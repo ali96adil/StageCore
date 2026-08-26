@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/osc"
@@ -21,9 +22,15 @@ func Listen(address string, engine *routing.Engine, sessionID string) (*Receiver
 	if engine == nil {
 		return nil, fmt.Errorf("routing engine is required")
 	}
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
 	udpAddress, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
 		return nil, fmt.Errorf("resolve OSC input listen address: %w", err)
+	}
+	if udpAddress.IP == nil || !udpAddress.IP.IsLoopback() {
+		return nil, fmt.Errorf("OSC input is loopback-only until Stage LAN security convergence")
 	}
 	conn, err := net.ListenUDP("udp", udpAddress)
 	if err != nil {
