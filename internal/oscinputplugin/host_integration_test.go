@@ -149,6 +149,39 @@ func TestOSCInputPermissionAndLoopbackGateBeforeProcessStart(t *testing.T) {
 	}
 }
 
+func TestRoutingFailureStopsExternalOSCInputProcess(t *testing.T) {
+	ctx := context.Background()
+	engine := &routing.Engine{}
+	host := oscinputplugin.New(buildOSCPlugin(t), "127.0.0.1:0", nil, inputManifest(true), engine, "missing-session")
+	if err := host.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	listenHost, listenPort, err := net.SplitHostPort(host.LocalAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(listenPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- host.Serve(ctx) }()
+	if _, err := (osc.Sender{}).Send(ctx, osc.Endpoint{Host: listenHost, Port: port}, osc.Message{Address: "/will/fail", Arguments: []osc.Argument{{Type: "int32", Value: int32(1)}}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-serveDone:
+		if err == nil {
+			t.Fatal("expected routing failure")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OSC input host did not return after routing failure")
+	}
+	if host.LocalAddr() != "" {
+		t.Fatalf("plugin remained ready after routing failure: %q", host.LocalAddr())
+	}
+}
+
 func inputManifest(grant bool) oscinputplugin.Manifest {
 	grants := []string(nil)
 	if grant {
