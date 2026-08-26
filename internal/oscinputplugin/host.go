@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -243,7 +244,7 @@ func (h *Host) stopLocked() {
 }
 
 func validateLoopbackListen(address string) error {
-	host, port, err := net.SplitHostPort(strings.TrimSpace(address))
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(address))
 	if err != nil {
 		return fmt.Errorf("OSC input listen address must be host:port: %w", err)
 	}
@@ -251,8 +252,9 @@ func validateLoopbackListen(address string) error {
 	if ip == nil || !ip.IsLoopback() {
 		return errors.New("OSC input is loopback-only until SEC0-SEC2 Stage LAN security gate passes")
 	}
-	if port == "" {
-		return errors.New("OSC input listen port is required")
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 0 || port > 65535 {
+		return errors.New("OSC input listen port must be 0..65535")
 	}
 	return nil
 }
