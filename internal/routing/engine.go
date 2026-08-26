@@ -272,6 +272,7 @@ func firstCriticalRouteTarget(manifest snapshot.Manifest, route snapshot.Route) 
 			if cue := resolveCue(manifest, *action.CueID); cue != nil && isCritical(cue.Criticality) {
 				return &criticalRouteTarget{actionID: action.ID, kind: "cue", targetID: cue.ID, criticality: cue.Criticality}
 			}
+		}
 	}
 	return nil
 }
