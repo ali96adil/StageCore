@@ -1,0 +1,262 @@
+import Foundation
+
+public enum CompanionMessageType: String, Codable, Sendable {
+    case hello = "companion.hello"
+    case sessionReady = "session.ready"
+    case executionRequest = "execution.request"
+    case executionResult = "execution.result"
+}
+
+public enum JSONValue: Codable, Sendable, Equatable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.typeMismatch(
+                JSONValue.self,
+                .init(codingPath: decoder.codingPath, debugDescription: "unsupported JSON value")
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .int(let value):
+            try container.encode(value)
+        case .double(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+}
+
+public struct CompanionHello: Codable, Sendable, Equatable {
+    public let type: CompanionMessageType
+    public let schemaVersion: Int
+    public let messageID: String
+    public let companionID: String
+    public let agentVersion: String
+    public let platform: String
+    public let architecture: String
+    public let capabilities: [String]
+    public let appliedRuntimeSnapshotID: String?
+    public let configHash: String
+    public let readiness: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case messageID = "message_id"
+        case companionID = "companion_id"
+        case agentVersion = "agent_version"
+        case platform
+        case architecture
+        case capabilities
+        case appliedRuntimeSnapshotID = "applied_runtime_snapshot_id"
+        case configHash = "config_hash"
+        case readiness
+    }
+
+    public init(
+        schemaVersion: Int = 1,
+        messageID: String = UUID().uuidString.lowercased(),
+        companionID: String,
+        agentVersion: String,
+        platform: String,
+        architecture: String,
+        capabilities: [String],
+        appliedRuntimeSnapshotID: String?,
+        configHash: String,
+        readiness: String
+    ) {
+        self.type = .hello
+        self.schemaVersion = schemaVersion
+        self.messageID = messageID
+        self.companionID = companionID
+        self.agentVersion = agentVersion
+        self.platform = platform
+        self.architecture = architecture
+        self.capabilities = capabilities
+        self.appliedRuntimeSnapshotID = appliedRuntimeSnapshotID
+        self.configHash = configHash
+        self.readiness = readiness
+    }
+}
+
+public struct SessionReady: Codable, Sendable, Equatable {
+    public let type: CompanionMessageType
+    public let schemaVersion: Int
+    public let messageID: String
+    public let machineRoleID: String
+    public let roleKey: String
+    public let runtimeSnapshotID: String
+    public let configHash: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case messageID = "message_id"
+        case machineRoleID = "machine_role_id"
+        case roleKey = "role_key"
+        case runtimeSnapshotID = "runtime_snapshot_id"
+        case configHash = "config_hash"
+    }
+
+    public init(
+        schemaVersion: Int = 1,
+        messageID: String = UUID().uuidString.lowercased(),
+        machineRoleID: String,
+        roleKey: String,
+        runtimeSnapshotID: String,
+        configHash: String
+    ) {
+        self.type = .sessionReady
+        self.schemaVersion = schemaVersion
+        self.messageID = messageID
+        self.machineRoleID = machineRoleID
+        self.roleKey = roleKey
+        self.runtimeSnapshotID = runtimeSnapshotID
+        self.configHash = configHash
+    }
+}
+
+public struct CompanionExecutionRequest: Codable, Sendable, Equatable {
+    public let type: CompanionMessageType
+    public let schemaVersion: Int
+    public let messageID: String
+    public let executionID: String
+    public let correlationID: String?
+    public let machineRoleID: String
+    public let runtimeSnapshotID: String
+    public let capability: String
+    public let parameters: [String: JSONValue]
+    public let timeoutMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case messageID = "message_id"
+        case executionID = "execution_id"
+        case correlationID = "correlation_id"
+        case machineRoleID = "machine_role_id"
+        case runtimeSnapshotID = "runtime_snapshot_id"
+        case capability
+        case parameters
+        case timeoutMS = "timeout_ms"
+    }
+
+    public init(
+        schemaVersion: Int = 1,
+        messageID: String = UUID().uuidString.lowercased(),
+        executionID: String,
+        correlationID: String?,
+        machineRoleID: String,
+        runtimeSnapshotID: String,
+        capability: String,
+        parameters: [String: JSONValue],
+        timeoutMS: Int64
+    ) {
+        self.type = .executionRequest
+        self.schemaVersion = schemaVersion
+        self.messageID = messageID
+        self.executionID = executionID
+        self.correlationID = correlationID
+        self.machineRoleID = machineRoleID
+        self.runtimeSnapshotID = runtimeSnapshotID
+        self.capability = capability
+        self.parameters = parameters
+        self.timeoutMS = timeoutMS
+    }
+}
+
+public enum CompanionExecutionStatus: String, Codable, Sendable {
+    case completed = "COMPLETED"
+    case failed = "FAILED"
+    case timedOut = "TIMED_OUT"
+    case cancelled = "CANCELLED"
+    case rejected = "REJECTED"
+}
+
+public enum CompanionAckLevel: String, Codable, Sendable {
+    case none = "NONE"
+    case transportOnly = "TRANSPORT_ONLY"
+    case accepted = "ACCEPTED"
+    case deviceAck = "DEVICE_ACK"
+    case verifiedState = "VERIFIED_STATE"
+}
+
+public struct CompanionExecutionResult: Codable, Sendable, Equatable {
+    public let type: CompanionMessageType
+    public let schemaVersion: Int
+    public let messageID: String
+    public let executionID: String
+    public let status: CompanionExecutionStatus
+    public let ackLevel: CompanionAckLevel
+    public let errorCode: String?
+    public let responseSummary: String
+    public let output: [String: JSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case messageID = "message_id"
+        case executionID = "execution_id"
+        case status
+        case ackLevel = "ack_level"
+        case errorCode = "error_code"
+        case responseSummary = "response_summary"
+        case output
+    }
+
+    public init(
+        schemaVersion: Int = 1,
+        messageID: String = UUID().uuidString.lowercased(),
+        executionID: String,
+        status: CompanionExecutionStatus,
+        ackLevel: CompanionAckLevel,
+        errorCode: String?,
+        responseSummary: String,
+        output: [String: JSONValue] = [:]
+    ) {
+        self.type = .executionResult
+        self.schemaVersion = schemaVersion
+        self.messageID = messageID
+        self.executionID = executionID
+        self.status = status
+        self.ackLevel = ackLevel
+        self.errorCode = errorCode
+        self.responseSummary = responseSummary
+        self.output = output
+    }
+}

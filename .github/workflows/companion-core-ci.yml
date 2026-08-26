@@ -1,0 +1,27 @@
+name: Companion Core CI
+
+on:
+  pull_request:
+    paths:
+      - "companion/macos/**"
+      - ".github/workflows/companion-core-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "companion/macos/**"
+      - ".github/workflows/companion-core-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    name: Swift CompanionCore
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test CompanionCore
+        run: swift test --package-path companion/macos
