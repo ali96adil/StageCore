@@ -21,7 +21,8 @@ The `00–10` baseline defines what StageCore must do. Concrete stack choices li
 Current decision-spike status:
 
 - **SPK-01 — Core Technology Stack:** ACCEPTED — Go Hub, SQLite/WAL persistence direction, HTTP+JSON + SSE browser transport, TypeScript/React/Vite product UI.
-- **SPK-02 — Real OSC:** next.
+- **SPK-02 — Real OSC:** ACCEPTED — OSC 1.0 UDP `osc.send`, logical target mapping and `TRANSPORT_ONLY` acknowledgement.
+- **SPK-03 — macOS Companion:** next.
 
 ## Documentation Convention
 
