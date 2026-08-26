@@ -70,6 +70,9 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 		CorrelationID: req.CorrelationID,
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone, ErrorCode: "CANCELLED", ResponseSummary: "OSC plugin execution cancelled"}
+		}
 		if errors.Is(err, pluginhost.ErrPluginTimeout) {
 			return capability.Result{Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone, ErrorCode: "TIMEOUT", ResponseSummary: "OSC plugin execution timed out"}
 		}
