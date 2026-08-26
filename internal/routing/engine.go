@@ -272,7 +272,6 @@ func firstCriticalRouteTarget(manifest snapshot.Manifest, route snapshot.Route) 
 			if cue := resolveCue(manifest, *action.CueID); cue != nil && isCritical(cue.Criticality) {
 				return &criticalRouteTarget{actionID: action.ID, kind: "cue", targetID: cue.ID, criticality: cue.Criticality}
 			}
-		}
 	}
 	return nil
 }
@@ -349,12 +348,13 @@ func (e *Engine) dispatchOutput(
 	target := resolvedCapabilityTarget(manifest, output.TargetRef)
 	started := e.now()
 	result := e.executor.Execute(ctx, capability.Request{
-		ExecutionID:   executionID,
-		Capability:    output.CapabilityKey,
-		Target:        target,
-		Parameters:    parameters,
-		Priority:      route.PriorityClass,
-		CorrelationID: command.CorrelationID,
+		ExecutionID:       executionID,
+		RuntimeSnapshotID: command.RuntimeSnapshotID,
+		Capability:        output.CapabilityKey,
+		Target:            target,
+		Parameters:        parameters,
+		Priority:          route.PriorityClass,
+		CorrelationID:     command.CorrelationID,
 	})
 	latencyMS := e.now().Sub(started).Milliseconds()
 	if latencyMS < 0 {
