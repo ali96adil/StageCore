@@ -1,3 +1,3 @@
 # Archive
 
-Original exported documents and historical reference files. Active engineering work should use Markdown in the other documentation folders.
+Reserved for original export formats and superseded artifacts. Active engineering documents live as Markdown in the baseline, ADR, architecture, and specifications folders.

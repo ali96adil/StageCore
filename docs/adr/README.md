@@ -1,3 +1,3 @@
-# Architectural Decision Records
+# Architectural Decisions
 
-Approved architectural decisions and addenda.
+- [StageCore Architectural Decisions — Addendum 001](addendum-001/README.md)

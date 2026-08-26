@@ -1,3 +1,5 @@
 # Specifications
 
-Implementation-facing specifications derived from the approved architecture.
+Next planned document:
+
+- StageCore Data Model v0.1
