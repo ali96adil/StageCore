@@ -9,8 +9,9 @@
 - **04 — Event & Command Contracts v0.1:** [Runtime contracts](specifications/04-event-command-contracts-v0.1.md)
 - **05 — MVP Product Specification v0.1:** [Executable MVP behavior and acceptance](specifications/05-mvp-product-spec-v0.1/README.md)
 - **06 — Plugin Contract v0.1:** [Capability extensions and native UI integration](specifications/06-plugin-contract-v0.1/README.md)
+- **07 — Companion Specification v0.1:** [Clients, pairing, roles, sync and macOS Companion](specifications/07-companion-spec-v0.1/README.md)
 
-Next planned chapter: **07 — Companion Specification v0.1**.
+Next planned chapter: **08 — Storage & Vault Specification v0.1**.
 
 ## Documentation Convention
 
