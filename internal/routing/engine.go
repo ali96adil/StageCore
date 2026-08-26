@@ -159,6 +159,13 @@ type routeFailure struct {
 	message  string
 }
 
+type criticalRouteTarget struct {
+	actionID   string
+	kind       string
+	targetID   string
+	criticality string
+}
+
 func (e *Engine) evaluateRoute(
 	ctx context.Context,
 	session domain.Session,
@@ -192,6 +199,14 @@ func (e *Engine) evaluateRoute(
 	if err != nil {
 		_ = e.emitRouteFailure(ctx, session.ID, command, inputEventID, route, "ROUTE_TRANSFORM_INVALID", err.Error())
 		return false, &routeFailure{"ROUTE_TRANSFORM_INVALID", "VALIDATION", err.Error()}
+	}
+	if !allowCritical {
+		if target := firstCriticalRouteTarget(manifest, route); target != nil {
+			if failure := e.blockCriticalTestRoute(ctx, session, command, inputEventID, route, value, transformed, *target); failure != nil {
+				return false, failure
+			}
+			return false, &routeFailure{"SAFETY_CONFIRMATION_REQUIRED", "SAFETY_BLOCK", "critical Route target requires explicit confirmation for test input"}
+		}
 	}
 	if route.DebounceMS != nil && *route.DebounceMS > 0 {
 		if !e.debouncer.Accept(route.ID, e.now().UTC(), time.Duration(*route.DebounceMS)*time.Millisecond) {
@@ -233,6 +248,54 @@ func (e *Engine) evaluateRoute(
 		return true, &routeFailure{"ROUTE_ACTION_INVALID", "VALIDATION", "route action has no output or cue target"}
 	}
 	return true, nil
+}
+
+func firstCriticalRouteTarget(manifest snapshot.Manifest, route snapshot.Route) *criticalRouteTarget {
+	for _, action := range route.Actions {
+		if action.OutputID != nil {
+			if output := manifest.ResolveOutput(*action.OutputID); output != nil && isCritical(output.Criticality) {
+				return &criticalRouteTarget{actionID: action.ID, kind: "output", targetID: output.ID, criticality: output.Criticality}
+			}
+		}
+		if action.CueID != nil {
+			if cue := resolveCue(manifest, *action.CueID); cue != nil && isCritical(cue.Criticality) {
+				return &criticalRouteTarget{actionID: action.ID, kind: "cue", targetID: cue.ID, criticality: cue.Criticality}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Engine) blockCriticalTestRoute(
+	ctx context.Context,
+	session domain.Session,
+	command contracts.CommandEnvelope,
+	inputEventID string,
+	route snapshot.Route,
+	value json.RawMessage,
+	transformed json.RawMessage,
+	target criticalRouteTarget,
+) *routeFailure {
+	const code = "SAFETY_CONFIRMATION_REQUIRED"
+	if _, err := e.emit(ctx, session.ID, command, "route.evaluated", inputEventID, routeTrace(route, value, transformed, true, "SAFETY_BLOCKED", code)); err != nil {
+		return &routeFailure{"ROUTE_TRACE_FAILED", "INTERNAL", err.Error()}
+	}
+	payload := map[string]any{
+		"route_id":        route.ID,
+		"route_action_id": target.actionID,
+		"criticality":     target.criticality,
+		"error_code":      code,
+		"result":          "REJECTED",
+	}
+	if target.kind == "output" {
+		payload["output_id"] = target.targetID
+	} else {
+		payload["cue_id"] = target.targetID
+	}
+	if _, err := e.emit(ctx, session.ID, command, "route.action.failed", inputEventID, payload); err != nil {
+		return &routeFailure{"ROUTE_TRACE_FAILED", "INTERNAL", err.Error()}
+	}
+	return nil
 }
 
 func (e *Engine) dispatchOutput(
