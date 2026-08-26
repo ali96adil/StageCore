@@ -47,6 +47,12 @@ MVP conditions must stay bounded and inspectable. Minimum useful operators:
 
 No arbitrary scripting inside Route conditions in the critical path.
 
+### M3 v0.1 Burst / Rate-Limit Boundary
+
+The v0.1 Route data model exposes `debounce_ms` and does not define a separate token-bucket, frequency or events-per-second field. Therefore the M3 `debounce/rate-limit` ownership gate is satisfied by the deterministic per-Route debounce window: after one accepted trigger, additional matching occurrences inside that window are traced as `DEBOUNCED` and do not dispatch.
+
+A distinct token-bucket/Hz rate limiter is not invented as hidden configuration. Adding one later requires an explicit versioned Route field/contract and tests.
+
 ## 4. Route Targets
 
 A RouteAction may:
@@ -78,7 +84,7 @@ OSC receive traffic is not treated as manual Test confirmation. It is a distinct
 - Injected input can trigger an OSC output through a Route.
 - Non-matching condition dispatches nothing and produces an inspectable trace.
 - Disabled Route dispatches nothing.
-- Debounce prevents repeated accepted triggers within its configured window.
+- Debounce prevents repeated accepted triggers within its configured window and is the v0.1 bounded burst/rate-limit mechanism.
 - A route failure never disappears silently from the trace.
 - Unconfirmed critical Test routing dispatches nothing and records an explicit safety block.
 - Supported OSC input reaches the same routing engine through the external Plugin boundary.
