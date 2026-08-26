@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	PluginID          = "stagecore.osc"
-	CapabilityOSCSend = "osc.send"
-	PermissionUDPSend = "network.udp.send"
+	PluginID             = "stagecore.osc"
+	CapabilityOSCSend    = "osc.send"
+	InputOSCReceive      = "osc.receive"
+	PermissionUDPSend    = "network.udp.send"
+	PermissionUDPListen  = "network.udp.listen"
 )
 
 type Executor struct {

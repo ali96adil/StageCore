@@ -8,11 +8,13 @@ The Plugin Contract v0.1 is implementation-ready when all criteria below can be 
 - Incompatible Plugin API versions are rejected with a clear reason.
 - Required permissions are visible before activation.
 - After activation, `osc.send` is registered in the Extension Registry.
+- The M3 package declares `osc.receive` as a `routing_inputs` contribution with separate `network.udp.listen` permission.
 
 ## Seamless UI
 
 - Cue Editor shows `Send OSC` in Add Action without hard-coding OSC into Cue Editor.
 - Routing shows `OSC Output` from the same plugin contribution.
+- Routing can expose the `OSC Input` contribution without embedding the UDP listener inside Core.
 - Devices can create/configure an `OSC Endpoint` using StageCore-native fields.
 - Settings/Status displays plugin health.
 - Preflight detects an invalid or missing endpoint used by the Published Runtime.
@@ -27,6 +29,9 @@ The Plugin Contract v0.1 is implementation-ready when all criteria below can be 
 - The result returns to the correct ActionExecution.
 - UDP send success is recorded as `TRANSPORT_ONLY`, not device-confirmed success.
 - Failure/timeout produces explicit Action/Cue behavior according to policy.
+- For M3 receive, the external Plugin owns the UDP socket and emits a versioned normalized `input.event`; Hub Core performs Snapshot matching, Route evaluation and dispatch.
+- A malformed receive datagram does not crash Core or synthesize a successful input.
+- Before SEC0–SEC2, a non-loopback OSC receive listener is rejected.
 
 ## Lifecycle & Resilience
 
@@ -34,6 +39,7 @@ The Plugin Contract v0.1 is implementation-ready when all criteria below can be 
 - A project with required OSC capability cannot become Show Ready while the plugin is missing/disabled.
 - Re-enabling a compatible plugin restores the preserved configuration.
 - Plugin crash does not crash the critical Core process.
+- Receive-side Plugin loss never replays a prior UDP input when the process is restarted.
 - Install/uninstall/incompatible upgrade is blocked during SHOW mode.
 
 ## MVP Reference Test
@@ -42,12 +48,15 @@ The Plugin Contract v0.1 is implementation-ready when all criteria below can be 
 Create OSC Endpoint
  -> Create Cue
  -> Add Send OSC Action
+ -> Create OSC Input + Route
  -> Publish Runtime
  -> Preflight passes
  -> Start Rehearsal
  -> GO
  -> test receiver gets OSC packet
- -> Action result recorded
+ -> external OSC Plugin receives one test input datagram
+ -> Hub Route executes exactly once subject to configured debounce
+ -> Action/Route results recorded
  -> Cue result recorded
  -> Rehearsal Log contains full correlation trace
 ```

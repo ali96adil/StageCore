@@ -40,7 +40,7 @@ Supported result states align with the Event & Command Contracts: `COMPLETED`, `
 
 The plugin must report only what it can prove. Sending an OSC UDP datagram does not prove that the external application executed the requested behavior. Therefore the reference OSC sender reports at most `TRANSPORT_ONLY` unless a future verified feedback mechanism exists.
 
-## OSC v0.1 Capability
+## OSC v0.1 Send Capability
 
 `osc.send` parameters:
 
@@ -51,7 +51,7 @@ The plugin must report only what it can prove. Sending an OSC UDP datagram does 
 
 The endpoint configuration contains host and port outside the Cue definition.
 
-## Reference End-to-End Flow
+## Reference Send Flow
 
 ```text
 Operator GO
@@ -66,4 +66,30 @@ Operator GO
  -> events and Rehearsal Log updated
 ```
 
-`osc.receive` is deferred because it introduces listener lifecycle, input normalization, port ownership, rate limiting and Routing integration.
+## M3 Promotion — OSC Receive Routing Input
+
+The earlier M2 baseline deferred `osc.receive` because it requires listener lifecycle, input normalization, port ownership, rate limiting/debounce and Routing integration. **M3 Routing owns and promotes that deferred item.**
+
+The receive path remains behind the same `stagecore.osc` external-process boundary:
+
+```text
+OSC UDP datagram
+ -> external stagecore.osc process in receive mode
+ -> normalized plugin `input.event`
+ -> Hub validates Plugin identity / permission / input contract
+ -> active Runtime Snapshot resolves matching InputDefinition
+ -> Routing Engine evaluates Route
+ -> Cue or generic capability dispatch
+ -> persistent Route Trace
+```
+
+Rules for the M3 receive contribution:
+
+- contribution key: `osc.receive`;
+- Plugin process model remains `external`;
+- required permission: `network.udp.listen`;
+- the external Plugin owns the UDP socket; Core does not open an OSC network listener directly;
+- malformed UDP datagrams are isolated and do not create input events;
+- the Plugin normalizes transport data only; authoritative InputDefinition matching, Snapshot checks, Route evaluation, debounce and dispatch remain in Hub Core;
+- each received UDP datagram is treated as a new input occurrence; StageCore does not invent network-level deduplication or replay. Route debounce is the bounded duplicate/burst control in M3;
+- until the SEC0–SEC2 Stage LAN security gate is implemented, product OSC receive listeners are restricted to loopback addresses only. Non-loopback Stage LAN control must not be enabled implicitly.

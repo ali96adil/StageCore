@@ -11,11 +11,14 @@ The Core communicates with them through bounded, versioned IPC/contracts. Plugin
 Manifest permissions are explicit and reviewed before activation. Examples:
 
 - `network.udp.send`
+- `network.udp.listen`
 - `network.tcp.connect`
 - `filesystem.project.read`
 - `filesystem.plugin-data.write`
 - `local.midi.send`
 - `local.application.control`
+
+Send and listen authority are separate grants. A Plugin allowed to send UDP does not automatically receive permission to bind a UDP listener.
 
 A plugin receives only approved permissions. Project credentials/secrets are accessed through scoped Core/Vault APIs when needed rather than copied into arbitrary plugin configuration.
 
@@ -27,6 +30,8 @@ A plugin receives only approved permissions. Project credentials/secrets are acc
 - A plugin failure produces an explicit degraded/unavailable state.
 - Retry is allowed only according to capability idempotency/error policy.
 - Plugins cannot claim stronger acknowledgement than they can verify.
+- External input Plugins normalize transport data but do not become authoritative for Project/Runtime state or Route decisions.
+- Before SEC0–SEC2, OSC receive is loopback-only; a Plugin permission grant must not silently expose unauthenticated Stage LAN control.
 
 ## Resource Controls
 

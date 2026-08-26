@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -20,9 +22,21 @@ type oscParams struct {
 const (
 	pluginID          = "stagecore.osc"
 	capabilityOSCSend = "osc.send"
+	inputOSCReceive   = "osc.receive"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--receive" {
+		if err := runReceive(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	runSend()
+}
+
+func runSend() {
 	out := bufio.NewWriter(os.Stdout)
 	write(out, pluginprotocol.Ready{
 		Type:          "plugin.ready",
@@ -44,6 +58,84 @@ func main() {
 		result.DurationMS = time.Since(started).Milliseconds()
 		write(out, result)
 	}
+}
+
+func runReceive(args []string) error {
+	flags := flag.NewFlagSet("receive", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	listen := flags.String("listen", "127.0.0.1:0", "OSC UDP listen address")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	address, err := net.ResolveUDPAddr("udp", *listen)
+	if err != nil {
+		return fmt.Errorf("resolve OSC receive address: %w", err)
+	}
+	if address.IP == nil || !address.IP.IsLoopback() {
+		return fmt.Errorf("OSC receive is loopback-only until Stage LAN security gate passes")
+	}
+	conn, err := net.ListenUDP("udp", address)
+	if err != nil {
+		return fmt.Errorf("listen OSC receive: %w", err)
+	}
+	defer conn.Close()
+
+	out := bufio.NewWriter(os.Stdout)
+	write(out, pluginprotocol.Ready{
+		Type:          "plugin.ready",
+		SchemaVersion: pluginprotocol.SchemaVersion,
+		PluginID:      pluginID,
+		PluginVersion: "0.1.0",
+		Inputs:        []string{inputOSCReceive},
+		ListenAddress: conn.LocalAddr().String(),
+	})
+
+	buffer := make([]byte, 64*1024)
+	for {
+		n, _, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			return fmt.Errorf("read OSC receive datagram: %w", err)
+		}
+		message, err := osc.DecodeMessage(buffer[:n])
+		if err != nil {
+			// A malformed UDP datagram is isolated to itself. It must not kill the
+			// external Plugin process or invent an input event.
+			continue
+		}
+		value, err := inputValue(message.Arguments)
+		if err != nil {
+			continue
+		}
+		write(out, pluginprotocol.InputEvent{
+			Type:          "input.event",
+			SchemaVersion: pluginprotocol.SchemaVersion,
+			InputType:     inputOSCReceive,
+			Source:        message.Address,
+			Value:         value,
+		})
+	}
+}
+
+func inputValue(arguments []osc.Argument) (json.RawMessage, error) {
+	values := make([]any, 0, len(arguments))
+	for _, argument := range arguments {
+		values = append(values, argument.Value)
+	}
+	var value any
+	switch len(values) {
+	case 0:
+		value = true
+	case 1:
+		value = values[0]
+	default:
+		value = values
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func execute(req pluginprotocol.ExecutionRequest) pluginprotocol.ExecutionResult {

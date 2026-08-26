@@ -9,7 +9,9 @@ type Ready struct {
 	SchemaVersion int      `json:"schema_version"`
 	PluginID      string   `json:"plugin_id"`
 	PluginVersion string   `json:"plugin_version"`
-	Capabilities  []string `json:"capabilities"`
+	Capabilities  []string `json:"capabilities,omitempty"`
+	Inputs        []string `json:"inputs,omitempty"`
+	ListenAddress string   `json:"listen_address,omitempty"`
 }
 
 type ResolvedTarget struct {
@@ -39,4 +41,16 @@ type ExecutionResult struct {
 	ErrorCategory string `json:"error_category,omitempty"`
 	ErrorMessage  string `json:"error_message,omitempty"`
 	DurationMS    int64  `json:"duration_ms"`
+}
+
+// InputEvent is an unsolicited, normalized input contribution emitted by an
+// external Plugin process. It contains transport-derived data only; Hub Core
+// still resolves the active Runtime Snapshot and performs authoritative Route
+// evaluation and dispatch.
+type InputEvent struct {
+	Type          string          `json:"type"`
+	SchemaVersion int             `json:"schema_version"`
+	InputType     string          `json:"input_type"`
+	Source        string          `json:"source"`
+	Value         json.RawMessage `json:"value"`
 }
