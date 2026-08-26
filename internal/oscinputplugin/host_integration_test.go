@@ -133,7 +133,7 @@ func TestOSCInputPermissionAndLoopbackGateBeforeProcessStart(t *testing.T) {
 	}
 
 	// Use a non-nil zero-value Engine so the security checks are reached without
-	// requiring a database. Permission denial must occur before process spawn.
+	// requiring a database. All failures below must happen before process spawn.
 	engine = &routing.Engine{}
 	denied = oscinputplugin.New("/does/not/matter", "127.0.0.1:9000", nil, inputManifest(false), engine, "session")
 	if err := denied.Start(context.Background()); !errors.Is(err, oscinputplugin.ErrPermissionDenied) {
@@ -142,6 +142,10 @@ func TestOSCInputPermissionAndLoopbackGateBeforeProcessStart(t *testing.T) {
 	unsafe := oscinputplugin.New("/does/not/matter", "0.0.0.0:9000", nil, inputManifest(true), engine, "session")
 	if err := unsafe.Start(context.Background()); err == nil {
 		t.Fatal("expected non-loopback OSC input to be blocked before process start")
+	}
+	invalidPort := oscinputplugin.New("/does/not/matter", "127.0.0.1:not-a-port", nil, inputManifest(true), engine, "session")
+	if err := invalidPort.Start(context.Background()); err == nil {
+		t.Fatal("expected invalid OSC input port to be blocked before process start")
 	}
 }
 
