@@ -67,7 +67,7 @@ func TestInjectTestRequiresExplicitConfirmationForCriticalOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasEventType(events, "route.action.completed") {
+	if safetyHasEventType(events, "route.action.completed") {
 		t.Fatal("critical test route executed without explicit confirmation")
 	}
 	if !hasSafetyBlock(events) {
@@ -82,7 +82,7 @@ func TestInjectTestRequiresExplicitConfirmationForCriticalOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasEventType(events, "route.action.completed") {
+	if !safetyHasEventType(events, "route.action.completed") {
 		t.Fatal("confirmed critical test route did not execute")
 	}
 }
@@ -110,7 +110,7 @@ func criticalInjectCommand(t *testing.T, runtimeSnapshot domain.RuntimeSnapshot,
 	}
 }
 
-func hasEventType(events []contracts.EventEnvelope, eventType string) bool {
+func safetyHasEventType(events []contracts.EventEnvelope, eventType string) bool {
 	for _, event := range events {
 		if event.EventType == eventType {
 			return true
