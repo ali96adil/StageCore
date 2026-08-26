@@ -35,11 +35,14 @@ This slice must pass before real device protocols are added.
 **MUST**
 
 - configure OSC target manually;
-- send OSC Action from Cue;
-- send OSC Action from Route;
+- send OSC Action from Cue through the generic capability dispatcher;
+- resolve the Cue's logical target from Runtime Snapshot-captured endpoint configuration, not mutable live config;
 - inspect actual acknowledgement level honestly (`sent` is not `verified`);
-- handle unreachable/misconfigured target without false success;
-- use a real OSC receiver or reproducible test receiver in acceptance test.
+- handle missing/misconfigured target or invalid OSC parameters without false success;
+- use a real OSC receiver or reproducible test receiver in acceptance test;
+- isolate the OSC Plugin process and preserve no-replay behavior across crash/timeout.
+
+**Routing boundary:** the generic dispatcher delivered by M2 is reused by M3. Route-origin OSC dispatch is accepted with the M3 Routing slice rather than pulling the Routing engine into M2.
 
 ### Slice M3 — Routing
 
@@ -49,6 +52,7 @@ This slice must pass before real device protocols are added.
 - receive supported OSC input;
 - evaluate simple condition;
 - dispatch Cue or Output Action;
+- dispatch a real OSC Output Action through the M2 generic capability path;
 - show Route Trace;
 - disabled/non-matching Route dispatches nothing;
 - debounce behavior is testable.
