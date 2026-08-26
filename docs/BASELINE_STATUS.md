@@ -20,12 +20,14 @@ Implementation technology was validated through `SPK-01`–`SPK-06`, and final p
 
 **M0 — CORE PERSISTENCE: COMPLETE**  
 **M1 — CUE ENGINE + SIMULATOR: COMPLETE**  
-**NEXT: M2 — REAL OSC**
+**M2 — REAL OSC: COMPLETE**  
+**NEXT: M3 — ROUTING**
 
 Completion evidence:
 
 - `docs/checkpoints/2026-08-26-m0-core-persistence-complete.md`
 - `docs/checkpoints/2026-08-26-m1-cue-engine-simulator-complete.md`
+- `docs/checkpoints/2026-08-26-m2-real-osc-complete.md`
 
 Merged product commits:
 
@@ -35,9 +37,12 @@ m0: establish core persistence foundation
 
 a5af7c269d516055831720fb4055276457757001
 m1: implement cue engine and deterministic simulator
+
+56feab35b7ec65fed4047bc106c12c30899adf0c
+m2: implement real OSC capability path
 ```
 
-The M1 post-merge `main` Core CI run `32966785414` passed Go 1.26/1.27 tests and vet, native race tests, module-lock verification and Linux ARM64 CGo-free cross-build.
+The M2 post-merge `main` Core CI run `32972408148` passed Go 1.26/1.27 tests and vet, native race tests, module-lock verification, and Linux ARM64 CGo-free builds for both the Hub and OSC Plugin binaries.
 
 ### Accepted Technology Direction
 
@@ -83,31 +88,53 @@ The M1 post-merge `main` Core CI run `32966785414` passed Go 1.26/1.27 tests and
 - restart-safe command history with no automatic replay;
 - explicit proof that runtime GO consumes Snapshot-captured definitions rather than live definition state.
 
-## M2 Entry Scope
+### M2 delivered
 
-M2 is the next product slice. It owns the first real transport-backed Action path while preserving all M1 runtime semantics:
+- generic product capability executor/registry shared by simulated and real Actions;
+- Runtime Snapshot schema 2 with deterministic logical target capture;
+- Snapshot-only endpoint resolution so later live alias edits do not mutate active runtime behavior;
+- product `osc.send` capability using OSC 1.0 over UDP;
+- explicit typed OSC arguments: `int32`, `float32`, `string`, `bool`;
+- truthful `COMPLETED / TRANSPORT_ONLY` acknowledgement for successful local UDP writes;
+- external `stagecore.osc` Plugin process;
+- versioned JSON Lines stdin/stdout IPC and `plugin.ready` handshake;
+- Plugin identity/capability validation;
+- explicit reference-path `network.udp.send` grant enforcement;
+- crash/EOF/hang/cancellation containment and no automatic replay;
+- lazy fresh Plugin process for later explicit execution;
+- Hub composition wiring for the actual OSC product path;
+- configurable OSC Plugin executable path with sibling-binary default;
+- real localhost UDP receiver tests and App-level end-to-end evidence;
+- ARM64 CGo-free builds for both `stagecore-hub` and `stagecore-osc-plugin`.
+
+## M3 Entry Scope
+
+M3 owns Routing execution and closes the Route-origin OSC acceptance intentionally deferred from M2:
 
 ```text
-Published Runtime Snapshot
-→ cue.go
-→ Cue Engine
-→ Action: osc.send
-→ logical target / endpoint resolution
-→ real OSC UDP transport
-→ local OSC receiver
-→ truthful TRANSPORT_ONLY acknowledgement
-→ Action/Cue/Event history
+Test Input / supported OSC input
+→ normalized Input event
+→ Runtime Snapshot Route lookup
+→ simple condition evaluation
+→ debounce
+→ Route Trace
+→ Cue dispatch OR Output capability dispatch
+→ existing capability registry
+→ sim.test / osc.send
+→ truthful result + Event history
 ```
 
-M2 should reuse the accepted SPK-02 OSC evidence rather than redesign OSC from scratch. Plugin/security boundaries must follow the existing Plugin Contract, SPK-04 process-isolation decision and Security ownership gates.
+M3 must prove that disabled/non-matching Routes dispatch nothing, debounce behavior is deterministic/testable, and each accepted input causes no duplicate Action/Cue dispatch.
 
-M2 does **not** silently promote Routing execution, Companion trust, Vault/media workflows, Stage LAN exposure, Operator UI, Nodes, full DMX/lighting, AI/Vision or HA/cloud work.
+M3 must reuse the capability boundary delivered by M2 rather than embedding protocol-specific OSC logic inside the Routing domain.
+
+M3 does **not** silently promote Companion trust, Vault/media workflows, non-loopback Stage LAN control, Operator UI, Nodes, full DMX/lighting, AI/Vision or HA/cloud work.
 
 ## Remaining Work Is Owned — Not Unbounded TBD
 
 - Security SEC0–SEC2 before non-loopback Stage LAN control;
-- Plugin permission/product integration in M2/SEC5;
-- Routing implementation in M3;
+- full Plugin permission administration remains in Security SEC5; M2 proved only the explicit reference OSC grant boundary;
+- Routing implementation and `osc.receive` lifecycle in M3;
 - Companion trust + real macOS bundle/Keychain/signing in M4/SEC3;
 - Publish/Preflight/Readiness convergence before show-facing operation;
 - media-aware Vault/cache/readiness work in Storage/M5;
