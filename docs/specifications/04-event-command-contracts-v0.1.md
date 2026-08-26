@@ -106,8 +106,13 @@
 | `correlation_id` | ربط التنفيذ |
 | `causation_id` | Command/Event المباشر الذي سببها |
 | `priority` | أهمية الحدث |
-| `sequence` | optional stream ordering |
+| `sequence` | ترتيب monotonic يخصصه Hub عند إدخال الحدث إلى الـauthoritative event journal |
+| `trace_context` | metadata اختيارية لتتبع trace عبر الحدود؛ لا تحتوي secrets |
 | `payload` | بيانات الحدث |
+
+**Sequence rule:** بعد قبول Event داخل Hub journal، يحصل على `sequence` محفوظة ومتزايدة monotonic داخل الـauthoritative Hub event journal. لا يعتمد StageCore على timestamp وحده لترتيب سجل الأحداث.
+
+**Trace rule:** `trace_context` مخصصة للـdistributed/runtime tracing وربط spans عند الحاجة، وليست مكانًا للـcredentials أوtokens أوProject secrets.
 
 **Rule:** Event لا يطلب من consumer تنفيذ Action حرج بمجرد replay. إذا نحتاج فعلًا، يولد consumer Command جديدًا يمر validation والpermissions.
 
@@ -467,6 +472,10 @@ Command context يجب أن يسمح للـCore بمعرفة:
   "correlation_id": "corr_01...",
   "causation_id": "cmd_01...",
   "priority": "P1",
+  "sequence": 1042,
+  "trace_context": {
+    "trace_id": "trace_01..."
+  },
   "payload": {
     "cue_id": "cue_035",
     "cue_execution_id": "cueexec_01..."
