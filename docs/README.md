@@ -27,6 +27,14 @@ Current decision-spike status:
 - **SPK-05 — Vault & Large File Transfer:** ACCEPTED — filesystem Vault objects, SHA-256 identity, byte-range resume, verified cache promotion, SHOW-mode transfer gate and runtime storage reserve.
 - **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** ACCEPTED for Linux deployment/release shape — native `amd64`/`arm64` binaries, systemd lifecycle, local-first boot and configurable SSD/NVMe storage. Real hardware qualification remains required.
 
+## Current Engineering Checkpoint
+
+Before product implementation, the full baseline and all six spikes were reviewed for consistency. The reference transition state is:
+
+- [2026-08-26 — Implementation Baseline Checkpoint](checkpoints/2026-08-26-implementation-baseline.md)
+
+The checkpoint records resolved interpretation, prototype-vs-product boundaries, known follow-up gaps and the cross-cutting Security/Storage gates required before real LAN/Rehearsal use.
+
 ## Implementation Phase
 
 Decision spikes are complete enough to begin implementation. The next milestone is **M0 — Core Persistence**: real Go Hub skeleton, pinned SQLite driver, migrations and authoritative Project persistence.
@@ -39,4 +47,5 @@ Product/specification documents must distinguish implementable milestone require
 
 - [Specifications index](specifications/README.md)
 - [Engineering decisions](decisions/README.md)
+- [Engineering checkpoints](checkpoints/README.md)
 - [Documentation source policy](SOURCE_POLICY.md)
