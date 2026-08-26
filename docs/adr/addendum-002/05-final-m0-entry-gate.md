@@ -10,7 +10,7 @@ This verdict means the design/technology choices needed to begin Core Persistenc
 
 - Hub architecture: authoritative local-first Hub.
 - Product language: Go.
-- Minimum Go baseline: 1.26; current Go 1.27 also tested in CI.
+- Minimum Go baseline: 1.26; M0 CI must cover supported Go 1.26.x and current Go 1.27.x.
 - Database: SQLite with WAL.
 - SQLite driver: `modernc.org/sqlite` v1.57.0.
 - DB API: standard `database/sql`.
