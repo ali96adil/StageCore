@@ -207,6 +207,7 @@ func (h *Host) Serve(ctx context.Context) error {
 				return fmt.Errorf("%w: decode input value", ErrProtocol)
 			}
 			if _, err := h.engine.ReceiveOSC(ctx, h.sessionID, event.Source, []any{value}); err != nil {
+				h.Close()
 				return fmt.Errorf("route external OSC input: %w", err)
 			}
 		}
