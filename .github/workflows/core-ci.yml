@@ -1,4 +1,4 @@
-name: M0 CI
+name: Core CI
 
 on:
   pull_request:
