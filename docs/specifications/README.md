@@ -13,8 +13,8 @@ Documentation sequence uses a numeric prefix so the project can be read in order
 - [`06` — Plugin Contract v0.1](06-plugin-contract-v0.1/README.md) — capability extensions, native UI contributions and OSC reference plugin
 - [`07` — Companion Specification v0.1](07-companion-spec-v0.1/README.md) — client/agent separation, pairing, roles, sync, bootstrap and macOS reference Companion
 - [`08` — Storage & Vault Specification v0.1](08-storage-vault-spec-v0.1/README.md) — authoritative storage, managed files, media sync, software repository, backup and SHOW-safe transfer policy
-- `09` — Security Model v0.1 — next planned specification
-- `10` — Testing & Reliability Plan v0.1
+- [`09` — Security Model v0.1](09-security-model-v0.1/README.md) — Hub/user/device identity, pairing, authorization, secrets, Plugin permissions and local security operations
+- `10` — Testing & Reliability Plan v0.1 — next planned specification
 
 ## Naming Rule
 

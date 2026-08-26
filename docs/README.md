@@ -11,8 +11,9 @@
 - **06 — Plugin Contract v0.1:** [Capability extensions and native UI integration](specifications/06-plugin-contract-v0.1/README.md)
 - **07 — Companion Specification v0.1:** [Clients, pairing, roles, sync and macOS Companion](specifications/07-companion-spec-v0.1/README.md)
 - **08 — Storage & Vault Specification v0.1:** [Vault, heavy file sync, software repository, backup and SHOW-safe storage](specifications/08-storage-vault-spec-v0.1/README.md)
+- **09 — Security Model v0.1:** [Identity, trust, users, pairing, permissions and secrets](specifications/09-security-model-v0.1/README.md)
 
-Next planned chapter: **09 — Security Model v0.1**.
+Next planned chapter: **10 — Testing & Reliability Plan v0.1**.
 
 ## Documentation Convention
 
