@@ -49,13 +49,16 @@ This slice must pass before real device protocols are added.
 **MUST**
 
 - inject test input;
-- receive supported OSC input;
+- receive supported OSC input through the external `stagecore.osc` Plugin process rather than opening the OSC UDP listener inside the Hub Critical Process;
+- keep OSC receive loopback/private-test only until SEC0–SEC2 permits intentional non-loopback Stage LAN exposure;
+- require the explicit `network.udp.listen` Plugin permission before OSC receive starts;
 - evaluate simple condition;
 - dispatch Cue or Output Action;
 - dispatch a real OSC Output Action through the M2 generic capability path;
 - show Route Trace;
 - disabled/non-matching Route dispatches nothing;
-- debounce behavior is testable.
+- debounce behavior is testable;
+- `input.inject_test` must not dispatch a `CRITICAL` or `SAFETY_CRITICAL` Cue/Output without explicit test confirmation, and a blocked attempt must produce an inspectable `SAFETY_BLOCK` result/trace.
 
 ### Slice M4 — Companion + Machine Role
 
