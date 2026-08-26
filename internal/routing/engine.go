@@ -18,6 +18,13 @@ import (
 
 const InputInjectTestCommandType = "input.inject_test"
 
+type inputOrigin string
+
+const (
+	inputOriginTest inputOrigin = "TEST"
+	inputOriginOSC  inputOrigin = "OSC"
+)
+
 type InjectTestPayload struct {
 	InputID         string          `json:"input_id"`
 	Value           json.RawMessage `json:"value"`
@@ -50,6 +57,10 @@ func NewWithNow(s *store.Store, executor capability.Executor, now func() time.Ti
 }
 
 func (e *Engine) InjectTest(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+	return e.inject(ctx, sessionID, command, inputOriginTest)
+}
+
+func (e *Engine) inject(ctx context.Context, sessionID string, command contracts.CommandEnvelope, origin inputOrigin) contracts.CommandResult {
 	if result := validateInjectEnvelope(command); result != nil {
 		return *result
 	}
@@ -70,7 +81,7 @@ func (e *Engine) InjectTest(ctx context.Context, sessionID string, command contr
 		command.CorrelationID = record.CorrelationID
 	}
 
-	result := e.executeReserved(ctx, sessionID, command)
+	result := e.executeReserved(ctx, sessionID, command, origin)
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := e.store.FinishCommand(finishCtx, command.CommandID, result); err != nil {
@@ -79,7 +90,7 @@ func (e *Engine) InjectTest(ctx context.Context, sessionID string, command contr
 	return result
 }
 
-func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope, origin inputOrigin) contracts.CommandResult {
 	if e == nil || e.store == nil || e.executor == nil {
 		return commandFailure(command.CommandID, "ROUTING_UNAVAILABLE", "INTERNAL", "routing engine is unavailable", "")
 	}
@@ -120,14 +131,14 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	inputEvent, err := e.emit(ctx, session.ID, command, "input.received", command.CommandID, map[string]any{
 		"input_id": input.ID,
 		"name":     input.Name,
-		"source":   inputSource(command),
+		"source":   string(origin),
 		"value":    json.RawMessage(payload.Value),
 	})
 	if err != nil {
 		return commandFailure(command.CommandID, "INPUT_EVENT_FAILED", "INTERNAL", err.Error(), input.ID)
 	}
 
-	allowCritical := inputSource(command) != "TEST" || payload.ConfirmCritical
+	allowCritical := origin != inputOriginTest || payload.ConfirmCritical
 	evaluated := 0
 	triggered := 0
 	for _, route := range manifest.Routes {
@@ -160,9 +171,9 @@ type routeFailure struct {
 }
 
 type criticalRouteTarget struct {
-	actionID   string
-	kind       string
-	targetID   string
+	actionID    string
+	kind        string
+	targetID    string
 	criticality string
 }
 
@@ -533,13 +544,6 @@ func (e *Engine) emit(ctx context.Context, sessionID string, command contracts.C
 		TraceContext:      json.RawMessage(`{}`),
 		Payload:           raw,
 	})
-}
-
-func inputSource(command contracts.CommandEnvelope) string {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(command.Issuer)), "osc:") {
-		return "OSC"
-	}
-	return "TEST"
 }
 
 func validateInjectEnvelope(command contracts.CommandEnvelope) *contracts.CommandResult {
