@@ -7,10 +7,11 @@ Specifications define required behavior. Decision spikes choose and validate con
 - [SPK-01 — Core Technology Stack](spikes/SPK-01-core-technology-stack.md) — Go Hub, SQLite/WAL, HTTP+JSON, SSE, React/TypeScript/Vite direction.
 - [SPK-02 — Real OSC](spikes/SPK-02-real-osc.md) — `osc.send` over UDP, logical endpoint resolution, typed OSC arguments and truthful `TRANSPORT_ONLY` acknowledgement.
 - [SPK-03 — macOS Companion](spikes/SPK-03-macos-companion.md) — native Swift CompanionCore, persistent WebSocket command/result channel, Machine Role/Snapshot reconciliation and reconnect duplicate protection.
+- [SPK-04 — Plugin Process / IPC](spikes/SPK-04-plugin-process-ipc.md) — external Plugin process, versioned JSON Lines over stdio, capability handshake, deadline/crash containment and no automatic replay.
 
 ## Next
 
-- **SPK-04 — Plugin Process / IPC** — isolate external plugin execution while keeping the capability contract stable.
+- **SPK-05 — Vault & Large File Transfer** — prove streaming/resumable transfer, checksum verification and SHOW-safe bulk-transfer behavior.
 
 ## Rule
 

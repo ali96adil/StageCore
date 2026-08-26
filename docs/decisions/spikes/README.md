@@ -3,6 +3,6 @@
 - [SPK-01 — Core Technology Stack](SPK-01-core-technology-stack.md) — ACCEPTED
 - [SPK-02 — Real OSC](SPK-02-real-osc.md) — ACCEPTED
 - [SPK-03 — macOS Companion](SPK-03-macos-companion.md) — ACCEPTED for Companion Core + channel baseline
-- **SPK-04 — Plugin Process / IPC** — next
-- **SPK-05 — Vault & Large File Transfer**
+- [SPK-04 — Plugin Process / IPC](SPK-04-plugin-process-ipc.md) — ACCEPTED
+- **SPK-05 — Vault & Large File Transfer** — next
 - **SPK-06 — Hub Deployment on ARM64 / Mini-PC**

@@ -28,13 +28,19 @@ Technology selection is proceeding through executable decision spikes rather tha
 - Executable OSC prototype opens a real UDP receiver, sends/decodes the expected packet and verifies no automatic duplicate send.
 - **SPK-03 — macOS Companion** — Swift CompanionCore; versioned JSON over persistent WebSocket; stable identity abstraction; `VIDEO-MAIN` / Runtime Snapshot reconciliation; duplicate and stale execution rejection.
 - Executable Swift/Go prototype proves Hub -> Companion Action -> result, intentional disconnect -> reconnect with same identity, duplicate execution rejection, stale Snapshot rejection, then successful new execution.
+- **SPK-04 — Plugin Process / IPC** — external Plugin process; versioned JSON Lines over stdin/stdout; `plugin.ready` capability handshake; Core-side target resolution; serialized MVP execution; deadline kill; crash/EOF containment; lazy restart; no automatic replay.
+- Executable Go prototype performs real OSC UDP through the external Plugin, passes crash-once and hang-once containment/recovery tests, and passes Go race detection.
 
 ### Next
 
-- **SPK-04 — Plugin Process / IPC** — prove external plugin isolation and failure containment while keeping capability execution semantics unchanged.
+- **SPK-05 — Vault & Large File Transfer** — prove streaming/resumable transfer, SHA-256 verification and SHOW-mode pause behavior without blocking P0/P1 runtime work.
 
 ### Explicit SPK-03 Follow-up
 
 The current validation environment is not macOS. SwiftUI app-bundle, Keychain credential storage, background/login behavior, local macOS permissions, signing and notarization still require validation on a real Mac/Xcode implementation. These do not change the accepted CompanionCore/channel contract.
+
+### Explicit SPK-04 Follow-up
+
+SPK-04 validates the external process/IPC boundary, not a complete OS sandbox. Plugin package extraction/signing, OS sandbox technology, idle heartbeat, resource telemetry and platform-specific production supervisor behavior remain implementation work under the existing Plugin/Security specifications.
 
 Changes to an established baseline decision should be made as explicit deltas/ADRs or superseding spikes rather than silently rewriting prior intent.

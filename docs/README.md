@@ -23,7 +23,8 @@ Current decision-spike status:
 - **SPK-01 — Core Technology Stack:** ACCEPTED — Go Hub, SQLite/WAL persistence direction, HTTP+JSON + SSE browser transport, TypeScript/React/Vite product UI.
 - **SPK-02 — Real OSC:** ACCEPTED — OSC 1.0 UDP `osc.send`, logical target mapping and `TRANSPORT_ONLY` acknowledgement.
 - **SPK-03 — macOS Companion:** ACCEPTED for Companion Core + channel baseline — Swift CompanionCore, WebSocket runtime channel, role/snapshot reconciliation, duplicate/stale execution guards. macOS app-bundle/background/signing validation remains implementation work on a real Mac.
-- **SPK-04 — Plugin Process / IPC:** next.
+- **SPK-04 — Plugin Process / IPC:** ACCEPTED — external Plugin processes, JSON Lines stdio IPC, capability handshake, deadline/crash containment, lazy restart and no automatic replay.
+- **SPK-05 — Vault & Large File Transfer:** next.
 
 ## Documentation Convention
 
