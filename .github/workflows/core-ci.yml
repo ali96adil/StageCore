@@ -33,10 +33,12 @@ jobs:
       - name: Race tests
         if: matrix.go == '1.26.x'
         run: go test -race ./...
-      - name: Linux ARM64 CGo-free build
+      - name: Linux ARM64 CGo-free product builds
         if: matrix.go == '1.26.x'
         env:
           CGO_ENABLED: '0'
           GOOS: linux
           GOARCH: arm64
-        run: go build -o /tmp/stagecore-hub-arm64 ./cmd/stagecore-hub
+        run: |
+          go build -o /tmp/stagecore-hub-arm64 ./cmd/stagecore-hub
+          go build -o /tmp/stagecore-osc-plugin-arm64 ./cmd/stagecore-osc-plugin
