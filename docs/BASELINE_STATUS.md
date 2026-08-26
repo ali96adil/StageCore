@@ -16,37 +16,41 @@ The current engineering baseline consists of the ordered StageCore documents `00
 
 ## Status
 
-**Architecture / Product / Reliability planning baseline complete for MVP implementation.**
+**Architecture / Product / Reliability baseline and planned technology decision spikes are complete enough for MVP implementation.**
 
-Technology selection is proceeding through executable decision spikes rather than additional broad planning documents.
+### Accepted Technology Spikes
 
-### Accepted
+- **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL persistence direction; HTTP+JSON commands; SSE browser events; TypeScript + React + Vite UI.
+- **SPK-02 — Real OSC** — OSC 1.0 UDP `osc.send`, logical endpoint resolution and truthful `TRANSPORT_ONLY` acknowledgement.
+- **SPK-03 — macOS Companion** — Swift CompanionCore, versioned WebSocket runtime channel, Machine Role/Snapshot reconciliation and duplicate/stale execution protection.
+- **SPK-04 — Plugin Process / IPC** — external Plugin process, JSON Lines stdio IPC, capability handshake, crash/hang containment, lazy restart and no automatic replay.
+- **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects, SHA-256 identity, staging/atomic promotion, HTTP range/resume, verified cache promotion, SHOW transfer gate and runtime storage reserve.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux deployment shape, native `amd64`/`arm64` binaries, systemd service lifecycle, local-first boot and independent Data/Vault roots suitable for SSD/NVMe.
 
-- **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL persistence direction; HTTP+JSON commands; SSE browser events; TypeScript + React + Vite product UI direction.
-- Executable Core prototype proves Project -> Cue -> Publish -> GO -> simulated result -> event/history -> restart/reload.
-- **SPK-02 — Real OSC** — OSC 1.0 UDP `osc.send`; logical target resolution; typed arguments; one datagram per dispatch; successful UDP write reports `TRANSPORT_ONLY` only.
-- Executable OSC prototype opens a real UDP receiver, sends/decodes the expected packet and verifies no automatic duplicate send.
-- **SPK-03 — macOS Companion** — Swift CompanionCore; versioned JSON over persistent WebSocket; stable identity abstraction; `VIDEO-MAIN` / Runtime Snapshot reconciliation; duplicate and stale execution rejection.
-- Executable Swift/Go prototype proves Hub -> Companion Action -> result, intentional disconnect -> reconnect with same identity, duplicate execution rejection, stale Snapshot rejection, then successful new execution.
-- **SPK-04 — Plugin Process / IPC** — external Plugin process; versioned JSON Lines over stdin/stdout; `plugin.ready` capability handshake; Core-side target resolution; serialized MVP execution; deadline kill; crash/EOF containment; lazy restart; no automatic replay.
-- Executable Go prototype performs real OSC UDP through the external Plugin, passes crash-once and hang-once containment/recovery tests, and passes Go race detection.
-- **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 content identity; staging/atomic promotion; HTTP byte-range resume; verified `.part` cache promotion; SHOW-mode bulk-transfer gate; runtime storage reserve admission.
-- Executable Go prototype passes normal/race tests, resumes an interrupted transfer, rejects corrupt cache data, pauses bulk work during SHOW while runtime ping remains responsive, and completes a manual 256 MiB streaming run with bounded memory behavior.
+## Implementation Transition
 
-### Next
+The next phase is **M0 — Core Persistence**, not another broad planning document.
 
-- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — prove the selected Go/SQLite/Vault stack on intended Linux deployment-class hardware and stage-network topology.
+M0 must:
 
-### Explicit SPK-03 Follow-up
+1. establish the real Go Hub source tree rather than another disposable spike;
+2. pin and validate the SQLite driver on the supported build matrix;
+3. enable SQLite WAL and versioned migrations;
+4. persist stable Project/ProjectRevision/Cue/Action/alias/Input/Route foundations required by the MVP boundary;
+5. prove restart persistence with automated tests;
+6. retain configurable Hub data roots and deployment/service boundaries from SPK-06.
 
-The current validation environment is not macOS. SwiftUI app-bundle, Keychain credential storage, background/login behavior, local macOS permissions, signing and notarization still require validation on a real Mac/Xcode implementation. These do not change the accepted CompanionCore/channel contract.
+After M0 passes, implementation proceeds to **M1 — Cue Engine + Simulator**.
 
-### Explicit SPK-04 Follow-up
+## Outstanding Qualification Gates
 
-SPK-04 validates the external process/IPC boundary, not a complete OS sandbox. Plugin package extraction/signing, OS sandbox technology, idle heartbeat, resource telemetry and platform-specific production supervisor behavior remain implementation work under the existing Plugin/Security specifications.
+Accepted architecture does not mean every target device is already production-qualified. The following remain explicit implementation/qualification work:
 
-### Explicit SPK-05 Follow-up
-
-SPK-05 validates the Vault/transfer mechanism. SQLite metadata wiring, Swift Companion media-cache code, authenticated object authorization, real filesystem free-space probing, bandwidth/concurrency controls, the mandatory 2 GiB interrupted-transfer qualification, and final-hardware filesystem behavior remain implementation/qualification work.
+- real macOS SwiftUI/Keychain/background/signing/notarization tests for Companion;
+- Plugin OS sandbox/package-signing/resource telemetry as required;
+- Swift Companion media-cache and authenticated Vault endpoints;
+- 2 GiB interrupted-transfer acceptance test;
+- final selected SQLite driver runtime/WAL/backup validation;
+- real ARM64/Pi and Mini-PC SSD/NVMe, power-loss, thermal, Stage LAN and soak qualification.
 
 Changes to an established baseline decision should be made as explicit deltas/ADRs or superseding spikes rather than silently rewriting prior intent.
