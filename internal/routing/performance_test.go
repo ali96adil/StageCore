@@ -9,6 +9,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/routing"
 )
 
+// This is the deterministic implementation-level pre-adapter gate used by
+// Core CI. It does not replace the later reference-hardware/network
+// qualification required before StageCore is called rehearsal-ready.
 func TestSimpleRouteEvaluationP95BelowReferenceTarget(t *testing.T) {
 	condition := json.RawMessage(`{"operator":"greater_than","value":10}`)
 	value := json.RawMessage(`11`)
