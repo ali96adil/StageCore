@@ -14,8 +14,10 @@ import (
 
 // ReceiveOSC maps one decoded OSC message onto enabled InputDefinitions in the
 // active Runtime Snapshot. Each matching input is processed through the same
-// authoritative routing path as input.inject_test; the generated command ID is
-// unique per received datagram so StageCore never invents transport replay.
+// authoritative routing path as input.inject_test, but with an internal typed
+// OSC origin that cannot be spoofed by changing Command issuer metadata. The
+// generated command ID is unique per received datagram so StageCore never
+// invents transport replay.
 func (e *Engine) ReceiveOSC(ctx context.Context, sessionID, address string, arguments []any) ([]contracts.CommandResult, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("routing engine is unavailable")
@@ -54,17 +56,17 @@ func (e *Engine) ReceiveOSC(ctx context.Context, sessionID, address string, argu
 			return results, err
 		}
 		payload, _ := json.Marshal(InjectTestPayload{InputID: input.ID, Value: value})
-		result := e.InjectTest(ctx, session.ID, contracts.CommandEnvelope{
+		result := e.inject(ctx, session.ID, contracts.CommandEnvelope{
 			CommandID:         commandID,
 			CommandType:       InputInjectTestCommandType,
 			SchemaVersion:     contracts.SchemaVersion1,
 			ProjectID:         session.ProjectID,
 			RuntimeSnapshotID: session.RuntimeSnapshotID,
-			Issuer:            "osc:" + address,
+			Issuer:            "stagecore.osc:" + address,
 			CorrelationID:     commandID,
 			Priority:          "P2",
 			Payload:           payload,
-		})
+		}, inputOriginOSC)
 		results = append(results, result)
 	}
 	return results, nil
