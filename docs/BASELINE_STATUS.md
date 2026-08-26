@@ -16,8 +16,17 @@ The current engineering baseline consists of the ordered StageCore documents `00
 
 ## Status
 
-**Architecture / Product / Reliability planning baseline complete for MVP implementation preparation.**
+**Architecture / Product / Reliability planning baseline complete for MVP implementation.**
 
-The next engineering phase is not another broad product document. It is **Technology Selection / Decision Spikes** to choose the simplest concrete implementation stack that satisfies these contracts, followed by implementation slices/issues.
+Technology selection has started through executable decision spikes rather than additional broad planning documents.
 
-Changes to an established baseline decision should be made as explicit deltas/ADRs rather than silently rewriting prior intent.
+### Accepted
+
+- **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL persistence direction; HTTP+JSON commands; SSE browser events; TypeScript + React + Vite product UI direction.
+- Executable zero-dependency Core prototype proves Project -> Cue -> Publish -> GO -> simulated result -> event/history -> restart/reload.
+
+### Next
+
+- **SPK-02 — Real OSC** — replace the simulated adapter path with a real UDP `osc.send` adapter and reproducible receiver.
+
+Changes to an established baseline decision should be made as explicit deltas/ADRs or superseding spikes rather than silently rewriting prior intent.
