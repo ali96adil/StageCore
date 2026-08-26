@@ -12,13 +12,20 @@ stagecore_api: 1
 process_model: external
 permissions:
   - network.udp.send
+  - network.udp.listen
 capabilities:
   - key: osc.send
+    schema_version: 1
+inputs:
+  - key: osc.receive
     schema_version: 1
 contributions:
   cue_actions:
     - capability: osc.send
       label: Send OSC
+  routing_inputs:
+    - input: osc.receive
+      label: OSC Input
   routing_outputs:
     - capability: osc.send
       label: OSC Output
@@ -33,6 +40,8 @@ contributions:
   status_sources:
     - key: osc.plugin.health
 ```
+
+`network.udp.listen` and `osc.receive` are the M3 Routing promotion of the receive-side contribution. Granting send permission does not implicitly grant listen permission; each direction is separately declared and enforced.
 
 ## Contribution Registry
 
@@ -61,5 +70,7 @@ Examples for an OSC Endpoint:
 - port: required integer 1–65535;
 - transport: fixed `udp` in OSC v0.1;
 - display_name: required string.
+
+For OSC receive, the listen address/port is operational Plugin input configuration rather than Cue data. Until the SEC0–SEC2 Stage LAN gate passes, the M3 product path restricts this listener to loopback.
 
 Plugin-specific data is namespaced by `plugin_id` and versioned.
