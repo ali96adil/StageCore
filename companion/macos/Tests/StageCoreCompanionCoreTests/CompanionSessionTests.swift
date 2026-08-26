@@ -26,7 +26,8 @@ final class CompanionSessionTests: XCTestCase {
             runtimeSnapshotID: "snap-1",
             configHash: "cfg-1"
         )
-        XCTAssertNil(try await session.handle(JSONEncoder().encode(ready)))
+        let readyResponse = try await session.handle(JSONEncoder().encode(ready))
+        XCTAssertNil(readyResponse)
 
         let request = CompanionExecutionRequest(
             executionID: "exec-1",
@@ -37,13 +38,15 @@ final class CompanionSessionTests: XCTestCase {
             parameters: ["message": .string("GO")],
             timeoutMS: 250
         )
-        let firstData = try XCTUnwrap(try await session.handle(JSONEncoder().encode(request)))
+        let firstResponse = try await session.handle(JSONEncoder().encode(request))
+        let firstData = try XCTUnwrap(firstResponse)
         let first = try JSONDecoder().decode(CompanionExecutionResult.self, from: firstData)
         XCTAssertEqual(first.status, .completed)
         XCTAssertEqual(first.ackLevel, .accepted)
         XCTAssertEqual(first.output["echo"], .string("GO"))
 
-        let duplicateData = try XCTUnwrap(try await session.handle(JSONEncoder().encode(request)))
+        let duplicateResponse = try await session.handle(JSONEncoder().encode(request))
+        let duplicateData = try XCTUnwrap(duplicateResponse)
         let duplicate = try JSONDecoder().decode(CompanionExecutionResult.self, from: duplicateData)
         XCTAssertEqual(duplicate.status, .rejected)
         XCTAssertEqual(duplicate.errorCode, "DUPLICATE_EXECUTION")
@@ -89,7 +92,8 @@ final class CompanionSessionTests: XCTestCase {
             parameters: fresh.parameters,
             timeoutMS: fresh.timeoutMS
         )
-        XCTAssertEqual(try await result(session, request: fresh).status, .completed)
+        let freshResult = try await result(session, request: fresh)
+        XCTAssertEqual(freshResult.status, .completed)
     }
 
     func testSessionProducesExplicitTimeout() async throws {
@@ -116,7 +120,9 @@ final class CompanionSessionTests: XCTestCase {
         XCTAssertEqual(timedOut.status, .timedOut)
         XCTAssertEqual(timedOut.ackLevel, .none)
         XCTAssertEqual(timedOut.errorCode, "COMPANION_EXECUTION_TIMEOUT")
-        XCTAssertEqual(try await result(session, request: request).errorCode, "DUPLICATE_EXECUTION")
+
+        let duplicate = try await result(session, request: request)
+        XCTAssertEqual(duplicate.errorCode, "DUPLICATE_EXECUTION")
     }
 
     private func applyReady(
@@ -137,7 +143,8 @@ final class CompanionSessionTests: XCTestCase {
         _ session: CompanionSession,
         request: CompanionExecutionRequest
     ) async throws -> CompanionExecutionResult {
-        let data = try XCTUnwrap(try await session.handle(JSONEncoder().encode(request)))
+        let response = try await session.handle(JSONEncoder().encode(request))
+        let data = try XCTUnwrap(response)
         return try JSONDecoder().decode(CompanionExecutionResult.self, from: data)
     }
 }
