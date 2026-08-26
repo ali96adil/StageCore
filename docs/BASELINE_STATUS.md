@@ -16,11 +16,21 @@ The ordered StageCore product/architecture/reliability baseline is `00–10`:
 
 Implementation technology was validated through `SPK-01`–`SPK-06`, and final pre-M0 consistency/entry decisions are recorded in **Architectural Decisions — Addendum 002: Implementation Baseline Finalization**.
 
-## Status
+## Current Implementation Status
 
-**READY FOR M0 — NO KNOWN UNOWNED PRE-M0 DECISIONS**
+**M0 — CORE PERSISTENCE: COMPLETE**  
+**NEXT: M1 — CUE ENGINE + SIMULATOR**
 
-The product baseline is complete enough for implementation, the planned technology spikes are accepted, and known pre-M0 cross-document differences/entry choices are resolved or explicitly assigned to later gates.
+M0 completion evidence is recorded in `docs/checkpoints/2026-08-26-m0-core-persistence-complete.md`.
+
+Merged M0 product commit:
+
+```text
+3b300ccf2549f417b3f86c4de841a4530902f9ca
+m0: establish core persistence foundation
+```
+
+The post-merge `main` M0 CI run `32960572160` passed the required Go 1.26/1.27 test/vet matrix, native race tests and Linux ARM64 CGo-free cross-build gate.
 
 ### Accepted Technology Direction
 
@@ -31,37 +41,40 @@ The product baseline is complete enough for implementation, the planned technolo
 - **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 identity; staging/atomic promotion; HTTP range/resume; verified cache; SHOW transfer gate.
 - **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe.
 
-### Finalized M0 Entry Choices
+### M0 Delivered
 
-Addendum 002 pins:
+- real Go Hub product source under `cmd/` + `internal/`;
+- pinned dependency graph and checksums;
+- SQLite/WAL with required effective safety/durability settings;
+- embedded Goose migrations;
+- UUIDv7 persisted identities;
+- Project + ProjectRevision transactional persistence;
+- Cue/Action persistence;
+- ProjectDeviceAlias/Input/Output/Route foundations;
+- frozen-revision guards;
+- FK and transaction rollback evidence;
+- restart/reopen persistence evidence;
+- verified local DB copy/reopen path;
+- loopback-only development health surface pending Security convergence;
+- Go 1.26/1.27 CI, race evidence and Linux ARM64 CGo-free build evidence.
 
-- Go 1.26 minimum with Go 1.27 CI coverage;
-- `modernc.org/sqlite` v1.57.0;
-- `database/sql` and no ORM in M0;
-- `github.com/pressly/goose/v3` v3.27.3 with embedded SQL migrations;
-- UUIDv7 IDs using `github.com/google/uuid` v1.6.0 initially;
-- UTC Unix-microsecond persisted timestamps;
-- validated/versioned JSON TEXT for extensible payloads;
-- required SQLite durability/hardening settings;
-- explicit ProjectRevision freeze semantics;
-- resolved Event `trace_context`/journal sequence interpretation;
-- resolved Companion RoleAssignment state vocabulary;
-- explicit ownership gates for all known deferred items.
+## M1 Entry Scope
 
-## Implementation Transition
+M1 is the next product slice. It owns:
 
-The next phase is **M0 — Core Persistence**, not another broad planning document or disposable technology spike.
+- production Command/Event Go structs aligned with the contract baseline;
+- direct synchronization of Event `trace_context`;
+- monotonic authoritative Hub journal `sequence`;
+- minimal immutable Runtime Snapshot serialization/identity sufficient for deterministic simulated execution;
+- Cue/Action execution state machine and error-policy behavior;
+- deterministic simulated adapter;
+- execution/result/event persistence required to prove the first runtime loop;
+- M1 tests for success, rejection, failure, timeout, duplicate handling and restart truthfulness.
 
-M0 must establish the first real StageCore product source tree and prove the pinned persistence stack through migrations, transaction/FK tests, Project/Revision/Cue/Action/alias/Input/Route persistence, restart/reopen proof, local DB copy/reopen verification, amd64 tests and arm64 CGo-free cross-build.
+M1 does **not** silently promote real OSC, Plugin product integration, Companion trust, Routing execution, Vault/media workflows, Stage LAN exposure, Nodes, DMX, AI/Vision or HA/cloud work.
 
-After M0 passes, implementation proceeds to **M1 — Cue Engine + Simulator**.
+## Remaining Work Is Owned — Not Unbounded TBD
 
-## Remaining Work Is Qualification or Later-Slice Scope — Not Unowned TBDs
-
-Examples include:
-
-- actual selected SQLite-driver build/WAL/backup acceptance evidence inside M0;
-- production Command/Event structs and Snapshot hashing in M1;
 - Security SEC0–SEC2 before non-loopback Stage LAN control;
 - Plugin permission/product integration in M2/SEC5;
 - Routing implementation in M3;
@@ -70,6 +83,6 @@ Examples include:
 - 2 GiB transfer, real ARM64/Mini-PC SSD/NVMe, power-loss, thermal, Stage LAN and soak qualification before first rehearsal;
 - Node MCU, full DMX/lighting automation, AI/Vision, HA/cloud and other explicitly post-MVP work.
 
-Every known deferred item is assigned in `docs/adr/addendum-002/04-deferred-register-and-ownership-gates.md`.
+Every known deferred item remains assigned in `docs/adr/addendum-002/04-deferred-register-and-ownership-gates.md`.
 
 Changes to an established decision require an explicit superseding ADR/decision with evidence; implementation must not silently drift the baseline.
