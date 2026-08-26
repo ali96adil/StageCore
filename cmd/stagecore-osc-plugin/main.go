@@ -39,9 +39,6 @@ func main() {
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 			continue
 		}
-		if applyTestFault() {
-			return
-		}
 		started := time.Now()
 		result := execute(req)
 		result.DurationMS = time.Since(started).Milliseconds()
@@ -121,23 +118,4 @@ func write(out *bufio.Writer, v any) {
 	}
 	fmt.Fprintln(out, string(b))
 	_ = out.Flush()
-}
-
-func applyTestFault() bool {
-	mode := os.Getenv("STAGECORE_PLUGIN_TEST_FAULT")
-	marker := os.Getenv("STAGECORE_PLUGIN_TEST_MARKER")
-	if mode == "" || marker == "" {
-		return false
-	}
-	if _, err := os.Stat(marker); err == nil {
-		return false
-	}
-	_ = os.WriteFile(marker, []byte("triggered"), 0o600)
-	switch mode {
-	case "crash-once":
-		os.Exit(41)
-	case "hang-once":
-		select {}
-	}
-	return false
 }
