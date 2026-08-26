@@ -24,7 +24,8 @@ Current decision-spike status:
 - **SPK-02 — Real OSC:** ACCEPTED — OSC 1.0 UDP `osc.send`, logical target mapping and `TRANSPORT_ONLY` acknowledgement.
 - **SPK-03 — macOS Companion:** ACCEPTED for Companion Core + channel baseline — Swift CompanionCore, WebSocket runtime channel, role/snapshot reconciliation, duplicate/stale execution guards. macOS app-bundle/background/signing validation remains implementation work on a real Mac.
 - **SPK-04 — Plugin Process / IPC:** ACCEPTED — external Plugin processes, JSON Lines stdio IPC, capability handshake, deadline/crash containment, lazy restart and no automatic replay.
-- **SPK-05 — Vault & Large File Transfer:** next.
+- **SPK-05 — Vault & Large File Transfer:** ACCEPTED — filesystem Vault objects, SHA-256 identity, byte-range resume, verified cache promotion, SHOW-mode transfer gate and runtime storage reserve.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** next.
 
 ## Documentation Convention
 

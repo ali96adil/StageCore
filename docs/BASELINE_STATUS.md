@@ -30,10 +30,12 @@ Technology selection is proceeding through executable decision spikes rather tha
 - Executable Swift/Go prototype proves Hub -> Companion Action -> result, intentional disconnect -> reconnect with same identity, duplicate execution rejection, stale Snapshot rejection, then successful new execution.
 - **SPK-04 — Plugin Process / IPC** — external Plugin process; versioned JSON Lines over stdin/stdout; `plugin.ready` capability handshake; Core-side target resolution; serialized MVP execution; deadline kill; crash/EOF containment; lazy restart; no automatic replay.
 - Executable Go prototype performs real OSC UDP through the external Plugin, passes crash-once and hang-once containment/recovery tests, and passes Go race detection.
+- **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 content identity; staging/atomic promotion; HTTP byte-range resume; verified `.part` cache promotion; SHOW-mode bulk-transfer gate; runtime storage reserve admission.
+- Executable Go prototype passes normal/race tests, resumes an interrupted transfer, rejects corrupt cache data, pauses bulk work during SHOW while runtime ping remains responsive, and completes a manual 256 MiB streaming run with bounded memory behavior.
 
 ### Next
 
-- **SPK-05 — Vault & Large File Transfer** — prove streaming/resumable transfer, SHA-256 verification and SHOW-mode pause behavior without blocking P0/P1 runtime work.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — prove the selected Go/SQLite/Vault stack on intended Linux deployment-class hardware and stage-network topology.
 
 ### Explicit SPK-03 Follow-up
 
@@ -42,5 +44,9 @@ The current validation environment is not macOS. SwiftUI app-bundle, Keychain cr
 ### Explicit SPK-04 Follow-up
 
 SPK-04 validates the external process/IPC boundary, not a complete OS sandbox. Plugin package extraction/signing, OS sandbox technology, idle heartbeat, resource telemetry and platform-specific production supervisor behavior remain implementation work under the existing Plugin/Security specifications.
+
+### Explicit SPK-05 Follow-up
+
+SPK-05 validates the Vault/transfer mechanism. SQLite metadata wiring, Swift Companion media-cache code, authenticated object authorization, real filesystem free-space probing, bandwidth/concurrency controls, the mandatory 2 GiB interrupted-transfer qualification, and final-hardware filesystem behavior remain implementation/qualification work.
 
 Changes to an established baseline decision should be made as explicit deltas/ADRs or superseding spikes rather than silently rewriting prior intent.
