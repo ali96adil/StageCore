@@ -11,16 +11,18 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
+	"github.com/ali96adil/StageCore/internal/routing"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
 type App struct {
-	Config    config.Config
-	DB        *db.Handle
-	Store     *store.Store
-	CueEngine *cueengine.Engine
-	OSCPlugin *pluginhost.Host
+	Config        config.Config
+	DB            *db.Handle
+	Store         *store.Store
+	CueEngine     *cueengine.Engine
+	RoutingEngine *routing.Engine
+	OSCPlugin     *pluginhost.Host
 }
 
 func Open(ctx context.Context, cfg config.Config) (*App, error) {
@@ -56,11 +58,12 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config:    cfg,
-		DB:        handle,
-		Store:     s,
-		CueEngine: cueengine.NewWithExecutor(s, registry),
-		OSCPlugin: oscHost,
+		Config:        cfg,
+		DB:            handle,
+		Store:         s,
+		CueEngine:     cueengine.NewWithExecutor(s, registry),
+		RoutingEngine: routing.New(s, registry),
+		OSCPlugin:     oscHost,
 	}, nil
 }
 
