@@ -336,13 +336,14 @@ func (e *Engine) runAction(
 		}
 	} else {
 		executionResult = e.executor.Execute(actionCtx, capability.Request{
-			ExecutionID:   actionExecution.ID,
-			Capability:    action.CapabilityKey,
-			Target:        resolvedTarget(manifest, action.TargetRef),
-			Parameters:    action.Parameters,
-			Priority:      action.PriorityClass,
-			TimeoutMS:     timeoutMS,
-			CorrelationID: command.CorrelationID,
+			ExecutionID:       actionExecution.ID,
+			RuntimeSnapshotID: command.RuntimeSnapshotID,
+			Capability:        action.CapabilityKey,
+			Target:            resolvedTarget(manifest, action.TargetRef),
+			Parameters:        action.Parameters,
+			Priority:          action.PriorityClass,
+			TimeoutMS:         timeoutMS,
+			CorrelationID:     command.CorrelationID,
 		})
 	}
 
