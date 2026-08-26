@@ -75,6 +75,9 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return cancelled(req.ExecutionID), err
+	}
 	if req.TimeoutMS <= 0 {
 		req.TimeoutMS = 500
 	}
@@ -83,6 +86,10 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	}
 	if err := h.ensureStartedLocked(); err != nil {
 		return failed(req.ExecutionID, "PLUGIN_FAILURE", "PLUGIN_FAILURE", err.Error()), err
+	}
+	if err := ctx.Err(); err != nil {
+		h.stopLocked()
+		return cancelled(req.ExecutionID), err
 	}
 	if h.ready.PluginID != h.manifest.PluginID {
 		err := fmt.Errorf("plugin identity mismatch: got %q want %q", h.ready.PluginID, h.manifest.PluginID)
@@ -107,6 +114,10 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	defer cancel()
 	response, err := h.readLineLocked(readCtx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			h.stopLocked()
+			return cancelled(req.ExecutionID), context.Canceled
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			h.stopLocked()
 			return failed(req.ExecutionID, "TIMEOUT", "TIMEOUT", ErrPluginTimeout.Error()), ErrPluginTimeout
@@ -243,6 +254,18 @@ func failed(id, code, category, message string) pluginprotocol.ExecutionResult {
 		ErrorCode:     code,
 		ErrorCategory: category,
 		ErrorMessage:  message,
+	}
+}
+
+func cancelled(id string) pluginprotocol.ExecutionResult {
+	return pluginprotocol.ExecutionResult{
+		Type:          "execution.result",
+		SchemaVersion: pluginprotocol.SchemaVersion,
+		ExecutionID:   id,
+		Status:        "CANCELLED",
+		ErrorCode:     "CANCELLED",
+		ErrorCategory: "CANCELLED",
+		ErrorMessage:  "plugin execution cancelled",
 	}
 }
 
