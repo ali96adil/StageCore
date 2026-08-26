@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -26,11 +24,11 @@ type InjectTestPayload struct {
 }
 
 type Engine struct {
-	store      *store.Store
-	executor   capability.Executor
-	cueEngine  *cueengine.Engine
-	debouncer  *Debouncer
-	now        func() time.Time
+	store     *store.Store
+	executor  capability.Executor
+	cueEngine *cueengine.Engine
+	debouncer *Debouncer
+	now       func() time.Time
 }
 
 func New(s *store.Store, executor capability.Executor) *Engine {
@@ -121,7 +119,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	inputEvent, err := e.emit(ctx, session.ID, command, "input.received", command.CommandID, map[string]any{
 		"input_id": input.ID,
 		"name":     input.Name,
-		"source":   "TEST",
+		"source":   inputSource(command),
 		"value":    json.RawMessage(payload.Value),
 	})
 	if err != nil {
@@ -277,17 +275,17 @@ func (e *Engine) dispatchOutput(
 		eventType = "route.action.failed"
 	}
 	_, emitErr := e.emit(ctx, session.ID, command, eventType, causationID, map[string]any{
-		"route_id":          route.ID,
-		"route_action_id":   action.ID,
-		"execution_id":      executionID,
-		"output_id":         output.ID,
-		"capability_key":    output.CapabilityKey,
-		"target_ref":        output.TargetRef,
-		"result":            result.Result,
-		"ack_level":         result.AckLevel,
-		"latency_ms":        latencyMS,
-		"response_summary":  result.ResponseSummary,
-		"error_code":        result.ErrorCode,
+		"route_id":         route.ID,
+		"route_action_id":  action.ID,
+		"execution_id":     executionID,
+		"output_id":        output.ID,
+		"capability_key":   output.CapabilityKey,
+		"target_ref":       output.TargetRef,
+		"result":           result.Result,
+		"ack_level":        result.AckLevel,
+		"latency_ms":       latencyMS,
+		"response_summary": result.ResponseSummary,
+		"error_code":       result.ErrorCode,
 	})
 	if emitErr != nil {
 		return &routeFailure{"ROUTE_TRACE_FAILED", "INTERNAL", emitErr.Error()}
@@ -325,7 +323,7 @@ func (e *Engine) dispatchCue(
 		Issuer:            "route:" + route.ID,
 		CorrelationID:     command.CorrelationID,
 		CausationID:       causationID,
-		Priority:          route.PriorityClass,
+		Priority:          "P1",
 		IdempotencyKey:    command.CommandID + ":" + action.ID,
 		Payload:           payload,
 	}
@@ -419,6 +417,13 @@ func (e *Engine) emit(ctx context.Context, sessionID string, command contracts.C
 	})
 }
 
+func inputSource(command contracts.CommandEnvelope) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(command.Issuer)), "osc:") {
+		return "OSC"
+	}
+	return "TEST"
+}
+
 func validateInjectEnvelope(command contracts.CommandEnvelope) *contracts.CommandResult {
 	if command.CommandType != InputInjectTestCommandType {
 		result := commandFailure(command.CommandID, "COMMAND_TYPE_INVALID", "VALIDATION", "expected input.inject_test command", command.CommandType)
@@ -455,6 +460,3 @@ func commandFailure(commandID, code, category, message, affected string) contrac
 		},
 	}
 }
-
-var _ = errors.Is
-var _ = fmt.Sprintf
