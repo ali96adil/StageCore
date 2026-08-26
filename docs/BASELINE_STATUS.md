@@ -26,9 +26,15 @@ Technology selection is proceeding through executable decision spikes rather tha
 - Executable Core prototype proves Project -> Cue -> Publish -> GO -> simulated result -> event/history -> restart/reload.
 - **SPK-02 — Real OSC** — OSC 1.0 UDP `osc.send`; logical target resolution; typed arguments; one datagram per dispatch; successful UDP write reports `TRANSPORT_ONLY` only.
 - Executable OSC prototype opens a real UDP receiver, sends/decodes the expected packet and verifies no automatic duplicate send.
+- **SPK-03 — macOS Companion** — Swift CompanionCore; versioned JSON over persistent WebSocket; stable identity abstraction; `VIDEO-MAIN` / Runtime Snapshot reconciliation; duplicate and stale execution rejection.
+- Executable Swift/Go prototype proves Hub -> Companion Action -> result, intentional disconnect -> reconnect with same identity, duplicate execution rejection, stale Snapshot rejection, then successful new execution.
 
 ### Next
 
-- **SPK-03 — macOS Companion** — prove trusted Hub-to-Mac execution, Machine Role assignment, reconnect reconciliation and replacement without Cue edits.
+- **SPK-04 — Plugin Process / IPC** — prove external plugin isolation and failure containment while keeping capability execution semantics unchanged.
+
+### Explicit SPK-03 Follow-up
+
+The current validation environment is not macOS. SwiftUI app-bundle, Keychain credential storage, background/login behavior, local macOS permissions, signing and notarization still require validation on a real Mac/Xcode implementation. These do not change the accepted CompanionCore/channel contract.
 
 Changes to an established baseline decision should be made as explicit deltas/ADRs or superseding spikes rather than silently rewriting prior intent.
