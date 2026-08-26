@@ -19,8 +19,9 @@ import (
 const InputInjectTestCommandType = "input.inject_test"
 
 type InjectTestPayload struct {
-	InputID string          `json:"input_id"`
-	Value   json.RawMessage `json:"value"`
+	InputID         string          `json:"input_id"`
+	Value           json.RawMessage `json:"value"`
+	ConfirmCritical bool            `json:"confirm_critical,omitempty"`
 }
 
 type Engine struct {
@@ -126,6 +127,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		return commandFailure(command.CommandID, "INPUT_EVENT_FAILED", "INTERNAL", err.Error(), input.ID)
 	}
 
+	allowCritical := inputSource(command) != "TEST" || payload.ConfirmCritical
 	evaluated := 0
 	triggered := 0
 	for _, route := range manifest.Routes {
@@ -133,7 +135,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 			continue
 		}
 		evaluated++
-		wasTriggered, routeErr := e.evaluateRoute(ctx, session, command, manifest, inputEvent.EventID, route, payload.Value)
+		wasTriggered, routeErr := e.evaluateRoute(ctx, session, command, manifest, inputEvent.EventID, route, payload.Value, allowCritical)
 		if wasTriggered {
 			triggered++
 		}
@@ -165,6 +167,7 @@ func (e *Engine) evaluateRoute(
 	inputEventID string,
 	route snapshot.Route,
 	value json.RawMessage,
+	allowCritical bool,
 ) (bool, *routeFailure) {
 	if !route.Enabled {
 		if _, err := e.emit(ctx, session.ID, command, "route.evaluated", inputEventID, routeTrace(route, value, nil, false, "DISABLED", "")); err != nil {
@@ -216,13 +219,13 @@ func (e *Engine) evaluateRoute(
 
 	for _, action := range route.Actions {
 		if action.OutputID != nil {
-			if failure := e.dispatchOutput(ctx, session, command, manifest, triggerEvent.EventID, route, action, transformed); failure != nil {
+			if failure := e.dispatchOutput(ctx, session, command, manifest, triggerEvent.EventID, route, action, transformed, allowCritical); failure != nil {
 				return true, failure
 			}
 			continue
 		}
 		if action.CueID != nil {
-			if failure := e.dispatchCue(ctx, session, command, triggerEvent.EventID, route, action); failure != nil {
+			if failure := e.dispatchCue(ctx, session, command, manifest, triggerEvent.EventID, route, action, allowCritical); failure != nil {
 				return true, failure
 			}
 			continue
@@ -241,12 +244,25 @@ func (e *Engine) dispatchOutput(
 	route snapshot.Route,
 	action snapshot.RouteAction,
 	transformed json.RawMessage,
+	allowCritical bool,
 ) *routeFailure {
 	output := manifest.ResolveOutput(*action.OutputID)
 	if output == nil {
 		message := "route output is not present in Runtime Snapshot"
 		_ = e.emitRouteFailure(ctx, session.ID, command, causationID, route, "OUTPUT_NOT_FOUND", message)
 		return &routeFailure{"OUTPUT_NOT_FOUND", "VALIDATION", message}
+	}
+	if !allowCritical && isCritical(output.Criticality) {
+		message := "critical Route output requires explicit confirmation for test input"
+		_ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
+			"route_id":        route.ID,
+			"route_action_id": action.ID,
+			"output_id":       output.ID,
+			"criticality":     output.Criticality,
+			"error_code":      "SAFETY_CONFIRMATION_REQUIRED",
+			"result":          "REJECTED",
+		})
+		return &routeFailure{"SAFETY_CONFIRMATION_REQUIRED", "SAFETY_BLOCK", message}
 	}
 	executionID, err := stageid.New()
 	if err != nil {
@@ -304,10 +320,30 @@ func (e *Engine) dispatchCue(
 	ctx context.Context,
 	session domain.Session,
 	command contracts.CommandEnvelope,
+	manifest snapshot.Manifest,
 	causationID string,
 	route snapshot.Route,
 	action snapshot.RouteAction,
+	allowCritical bool,
 ) *routeFailure {
+	cue := resolveCue(manifest, *action.CueID)
+	if cue == nil {
+		message := "route Cue is not present in Runtime Snapshot"
+		_ = e.emitRouteFailure(ctx, session.ID, command, causationID, route, "CUE_NOT_FOUND", message)
+		return &routeFailure{"CUE_NOT_FOUND", "VALIDATION", message}
+	}
+	if !allowCritical && isCritical(cue.Criticality) {
+		message := "critical Route Cue requires explicit confirmation for test input"
+		_ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
+			"route_id":        route.ID,
+			"route_action_id": action.ID,
+			"cue_id":          cue.ID,
+			"criticality":     cue.Criticality,
+			"error_code":      "SAFETY_CONFIRMATION_REQUIRED",
+			"result":          "REJECTED",
+		})
+		return &routeFailure{"SAFETY_CONFIRMATION_REQUIRED", "SAFETY_BLOCK", message}
+	}
 	commandID, err := stageid.New()
 	if err != nil {
 		return &routeFailure{"ROUTE_CUE_COMMAND_ID_FAILED", "INTERNAL", err.Error()}
@@ -354,6 +390,25 @@ func (e *Engine) dispatchCue(
 		return &routeFailure{code, "EXECUTION", message}
 	}
 	return nil
+}
+
+func resolveCue(manifest snapshot.Manifest, cueID string) *snapshot.Cue {
+	for i := range manifest.Cues {
+		if manifest.Cues[i].ID == cueID {
+			cue := manifest.Cues[i]
+			return &cue
+		}
+	}
+	return nil
+}
+
+func isCritical(criticality string) bool {
+	switch strings.ToUpper(strings.TrimSpace(criticality)) {
+	case "CRITICAL", "SAFETY_CRITICAL":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolvedCapabilityTarget(manifest snapshot.Manifest, targetRef string) *capability.Target {
@@ -442,7 +497,7 @@ func validateInjectEnvelope(command contracts.CommandEnvelope) *contracts.Comman
 
 func commandFailure(commandID, code, category, message, affected string) contracts.CommandResult {
 	status := contracts.CommandFailed
-	if category == "VALIDATION" || category == "SNAPSHOT_MISMATCH" {
+	if category == "VALIDATION" || category == "SNAPSHOT_MISMATCH" || category == "SAFETY_BLOCK" {
 		status = contracts.CommandRejected
 	} else if category == "CANCELLED" {
 		status = contracts.CommandCancelled
