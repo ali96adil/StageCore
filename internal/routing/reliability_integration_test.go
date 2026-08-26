@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -42,14 +42,15 @@ func TestRoutedInputDuplicateAfterRestartDoesNotReplayOSC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dataRoot := filepath.Dir(filepath.Dir(f.h.Path))
 	host.Close()
 	if err := f.h.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	reopened, err := db.Open(context.Background(), db.Config{DataRoot: f.h.DataRoot})
+	reopened, err := db.Open(context.Background(), db.Config{DataRoot: dataRoot})
 	if err != nil {
-		t.Skipf("database handle does not expose a reopenable data root in this fixture: %v", err)
+		t.Fatal(err)
 	}
 	defer reopened.Close()
 	reopenedStore := store.New(reopened.DB, clock.Real{})
@@ -146,5 +147,3 @@ func TestRouteOutputFailureIsExplicitAndNotFalseSuccess(t *testing.T) {
 		t.Fatalf("missing truthful failed RouteAction trace; events=%v", routeEventTypes(events))
 	}
 }
-
-var _ = time.Second
