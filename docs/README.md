@@ -16,34 +16,37 @@
 
 ## Implementation Decisions
 
-The `00–10` baseline defines what StageCore must do. Concrete stack choices live separately under [Engineering Decisions](decisions/README.md) so technology can be validated or changed without silently rewriting product intent.
+The `00–10` baseline defines what StageCore must do. Concrete stack choices and implementation-entry clarifications live separately so technology can evolve without silently weakening product intent.
 
-Current decision-spike status:
+Accepted technology spikes:
 
-- **SPK-01 — Core Technology Stack:** ACCEPTED — Go Hub, SQLite/WAL persistence direction, HTTP+JSON + SSE browser transport, TypeScript/React/Vite product UI.
-- **SPK-02 — Real OSC:** ACCEPTED — OSC 1.0 UDP `osc.send`, logical target mapping and `TRANSPORT_ONLY` acknowledgement.
-- **SPK-03 — macOS Companion:** ACCEPTED for Companion Core + channel baseline — Swift CompanionCore, WebSocket runtime channel, role/snapshot reconciliation, duplicate/stale execution guards. macOS app-bundle/background/signing validation remains implementation work on a real Mac.
-- **SPK-04 — Plugin Process / IPC:** ACCEPTED — external Plugin processes, JSON Lines stdio IPC, capability handshake, deadline/crash containment, lazy restart and no automatic replay.
-- **SPK-05 — Vault & Large File Transfer:** ACCEPTED — filesystem Vault objects, SHA-256 identity, byte-range resume, verified cache promotion, SHOW-mode transfer gate and runtime storage reserve.
-- **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** ACCEPTED for Linux deployment/release shape — native `amd64`/`arm64` binaries, systemd lifecycle, local-first boot and configurable SSD/NVMe storage. Real hardware qualification remains required.
+- **SPK-01 — Core Technology Stack:** Go Hub, SQLite/WAL direction, HTTP+JSON + SSE browser transport, TypeScript/React/Vite UI.
+- **SPK-02 — Real OSC:** OSC 1.0 UDP `osc.send`, logical target mapping and truthful `TRANSPORT_ONLY` acknowledgement.
+- **SPK-03 — macOS Companion:** Swift CompanionCore, WebSocket runtime channel, role/snapshot reconciliation and duplicate/stale execution guards.
+- **SPK-04 — Plugin Process / IPC:** external Plugin process, JSON Lines stdio IPC, capability handshake, deadline/crash containment and no automatic replay.
+- **SPK-05 — Vault & Large File Transfer:** filesystem Vault objects, SHA-256 identity, byte-range resume, verified cache promotion, SHOW transfer gate and runtime storage reserve.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** Linux `amd64`/`arm64` native binaries, systemd lifecycle, local-first boot and configurable SSD/NVMe storage.
 
-## Current Engineering Checkpoint
+Final pre-M0 decisions and consistency corrections:
 
-Before product implementation, the full baseline and all six spikes were reviewed for consistency. The reference transition state is:
+- [Architectural Decisions — Addendum 002: Implementation Baseline Finalization](adr/addendum-002/README.md)
+
+## Engineering Checkpoints
 
 - [2026-08-26 — Implementation Baseline Checkpoint](checkpoints/2026-08-26-implementation-baseline.md)
+- [2026-08-26 — Pre-M0 Finalization Checkpoint](checkpoints/2026-08-26-pre-m0-finalization.md)
 
-The checkpoint records resolved interpretation, prototype-vs-product boundaries, known follow-up gaps and the cross-cutting Security/Storage gates required before real LAN/Rehearsal use.
+The finalization checkpoint records the current entry state: **READY FOR M0 — NO KNOWN UNOWNED PRE-M0 DECISIONS**. Items not needed by M0 are not ignored; Addendum 002 assigns them to explicit later gates.
 
 ## Implementation Phase
 
-Decision spikes are complete enough to begin implementation. The next milestone is **M0 — Core Persistence**: real Go Hub skeleton, pinned SQLite driver, migrations and authoritative Project persistence.
+The next milestone is **M0 — Core Persistence**: first real StageCore product code, pinned SQLite/migration/ID dependencies, migrations, authoritative Project persistence, restart/backup proof, and supported build validation.
 
 ## Documentation Convention
 
-Documents are ordered numerically and named by the subject they cover. New specification files use the pattern `<NN>-<descriptive-topic>-v<version>` so sequence and purpose remain obvious.
+Documents are ordered numerically and named by subject. New specification files use `<NN>-<descriptive-topic>-v<version>` where they belong to the ordered product/specification sequence.
 
-Product/specification documents must distinguish implementable milestone requirements from future ideas. Future capabilities stay explicitly out of scope until promoted by a documented decision.
+Product/specification documents must distinguish implementable milestone requirements from future ideas. Future capabilities remain explicitly out of scope until promoted by a documented decision.
 
 - [Specifications index](specifications/README.md)
 - [Engineering decisions](decisions/README.md)
