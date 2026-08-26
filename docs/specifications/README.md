@@ -10,8 +10,8 @@ Documentation sequence uses a numeric prefix so the project can be read in order
 - [`03` — Data Model v0.1](03-data-model-v0.1.md) — entities, ownership and relationships
 - [`04` — Event & Command Contracts v0.1](04-event-command-contracts-v0.1.md) — runtime communication semantics
 - [`05` — MVP Product Specification v0.1](05-mvp-product-spec-v0.1/README.md) — executable product behavior and release gates
-- `06` — Plugin Contract v0.1 — next planned specification
-- `07` — Companion Specification v0.1
+- [`06` — Plugin Contract v0.1](06-plugin-contract-v0.1/README.md) — capability extensions, native UI contributions and OSC reference plugin
+- `07` — Companion Specification v0.1 — next planned specification
 - `08` — Storage & Vault Specification v0.1
 - `09` — Security Model v0.1
 - `10` — Testing & Reliability Plan v0.1
