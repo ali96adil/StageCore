@@ -13,14 +13,22 @@ import (
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-const ManifestSchemaVersion = 1
+const ManifestSchemaVersion = 2
 
 type Manifest struct {
-	SchemaVersion  int   `json:"schema_version"`
-	ProjectID      string `json:"project_id"`
-	RevisionID     string `json:"revision_id"`
-	RevisionNumber int64  `json:"revision_number"`
-	Cues           []Cue  `json:"cues"`
+	SchemaVersion  int      `json:"schema_version"`
+	ProjectID      string   `json:"project_id"`
+	RevisionID     string   `json:"revision_id"`
+	RevisionNumber int64    `json:"revision_number"`
+	Targets        []Target `json:"targets,omitempty"`
+	Cues           []Cue    `json:"cues"`
+}
+
+type Target struct {
+	AliasID       string          `json:"alias_id"`
+	TargetRef     string          `json:"target_ref"`
+	LogicalType   string          `json:"logical_type"`
+	Configuration json.RawMessage `json:"configuration"`
 }
 
 type Cue struct {
@@ -68,13 +76,34 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 	if err != nil {
 		return domain.RuntimeSnapshot{}, Manifest{}, err
 	}
+	aliases, err := b.store.ListAliases(ctx, revision.ProjectID)
+	if err != nil {
+		return domain.RuntimeSnapshot{}, Manifest{}, err
+	}
+
 	manifest := Manifest{
 		SchemaVersion:  ManifestSchemaVersion,
 		ProjectID:      revision.ProjectID,
 		RevisionID:     revision.ID,
 		RevisionNumber: revision.RevisionNumber,
+		Targets:        make([]Target, 0, len(aliases)),
 		Cues:           make([]Cue, 0, len(cues)),
 	}
+	for _, alias := range aliases {
+		manifest.Targets = append(manifest.Targets, Target{
+			AliasID:       alias.ID,
+			TargetRef:     alias.LogicalName,
+			LogicalType:   alias.LogicalType,
+			Configuration: cloneJSON(alias.ProjectConfig, `{}`),
+		})
+	}
+	sort.Slice(manifest.Targets, func(i, j int) bool {
+		if manifest.Targets[i].TargetRef == manifest.Targets[j].TargetRef {
+			return manifest.Targets[i].AliasID < manifest.Targets[j].AliasID
+		}
+		return manifest.Targets[i].TargetRef < manifest.Targets[j].TargetRef
+	})
+
 	for _, sourceCue := range cues {
 		actions := append([]domain.Action(nil), sourceCue.Actions...)
 		sort.Slice(actions, func(i, j int) bool {
@@ -135,10 +164,23 @@ func Decode(raw json.RawMessage) (Manifest, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode snapshot manifest: %w", err)
 	}
-	if manifest.SchemaVersion != ManifestSchemaVersion {
+	switch manifest.SchemaVersion {
+	case 1, ManifestSchemaVersion:
+		return manifest, nil
+	default:
 		return Manifest{}, fmt.Errorf("unsupported snapshot manifest schema %d", manifest.SchemaVersion)
 	}
-	return manifest, nil
+}
+
+func (m Manifest) ResolveTarget(targetRef string) *Target {
+	for i := range m.Targets {
+		if m.Targets[i].TargetRef == targetRef {
+			target := m.Targets[i]
+			target.Configuration = cloneJSON(target.Configuration, `{}`)
+			return &target
+		}
+	}
+	return nil
 }
 
 func cloneJSON(raw json.RawMessage, fallback string) json.RawMessage {
