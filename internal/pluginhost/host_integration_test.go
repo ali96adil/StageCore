@@ -17,7 +17,7 @@ import (
 )
 
 func TestOSCPluginCrashAndHangAreContainedWithoutReplay(t *testing.T) {
-	pluginPath := buildOSCPlugin(t)
+	pluginPath := buildFaultOSCPlugin(t)
 
 	for _, tc := range []struct {
 		name      string
@@ -140,18 +140,18 @@ func request(id string, port int, timeoutMS int64) pluginprotocol.ExecutionReque
 	}
 }
 
-func buildOSCPlugin(t *testing.T) string {
+func buildFaultOSCPlugin(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	binary := filepath.Join(t.TempDir(), "stagecore-osc-plugin")
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/stagecore-osc-plugin")
+	binary := filepath.Join(t.TempDir(), "stagecore-fault-osc-plugin")
+	cmd := exec.Command("go", "build", "-o", binary, "./internal/pluginhost/testdata/faultoscplugin")
 	cmd.Dir = repoRoot
 	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build OSC plugin: %v\n%s", err, output)
+		t.Fatalf("build fault OSC plugin: %v\n%s", err, output)
 	}
 	return binary
 }
