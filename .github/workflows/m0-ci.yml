@@ -22,8 +22,10 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache: true
-      - name: Resolve module graph
-        run: go mod tidy
+      - name: Verify module lock
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Test
         run: go test ./...
       - name: Vet
@@ -38,12 +40,3 @@ jobs:
           GOOS: linux
           GOARCH: arm64
         run: go build -o /tmp/stagecore-hub-arm64 ./cmd/stagecore-hub
-      - name: Dependency lock evidence
-        if: matrix.go == '1.26.x'
-        run: |
-          echo '---BEGIN-GO-MOD---'
-          cat go.mod
-          echo '---END-GO-MOD---'
-          echo '---BEGIN-GO-SUM---'
-          cat go.sum
-          echo '---END-GO-SUM---'
