@@ -1,11 +1,23 @@
-# Specifications
+# StageCore Specifications
 
-Current engineering specifications:
+Documentation sequence uses a numeric prefix so the project can be read in order while every chapter remains named by the subject it covers.
 
-- [StageCore Data Model v0.1](data-model-v0.1.md)
+## Sequence
 
-Next planned documents:
+- `00` — Master Plan v0.2 — product vision and boundaries
+- `01` — Architectural Decisions Addendum 001 — approved architecture decisions
+- `02` — System Architecture v0.1 — system components and runtime architecture
+- [`03` — Data Model v0.1](03-data-model-v0.1.md) — entities, ownership and relationships
+- [`04` — Event & Command Contracts v0.1](04-event-command-contracts-v0.1.md) — runtime communication semantics
+- `05` — MVP Product Specification v0.1 — next planned specification
+- `06` — Plugin Contract v0.1
+- `07` — Companion Specification v0.1
+- `08` — Storage & Vault Specification v0.1
+- `09` — Security Model v0.1
+- `10` — Testing & Reliability Plan v0.1
 
-1. StageCore Event & Command Contracts v0.1
-2. StageCore MVP Product Specification v0.1
-3. Technology Selection / Decision Spikes
+## Naming Rule
+
+Use: `<NN>-<descriptive-topic>-v<version>.md`
+
+For a document split into multiple files, keep the numeric order and use descriptive filenames for each part rather than generic `chapter-x-y` names whenever practical.
