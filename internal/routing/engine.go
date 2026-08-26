@@ -328,7 +328,7 @@ func (e *Engine) dispatchOutput(
 	}
 	if !allowCritical && isCritical(output.Criticality) {
 		message := "critical Route output requires explicit confirmation for test input"
-		_ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
+		_, _ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
 			"route_id":        route.ID,
 			"route_action_id": action.ID,
 			"output_id":       output.ID,
@@ -408,7 +408,7 @@ func (e *Engine) dispatchCue(
 	}
 	if !allowCritical && isCritical(cue.Criticality) {
 		message := "critical Route Cue requires explicit confirmation for test input"
-		_ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
+		_, _ = e.emit(ctx, session.ID, command, "route.action.failed", causationID, map[string]any{
 			"route_id":        route.ID,
 			"route_action_id": action.ID,
 			"cue_id":          cue.ID,
