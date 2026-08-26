@@ -24,11 +24,11 @@ type ExecutionRequest struct {
 }
 
 type ExecutionResult struct {
-	ExecutionID       string
-	Result            domain.ExecutionResult
-	AckLevel          contracts.AckLevel
-	ErrorCode         string
-	ResponseSummary   string
+	ExecutionID     string
+	Result          domain.ExecutionResult
+	AckLevel        contracts.AckLevel
+	ErrorCode       string
+	ResponseSummary string
 }
 
 type Channel interface {
@@ -38,8 +38,10 @@ type Channel interface {
 type SimulationBehavior string
 
 const (
-	SimulationComplete SimulationBehavior = "COMPLETE"
-	SimulationFail     SimulationBehavior = "FAIL"
+	SimulationComplete    SimulationBehavior = "COMPLETE"
+	SimulationFail        SimulationBehavior = "FAIL"
+	SimulationTimeout     SimulationBehavior = "TIMEOUT"
+	SimulationInterrupted SimulationBehavior = "INTERRUPTED"
 )
 
 type AgentConfig struct {
@@ -87,7 +89,9 @@ func (c *SimulatedChannel) RegisterAgent(config AgentConfig) error {
 	if behavior == "" {
 		behavior = SimulationComplete
 	}
-	if behavior != SimulationComplete && behavior != SimulationFail {
+	switch behavior {
+	case SimulationComplete, SimulationFail, SimulationTimeout, SimulationInterrupted:
+	default:
 		return fmt.Errorf("unsupported simulation behavior %q", behavior)
 	}
 	c.mu.Lock()
@@ -165,6 +169,12 @@ func (c *SimulatedChannel) Execute(ctx context.Context, request ExecutionRequest
 	case agent.behavior == SimulationFail:
 		agent.executionCount++
 		result = failed(request.ExecutionID, "SIMULATED_COMPANION_FAILURE", "simulated Companion execution failed", domain.ExecutionFailed)
+	case agent.behavior == SimulationTimeout:
+		agent.executionCount++
+		result = failed(request.ExecutionID, "COMPANION_EXECUTION_TIMEOUT", "Companion execution timed out without verified completion", domain.ExecutionTimedOut)
+	case agent.behavior == SimulationInterrupted:
+		agent.executionCount++
+		result = failed(request.ExecutionID, "COMPANION_EXECUTION_INTERRUPTED", "Companion execution was interrupted and completion is unknown", domain.ExecutionFailed)
 	default:
 		agent.executionCount++
 		result = ExecutionResult{
