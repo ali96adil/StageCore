@@ -25,7 +25,11 @@ Current decision-spike status:
 - **SPK-03 — macOS Companion:** ACCEPTED for Companion Core + channel baseline — Swift CompanionCore, WebSocket runtime channel, role/snapshot reconciliation, duplicate/stale execution guards. macOS app-bundle/background/signing validation remains implementation work on a real Mac.
 - **SPK-04 — Plugin Process / IPC:** ACCEPTED — external Plugin processes, JSON Lines stdio IPC, capability handshake, deadline/crash containment, lazy restart and no automatic replay.
 - **SPK-05 — Vault & Large File Transfer:** ACCEPTED — filesystem Vault objects, SHA-256 identity, byte-range resume, verified cache promotion, SHOW-mode transfer gate and runtime storage reserve.
-- **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** next.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC:** ACCEPTED for Linux deployment/release shape — native `amd64`/`arm64` binaries, systemd lifecycle, local-first boot and configurable SSD/NVMe storage. Real hardware qualification remains required.
+
+## Implementation Phase
+
+Decision spikes are complete enough to begin implementation. The next milestone is **M0 — Core Persistence**: real Go Hub skeleton, pinned SQLite driver, migrations and authoritative Project persistence.
 
 ## Documentation Convention
 

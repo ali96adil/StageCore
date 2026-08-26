@@ -1,0 +1,27 @@
+[Unit]
+Description=StageCore Hub
+After=local-fs.target network.target
+Wants=network.target
+RequiresMountsFor=/var/lib/stagecore
+
+[Service]
+Type=simple
+User=stagecore
+Group=stagecore
+EnvironmentFile=-/etc/stagecore/stagecore.env
+WorkingDirectory=/var/lib/stagecore
+ExecStart=/opt/stagecore/bin/stagecore-hub
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/stagecore
+UMask=0027
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
