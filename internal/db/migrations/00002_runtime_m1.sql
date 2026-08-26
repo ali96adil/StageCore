@@ -17,6 +17,7 @@ CREATE TABLE runtime_snapshots (
 CREATE INDEX runtime_snapshots_revision_idx ON runtime_snapshots(revision_id);
 CREATE INDEX runtime_snapshots_hash_idx ON runtime_snapshots(content_hash);
 
+-- +goose StatementBegin
 CREATE TRIGGER runtime_snapshot_content_immutable
 BEFORE UPDATE ON runtime_snapshots
 WHEN NEW.project_id IS NOT OLD.project_id
@@ -29,6 +30,7 @@ WHEN NEW.project_id IS NOT OLD.project_id
 BEGIN
     SELECT RAISE(ABORT, 'runtime snapshot content is immutable');
 END;
+-- +goose StatementEnd
 
 CREATE TABLE sessions (
     session_id TEXT PRIMARY KEY CHECK(length(session_id) = 36),
