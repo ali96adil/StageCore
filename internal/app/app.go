@@ -23,6 +23,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/pluginhost"
 	"github.com/ali96adil/StageCore/internal/routing"
 	"github.com/ali96adil/StageCore/internal/scriptaction"
+	"github.com/ali96adil/StageCore/internal/secretstore"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
@@ -35,6 +36,7 @@ type App struct {
 	DB               *db.Handle
 	Store            *store.Store
 	HubSecurity      *hubsecurity.Service
+	SecretStore      *secretstore.Service
 	Capabilities     *capability.Registry
 	Vault            *vault.Vault
 	Software         *software.Repository
@@ -59,6 +61,11 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("open Hub security identity: %w", err)
+	}
+	secrets, err := secretstore.Open(ctx, handle.DB, cfg.DataRoot)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Secret Store: %w", err)
 	}
 
 	s := store.New(handle.DB, clock.Real{})
@@ -104,7 +111,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("register simulator capability: %w", err)
 	}
-	if err := registry.Register(httpaction.CapabilityKey, httpaction.New()); err != nil {
+	if err := registry.Register(httpaction.CapabilityKey, httpaction.NewWithSecretResolver(secrets)); err != nil {
 		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register HTTP capability: %w", err)
@@ -145,7 +152,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity, Capabilities: registry,
+		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity, SecretStore: secrets, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
