@@ -72,6 +72,7 @@ func main() {
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
+		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
