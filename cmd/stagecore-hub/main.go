@@ -35,7 +35,7 @@ func main() {
 	}
 	defer application.Close()
 
-	api := httpapi.New()
+	api := httpapi.New(httpapi.WithCompanionAuth(application.CompanionAuth))
 	server := &http.Server{Addr: cfg.Listen, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
 
 	errCh := make(chan error, 1)

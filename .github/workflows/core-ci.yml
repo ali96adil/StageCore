@@ -42,3 +42,4 @@ jobs:
         run: |
           go build -o /tmp/stagecore-hub-arm64 ./cmd/stagecore-hub
           go build -o /tmp/stagecore-osc-plugin-arm64 ./cmd/stagecore-osc-plugin
+          go build -o /tmp/stagecore-pairing-arm64 ./cmd/stagecore-pairing

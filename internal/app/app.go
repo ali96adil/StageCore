@@ -6,6 +6,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
@@ -21,6 +22,7 @@ type App struct {
 	Config        config.Config
 	DB            *db.Handle
 	Store         *store.Store
+	CompanionAuth *companionauth.Service
 	CueEngine     *cueengine.Engine
 	RoutingEngine *routing.Engine
 	OSCPlugin     *pluginhost.Host
@@ -63,6 +65,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Config:        cfg,
 		DB:            handle,
 		Store:         s,
+		CompanionAuth: companionauth.New(s, nil),
 		CueEngine:     cueengine.NewWithExecutor(s, registry),
 		RoutingEngine: routing.New(s, registry),
 		OSCPlugin:     oscHost,

@@ -15,6 +15,7 @@ import (
 )
 
 type RegisterCompanionParams struct {
+	CompanionID  string
 	DisplayName  string
 	Hostname     string
 	Platform     string
@@ -49,9 +50,15 @@ func (s *Store) RegisterCompanion(ctx context.Context, p RegisterCompanionParams
 	if name == "" {
 		return domain.Companion{}, fmt.Errorf("%w: companion display name is required", domain.ErrInvalidInput)
 	}
-	id, err := stageid.New()
-	if err != nil {
-		return domain.Companion{}, err
+	id := strings.TrimSpace(p.CompanionID)
+	if id == "" {
+		var err error
+		id, err = stageid.New()
+		if err != nil {
+			return domain.Companion{}, err
+		}
+	} else if err := stageid.ValidateCanonical(id); err != nil {
+		return domain.Companion{}, fmt.Errorf("%w: invalid companion id: %v", domain.ErrInvalidInput, err)
 	}
 	capabilities := normalizeStringList(p.Capabilities)
 	capabilitiesJSON, err := json.Marshal(capabilities)
