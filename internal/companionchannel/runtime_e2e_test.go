@@ -345,6 +345,15 @@ func runtimeCueFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "2", Name: "Authenticated Echo After Reconnect", OrderIndex: 1, Enabled: true,
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "VIDEO-MAIN", CapabilityKey: "local.echo",
+		Parameters: json.RawMessage(`{"message":"GO-2"}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
 		t.Fatal(err)
 	}
