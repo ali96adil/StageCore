@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
+	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -56,6 +57,7 @@ func main() {
 		application.Capabilities,
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 	)
+	memory := sessionmemory.New(application.Store)
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -64,6 +66,7 @@ func main() {
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
+		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
