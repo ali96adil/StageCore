@@ -45,6 +45,7 @@ type runtimeStatusView struct {
 	Mode            string                `json:"mode"`
 	Snapshot        *snapshotView         `json:"runtime_snapshot"`
 	Session         *sessionView          `json:"session"`
+	Cues            []cueSummaryView      `json:"cues"`
 	CurrentCue      *cueSummaryView       `json:"current_cue"`
 	NextCue         *cueSummaryView       `json:"next_cue"`
 	LatestExecution *runtimeExecutionView `json:"latest_execution"`
@@ -188,10 +189,15 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	if err != nil {
 		return runtimeStatusView{}, err
 	}
-	view := runtimeStatusView{Project: makeProjectView(project), Mode: "EDIT"}
+	view := runtimeStatusView{Project: makeProjectView(project), Mode: "EDIT", Cues: []cueSummaryView{}}
 	if latest != nil {
 		value := makeSnapshotView(*latest)
 		view.Snapshot = &value
+		publishedCues, err := projectStore.ListCues(r.Context(), latest.RevisionID)
+		if err != nil {
+			return runtimeStatusView{}, err
+		}
+		view.Cues = makeRuntimeCueSummaries(publishedCues)
 	}
 	active, err := projectStore.ActiveSessionForProject(r.Context(), project.ID)
 	if err != nil || active == nil {
@@ -210,6 +216,7 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	if err != nil {
 		return runtimeStatusView{}, err
 	}
+	view.Cues = makeRuntimeCueSummaries(cues)
 	view.CurrentCue, view.NextCue = currentAndNextCue(cues, active.CurrentCueID)
 	executions, err := projectStore.ListCueExecutions(r.Context(), active.ID)
 	if err != nil {
@@ -223,6 +230,16 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 		}
 	}
 	return view, nil
+}
+
+func makeRuntimeCueSummaries(cues []domain.Cue) []cueSummaryView {
+	items := make([]cueSummaryView, 0, len(cues))
+	for _, cue := range cues {
+		if cue.Enabled {
+			items = append(items, makeCueSummary(cue))
+		}
+	}
+	return items
 }
 
 func writeRuntimeCommandResponse(w http.ResponseWriter, successStatus int, result contracts.CommandResult, extra map[string]any) {
