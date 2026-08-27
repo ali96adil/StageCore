@@ -28,6 +28,25 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
         XCTAssertEqual(renamedStatus.displayName, "Renamed Video Mac")
     }
 
+    func testConfiguredOSCIsAdvertisedAndMissingOSCIsNotFabricated() async throws {
+        let withoutOSC = try CompanionBootstrap(
+            configuration: configuration(displayName: "Video Mac"),
+            identityStore: MemorySecureIdentityStore()
+        )
+        let withoutStatus = await withoutOSC.status()
+        XCTAssertEqual(withoutStatus.capabilities, ["local.echo"])
+
+        let withOSC = try CompanionBootstrap(
+            configuration: configuration(
+                displayName: "Video Mac OSC",
+                oscEndpoint: OSCEndpoint(host: "127.0.0.1", port: 9000)
+            ),
+            identityStore: MemorySecureIdentityStore()
+        )
+        let withStatus = await withOSC.status()
+        XCTAssertEqual(withStatus.capabilities, ["local.echo", "osc.send"])
+    }
+
     func testNormalConfigurationContainsNoPrivateCredentialMaterial() throws {
         let configuration = configuration(displayName: "Video Mac")
         let data = try JSONEncoder().encode(configuration)
@@ -76,11 +95,15 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
         )
     }
 
-    private func configuration(displayName: String) -> CompanionAppConfiguration {
+    private func configuration(
+        displayName: String,
+        oscEndpoint: OSCEndpoint? = nil
+    ) -> CompanionAppConfiguration {
         CompanionAppConfiguration(
             hubAPIBaseURL: URL(string: "https://stagecore.local/")!,
             hubRuntimeURL: URL(string: "wss://stagecore.local/companion")!,
-            displayName: displayName
+            displayName: displayName,
+            oscEndpoint: oscEndpoint
         )
     }
 }
