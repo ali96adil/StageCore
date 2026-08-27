@@ -146,7 +146,47 @@ func (v *Vault) ImportManaged(ctx context.Context, p ImportParams, r io.Reader) 
 	return managed, nil
 }
 
+// OpenObject opens a committed Vault object only when authoritative metadata
+// and the local immutable file agree on its expected size. The returned file is
+// seekable so HTTP range serving can stream directly from disk.
+func (v *Vault) OpenObject(ctx context.Context, contentHash string) (*os.File, store.VaultObject, error) {
+	if v == nil || v.store == nil {
+		return nil, store.VaultObject{}, fmt.Errorf("Vault is unavailable")
+	}
+	contentHash, err := validateContentHash(contentHash)
+	if err != nil {
+		return nil, store.VaultObject{}, err
+	}
+	object, err := v.store.GetVaultObject(ctx, contentHash)
+	if err != nil {
+		return nil, store.VaultObject{}, err
+	}
+	path := filepath.Join(v.root, filepath.FromSlash(object.RelativePath))
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, store.VaultObject{}, fmt.Errorf("open committed Vault object: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, store.VaultObject{}, fmt.Errorf("stat committed Vault object: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != object.SizeBytes {
+		_ = file.Close()
+		return nil, store.VaultObject{}, fmt.Errorf("committed Vault object metadata mismatch")
+	}
+	return file, object, nil
+}
+
 func (v *Vault) ObjectPath(contentHash string) (string, error) {
+	contentHash, err := validateContentHash(contentHash)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(v.root, filepath.FromSlash(objectRelativePath(contentHash))), nil
+}
+
+func validateContentHash(contentHash string) (string, error) {
 	contentHash = strings.ToLower(strings.TrimSpace(contentHash))
 	if len(contentHash) != 64 {
 		return "", fmt.Errorf("invalid SHA-256 content identity")
@@ -154,7 +194,7 @@ func (v *Vault) ObjectPath(contentHash string) (string, error) {
 	if _, err := hex.DecodeString(contentHash); err != nil {
 		return "", fmt.Errorf("invalid SHA-256 content identity: %w", err)
 	}
-	return filepath.Join(v.root, filepath.FromSlash(objectRelativePath(contentHash))), nil
+	return contentHash, nil
 }
 
 func objectRelativePath(contentHash string) string {
