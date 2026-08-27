@@ -61,12 +61,21 @@ func main() {
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
-		httpapi.WithUserAuth(userAuth, application.HubSecurity),
+		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
 		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
+		httpapi.WithSecurityOperations(
+			userAuth,
+			application.Store,
+			application.SecretStore,
+			application.PluginPermissions,
+			application.SecurityAudit,
+			application.CompanionAuth,
+			application.RefreshPluginPermissions,
+		),
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
