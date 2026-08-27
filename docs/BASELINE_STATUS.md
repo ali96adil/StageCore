@@ -21,13 +21,17 @@ Implementation technology was validated through `SPK-01`–`SPK-06`, and final p
 **M0 — CORE PERSISTENCE: COMPLETE**  
 **M1 — CUE ENGINE + SIMULATOR: COMPLETE**  
 **M2 — REAL OSC: COMPLETE**  
-**NEXT: M3 — ROUTING**
+**M3 — ROUTING: COMPLETE**  
+**M4 — COMPANION + MACHINE ROLE: COMPLETE**  
+**NEXT: PRE-M5 RASPBERRY PI SMOKE → M5 STORAGE / VAULT**
 
 Completion evidence:
 
 - `docs/checkpoints/2026-08-26-m0-core-persistence-complete.md`
 - `docs/checkpoints/2026-08-26-m1-cue-engine-simulator-complete.md`
 - `docs/checkpoints/2026-08-26-m2-real-osc-complete.md`
+- `docs/checkpoints/2026-08-27-m3-routing-complete.md`
+- `docs/checkpoints/2026-08-27-m4-companion-machine-role-complete.md`
 
 Merged product commits:
 
@@ -40,18 +44,28 @@ m1: implement cue engine and deterministic simulator
 
 56feab35b7ec65fed4047bc106c12c30899adf0c
 m2: implement real OSC capability path
+
+7f573c32d8e8bbad151105025900869cf8eee5
+m3: implement deterministic routing runtime
+
+d2dab103fff7979953ac3c1af096d9bb4245d1de
+m4: implement Companion and Machine Role runtime
 ```
 
-The M2 post-merge `main` Core CI run `32972408148` passed Go 1.26/1.27 tests and vet, native race tests, module-lock verification, and Linux ARM64 CGo-free builds for both the Hub and OSC Plugin binaries.
+Latest merged-main verification:
+
+- M4 merged tree: `11447ef7157e81dc434edc33fee3ceaee8e3ad64`, byte-identical to the final reviewed/tested M4 tree;
+- post-merge Core CI #79 — PASS;
+- post-merge Companion Core CI #25 — PASS, including the real macOS Companion replacement acceptance.
 
 ### Accepted Technology Direction
 
 - **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL; HTTP+JSON; SSE browser events; TypeScript + React + Vite UI.
 - **SPK-02 — Real OSC** — OSC 1.0 UDP `osc.send`; logical endpoint resolution; truthful `TRANSPORT_ONLY` acknowledgement.
-- **SPK-03 — macOS Companion** — Swift CompanionCore; versioned WebSocket runtime channel; Machine Role/Snapshot reconciliation; duplicate/stale execution protection.
+- **SPK-03 — macOS Companion** — Swift CompanionCore; versioned authenticated WebSocket runtime channel; Machine Role/Snapshot reconciliation; duplicate/stale execution protection; Keychain-backed device identity.
 - **SPK-04 — Plugin Process / IPC** — external Plugin process; JSON Lines stdio IPC; capability handshake; crash/hang containment; no automatic replay.
 - **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 identity; staging/atomic promotion; HTTP range/resume; verified cache; SHOW transfer gate.
-- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe. Physical hardware qualification remains mandatory.
 
 ## Delivered Product Foundation
 
@@ -69,78 +83,125 @@ The M2 post-merge `main` Core CI run `32972408148` passed Go 1.26/1.27 tests and
 - FK and transaction rollback evidence;
 - restart/reopen persistence evidence;
 - verified local DB copy/reopen path;
-- loopback-only development health surface pending Security convergence;
 - Go 1.26/1.27 CI, race evidence and Linux ARM64 CGo-free build evidence.
 
 ### M1 delivered
 
-- production Command/Event Go envelopes;
-- synchronized Event `trace_context` contract;
+- production Command/Event Go envelopes and Event `trace_context`;
 - authoritative persisted Event journal with monotonic Hub `sequence`;
-- minimal immutable Runtime Snapshot from exact validated ProjectRevision;
-- canonical JSON + SHA-256 Snapshot content identity;
-- Simulation Session, CueExecution, ActionExecution and EventRecord persistence;
+- immutable Runtime Snapshot identity using canonical JSON + SHA-256;
+- Session, CueExecution, ActionExecution and EventRecord persistence;
 - deterministic COMPLETE/FAIL/TIMEOUT simulator;
-- sequential, parallel and parallel-barrier Cue Action execution;
-- FAIL_CUE / CONTINUE error-policy behavior;
-- snapshot/current-Cue rejection guards;
-- duplicate/idempotency protection;
-- restart-safe command history with no automatic replay;
-- explicit proof that runtime GO consumes Snapshot-captured definitions rather than live definition state.
+- sequential, parallel and parallel-barrier Cue execution;
+- FAIL_CUE / CONTINUE behavior;
+- duplicate/idempotency protection and restart-safe no-replay;
+- runtime proof that GO consumes Snapshot-captured definitions rather than mutable live state.
 
 ### M2 delivered
 
-- generic product capability executor/registry shared by simulated and real Actions;
-- Runtime Snapshot schema 2 with deterministic logical target capture;
-- Snapshot-only endpoint resolution so later live alias edits do not mutate active runtime behavior;
-- product `osc.send` capability using OSC 1.0 over UDP;
-- explicit typed OSC arguments: `int32`, `float32`, `string`, `bool`;
-- truthful `COMPLETED / TRANSPORT_ONLY` acknowledgement for successful local UDP writes;
-- external `stagecore.osc` Plugin process;
-- versioned JSON Lines stdin/stdout IPC and `plugin.ready` handshake;
-- Plugin identity/capability validation;
-- explicit reference-path `network.udp.send` grant enforcement;
-- crash/EOF/hang/cancellation containment and no automatic replay;
-- lazy fresh Plugin process for later explicit execution;
-- Hub composition wiring for the actual OSC product path;
-- configurable OSC Plugin executable path with sibling-binary default;
-- real localhost UDP receiver tests and App-level end-to-end evidence;
-- ARM64 CGo-free builds for both `stagecore-hub` and `stagecore-osc-plugin`.
+- generic capability executor/registry shared by simulated and real Actions;
+- immutable Snapshot logical-target resolution;
+- real `osc.send` OSC 1.0 UDP capability with typed arguments;
+- truthful `COMPLETED / TRANSPORT_ONLY` acknowledgement;
+- external `stagecore.osc` Plugin with versioned JSON Lines IPC;
+- Plugin capability/permission checks and crash/hang containment;
+- no replay after Plugin failure/restart;
+- Hub composition wired to the actual OSC product path;
+- ARM64 CGo-free Hub + OSC Plugin builds.
 
-## M3 Entry Scope
+### M3 delivered
 
-M3 owns Routing execution and closes the Route-origin OSC acceptance intentionally deferred from M2:
+- deterministic Routing from typed Test/OSC inputs;
+- Snapshot-only Route lookup;
+- bounded conditions, transforms and debounce;
+- persistent Route Trace and explicit failures;
+- Route -> Cue through the normal validated command path;
+- Route -> Output through the generic capability registry;
+- real Route -> OSC path;
+- route-atomic manual Test safety preflight;
+- typed input authority and external OSC receive isolation;
+- duplicate/restart/no-replay preservation;
+- implementation-level routing latency evidence.
+
+### M4 delivered
+
+- stable Companion identity independent of hostname/IP;
+- Project MachineRole + one-active assignment;
+- truthful readiness, heartbeat -> OFFLINE and Snapshot/config evidence;
+- RuntimeSnapshotID propagated through Cue and Route execution;
+- secure P-256 macOS identity with private key in Keychain;
+- explicit pairing approval, challenge/response authentication and bounded runtime sessions;
+- authenticated Hub WebSocket runtime;
+- stale Snapshot/wrong-role/unsupported/duplicate rejection;
+- revocation removes runtime authority;
+- headless real `stagecore-companion` executable;
+- real macOS `osc.send` executor with truthful `TRANSPORT_ONLY` acknowledgement;
+- replacement/no-replay with the same immutable Cue and Runtime Snapshot;
+- real macOS acceptance with two distinct Keychain-backed Companion identities.
+
+## Pre-M5 Raspberry Pi Smoke Gate
+
+A bounded native Raspberry Pi smoke deployment is now appropriate **before M5 implementation begins**.
+
+The current `main` already has Linux ARM64 CGo-free build evidence for the Hub, OSC Plugin and pairing CLI, but CI cross-build evidence is not the same as physical Pi qualification. The pre-M5 smoke should therefore validate the current M0–M4 control/runtime foundation on the selected Pi without claiming rehearsal-ready or show-ready hardware status.
+
+Recommended smoke boundary:
 
 ```text
-Test Input / supported OSC input
-→ normalized Input event
-→ Runtime Snapshot Route lookup
-→ simple condition evaluation
-→ debounce
-→ Route Trace
-→ Cue dispatch OR Output capability dispatch
-→ existing capability registry
-→ sim.test / osc.send
-→ truthful result + Event history
+Pi 64-bit Linux
+→ native StageCore binaries
+→ persistent Data Root / SQLite WAL
+→ restart/reopen
+→ real OSC bench path
+→ macOS Companion pair/auth/connect
+→ VIDEO-MAIN assignment
+→ Cue/Route runtime execution
+→ disconnect/reconnect no replay
+→ WAN disconnected local operation
+→ short CPU/memory/temperature observation
 ```
 
-M3 must prove that disabled/non-matching Routes dispatch nothing, debounce behavior is deterministic/testable, and each accepted input causes no duplicate Action/Cue dispatch.
+Full hardware qualification remains later because the First Rehearsal gate requires real SSD/NVMe behavior, controlled power-loss/recovery, at least 2 GiB interrupted/resumed media transfer with SHA-256 verification, storage-pressure/thermal soak, Stage LAN failure/recovery and backup/restore evidence. Those storage-heavy proofs depend on M5 capabilities and therefore must not be falsely claimed by the pre-M5 smoke.
 
-M3 must reuse the capability boundary delivered by M2 rather than embedding protocol-specific OSC logic inside the Routing domain.
+## M5 Entry Scope
 
-M3 does **not** silently promote Companion trust, Vault/media workflows, non-loopback Stage LAN control, Operator UI, Nodes, full DMX/lighting, AI/Vision or HA/cloud work.
+M5 owns the first real Storage/Vault and media-aware runtime slice.
+
+Reference implementation order:
+
+```text
+S0 Storage Root + DB persistence
+→ S1 Vault object import + checksum
+→ S2 File download/transfer jobs
+→ S3 Companion media cache sync
+→ S4 Hub Software Downloads
+→ S5 SHOW traffic gates + capacity reserve
+→ S6 Backup/restore proof
+```
+
+M5 must prove at least:
+
+- managed Vault import through staging -> SHA-256 verification -> atomic promotion;
+- database metadata for managed content identity;
+- streaming/local-network download without loading whole files into application memory;
+- resumable Companion download and `.part` cache behavior;
+- required-media manifest comparison and checksum before media READY;
+- SHOW-mode bulk-transfer pause/block behavior;
+- filesystem capacity reserve/admission checks;
+- one repeatable backup/restore path.
+
+M5 must preserve the M0–M4 authority model: immutable Runtime Snapshot identity, truthful readiness/results, no hidden replay and logical Machine Role replacement.
 
 ## Remaining Work Is Owned — Not Unbounded TBD
 
-- Security SEC0–SEC2 before non-loopback Stage LAN control;
-- full Plugin permission administration remains in Security SEC5; M2 proved only the explicit reference OSC grant boundary;
-- Routing implementation and `osc.receive` lifecycle in M3;
-- Companion trust + real macOS bundle/Keychain/signing in M4/SEC3;
-- Publish/Preflight/Readiness convergence before show-facing operation;
-- media-aware Vault/cache/readiness work in Storage/M5;
-- Operator Web UI in its MVP slice;
-- 2 GiB transfer, real ARM64/Mini-PC SSD/NVMe, power-loss, thermal, Stage LAN and soak qualification before first rehearsal;
-- Node MCU, full DMX/lighting automation, AI/Vision, HA/cloud and other explicitly post-MVP work.
+- Security SEC0–SEC2 before intentional non-loopback control/configuration APIs are considered production-exposed on the Stage LAN;
+- full Plugin permission administration and secret-bearing integration gates remain under SEC4/SEC5;
+- Storage/Vault/media-aware readiness work is M5;
+- SHOW security operations are owned by SEC6 + M5/M6 before rehearsal qualification;
+- Operator Web UI remains in its MVP slice;
+- production macOS signing/notarization/background packaging remains a later product gate beyond the bounded M4 runtime contract;
+- real ARM64/Pi and Mini-PC hardware qualification remains required before naming a hardware SKU rehearsal/show-ready;
+- Hardware Nodes, full DMX/lighting automation, AI/Vision, HA/cloud and distributed offline authority remain explicitly later/post-MVP work.
 
 Every known deferred item remains assigned in `docs/adr/addendum-002/04-deferred-register-and-ownership-gates.md`.
 
