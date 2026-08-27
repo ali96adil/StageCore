@@ -24,7 +24,8 @@ Implementation technology was validated through `SPK-01`–`SPK-06`, and final p
 **M3 — ROUTING: COMPLETE**  
 **M4 — COMPANION + MACHINE ROLE: COMPLETE**  
 **M5 — STORAGE / VAULT / MEDIA READINESS: COMPLETE**  
-**NEXT: PHYSICAL RASPBERRY PI M0–M5 QUALIFICATION — ISSUE #21**
+**M6 — MVP OPERATOR + SECURITY CLOSURE: COMPLETE**  
+**NEXT: PHYSICAL RASPBERRY PI ARM64 M0–M6 QUALIFICATION — ISSUE #21**
 
 Completion evidence:
 
@@ -34,6 +35,7 @@ Completion evidence:
 - `docs/checkpoints/2026-08-27-m3-routing-complete.md`
 - `docs/checkpoints/2026-08-27-m4-companion-machine-role-complete.md`
 - `docs/checkpoints/2026-08-27-m5-storage-vault-complete.md`
+- `docs/checkpoints/2026-08-27-m6-software-mvp-complete.md`
 
 Merged product commits:
 
@@ -55,24 +57,33 @@ m4: implement Companion and Machine Role runtime
 
 99552d6d58512836ea325393812d52dbbded6f1d
 M5 Storage / Vault / Media Readiness (#23)
+
+268b499856aa45ee7650ff66ab28d46f2f195c7b
+M6 MVP Operator + Security Closure (#28)
 ```
 
 Latest merged-main verification:
 
-- M5 merged tree: `3e68ac45ccef668ff73c10875f9fd35b9865d9f9`;
-- final tested M5 branch tree: `3e68ac45ccef668ff73c10875f9fd35b9865d9f9` — byte-identical to merged `main`;
-- post-merge Core CI #146 — PASS;
-- post-merge Companion Core CI #78 — PASS;
+- M6 final tested branch commit: `86bb56f835265f982bfd7f9929d499dd2100cd19`;
+- final tested M6 tree: `45a32de4e8989b8be0699fb45641d424fed73c05`;
+- M6 merge commit: `268b499856aa45ee7650ff66ab28d46f2f195c7b`;
+- merged M6 tree: `45a32de4e8989b8be0699fb45641d424fed73c05` — byte-identical to the final tested branch tree;
+- pre-merge Core CI #311 — PASS;
+- pre-merge Companion Core CI #146 — PASS;
+- post-merge Core CI #312 — PASS;
+- post-merge Companion Core CI #147 — PASS;
+- Linux ARM64 CGo-free product builds — PASS;
 - real macOS Companion replacement acceptance — PASS;
-- `2 GiB + 1 byte` interrupted/resumed media transfer + SHA-256 acceptance — PASS.
+- `>=2 GiB` interrupted/resumed media transfer acceptance — PASS;
+- integrated fresh-Hub → OWNER → Project/configuration → Publish → REHEARSAL → GO → Note → restart/history software-MVP acceptance — PASS.
 
 ### Accepted Technology Direction
 
-- **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL; HTTP+JSON; SSE browser events; TypeScript + React + Vite UI.
+- **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL; HTTP+JSON; authenticated local browser/API surface; embedded offline Operator UI.
 - **SPK-02 — Real OSC** — OSC 1.0 UDP `osc.send`; logical endpoint resolution; truthful `TRANSPORT_ONLY` acknowledgement.
 - **SPK-03 — macOS Companion** — Swift CompanionCore; versioned authenticated WebSocket runtime channel; Machine Role/Snapshot reconciliation; duplicate/stale execution protection; Keychain-backed device identity.
 - **SPK-04 — Plugin Process / IPC** — external Plugin process; JSON Lines stdio IPC; capability handshake; crash/hang containment; no automatic replay.
-- **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 identity; staging/atomic promotion; HTTP Range/resume; verified cache; SHOW transfer gate.
+- **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 identity; staging/atomic promotion; HTTP Range/resume; verified Companion cache; SHOW transfer gate.
 - **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe. Physical hardware qualification remains mandatory.
 
 ## Delivered Product Foundation
@@ -112,9 +123,9 @@ Latest merged-main verification:
 - Snapshot-only Route lookup;
 - bounded conditions/transforms/debounce;
 - persistent Route Trace and explicit failures;
-- Route -> Cue through validated command path;
-- Route -> Output through generic capability registry;
-- real Route -> OSC path;
+- Route → Cue through validated command path;
+- Route → Output through generic capability registry;
+- real Route → OSC path;
 - typed input authority and external OSC receive isolation;
 - duplicate/restart/no-replay preservation and routing latency evidence.
 
@@ -122,7 +133,7 @@ Latest merged-main verification:
 
 - stable Companion identity independent of hostname/IP;
 - MachineRole + one-active assignment;
-- truthful readiness and heartbeat -> OFFLINE;
+- truthful readiness and heartbeat → OFFLINE;
 - RuntimeSnapshotID propagated through Cue/Route execution;
 - P-256 Keychain-backed macOS identity;
 - explicit pairing, challenge/response authentication and bounded runtime sessions;
@@ -140,7 +151,7 @@ Latest merged-main verification:
 - staged streaming imports with SHA-256 content identity and atomic no-overwrite promotion;
 - content-addressed immutable Vault object storage;
 - authenticated disk-backed HTTP Range serving;
-- macOS `.part` cache with bounded 8 MiB range chunks and restart-resume behavior;
+- macOS `.part` cache with bounded chunks and restart-resume behavior;
 - exact size + SHA-256 verification before final media promotion;
 - Required Media captured by immutable Runtime Snapshot identity;
 - truthful READY / BLOCKED / MISMATCH media readiness;
@@ -148,48 +159,74 @@ Latest merged-main verification:
 - local Downloads/Setup path that does not depend on WAN/Internet access;
 - bulk-job policy isolated from P0/P1 runtime;
 - SHOW blocks/pauses nonessential transfer/software/backup/archive work while P1 Cue execution remains functional;
-- free-space health with reference 15% warning threshold;
+- free-space health with reference warning threshold;
 - configurable runtime reserve with 2 GiB default and write admission enforcement;
-- verified consistent state backup, tamper evidence and non-destructive restore to a new Data Root;
-- `2 GiB + 1 byte` forced-interruption transfer acceptance: 16 MiB `.part` retained, HTTP Range resume, exact SHA-256, atomic promote.
+- verified consistent state backup, tamper evidence and non-destructive restore;
+- `>=2 GiB` forced-interruption transfer acceptance with HTTP Range resume, exact SHA-256 and atomic promote.
 
-## Physical Raspberry Pi Qualification Gate — Issue #21
+### M6 delivered
 
-The pre-M5 Pi smoke was intentionally deferred while M5 was being built. M5 is now merged, so Issue #21 becomes the next bounded engineering gate and should exercise the **complete M0–M5 baseline** on real ARM64 hardware.
+- persistent Hub identity, fingerprint and first OWNER bootstrap;
+- mature password hashing and one-time setup-code behavior;
+- local login/logout, bounded sessions, RBAC and CSRF/session protections;
+- secure non-loopback browser/API transport policy and authenticated realtime/browser channel;
+- embedded WAN-independent Operator Web;
+- Project create/open and operator-supported Target/Input/Output/Route/Cue editing;
+- validation + immutable Publish workflow;
+- Dashboard, Runtime, Preflight, Notes and Session Memory;
+- REHEARSAL/SHOW runtime controls through normal command/idempotency paths;
+- authoritative Companion/media/storage/security readiness and SHOW gating;
+- structured execution history and truthful restart interruption reconciliation;
+- basic HTTP Action, macOS MIDI Action and isolated Script Action with explicit bounded outcomes;
+- encrypted Secret Store and `secret_ref` policy;
+- explicit first-party Plugin permissions;
+- security audit and denial-path coverage;
+- SHOW security administration gates with bounded emergency revocation;
+- local user/session/Companion revocation and renewal without Internet;
+- integrated software-MVP acceptance from fresh Hub through restart/history without manual DB/file editing.
+
+## Active Physical Raspberry Pi Qualification Gate — Issue #21
+
+M6 is now merged and the software MVP is closed. Issue #21 is therefore the **active engineering gate** and must exercise the **complete M0–M6 baseline** on real ARM64 hardware.
 
 Recommended physical qualification boundary:
 
 ```text
-Pi 64-bit Linux
-→ native StageCore ARM64 binaries
+Pi 64-bit Linux / arm64
+→ native StageCore ARM64 product binaries
+→ systemd/local-first startup
 → Data Root + independent Vault Root on intended storage
 → SQLite WAL restart/reopen
+→ first OWNER bootstrap + authenticated Operator Web/RBAC
+→ Project/configuration/Publish workflow
 → real OSC bench path
-→ macOS Companion pair/auth/connect
-→ VIDEO-MAIN assignment
+→ basic HTTP/Script safe bench path
+→ real macOS Companion pair/auth/connect
+→ VIDEO-MAIN assignment + Runtime Snapshot readiness
+→ macOS MIDI safe bench path
 → Cue + Route runtime execution
 → disconnect/reconnect no replay
 → managed Vault import + SHA-256
-→ real LAN media transfer + interruption/resume + checksum
-→ Companion required-media READY transition
-→ SHOW bulk pause while P1 Cue remains functional
-→ storage reserve / low-space behavior
+→ real LAN >=2 GiB media transfer + interruption/resume + checksum
+→ Companion required-media READY/BLOCKED/MISMATCH transitions
+→ SHOW bulk/admin gates while P0/P1 runtime remains functional
+→ runtime reserve / low-space behavior
+→ Notes/session history across restart
 → backup/restore drill
-→ WAN disconnected local operation
-→ controlled restart/power-recovery checks
-→ CPU/memory/storage/temperature observation
+→ WAN-disconnected local operation
+→ clean reboot/service recovery
+→ controlled power-loss/recovery on disposable/reference storage
+→ CPU/RAM/disk/thermal observation under representative pressure
 ```
 
-Passing CI/cross-build and hosted macOS acceptance does not by itself qualify a Raspberry Pi, SSD/NVMe, power supply, thermal configuration or Stage LAN as rehearsal-ready/show-ready. That claim requires the physical evidence owned by Issue #21 and the Testing & Reliability baseline.
+Passing CI, cross-build and hosted macOS acceptance does not by itself qualify a Raspberry Pi, SSD/NVMe, power supply, thermal configuration or Stage LAN as rehearsal-ready/show-ready. That claim requires physical evidence owned by Issue #21 and the Testing & Reliability baseline.
 
 ## Remaining Work Is Owned — Not Unbounded TBD
 
-- physical ARM64/Pi and Mini-PC qualification is the immediate next gate (#21);
-- Security SEC0–SEC2 remain required before intentional non-loopback control/configuration APIs are considered production-exposed on the Stage LAN;
-- full Plugin permission administration and secret-bearing integration gates remain under SEC4/SEC5;
-- SHOW security operations remain owned by SEC6 and later rehearsal qualification;
-- Operator Web UI remains in its MVP slice;
+- physical ARM64/Pi appliance qualification is the immediate next gate (#21);
+- any defect exposed by #21 returns to a bounded product fix with regression evidence before qualification continues;
 - production macOS signing/notarization/background packaging remains a later product gate;
+- final appliance SKU, power/thermal/storage/network qualification remains later hardware/rehearsal work;
 - Hardware Nodes, full DMX/lighting automation, AI/Vision, HA/cloud and distributed offline authority remain explicitly later/post-MVP work.
 
 Every known deferred item remains assigned in `docs/adr/addendum-002/04-deferred-register-and-ownership-gates.md`.
