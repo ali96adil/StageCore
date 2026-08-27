@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -104,5 +105,39 @@ func TestSetRoleAssignmentStateDoesNotReviveReleasedAssignment(t *testing.T) {
 	}
 	if err := s.SetRoleAssignmentState(ctx, assignment.ID, domain.RoleReady); err == nil {
 		t.Fatal("released assignment was revived")
+	}
+}
+
+func TestRevokedCompanionCannotRestoreReadyStateWithLateReport(t *testing.T) {
+	ctx := context.Background()
+	c := &movingClock{now: time.Date(2026, 8, 27, 5, 15, 0, 0, time.UTC)}
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s := store.New(h.DB, c)
+	companionState, err := s.RegisterCompanion(ctx, store.RegisterCompanionParams{DisplayName: "Revoked Mac"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCompanionTrustState(ctx, companionState.ID, domain.CompanionTrusted); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeCompanionDevice(ctx, companionState.ID, c.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.UpdateCompanionReport(ctx, companionState.ID, store.CompanionReportParams{
+		DisplayName: "Revoked Mac", Capabilities: []string{"local.echo"}, Readiness: domain.CompanionReadinessReady,
+	})
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("late report error=%v want not found", err)
+	}
+	companionState, err = s.GetCompanion(ctx, companionState.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if companionState.TrustState != domain.CompanionRevoked || companionState.Readiness != domain.CompanionReadinessBlocked {
+		t.Fatalf("revoked Companion state=%#v", companionState)
 	}
 }
