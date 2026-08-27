@@ -16,6 +16,8 @@ public struct CompanionRuntimeState: Sendable, Equatable {
     public var configHash: String
     public var capabilities: Set<String>
     public var readiness: CompanionReadiness
+    public var authenticatedSessionID: String?
+    public var authenticatedUntil: Date?
 
     public init(
         companionID: String,
@@ -24,7 +26,9 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         appliedRuntimeSnapshotID: String? = nil,
         configHash: String = "",
         capabilities: Set<String> = [],
-        readiness: CompanionReadiness = .unknown
+        readiness: CompanionReadiness = .unknown,
+        authenticatedSessionID: String? = nil,
+        authenticatedUntil: Date? = nil
     ) {
         self.companionID = companionID
         self.machineRoleID = machineRoleID
@@ -33,6 +37,8 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         self.configHash = configHash
         self.capabilities = capabilities
         self.readiness = readiness
+        self.authenticatedSessionID = authenticatedSessionID
+        self.authenticatedUntil = authenticatedUntil
     }
 
     public mutating func apply(_ ready: SessionReady) {
@@ -41,5 +47,21 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         appliedRuntimeSnapshotID = ready.runtimeSnapshotID
         configHash = ready.configHash
         readiness = .ready
+    }
+
+    public mutating func authenticate(sessionID: String, expiresAt: Date) {
+        authenticatedSessionID = sessionID
+        authenticatedUntil = expiresAt
+    }
+
+    public mutating func clearAuthentication() {
+        authenticatedSessionID = nil
+        authenticatedUntil = nil
+        readiness = .offline
+    }
+
+    public func isAuthenticated(at date: Date = Date()) -> Bool {
+        guard authenticatedSessionID != nil, let authenticatedUntil else { return false }
+        return date < authenticatedUntil
     }
 }

@@ -66,10 +66,14 @@ public struct CompanionHello: Codable, Sendable, Equatable {
     public let schemaVersion: Int
     public let messageID: String
     public let companionID: String
+    public let displayName: String
+    public let hostname: String
     public let agentVersion: String
     public let platform: String
     public let architecture: String
     public let capabilities: [String]
+    public let machineRoleID: String?
+    public let roleKey: String?
     public let appliedRuntimeSnapshotID: String?
     public let configHash: String
     public let readiness: String
@@ -79,10 +83,14 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         case schemaVersion = "schema_version"
         case messageID = "message_id"
         case companionID = "companion_id"
+        case displayName = "display_name"
+        case hostname
         case agentVersion = "agent_version"
         case platform
         case architecture
         case capabilities
+        case machineRoleID = "machine_role_id"
+        case roleKey = "role_key"
         case appliedRuntimeSnapshotID = "applied_runtime_snapshot_id"
         case configHash = "config_hash"
         case readiness
@@ -92,10 +100,14 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         schemaVersion: Int = 1,
         messageID: String = UUID().uuidString.lowercased(),
         companionID: String,
+        displayName: String = "",
+        hostname: String = "",
         agentVersion: String,
         platform: String,
         architecture: String,
         capabilities: [String],
+        machineRoleID: String? = nil,
+        roleKey: String? = nil,
         appliedRuntimeSnapshotID: String?,
         configHash: String,
         readiness: String
@@ -104,10 +116,14 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         self.schemaVersion = schemaVersion
         self.messageID = messageID
         self.companionID = companionID
+        self.displayName = displayName
+        self.hostname = hostname
         self.agentVersion = agentVersion
         self.platform = platform
         self.architecture = architecture
         self.capabilities = capabilities
+        self.machineRoleID = machineRoleID
+        self.roleKey = roleKey
         self.appliedRuntimeSnapshotID = appliedRuntimeSnapshotID
         self.configHash = configHash
         self.readiness = readiness

@@ -47,6 +47,7 @@ public actor WebSocketCompanionAgent {
     private let url: URL
     private let securityPolicy: CompanionTransportSecurityPolicy
     private let session: CompanionSession
+    private let authenticator: any CompanionRuntimeAuthenticator
     private let reconnectDelay: Duration
     private let maxReconnects: Int
 
@@ -54,6 +55,7 @@ public actor WebSocketCompanionAgent {
         url: URL,
         securityPolicy: CompanionTransportSecurityPolicy = .production,
         session: CompanionSession,
+        authenticator: any CompanionRuntimeAuthenticator,
         reconnectDelay: Duration = .milliseconds(250),
         maxReconnects: Int = 8
     ) throws {
@@ -61,6 +63,7 @@ public actor WebSocketCompanionAgent {
         self.url = url
         self.securityPolicy = securityPolicy
         self.session = session
+        self.authenticator = authenticator
         self.reconnectDelay = reconnectDelay
         self.maxReconnects = max(0, maxReconnects)
     }
@@ -88,22 +91,31 @@ public actor WebSocketCompanionAgent {
     }
 
     private func runOneConnection() async throws {
+        let credential = try await authenticator.authenticate()
+        await session.establishAuthenticatedSession(credential)
         let urlSession = URLSession(configuration: .ephemeral)
-        let socket = urlSession.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("StageCoreSession \(credential.token)", forHTTPHeaderField: "Authorization")
+        let socket = urlSession.webSocketTask(with: request)
         socket.resume()
         defer {
             socket.cancel(with: .normalClosure, reason: nil)
             urlSession.invalidateAndCancel()
         }
 
-        try await send(try await session.helloData(), socket: socket)
-        while !Task.isCancelled {
-            let data = try await receive(socket: socket)
-            if let response = try await session.handle(data) {
-                try await send(response, socket: socket)
+        do {
+            try await send(try await session.helloData(), socket: socket)
+            while !Task.isCancelled {
+                let data = try await receive(socket: socket)
+                if let response = try await session.handle(data) {
+                    try await send(response, socket: socket)
+                }
             }
+            throw CancellationError()
+        } catch {
+            await session.invalidateAuthenticatedSession()
+            throw error
         }
-        throw CancellationError()
     }
 
     private func send(_ data: Data, socket: URLSessionWebSocketTask) async throws {

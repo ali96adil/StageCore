@@ -44,32 +44,42 @@ public struct LocalEchoExecutor: CompanionCapabilityExecutor {
 
 public struct CompanionSessionConfiguration: Sendable, Equatable {
     public var companionID: String
+    public var displayName: String
+    public var hostname: String
     public var agentVersion: String
     public var platform: String
     public var architecture: String
     public var configHash: String
     public var readiness: CompanionReadiness
+    public var requiresAuthenticatedSession: Bool
 
     public init(
         companionID: String,
+        displayName: String = "",
+        hostname: String = "",
         agentVersion: String,
         platform: String,
         architecture: String,
         configHash: String = "",
-        readiness: CompanionReadiness = .unknown
+        readiness: CompanionReadiness = .unknown,
+        requiresAuthenticatedSession: Bool = true
     ) {
         self.companionID = companionID
+        self.displayName = displayName
+        self.hostname = hostname
         self.agentVersion = agentVersion
         self.platform = platform
         self.architecture = architecture
         self.configHash = configHash
         self.readiness = readiness
+        self.requiresAuthenticatedSession = requiresAuthenticatedSession
     }
 }
 
 public enum CompanionSessionError: Error, Equatable {
     case unsupportedSchemaVersion(Int)
     case unexpectedMessage(CompanionMessageType)
+    case unauthenticatedSession
 }
 
 private struct CompanionMessageHeader: Decodable {
@@ -114,10 +124,14 @@ public actor CompanionSession {
         try encoder.encode(
             CompanionHello(
                 companionID: configuration.companionID,
+                displayName: configuration.displayName,
+                hostname: configuration.hostname,
                 agentVersion: configuration.agentVersion,
                 platform: configuration.platform,
                 architecture: configuration.architecture,
                 capabilities: state.capabilities.sorted(),
+                machineRoleID: state.machineRoleID,
+                roleKey: state.roleKey,
                 appliedRuntimeSnapshotID: state.appliedRuntimeSnapshotID,
                 configHash: state.configHash,
                 readiness: state.readiness.rawValue
@@ -127,6 +141,14 @@ public actor CompanionSession {
 
     public func runtimeState() -> CompanionRuntimeState {
         state
+    }
+
+    public func establishAuthenticatedSession(_ credential: CompanionRuntimeCredential) {
+        state.authenticate(sessionID: credential.sessionID, expiresAt: credential.expiresAt)
+    }
+
+    public func invalidateAuthenticatedSession() {
+        state.clearAuthentication()
     }
 
     /// Handles one Hub message. A non-nil return is a wire response that the
@@ -139,6 +161,9 @@ public actor CompanionSession {
 
         switch header.type {
         case .sessionReady:
+            guard !configuration.requiresAuthenticatedSession || state.isAuthenticated() else {
+                throw CompanionSessionError.unauthenticatedSession
+            }
             let ready = try decoder.decode(SessionReady.self, from: data)
             state.apply(ready)
             return nil
@@ -153,6 +178,10 @@ public actor CompanionSession {
     }
 
     private func handleExecution(_ request: CompanionExecutionRequest) async -> CompanionExecutionResult {
+        guard !configuration.requiresAuthenticatedSession || state.isAuthenticated() else {
+            guardState.markTerminal(request.executionID)
+            return rejection(request, code: "SESSION_UNAUTHENTICATED", summary: "authenticated runtime session is required")
+        }
         let decision = guardState.decision(for: request, state: state)
         switch decision {
         case .rejectDuplicate:

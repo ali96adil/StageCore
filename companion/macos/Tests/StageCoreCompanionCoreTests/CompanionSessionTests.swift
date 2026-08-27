@@ -20,6 +20,8 @@ final class CompanionSessionTests: XCTestCase {
         XCTAssertEqual(hello.capabilities, ["local.echo"])
         XCTAssertNil(hello.appliedRuntimeSnapshotID)
 
+        await authenticate(session)
+
         let ready = SessionReady(
             machineRoleID: "role-video-main",
             roleKey: "VIDEO-MAIN",
@@ -130,6 +132,7 @@ final class CompanionSessionTests: XCTestCase {
         snapshot: String,
         role: String = "role-video-main"
     ) async throws {
+        await authenticate(session)
         let ready = SessionReady(
             machineRoleID: role,
             roleKey: "VIDEO-MAIN",
@@ -137,6 +140,16 @@ final class CompanionSessionTests: XCTestCase {
             configHash: ""
         )
         _ = try await session.handle(JSONEncoder().encode(ready))
+    }
+
+    private func authenticate(_ session: CompanionSession) async {
+        await session.establishAuthenticatedSession(
+            CompanionRuntimeCredential(
+                sessionID: "session-test",
+                token: "not-persisted",
+                expiresAt: Date().addingTimeInterval(300)
+            )
+        )
     }
 
     private func result(
