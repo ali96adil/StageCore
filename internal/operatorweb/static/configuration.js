@@ -16,13 +16,16 @@ function optionList(items, valueKey, labeler) {
 
 async function renderConfiguration() {
   const model = await loadConfiguration();
-  const editable = configurationEditable();
+  const roleCanEdit = configurationEditable();
+  const editable = roleCanEdit && model.revision.status === "DRAFT";
   const disabled = editable ? "" : "disabled";
+  const startEdit = roleCanEdit && !editable ? `<button id="startRoutingEdit" class="button primary" type="button">Start routing edit</button>` : "";
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">PROJECT CONFIGURATION</p><h1>Targets and Routing</h1><p>Build the Draft routing graph through the supported Operator interface. Published Runtime Snapshots remain immutable.</p></div>
-      <div class="toolbar">${pill(model.revision.status, model.revision.status === "DRAFT" ? "warn" : "good")}<button id="refreshConfiguration" class="button" type="button">Refresh</button></div>
+      <div class="toolbar">${pill(model.revision.status, model.revision.status === "DRAFT" ? "warn" : "good")}${startEdit}<button id="refreshConfiguration" class="button" type="button">Refresh</button></div>
     </div>
+    ${roleCanEdit && !editable ? `<div class="message warn">This revision backs a published Runtime Snapshot. Start a routing edit to fork a new Draft and refresh all revision-bound IDs before changing configuration.</div>` : ""}
 
     <div class="grid cards">
       <article class="card">
@@ -93,6 +96,16 @@ async function renderConfiguration() {
     </div>`;
 
   el("refreshConfiguration").addEventListener("click", () => renderConfiguration().catch(configurationError));
+  const startButton = el("startRoutingEdit");
+  if (startButton) {
+    startButton.addEventListener("click", async () => {
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration/draft`, { method: "POST" });
+        await refreshProjectAndConfiguration();
+        setMessage(globalMessage, "New routing Draft created. The published Runtime Snapshot remains unchanged.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  }
   if (!editable) return;
   el("targetForm").addEventListener("submit", async (event) => {
     event.preventDefault();
