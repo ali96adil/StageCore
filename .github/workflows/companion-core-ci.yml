@@ -1,0 +1,53 @@
+name: Companion Core CI
+
+on:
+  pull_request:
+    paths:
+      - "companion/macos/**"
+      - "internal/companionchannel/runtime_macos_acceptance_test.go"
+      - ".github/workflows/companion-core-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "companion/macos/**"
+      - "internal/companionchannel/runtime_macos_acceptance_test.go"
+      - ".github/workflows/companion-core-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    name: Swift CompanionCore
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build macOS Companion package
+        run: swift build --package-path companion/macos
+      - name: Test CompanionCore
+        run: swift test --package-path companion/macos
+
+  macos-acceptance:
+    name: Real macOS Companion replacement
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - name: Swift version
+        run: swift --version
+      - name: Build real macOS Companion executable
+        run: swift build --package-path companion/macos
+      - name: Run real Companion replacement acceptance
+        shell: bash
+        run: |
+          COMPANION_BIN="$(swift build --package-path companion/macos --show-bin-path)/stagecore-companion"
+          test -x "$COMPANION_BIN"
+          STAGECORE_COMPANION_BIN="$COMPANION_BIN" \
+            go test -tags=macos_companion_acceptance ./internal/companionchannel \
+              -run '^TestRealMacOSCompanionReplacementAcceptance$' -count=1 -v

@@ -3,9 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/companion"
+	"github.com/ali96adil/StageCore/internal/companionauth"
+	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
@@ -18,13 +22,15 @@ import (
 )
 
 type App struct {
-	Config        config.Config
-	DB            *db.Handle
-	Store         *store.Store
-	CueEngine     *cueengine.Engine
-	RoutingEngine *routing.Engine
-	OSCPlugin     *pluginhost.Host
-	OSCInput      *oscinputplugin.Host
+	Config           config.Config
+	DB               *db.Handle
+	Store            *store.Store
+	CompanionAuth    *companionauth.Service
+	CompanionRuntime *companionchannel.RuntimeChannel
+	CueEngine        *cueengine.Engine
+	RoutingEngine    *routing.Engine
+	OSCPlugin        *pluginhost.Host
+	OSCInput         *oscinputplugin.Host
 }
 
 func Open(ctx context.Context, cfg config.Config) (*App, error) {
@@ -34,6 +40,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
+	companionAuth := companionauth.New(s, nil)
+	companionRuntime := companionchannel.NewRuntime(s, companionAuth)
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
 		_ = handle.Close()
@@ -58,14 +66,25 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("register OSC capability: %w", err)
 	}
+	if err := registry.RegisterTargetType(
+		companion.MachineRoleLogicalType,
+		companion.NewForwarder(s, companionRuntime, 5*time.Second, nil),
+	); err != nil {
+		companionRuntime.Close()
+		oscHost.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register Companion target dispatch: %w", err)
+	}
 
 	return &App{
-		Config:        cfg,
-		DB:            handle,
-		Store:         s,
-		CueEngine:     cueengine.NewWithExecutor(s, registry),
-		RoutingEngine: routing.New(s, registry),
-		OSCPlugin:     oscHost,
+		Config:           cfg,
+		DB:               handle,
+		Store:            s,
+		CompanionAuth:    companionAuth,
+		CompanionRuntime: companionRuntime,
+		CueEngine:        cueengine.NewWithExecutor(s, registry),
+		RoutingEngine:    routing.New(s, registry),
+		OSCPlugin:        oscHost,
 	}, nil
 }
 
@@ -115,6 +134,9 @@ func (a *App) Close() error {
 	}
 	if a.OSCInput != nil {
 		a.OSCInput.Close()
+	}
+	if a.CompanionRuntime != nil {
+		a.CompanionRuntime.Close()
 	}
 	if a.OSCPlugin != nil {
 		a.OSCPlugin.Close()
