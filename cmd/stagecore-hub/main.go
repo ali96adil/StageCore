@@ -56,6 +56,7 @@ func main() {
 	preflightService := securitypreflight.New(
 		basePreflight,
 		application.Store,
+		application.HubSecurity,
 		application.SecretStore,
 		application.PluginPermissions,
 	)
@@ -91,8 +92,8 @@ func main() {
 		httpapi.WithStorageHealth(application.StorageHealth),
 	)
 	server := &http.Server{
-		Addr: cfg.Listen,
-		Handler: httpapi.AuditDeniedRequests(api.Handler(), userAuth, application.SecurityAudit),
+		Addr:              cfg.Listen,
+		Handler:           httpapi.AuditDeniedRequests(api.Handler(), userAuth, application.SecurityAudit),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
