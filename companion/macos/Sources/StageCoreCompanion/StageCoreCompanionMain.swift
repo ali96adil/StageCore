@@ -40,6 +40,8 @@ enum StageCoreCompanionMain {
         var apiURL: URL?
         var runtimeURL: URL?
         var displayName = ProcessInfo.processInfo.hostName
+        var oscHost: String?
+        var oscPort: Int?
         var index = 0
         while index < arguments.count {
             let value = arguments[index]
@@ -49,6 +51,8 @@ enum StageCoreCompanionMain {
             case "--hub-api": apiURL = URL(string: arguments[index + 1])
             case "--hub-runtime": runtimeURL = URL(string: arguments[index + 1])
             case "--display-name": displayName = arguments[index + 1]
+            case "--osc-host": oscHost = arguments[index + 1]
+            case "--osc-port": oscPort = Int(arguments[index + 1])
             default: throw BootstrapCLIError.invalidArguments
             }
             index += 2
@@ -61,10 +65,24 @@ enum StageCoreCompanionMain {
         guard let apiURL, let runtimeURL, !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw BootstrapCLIError.configurationRequired
         }
+
+        let oscEndpoint: OSCEndpoint?
+        switch (oscHost, oscPort) {
+        case (nil, nil):
+            oscEndpoint = nil
+        case let (.some(host), .some(port)):
+            let endpoint = OSCEndpoint(host: host, port: port)
+            guard endpoint.isValid else { throw BootstrapCLIError.invalidOSCConfiguration }
+            oscEndpoint = endpoint
+        default:
+            throw BootstrapCLIError.invalidOSCConfiguration
+        }
+
         let configuration = CompanionAppConfiguration(
             hubAPIBaseURL: apiURL,
             hubRuntimeURL: runtimeURL,
-            displayName: displayName
+            displayName: displayName,
+            oscEndpoint: oscEndpoint
         )
         try store.save(configuration)
         return configuration
@@ -83,6 +101,8 @@ enum StageCoreCompanionMain {
         case let value as HubSecurityClientError: return String(describing: value)
         case let value as SecureDeviceIdentityError: return String(describing: value)
         case let value as CompanionTransportError: return String(describing: value)
+        case let value as OSCExecutorError: return String(describing: value)
+        case let value as BootstrapCLIError: return String(describing: value)
         default: return "COMPANION_STARTUP_FAILED"
         }
     }
@@ -91,4 +111,5 @@ enum StageCoreCompanionMain {
 private enum BootstrapCLIError: Error {
     case invalidArguments
     case configurationRequired
+    case invalidOSCConfiguration
 }
