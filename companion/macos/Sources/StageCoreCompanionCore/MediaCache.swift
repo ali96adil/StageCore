@@ -13,6 +13,8 @@ public enum MediaCacheError: Error, Equatable {
 }
 
 public actor MediaCacheSynchronizer: CompanionMediaSynchronizer {
+    static let transferChunkBytes: Int64 = 8 * 1024 * 1024
+
     private let apiBaseURL: URL
     private let cacheRoot: URL
     private let securityPolicy: CompanionTransportSecurityPolicy
@@ -99,8 +101,26 @@ public actor MediaCacheSynchronizer: CompanionMediaSynchronizer {
             fileManager.createFile(atPath: partURL.path, contents: nil)
         }
 
-        if offset < item.sizeBytes {
-            try await appendDownload(item, offset: offset, sessionToken: sessionToken, partURL: partURL)
+        while offset < item.sizeBytes {
+            try Task.checkCancellation()
+            let remaining = item.sizeBytes - offset
+            let chunkLength = min(Self.transferChunkBytes, remaining)
+            let end = offset + chunkLength - 1
+            let chunk = try await downloadRange(
+                item,
+                start: offset,
+                end: end,
+                sessionToken: sessionToken
+            )
+            guard Int64(chunk.count) == chunkLength else {
+                throw MediaCacheError.sizeMismatch
+            }
+            let handle = try FileHandle(forWritingTo: partURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: chunk)
+            try handle.synchronize()
+            offset += chunkLength
         }
 
         let attributes = try fileManager.attributesOfItem(atPath: partURL.path)
@@ -128,12 +148,12 @@ public actor MediaCacheSynchronizer: CompanionMediaSynchronizer {
         try fileManager.moveItem(at: partURL, to: finalURL)
     }
 
-    private func appendDownload(
+    private func downloadRange(
         _ item: RequiredMedia,
-        offset: Int64,
-        sessionToken: String,
-        partURL: URL
-    ) async throws {
+        start: Int64,
+        end: Int64,
+        sessionToken: String
+    ) async throws -> Data {
         let objectURL = apiBaseURL
             .appendingPathComponent("api", isDirectory: true)
             .appendingPathComponent("v1", isDirectory: true)
@@ -142,45 +162,20 @@ public actor MediaCacheSynchronizer: CompanionMediaSynchronizer {
             .appendingPathComponent(item.contentHash, isDirectory: false)
         var request = URLRequest(url: objectURL)
         request.setValue("StageCoreSession \(sessionToken)", forHTTPHeaderField: "Authorization")
-        if offset > 0 {
-            request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
-        }
+        request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
 
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw MediaCacheError.invalidResponse
-        }
-        if offset > 0 {
-            guard http.statusCode == 206,
-                  let range = http.value(forHTTPHeaderField: "Content-Range"),
-                  range.hasPrefix("bytes \(offset)-") else {
-                throw MediaCacheError.rangeNotHonored
-            }
-        } else if http.statusCode != 200 {
-            throw MediaCacheError.invalidResponse
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              http.statusCode == 206,
+              let range = http.value(forHTTPHeaderField: "Content-Range"),
+              range.hasPrefix("bytes \(start)-\(end)/") else {
+            throw MediaCacheError.rangeNotHonored
         }
         if let expectedHash = http.value(forHTTPHeaderField: "X-Content-SHA256"),
            expectedHash.lowercased() != item.contentHash.lowercased() {
             throw MediaCacheError.checksumMismatch
         }
-
-        let handle = try FileHandle(forWritingTo: partURL)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        var buffer = Data()
-        buffer.reserveCapacity(64 * 1024)
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            buffer.append(byte)
-            if buffer.count >= 64 * 1024 {
-                try handle.write(contentsOf: buffer)
-                buffer.removeAll(keepingCapacity: true)
-            }
-        }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-        }
-        try handle.synchronize()
+        return data
     }
 
     private func sha256Hex(of url: URL) throws -> String {
