@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -20,6 +21,17 @@ type Vault struct {
 	stagingRoot string
 	objectsRoot string
 	store       *store.Store
+	capacity    *storagehealth.Policy
+}
+
+type Option func(*Vault)
+
+func WithCapacityPolicy(policy *storagehealth.Policy) Option {
+	return func(v *Vault) {
+		if policy != nil {
+			v.capacity = policy
+		}
+	}
 }
 
 type ImportParams struct {
@@ -29,7 +41,7 @@ type ImportParams struct {
 	OriginalFilename string
 }
 
-func Open(root string, s *store.Store) (*Vault, error) {
+func Open(root string, s *store.Store, options ...Option) (*Vault, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, fmt.Errorf("Vault root is required")
@@ -57,7 +69,14 @@ func Open(root string, s *store.Store) (*Vault, error) {
 	if err := os.Remove(probeName); err != nil {
 		return nil, fmt.Errorf("remove Vault write probe: %w", err)
 	}
-	return &Vault{root: root, stagingRoot: staging, objectsRoot: objects, store: s}, nil
+	v := &Vault{
+		root: root, stagingRoot: staging, objectsRoot: objects, store: s,
+		capacity: storagehealth.NewPolicy(0, 0),
+	}
+	for _, option := range options {
+		option(v)
+	}
+	return v, nil
 }
 
 func (v *Vault) Root() string {
@@ -65,6 +84,13 @@ func (v *Vault) Root() string {
 		return ""
 	}
 	return v.root
+}
+
+func (v *Vault) StorageStatus() storagehealth.Status {
+	if v == nil {
+		return storagehealth.Status{State: storagehealth.Unavailable, Reason: "Vault is unavailable"}
+	}
+	return v.capacity.Probe(v.root)
 }
 
 func (v *Vault) ImportManaged(ctx context.Context, p ImportParams, r io.Reader) (store.ManagedMedia, error) {
@@ -92,7 +118,7 @@ func (v *Vault) ImportManaged(ctx context.Context, p ImportParams, r io.Reader) 
 	}()
 
 	hasher := sha256.New()
-	size, err := io.Copy(io.MultiWriter(staged, hasher), r)
+	size, err := v.streamToStaging(staged, hasher, r)
 	if err != nil {
 		return store.ManagedMedia{}, fmt.Errorf("stream managed media into staging: %w", err)
 	}
