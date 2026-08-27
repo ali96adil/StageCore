@@ -123,7 +123,13 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 	}
 
 	connected = true
-	wrong := "00000000-0000-7000-8000-000000000699"
+	wrongManifest := append([]byte("\n"), raw...)
+	wrongDigest := sha256.Sum256(wrongManifest)
+	wrongSnapshot, err := projectStore.CreateRuntimeSnapshot(ctx, revision.ID, "owner", hex.EncodeToString(wrongDigest[:]), wrongManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := wrongSnapshot.ID
 	if _, err := projectStore.UpdateCompanionReport(ctx, companionState.ID, store.CompanionReportParams{
 		DisplayName: "Mac A", Hostname: "mac-a", Platform: "macOS", Architecture: "arm64", Version: "0.1",
 		Capabilities: []string{"osc.send"}, Readiness: domain.CompanionReadinessMismatch,
