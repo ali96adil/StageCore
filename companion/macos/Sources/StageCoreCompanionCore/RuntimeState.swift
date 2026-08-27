@@ -67,4 +67,3 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         return date < authenticatedUntil
     }
 }
-e9761fe78c69840779a2c2fc23224c27c8cea363
