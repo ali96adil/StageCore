@@ -29,7 +29,13 @@ final class CompanionSessionTests: XCTestCase {
             configHash: "cfg-1"
         )
         let readyResponse = try await session.handle(JSONEncoder().encode(ready))
-        XCTAssertNil(readyResponse)
+        let appliedHello = try JSONDecoder().decode(
+            CompanionHello.self,
+            from: try XCTUnwrap(readyResponse)
+        )
+        XCTAssertEqual(appliedHello.machineRoleID, "role-video-main")
+        XCTAssertEqual(appliedHello.appliedRuntimeSnapshotID, "snap-1")
+        XCTAssertEqual(appliedHello.readiness, "READY")
 
         let request = CompanionExecutionRequest(
             executionID: "exec-1",

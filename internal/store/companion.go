@@ -134,7 +134,7 @@ func (s *Store) UpdateCompanionReport(ctx context.Context, companionID string, p
 		SET display_name = ?, hostname = ?, platform = ?, architecture = ?, version = ?,
 		    capabilities_json = ?, last_seen_at_us = ?, readiness = ?,
 		    applied_runtime_snapshot_id = ?, config_hash = ?, updated_at_us = ?
-		WHERE companion_id = ?`,
+		WHERE companion_id = ? AND trust_state <> 'REVOKED'`,
 		strings.TrimSpace(p.DisplayName), strings.TrimSpace(p.Hostname), strings.TrimSpace(p.Platform),
 		strings.TrimSpace(p.Architecture), strings.TrimSpace(p.Version), string(capabilitiesJSON), nowUS,
 		p.Readiness, snapshot, strings.TrimSpace(p.ConfigHash), nowUS, companionID,

@@ -8,17 +8,23 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/companionauth"
+	"github.com/ali96adil/StageCore/internal/companionchannel"
 )
 
 type Server struct {
-	mux           *http.ServeMux
-	companionAuth *companionauth.Service
+	mux              *http.ServeMux
+	companionAuth    *companionauth.Service
+	companionRuntime *companionchannel.RuntimeChannel
 }
 
 type Option func(*Server)
 
 func WithCompanionAuth(service *companionauth.Service) Option {
 	return func(s *Server) { s.companionAuth = service }
+}
+
+func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
+	return func(s *Server) { s.companionRuntime = channel }
 }
 
 func New(options ...Option) *Server {
@@ -35,7 +41,30 @@ func New(options ...Option) *Server {
 	if s.companionAuth != nil {
 		s.registerCompanionSecurityRoutes()
 	}
+	if s.companionAuth != nil && s.companionRuntime != nil {
+		s.mux.HandleFunc("GET /api/v1/companion/runtime", s.handleCompanionRuntime)
+	}
 	return s
+}
+
+func (s *Server) handleCompanionRuntime(w http.ResponseWriter, r *http.Request) {
+	if !secureDeviceRequest(r) {
+		writeJSON(w, http.StatusUpgradeRequired, map[string]any{"error_code": "SECURE_TRANSPORT_REQUIRED"})
+		return
+	}
+	const prefix = "StageCoreSession "
+	authorization := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, prefix) || strings.TrimSpace(strings.TrimPrefix(authorization, prefix)) == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": companionauth.CodeSessionInvalid})
+		return
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
+	session, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token)
+	if err != nil {
+		writeCompanionAuthError(w, err)
+		return
+	}
+	s.companionRuntime.ServeWebSocket(w, r, session, token)
 }
 
 func (s *Server) Handler() http.Handler { return s.mux }

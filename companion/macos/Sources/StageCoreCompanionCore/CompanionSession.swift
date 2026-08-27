@@ -166,7 +166,9 @@ public actor CompanionSession {
             }
             let ready = try decoder.decode(SessionReady.self, from: data)
             state.apply(ready)
-            return nil
+            // Report the applied assignment and Snapshot only after the
+            // Companion has accepted the Hub's authoritative session state.
+            return try helloData()
 
         case .executionRequest:
             let request = try decoder.decode(CompanionExecutionRequest.self, from: data)
