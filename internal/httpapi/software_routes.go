@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/software"
 )
@@ -74,6 +75,31 @@ func (s *Server) handleSoftwareDownload(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
+	content := interface {
+		Read([]byte) (int, error)
+		Seek(int64, int) (int64, error)
+	}(file)
+	jobID := ""
+	if s.bulk != nil {
+		jobID, err = s.bulk.Begin(r.Context(), bulk.KindSoftwareDownload, status.Package.SizeBytes)
+		if errors.Is(err, bulk.ErrShowBlocked) {
+			writeJSON(w, http.StatusLocked, map[string]any{"error_code": "BULK_TRANSFER_BLOCKED_SHOW"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "BULK_TRANSFER_UNAVAILABLE"})
+			return
+		}
+		content = bulk.NewGuardedReadSeeker(r.Context(), s.bulk, jobID, file)
+		defer func() {
+			if r.Context().Err() != nil {
+				s.bulk.Cancel(jobID, r.Context().Err().Error())
+				return
+			}
+			s.bulk.Complete(jobID)
+		}()
+	}
+
 	name := filepath.Base(strings.TrimSpace(status.Package.OriginalFilename))
 	if name == "." || name == "" {
 		name = status.Package.ProductID + "-" + status.Package.Version
@@ -84,7 +110,7 @@ func (s *Server) handleSoftwareDownload(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("ETag", `"sha256:`+status.Package.ContentHash+`"`)
 	w.Header().Set("X-Content-SHA256", status.Package.ContentHash)
 	w.Header().Set("X-Content-Length", int64String(status.Package.SizeBytes))
-	http.ServeContent(w, r, name, status.Package.CreatedAt, file)
+	http.ServeContent(w, r, name, status.Package.CreatedAt, content)
 }
 
 type softwareSetupRow struct {
