@@ -14,6 +14,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /", serveOperatorAsset("index.html", "text/html; charset=utf-8", true))
 		s.mux.HandleFunc("GET /app.css", serveOperatorAsset("app.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /app.js", serveOperatorAsset("app.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /preflight.js", serveOperatorAsset("preflight.js", "application/javascript; charset=utf-8", false))
 	}
 }
 
