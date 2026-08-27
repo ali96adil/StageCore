@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/httpapi"
+	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -41,10 +42,12 @@ func main() {
 		logger.Error("browser authentication startup failed", "error", err)
 		os.Exit(1)
 	}
+	publisher := publish.New(application.Store, application.Capabilities)
 
 	api := httpapi.New(
 		httpapi.WithUserAuth(userAuth, application.HubSecurity),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
