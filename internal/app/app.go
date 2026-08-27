@@ -16,10 +16,16 @@ import (
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/httpaction"
+	"github.com/ali96adil/StageCore/internal/hubsecurity"
 	"github.com/ali96adil/StageCore/internal/oscinputplugin"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
+	"github.com/ali96adil/StageCore/internal/pluginpermissions"
 	"github.com/ali96adil/StageCore/internal/routing"
+	"github.com/ali96adil/StageCore/internal/scriptaction"
+	"github.com/ali96adil/StageCore/internal/secretstore"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
@@ -28,20 +34,25 @@ import (
 )
 
 type App struct {
-	Config           config.Config
-	DB               *db.Handle
-	Store            *store.Store
-	Vault            *vault.Vault
-	Software         *software.Repository
-	Bulk             *bulk.Manager
-	StorageHealth    *storagehealth.Monitor
-	Backup           *backup.Service
-	CompanionAuth    *companionauth.Service
-	CompanionRuntime *companionchannel.RuntimeChannel
-	CueEngine        *cueengine.Engine
-	RoutingEngine    *routing.Engine
-	OSCPlugin        *pluginhost.Host
-	OSCInput         *oscinputplugin.Host
+	Config            config.Config
+	DB                *db.Handle
+	Store             *store.Store
+	HubSecurity       *hubsecurity.Service
+	SecretStore       *secretstore.Service
+	SecurityAudit     *securityaudit.Service
+	PluginPermissions *pluginpermissions.Service
+	Capabilities      *capability.Registry
+	Vault             *vault.Vault
+	Software          *software.Repository
+	Bulk              *bulk.Manager
+	StorageHealth     *storagehealth.Monitor
+	Backup            *backup.Service
+	CompanionAuth     *companionauth.Service
+	CompanionRuntime  *companionchannel.RuntimeChannel
+	CueEngine         *cueengine.Engine
+	RoutingEngine     *routing.Engine
+	OSCPlugin         *pluginhost.Host
+	OSCInput          *oscinputplugin.Host
 }
 
 func Open(ctx context.Context, cfg config.Config) (*App, error) {
@@ -50,7 +61,32 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("open StageCore database: %w", err)
 	}
 
+	hubSecurity, err := hubsecurity.Open(ctx, handle.DB, cfg.DataRoot)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Hub security identity: %w", err)
+	}
+	secrets, err := secretstore.Open(ctx, handle.DB, cfg.DataRoot)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Secret Store: %w", err)
+	}
+	audit, err := securityaudit.New(handle.DB, secrets)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open security audit: %w", err)
+	}
+	pluginGrants, err := pluginpermissions.New(handle.DB)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open plugin permissions: %w", err)
+	}
+
 	s := store.New(handle.DB, clock.Real{})
+	if _, err := s.ReconcileInterruptedRuntime(ctx); err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("reconcile interrupted runtime: %w", err)
+	}
 	capacityPolicy := storagehealth.NewPolicy(cfg.RuntimeReserveBytes, cfg.StorageWarningPercent)
 	vaultService, err := vault.Open(cfg.VaultRoot, s, vault.WithCapacityPolicy(capacityPolicy))
 	if err != nil {
@@ -89,7 +125,23 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("register simulator capability: %w", err)
 	}
+	if err := registry.Register(httpaction.CapabilityKey, httpaction.NewWithSecretResolver(secrets)); err != nil {
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register HTTP capability: %w", err)
+	}
+	if err := registry.Register(scriptaction.CapabilityKey, scriptaction.New()); err != nil {
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register Script capability: %w", err)
+	}
 
+	grantedPermissions, err := pluginGrants.Granted(ctx, oscplugin.PluginID)
+	if err != nil {
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("load OSC plugin permissions: %w", err)
+	}
 	oscHost := pluginhost.New(
 		cfg.OSCPluginPath,
 		nil,
@@ -100,10 +152,11 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 			CapabilityPermissions: map[string][]string{
 				oscplugin.CapabilityOSCSend: {oscplugin.PermissionUDPSend},
 			},
-			GrantedPermissions: []string{oscplugin.PermissionUDPSend},
+			GrantedPermissions: grantedPermissions,
 		},
 	)
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(oscHost)); err != nil {
+		companionRuntime.Close()
 		oscHost.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register OSC capability: %w", err)
@@ -119,7 +172,9 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, Vault: vaultService, Software: softwareRepository,
+		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity, SecretStore: secrets,
+		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
+		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
 		CueEngine: cueengine.NewWithExecutor(s, registry), RoutingEngine: routing.New(s, registry),
@@ -127,9 +182,21 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}, nil
 }
 
-// StartOSCInput starts the receive mode of the external stagecore.osc Plugin.
-// M3 intentionally permits loopback listeners only; non-loopback Stage LAN
-// input remains blocked until the SEC0-SEC2 authentication/transport gate.
+// RefreshPluginPermissions applies persisted first-party permission grants to
+// the live execution host. Revocation therefore affects new executions without
+// changing Project/Snapshot configuration.
+func (a *App) RefreshPluginPermissions(ctx context.Context) error {
+	if a == nil || a.PluginPermissions == nil || a.OSCPlugin == nil {
+		return fmt.Errorf("plugin permission runtime is unavailable")
+	}
+	permissions, err := a.PluginPermissions.Granted(ctx, oscplugin.PluginID)
+	if err != nil {
+		return err
+	}
+	a.OSCPlugin.SetGrantedPermissions(permissions)
+	return nil
+}
+
 func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string) (string, error) {
 	if a == nil || a.RoutingEngine == nil {
 		return "", fmt.Errorf("StageCore routing is unavailable")
@@ -137,6 +204,10 @@ func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string
 	if a.OSCInput != nil {
 		a.OSCInput.Close()
 		a.OSCInput = nil
+	}
+	permissions, err := a.PluginPermissions.Granted(ctx, oscplugin.PluginID)
+	if err != nil {
+		return "", fmt.Errorf("load OSC input permissions: %w", err)
 	}
 	host := oscinputplugin.New(
 		a.Config.OSCPluginPath,
@@ -147,7 +218,7 @@ func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string
 			InputPermissions: map[string][]string{
 				oscplugin.InputOSCReceive: {oscplugin.PermissionUDPListen},
 			},
-			GrantedPermissions: []string{oscplugin.PermissionUDPListen},
+			GrantedPermissions: permissions,
 		},
 		a.RoutingEngine,
 		sessionID,

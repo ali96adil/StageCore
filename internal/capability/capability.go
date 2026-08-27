@@ -92,6 +92,28 @@ func (r *Registry) RegisterTargetType(logicalType string, executor Executor) err
 	return nil
 }
 
+// Supports reports whether the runtime has an execution boundary for the
+// capability/target combination. A logical target dispatcher (for example a
+// Machine Role forwarded to a Companion) takes precedence in the same way as
+// Execute. This is intentionally a structural availability check; live
+// endpoint readiness remains a Preflight concern.
+func (r *Registry) Supports(capabilityKey, logicalType string) bool {
+	if r == nil {
+		return false
+	}
+	capabilityKey = strings.TrimSpace(capabilityKey)
+	if capabilityKey == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, ok := r.targetExecutors[normalizeLogicalType(logicalType)]; ok {
+		return true
+	}
+	_, ok := r.executors[capabilityKey]
+	return ok
+}
+
 func (r *Registry) Execute(ctx context.Context, req Request) Result {
 	r.mu.RLock()
 	var executor Executor

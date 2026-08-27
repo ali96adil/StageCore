@@ -104,6 +104,9 @@ public actor CompanionBootstrap {
         if let endpoint = configuration.oscEndpoint {
             executors.append(try OSCSendExecutor(endpoint: endpoint))
         }
+        #if os(macOS)
+        executors.append(try MIDISendExecutor())
+        #endif
         let capabilities = executors.map(\.capabilityKey).sorted()
 
         let report = CompanionReportIdentity(
