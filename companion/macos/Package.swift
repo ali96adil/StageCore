@@ -11,9 +11,22 @@ let package = Package(
             name: "StageCoreCompanionCore",
             targets: ["StageCoreCompanionCore"]
         ),
+        .executable(
+            name: "stagecore-companion",
+            targets: ["StageCoreCompanion"]
+        ),
     ],
     targets: [
-        .target(name: "StageCoreCompanionCore"),
+        .target(
+            name: "StageCoreCompanionCore",
+            linkerSettings: [
+                .linkedFramework("Security", .when(platforms: [.macOS])),
+            ]
+        ),
+        .executableTarget(
+            name: "StageCoreCompanion",
+            dependencies: ["StageCoreCompanionCore"]
+        ),
         .testTarget(
             name: "StageCoreCompanionCoreTests",
             dependencies: ["StageCoreCompanionCore"]

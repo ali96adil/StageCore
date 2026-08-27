@@ -9,11 +9,13 @@ Current M4.2 boundary:
 - A reconnect never authorizes replay of a prior execution.
 - The Companion rejects stale Runtime Snapshot, wrong Machine Role and unsupported capability requests before local execution.
 - `companion_id` uses canonical UUID text to match Hub persistence.
+- `stagecore-companion` is the headless SwiftPM executable bootstrap. It loads non-secret Hub URLs/display settings, obtains the Keychain device identity, completes pairing/authentication and starts the existing WebSocket agent lifecycle.
 
 Security boundary:
 
-- This package does **not** persist private credentials in a normal file.
-- Production identity keys/credentials must use macOS Keychain or another Security-Model-approved protected store.
-- Unauthenticated Stage LAN WebSocket exposure is not enabled by this package. Product transport must use authenticated `wss://`; loopback `ws://` remains test-only until the security pairing baseline is implemented.
+- The production P-256 private device key and stable `companion_id` are created/recovered through macOS Keychain/Security APIs. The private key is non-exported by StageCore.
+- Normal Companion configuration contains only non-secret Hub URLs, display name, version and config identity.
+- Pairing is an explicit, expiring request approved through the Hub-local `stagecore-pairing` boundary. Reconnect uses a signed challenge and a short-lived in-memory runtime session credential.
+- Product transport requires authenticated `wss://`/`https://`; insecure transport is limited to explicit loopback tests.
 
-The SwiftUI app shell, Keychain implementation, real WebSocket agent transport and macOS-local capability adapters are subsequent M4.2 slices.
+There is no polished SwiftUI/status window in this slice. Hub identity pinning UI, background launch packaging, real OSC/local adapters, media sync, signing and notarization remain later M4.2 work.

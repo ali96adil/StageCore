@@ -23,5 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
+      - name: Build macOS Companion package
+        run: swift build --package-path companion/macos
       - name: Test CompanionCore
         run: swift test --package-path companion/macos
