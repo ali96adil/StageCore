@@ -6,19 +6,22 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
     public var displayName: String
     public var agentVersion: String
     public var configHash: String
+    public var oscEndpoint: OSCEndpoint?
 
     public init(
         hubAPIBaseURL: URL,
         hubRuntimeURL: URL,
         displayName: String,
         agentVersion: String = "0.1.0",
-        configHash: String = ""
+        configHash: String = "",
+        oscEndpoint: OSCEndpoint? = nil
     ) {
         self.hubAPIBaseURL = hubAPIBaseURL
         self.hubRuntimeURL = hubRuntimeURL
         self.displayName = displayName
         self.agentVersion = agentVersion
         self.configHash = configHash
+        self.oscEndpoint = oscEndpoint
     }
 }
 
@@ -93,13 +96,20 @@ public actor CompanionBootstrap {
     ) throws {
         self.configuration = configuration
         self.identity = try identityStore.loadOrCreateIdentity()
+
+        var executors: [any CompanionCapabilityExecutor] = [LocalEchoExecutor()]
+        if let endpoint = configuration.oscEndpoint {
+            executors.append(try OSCSendExecutor(endpoint: endpoint))
+        }
+        let capabilities = executors.map(\.capabilityKey).sorted()
+
         let report = CompanionReportIdentity(
             displayName: configuration.displayName,
             hostname: hostname,
             platform: platform,
             architecture: architecture,
             version: configuration.agentVersion,
-            capabilities: [LocalEchoExecutor().capabilityKey]
+            capabilities: capabilities
         )
         self.report = report
         let securityClient = try HubSecurityClient(
@@ -121,7 +131,7 @@ public actor CompanionBootstrap {
                 readiness: .unknown,
                 requiresAuthenticatedSession: true
             ),
-            executors: [LocalEchoExecutor()]
+            executors: executors
         )
         self.companionSession = companionSession
         self.runtimeAgent = try WebSocketCompanionAgent(
