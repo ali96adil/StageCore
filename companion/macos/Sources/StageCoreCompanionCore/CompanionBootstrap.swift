@@ -7,6 +7,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
     public var agentVersion: String
     public var configHash: String
     public var oscEndpoint: OSCEndpoint?
+    public var mediaCacheRoot: URL?
 
     public init(
         hubAPIBaseURL: URL,
@@ -14,7 +15,8 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         displayName: String,
         agentVersion: String = "0.1.0",
         configHash: String = "",
-        oscEndpoint: OSCEndpoint? = nil
+        oscEndpoint: OSCEndpoint? = nil,
+        mediaCacheRoot: URL? = nil
     ) {
         self.hubAPIBaseURL = hubAPIBaseURL
         self.hubRuntimeURL = hubRuntimeURL
@@ -22,6 +24,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         self.agentVersion = agentVersion
         self.configHash = configHash
         self.oscEndpoint = oscEndpoint
+        self.mediaCacheRoot = mediaCacheRoot
     }
 }
 
@@ -119,6 +122,22 @@ public actor CompanionBootstrap {
             report: report
         )
         self.securityClient = securityClient
+
+        let mediaSynchronizer: (any CompanionMediaSynchronizer)?
+        #if os(macOS)
+        let cacheRoot = configuration.mediaCacheRoot ?? FileManager.default.urls(
+            for: .cachesDirectory,
+            in: .userDomainMask
+        ).first!.appendingPathComponent("StageCore/media", isDirectory: true)
+        mediaSynchronizer = try MediaCacheSynchronizer(
+            apiBaseURL: configuration.hubAPIBaseURL,
+            cacheRoot: cacheRoot,
+            securityPolicy: securityPolicy
+        )
+        #else
+        mediaSynchronizer = nil
+        #endif
+
         let companionSession = CompanionSession(
             configuration: CompanionSessionConfiguration(
                 companionID: identity.companionID,
@@ -131,7 +150,8 @@ public actor CompanionBootstrap {
                 readiness: .unknown,
                 requiresAuthenticatedSession: true
             ),
-            executors: executors
+            executors: executors,
+            mediaSynchronizer: mediaSynchronizer
         )
         self.companionSession = companionSession
         self.runtimeAgent = try WebSocketCompanionAgent(
