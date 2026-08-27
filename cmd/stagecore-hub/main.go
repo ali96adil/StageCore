@@ -44,6 +44,7 @@ func main() {
 
 	api := httpapi.New(
 		httpapi.WithUserAuth(userAuth, application.HubSecurity),
+		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
