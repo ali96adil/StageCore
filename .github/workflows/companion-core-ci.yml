@@ -32,7 +32,7 @@ jobs:
 
   macos-acceptance:
     name: Real macOS Companion replacement
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
