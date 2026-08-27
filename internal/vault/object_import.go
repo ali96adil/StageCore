@@ -37,7 +37,7 @@ func (v *Vault) ImportObject(ctx context.Context, r io.Reader) (store.VaultObjec
 	}()
 
 	hasher := sha256.New()
-	size, err := io.Copy(io.MultiWriter(staged, hasher), r)
+	size, err := v.streamToStaging(staged, hasher, r)
 	if err != nil {
 		return store.VaultObject{}, fmt.Errorf("stream object into Vault staging: %w", err)
 	}
