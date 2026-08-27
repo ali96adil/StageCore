@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
+	"github.com/ali96adil/StageCore/internal/software"
 	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
@@ -17,6 +18,7 @@ type Server struct {
 	companionAuth    *companionauth.Service
 	companionRuntime *companionchannel.RuntimeChannel
 	vault            *stagevault.Vault
+	software         *software.Repository
 }
 
 type Option func(*Server)
@@ -31,6 +33,10 @@ func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
 
 func WithVault(v *stagevault.Vault) Option {
 	return func(s *Server) { s.vault = v }
+}
+
+func WithSoftwareRepository(repository *software.Repository) Option {
+	return func(s *Server) { s.software = repository }
 }
 
 func New(options ...Option) *Server {
@@ -52,6 +58,11 @@ func New(options ...Option) *Server {
 	}
 	if s.companionAuth != nil && s.vault != nil {
 		s.mux.HandleFunc("GET /api/v1/vault/objects/{content_hash}", s.handleVaultObject)
+	}
+	if s.software != nil {
+		s.mux.HandleFunc("GET /downloads/setup", s.handleSoftwareSetup)
+		s.mux.HandleFunc("GET /api/v1/software/packages", s.handleSoftwarePackages)
+		s.mux.HandleFunc("GET /downloads/software/{package_id}", s.handleSoftwareDownload)
 	}
 	return s
 }
@@ -107,9 +118,9 @@ type authChallengeBody struct {
 }
 
 type authSessionBody struct {
-	CompanionID     string `json:"companion_id"`
-	ChallengeID    string `json:"challenge_id"`
-	SignatureBase64 string `json:"signature_base64"`
+	CompanionID      string `json:"companion_id"`
+	ChallengeID      string `json:"challenge_id"`
+	SignatureBase64  string `json:"signature_base64"`
 }
 
 func (s *Server) registerCompanionSecurityRoutes() {
