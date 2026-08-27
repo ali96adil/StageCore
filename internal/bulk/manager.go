@@ -26,6 +26,7 @@ const (
 	KindSoftwareDownload Kind = "SOFTWARE_DOWNLOAD"
 	KindPluginOperation  Kind = "PLUGIN_OPERATION"
 	KindBackup           Kind = "BACKUP"
+	KindRestore          Kind = "RESTORE"
 	KindArchive          Kind = "ARCHIVE"
 	KindGarbageCollect   Kind = "GARBAGE_COLLECTION"
 	KindIntegrityScan    Kind = "INTEGRITY_SCAN"
@@ -188,7 +189,7 @@ func allowed(mode Mode, kind Kind) bool {
 	case ModeShow:
 		return false
 	case ModeRehearsal:
-		return kind != KindBackup && kind != KindArchive && kind != KindGarbageCollect && kind != KindIntegrityScan
+		return kind != KindBackup && kind != KindRestore && kind != KindArchive && kind != KindGarbageCollect && kind != KindIntegrityScan
 	default:
 		return true
 	}
