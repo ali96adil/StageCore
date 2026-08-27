@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -27,16 +28,20 @@ type loginRequest struct {
 // WithUserAuth adds the authenticated local browser/API surface without
 // changing Companion/device authentication. Browser credentials are accepted
 // over TLS or explicit loopback development transport only.
-func WithUserAuth(service *userauth.Service, hub *hubsecurity.Service) Option {
+func WithUserAuth(service *userauth.Service, hub *hubsecurity.Service, audits ...*securityaudit.Service) Option {
 	return func(s *Server) {
 		if service == nil || hub == nil {
 			return
 		}
-		registerUserAuthRoutes(s.mux, service, hub)
+		var audit *securityaudit.Service
+		if len(audits) > 0 {
+			audit = audits[0]
+		}
+		registerUserAuthRoutes(s.mux, service, hub, audit)
 	}
 }
 
-func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *hubsecurity.Service) {
+func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *hubsecurity.Service, audit *securityaudit.Service) {
 	mux.HandleFunc("GET /api/v1/auth/status", func(w http.ResponseWriter, r *http.Request) {
 		if !secureBrowserRequest(w, r) {
 			return
@@ -62,18 +67,33 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		credential, err := service.Login(r.Context(), body.Username, body.Password, loginRemoteKey(r))
+		remoteKey := loginRemoteKey(r)
+		credential, err := service.Login(r.Context(), body.Username, body.Password, remoteKey)
 		if err != nil {
+			result := securityaudit.ResultRejected
+			reason := "INVALID_CREDENTIALS"
+			status := http.StatusUnauthorized
 			switch {
 			case errors.Is(err, userauth.ErrLoginRateLimited):
-				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error_code": "LOGIN_RATE_LIMITED"})
+				status = http.StatusTooManyRequests
+				reason = "LOGIN_RATE_LIMITED"
 			case errors.Is(err, userauth.ErrInvalidCredentials):
-				writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "INVALID_CREDENTIALS"})
 			default:
-				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "AUTH_UNAVAILABLE"})
+				status = http.StatusServiceUnavailable
+				reason = "AUTH_UNAVAILABLE"
+				result = securityaudit.ResultFailed
 			}
+			appendAudit(r, audit, securityaudit.Event{
+				EventType: "auth.login", ActorUsername: strings.TrimSpace(body.Username), Source: remoteKey,
+				ResourceType: "browser_session", Result: result, Reason: reason,
+			})
+			writeJSON(w, status, map[string]any{"error_code": reason})
 			return
 		}
+		appendAudit(r, audit, securityaudit.Event{
+			EventType: "auth.login", ActorUserID: credential.Session.User.ID, ActorUsername: credential.Session.User.Username,
+			Source: remoteKey, ResourceType: "browser_session", ResourceID: credential.Session.ID, Result: securityaudit.ResultSuccess,
+		})
 		setBrowserSessionCookie(w, r, credential.Token, credential.Session.ExpiresAt)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"user": credential.Session.User,
@@ -90,18 +110,57 @@ func registerUserAuthRoutes(mux *http.ServeMux, service *userauth.Service, hub *
 	}))
 
 	mux.HandleFunc("POST /api/v1/auth/logout", withAuthenticatedSession(service, true, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
-		_ = session
 		if err := service.Logout(r.Context(), token); err != nil && !errors.Is(err, userauth.ErrSessionInvalid) {
+			appendAudit(r, audit, securityaudit.Event{
+				EventType: "auth.logout", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
+				Source: loginRemoteKey(r), ResourceType: "browser_session", ResourceID: session.ID,
+				Result: securityaudit.ResultFailed, Reason: "AUTH_UNAVAILABLE",
+			})
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "AUTH_UNAVAILABLE"})
 			return
 		}
+		appendAudit(r, audit, securityaudit.Event{
+			EventType: "auth.logout", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
+			Source: loginRemoteKey(r), ResourceType: "browser_session", ResourceID: session.ID, Result: securityaudit.ResultSuccess,
+		})
 		clearBrowserSessionCookie(w, r)
 		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.HandleFunc("POST /api/v1/auth/renew", withAuthenticatedSession(service, true, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
+		credential, err := service.Renew(r.Context(), token)
+		if err != nil {
+			appendAudit(r, audit, securityaudit.Event{
+				EventType: "auth.session.renew", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
+				Source: loginRemoteKey(r), ResourceType: "browser_session", ResourceID: session.ID,
+				Result: securityaudit.ResultFailed, Reason: "SESSION_RENEWAL_FAILED",
+			})
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+			return
+		}
+		appendAudit(r, audit, securityaudit.Event{
+			EventType: "auth.session.renew", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
+			Source: loginRemoteKey(r), ResourceType: "browser_session", ResourceID: credential.Session.ID,
+			Result: securityaudit.ResultSuccess, Metadata: map[string]any{"replaced_session_id": session.ID},
+		})
+		setBrowserSessionCookie(w, r, credential.Token, credential.Session.ExpiresAt)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user": credential.Session.User,
+			"expires_at": credential.Session.ExpiresAt.Format(time.RFC3339Nano),
+			"csrf_token": credential.CSRFToken,
+		})
 	}))
 
 	mux.HandleFunc("GET /api/v1/events", withPermission(service, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		serveAuthenticatedSSE(w, r, service, hub, session)
 	}))
+}
+
+func appendAudit(r *http.Request, audit *securityaudit.Service, event securityaudit.Event) {
+	if audit == nil {
+		return
+	}
+	_, _ = audit.Append(r.Context(), event)
 }
 
 type sessionHandler func(http.ResponseWriter, *http.Request, userauth.Session)
