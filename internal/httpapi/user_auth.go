@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -199,12 +200,11 @@ func clearBrowserSessionCookie(w http.ResponseWriter, r *http.Request) {
 }
 
 func loginRemoteKey(r *http.Request) string {
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		// StageCore does not trust arbitrary forwarding as identity; this value is
-		// only an additional throttle bucket. The direct peer remains included.
-		return r.RemoteAddr + "|" + forwarded
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		return host
 	}
-	return r.RemoteAddr
+	return remote
 }
 
 func isUnsafeMethod(method string) bool {
