@@ -11,21 +11,29 @@ enum StageCoreCompanionMain {
     static func main() async {
         do {
             let configuration = try loadConfiguration(arguments: Array(CommandLine.arguments.dropFirst()))
+            let environment = ProcessInfo.processInfo.environment
+            let securityPolicy: CompanionTransportSecurityPolicy =
+                environment["STAGECORE_COMPANION_ALLOW_INSECURE_LOOPBACK_FOR_TESTING"] == "1"
+                ? .allowInsecureLoopbackForTesting
+                : .production
+            let identityService = environment["STAGECORE_COMPANION_IDENTITY_SERVICE"]
+                ?? "com.stagecore.companion.identity"
             let bootstrap = try CompanionBootstrap(
                 configuration: configuration,
-                identityStore: KeychainDeviceIdentityStore()
+                identityStore: KeychainDeviceIdentityStore(service: identityService),
+                securityPolicy: securityPolicy
             )
             let initial = await bootstrap.status()
-            print("StageCore Companion \(initial.companionID) starting as \(initial.displayName)")
+            emit("StageCore Companion \(initial.companionID) starting as \(initial.displayName)")
             try await bootstrap.run { event in
                 switch event {
                 case .pairingRequired(let receipt):
                     // This is an explicit setup surface, not a normal runtime log.
-                    print("Pairing request: \(receipt.requestID)")
-                    print("Pairing code: \(receipt.pairingCode)")
-                    print("Approve it locally on the Hub before \(receipt.expiresAt.ISO8601Format())")
+                    emit("Pairing request: \(receipt.requestID)")
+                    emit("Pairing code: \(receipt.pairingCode)")
+                    emit("Approve it locally on the Hub before \(receipt.expiresAt.ISO8601Format())")
                 case .phaseChanged(let phase):
-                    print("Companion state: \(phase.rawValue)")
+                    emit("Companion state: \(phase.rawValue)")
                 }
             }
         } catch {
@@ -33,6 +41,10 @@ enum StageCoreCompanionMain {
             try? FileHandle.standardError.write(contentsOf: message)
             exit(1)
         }
+    }
+
+    private static func emit(_ line: String) {
+        try? FileHandle.standardOutput.write(contentsOf: Data((line + "\n").utf8))
     }
 
     private static func loadConfiguration(arguments: [String]) throws -> CompanionAppConfiguration {
