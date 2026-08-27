@@ -69,6 +69,7 @@ func main() {
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
+		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
