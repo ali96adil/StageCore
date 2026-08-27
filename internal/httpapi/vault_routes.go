@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -34,12 +35,37 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	content := interface {
+		Read([]byte) (int, error)
+		Seek(int64, int) (int64, error)
+	}(file)
+	jobID := ""
+	if s.bulk != nil {
+		jobID, err = s.bulk.Begin(r.Context(), bulk.KindMediaSync, object.SizeBytes)
+		if errors.Is(err, bulk.ErrShowBlocked) {
+			writeJSON(w, http.StatusLocked, map[string]any{"error_code": "BULK_TRANSFER_BLOCKED_SHOW"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "BULK_TRANSFER_UNAVAILABLE"})
+			return
+		}
+		content = bulk.NewGuardedReadSeeker(r.Context(), s.bulk, jobID, file)
+		defer func() {
+			if r.Context().Err() != nil {
+				s.bulk.Cancel(jobID, r.Context().Err().Error())
+				return
+			}
+			s.bulk.Complete(jobID)
+		}()
+	}
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", `"sha256:`+object.ContentHash+`"`)
 	w.Header().Set("X-Content-SHA256", object.ContentHash)
 	w.Header().Set("X-Content-Length", int64String(object.SizeBytes))
-	http.ServeContent(w, r, object.ContentHash, object.CreatedAt, file)
+	http.ServeContent(w, r, object.ContentHash, object.CreatedAt, content)
 }
 
 func (s *Server) requireRuntimeSession(w http.ResponseWriter, r *http.Request) bool {
