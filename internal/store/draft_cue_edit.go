@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +26,7 @@ func (s *Store) GetCue(ctx context.Context, cueID string) (domain.Cue, error) {
 		&cue.ID, &cue.RevisionID, &cue.DisplayLabel, &cue.Name, &cue.OrderIndex,
 		&cue.CueType, &cue.Criticality, &enabled, &policy, &cue.NotesSummary,
 	)
-	if errors.Is(err, domain.ErrNotFound) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Cue{}, domain.ErrNotFound
 	}
 	if err != nil {
