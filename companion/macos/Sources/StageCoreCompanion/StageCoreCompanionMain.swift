@@ -29,7 +29,8 @@ enum StageCoreCompanionMain {
                 }
             }
         } catch {
-            fputs("StageCore Companion stopped: \(safeErrorCode(error))\n", stderr)
+            let message = Data("StageCore Companion stopped: \(safeErrorCode(error))\n".utf8)
+            try? FileHandle.standardError.write(contentsOf: message)
             exit(1)
         }
     }
