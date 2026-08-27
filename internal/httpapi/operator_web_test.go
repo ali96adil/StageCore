@@ -24,8 +24,11 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		!strings.Contains(rootRes.Body.String(), `href="/app.css"`) ||
 		!strings.Contains(rootRes.Body.String(), `src="/app.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `src="/preflight.js"`) ||
-		!strings.Contains(rootRes.Body.String(), `data-page="preflight"`) {
-		t.Fatalf("operator root does not reference embedded local assets and Preflight navigation")
+		!strings.Contains(rootRes.Body.String(), `src="/memory.js"`) ||
+		!strings.Contains(rootRes.Body.String(), `data-page="preflight"`) ||
+		!strings.Contains(rootRes.Body.String(), `data-page="sessions"`) ||
+		!strings.Contains(rootRes.Body.String(), `data-page="notes"`) {
+		t.Fatalf("operator root does not reference embedded local Operator navigation")
 	}
 	if strings.Contains(rootRes.Body.String(), "http://") || strings.Contains(rootRes.Body.String(), "https://") {
 		t.Fatal("operator root must not depend on remote web assets")
@@ -59,8 +62,19 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatal("embedded Preflight client is missing authoritative readiness flow")
 	}
 
+	memoryReq := httptest.NewRequest(http.MethodGet, "/memory.js", nil)
+	memoryReq.RemoteAddr = "127.0.0.1:17004"
+	memoryRes := httptest.NewRecorder()
+	handler.ServeHTTP(memoryRes, memoryReq)
+	if memoryRes.Code != http.StatusOK || !strings.HasPrefix(memoryRes.Header().Get("Content-Type"), "application/javascript") {
+		t.Fatalf("memory.js status=%d content-type=%q", memoryRes.Code, memoryRes.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(memoryRes.Body.String(), "/sessions") || !strings.Contains(memoryRes.Body.String(), "/notes") || !strings.Contains(memoryRes.Body.String(), "execution trace") {
+		t.Fatal("embedded Session Memory client is missing structured session and note flows")
+	}
+
 	cssReq := httptest.NewRequest(http.MethodGet, "/app.css", nil)
-	cssReq.RemoteAddr = "127.0.0.1:17004"
+	cssReq.RemoteAddr = "127.0.0.1:17005"
 	cssRes := httptest.NewRecorder()
 	handler.ServeHTTP(cssRes, cssReq)
 	if cssRes.Code != http.StatusOK || !strings.HasPrefix(cssRes.Header().Get("Content-Type"), "text/css") {
@@ -68,7 +82,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	}
 
 	lanReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	lanReq.RemoteAddr = "10.20.30.40:17005"
+	lanReq.RemoteAddr = "10.20.30.40:17006"
 	lanRes := httptest.NewRecorder()
 	handler.ServeHTTP(lanRes, lanReq)
 	if lanRes.Code != http.StatusUpgradeRequired || !strings.Contains(lanRes.Body.String(), "SECURE_TRANSPORT_REQUIRED") {
@@ -76,7 +90,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	}
 
 	missingReq := httptest.NewRequest(http.MethodGet, "/not-a-stagecore-route", nil)
-	missingReq.RemoteAddr = "127.0.0.1:17006"
+	missingReq.RemoteAddr = "127.0.0.1:17007"
 	missingRes := httptest.NewRecorder()
 	handler.ServeHTTP(missingRes, missingReq)
 	if missingRes.Code != http.StatusNotFound {
