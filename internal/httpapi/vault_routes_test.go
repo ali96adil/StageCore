@@ -80,7 +80,7 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	}
 }
 
-func pairedRuntimeCredential(t *testing.T, ctx context.Context, auth *companionauth.Service) companionauth.RuntimeCredential {
+func pairedRuntimeCredential(t *testing.T, ctx context.Context, auth *companionauth.Service) companionauth.RuntimeSessionCredential {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
