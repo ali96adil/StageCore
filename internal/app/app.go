@@ -19,12 +19,14 @@ import (
 	"github.com/ali96adil/StageCore/internal/routing"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/vault"
 )
 
 type App struct {
 	Config           config.Config
 	DB               *db.Handle
 	Store            *store.Store
+	Vault            *vault.Vault
 	CompanionAuth    *companionauth.Service
 	CompanionRuntime *companionchannel.RuntimeChannel
 	CueEngine        *cueengine.Engine
@@ -40,6 +42,11 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
+	vaultService, err := vault.Open(cfg.VaultRoot, s)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open StageCore Vault: %w", err)
+	}
 	companionAuth := companionauth.New(s, nil)
 	companionRuntime := companionchannel.NewRuntime(s, companionAuth)
 	registry := capability.NewRegistry()
@@ -80,6 +87,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Config:           cfg,
 		DB:               handle,
 		Store:            s,
+		Vault:            vaultService,
 		CompanionAuth:    companionAuth,
 		CompanionRuntime: companionRuntime,
 		CueEngine:        cueengine.NewWithExecutor(s, registry),
