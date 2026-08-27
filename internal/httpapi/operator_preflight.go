@@ -1,13 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-func WithOperatorPreflight(auth *userauth.Service, service *preflight.Service) Option {
+type PreflightEvaluator interface {
+	Evaluate(context.Context, string, string) (preflight.Report, error)
+}
+
+func WithOperatorPreflight(auth *userauth.Service, service PreflightEvaluator) Option {
 	return func(s *Server) {
 		if auth == nil || service == nil {
 			return
