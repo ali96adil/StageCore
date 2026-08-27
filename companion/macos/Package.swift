@@ -21,6 +21,7 @@ let package = Package(
             name: "StageCoreCompanionCore",
             linkerSettings: [
                 .linkedFramework("Security", .when(platforms: [.macOS])),
+                .linkedFramework("CoreMIDI", .when(platforms: [.macOS])),
             ]
         ),
         .executableTarget(
