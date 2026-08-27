@@ -122,9 +122,13 @@ func (c *RuntimeChannel) ServeWebSocket(
 		return
 	}
 	server := websocket.Server{
-		Handshake: func(_ *websocket.Config, request *http.Request) error {
-			if request.Header.Get("Origin") != "" {
-				return errors.New("browser websocket origins are not accepted")
+		Handshake: func(config *websocket.Config, request *http.Request) error {
+			origin, err := websocket.Origin(config, request)
+			if err != nil {
+				return err
+			}
+			if origin != nil && !strings.EqualFold(origin.Host, request.Host) {
+				return errors.New("cross-origin websocket connections are not accepted")
 			}
 			return nil
 		},

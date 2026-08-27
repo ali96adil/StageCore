@@ -300,11 +300,10 @@ func (agent *runtimeTestAgent) waitClosed(t *testing.T) {
 }
 
 func dialRuntime(runtimeURL, token string) (*websocket.Conn, error) {
-	config, err := websocket.NewConfig(runtimeURL, "http://localhost/")
+	config, err := websocket.NewConfig(runtimeURL, "http"+strings.TrimPrefix(runtimeURL, "ws"))
 	if err != nil {
 		return nil, err
 	}
-	config.Origin = nil
 	config.Header = make(http.Header)
 	if token != "" {
 		config.Header.Set("Authorization", "StageCoreSession "+token)
