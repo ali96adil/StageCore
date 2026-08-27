@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/httpapi"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func main() {
@@ -35,7 +36,14 @@ func main() {
 	}
 	defer application.Close()
 
+	userAuth, err := userauth.New(application.DB.DB)
+	if err != nil {
+		logger.Error("browser authentication startup failed", "error", err)
+		os.Exit(1)
+	}
+
 	api := httpapi.New(
+		httpapi.WithUserAuth(userAuth, application.HubSecurity),
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
