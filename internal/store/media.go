@@ -54,10 +54,22 @@ type MediaLocation struct {
 }
 
 type ManagedMedia struct {
-	Object  VaultObject
-	Asset   MediaAsset
-	Version MediaContentVersion
+	Object   VaultObject
+	Asset    MediaAsset
+	Version  MediaContentVersion
 	Location MediaLocation
+}
+
+type MachineRoleMediaRequirement struct {
+	ID               string
+	MachineRoleID    string
+	RoleKey          string
+	MediaAssetID     string
+	ContentVersionID string
+	ContentHash      string
+	SizeBytes        int64
+	Required         bool
+	CreatedAt        time.Time
 }
 
 type RegisterManagedMediaParams struct {
@@ -161,6 +173,90 @@ func (s *Store) RegisterManagedMedia(ctx context.Context, p RegisterManagedMedia
 		Version: MediaContentVersion{ID: versionID, MediaAssetID: assetID, ContentHash: p.ContentHash, OriginalFilename: p.OriginalFilename, SizeBytes: p.SizeBytes, CreatedAt: now},
 		Location: MediaLocation{ID: locationID, ContentVersionID: versionID, LocationType: "HUB", Locator: p.RelativePath, Status: "AVAILABLE", VerifiedAt: &verified},
 	}, nil
+}
+
+func (s *Store) AddMachineRoleMediaRequirement(ctx context.Context, machineRoleID, contentVersionID string, required bool) (MachineRoleMediaRequirement, error) {
+	machineRoleID = strings.TrimSpace(machineRoleID)
+	contentVersionID = strings.TrimSpace(contentVersionID)
+	if machineRoleID == "" || contentVersionID == "" {
+		return MachineRoleMediaRequirement{}, fmt.Errorf("%w: machine role and content version are required", domain.ErrInvalidInput)
+	}
+	role, err := s.GetMachineRole(ctx, machineRoleID)
+	if err != nil {
+		return MachineRoleMediaRequirement{}, err
+	}
+	var assetProjectID string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT a.project_id
+		FROM media_content_versions v
+		JOIN media_assets a ON a.media_asset_id = v.media_asset_id
+		WHERE v.content_version_id = ?`, contentVersionID).Scan(&assetProjectID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return MachineRoleMediaRequirement{}, domain.ErrNotFound
+		}
+		return MachineRoleMediaRequirement{}, fmt.Errorf("read media content version project: %w", err)
+	}
+	if assetProjectID != role.ProjectID {
+		return MachineRoleMediaRequirement{}, fmt.Errorf("%w: media requirement must belong to the Machine Role project", domain.ErrConflict)
+	}
+	id, err := stageid.New()
+	if err != nil {
+		return MachineRoleMediaRequirement{}, err
+	}
+	now := s.clock.Now().UTC()
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO machine_role_media_requirements (
+			media_requirement_id, machine_role_id, content_version_id, required, created_at_us
+		) VALUES (?, ?, ?, ?, ?)`, id, machineRoleID, contentVersionID, boolInt(required), clock.UnixMicros(now)); err != nil {
+		return MachineRoleMediaRequirement{}, fmt.Errorf("add Machine Role media requirement: %w", err)
+	}
+	items, err := s.ListProjectMediaRequirements(ctx, role.ProjectID)
+	if err != nil {
+		return MachineRoleMediaRequirement{}, err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return MachineRoleMediaRequirement{}, domain.ErrNotFound
+}
+
+func (s *Store) ListProjectMediaRequirements(ctx context.Context, projectID string) ([]MachineRoleMediaRequirement, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.media_requirement_id, r.machine_role_id, mr.role_key,
+		       a.media_asset_id, v.content_version_id, v.content_hash, v.size_bytes,
+		       r.required, r.created_at_us
+		FROM machine_role_media_requirements r
+		JOIN machine_roles mr ON mr.machine_role_id = r.machine_role_id
+		JOIN media_content_versions v ON v.content_version_id = r.content_version_id
+		JOIN media_assets a ON a.media_asset_id = v.media_asset_id
+		WHERE mr.project_id = ?
+		ORDER BY mr.role_key, a.media_asset_id, v.content_version_id`, strings.TrimSpace(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("list project media requirements: %w", err)
+	}
+	defer rows.Close()
+	items := make([]MachineRoleMediaRequirement, 0)
+	for rows.Next() {
+		var item MachineRoleMediaRequirement
+		var required int
+		var createdUS int64
+		if err := rows.Scan(
+			&item.ID, &item.MachineRoleID, &item.RoleKey,
+			&item.MediaAssetID, &item.ContentVersionID, &item.ContentHash, &item.SizeBytes,
+			&required, &createdUS,
+		); err != nil {
+			return nil, fmt.Errorf("scan project media requirement: %w", err)
+		}
+		item.Required = required == 1
+		item.CreatedAt = clock.FromUnixMicros(createdUS)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project media requirements: %w", err)
+	}
+	return items, nil
 }
 
 func (s *Store) GetVaultObject(ctx context.Context, contentHash string) (VaultObject, error) {
