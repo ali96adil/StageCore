@@ -93,6 +93,11 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 		report.Findings = append(report.Findings, Finding{Severity: SeverityBlock, Code: code, Message: message, Ref: ref})
 	}
 
+	for _, alias := range aliases {
+		if hasInlineCredential(alias.ProjectConfig) {
+			block("INLINE_CREDENTIAL_FORBIDDEN", "Project target configuration must use secret_ref instead of inline password/token/secret values", alias.ID)
+		}
+	}
 	for _, cue := range cues {
 		if cue.Criticality == "SAFETY_CRITICAL" {
 			block("SAFETY_CRITICAL_RESERVED", "SAFETY_CRITICAL Cues are reserved and not executable in the MVP", cue.ID)
@@ -139,6 +144,43 @@ func validateTargetCapability(report *Report, block func(string, string, string)
 		block("CAPABILITY_UNAVAILABLE", "no runtime executor is registered for this capability/target type", ref)
 	}
 	_ = report
+}
+
+func hasInlineCredential(raw json.RawMessage) bool {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return false
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	found := false
+	walkConfig(value, func(key string, child any) {
+		if found || strings.EqualFold(key, "secret_ref") || strings.EqualFold(key, "secret_header") || strings.EqualFold(key, "secret_prefix") {
+			return
+		}
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "authorization" || normalized == "password" || normalized == "token" || normalized == "api_key" || normalized == "apikey" || normalized == "secret" || strings.HasSuffix(normalized, "_password") || strings.HasSuffix(normalized, "_token") || strings.HasSuffix(normalized, "_secret") {
+			if text, ok := child.(string); ok && strings.TrimSpace(text) != "" {
+				found = true
+			}
+		}
+	})
+	return found
+}
+
+func walkConfig(value any, visit func(string, any)) {
+	switch item := value.(type) {
+	case map[string]any:
+		for key, child := range item {
+			visit(key, child)
+			walkConfig(child, visit)
+		}
+	case []any:
+		for _, child := range item {
+			walkConfig(child, visit)
+		}
+	}
 }
 
 func (s *Service) Publish(ctx context.Context, projectID, revisionID, createdBy string) (domain.RuntimeSnapshot, Report, error) {
