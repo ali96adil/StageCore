@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
+	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -46,11 +47,18 @@ func main() {
 		os.Exit(1)
 	}
 	publisher := publish.New(application.Store, application.Capabilities)
-	preflightService := preflight.New(
+	basePreflight := preflight.New(
 		application.Store,
 		application.Capabilities,
 		application.StorageHealth,
 		preflight.WithConnectionCheck(application.CompanionRuntime.IsConnected),
+	)
+	preflightService := securitypreflight.New(
+		basePreflight,
+		application.Store,
+		application.HubSecurity,
+		application.SecretStore,
+		application.PluginPermissions,
 	)
 	runtime := runtimecontrol.New(
 		application.Store,
