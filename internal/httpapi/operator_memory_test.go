@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorNotesAndSessionMemoryAPI(t *testing.T) {
