@@ -1,9 +1,0 @@
-# StageCore Engineering Checkpoints
-
-Checkpoints are dated consistency reviews used at major engineering transitions. They do not replace the product baseline; they record what has been reviewed, which later decisions resolve older open questions, which implementation/prototype evidence exists, and what remains unproven before the next phase.
-
-- [2026-08-26 — Implementation Baseline Checkpoint](2026-08-26-implementation-baseline.md) — full transition review from planning/decision spikes toward M0 Core Persistence.
-- [2026-08-26 — Pre-M0 Finalization Checkpoint](2026-08-26-pre-m0-finalization.md) — closes known pre-M0 consistency gaps, pins implementation-entry choices through Addendum 002, and records that no known pre-M0 decision remains unowned.
-- [2026-08-26 — M0 Core Persistence Completion Checkpoint](2026-08-26-m0-core-persistence-complete.md) — records implementation and CI evidence that M0 is complete and transitions the project to M1 Cue Engine + Simulator.
-- [2026-08-26 — M1 Cue Engine + Simulator Completion Checkpoint](2026-08-26-m1-cue-engine-simulator-complete.md) — records immutable Snapshot, Cue Engine, simulator, runtime-history and CI evidence and transitions the project to M2 Real OSC.
-- [2026-08-26 — M2 Real OSC Completion Checkpoint](2026-08-26-m2-real-osc-complete.md) — records real OSC, capability/Plugin isolation, Snapshot target mapping, truthful acknowledgement and CI evidence and transitions the project to M3 Routing.
