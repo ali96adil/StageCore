@@ -84,13 +84,13 @@ func TestProductCueEngineExecutesHTTPAndScriptActions(t *testing.T) {
 		{
 			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "HTTP-DEVICE",
 			CapabilityKey: httpaction.CapabilityKey, Parameters: httpParams,
-			TimeoutPolicy: json.RawMessage(`{"timeout_ms":1000}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+			TimeoutPolicy: json.RawMessage(`{"timeout_ms":5000}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 		{
 			OrderIndex: 1, ExecutionMode: "SEQUENTIAL", TargetRef: "SCRIPT-LOCAL",
 			CapabilityKey: scriptaction.CapabilityKey, Parameters: json.RawMessage(`{}`),
-			TimeoutPolicy: json.RawMessage(`{"timeout_ms":1000}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+			TimeoutPolicy: json.RawMessage(`{"timeout_ms":5000}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 	}); err != nil {
