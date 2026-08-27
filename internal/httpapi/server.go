@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/software"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
@@ -19,6 +21,8 @@ type Server struct {
 	companionRuntime *companionchannel.RuntimeChannel
 	vault            *stagevault.Vault
 	software         *software.Repository
+	bulk             *bulk.Manager
+	storageHealth    *storagehealth.Monitor
 }
 
 type Option func(*Server)
@@ -39,6 +43,14 @@ func WithSoftwareRepository(repository *software.Repository) Option {
 	return func(s *Server) { s.software = repository }
 }
 
+func WithBulkManager(manager *bulk.Manager) Option {
+	return func(s *Server) { s.bulk = manager }
+}
+
+func WithStorageHealth(monitor *storagehealth.Monitor) Option {
+	return func(s *Server) { s.storageHealth = monitor }
+}
+
 func New(options ...Option) *Server {
 	s := &Server{mux: http.NewServeMux()}
 	for _, option := range options {
@@ -47,9 +59,7 @@ func New(options ...Option) *Server {
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "LIVE"})
 	})
-	s.mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "READY"})
-	})
+	s.mux.HandleFunc("GET /health/ready", s.handleStorageReady)
 	if s.companionAuth != nil {
 		s.registerCompanionSecurityRoutes()
 	}
@@ -118,9 +128,9 @@ type authChallengeBody struct {
 }
 
 type authSessionBody struct {
-	CompanionID      string `json:"companion_id"`
-	ChallengeID      string `json:"challenge_id"`
-	SignatureBase64  string `json:"signature_base64"`
+	CompanionID     string `json:"companion_id"`
+	ChallengeID     string `json:"challenge_id"`
+	SignatureBase64 string `json:"signature_base64"`
 }
 
 func (s *Server) registerCompanionSecurityRoutes() {
