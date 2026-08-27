@@ -4,6 +4,7 @@ public enum ExecutionDecision: Equatable, Sendable {
     case rejectSnapshotMismatch
     case rejectUnsupportedCapability
     case rejectRoleMismatch
+    case rejectNotReady
 }
 
 public struct ExecutionGuard: Sendable {
@@ -30,6 +31,9 @@ public struct ExecutionGuard: Sendable {
         }
         guard state.capabilities.contains(request.capability) else {
             return .rejectUnsupportedCapability
+        }
+        guard state.readiness == .ready else {
+            return .rejectNotReady
         }
         return .execute
     }

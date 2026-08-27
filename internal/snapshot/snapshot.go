@@ -13,18 +13,30 @@ import (
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-const ManifestSchemaVersion = 3
+const ManifestSchemaVersion = 4
 
 type Manifest struct {
-	SchemaVersion  int      `json:"schema_version"`
-	ProjectID      string   `json:"project_id"`
-	RevisionID     string   `json:"revision_id"`
-	RevisionNumber int64    `json:"revision_number"`
-	Targets        []Target `json:"targets,omitempty"`
-	Cues           []Cue    `json:"cues"`
-	Inputs         []Input  `json:"inputs,omitempty"`
-	Outputs        []Output `json:"outputs,omitempty"`
-	Routes         []Route  `json:"routes,omitempty"`
+	SchemaVersion  int             `json:"schema_version"`
+	ProjectID      string          `json:"project_id"`
+	RevisionID     string          `json:"revision_id"`
+	RevisionNumber int64           `json:"revision_number"`
+	Targets        []Target        `json:"targets,omitempty"`
+	Cues           []Cue           `json:"cues"`
+	Inputs         []Input         `json:"inputs,omitempty"`
+	Outputs        []Output        `json:"outputs,omitempty"`
+	Routes         []Route         `json:"routes,omitempty"`
+	RequiredMedia  []RequiredMedia `json:"required_media,omitempty"`
+}
+
+type RequiredMedia struct {
+	MachineRoleID    string `json:"machine_role_id"`
+	RoleKey          string `json:"role_key"`
+	MediaAssetID     string `json:"media_asset_id"`
+	ContentVersionID string `json:"content_version_id"`
+	ChecksumAlgorithm string `json:"checksum_algorithm"`
+	ContentHash      string `json:"content_hash"`
+	SizeBytes        int64  `json:"size_bytes"`
+	Required         bool   `json:"required"`
 }
 
 type Target struct {
@@ -135,6 +147,10 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 	if err != nil {
 		return domain.RuntimeSnapshot{}, Manifest{}, err
 	}
+	mediaRequirements, err := b.store.ListProjectMediaRequirements(ctx, revision.ProjectID)
+	if err != nil {
+		return domain.RuntimeSnapshot{}, Manifest{}, err
+	}
 
 	manifest := Manifest{
 		SchemaVersion:  ManifestSchemaVersion,
@@ -146,6 +162,7 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 		Inputs:         make([]Input, 0, len(inputs)),
 		Outputs:        make([]Output, 0, len(outputs)),
 		Routes:         make([]Route, 0, len(routes)),
+		RequiredMedia:  make([]RequiredMedia, 0, len(mediaRequirements)),
 	}
 	for _, alias := range aliases {
 		manifest.Targets = append(manifest.Targets, Target{
@@ -277,6 +294,28 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 		return manifest.Routes[i].Name < manifest.Routes[j].Name
 	})
 
+	for _, requirement := range mediaRequirements {
+		manifest.RequiredMedia = append(manifest.RequiredMedia, RequiredMedia{
+			MachineRoleID: requirement.MachineRoleID,
+			RoleKey: requirement.RoleKey,
+			MediaAssetID: requirement.MediaAssetID,
+			ContentVersionID: requirement.ContentVersionID,
+			ChecksumAlgorithm: "SHA256",
+			ContentHash: requirement.ContentHash,
+			SizeBytes: requirement.SizeBytes,
+			Required: requirement.Required,
+		})
+	}
+	sort.Slice(manifest.RequiredMedia, func(i, j int) bool {
+		if manifest.RequiredMedia[i].RoleKey != manifest.RequiredMedia[j].RoleKey {
+			return manifest.RequiredMedia[i].RoleKey < manifest.RequiredMedia[j].RoleKey
+		}
+		if manifest.RequiredMedia[i].MediaAssetID != manifest.RequiredMedia[j].MediaAssetID {
+			return manifest.RequiredMedia[i].MediaAssetID < manifest.RequiredMedia[j].MediaAssetID
+		}
+		return manifest.RequiredMedia[i].ContentVersionID < manifest.RequiredMedia[j].ContentVersionID
+	})
+
 	canonical, err := canonicaljson.Marshal(manifest)
 	if err != nil {
 		return domain.RuntimeSnapshot{}, Manifest{}, fmt.Errorf("canonical snapshot manifest: %w", err)
@@ -296,7 +335,7 @@ func Decode(raw json.RawMessage) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("decode snapshot manifest: %w", err)
 	}
 	switch manifest.SchemaVersion {
-	case 1, 2, ManifestSchemaVersion:
+	case 1, 2, 3, ManifestSchemaVersion:
 		return manifest, nil
 	default:
 		return Manifest{}, fmt.Errorf("unsupported snapshot manifest schema %d", manifest.SchemaVersion)
@@ -334,6 +373,16 @@ func (m Manifest) ResolveOutput(outputID string) *Output {
 		}
 	}
 	return nil
+}
+
+func (m Manifest) RequiredMediaForRole(machineRoleID string) []RequiredMedia {
+	items := make([]RequiredMedia, 0)
+	for _, requirement := range m.RequiredMedia {
+		if requirement.MachineRoleID == machineRoleID {
+			items = append(items, requirement)
+		}
+	}
+	return items
 }
 
 func cloneJSON(raw json.RawMessage, fallback string) json.RawMessage {

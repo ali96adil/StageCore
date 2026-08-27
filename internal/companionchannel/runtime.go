@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
 )
@@ -70,14 +71,24 @@ type runtimeHello struct {
 	Readiness                string   `json:"readiness"`
 }
 
+type runtimeRequiredMedia struct {
+	MediaAssetID      string `json:"media_asset_id"`
+	ContentVersionID  string `json:"content_version_id"`
+	ChecksumAlgorithm string `json:"checksum_algorithm"`
+	ContentHash       string `json:"content_hash"`
+	SizeBytes         int64  `json:"size_bytes"`
+	Required          bool   `json:"required"`
+}
+
 type runtimeSessionReady struct {
-	Type              string `json:"type"`
-	SchemaVersion     int    `json:"schema_version"`
-	MessageID         string `json:"message_id"`
-	MachineRoleID     string `json:"machine_role_id"`
-	RoleKey           string `json:"role_key"`
-	RuntimeSnapshotID string `json:"runtime_snapshot_id"`
-	ConfigHash        string `json:"config_hash"`
+	Type              string                 `json:"type"`
+	SchemaVersion     int                    `json:"schema_version"`
+	MessageID         string                 `json:"message_id"`
+	MachineRoleID     string                 `json:"machine_role_id"`
+	RoleKey           string                 `json:"role_key"`
+	RuntimeSnapshotID string                 `json:"runtime_snapshot_id"`
+	ConfigHash        string                 `json:"config_hash"`
+	RequiredMedia     []runtimeRequiredMedia `json:"required_media,omitempty"`
 }
 
 type runtimeExecutionRequest struct {
@@ -318,10 +329,32 @@ func (c *RuntimeChannel) acceptHello(ctx context.Context, connection *runtimeCon
 	if err != nil || role.RequiredRuntimeSnapshotID == nil || strings.TrimSpace(*role.RequiredRuntimeSnapshotID) == "" {
 		return nil
 	}
+
+	requiredMedia := make([]runtimeRequiredMedia, 0)
+	runtimeSnapshot, err := c.store.GetRuntimeSnapshot(ctx, *role.RequiredRuntimeSnapshotID)
+	if err != nil {
+		return err
+	}
+	manifest, err := snapshot.Decode(runtimeSnapshot.Manifest)
+	if err != nil {
+		return err
+	}
+	for _, requirement := range manifest.RequiredMediaForRole(role.ID) {
+		requiredMedia = append(requiredMedia, runtimeRequiredMedia{
+			MediaAssetID: requirement.MediaAssetID,
+			ContentVersionID: requirement.ContentVersionID,
+			ChecksumAlgorithm: requirement.ChecksumAlgorithm,
+			ContentHash: requirement.ContentHash,
+			SizeBytes: requirement.SizeBytes,
+			Required: requirement.Required,
+		})
+	}
+
 	ready, err := json.Marshal(runtimeSessionReady{
 		Type: "session.ready", SchemaVersion: runtimeSchemaVersion, MessageID: assignment.ID,
 		MachineRoleID: role.ID, RoleKey: role.RoleKey,
 		RuntimeSnapshotID: *role.RequiredRuntimeSnapshotID, ConfigHash: role.RequiredConfigHash,
+		RequiredMedia: requiredMedia,
 	})
 	if err != nil {
 		return err

@@ -20,6 +20,7 @@ public struct CompanionRuntimeState: Sendable, Equatable {
     public var readiness: CompanionReadiness
     public var authenticatedSessionID: String?
     public var authenticatedUntil: Date?
+    public var requiredMedia: [RequiredMedia]
 
     public init(
         companionID: String,
@@ -30,7 +31,8 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         capabilities: Set<String> = [],
         readiness: CompanionReadiness = .unknown,
         authenticatedSessionID: String? = nil,
-        authenticatedUntil: Date? = nil
+        authenticatedUntil: Date? = nil,
+        requiredMedia: [RequiredMedia] = []
     ) {
         self.companionID = companionID
         self.machineRoleID = machineRoleID
@@ -41,6 +43,7 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         self.readiness = readiness
         self.authenticatedSessionID = authenticatedSessionID
         self.authenticatedUntil = authenticatedUntil
+        self.requiredMedia = requiredMedia
     }
 
     public mutating func apply(_ ready: SessionReady) {
@@ -48,7 +51,19 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         roleKey = ready.roleKey
         appliedRuntimeSnapshotID = ready.runtimeSnapshotID
         configHash = ready.configHash
-        readiness = .ready
+        requiredMedia = ready.requiredMedia
+        readiness = ready.requiredMedia.contains(where: \.required) ? .syncing : .ready
+    }
+
+    public mutating func applyMediaSyncResult(_ result: MediaSyncResult) {
+        switch result {
+        case .ready:
+            readiness = .ready
+        case .mismatch:
+            readiness = .mismatch
+        case .failed:
+            readiness = .blocked
+        }
     }
 
     public mutating func authenticate(sessionID: String, expiresAt: Date) {

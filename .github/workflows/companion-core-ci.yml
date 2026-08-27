@@ -31,9 +31,9 @@ jobs:
         run: swift test --package-path companion/macos
 
   macos-acceptance:
-    name: Real macOS Companion replacement
+    name: Real macOS Companion replacement + media
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -43,6 +43,8 @@ jobs:
         run: swift --version
       - name: Build real macOS Companion executable
         run: swift build --package-path companion/macos
+      - name: Run >=2 GiB interrupted media resume acceptance
+        run: swift test --package-path companion/macos --filter LargeMediaTransferAcceptanceTests
       - name: Run real Companion replacement acceptance
         shell: bash
         run: |

@@ -60,6 +60,110 @@ final class CompanionSessionTests: XCTestCase {
         XCTAssertEqual(duplicate.errorCode, "DUPLICATE_EXECUTION")
     }
 
+    func testRequiredMediaMustVerifyBeforeReady() async throws {
+        let media = RequiredMedia(
+            mediaAssetID: "asset-1",
+            contentVersionID: "content-1",
+            contentHash: String(repeating: "a", count: 64),
+            sizeBytes: 1024
+        )
+        let session = CompanionSession(
+            configuration: CompanionSessionConfiguration(
+                companionID: "11111111-1111-4111-8111-111111111111",
+                agentVersion: "0.1.0",
+                platform: "macos",
+                architecture: "arm64"
+            ),
+            executors: [LocalEchoExecutor()],
+            mediaSynchronizer: FixedMediaSynchronizer(result: .ready)
+        )
+        await authenticate(session)
+        let ready = SessionReady(
+            machineRoleID: "role-video-main",
+            roleKey: "VIDEO-MAIN",
+            runtimeSnapshotID: "snap-media",
+            configHash: "cfg",
+            requiredMedia: [media]
+        )
+        let response = try await session.handle(JSONEncoder().encode(ready))
+        let hello = try JSONDecoder().decode(CompanionHello.self, from: try XCTUnwrap(response))
+        XCTAssertEqual(hello.readiness, "READY")
+        let runtimeState = await session.runtimeState()
+        XCTAssertEqual(runtimeState.requiredMedia, [media])
+    }
+
+    func testMissingMediaSynchronizerBlocksReadyAndExecution() async throws {
+        let media = RequiredMedia(
+            mediaAssetID: "asset-1",
+            contentVersionID: "content-1",
+            contentHash: String(repeating: "b", count: 64),
+            sizeBytes: 2048
+        )
+        let session = CompanionSession(
+            configuration: CompanionSessionConfiguration(
+                companionID: "11111111-1111-4111-8111-111111111111",
+                agentVersion: "0.1.0",
+                platform: "macos",
+                architecture: "arm64"
+            ),
+            executors: [LocalEchoExecutor()]
+        )
+        await authenticate(session)
+        let ready = SessionReady(
+            machineRoleID: "role-video-main",
+            roleKey: "VIDEO-MAIN",
+            runtimeSnapshotID: "snap-media",
+            configHash: "cfg",
+            requiredMedia: [media]
+        )
+        let response = try await session.handle(JSONEncoder().encode(ready))
+        let hello = try JSONDecoder().decode(CompanionHello.self, from: try XCTUnwrap(response))
+        XCTAssertEqual(hello.readiness, "BLOCKED")
+
+        let request = CompanionExecutionRequest(
+            executionID: "exec-blocked",
+            correlationID: nil,
+            machineRoleID: "role-video-main",
+            runtimeSnapshotID: "snap-media",
+            capability: "local.echo",
+            parameters: [:],
+            timeoutMS: 100
+        )
+        let blocked = try await result(session, request: request)
+        XCTAssertEqual(blocked.status, .rejected)
+        XCTAssertEqual(blocked.errorCode, "COMPANION_NOT_READY")
+    }
+
+    func testMediaChecksumMismatchReportsMismatch() async throws {
+        let media = RequiredMedia(
+            mediaAssetID: "asset-1",
+            contentVersionID: "content-1",
+            contentHash: String(repeating: "c", count: 64),
+            sizeBytes: 12
+        )
+        let session = CompanionSession(
+            configuration: CompanionSessionConfiguration(
+                companionID: "11111111-1111-4111-8111-111111111111",
+                agentVersion: "0.1.0",
+                platform: "macos",
+                architecture: "arm64"
+            ),
+            executors: [LocalEchoExecutor()],
+            mediaSynchronizer: FixedMediaSynchronizer(result: .mismatch(media.contentHash))
+        )
+        await authenticate(session)
+        let ready = SessionReady(
+            machineRoleID: "role-video-main",
+            roleKey: "VIDEO-MAIN",
+            runtimeSnapshotID: "snap-media",
+            configHash: "cfg",
+            requiredMedia: [media]
+        )
+        let response = try await session.handle(JSONEncoder().encode(ready))
+        let hello = try JSONDecoder().decode(CompanionHello.self, from: try XCTUnwrap(response))
+        XCTAssertEqual(hello.readiness, "MISMATCH")
+    }
+
     func testRejectedStaleExecutionIDCannotBecomeExecutableAfterSync() async throws {
         let session = CompanionSession(
             configuration: CompanionSessionConfiguration(
@@ -90,15 +194,14 @@ final class CompanionSessionTests: XCTestCase {
         XCTAssertEqual(repeated.status, .rejected)
         XCTAssertEqual(repeated.errorCode, "DUPLICATE_EXECUTION")
 
-        var fresh = stale
-        fresh = CompanionExecutionRequest(
+        let fresh = CompanionExecutionRequest(
             executionID: "exec-fresh",
             correlationID: nil,
-            machineRoleID: fresh.machineRoleID,
-            runtimeSnapshotID: fresh.runtimeSnapshotID,
-            capability: fresh.capability,
-            parameters: fresh.parameters,
-            timeoutMS: fresh.timeoutMS
+            machineRoleID: stale.machineRoleID,
+            runtimeSnapshotID: stale.runtimeSnapshotID,
+            capability: stale.capability,
+            parameters: stale.parameters,
+            timeoutMS: stale.timeoutMS
         )
         let freshResult = try await result(session, request: fresh)
         XCTAssertEqual(freshResult.status, .completed)
@@ -165,6 +268,14 @@ final class CompanionSessionTests: XCTestCase {
         let response = try await session.handle(JSONEncoder().encode(request))
         let data = try XCTUnwrap(response)
         return try JSONDecoder().decode(CompanionExecutionResult.self, from: data)
+    }
+}
+
+private struct FixedMediaSynchronizer: CompanionMediaSynchronizer {
+    let result: MediaSyncResult
+
+    func synchronize(requiredMedia: [RequiredMedia], sessionToken: String) async -> MediaSyncResult {
+        result
     }
 }
 

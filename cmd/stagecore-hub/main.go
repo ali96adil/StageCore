@@ -38,6 +38,10 @@ func main() {
 	api := httpapi.New(
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
+		httpapi.WithVault(application.Vault),
+		httpapi.WithSoftwareRepository(application.Software),
+		httpapi.WithBulkManager(application.Bulk),
+		httpapi.WithStorageHealth(application.StorageHealth),
 	)
 	server := &http.Server{Addr: cfg.Listen, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second}
 

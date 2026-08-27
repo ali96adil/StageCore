@@ -97,12 +97,15 @@ public actor CompanionSession {
     private var state: CompanionRuntimeState
     private var guardState: ExecutionGuard
     private let executors: [String: any CompanionCapabilityExecutor]
+    private let mediaSynchronizer: (any CompanionMediaSynchronizer)?
+    private var runtimeSessionToken: String?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(
         configuration: CompanionSessionConfiguration,
         executors: [any CompanionCapabilityExecutor],
+        mediaSynchronizer: (any CompanionMediaSynchronizer)? = nil,
         duplicateCapacity: Int = 512
     ) {
         self.configuration = configuration
@@ -113,6 +116,7 @@ public actor CompanionSession {
             readiness: configuration.readiness
         )
         self.guardState = ExecutionGuard(capacity: duplicateCapacity)
+        self.mediaSynchronizer = mediaSynchronizer
         var registry: [String: any CompanionCapabilityExecutor] = [:]
         for executor in executors {
             registry[executor.capabilityKey] = executor
@@ -144,10 +148,12 @@ public actor CompanionSession {
     }
 
     public func establishAuthenticatedSession(_ credential: CompanionRuntimeCredential) {
+        runtimeSessionToken = credential.token
         state.authenticate(sessionID: credential.sessionID, expiresAt: credential.expiresAt)
     }
 
     public func invalidateAuthenticatedSession() {
+        runtimeSessionToken = nil
         state.clearAuthentication()
     }
 
@@ -166,8 +172,19 @@ public actor CompanionSession {
             }
             let ready = try decoder.decode(SessionReady.self, from: data)
             state.apply(ready)
-            // Report the applied assignment and Snapshot only after the
-            // Companion has accepted the Hub's authoritative session state.
+
+            let required = ready.requiredMedia.filter(\.required)
+            if !required.isEmpty {
+                guard let synchronizer = mediaSynchronizer, let token = runtimeSessionToken else {
+                    state.applyMediaSyncResult(.failed("required media synchronization is unavailable"))
+                    return try helloData()
+                }
+                let result = await synchronizer.synchronize(requiredMedia: required, sessionToken: token)
+                state.applyMediaSyncResult(result)
+            }
+
+            // Report assignment, Snapshot and truthful media readiness only
+            // after required content has been reconciled against local cache.
             return try helloData()
 
         case .executionRequest:
@@ -200,6 +217,10 @@ public actor CompanionSession {
         case .rejectUnsupportedCapability:
             guardState.markTerminal(request.executionID)
             return rejection(request, code: "UNSUPPORTED_CAPABILITY", summary: "capability is not available on this Companion")
+
+        case .rejectNotReady:
+            guardState.markTerminal(request.executionID)
+            return rejection(request, code: "COMPANION_NOT_READY", summary: "required Companion state or media is not READY")
 
         case .execute:
             guard let executor = executors[request.capability] else {

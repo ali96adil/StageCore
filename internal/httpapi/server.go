@@ -7,14 +7,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
+	"github.com/ali96adil/StageCore/internal/software"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
+	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
 type Server struct {
 	mux              *http.ServeMux
 	companionAuth    *companionauth.Service
 	companionRuntime *companionchannel.RuntimeChannel
+	vault            *stagevault.Vault
+	software         *software.Repository
+	bulk             *bulk.Manager
+	storageHealth    *storagehealth.Monitor
 }
 
 type Option func(*Server)
@@ -27,6 +35,22 @@ func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
 	return func(s *Server) { s.companionRuntime = channel }
 }
 
+func WithVault(v *stagevault.Vault) Option {
+	return func(s *Server) { s.vault = v }
+}
+
+func WithSoftwareRepository(repository *software.Repository) Option {
+	return func(s *Server) { s.software = repository }
+}
+
+func WithBulkManager(manager *bulk.Manager) Option {
+	return func(s *Server) { s.bulk = manager }
+}
+
+func WithStorageHealth(monitor *storagehealth.Monitor) Option {
+	return func(s *Server) { s.storageHealth = monitor }
+}
+
 func New(options ...Option) *Server {
 	s := &Server{mux: http.NewServeMux()}
 	for _, option := range options {
@@ -35,14 +59,20 @@ func New(options ...Option) *Server {
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "LIVE"})
 	})
-	s.mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "READY"})
-	})
+	s.mux.HandleFunc("GET /health/ready", s.handleStorageReady)
 	if s.companionAuth != nil {
 		s.registerCompanionSecurityRoutes()
 	}
 	if s.companionAuth != nil && s.companionRuntime != nil {
 		s.mux.HandleFunc("GET /api/v1/companion/runtime", s.handleCompanionRuntime)
+	}
+	if s.companionAuth != nil && s.vault != nil {
+		s.mux.HandleFunc("GET /api/v1/vault/objects/{content_hash}", s.handleVaultObject)
+	}
+	if s.software != nil {
+		s.mux.HandleFunc("GET /downloads/setup", s.handleSoftwareSetup)
+		s.mux.HandleFunc("GET /api/v1/software/packages", s.handleSoftwarePackages)
+		s.mux.HandleFunc("GET /downloads/software/{package_id}", s.handleSoftwareDownload)
 	}
 	return s
 }
@@ -76,16 +106,16 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 type pairingRequestBody struct {
-	CompanionID       string   `json:"companion_id"`
-	DisplayName       string   `json:"display_name"`
-	Hostname          string   `json:"hostname"`
-	Platform          string   `json:"platform"`
-	Architecture      string   `json:"architecture"`
-	Version           string   `json:"version"`
-	Capabilities      []string `json:"capabilities"`
-	PublicKeyAlgorithm string   `json:"public_key_algorithm"`
-	PublicKeyBase64   string   `json:"public_key_base64"`
-	ClientNonceBase64 string   `json:"client_nonce_base64"`
+	CompanionID         string   `json:"companion_id"`
+	DisplayName         string   `json:"display_name"`
+	Hostname            string   `json:"hostname"`
+	Platform            string   `json:"platform"`
+	Architecture        string   `json:"architecture"`
+	Version             string   `json:"version"`
+	Capabilities        []string `json:"capabilities"`
+	PublicKeyAlgorithm  string   `json:"public_key_algorithm"`
+	PublicKeyBase64     string   `json:"public_key_base64"`
+	ClientNonceBase64   string   `json:"client_nonce_base64"`
 }
 
 type pairingStatusBody struct {
@@ -98,8 +128,8 @@ type authChallengeBody struct {
 }
 
 type authSessionBody struct {
-	CompanionID    string `json:"companion_id"`
-	ChallengeID   string `json:"challenge_id"`
+	CompanionID     string `json:"companion_id"`
+	ChallengeID     string `json:"challenge_id"`
 	SignatureBase64 string `json:"signature_base64"`
 }
 

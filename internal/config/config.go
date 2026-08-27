@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 )
 
 type Config struct {
-	DataRoot      string
-	VaultRoot     string
-	Listen        string
-	OSCPluginPath string
+	DataRoot              string
+	VaultRoot             string
+	Listen                string
+	OSCPluginPath         string
+	RuntimeReserveBytes   int64
+	StorageWarningPercent float64
 }
 
 func Load(args []string) (Config, error) {
@@ -20,21 +25,30 @@ func Load(args []string) (Config, error) {
 	defaultVaultRoot := envOr("STAGECORE_VAULT_ROOT", filepath.Join(defaultDataRoot, "vault"))
 	defaultListen := envOr("STAGECORE_LISTEN", "127.0.0.1:7840")
 	defaultOSCPlugin := defaultOSCPluginPath()
+	defaultReserve, err := envInt64("STAGECORE_RUNTIME_RESERVE_BYTES", storagehealth.DefaultRuntimeReserveBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	defaultWarning, err := envFloat64("STAGECORE_STORAGE_WARNING_PERCENT", storagehealth.DefaultWarningPercent)
+	if err != nil {
+		return Config{}, err
+	}
 
 	fs := flag.NewFlagSet("stagecore-hub", flag.ContinueOnError)
 	dataRoot := fs.String("data-root", defaultDataRoot, "authoritative StageCore data root")
 	vaultRoot := fs.String("vault-root", defaultVaultRoot, "StageCore Vault root")
 	listen := fs.String("listen", defaultListen, "HTTP listen address")
 	oscPluginPath := fs.String("osc-plugin-path", defaultOSCPlugin, "path to the StageCore OSC plugin executable")
+	reserveBytes := fs.Int64("runtime-reserve-bytes", defaultReserve, "bytes reserved for critical runtime persistence")
+	warningPercent := fs.Float64("storage-warning-percent", defaultWarning, "free-space percentage that produces storage WARNING")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
 
 	cfg := Config{
-		DataRoot:      strings.TrimSpace(*dataRoot),
-		VaultRoot:     strings.TrimSpace(*vaultRoot),
-		Listen:        strings.TrimSpace(*listen),
-		OSCPluginPath: strings.TrimSpace(*oscPluginPath),
+		DataRoot: strings.TrimSpace(*dataRoot), VaultRoot: strings.TrimSpace(*vaultRoot),
+		Listen: strings.TrimSpace(*listen), OSCPluginPath: strings.TrimSpace(*oscPluginPath),
+		RuntimeReserveBytes: *reserveBytes, StorageWarningPercent: *warningPercent,
 	}
 	if cfg.DataRoot == "" {
 		return Config{}, fmt.Errorf("data root is required")
@@ -47,6 +61,12 @@ func Load(args []string) (Config, error) {
 	}
 	if cfg.OSCPluginPath == "" {
 		return Config{}, fmt.Errorf("OSC plugin path is required")
+	}
+	if cfg.RuntimeReserveBytes <= 0 {
+		return Config{}, fmt.Errorf("runtime reserve bytes must be greater than zero")
+	}
+	if cfg.StorageWarningPercent <= 0 || cfg.StorageWarningPercent >= 100 {
+		return Config{}, fmt.Errorf("storage warning percent must be between 0 and 100")
 	}
 	return cfg, nil
 }
@@ -66,4 +86,28 @@ func envOr(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt64(key string, fallback int64) (int64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func envFloat64(key string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return parsed, nil
 }

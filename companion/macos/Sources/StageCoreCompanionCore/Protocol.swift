@@ -43,20 +43,13 @@ public enum JSONValue: Codable, Sendable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
-        case .string(let value):
-            try container.encode(value)
-        case .int(let value):
-            try container.encode(value)
-        case .double(let value):
-            try container.encode(value)
-        case .bool(let value):
-            try container.encode(value)
-        case .object(let value):
-            try container.encode(value)
-        case .array(let value):
-            try container.encode(value)
-        case .null:
-            try container.encodeNil()
+        case .string(let value): try container.encode(value)
+        case .int(let value): try container.encode(value)
+        case .double(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .null: try container.encodeNil()
         }
     }
 }
@@ -130,6 +123,40 @@ public struct CompanionHello: Codable, Sendable, Equatable {
     }
 }
 
+public struct RequiredMedia: Codable, Sendable, Equatable, Hashable {
+    public let mediaAssetID: String
+    public let contentVersionID: String
+    public let checksumAlgorithm: String
+    public let contentHash: String
+    public let sizeBytes: Int64
+    public let required: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case mediaAssetID = "media_asset_id"
+        case contentVersionID = "content_version_id"
+        case checksumAlgorithm = "checksum_algorithm"
+        case contentHash = "content_hash"
+        case sizeBytes = "size_bytes"
+        case required
+    }
+
+    public init(
+        mediaAssetID: String,
+        contentVersionID: String,
+        checksumAlgorithm: String = "SHA256",
+        contentHash: String,
+        sizeBytes: Int64,
+        required: Bool = true
+    ) {
+        self.mediaAssetID = mediaAssetID
+        self.contentVersionID = contentVersionID
+        self.checksumAlgorithm = checksumAlgorithm
+        self.contentHash = contentHash
+        self.sizeBytes = sizeBytes
+        self.required = required
+    }
+}
+
 public struct SessionReady: Codable, Sendable, Equatable {
     public let type: CompanionMessageType
     public let schemaVersion: Int
@@ -138,6 +165,7 @@ public struct SessionReady: Codable, Sendable, Equatable {
     public let roleKey: String
     public let runtimeSnapshotID: String
     public let configHash: String
+    public let requiredMedia: [RequiredMedia]
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -147,6 +175,7 @@ public struct SessionReady: Codable, Sendable, Equatable {
         case roleKey = "role_key"
         case runtimeSnapshotID = "runtime_snapshot_id"
         case configHash = "config_hash"
+        case requiredMedia = "required_media"
     }
 
     public init(
@@ -155,7 +184,8 @@ public struct SessionReady: Codable, Sendable, Equatable {
         machineRoleID: String,
         roleKey: String,
         runtimeSnapshotID: String,
-        configHash: String
+        configHash: String,
+        requiredMedia: [RequiredMedia] = []
     ) {
         self.type = .sessionReady
         self.schemaVersion = schemaVersion
@@ -164,6 +194,19 @@ public struct SessionReady: Codable, Sendable, Equatable {
         self.roleKey = roleKey
         self.runtimeSnapshotID = runtimeSnapshotID
         self.configHash = configHash
+        self.requiredMedia = requiredMedia
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(CompanionMessageType.self, forKey: .type)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        messageID = try container.decode(String.self, forKey: .messageID)
+        machineRoleID = try container.decode(String.self, forKey: .machineRoleID)
+        roleKey = try container.decode(String.self, forKey: .roleKey)
+        runtimeSnapshotID = try container.decode(String.self, forKey: .runtimeSnapshotID)
+        configHash = try container.decode(String.self, forKey: .configHash)
+        requiredMedia = try container.decodeIfPresent([RequiredMedia].self, forKey: .requiredMedia) ?? []
     }
 }
 

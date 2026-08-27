@@ -73,7 +73,7 @@ func TestBuilderCapturesRoutingDefinitionsImmutably(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.SchemaVersion != 3 || len(manifest.Inputs) != 1 || len(manifest.Outputs) != 1 || len(manifest.Routes) != 1 {
+	if manifest.SchemaVersion != snapshot.ManifestSchemaVersion || len(manifest.Inputs) != 1 || len(manifest.Outputs) != 1 || len(manifest.Routes) != 1 {
 		t.Fatalf("routing manifest=%#v", manifest)
 	}
 	if manifest.Routes[0].ID != route.ID || manifest.Routes[0].DebounceMS == nil || *manifest.Routes[0].DebounceMS != 250 {
