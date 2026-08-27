@@ -16,11 +16,13 @@ import (
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/httpaction"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
 	"github.com/ali96adil/StageCore/internal/oscinputplugin"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
 	"github.com/ali96adil/StageCore/internal/routing"
+	"github.com/ali96adil/StageCore/internal/scriptaction"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
@@ -102,6 +104,16 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("register simulator capability: %w", err)
 	}
+	if err := registry.Register(httpaction.CapabilityKey, httpaction.New()); err != nil {
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register HTTP capability: %w", err)
+	}
+	if err := registry.Register(scriptaction.CapabilityKey, scriptaction.New()); err != nil {
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register Script capability: %w", err)
+	}
 
 	oscHost := pluginhost.New(
 		cfg.OSCPluginPath,
@@ -117,6 +129,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		},
 	)
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(oscHost)); err != nil {
+		companionRuntime.Close()
 		oscHost.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register OSC capability: %w", err)
