@@ -185,7 +185,7 @@ func TestSoftwareMVPOperatorWorkflowSurvivesHubRestart(t *testing.T) {
 	startBody := client.request(http.MethodPost, "/api/v1/projects/"+projectID+"/runtime/start", map[string]any{
 		"mode": "REHEARSAL",
 		"name": "MVP Acceptance Rehearsal",
-		"request_id": "mvp-acceptance-start",
+		"request_id": "00000000-0000-7000-8000-000000000101",
 	}, http.StatusCreated, true)
 	var startPayload struct {
 		Session struct {
@@ -199,7 +199,7 @@ func TestSoftwareMVPOperatorWorkflowSurvivesHubRestart(t *testing.T) {
 	}
 
 	goBody := client.request(http.MethodPost, "/api/v1/projects/"+projectID+"/runtime/go", map[string]any{
-		"request_id": "mvp-acceptance-go",
+		"request_id": "00000000-0000-7000-8000-000000000102",
 		"operator_note": "GO from software MVP acceptance",
 	}, http.StatusOK, true)
 	if !strings.Contains(string(goBody), `"status":"COMPLETED"`) {
