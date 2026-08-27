@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/backup"
 	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -34,6 +35,7 @@ type App struct {
 	Software         *software.Repository
 	Bulk             *bulk.Manager
 	StorageHealth    *storagehealth.Monitor
+	Backup           *backup.Service
 	CompanionAuth    *companionauth.Service
 	CompanionRuntime *companionchannel.RuntimeChannel
 	CueEngine        *cueengine.Engine
@@ -75,6 +77,11 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 			return bulk.ModeEdit, nil
 		}
 	})
+	backupService, err := backup.New(handle, s, cfg.DataRoot, bulkManager)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open StageCore backup service: %w", err)
+	}
 	companionAuth := companionauth.New(s, nil)
 	companionRuntime := companionchannel.NewRuntime(s, companionAuth)
 	registry := capability.NewRegistry()
@@ -113,7 +120,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 
 	return &App{
 		Config: cfg, DB: handle, Store: s, Vault: vaultService, Software: softwareRepository,
-		Bulk: bulkManager, StorageHealth: storageMonitor,
+		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
 		CueEngine: cueengine.NewWithExecutor(s, registry), RoutingEngine: routing.New(s, registry),
 		OSCPlugin: oscHost,
