@@ -33,6 +33,7 @@ type App struct {
 	DB               *db.Handle
 	Store            *store.Store
 	HubSecurity      *hubsecurity.Service
+	Capabilities     *capability.Registry
 	Vault            *vault.Vault
 	Software         *software.Repository
 	Bulk             *bulk.Manager
@@ -127,7 +128,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity,
+		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
