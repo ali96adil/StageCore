@@ -47,6 +47,7 @@ func main() {
 	runtime := runtimecontrol.New(application.Store, application.Capabilities)
 
 	api := httpapi.New(
+		httpapi.WithOperatorWeb(),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
