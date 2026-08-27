@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/pressly/goose/v3 v3.27.3
+	golang.org/x/crypto v0.47.0
 	golang.org/x/net v0.57.0
 	modernc.org/sqlite v1.57.0
 )
