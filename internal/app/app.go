@@ -60,6 +60,10 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
+	if _, err := s.ReconcileInterruptedRuntime(ctx); err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("reconcile interrupted runtime: %w", err)
+	}
 	capacityPolicy := storagehealth.NewPolicy(cfg.RuntimeReserveBytes, cfg.StorageWarningPercent)
 	vaultService, err := vault.Open(cfg.VaultRoot, s, vault.WithCapacityPolicy(capacityPolicy))
 	if err != nil {
