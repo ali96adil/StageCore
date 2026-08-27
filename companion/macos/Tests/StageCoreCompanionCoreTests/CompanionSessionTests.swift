@@ -88,7 +88,8 @@ final class CompanionSessionTests: XCTestCase {
         let response = try await session.handle(JSONEncoder().encode(ready))
         let hello = try JSONDecoder().decode(CompanionHello.self, from: try XCTUnwrap(response))
         XCTAssertEqual(hello.readiness, "READY")
-        XCTAssertEqual((await session.runtimeState()).requiredMedia, [media])
+        let runtimeState = await session.runtimeState()
+        XCTAssertEqual(runtimeState.requiredMedia, [media])
     }
 
     func testMissingMediaSynchronizerBlocksReadyAndExecution() async throws {
