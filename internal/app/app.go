@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/hubsecurity"
 	"github.com/ali96adil/StageCore/internal/oscinputplugin"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
@@ -31,6 +32,7 @@ type App struct {
 	Config           config.Config
 	DB               *db.Handle
 	Store            *store.Store
+	HubSecurity      *hubsecurity.Service
 	Vault            *vault.Vault
 	Software         *software.Repository
 	Bulk             *bulk.Manager
@@ -48,6 +50,12 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	handle, err := db.Open(ctx, db.Config{DataRoot: cfg.DataRoot})
 	if err != nil {
 		return nil, fmt.Errorf("open StageCore database: %w", err)
+	}
+
+	hubSecurity, err := hubsecurity.Open(ctx, handle.DB, cfg.DataRoot)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Hub security identity: %w", err)
 	}
 
 	s := store.New(handle.DB, clock.Real{})
@@ -119,7 +127,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, Vault: vaultService, Software: softwareRepository,
+		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity,
+		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
 		CueEngine: cueengine.NewWithExecutor(s, registry), RoutingEngine: routing.New(s, registry),
