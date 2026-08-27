@@ -30,14 +30,13 @@ func TestActiveShowPausesBulkWhileP1CueStillCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	parameters := json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":0}}`)
-	cue, err := s.CreateCueWithActions(ctx, domain.Cue{
+	if _, err := s.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "1", Name: "P1 GO", OrderIndex: 0, Enabled: true,
 	}, []domain.Action{{
 		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
 		Parameters: parameters, TimeoutPolicy: json.RawMessage(`{}`),
 		ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`), PriorityClass: domain.PriorityP1, Enabled: true,
-	}})
-	if err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
@@ -88,7 +87,7 @@ func TestActiveShowPausesBulkWhileP1CueStillCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(cueengine.CueGoPayload{CueID: cue.ID})
+	payload, _ := json.Marshal(cueengine.CueGoPayload{})
 	result := cueengine.New(s).ExecuteCueGo(ctx, show.ID, contracts.CommandEnvelope{
 		CommandID: commandID, CommandType: cueengine.CueGoCommandType, SchemaVersion: contracts.SchemaVersion1,
 		IssuedAt: time.Now().UTC(), ProjectID: runtimeSnapshot.ProjectID, RuntimeSnapshotID: runtimeSnapshot.ID,
