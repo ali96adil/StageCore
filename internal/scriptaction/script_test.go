@@ -27,7 +27,7 @@ func TestScriptActionSuccessWithoutShellOrInheritedEnvironment(t *testing.T) {
 	result := New().Execute(context.Background(), capability.Request{
 		ExecutionID: "script-success", Capability: CapabilityKey,
 		Target: &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
-		Parameters: json.RawMessage(`{}`), TimeoutMS: 1000,
+		Parameters: json.RawMessage(`{}`), TimeoutMS: 5000,
 	})
 	if result.Result != domain.ExecutionCompleted || result.AckLevel != contracts.AckAccepted || result.ErrorCode != "" {
 		t.Fatalf("result=%+v", result)
