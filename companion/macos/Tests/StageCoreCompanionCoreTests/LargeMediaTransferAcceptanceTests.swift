@@ -48,9 +48,8 @@ final class LargeMediaTransferAcceptanceTests: XCTestCase {
         let partialURL = await synchronizer.partialObjectURL(for: contentHash)
         let partialSize = try fileSize(partialURL)
         XCTAssertEqual(partialSize, 2 * chunkBytes)
-        XCTAssertFalse(FileManager.default.fileExists(
-            atPath: await synchronizer.verifiedObjectURL(for: contentHash).path
-        ))
+        let finalBeforeResume = await synchronizer.verifiedObjectURL(for: contentHash)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: finalBeforeResume.path))
 
         LargeTransferURLProtocol.state.disableFailure()
         let second = await synchronizer.synchronize(
