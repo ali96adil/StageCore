@@ -28,19 +28,47 @@
   <main id="loginView" class="auth-layout">
     <section class="auth-card">
       <p class="eyebrow">LOCAL OPERATOR ACCESS</p>
-      <h1>Sign in to the Hub</h1>
-      <p class="muted">Authentication stays on this StageCore Hub. No Internet account is required.</p>
-      <form id="loginForm" autocomplete="on">
-        <label>
-          Username
-          <input id="username" name="username" autocomplete="username" required>
-        </label>
-        <label>
-          Password
-          <input id="password" name="password" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="button primary wide" type="submit">Sign in</button>
-      </form>
+
+      <div id="loginPanel">
+        <h1>Sign in to the Hub</h1>
+        <p class="muted">Authentication stays on this StageCore Hub. No Internet account is required.</p>
+        <form id="loginForm" autocomplete="on">
+          <label>
+            Username
+            <input id="username" name="username" autocomplete="username" required>
+          </label>
+          <label>
+            Password
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="button primary wide" type="submit">Sign in</button>
+        </form>
+      </div>
+
+      <div id="bootstrapPanel" class="hidden">
+        <h1>Claim this fresh Hub</h1>
+        <p class="muted">On the Hub machine, run <span class="mono">stagecore-setup setup-code</span>. Enter that one-time local code here to create the first OWNER. No Internet account is involved.</p>
+        <form id="bootstrapForm" autocomplete="off">
+          <label>
+            Setup code
+            <input id="bootstrapCode" class="mono" autocomplete="off" required>
+          </label>
+          <label>
+            OWNER username
+            <input id="bootstrapUsername" autocomplete="username" minlength="3" maxlength="64" required>
+          </label>
+          <label>
+            OWNER password
+            <input id="bootstrapPassword" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <label>
+            Confirm password
+            <input id="bootstrapPasswordConfirm" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <button class="button primary wide" type="submit">Create first OWNER</button>
+        </form>
+      </div>
+
       <div id="loginMessage" class="message hidden" role="status"></div>
       <dl class="identity-grid">
         <div><dt>Hub</dt><dd id="hubName">—</dd></div>
@@ -152,6 +180,7 @@
   </template>
 
   <script src="/app.js" defer></script>
+  <script src="/bootstrap.js" defer></script>
   <script src="/configuration.js" defer></script>
   <script src="/preflight.js" defer></script>
   <script src="/memory.js" defer></script>
