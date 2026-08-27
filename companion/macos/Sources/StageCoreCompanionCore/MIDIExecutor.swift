@@ -73,12 +73,9 @@ struct CoreMIDISender: MIDISending {
 public struct MIDISendExecutor: CompanionCapabilityExecutor {
     public let capabilityKey = "midi.send"
 
-    private let destination: MIDIDestination
     private let sender: any MIDISending
 
-    public init(destination: MIDIDestination) throws {
-        guard destination.isValid else { throw MIDIExecutorError.invalidDestination }
-        self.destination = destination
+    public init() throws {
         #if os(macOS)
         self.sender = CoreMIDISender()
         #else
@@ -86,15 +83,15 @@ public struct MIDISendExecutor: CompanionCapabilityExecutor {
         #endif
     }
 
-    init(destination: MIDIDestination, sender: any MIDISending) throws {
-        guard destination.isValid else { throw MIDIExecutorError.invalidDestination }
-        self.destination = destination
+    init(sender: any MIDISending) {
         self.sender = sender
     }
 
     public func execute(parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        let destination: MIDIDestination
         let bytes: [UInt8]
         do {
+            destination = try MIDIMessageEncoder.destination(parameters: parameters)
             bytes = try MIDIMessageEncoder.encode(parameters: parameters)
         } catch {
             return CompanionCapabilityOutcome(
@@ -140,6 +137,15 @@ public struct MIDISendExecutor: CompanionCapabilityExecutor {
 }
 
 enum MIDIMessageEncoder {
+    static func destination(parameters: [String: JSONValue]) throws -> MIDIDestination {
+        guard case .int(let index)? = parameters["destination_index"] else {
+            throw MIDIExecutorError.invalidDestination
+        }
+        let destination = MIDIDestination(index: index)
+        guard destination.isValid else { throw MIDIExecutorError.invalidDestination }
+        return destination
+    }
+
     static func encode(parameters: [String: JSONValue]) throws -> [UInt8] {
         guard case .array(let rawBytes)? = parameters["bytes"] else {
             throw MIDIExecutorError.sendFailed
