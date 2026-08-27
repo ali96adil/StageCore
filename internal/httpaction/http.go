@@ -24,13 +24,20 @@ const (
 	maxTimeout     = 30 * time.Second
 )
 
+type SecretResolver interface {
+	Resolve(context.Context, string) (string, error)
+}
+
 type Executor struct {
-	client *http.Client
+	client  *http.Client
+	secrets SecretResolver
 }
 
 type targetConfig struct {
-	URL       string `json:"url"`
-	SecretRef string `json:"secret_ref,omitempty"`
+	URL          string `json:"url"`
+	SecretRef    string `json:"secret_ref,omitempty"`
+	SecretHeader string `json:"secret_header,omitempty"`
+	SecretPrefix string `json:"secret_prefix,omitempty"`
 }
 
 type parameters struct {
@@ -41,10 +48,18 @@ type parameters struct {
 	SecretRef string            `json:"secret_ref,omitempty"`
 }
 
-func New() *Executor {
-	return &Executor{client: &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+func defaultClient() *http.Client {
+	return &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
-	}}}
+	}}
+}
+
+func New() *Executor {
+	return &Executor{client: defaultClient()}
+}
+
+func NewWithSecretResolver(resolver SecretResolver) *Executor {
+	return &Executor{client: defaultClient(), secrets: resolver}
 }
 
 func NewWithClient(client *http.Client) *Executor {
@@ -52,6 +67,13 @@ func NewWithClient(client *http.Client) *Executor {
 		return New()
 	}
 	return &Executor{client: client}
+}
+
+func NewWithClientAndSecretResolver(client *http.Client, resolver SecretResolver) *Executor {
+	if client == nil {
+		client = defaultClient()
+	}
+	return &Executor{client: client, secrets: resolver}
 }
 
 func (e *Executor) Execute(ctx context.Context, req capability.Request) capability.Result {
@@ -62,15 +84,12 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 	if err := json.Unmarshal(req.Target.Configuration, &target); err != nil {
 		return failure("HTTP_TARGET_INVALID", "HTTP target configuration is invalid")
 	}
-	if strings.TrimSpace(target.SecretRef) != "" {
-		return failure("SECRET_STORE_REQUIRED", "HTTP credentials require the StageCore Secret Store")
-	}
 	base, err := url.Parse(strings.TrimSpace(target.URL))
 	if err != nil || base.Scheme == "" || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") || base.User != nil {
 		return failure("HTTP_TARGET_INVALID", "HTTP target must be an absolute http/https URL without embedded credentials")
 	}
 	if hasSensitiveQuery(base.Query()) {
-		return failure("SECRET_STORE_REQUIRED", "credential-like HTTP query parameters require the StageCore Secret Store")
+		return failure("SECRET_STORE_REQUIRED", "credential-like HTTP query parameters require a Secret Store reference")
 	}
 
 	var p parameters
@@ -80,8 +99,11 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 	if err := json.Unmarshal(req.Parameters, &p); err != nil {
 		return failure("HTTP_INVALID_PARAMETERS", "HTTP Action parameters are invalid")
 	}
+	// Per-execution secret injection is intentionally not accepted. A secret is
+	// bound by target configuration so immutable Snapshot review can see which
+	// logical credential an endpoint is allowed to use.
 	if strings.TrimSpace(p.SecretRef) != "" {
-		return failure("SECRET_STORE_REQUIRED", "HTTP credentials require the StageCore Secret Store")
+		return failure("HTTP_INVALID_PARAMETERS", "HTTP secret references must be declared on the target configuration")
 	}
 	method := strings.ToUpper(strings.TrimSpace(p.Method))
 	if method == "" {
@@ -94,7 +116,7 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 	}
 	for name := range p.Headers {
 		if sensitiveHeader(name) {
-			return failure("SECRET_STORE_REQUIRED", "credential-bearing HTTP headers require the StageCore Secret Store")
+			return failure("SECRET_STORE_REQUIRED", "credential-bearing HTTP headers require a Secret Store reference")
 		}
 	}
 
@@ -117,6 +139,9 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 	for name, value := range p.Headers {
 		httpReq.Header.Set(name, value)
 	}
+	if result := e.applySecret(execCtx, httpReq, target); result != nil {
+		return *result
+	}
 
 	response, err := e.client.Do(httpReq)
 	if err != nil {
@@ -136,6 +161,38 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckAccepted, ResponseSummary: summary}
 	}
 	return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckAccepted, ErrorCode: fmt.Sprintf("HTTP_STATUS_%d", response.StatusCode), ResponseSummary: summary}
+}
+
+func (e *Executor) applySecret(ctx context.Context, request *http.Request, target targetConfig) *capability.Result {
+	reference := strings.TrimSpace(target.SecretRef)
+	if reference == "" {
+		if strings.TrimSpace(target.SecretHeader) != "" || strings.TrimSpace(target.SecretPrefix) != "" {
+			result := failure("HTTP_SECRET_CONFIGURATION_INVALID", "HTTP secret header/prefix requires a secret_ref")
+			return &result
+		}
+		return nil
+	}
+	if e.secrets == nil {
+		result := failure("SECRET_STORE_REQUIRED", "HTTP target references a secret but no Secret Store resolver is available")
+		return &result
+	}
+	header := strings.TrimSpace(target.SecretHeader)
+	if header == "" || strings.ContainsAny(header, "\r\n") {
+		result := failure("HTTP_SECRET_CONFIGURATION_INVALID", "HTTP secret_ref requires a valid secret_header")
+		return &result
+	}
+	prefix := target.SecretPrefix
+	if strings.ContainsAny(prefix, "\r\n") {
+		result := failure("HTTP_SECRET_CONFIGURATION_INVALID", "HTTP secret prefix is invalid")
+		return &result
+	}
+	value, err := e.secrets.Resolve(ctx, reference)
+	if err != nil {
+		result := failure("HTTP_SECRET_UNAVAILABLE", "HTTP credential reference could not be resolved")
+		return &result
+	}
+	request.Header.Set(header, prefix+value)
+	return nil
 }
 
 func boundedTimeout(timeoutMS int64) time.Duration {
