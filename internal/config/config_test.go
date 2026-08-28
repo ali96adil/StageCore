@@ -1,0 +1,32 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestLoadOSCInputConfiguration(t *testing.T) {
+	t.Setenv("STAGECORE_OSC_INPUT_LISTEN", "")
+	t.Setenv("STAGECORE_OSC_INPUT_SESSION_ID", "")
+
+	cfg, err := Load([]string{
+		"--osc-input-listen", "127.0.0.1:9000",
+		"--osc-input-session-id", "session-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OSCInputListen != "127.0.0.1:9000" || cfg.OSCInputSessionID != "session-1" {
+		t.Fatalf("OSC input config = %q, %q", cfg.OSCInputListen, cfg.OSCInputSessionID)
+	}
+}
+
+func TestLoadRejectsPartialOSCInputConfiguration(t *testing.T) {
+	t.Setenv("STAGECORE_OSC_INPUT_LISTEN", "")
+	t.Setenv("STAGECORE_OSC_INPUT_SESSION_ID", "")
+
+	_, err := Load([]string{"--osc-input-listen", "127.0.0.1:9000"})
+	if err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("error = %v", err)
+	}
+}

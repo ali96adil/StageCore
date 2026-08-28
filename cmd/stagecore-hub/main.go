@@ -21,6 +21,11 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type oscInputRuntime interface {
+	StartOSCInput(context.Context, string, string) (string, error)
+	ServeOSCInput(context.Context) error
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
@@ -100,17 +105,30 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	errCh := make(chan error, 1)
+	httpErrCh := make(chan error, 1)
+	oscInputErrCh := make(chan error, 1)
+	if cfg.OSCInputListen != "" {
+		listen, err := startOSCInput(ctx, application, cfg.OSCInputSessionID, cfg.OSCInputListen, oscInputErrCh)
+		if err != nil {
+			logger.Error("OSC input startup failed", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("StageCore OSC input listening", "listen", listen, "session_id", cfg.OSCInputSessionID)
+	}
 	go func() {
 		logger.Info("StageCore Hub listening", "listen", cfg.Listen, "data_root", cfg.DataRoot)
-		errCh <- server.ListenAndServe()
+		httpErrCh <- server.ListenAndServe()
 	}()
 
 	select {
 	case <-ctx.Done():
-	case err := <-errCh:
+	case err := <-httpErrCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server failed", "error", err)
+		}
+	case err := <-oscInputErrCh:
+		if err != nil {
+			logger.Error("OSC input failed", "error", err)
 		}
 	}
 
@@ -119,4 +137,15 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("HTTP shutdown failed", "error", err)
 	}
+}
+
+func startOSCInput(ctx context.Context, runtime oscInputRuntime, sessionID, listenAddress string, errCh chan<- error) (string, error) {
+	listen, err := runtime.StartOSCInput(ctx, sessionID, listenAddress)
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		errCh <- runtime.ServeOSCInput(ctx)
+	}()
+	return listen, nil
 }
