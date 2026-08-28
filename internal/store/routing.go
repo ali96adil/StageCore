@@ -64,6 +64,37 @@ func (s *Store) CreateOutput(ctx context.Context, output domain.OutputDefinition
 	return output, nil
 }
 
+
+func (s *Store) UpdateOutput(ctx context.Context, output domain.OutputDefinition) (domain.OutputDefinition, error) {
+	if err := s.ensureDraft(ctx, s.db, output.RevisionID); err != nil {
+		return domain.OutputDefinition{}, err
+	}
+	if output.Criticality == "" {
+		output.Criticality = "NORMAL"
+	}
+	schema, err := normalizeJSON(output.ValueSchema, "{}")
+	if err != nil {
+		return domain.OutputDefinition{}, fmt.Errorf("output value schema: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE output_definitions
+		SET name = ?, target_ref = ?, capability_key = ?, value_schema_json = ?, criticality = ?
+		WHERE output_id = ? AND revision_id = ?`,
+		strings.TrimSpace(output.Name), output.TargetRef, output.CapabilityKey, schema, output.Criticality, output.ID, output.RevisionID)
+	if err != nil {
+		return domain.OutputDefinition{}, fmt.Errorf("update output: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.OutputDefinition{}, fmt.Errorf("count updated outputs: %w", err)
+	}
+	if affected != 1 {
+		return domain.OutputDefinition{}, fmt.Errorf("%w: output does not belong to revision", domain.ErrInvalidInput)
+	}
+	output.ValueSchema = json.RawMessage(schema)
+	return output, nil
+}
+
 func (s *Store) ListInputs(ctx context.Context, revisionID string) ([]domain.InputDefinition, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT input_id, revision_id, name, source_ref, event_type, value_schema_json, enabled FROM input_definitions WHERE revision_id = ? ORDER BY name, input_id`, revisionID)
 	if err != nil {
