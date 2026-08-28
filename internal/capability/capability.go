@@ -92,6 +92,18 @@ func (r *Registry) RegisterTargetType(logicalType string, executor Executor) err
 	return nil
 }
 
+// HasTargetTypeExecutor reports whether execution for this logical target type
+// is handled by a target dispatcher instead of the capability-key executor.
+func (r *Registry) HasTargetTypeExecutor(logicalType string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.targetExecutors[normalizeLogicalType(logicalType)]
+	return ok
+}
+
 // Supports reports whether the runtime has an execution boundary for the
 // capability/target combination. A logical target dispatcher (for example a
 // Machine Role forwarded to a Companion) takes precedence in the same way as
