@@ -229,6 +229,34 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		writeJSON(w, http.StatusCreated, outputView(created))
 	}))
 
+
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/outputs/{output_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		var body outputCreateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if len(body.ValueSchema) == 0 {
+			body.ValueSchema = json.RawMessage(`{}`)
+		}
+		updated, err := stageStore.UpdateOutput(r.Context(), domain.OutputDefinition{
+			ID: strings.TrimSpace(r.PathValue("output_id")), RevisionID: revision.ID,
+			Name: strings.TrimSpace(body.Name), TargetRef: strings.TrimSpace(body.TargetRef),
+			CapabilityKey: strings.TrimSpace(body.CapabilityKey), ValueSchema: body.ValueSchema,
+			Criticality: strings.TrimSpace(body.Criticality),
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "OUTPUT_UPDATE_FAILED"})
+			return
+		}
+		writeJSON(w, http.StatusOK, outputView(updated))
+	}))
+
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/routes", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
