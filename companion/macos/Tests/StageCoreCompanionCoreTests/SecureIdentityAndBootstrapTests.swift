@@ -34,7 +34,11 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
             identityStore: MemorySecureIdentityStore()
         )
         let withoutStatus = await withoutOSC.status()
+        #if os(macOS)
+        XCTAssertEqual(withoutStatus.capabilities, ["local.echo", "midi.send"])
+        #else
         XCTAssertEqual(withoutStatus.capabilities, ["local.echo"])
+        #endif
 
         let withOSC = try CompanionBootstrap(
             configuration: configuration(
@@ -44,7 +48,11 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
             identityStore: MemorySecureIdentityStore()
         )
         let withStatus = await withOSC.status()
+        #if os(macOS)
+        XCTAssertEqual(withStatus.capabilities, ["local.echo", "midi.send", "osc.send"])
+        #else
         XCTAssertEqual(withStatus.capabilities, ["local.echo", "osc.send"])
+        #endif
     }
 
     func testNormalConfigurationContainsNoPrivateCredentialMaterial() throws {
