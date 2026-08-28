@@ -50,6 +50,7 @@ public actor WebSocketCompanionAgent {
     private let authenticator: any CompanionRuntimeAuthenticator
     private let reconnectDelay: Duration
     private let maxReconnects: Int
+    private let heartbeatInterval: Duration
 
     public init(
         url: URL,
@@ -57,7 +58,8 @@ public actor WebSocketCompanionAgent {
         session: CompanionSession,
         authenticator: any CompanionRuntimeAuthenticator,
         reconnectDelay: Duration = .milliseconds(250),
-        maxReconnects: Int = 8
+        maxReconnects: Int = 8,
+        heartbeatInterval: Duration = .seconds(5)
     ) throws {
         try CompanionTransportPolicy.validate(url: url, policy: securityPolicy)
         self.url = url
@@ -66,6 +68,7 @@ public actor WebSocketCompanionAgent {
         self.authenticator = authenticator
         self.reconnectDelay = reconnectDelay
         self.maxReconnects = max(0, maxReconnects)
+        self.heartbeatInterval = heartbeatInterval
     }
 
     public func run() async throws {
@@ -103,6 +106,19 @@ public actor WebSocketCompanionAgent {
             urlSession.invalidateAndCancel()
         }
 
+        let heartbeat = Task {
+            do {
+                try await runCompanionHeartbeat(every: heartbeatInterval) {
+                    try await self.send(try await self.session.helloData(), socket: socket)
+                }
+            } catch is CancellationError {
+                // Normal connection teardown.
+            } catch {
+                socket.cancel(with: .goingAway, reason: nil)
+            }
+        }
+        defer { heartbeat.cancel() }
+
         do {
             try await send(try await session.helloData(), socket: socket)
             while !Task.isCancelled {
@@ -135,4 +151,17 @@ public actor WebSocketCompanionAgent {
             throw CompanionTransportError.disconnected
         }
     }
+}
+
+
+func runCompanionHeartbeat(
+    every interval: Duration,
+    operation: @escaping @Sendable () async throws -> Void
+) async throws {
+    while !Task.isCancelled {
+        try await Task.sleep(for: interval)
+        try Task.checkCancellation()
+        try await operation()
+    }
+    throw CancellationError()
 }
