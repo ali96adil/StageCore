@@ -16,6 +16,8 @@ type Config struct {
 	VaultRoot             string
 	Listen                string
 	OSCPluginPath         string
+	OSCInputListen        string
+	OSCInputSessionID     string
 	RuntimeReserveBytes   int64
 	StorageWarningPercent float64
 }
@@ -25,6 +27,8 @@ func Load(args []string) (Config, error) {
 	defaultVaultRoot := envOr("STAGECORE_VAULT_ROOT", filepath.Join(defaultDataRoot, "vault"))
 	defaultListen := envOr("STAGECORE_LISTEN", "127.0.0.1:7840")
 	defaultOSCPlugin := defaultOSCPluginPath()
+	defaultOSCInputListen := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_LISTEN"))
+	defaultOSCInputSessionID := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_SESSION_ID"))
 	defaultReserve, err := envInt64("STAGECORE_RUNTIME_RESERVE_BYTES", storagehealth.DefaultRuntimeReserveBytes)
 	if err != nil {
 		return Config{}, err
@@ -39,6 +43,8 @@ func Load(args []string) (Config, error) {
 	vaultRoot := fs.String("vault-root", defaultVaultRoot, "StageCore Vault root")
 	listen := fs.String("listen", defaultListen, "HTTP listen address")
 	oscPluginPath := fs.String("osc-plugin-path", defaultOSCPlugin, "path to the StageCore OSC plugin executable")
+	oscInputListen := fs.String("osc-input-listen", defaultOSCInputListen, "OSC input UDP listen address (loopback only)")
+	oscInputSessionID := fs.String("osc-input-session-id", defaultOSCInputSessionID, "active Runtime Session for OSC input routing")
 	reserveBytes := fs.Int64("runtime-reserve-bytes", defaultReserve, "bytes reserved for critical runtime persistence")
 	warningPercent := fs.Float64("storage-warning-percent", defaultWarning, "free-space percentage that produces storage WARNING")
 	if err := fs.Parse(args); err != nil {
@@ -48,6 +54,7 @@ func Load(args []string) (Config, error) {
 	cfg := Config{
 		DataRoot: strings.TrimSpace(*dataRoot), VaultRoot: strings.TrimSpace(*vaultRoot),
 		Listen: strings.TrimSpace(*listen), OSCPluginPath: strings.TrimSpace(*oscPluginPath),
+		OSCInputListen: strings.TrimSpace(*oscInputListen), OSCInputSessionID: strings.TrimSpace(*oscInputSessionID),
 		RuntimeReserveBytes: *reserveBytes, StorageWarningPercent: *warningPercent,
 	}
 	if cfg.DataRoot == "" {
@@ -61,6 +68,9 @@ func Load(args []string) (Config, error) {
 	}
 	if cfg.OSCPluginPath == "" {
 		return Config{}, fmt.Errorf("OSC plugin path is required")
+	}
+	if (cfg.OSCInputListen == "") != (cfg.OSCInputSessionID == "") {
+		return Config{}, fmt.Errorf("OSC input listen address and session ID must be configured together")
 	}
 	if cfg.RuntimeReserveBytes <= 0 {
 		return Config{}, fmt.Errorf("runtime reserve bytes must be greater than zero")
