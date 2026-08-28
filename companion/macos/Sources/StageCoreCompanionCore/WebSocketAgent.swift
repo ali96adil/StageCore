@@ -59,7 +59,7 @@ public actor WebSocketCompanionAgent {
         authenticator: any CompanionRuntimeAuthenticator,
         reconnectDelay: Duration = .milliseconds(250),
         maxReconnects: Int = 8,
-        heartbeatInterval: Duration = .seconds(5)
+        heartbeatInterval: Duration = .seconds(1)
     ) throws {
         try CompanionTransportPolicy.validate(url: url, policy: securityPolicy)
         self.url = url
