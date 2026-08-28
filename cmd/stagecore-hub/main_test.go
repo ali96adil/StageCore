@@ -8,7 +8,7 @@ import (
 )
 
 type fakeOSCInputRuntime struct {
-	startSession string
+	startProject string
 	startListen  string
 	localListen  string
 	startErr     error
@@ -16,8 +16,8 @@ type fakeOSCInputRuntime struct {
 	serveCalled  chan struct{}
 }
 
-func (f *fakeOSCInputRuntime) StartOSCInput(_ context.Context, sessionID, listenAddress string) (string, error) {
-	f.startSession = sessionID
+func (f *fakeOSCInputRuntime) StartOSCInputForProject(_ context.Context, projectID, listenAddress string) (string, error) {
+	f.startProject = projectID
 	f.startListen = listenAddress
 	return f.localListen, f.startErr
 }
@@ -36,12 +36,12 @@ func TestStartOSCInputWiresProductionRuntime(t *testing.T) {
 	}
 	errCh := make(chan error, 1)
 
-	listen, err := startOSCInput(context.Background(), runtime, "session-1", "127.0.0.1:9000", errCh)
+	listen, err := startOSCInput(context.Background(), runtime, "project-1", "127.0.0.1:9000", errCh)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listen != runtime.localListen || runtime.startSession != "session-1" || runtime.startListen != "127.0.0.1:9000" {
-		t.Fatalf("listen=%q startSession=%q startListen=%q", listen, runtime.startSession, runtime.startListen)
+	if listen != runtime.localListen || runtime.startProject != "project-1" || runtime.startListen != "127.0.0.1:9000" {
+		t.Fatalf("listen=%q startProject=%q startListen=%q", listen, runtime.startProject, runtime.startListen)
 	}
 
 	select {
@@ -63,7 +63,7 @@ func TestStartOSCInputDoesNotServeAfterStartupFailure(t *testing.T) {
 	wantErr := errors.New("startup failed")
 	runtime := &fakeOSCInputRuntime{startErr: wantErr, serveCalled: make(chan struct{})}
 
-	_, err := startOSCInput(context.Background(), runtime, "session-1", "127.0.0.1:9000", make(chan error, 1))
+	_, err := startOSCInput(context.Background(), runtime, "project-1", "127.0.0.1:9000", make(chan error, 1))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error = %v", err)
 	}

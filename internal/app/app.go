@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/backup"
@@ -198,6 +199,28 @@ func (a *App) RefreshPluginPermissions(ctx context.Context) error {
 }
 
 func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string) (string, error) {
+	return a.startOSCInput(ctx, listenAddress, func(context.Context) (string, error) {
+		return sessionID, nil
+	})
+}
+
+func (a *App) StartOSCInputForProject(ctx context.Context, projectID, listenAddress string) (string, error) {
+	if a == nil || a.Store == nil {
+		return "", fmt.Errorf("StageCore Store is unavailable")
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return "", fmt.Errorf("OSC input project ID is required")
+	}
+	return a.startOSCInput(ctx, listenAddress, func(ctx context.Context) (string, error) {
+		session, err := a.Store.ActiveSessionForProject(ctx, projectID)
+		if err != nil || session == nil {
+			return "", err
+		}
+		return session.ID, nil
+	})
+}
+
+func (a *App) startOSCInput(ctx context.Context, listenAddress string, resolveSession oscinputplugin.SessionResolver) (string, error) {
 	if a == nil || a.RoutingEngine == nil {
 		return "", fmt.Errorf("StageCore routing is unavailable")
 	}
@@ -209,7 +232,7 @@ func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string
 	if err != nil {
 		return "", fmt.Errorf("load OSC input permissions: %w", err)
 	}
-	host := oscinputplugin.New(
+	host := oscinputplugin.NewWithSessionResolver(
 		a.Config.OSCPluginPath,
 		listenAddress,
 		nil,
@@ -221,7 +244,7 @@ func (a *App) StartOSCInput(ctx context.Context, sessionID, listenAddress string
 			GrantedPermissions: permissions,
 		},
 		a.RoutingEngine,
-		sessionID,
+		resolveSession,
 	)
 	if err := host.Start(ctx); err != nil {
 		host.Close()

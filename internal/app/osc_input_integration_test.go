@@ -33,7 +33,7 @@ func TestAppExternalOSCInputReachesRoutingRuntime(t *testing.T) {
 	}
 	defer application.Close()
 
-	_, revision, err := application.Store.CreateProject(ctx, store.CreateProjectParams{Name: "App OSC Input", CreatedBy: "test"})
+	project, revision, err := application.Store.CreateProject(ctx, store.CreateProjectParams{Name: "App OSC Input", CreatedBy: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +56,7 @@ func TestAppExternalOSCInputReachesRoutingRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := application.Store.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionRehearsal, "App external OSC input")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	listen, err := application.StartOSCInput(ctx, session.ID, "127.0.0.1:0")
+	listen, err := application.StartOSCInputForProject(ctx, project.ID, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +70,22 @@ func TestAppExternalOSCInputReachesRoutingRuntime(t *testing.T) {
 	}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- application.ServeOSCInput(ctx) }()
+
+	// The production listener starts before an Operator Runtime Session exists.
+	// Input received in EDIT mode is ignored without terminating the listener.
+	if _, err := (osc.Sender{}).Send(ctx, osc.Endpoint{Host: "127.0.0.1", Port: port}, osc.Message{Address: "/app/input", Arguments: []osc.Argument{{Type: "int32", Value: int32(7)}}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-serveDone:
+		t.Fatalf("OSC input listener stopped without an active session: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	session, err := application.Store.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionRehearsal, "App external OSC input")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := (osc.Sender{}).Send(ctx, osc.Endpoint{Host: "127.0.0.1", Port: port}, osc.Message{Address: "/app/input", Arguments: []osc.Argument{{Type: "int32", Value: int32(7)}}}); err != nil {
 		t.Fatal(err)
