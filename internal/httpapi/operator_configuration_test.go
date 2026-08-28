@@ -81,6 +81,14 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 		t.Fatalf("output decode=%v body=%s", err, outputRes.Body.String())
 	}
 
+
+	updateOutputRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/outputs/"+output.ID, map[string]any{
+		"name": "Projector OSC", "target_ref": "PROJECTOR-MAIN", "capability_key": "local.echo", "value_schema": map[string]any{}, "criticality": "NORMAL",
+	})
+	if updateOutputRes.Code != http.StatusOK {
+		t.Fatalf("output update status=%d body=%s", updateOutputRes.Code, updateOutputRes.Body.String())
+	}
+
 	routeRes := request(http.MethodPost, "/api/v1/projects/"+project.ID+"/routes", map[string]any{
 		"name": "GO to Projector", "input_id": input.ID, "condition_definition": nil,
 		"transform_definition": nil, "priority_class": "P2", "error_policy": map[string]any{}, "enabled": true,
@@ -103,7 +111,7 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if err := json.Unmarshal(configurationRes.Body.Bytes(), &model); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.Targets) != 1 || len(model.Inputs) != 1 || len(model.Outputs) != 1 || len(model.Routes) != 1 || len(model.Routes[0].Actions) != 1 {
+	if len(model.Targets) != 1 || len(model.Inputs) != 1 || len(model.Outputs) != 1 || model.Outputs[0].CapabilityKey != "local.echo" || len(model.Routes) != 1 || len(model.Routes[0].Actions) != 1 {
 		t.Fatalf("configuration=%#v", model)
 	}
 
