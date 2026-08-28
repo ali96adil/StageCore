@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	PluginID             = "stagecore.osc"
-	CapabilityOSCSend    = "osc.send"
-	InputOSCReceive      = "osc.receive"
-	PermissionUDPSend    = "network.udp.send"
-	PermissionUDPListen  = "network.udp.listen"
+	PluginID            = "stagecore.osc"
+	CapabilityOSCSend   = "osc.send"
+	InputOSCReceive     = "osc.receive"
+	PermissionUDPSend   = "network.udp.send"
+	PermissionUDPListen = "network.udp.listen"
 )
 
 type Executor struct {
@@ -37,6 +37,25 @@ type targetConfig struct {
 	} `json:"osc"`
 }
 
+// ValidateTargetConfiguration applies the same target schema enforced by the
+// runtime OSC executor so invalid local OSC endpoints are blocked before a
+// Runtime Snapshot can be published.
+func ValidateTargetConfiguration(raw json.RawMessage) error {
+	_, err := parseTargetConfiguration(raw)
+	return err
+}
+
+func parseTargetConfiguration(raw json.RawMessage) (targetConfig, error) {
+	var cfg targetConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return targetConfig{}, errors.New("OSC target configuration is invalid")
+	}
+	if strings.TrimSpace(cfg.OSC.Host) == "" || cfg.OSC.Port < 1 || cfg.OSC.Port > 65535 {
+		return targetConfig{}, errors.New("OSC target requires host and port 1..65535")
+	}
+	return cfg, nil
+}
+
 func (e *Executor) Execute(ctx context.Context, req capability.Request) capability.Result {
 	if req.Capability != CapabilityOSCSend {
 		return failed("CAPABILITY_UNAVAILABLE", "OSC executor received unsupported capability")
@@ -48,12 +67,9 @@ func (e *Executor) Execute(ctx context.Context, req capability.Request) capabili
 		return failed("TARGET_NOT_FOUND", "logical target is not present in Runtime Snapshot")
 	}
 
-	var cfg targetConfig
-	if err := json.Unmarshal(req.Target.Configuration, &cfg); err != nil {
-		return failed("TARGET_CONFIG_INVALID", "OSC target configuration is invalid")
-	}
-	if strings.TrimSpace(cfg.OSC.Host) == "" || cfg.OSC.Port < 1 || cfg.OSC.Port > 65535 {
-		return failed("TARGET_CONFIG_INVALID", "OSC target requires host and port 1..65535")
+	cfg, err := parseTargetConfiguration(req.Target.Configuration)
+	if err != nil {
+		return failed("TARGET_CONFIG_INVALID", err.Error())
 	}
 
 	timeoutMS := req.TimeoutMS
