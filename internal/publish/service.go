@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -142,6 +143,12 @@ func validateTargetCapability(report *Report, block func(string, string, string)
 	}
 	if !registry.Supports(capabilityKey, alias.LogicalType) {
 		block("CAPABILITY_UNAVAILABLE", "no runtime executor is registered for this capability/target type", ref)
+		return
+	}
+	if capabilityKey == oscplugin.CapabilityOSCSend && !registry.HasTargetTypeExecutor(alias.LogicalType) {
+		if err := oscplugin.ValidateTargetConfiguration(alias.ProjectConfig); err != nil {
+			block("TARGET_CONFIG_INVALID", err.Error(), alias.ID)
+		}
 	}
 	_ = report
 }
