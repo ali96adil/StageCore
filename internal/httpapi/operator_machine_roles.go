@@ -24,6 +24,11 @@ type roleAssignmentCreateRequest struct {
 	CompanionID string `json:"companion_id"`
 }
 
+type machineRoleRuntimeRequirementRequest struct {
+	RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+	ConfigHash        string `json:"config_hash,omitempty"`
+}
+
 type machineRoleView struct {
 	ID                        string    `json:"machine_role_id"`
 	ProjectID                 string    `json:"project_id"`
@@ -74,6 +79,36 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			return
 		}
 		writeJSON(w, http.StatusCreated, makeMachineRoleView(role))
+	}))
+
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/runtime-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		roleID := strings.TrimSpace(r.PathValue("machine_role_id"))
+		role, err := stageStore.GetMachineRole(r.Context(), roleID)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_REQUIREMENT_FAILED")
+			return
+		}
+		if role.ProjectID != projectID {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "MACHINE_ROLE_NOT_FOUND"})
+			return
+		}
+		var body machineRoleRuntimeRequirementRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if err := stageStore.SetMachineRoleRuntimeRequirement(
+			r.Context(), roleID, strings.TrimSpace(body.RuntimeSnapshotID), strings.TrimSpace(body.ConfigHash),
+		); err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_REQUIREMENT_FAILED")
+			return
+		}
+		updated, err := stageStore.GetMachineRole(r.Context(), roleID)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_REQUIREMENT_FAILED")
+			return
+		}
+		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/assignment", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
