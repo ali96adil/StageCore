@@ -43,8 +43,9 @@ func (s *Store) GetCue(ctx context.Context, cueID string) (domain.Cue, error) {
 }
 
 // ReplaceDraftCue replaces the editable Cue fields and its Action list as one
-// transaction. IDs supplied for Actions are preserved; missing IDs receive a
-// fresh UUIDv7. Published/frozen revisions are never modified.
+// transaction. IDs supplied for Actions are preserved only when they already
+// belong to this Draft Cue; stale IDs from a published/source revision receive
+// a fresh UUIDv7. Published/frozen revisions are never modified.
 func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []domain.Action) (domain.Cue, error) {
 	if strings.TrimSpace(cue.ID) == "" || strings.TrimSpace(cue.RevisionID) == "" || strings.TrimSpace(cue.Name) == "" {
 		return domain.Cue{}, fmt.Errorf("%w: cue ID, revision and name are required", domain.ErrInvalidInput)
@@ -76,6 +77,27 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 		return domain.Cue{}, domain.ErrNotFound
 	}
 
+	existingActionIDs := make(map[string]struct{})
+	rows, err := tx.QueryContext(ctx, `SELECT action_id FROM actions WHERE cue_id = ?`, cue.ID)
+	if err != nil {
+		return domain.Cue{}, fmt.Errorf("list existing cue action ids: %w", err)
+	}
+	for rows.Next() {
+		var actionID string
+		if err := rows.Scan(&actionID); err != nil {
+			_ = rows.Close()
+			return domain.Cue{}, fmt.Errorf("scan existing cue action id: %w", err)
+		}
+		existingActionIDs[actionID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return domain.Cue{}, fmt.Errorf("iterate existing cue action ids: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return domain.Cue{}, fmt.Errorf("close existing cue action ids: %w", err)
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		UPDATE cues SET display_label = ?, name = ?, order_index = ?, cue_type = ?,
 		criticality = ?, enabled = ?, execution_policy_json = ?, notes_summary = ?
@@ -98,6 +120,11 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 	cue.Actions = make([]domain.Action, 0, len(actions))
 	for _, action := range actions {
 		action.CueID = cue.ID
+		if action.ID != "" {
+			if _, ok := existingActionIDs[action.ID]; !ok {
+				action.ID = ""
+			}
+		}
 		if action.ID == "" {
 			action.ID, err = stageid.New()
 			if err != nil {
