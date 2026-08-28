@@ -77,6 +77,7 @@ func main() {
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
