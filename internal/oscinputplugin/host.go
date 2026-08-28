@@ -31,6 +31,8 @@ type Manifest struct {
 	GrantedPermissions []string
 }
 
+type SessionResolver func(context.Context) (string, error)
+
 type Host struct {
 	mu             sync.Mutex
 	command        string
@@ -39,7 +41,7 @@ type Host struct {
 	startupTimeout time.Duration
 	manifest       Manifest
 	engine         *routing.Engine
-	sessionID      string
+	resolveSession SessionResolver
 
 	cmd     *exec.Cmd
 	scanner *bufio.Scanner
@@ -47,6 +49,15 @@ type Host struct {
 }
 
 func New(command, listenAddress string, stderr io.Writer, manifest Manifest, engine *routing.Engine, sessionID string) *Host {
+	if strings.TrimSpace(sessionID) == "" {
+		return NewWithSessionResolver(command, listenAddress, stderr, manifest, engine, nil)
+	}
+	return NewWithSessionResolver(command, listenAddress, stderr, manifest, engine, func(context.Context) (string, error) {
+		return sessionID, nil
+	})
+}
+
+func NewWithSessionResolver(command, listenAddress string, stderr io.Writer, manifest Manifest, engine *routing.Engine, resolveSession SessionResolver) *Host {
 	if stderr == nil {
 		stderr = io.Discard
 	}
@@ -60,8 +71,8 @@ func New(command, listenAddress string, stderr io.Writer, manifest Manifest, eng
 			InputPermissions:   clonePermissionMap(manifest.InputPermissions),
 			GrantedPermissions: append([]string(nil), manifest.GrantedPermissions...),
 		},
-		engine:    engine,
-		sessionID: sessionID,
+		engine:         engine,
+		resolveSession: resolveSession,
 	}
 }
 
@@ -77,8 +88,8 @@ func (h *Host) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if h.engine == nil || strings.TrimSpace(h.sessionID) == "" {
-		return errors.New("routing engine and session are required")
+	if h.engine == nil || h.resolveSession == nil {
+		return errors.New("routing engine and session resolver are required")
 	}
 	if err := validateLoopbackListen(h.listenAddress); err != nil {
 		return err
@@ -206,7 +217,15 @@ func (h *Host) Serve(ctx context.Context) error {
 				h.Close()
 				return fmt.Errorf("%w: decode input value", ErrProtocol)
 			}
-			if _, err := h.engine.ReceiveOSC(ctx, h.sessionID, event.Source, []any{value}); err != nil {
+			sessionID, err := h.resolveSession(ctx)
+			if err != nil {
+				h.Close()
+				return fmt.Errorf("resolve OSC input session: %w", err)
+			}
+			if strings.TrimSpace(sessionID) == "" {
+				continue
+			}
+			if _, err := h.engine.ReceiveOSC(ctx, sessionID, event.Source, []any{value}); err != nil {
 				h.Close()
 				return fmt.Errorf("route external OSC input: %w", err)
 			}

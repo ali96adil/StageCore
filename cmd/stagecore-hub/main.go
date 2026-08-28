@@ -22,7 +22,7 @@ import (
 )
 
 type oscInputRuntime interface {
-	StartOSCInput(context.Context, string, string) (string, error)
+	StartOSCInputForProject(context.Context, string, string) (string, error)
 	ServeOSCInput(context.Context) error
 }
 
@@ -108,12 +108,12 @@ func main() {
 	httpErrCh := make(chan error, 1)
 	oscInputErrCh := make(chan error, 1)
 	if cfg.OSCInputListen != "" {
-		listen, err := startOSCInput(ctx, application, cfg.OSCInputSessionID, cfg.OSCInputListen, oscInputErrCh)
+		listen, err := startOSCInput(ctx, application, cfg.OSCInputProjectID, cfg.OSCInputListen, oscInputErrCh)
 		if err != nil {
 			logger.Error("OSC input startup failed", "error", err)
 			os.Exit(1)
 		}
-		logger.Info("StageCore OSC input listening", "listen", listen, "session_id", cfg.OSCInputSessionID)
+		logger.Info("StageCore OSC input listening", "listen", listen, "project_id", cfg.OSCInputProjectID)
 	}
 	go func() {
 		logger.Info("StageCore Hub listening", "listen", cfg.Listen, "data_root", cfg.DataRoot)
@@ -139,8 +139,8 @@ func main() {
 	}
 }
 
-func startOSCInput(ctx context.Context, runtime oscInputRuntime, sessionID, listenAddress string, errCh chan<- error) (string, error) {
-	listen, err := runtime.StartOSCInput(ctx, sessionID, listenAddress)
+func startOSCInput(ctx context.Context, runtime oscInputRuntime, projectID, listenAddress string, errCh chan<- error) (string, error) {
+	listen, err := runtime.StartOSCInputForProject(ctx, projectID, listenAddress)
 	if err != nil {
 		return "", err
 	}
