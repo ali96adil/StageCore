@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -152,5 +153,73 @@ func TestOperatorMachineRoleAssignmentRejectsCrossProjectRole(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("cross-project assignment status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestOperatorMachineRoleRuntimeRequirementUsesPublishedProjectSnapshot(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	handler := New(WithOperatorMachineRoles(h.auth, stageStore)).Handler()
+
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Runtime Requirement Test", CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
+		RoleKey: "VIDEO-MAIN", RequiredCapabilities: []string{"local.echo"}, Required: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := stageStore.CreateRuntimeSnapshot(
+		ctx, revision.ID, owner.Session.User.ID, strings.Repeat("a", 64), json.RawMessage(`{}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"runtime_snapshot_id": snapshot.ID,
+		"config_hash": "qualification-config",
+	})
+	path := "/api/v1/projects/" + project.ID + "/machine-roles/" + role.ID + "/runtime-requirement"
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:13200"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	req.Header.Set(csrfHeader, owner.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("runtime requirement status=%d body=%s", res.Code, res.Body.String())
+	}
+	var updated machineRoleView
+	if err := json.Unmarshal(res.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.RequiredRuntimeSnapshotID == nil || *updated.RequiredRuntimeSnapshotID != snapshot.ID {
+		t.Fatalf("runtime snapshot=%v, want %s", updated.RequiredRuntimeSnapshotID, snapshot.ID)
+	}
+	if updated.RequiredConfigHash != "qualification-config" {
+		t.Fatalf("config hash=%q", updated.RequiredConfigHash)
+	}
+
+	emptyReq := httptest.NewRequest(http.MethodPut, path, bytes.NewReader([]byte(`{"runtime_snapshot_id":""}`)))
+	emptyReq.RemoteAddr = "127.0.0.1:13201"
+	emptyReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	emptyReq.Header.Set(csrfHeader, owner.CSRFToken)
+	emptyRes := httptest.NewRecorder()
+	handler.ServeHTTP(emptyRes, emptyReq)
+	if emptyRes.Code != http.StatusBadRequest {
+		t.Fatalf("empty runtime requirement status=%d body=%s", emptyRes.Code, emptyRes.Body.String())
 	}
 }
