@@ -10,7 +10,7 @@ It is a product backlog, not an implementation promise. A feature is promoted in
 - `[x]` = implemented, verified, and documented.
 - Do not check an item merely because code exists; its acceptance path must also pass.
 - New user-approved ideas get a stable `F-xxx` ID and are appended here.
-- Suggestions that are not yet approved stay in **Proposals** until promoted.
+- Proactively surface useful product improvements during StageCore work; new suggestions stay in **Proposals** until explicitly approved and promoted.
 
 ## Confirmed future features
 
@@ -57,31 +57,41 @@ It is a product backlog, not an implementation promise. A feature is promoted in
   - Keep heavy video processing/rendering off the Hub when practical; use the Companion/rendering machine while StageCore owns cues, state, routing, and control.
   - Leave room for adapters such as NDI, RTSP, SRT, WebRTC, or platform-specific camera bridges without changing the core cue architecture.
 
-## Proposals — not yet promoted
+- [ ] **F-008 — First-run setup wizard**
+  - Provide a friendly first-launch flow for language, StageCore name, primary devices, and common initial capabilities.
+  - Prefer guided choices and automatic discovery over asking the operator for technical configuration.
 
-These are useful candidates raised during design discussion. They remain proposals until explicitly approved.
+- [ ] **F-009 — `stagecore doctor` diagnostics command**
+  - Provide one command to inspect service state, connectivity, pairing, storage, versions, permissions, and major runtime dependencies.
+  - Present actionable results suitable for both operators and support/debugging workflows.
 
-- [ ] **P-001 — First-run setup wizard**
-  - Friendly first-launch flow for language, StageCore name, primary devices, and common initial capabilities.
+- [ ] **F-010 — Safe update + automatic backup/rollback**
+  - Run pre-update validation and backup before changing the installed version.
+  - Run post-update health checks and automatically offer or perform rollback when the new version fails validation.
+  - Protect projects, configuration, identities, and operator data across supported updates.
 
-- [ ] **P-002 — `stagecore doctor` diagnostics command**
-  - One command to inspect service state, connectivity, pairing, storage, versions, permissions, and major runtime dependencies.
+- [ ] **F-011 — Show/profile templates**
+  - Provide ready-made starting points for common workflows such as theatre video tablets, OSC control, projection workflows, and rehearsal setups.
+  - Keep templates editable and understandable rather than hiding the resulting configuration.
 
-- [ ] **P-003 — Safe update + automatic backup/rollback**
-  - Pre-update validation and backup, post-update health checks, and rollback when the new version fails validation.
-
-- [ ] **P-004 — Show/profile templates**
-  - Ready-made starting points for common workflows such as theatre video tablets, OSC control, projection workflows, and rehearsal setups.
-
-- [ ] **P-005 — Show Mode configuration lock**
+- [ ] **F-012 — Show Mode configuration lock**
   - Reduce accidental configuration changes during a live show while preserving required operator actions.
+  - Make the active lock state obvious and provide a deliberate authorized path back to configuration mode.
 
-- [ ] **P-006 — Exportable diagnostics bundle**
-  - Generate a support bundle with useful logs/state while excluding secrets and sensitive credentials.
+- [ ] **F-013 — Exportable diagnostics bundle**
+  - Generate a support bundle with useful logs, versions, health/state summaries, and relevant configuration metadata.
+  - Exclude secrets, credentials, private keys, and other sensitive values by design.
 
-- [ ] **P-007 — Offline installer/package path**
-  - Support installation or recovery in venues with poor/no Internet connectivity, for example from removable media or a prepared release bundle.
+- [ ] **F-014 — Offline installer/package path**
+  - Support installation, update, or recovery in venues with poor or no Internet connectivity.
+  - Allow a prepared release bundle or removable media path while retaining integrity checks and post-install verification.
+
+## Proposals — awaiting approval
+
+New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
+
+_Currently empty._
 
 ## Next confirmed feature ID
 
-`F-008`
+`F-015`
