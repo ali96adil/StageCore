@@ -42,6 +42,10 @@ The finalization checkpoint records the current entry state: **READY FOR M0 — 
 
 The next milestone is **M0 — Core Persistence**: first real StageCore product code, pinned SQLite/migration/ID dependencies, migrations, authoritative Project persistence, restart/backup proof, and supported build validation.
 
+## Future Feature Backlog
+
+- [StageCore Feature Backlog](FEATURE_BACKLOG.md) — user-approved future additions and unapproved proposals tracked with stable IDs and completion checkboxes.
+
 ## Documentation Convention
 
 Documents are ordered numerically and named by subject. New specification files use `<NN>-<descriptive-topic>-v<version>` where they belong to the ordered product/specification sequence.
