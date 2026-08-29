@@ -12,6 +12,22 @@ It is a product backlog, not an implementation promise. A feature is promoted in
 - New user-approved ideas get a stable `F-xxx` ID and are appended here.
 - Proactively surface useful product improvements during StageCore work; new suggestions stay in **Proposals** until explicitly approved and promoted.
 
+## Feature documentation rule
+
+The backlog entry must be self-contained enough that a future reader can understand the feature intent without needing the original chat or discussion.
+
+The backlog is intentionally not the full implementation specification. Before implementation begins, each promoted feature should receive a dedicated feature/spec document that records, as applicable:
+
+- user goal and expected operator experience;
+- supported platforms and device roles;
+- in-scope and explicitly out-of-scope behavior;
+- configuration/state that must persist;
+- security, safety, SHOW-mode, and failure behavior;
+- dependencies, compatibility, migration, and upgrade expectations;
+- acceptance criteria and verification path.
+
+This keeps the backlog readable while preserving enough detail to turn each `F-xxx` item into an executable implementation plan later.
+
 ## Confirmed future features
 
 - [ ] **F-001 — Arabic UI and RTL support**
@@ -97,6 +113,16 @@ It is a product backlog, not an implementation promise. A feature is promoted in
   - Support backup/export of the installed extension manifest so a new StageCore server can reproduce the same plugin/add-on set automatically.
   - Keep installation, upgrade, removal, and incompatible migration blocked during SHOW mode unless a future explicitly safe policy is defined.
 
+- [ ] **F-016 — Cross-platform Appearance & Theme System**
+  - Provide a first-class StageCore appearance system shared conceptually across the Web UI, macOS Companion, Android tablet client, and other supported operator/display clients where practical.
+  - Define semantic design tokens rather than hard-coded colors: background/surface, text, accent, status, warning, error, success, cue states, selection/focus, borders, and other UI roles.
+  - Include built-in Light, Dark, and System/Automatic modes plus operator-selectable accent/theme presets.
+  - Allow user-created or StageCore-provided theme presets to be saved, exported/imported, backed up, and restored on a new installation.
+  - Allow optional Theme Packs to be distributed through the Extension Library, while keeping the underlying theming engine part of StageCore rather than requiring a plugin for basic appearance control.
+  - A shared theme should map the same semantic intent across platforms while still allowing each native client to respect platform conventions, accessibility, contrast, typography, and control behavior.
+  - Support choosing whether appearance is local to one device/user or synchronized as an account/site/show preference where appropriate; a stage-display theme may intentionally differ from the operator UI.
+  - Theme changes must affect presentation only and must never change cue logic, runtime safety, permissions, or show behavior.
+
 ## Proposals — awaiting approval
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
@@ -105,4 +131,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-016`
+`F-017`
