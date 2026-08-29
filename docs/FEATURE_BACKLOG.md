@@ -184,6 +184,21 @@ This keeps the backlog readable while preserving enough detail to turn each `F-x
   - Support adapter-specific launch/open/reconnect workflows where the external application exposes a supported API, URL scheme, command-line interface, OSC/OSCQuery, MIDI, or other legitimate integration surface.
   - Never bypass or emulate around a third-party product's licensing restrictions. If an application edition intentionally cannot save or export its project state, StageCore must report that limitation truthfully rather than claiming the show is fully portable.
   - For applications that support portable packaging or project collection, integrate that workflow into the Show Capsule so a replacement execution workstation can be prepared with the fewest manual steps possible.
+  - For applications with partial export/state surfaces, support an **Execution Environment Snapshot** that captures every legitimately accessible reconstruction aid instead of giving up when a full project file is unavailable.
+  - The VDMX adapter should investigate and, where supported by the installed edition, capture Workspace Templates, Plugin Templates, exported Media Bin pages, Control Surface JSON/layouts, VDMX user assets/resources, relevant preferences, plugin/FX inventories, media manifests and hashes, output/display notes, and operator-approved reference screenshots.
+  - Where VDMX Control Surfaces publish parameters through OSCQuery, StageCore may discover the published namespace and record exposed control values/state as a partial live snapshot; this must be treated as partial state, never as a substitute for a real VDMX project file.
+  - Generate a human-readable assisted-rebuild guide from the snapshot so a replacement Mac can reconstruct the VDMX workspace with substantially less manual work, and verify the rebuilt environment against the captured manifest/snapshot before declaring it ready.
+  - Because third-party demo/edition behavior can change, StageCore must capability-test each export/template path on the installed VDMX version before relying on it and clearly mark what was or was not captured.
+
+- [ ] **F-026 — StageCore Visual Engine**
+  - Provide an optional first-party visual playback/rendering engine that can execute common theatre video and projection workflows directly under StageCore control, reducing dependence on external visual software for ordinary shows.
+  - Initial scope should prioritize reliable show needs rather than attempting to clone a full VJ/compositing application: video/image playback, preload, pause/seek/loop, blackout, layers, opacity, fades/transitions, fit/fill/crop, basic transforms, masks, simple effects, camera/live inputs, multi-output, and practical projector mapping/keystone/perspective correction.
+  - Expose the engine through the same StageCore Cue, Routing, Device, Preflight, Simulation, Logs, Media/Vault, Show Mode, and permission models rather than creating a separate control application.
+  - Keep rendering on an appropriate Companion/render workstation/GPU rather than burdening the Hub with heavy video processing.
+  - Allow StageCore to choose between its own Visual Engine and an external engine such as VDMX, TouchDesigner, QLab, or another supported renderer on a per-project or per-capability basis.
+  - Use open/portable media and effect standards where practical and keep project state portable, versioned, backed up, integrity-checked, and compatible with Show Capsule restore.
+  - Design for deterministic live playback and graceful failure behavior first; advanced generative visuals, deep compositing, node programming, or high-end VJ features remain optional extensions rather than requirements for the first version.
+  - Never make the live show dependent on cloud services; all required rendering and control paths must work local-first.
 
 ## Proposals — awaiting approval
 
@@ -193,4 +208,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-026`
+`F-027`
