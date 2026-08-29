@@ -11,6 +11,7 @@ It is a product backlog, not an implementation promise. A feature is promoted in
 - Do not check an item merely because code exists; its acceptance path must also pass.
 - New user-approved ideas get a stable `F-xxx` ID and are appended here.
 - Proactively surface useful product improvements during StageCore work; new suggestions stay in **Proposals** until explicitly approved and promoted.
+- Stable `F-xxx` IDs are references, **not implementation-order numbers**. Priority and dependency order are tracked separately.
 
 ## Feature documentation rule
 
@@ -27,6 +28,10 @@ The backlog is intentionally not the full implementation specification. Before i
 - acceptance criteria and verification path.
 
 This keeps the backlog readable while preserving enough detail to turn each `F-xxx` item into an executable implementation plan later.
+
+## Recommended implementation sequence
+
+Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER.md) as the canonical planning guide for *when* confirmed features should be implemented. The order may change as implementation evidence changes dependencies, but stable `F-xxx` IDs must not be renumbered.
 
 ## Confirmed future features
 
@@ -200,6 +205,16 @@ This keeps the backlog readable while preserving enough detail to turn each `F-x
   - Design for deterministic live playback and graceful failure behavior first; advanced generative visuals, deep compositing, node programming, or high-end VJ features remain optional extensions rather than requirements for the first version.
   - Never make the live show dependent on cloud services; all required rendering and control paths must work local-first.
 
+- [ ] **F-027 — Rehearsal & Show Session Modes**
+  - Treat SHOW, REHEARSAL, resumed rehearsal, partial-scene/cue rehearsal, bounded ranges, and SIMULATION as explicit runtime session modes instead of assuming every run starts at the first cue.
+  - Allow rehearsal to begin from the show start, a selected scene, an exact cue, a selected cue range, or a saved rehearsal checkpoint, and allow an incomplete rehearsal to be marked for later resume.
+  - Starting from a scene/cue must prepare the **expected pre-cue state**, not merely move the Current Cue pointer; StageCore should restore and verify what it legitimately can and produce explicit manual checks or blockers for state it cannot prove.
+  - Preserve session history including start/end, pause/resume, current/last/next cue, repeats/skips/jumps, notes, results, relevant device health, and checkpoint/state references.
+  - Support rehearsal checkpoints and repeat/loop workflows while keeping dangerous/critical actions protected by normal safety policy.
+  - Keep live SHOW recovery stricter than rehearsal shortcuts: never replay historical commands blindly after interruption or reconnect.
+  - Integrate with Preflight, Show Mode, Timecode, Digital Twin, external execution snapshots, Self-Healing, Stage Display, and the shared future state/checkpoint model.
+  - Detailed specification: [F-027 — Rehearsal & Show Session Modes](features/F-027-rehearsal-show-session-modes.md).
+
 ## Proposals — awaiting approval
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
@@ -208,4 +223,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-027`
+`F-028`
