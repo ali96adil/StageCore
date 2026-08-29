@@ -123,6 +123,17 @@ This keeps the backlog readable while preserving enough detail to turn each `F-x
   - Support choosing whether appearance is local to one device/user or synchronized as an account/site/show preference where appropriate; a stage-display theme may intentionally differ from the operator UI.
   - Theme changes must affect presentation only and must never change cue logic, runtime safety, permissions, or show behavior.
 
+- [ ] **F-017 — Workspace Layouts & Operator Profiles**
+  - Allow operators to arrange, resize, show/hide, dock, or prioritize supported StageCore panels/workspaces and save that arrangement as a reusable layout profile.
+  - Provide role-oriented presets such as Stage Manager, Video, Lighting, Sound, Rehearsal, and Monitoring while keeping every preset editable.
+  - Support user-created profiles with clear names and fast switching between layouts without changing the underlying project or cue logic.
+  - Preserve relevant workspace state such as panel visibility, panel sizing, selected workspace, inspector placement, and supported multi-window/multi-display placement where the client platform allows it.
+  - Allow layouts to be scoped appropriately: local to one device, associated with a user/operator, or optionally shared/exported for another StageCore workstation.
+  - Restore layouts safely when screen count, resolution, or platform differs; inaccessible/off-screen windows must be recovered automatically to a usable default position.
+  - Integrate with Show Mode so an operator can use approved layout switching during a show while structural editing of protected layouts may be locked.
+  - Keep workspace layout state separate from runtime show state: changing layout must never fire cues, modify routing, alter permissions, or change published runtime behavior.
+  - Where practical, use the same semantic workspace/profile model across Web and macOS clients while allowing each platform to follow its native windowing and interaction conventions.
+
 ## Proposals — awaiting approval
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
@@ -131,4 +142,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-017`
+`F-018`
