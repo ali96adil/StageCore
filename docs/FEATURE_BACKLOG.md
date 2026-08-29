@@ -86,6 +86,17 @@ It is a product backlog, not an implementation promise. A feature is promoted in
   - Support installation, update, or recovery in venues with poor or no Internet connectivity.
   - Allow a prepared release bundle or removable media path while retaining integrity checks and post-install verification.
 
+- [ ] **F-015 — Plugin & Add-on Library / Manager**
+  - Provide a dedicated StageCore page/window for discovering, installing, updating, enabling, disabling, repairing, and uninstalling Plugins and Add-ons without manual file handling.
+  - Ship an official local/offline library or bundled catalog of StageCore-maintained extensions so a fresh installation can restore known add-ons without searching external locations.
+  - Optionally connect to an online StageCore catalog/repository to discover newer or additional approved extensions when Internet access is available.
+  - Support import from a local package/release bundle for venues without Internet access.
+  - Show plugin/add-on name, description, version, compatibility, required permissions, dependencies, health/status, update availability, and whether it is official, local, or externally sourced.
+  - Install explicit dependencies safely, run compatibility/integrity checks before activation, and run a post-install health check before marking an extension ready.
+  - Preserve plugin configuration and project references across supported reinstall/update flows where possible.
+  - Support backup/export of the installed extension manifest so a new StageCore server can reproduce the same plugin/add-on set automatically.
+  - Keep installation, upgrade, removal, and incompatible migration blocked during SHOW mode unless a future explicitly safe policy is defined.
+
 ## Proposals — awaiting approval
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
@@ -94,4 +105,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-015`
+`F-016`
