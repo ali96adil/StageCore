@@ -215,6 +215,17 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
   - Integrate with Preflight, Show Mode, Timecode, Digital Twin, external execution snapshots, Self-Healing, Stage Display, and the shared future state/checkpoint model.
   - Detailed specification: [F-027 — Rehearsal & Show Session Modes](features/F-027-rehearsal-show-session-modes.md).
 
+- [ ] **F-028 — Rehearsal Timing Intelligence & Expected Next Cue**
+  - Record trustworthy cue execution timing from the first real rehearsal/show sessions so historical data exists before predictive UI is added.
+  - Compare selected trusted rehearsals to learn typical cue-to-cue/section timing, variation, recent trend, and confidence while excluding interrupted runs, repeats, skips, jumps, and other outliers appropriately.
+  - During REHEARSAL and optionally SHOW, display the next expected cue, estimated time/window, confidence, and whether the current run is early/normal/late compared with rehearsals.
+  - Surface relevant upcoming cue/scene notes at configurable lead times, including notes promoted from rehearsal into Show Mode.
+  - Predictions are advisory only and must never auto-fire GO or critical actions merely because the expected time arrives.
+  - Work with partial rehearsals that start from a scene/cue/checkpoint and integrate with F-018 Timecode when an explicit time source is present.
+  - Use the canonical event/result timeline plus reliable clock metadata; do not create a second incompatible analytics log.
+  - Remain local-first and statistical/deterministic without requiring AI or Internet access; AI may explain trends later but is not the timing authority.
+  - Detailed specification: [F-028 — Rehearsal Timing Intelligence & Expected Next Cue](features/F-028-rehearsal-timing-intelligence.md).
+
 ## Proposals — awaiting approval
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
@@ -223,4 +234,4 @@ _Currently empty._
 
 ## Next confirmed feature ID
 
-`F-028`
+`F-029`
