@@ -138,7 +138,47 @@ This keeps the backlog readable while preserving enough detail to turn each `F-x
 
 New improvement ideas may be added here during StageCore work. They remain proposals until explicitly approved and assigned a confirmed `F-xxx` ID.
 
-_Currently empty._
+- [ ] **P-001 — Universal Timecode & Show Synchronization**
+  - Add a first-class synchronization layer for time-driven shows, including practical support for SMPTE/LTC, MIDI Time Code (MTC), and internal StageCore timecode where appropriate.
+  - Allow cues, timelines, media actions, external systems, and rehearsal markers to follow or generate timecode with configurable offsets and frame-rate/drop-frame rules.
+  - Detect unstable, missing, discontinuous, or unexpectedly jumping timecode and expose clear operator warnings instead of silently firing unsafe actions.
+  - Keep timecode-triggered execution compatible with Show Mode, logging, simulation, preflight, and critical-action safety policy.
+
+- [ ] **P-002 — Portable Show Capsule / Complete Environment Restore**
+  - Provide a portable, integrity-checked show package that can reproduce an operational StageCore show on another supported server or workstation.
+  - Capture the project, runtime/version requirements, media manifest or selected media payloads, plugin/add-on manifest, device profiles, themes, workspace layouts, relevant presets, and migration metadata.
+  - Offer validation before export and after import so the operator knows whether the destination is genuinely show-ready rather than merely copied.
+  - Support both compact manifest-only transfer and a larger self-contained/offline capsule when required.
+
+- [ ] **P-003 — Self-Healing Runtime & Optional High Availability**
+  - Add automatic recovery policies for non-safety-critical failures such as crashed plugins, disconnected companions, stale device sessions, and recoverable service faults.
+  - Distinguish safe automatic recovery from cases requiring operator acknowledgement; never replay expired or ambiguous live commands merely because a component reconnects.
+  - Consider an optional redundant/standby Hub mode for high-value productions, with explicit leader ownership/fencing so two controllers can never issue duplicate live commands.
+  - Integrate recovery events into health, logs, preflight, diagnostics, and post-show reporting.
+
+- [ ] **P-004 — Device Profile Library & Guided Auto-Configuration**
+  - Maintain a versioned library of known device/software profiles that map real products and applications to StageCore capabilities without requiring operators to understand raw protocol details.
+  - Profiles may define discovery hints, connection fields, supported actions/events, default routing, health checks, tested protocol versions, and useful presets.
+  - Allow official profiles to ship locally and update through the Extension Library, with clear trust/source labels for community or locally authored profiles.
+  - Preserve an expert/manual path for unusual devices while making the common path close to “device found → choose profile → test → ready”.
+
+- [ ] **P-005 — Stage Network Cockpit**
+  - Provide a theatre-focused network view that shows StageCore devices, companions, nodes, relevant endpoints, connectivity state, latency/jitter trends, address conflicts, and important transport health in one operator-friendly workspace.
+  - Surface actionable diagnostics such as “device reachable but OSC port not responding”, “multicast path unavailable”, or “Companion latency increased” rather than generic network errors.
+  - Integrate network readiness into Preflight and diagnostics without requiring the operator to use external networking tools for common StageCore troubleshooting.
+  - Keep deep packet analysis or enterprise network management out of scope unless added through a specialist extension.
+
+- [ ] **P-006 — StageCore Assistant / Natural-Language Show Builder**
+  - Provide an optional assistant that can turn operator intent into editable drafts: cue groups, routing rules, device mappings, checklists, notes, templates, and troubleshooting steps.
+  - Allow questions such as “why did Cue 42 fail?”, “prepare these six tablets for Scene 3”, or “create a five-minute places countdown” using project state, logs, and available capabilities as context.
+  - Use AI for explanation, drafting, rehearsal analysis, and diagnostics; never give AI autonomous authority over GO, emergency actions, safety-critical commands, or irreversible configuration changes.
+  - Preserve a fully functional offline/manual show path when AI or Internet access is unavailable.
+
+- [ ] **P-007 — Full Show Simulation / Digital Twin Mode**
+  - Expand mock-device support into a complete rehearsal/simulation environment where an operator can run the show without the real stage hardware attached.
+  - Simulate expected device acknowledgements, failures, timing, disconnects, cue results, and selected sensor/input events so routing and automation can be tested safely before load-in.
+  - Allow switching real devices to simulated equivalents deliberately and visibly, with no possibility of accidentally mixing simulated and live outputs without explicit operator intent.
+  - Produce a simulation report that highlights missing mappings, timing risks, unhandled failures, and differences between the simulated environment and the actual connected stage.
 
 ## Next confirmed feature ID
 
