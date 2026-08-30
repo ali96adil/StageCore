@@ -3,24 +3,16 @@
 const stagecoreBaseLoadConfiguration = loadConfiguration;
 const stagecoreBaseConfigurationEditable = configurationEditable;
 const stagecoreBaseRenderConfiguration = renderConfiguration;
+const stagecoreBaseRenderCues = renderCues;
+const stagecoreBaseCanEdit = canEdit;
 
-loadConfiguration = async function stagecoreLoadConfigurationWithShowLock() {
-  const [model, lockPayload] = await Promise.all([
-    stagecoreBaseLoadConfiguration(),
-    api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration/lock`),
-  ]);
-  state.showConfigurationLock = lockPayload.show_configuration_lock || { locked: false };
-  model.show_configuration_lock = state.showConfigurationLock;
-  return model;
-};
+async function stagecoreLoadShowConfigurationLock() {
+  const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration/lock`);
+  state.showConfigurationLock = payload.show_configuration_lock || { locked: false };
+  return state.showConfigurationLock;
+}
 
-configurationEditable = function stagecoreConfigurationEditableWithShowLock() {
-  return stagecoreBaseConfigurationEditable() && !state.showConfigurationLock?.locked;
-};
-
-renderConfiguration = async function stagecoreRenderConfigurationWithShowLock() {
-  await stagecoreBaseRenderConfiguration();
-  const lock = state.showConfigurationLock;
+function stagecoreShowConfigurationLockBanner(lock) {
   if (!lock?.locked) return;
   const pageHead = content.querySelector(".page-head");
   if (!pageHead || content.querySelector("[data-show-configuration-lock]")) return;
@@ -31,4 +23,37 @@ renderConfiguration = async function stagecoreRenderConfigurationWithShowLock() 
       Exit SHOW through the authorized Runtime controls before editing configuration.
       <span class="mono">Session ${esc(lock.active_show_session_id || "")} · Snapshot ${esc(lock.runtime_snapshot_id || "")}</span>
     </div>`);
+}
+
+loadConfiguration = async function stagecoreLoadConfigurationWithShowLock() {
+  const [model, lock] = await Promise.all([
+    stagecoreBaseLoadConfiguration(),
+    stagecoreLoadShowConfigurationLock(),
+  ]);
+  model.show_configuration_lock = lock;
+  return model;
+};
+
+configurationEditable = function stagecoreConfigurationEditableWithShowLock() {
+  return stagecoreBaseConfigurationEditable() && !state.showConfigurationLock?.locked;
+};
+
+renderConfiguration = async function stagecoreRenderConfigurationWithShowLock() {
+  await stagecoreBaseRenderConfiguration();
+  stagecoreShowConfigurationLockBanner(state.showConfigurationLock);
+};
+
+renderCues = async function stagecoreRenderCuesWithShowLock(message = "") {
+  const lock = await stagecoreLoadShowConfigurationLock();
+  if (!lock.locked) {
+    await stagecoreBaseRenderCues(message);
+    return;
+  }
+  canEdit = () => false;
+  try {
+    await stagecoreBaseRenderCues(message);
+  } finally {
+    canEdit = stagecoreBaseCanEdit;
+  }
+  stagecoreShowConfigurationLockBanner(lock);
 };
