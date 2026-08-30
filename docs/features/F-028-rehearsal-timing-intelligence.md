@@ -1,6 +1,6 @@
 # F-028 — Rehearsal Timing Intelligence & Expected Next Cue
 
-**Status:** Confirmed future feature  
+**Status:** In progress — timing capture v1 implemented; prediction/UI deferred
 **Backlog ID:** F-028
 
 ## Intent
@@ -32,6 +32,14 @@ For every rehearsal/show session, record at minimum:
 
 Raw observations must remain available so later algorithms can be improved without losing rehearsal history.
 
+### Current capture checkpoint
+
+Timing capture v1 is defined in `F-028-timing-capture-v1.md` and reuses the canonical Session/command/Cue/Action/event records rather than creating a second analytics log.
+
+For new REHEARSAL and SHOW Cue executions it records a canonical `cue.timing_observed` event containing the Session/Cue start anchors, correlated GO issue time when available, Cue-to-Cue and Session elapsed intervals, repeat/jump/back/skip path classification, manual-override truth, and conservative clock metadata. Terminal Cue and Action result timestamps continue to come from the existing Cue/Action execution records and canonical result events.
+
+This checkpoint is raw capture only. Clock health remains `UNASSESSED`, historical rows are not given invented path observations, explicit pause/resume events wait for the corresponding F-027 operations, and no timing observation can trigger GO.
+
 ## Rehearsal timing model
 
 For each cue transition or useful show segment, StageCore may derive:
@@ -62,9 +70,9 @@ During REHEARSAL and, when enabled, SHOW mode, StageCore can display information
 
 Example:
 
-> **Next: Elevator Down**  
-> Typical: 2m 18s after Cue 17  
-> Expected window: 2m 05s–2m 31s  
+> **Next: Elevator Down**
+> Typical: 2m 18s after Cue 17
+> Expected window: 2m 05s–2m 31s
 > Confidence: High — 6 trusted rehearsals
 
 Predictions are advisory. They must never issue GO automatically merely because the predicted time has arrived.
