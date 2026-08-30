@@ -15,6 +15,9 @@ import (
 // Snapshot), it creates a complete editable successor revision while leaving
 // the validated source and all Runtime Snapshots immutable.
 func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, changeNote string) (domain.ProjectRevision, error) {
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return domain.ProjectRevision{}, err
+	}
 	project, err := s.GetProject(ctx, projectID)
 	if err != nil {
 		return domain.ProjectRevision{}, err
