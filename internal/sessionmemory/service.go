@@ -19,16 +19,38 @@ type Service struct {
 
 func New(s *store.Store) *Service { return &Service{store: s} }
 
+type SessionStartPositionSummary struct {
+	Version  int                             `json:"version"`
+	Kind     domain.SessionStartPositionKind `json:"kind"`
+	CueID    *string                         `json:"cue_id,omitempty"`
+	Metadata json.RawMessage                 `json:"metadata"`
+}
+
+type SessionStateTruthSummary struct {
+	Version                    int                              `json:"version"`
+	RestorationStatus          domain.SessionRestorationStatus `json:"restoration_status"`
+	DesiredStateRef            *string                          `json:"desired_state_ref,omitempty"`
+	VerifiedStateRef           *string                          `json:"verified_state_ref,omitempty"`
+	ManualConfirmationRequired bool                             `json:"manual_confirmation_required"`
+}
+
 type SessionSummary struct {
-	SessionID         string               `json:"session_id"`
-	ProjectID         string               `json:"project_id"`
-	RuntimeSnapshotID string               `json:"runtime_snapshot_id"`
-	Type              domain.SessionType   `json:"session_type"`
-	Name              string               `json:"name"`
-	StartedAt         time.Time            `json:"started_at"`
-	EndedAt           *time.Time           `json:"ended_at,omitempty"`
-	Status            domain.SessionStatus `json:"status"`
-	CurrentCueID      *string              `json:"current_cue_id,omitempty"`
+	SessionID          string                       `json:"session_id"`
+	ProjectID          string                       `json:"project_id"`
+	RuntimeSnapshotID  string                       `json:"runtime_snapshot_id"`
+	Type               domain.SessionType           `json:"session_type"`
+	Name               string                       `json:"name"`
+	StartedAt          time.Time                    `json:"started_at"`
+	EndedAt            *time.Time                   `json:"ended_at,omitempty"`
+	Status             domain.SessionStatus         `json:"status"`
+	ContractVersion    int                          `json:"session_contract_version"`
+	LifecycleState     domain.SessionLifecycleState `json:"lifecycle_state"`
+	EndReason          string                       `json:"end_reason,omitempty"`
+	StartPosition      SessionStartPositionSummary  `json:"start_position"`
+	CurrentCueID       *string                      `json:"current_cue_id,omitempty"`
+	LastCompletedCueID *string                      `json:"last_completed_cue_id,omitempty"`
+	NextCueID          *string                      `json:"next_cue_id,omitempty"`
+	StateTruth         SessionStateTruthSummary     `json:"state_truth"`
 }
 
 type CueTrace struct {
@@ -73,7 +95,7 @@ func (s *Service) List(ctx context.Context, projectID string, limit int) ([]Sess
 	if _, err := s.store.GetProject(ctx, strings.TrimSpace(projectID)); err != nil {
 		return nil, err
 	}
-	sessions, err := s.store.ListSessionsForProject(ctx, projectID, limit)
+	sessions, err := s.store.ListSessionFoundationsForProject(ctx, projectID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +110,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 	if s == nil || s.store == nil {
 		return SessionDetail{}, fmt.Errorf("session memory service is unavailable")
 	}
-	session, err := s.store.GetSession(ctx, strings.TrimSpace(sessionID))
+	session, err := s.store.GetSessionFoundation(ctx, strings.TrimSpace(sessionID))
 	if err != nil {
 		return SessionDetail{}, err
 	}
@@ -187,6 +209,17 @@ func summary(session domain.Session) SessionSummary {
 	return SessionSummary{
 		SessionID: session.ID, ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		Type: session.Type, Name: session.Name, StartedAt: session.StartedAt,
-		EndedAt: session.EndedAt, Status: session.Status, CurrentCueID: session.CurrentCueID,
+		EndedAt: session.EndedAt, Status: session.Status,
+		ContractVersion: session.ContractVersion, LifecycleState: session.LifecycleState, EndReason: session.EndReason,
+		StartPosition: SessionStartPositionSummary{
+			Version: session.StartPosition.Version, Kind: session.StartPosition.Kind,
+			CueID: session.StartPosition.CueID, Metadata: session.StartPosition.Metadata,
+		},
+		CurrentCueID: session.CurrentCueID, LastCompletedCueID: session.LastCompletedCueID, NextCueID: session.NextCueID,
+		StateTruth: SessionStateTruthSummary{
+			Version: session.StateTruth.Version, RestorationStatus: session.StateTruth.RestorationStatus,
+			DesiredStateRef: session.StateTruth.DesiredStateRef, VerifiedStateRef: session.StateTruth.VerifiedStateRef,
+			ManualConfirmationRequired: session.StateTruth.ManualConfirmationRequired,
+		},
 	}
 }
