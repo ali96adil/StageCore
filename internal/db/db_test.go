@@ -68,7 +68,11 @@ func TestBackupCreatesReopenableDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer copyHandle.Close()
-	if err := db.VerifyConnection(ctx, copyHandle.DB); err != nil {
+	var name string
+	if err := copyHandle.DB.QueryRowContext(ctx, `SELECT name FROM projects WHERE project_id = '00000000-0000-7000-8000-000000000001'`).Scan(&name); err != nil {
 		t.Fatal(err)
+	}
+	if name != "Backup Test" {
+		t.Fatalf("name=%q", name)
 	}
 }
