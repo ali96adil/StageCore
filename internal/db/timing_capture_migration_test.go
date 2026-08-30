@@ -61,9 +61,10 @@ func TestTimingCaptureMigrationRecordsCanonicalRawObservations(t *testing.T) {
 		t.Fatal(err)
 	}
 	cues := make([]domain.Cue, 0, 3)
+	labels := []string{"1", "2", "3"}
 	for i, name := range []string{"Cue One", "Cue Two", "Cue Three"} {
 		cue, err := s.CreateCueWithActions(ctx, domain.Cue{
-			RevisionID: revision.ID, DisplayLabel: string(rune('1' + i)), Name: name,
+			RevisionID: revision.ID, DisplayLabel: labels[i], Name: name,
 			OrderIndex: i, CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
 		}, nil)
 		if err != nil {
