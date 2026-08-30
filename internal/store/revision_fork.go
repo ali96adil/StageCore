@@ -15,6 +15,9 @@ import (
 // Snapshot), it creates a complete editable successor revision while leaving
 // the validated source and all Runtime Snapshots immutable.
 func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, changeNote string) (domain.ProjectRevision, error) {
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return domain.ProjectRevision{}, err
+	}
 	project, err := s.GetProject(ctx, projectID)
 	if err != nil {
 		return domain.ProjectRevision{}, err
@@ -163,7 +166,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			 delay_ms, debounce_ms, priority_class, error_policy_json, enabled)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, newRouteID, newRevisionID, route.Name, newInputID, string(route.ConditionDefinition),
-			string(route.TransformDefinition), route.DelayMS, route.DebounceMS, route.PriorityClass,
+			route.TransformDefinition, route.DelayMS, route.DebounceMS, route.PriorityClass,
 			string(route.ErrorPolicy), boolInt(route.Enabled)); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone route: %w", err)
 		}
