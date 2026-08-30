@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -29,15 +28,12 @@ func (s *Store) ActiveOperationalSessionType(ctx context.Context) (domain.Sessio
 }
 
 func (s *Store) EndSession(ctx context.Context, sessionID string, status domain.SessionStatus) error {
-	if status != domain.SessionCompleted && status != domain.SessionAborted {
+	switch status {
+	case domain.SessionCompleted:
+		return s.EndSessionLifecycle(ctx, sessionID, domain.SessionLifecycleCompleted, "")
+	case domain.SessionAborted:
+		return s.EndSessionLifecycle(ctx, sessionID, domain.SessionLifecycleAborted, "")
+	default:
 		return fmt.Errorf("%w: terminal session status required", domain.ErrInvalidInput)
 	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE sessions
-		SET status = ?, ended_at_us = ?
-		WHERE session_id = ? AND status = 'ACTIVE'`, status, clock.UnixMicros(s.clock.Now()), sessionID)
-	if err != nil {
-		return fmt.Errorf("end session: %w", err)
-	}
-	return requireOneRow(result)
 }

@@ -33,13 +33,63 @@ const (
 	SessionSimulation SessionType = "SIMULATION"
 )
 
+const SessionContractVersion1 = 1
+
 type SessionStatus string
 
 const (
+	// SessionStatus is the M1 coarse compatibility projection used by existing
+	// runtime gates. LifecycleState is the F-027 authoritative lifecycle.
 	SessionActive    SessionStatus = "ACTIVE"
 	SessionCompleted SessionStatus = "COMPLETED"
 	SessionAborted   SessionStatus = "ABORTED"
 )
+
+type SessionLifecycleState string
+
+const (
+	SessionLifecycleActive    SessionLifecycleState = "ACTIVE"
+	SessionLifecycleCompleted SessionLifecycleState = "COMPLETED"
+	SessionLifecycleStopped   SessionLifecycleState = "STOPPED"
+	SessionLifecycleSuspended SessionLifecycleState = "SUSPENDED"
+	SessionLifecycleAborted   SessionLifecycleState = "ABORTED"
+)
+
+type SessionStartPositionKind string
+
+const (
+	SessionStartUnspecified SessionStartPositionKind = "UNSPECIFIED"
+	SessionStartBeginning   SessionStartPositionKind = "BEGINNING"
+	SessionStartCue         SessionStartPositionKind = "CUE"
+	SessionStartScene       SessionStartPositionKind = "SCENE"
+	SessionStartRange       SessionStartPositionKind = "RANGE"
+	SessionStartCheckpoint  SessionStartPositionKind = "CHECKPOINT"
+)
+
+type SessionRestorationStatus string
+
+const (
+	SessionRestorationNotAssessed                SessionRestorationStatus = "NOT_ASSESSED"
+	SessionRestorationNotRequired                SessionRestorationStatus = "NOT_REQUIRED"
+	SessionRestorationRestorable                 SessionRestorationStatus = "RESTORABLE"
+	SessionRestorationManualConfirmationRequired SessionRestorationStatus = "MANUAL_CONFIRMATION_REQUIRED"
+	SessionRestorationUnavailable                SessionRestorationStatus = "UNAVAILABLE"
+)
+
+type SessionStartPosition struct {
+	Version  int
+	Kind     SessionStartPositionKind
+	CueID    *string
+	Metadata json.RawMessage
+}
+
+type SessionStateTruth struct {
+	Version                    int
+	RestorationStatus          SessionRestorationStatus
+	DesiredStateRef            *string
+	VerifiedStateRef           *string
+	ManualConfirmationRequired bool
+}
 
 type Session struct {
 	ID                string
@@ -51,6 +101,14 @@ type Session struct {
 	EndedAt           *time.Time
 	Status            SessionStatus
 	CurrentCueID      *string
+
+	ContractVersion    int
+	LifecycleState     SessionLifecycleState
+	EndReason          string
+	StartPosition      SessionStartPosition
+	LastCompletedCueID *string
+	NextCueID          *string
+	StateTruth         SessionStateTruth
 }
 
 type ExecutionResult string
