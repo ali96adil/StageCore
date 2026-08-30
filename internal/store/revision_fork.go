@@ -166,7 +166,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			 delay_ms, debounce_ms, priority_class, error_policy_json, enabled)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, newRouteID, newRevisionID, route.Name, newInputID, string(route.ConditionDefinition),
-			route.TransformDefinition, route.DelayMS, route.DebounceMS, route.PriorityClass,
+			string(route.TransformDefinition), route.DelayMS, route.DebounceMS, route.PriorityClass,
 			string(route.ErrorPolicy), boolInt(route.Enabled)); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone route: %w", err)
 		}
