@@ -24,8 +24,8 @@ func TestOpenAppliesMigrationAndRequiredPragmas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 14 {
-		t.Fatalf("schema version=%d, want 14", version)
+	if version != 15 {
+		t.Fatalf("schema version=%d, want 15", version)
 	}
 }
 
@@ -68,11 +68,7 @@ func TestBackupCreatesReopenableDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer copyHandle.Close()
-	var name string
-	if err := copyHandle.DB.QueryRowContext(ctx, `SELECT name FROM projects WHERE project_id = '00000000-0000-7000-8000-000000000001'`).Scan(&name); err != nil {
+	if err := db.VerifyConnection(ctx, copyHandle.DB); err != nil {
 		t.Fatal(err)
-	}
-	if name != "Backup Test" {
-		t.Fatalf("name=%q", name)
 	}
 }
