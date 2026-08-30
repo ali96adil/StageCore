@@ -7,10 +7,11 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("not found")
-	ErrRevisionFrozen = errors.New("project revision is frozen")
-	ErrInvalidInput   = errors.New("invalid input")
-	ErrConflict       = errors.New("conflict")
+	ErrNotFound                = errors.New("not found")
+	ErrRevisionFrozen          = errors.New("project revision is frozen")
+	ErrInvalidInput            = errors.New("invalid input")
+	ErrConflict                = errors.New("conflict")
+	ErrShowConfigurationLocked = errors.New("show configuration locked")
 )
 
 type ProjectLifecycle string
