@@ -11,6 +11,9 @@ import (
 )
 
 func (s *Store) CreateAlias(ctx context.Context, alias domain.ProjectDeviceAlias) (domain.ProjectDeviceAlias, error) {
+	if err := s.RequireProjectConfigurationMutable(ctx, alias.ProjectID); err != nil {
+		return domain.ProjectDeviceAlias{}, err
+	}
 	if alias.ID == "" {
 		var err error
 		alias.ID, err = stageid.New()
