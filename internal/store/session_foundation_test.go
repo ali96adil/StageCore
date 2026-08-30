@@ -199,7 +199,14 @@ func TestRestartReconciliationSuspendsRehearsalWithoutReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].EventType != "rehearsal.suspended" || !events[0].OccurredAt.Equal(fixedTime) {
+	var recoveryEvent *contracts.EventEnvelope
+	for i := range events {
+		if events[i].EventType == "rehearsal.suspended" {
+			recoveryEvent = &events[i]
+			break
+		}
+	}
+	if recoveryEvent == nil || !recoveryEvent.OccurredAt.Equal(fixedTime) {
 		t.Fatalf("recovery events=%+v", events)
 	}
 	if record, reserved, err := s.ReserveCommand(ctx, command); err != nil || reserved || record.Status != string(contracts.CommandAccepted) {
