@@ -18,14 +18,23 @@ Implementation technology was validated through `SPK-01`–`SPK-06`, and final p
 
 ## Current Implementation Status
 
-**M0 — CORE PERSISTENCE: COMPLETE**  
-**M1 — CUE ENGINE + SIMULATOR: COMPLETE**  
-**M2 — REAL OSC: COMPLETE**  
-**M3 — ROUTING: COMPLETE**  
-**M4 — COMPANION + MACHINE ROLE: COMPLETE**  
-**M5 — STORAGE / VAULT / MEDIA READINESS: COMPLETE**  
-**M6 — MVP OPERATOR + SECURITY CLOSURE: COMPLETE**  
-**NEXT: PHYSICAL RASPBERRY PI ARM64 M0–M6 QUALIFICATION — ISSUE #21**
+**M0 — CORE PERSISTENCE: COMPLETE**
+
+**M1 — CUE ENGINE + SIMULATOR: COMPLETE**
+
+**M2 — REAL OSC: COMPLETE**
+
+**M3 — ROUTING: COMPLETE**
+
+**M4 — COMPANION + MACHINE ROLE: COMPLETE**
+
+**M5 — STORAGE / VAULT / MEDIA READINESS: COMPLETE**
+
+**M6 — MVP OPERATOR + SECURITY CLOSURE: COMPLETE**
+
+**PHYSICAL RASPBERRY PI ARM64 M0–M6 QUALIFICATION: PASS — ISSUE #21 CLOSED**
+
+**CURRENT ENGINEERING STATE: FEATURE EXPANSION READY**
 
 Completion evidence:
 
@@ -36,6 +45,7 @@ Completion evidence:
 - `docs/checkpoints/2026-08-27-m4-companion-machine-role-complete.md`
 - `docs/checkpoints/2026-08-27-m5-storage-vault-complete.md`
 - `docs/checkpoints/2026-08-27-m6-software-mvp-complete.md`
+- `docs/checkpoints/2026-08-30-m0-m6-physical-qualification-complete.md`
 
 Merged product commits:
 
@@ -62,7 +72,7 @@ M5 Storage / Vault / Media Readiness (#23)
 M6 MVP Operator + Security Closure (#28)
 ```
 
-Latest merged-main verification:
+Latest merged-main software verification:
 
 - M6 final tested branch commit: `86bb56f835265f982bfd7f9929d499dd2100cd19`;
 - final tested M6 tree: `45a32de4e8989b8be0699fb45641d424fed73c05`;
@@ -77,6 +87,15 @@ Latest merged-main verification:
 - `>=2 GiB` interrupted/resumed media transfer acceptance — PASS;
 - integrated fresh-Hub → OWNER → Project/configuration → Publish → REHEARSAL → GO → Note → restart/history software-MVP acceptance — PASS.
 
+Latest physical qualification verification:
+
+- Issue #21 — `PASS — Raspberry Pi ARM64 M0–M6 Qualification Gate` — CLOSED on 2026-08-30;
+- tested host: Raspberry Pi 4 Model B Rev 1.4, 8 GB class RAM, Debian GNU/Linux 13.5, kernel `6.18.39+rpt-rpi-v8`, native `aarch64`;
+- authoritative storage: Kingston SA400S37480G 480 GB-class SATA SSD over USB, ext4 root, with independent StageCore Data/Vault roots;
+- native ARM64 systemd lifecycle, SQLite/WAL persistence, authenticated Operator Web/RBAC, immutable Runtime Snapshots, OSC input/output, authenticated macOS Companion/Machine Role, HTTP/Script/macOS MIDI, Vault/media readiness, `>=2 GiB` interrupted/resumed transfer, SHOW bulk protection, backup/restore, WAN-disconnected local-first operation, clean reboot recovery and representative CPU/RAM/disk/thermal pressure — PASS;
+- controlled power-loss/recovery — PASS on disposable/reference microSD storage only; the authoritative Kingston SSD was not subjected to destructive power-loss testing;
+- no unresolved Raspberry Pi-specific blocker remains from the qualification gate.
+
 ### Accepted Technology Direction
 
 - **SPK-01 — Core Technology Stack** — Go Hub; SQLite/WAL; HTTP+JSON; authenticated local browser/API surface; embedded offline Operator UI.
@@ -84,7 +103,7 @@ Latest merged-main verification:
 - **SPK-03 — macOS Companion** — Swift CompanionCore; versioned authenticated WebSocket runtime channel; Machine Role/Snapshot reconciliation; duplicate/stale execution protection; Keychain-backed device identity.
 - **SPK-04 — Plugin Process / IPC** — external Plugin process; JSON Lines stdio IPC; capability handshake; crash/hang containment; no automatic replay.
 - **SPK-05 — Vault & Large File Transfer** — filesystem Vault objects; SHA-256 identity; staging/atomic promotion; HTTP Range/resume; verified Companion cache; SHOW transfer gate.
-- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe. Physical hardware qualification remains mandatory.
+- **SPK-06 — Hub Deployment on ARM64 / Mini-PC** — 64-bit Linux; native `amd64`/`arm64`; systemd; local-first boot; independent Data/Vault roots for SSD/NVMe. The selected Raspberry Pi qualification configuration has passed; other hardware/storage/power/network combinations still require their own qualification evidence before equivalent claims are made.
 
 ## Delivered Product Foundation
 
@@ -185,11 +204,11 @@ Latest merged-main verification:
 - local user/session/Companion revocation and renewal without Internet;
 - integrated software-MVP acceptance from fresh Hub through restart/history without manual DB/file editing.
 
-## Active Physical Raspberry Pi Qualification Gate — Issue #21
+## Completed Physical Raspberry Pi Qualification Gate — Issue #21
 
-M6 is now merged and the software MVP is closed. Issue #21 is therefore the **active engineering gate** and must exercise the **complete M0–M6 baseline** on real ARM64 hardware.
+Issue #21 physically exercised the complete M0–M6 baseline on the selected Raspberry Pi/Kingston SSD/Stage LAN configuration and closed as **PASS** on 2026-08-30.
 
-Recommended physical qualification boundary:
+The proven physical boundary included:
 
 ```text
 Pi 64-bit Linux / arm64
@@ -199,13 +218,13 @@ Pi 64-bit Linux / arm64
 → SQLite WAL restart/reopen
 → first OWNER bootstrap + authenticated Operator Web/RBAC
 → Project/configuration/Publish workflow
-→ real OSC bench path
-→ basic HTTP/Script safe bench path
+→ real OSC input/output bench paths
+→ basic HTTP/Script safe bench paths
 → real macOS Companion pair/auth/connect
-→ VIDEO-MAIN assignment + Runtime Snapshot readiness
+→ Machine Role + Runtime Snapshot readiness
 → macOS MIDI safe bench path
 → Cue + Route runtime execution
-→ disconnect/reconnect no replay
+→ disconnect/reconnect and Hub restart with no replay
 → managed Vault import + SHA-256
 → real LAN >=2 GiB media transfer + interruption/resume + checksum
 → Companion required-media READY/BLOCKED/MISMATCH transitions
@@ -219,14 +238,30 @@ Pi 64-bit Linux / arm64
 → CPU/RAM/disk/thermal observation under representative pressure
 ```
 
-Passing CI, cross-build and hosted macOS acceptance does not by itself qualify a Raspberry Pi, SSD/NVMe, power supply, thermal configuration or Stage LAN as rehearsal-ready/show-ready. That claim requires physical evidence owned by Issue #21 and the Testing & Reliability baseline.
+Known non-blocking qualification observations remain recorded rather than hidden:
+
+- an initial historical undervoltage event occurred during native build load; after the power lead was corrected, fresh boots and later pressure tests remained at `vcgencmd get_throttled => 0x0` with no new undervoltage evidence;
+- representative full-core thermal pressure reached about `77.4°C` without throttling, so adequate cooling/airflow remains an operational requirement;
+- `eth0` and `wlan0` were simultaneously active on the same Stage LAN during qualification, creating route/interface ambiguity as an operational nuance rather than a product blocker; show deployments should deliberately choose the intended control interface/route.
+
+This PASS is specific to the tested configuration. It does not automatically qualify every Raspberry Pi, SSD/NVMe, power supply, thermal enclosure, router, Stage LAN, or future StageCore build. Equivalent deployment claims still require evidence appropriate to the changed configuration and the Testing & Reliability baseline.
+
+## Feature Expansion Entry State
+
+The pre-expansion review of `docs/FEATURE_BACKLOG.md` together with `docs/FEATURE_IMPLEMENTATION_ORDER.md` found no new physical-qualification dependency that requires changing the dependency-first order.
+
+The canonical next implementation sequence therefore remains:
+
+1. **F-027 — Rehearsal & Show Session Modes** — establish the shared session/state/checkpoint semantics first.
+2. **F-028 — Rehearsal Timing Intelligence** — begin the timing-capture foundation as soon as F-027 sessions are real; predictive UI remains a later slice.
+
+No future feature is marked complete by this transition checkpoint.
 
 ## Remaining Work Is Owned — Not Unbounded TBD
 
-- physical ARM64/Pi appliance qualification is the immediate next gate (#21);
-- any defect exposed by #21 returns to a bounded product fix with regression evidence before qualification continues;
+- feature expansion now proceeds through the canonical dependency-first order in `docs/FEATURE_IMPLEMENTATION_ORDER.md`;
 - production macOS signing/notarization/background packaging remains a later product gate;
-- final appliance SKU, power/thermal/storage/network qualification remains later hardware/rehearsal work;
+- final appliance SKU and any additional power/thermal/storage/network combinations remain later hardware/deployment qualification work and must not inherit the Issue #21 PASS automatically;
 - Hardware Nodes, full DMX/lighting automation, AI/Vision, HA/cloud and distributed offline authority remain explicitly later/post-MVP work.
 
 Every known deferred item remains assigned in `docs/adr/addendum-002/04-deferred-register-and-ownership-gates.md`.

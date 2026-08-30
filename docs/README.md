@@ -35,12 +35,18 @@ Final pre-M0 decisions and consistency corrections:
 
 - [2026-08-26 — Implementation Baseline Checkpoint](checkpoints/2026-08-26-implementation-baseline.md)
 - [2026-08-26 — Pre-M0 Finalization Checkpoint](checkpoints/2026-08-26-pre-m0-finalization.md)
+- [2026-08-27 — M6 Software MVP Completion Checkpoint](checkpoints/2026-08-27-m6-software-mvp-complete.md)
+- [2026-08-30 — M0–M6 Physical Qualification Completion Checkpoint](checkpoints/2026-08-30-m0-m6-physical-qualification-complete.md)
 
-The finalization checkpoint records the current entry state: **READY FOR M0 — NO KNOWN UNOWNED PRE-M0 DECISIONS**. Items not needed by M0 are not ignored; Addendum 002 assigns them to explicit later gates.
+See the [Engineering Checkpoints index](checkpoints/README.md) for the full dated history.
+
+The current entry state is **FEATURE EXPANSION READY**: M0–M6 software is complete, Issue #21 physical Raspberry Pi ARM64 qualification passed for the tested reference configuration, and no unresolved hardware-specific blocker remains from that gate.
 
 ## Implementation Phase
 
-The next milestone is **M0 — Core Persistence**: first real StageCore product code, pinned SQLite/migration/ID dependencies, migrations, authoritative Project persistence, restart/backup proof, and supported build validation.
+The next implementation target is **F-027 — Rehearsal & Show Session Modes**. After the F-027 session foundation exists, begin the **F-028 — Rehearsal Timing Intelligence** capture foundation so trustworthy timing data is collected from the first real sessions. The canonical dependency-first order remains [FEATURE_IMPLEMENTATION_ORDER.md](FEATURE_IMPLEMENTATION_ORDER.md).
+
+Do not infer completion of a future feature from a partial foundation slice; stable `F-xxx` IDs remain unchanged.
 
 ## Future Feature Backlog
 
