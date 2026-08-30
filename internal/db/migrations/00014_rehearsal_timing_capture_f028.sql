@@ -2,6 +2,8 @@
 -- F-028 capture v1 records raw cue timing in the canonical event journal.
 -- It deliberately does not create a second analytics/timing table.
 -- Historical executions are not backfilled with invented path semantics.
+-- Previous Cue identity follows insertion order rather than wall-clock order so
+-- a clock regression remains visible as a signed negative interval.
 -- +goose StatementBegin
 CREATE TRIGGER f028_capture_cue_timing
 AFTER INSERT ON cue_executions
@@ -89,24 +91,24 @@ BEGIN
                 SELECT previous.cue_execution_id
                 FROM cue_executions previous
                 WHERE previous.session_id = NEW.session_id
-                  AND previous.cue_execution_id <> NEW.cue_execution_id
-                ORDER BY previous.started_at_us DESC, previous.cue_execution_id DESC
+                  AND previous.rowid < NEW.rowid
+                ORDER BY previous.rowid DESC
                 LIMIT 1
             ),
             'previous_cue_id', (
                 SELECT previous.cue_id
                 FROM cue_executions previous
                 WHERE previous.session_id = NEW.session_id
-                  AND previous.cue_execution_id <> NEW.cue_execution_id
-                ORDER BY previous.started_at_us DESC, previous.cue_execution_id DESC
+                  AND previous.rowid < NEW.rowid
+                ORDER BY previous.rowid DESC
                 LIMIT 1
             ),
             'previous_cue_started_at_us', (
                 SELECT previous.started_at_us
                 FROM cue_executions previous
                 WHERE previous.session_id = NEW.session_id
-                  AND previous.cue_execution_id <> NEW.cue_execution_id
-                ORDER BY previous.started_at_us DESC, previous.cue_execution_id DESC
+                  AND previous.rowid < NEW.rowid
+                ORDER BY previous.rowid DESC
                 LIMIT 1
             ),
             'cue_to_cue_elapsed_us', CASE
@@ -114,16 +116,16 @@ BEGIN
                     SELECT previous.started_at_us
                     FROM cue_executions previous
                     WHERE previous.session_id = NEW.session_id
-                      AND previous.cue_execution_id <> NEW.cue_execution_id
-                    ORDER BY previous.started_at_us DESC, previous.cue_execution_id DESC
+                      AND previous.rowid < NEW.rowid
+                    ORDER BY previous.rowid DESC
                     LIMIT 1
                 ) IS NULL THEN NULL
                 ELSE NEW.started_at_us - (
                     SELECT previous.started_at_us
                     FROM cue_executions previous
                     WHERE previous.session_id = NEW.session_id
-                      AND previous.cue_execution_id <> NEW.cue_execution_id
-                    ORDER BY previous.started_at_us DESC, previous.cue_execution_id DESC
+                      AND previous.rowid < NEW.rowid
+                    ORDER BY previous.rowid DESC
                     LIMIT 1
                 )
             END,
