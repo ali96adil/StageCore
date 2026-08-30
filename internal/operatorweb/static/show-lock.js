@@ -4,7 +4,6 @@ const stagecoreBaseLoadConfiguration = loadConfiguration;
 const stagecoreBaseConfigurationEditable = configurationEditable;
 const stagecoreBaseRenderConfiguration = renderConfiguration;
 const stagecoreBaseRenderCues = renderCues;
-const stagecoreBaseCanEdit = canEdit;
 
 async function stagecoreLoadShowConfigurationLock() {
   const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration/lock`);
@@ -45,15 +44,13 @@ renderConfiguration = async function stagecoreRenderConfigurationWithShowLock() 
 
 renderCues = async function stagecoreRenderCuesWithShowLock(message = "") {
   const lock = await stagecoreLoadShowConfigurationLock();
-  if (!lock.locked) {
-    await stagecoreBaseRenderCues(message);
-    return;
-  }
-  canEdit = () => false;
-  try {
-    await stagecoreBaseRenderCues(message);
-  } finally {
-    canEdit = stagecoreBaseCanEdit;
-  }
+  await stagecoreBaseRenderCues(message);
+  if (!lock.locked) return;
+  el("createCueButton")?.remove();
+  el("publishButton")?.remove();
+  content.querySelectorAll(".cue-up, .cue-down, .cue-edit, .cue-toggle, .cue-duplicate, .cue-delete").forEach((button) => {
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+  });
   stagecoreShowConfigurationLockBanner(lock);
 };
