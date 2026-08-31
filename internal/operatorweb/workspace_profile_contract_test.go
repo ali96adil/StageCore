@@ -24,10 +24,16 @@ func TestWorkspaceProfileFoundationContract(t *testing.T) {
 		`f017DeleteCustom`,
 		`f017ApplyProfile`,
 		`/configuration/lock`,
+		`const refreshWritePolicy = async () =>`,
+		`const currentPolicy = await refreshWritePolicy()`,
 	} {
 		if !strings.Contains(js, marker) {
 			t.Fatalf("workspace profile JS missing contract marker %q", marker)
 		}
+	}
+
+	if strings.Count(js, `await refreshWritePolicy()`) < 3 {
+		t.Fatalf("workspace profile structural writes do not all recheck SHOW lock")
 	}
 
 	for _, preset := range []string{"stage-manager", "video", "lighting", "sound", "rehearsal", "monitoring"} {
