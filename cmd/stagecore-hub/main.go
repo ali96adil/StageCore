@@ -107,7 +107,13 @@ func main() {
 	}
 
 	httpErrCh := make(chan error, 1)
+	deviceErrCh := make(chan error, 1)
 	oscInputErrCh := make(chan error, 1)
+	gateway, err := startDeviceGateway(ctx, logger, application, cfg.DeviceListen, deviceErrCh)
+	if err != nil {
+		logger.Error("secure device gateway startup failed", "error", err)
+		os.Exit(1)
+	}
 	if cfg.OSCInputListen != "" {
 		listen, err := startOSCInput(ctx, application, cfg.OSCInputProjectID, cfg.OSCInputListen, oscInputErrCh)
 		if err != nil {
@@ -127,6 +133,10 @@ func main() {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server failed", "error", err)
 		}
+	case err := <-deviceErrCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("secure device gateway failed", "error", err)
+		}
 	case err := <-oscInputErrCh:
 		if err != nil {
 			logger.Error("OSC input failed", "error", err)
@@ -135,6 +145,9 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if err := gateway.Shutdown(shutdownCtx); err != nil {
+		logger.Error("secure device gateway shutdown failed", "error", err)
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("HTTP shutdown failed", "error", err)
 	}
