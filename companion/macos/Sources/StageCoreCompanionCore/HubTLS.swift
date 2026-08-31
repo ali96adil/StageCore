@@ -9,9 +9,9 @@ import Security
 public enum HubTLS {
     public static func isValidCertificateSHA256(_ value: String) -> Bool {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard normalized.count == 64 else { return false }
-        return normalized.unicodeScalars.allSatisfy {
-            ("0"..."9").contains(Character(String($0))) || ("a"..."f").contains(Character(String($0)))
+        guard normalized.utf8.count == 64 else { return false }
+        return normalized.utf8.allSatisfy { byte in
+            (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
         }
     }
 
