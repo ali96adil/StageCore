@@ -16,6 +16,7 @@ for arch in amd64 arm64; do
   echo "Building StageCore linux/$arch release bundle..."
   (
     cd "$ROOT"
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore" ./cmd/stagecore
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-hub" ./cmd/stagecore-hub
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-osc-plugin" ./cmd/stagecore-osc-plugin
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-pairing" ./cmd/stagecore-pairing
@@ -23,12 +24,12 @@ for arch in amd64 arm64; do
   )
 
   cp "$ROOT/deployment/install.sh" "$bundle/install.sh"
-  chmod 0755 "$bundle/install.sh" "$bundle"/stagecore-*
+  chmod 0755 "$bundle/install.sh" "$bundle/stagecore" "$bundle"/stagecore-*
   printf '%s\n' "$REVISION" > "$bundle/RELEASE_REVISION"
 
   (
     cd "$bundle"
-    sha256sum stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS
+    sha256sum stagecore stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS
   )
 
   tar -C "$DIST" -czf "$archive" "$(basename "$bundle")"
