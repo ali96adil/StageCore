@@ -14,10 +14,13 @@ for arch in amd64 arm64; do
   mkdir -p "$bundle"
 
   echo "Building StageCore linux/$arch release bundle..."
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-hub" "$ROOT/cmd/stagecore-hub"
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-osc-plugin" "$ROOT/cmd/stagecore-osc-plugin"
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-pairing" "$ROOT/cmd/stagecore-pairing"
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-setup" "$ROOT/cmd/stagecore-setup"
+  (
+    cd "$ROOT"
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-hub" ./cmd/stagecore-hub
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-osc-plugin" ./cmd/stagecore-osc-plugin
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-pairing" ./cmd/stagecore-pairing
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-setup" ./cmd/stagecore-setup
+  )
 
   cp "$ROOT/deployment/install.sh" "$bundle/install.sh"
   chmod 0755 "$bundle/install.sh" "$bundle"/stagecore-*
