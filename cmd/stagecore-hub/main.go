@@ -100,6 +100,11 @@ func main() {
 		logger.Error("extension readiness startup failed", "error", err)
 		os.Exit(1)
 	}
+	extensionActivationStager, err := extension.NewActivationStager(extensionInstaller, extensionPermissionReviewer, extensionReadiness)
+	if err != nil {
+		logger.Error("extension activation staging startup failed", "error", err)
+		os.Exit(1)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -111,6 +116,7 @@ func main() {
 		httpapi.WithOperatorExtensionInstaller(userAuth, extensionInstaller, application.SecurityAudit),
 		httpapi.WithOperatorExtensionPermissionReview(userAuth, extensionPermissionReviewer, application.SecurityAudit),
 		httpapi.WithOperatorExtensionReadiness(userAuth, extensionReadiness),
+		httpapi.WithOperatorExtensionActivationStaging(userAuth, extensionActivationStager, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),

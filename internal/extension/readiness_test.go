@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/software"
@@ -37,8 +38,25 @@ func newReadinessAssessorForHarness(t *testing.T, h *dependencyTestHarness) *Rea
 	return assessor
 }
 
+func readinessHostMachine(t *testing.T) elf.Machine {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("native runtime readiness contract currently supports Linux Hub hosts")
+	}
+	switch runtime.GOARCH {
+	case "arm64":
+		return elf.EM_AARCH64
+	case "amd64":
+		return elf.EM_X86_64
+	default:
+		t.Skipf("unsupported readiness test architecture %s", runtime.GOARCH)
+		return elf.EM_NONE
+	}
+}
+
 func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionID string, permissions []string, dependencies []Dependency, productionReady, withRuntime bool) Package {
 	t.Helper()
+	machine := readinessHostMachine(t)
 	signing := store.SoftwareSigningSigned
 	channel := store.SoftwareChannelRelease
 	if !productionReady {
@@ -49,14 +67,14 @@ func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionI
 		ProductID: extensionID,
 		Version: "1.0.0",
 		Platform: "linux",
-		Architecture: "arm64",
+		Architecture: runtime.GOARCH,
 		MinAPIVersion: 1,
 		MaxAPIVersion: 1,
 		OriginalFilename: extensionID + "-1.0.0",
 		SigningStatus: signing,
 		NotarizationStatus: store.SoftwareNotarizationNotApplicable,
 		ReleaseChannel: channel,
-	}, bytes.NewReader(minimalELF64(elf.EM_AARCH64)))
+	}, bytes.NewReader(minimalELF64(machine)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +86,7 @@ func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionI
 		Source: SourceLocal,
 		Name: LocalizedText{EN: extensionID, ArIQ: "إضافة " + extensionID},
 		Summary: LocalizedText{EN: "Readiness test extension.", ArIQ: "إضافة تجريبية لاختبار الجاهزية."},
-		Compatibility: Compatibility{APIMin: 1, APIMax: 1, Platforms: []string{"linux"}, Architectures: []string{"arm64"}},
+		Compatibility: Compatibility{APIMin: 1, APIMax: 1, Platforms: []string{"linux"}, Architectures: []string{runtime.GOARCH}},
 		Permissions: permissions,
 		Dependencies: dependencies,
 	}
@@ -122,14 +140,14 @@ func TestReadinessReadyOnlyAfterPermissionApproval(t *testing.T) {
 	if ready.Status != ReadinessReadyForActivation {
 		t.Fatalf("ready status=%s checks=%+v", ready.Status, ready.Checks)
 	}
-	for _, id := range []string{"installed_integrity", "package_compatibility", "package_trust", "runtime_artifact", "dependencies", "permission_review"} {
+	for _, id := range []string{"installed_integrity", "package_compatibility", "package_trust", "runtime_artifact", "runtime_host", "dependencies", "permission_review"} {
 		if check := readinessCheckByID(t, ready, id); check.Status != ReadinessCheckPass {
 			t.Fatalf("%s check=%+v", id, check)
 		}
 	}
-	runtime := readinessCheckByID(t, ready, "runtime_health")
-	if runtime.Status != ReadinessCheckNotApplicable || runtime.Code != "ACTIVATION_NOT_IMPLEMENTED" {
-		t.Fatalf("runtime check=%+v", runtime)
+	runtimeHealth := readinessCheckByID(t, ready, "runtime_health")
+	if runtimeHealth.Status != ReadinessCheckNotApplicable || runtimeHealth.Code != "ACTIVATION_NOT_IMPLEMENTED" {
+		t.Fatalf("runtime check=%+v", runtimeHealth)
 	}
 }
 

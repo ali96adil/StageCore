@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,14 +21,27 @@ import (
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
-func minimalHTTPPluginELF() []byte {
+func minimalHTTPPluginELF(t *testing.T) []byte {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("native runtime readiness contract currently supports Linux Hub hosts")
+	}
+	machine := elf.EM_NONE
+	switch runtime.GOARCH {
+	case "arm64":
+		machine = elf.EM_AARCH64
+	case "amd64":
+		machine = elf.EM_X86_64
+	default:
+		t.Skipf("unsupported readiness test architecture %s", runtime.GOARCH)
+	}
 	image := make([]byte, 64)
 	copy(image[:4], []byte{0x7f, 'E', 'L', 'F'})
 	image[4] = byte(elf.ELFCLASS64)
 	image[5] = byte(elf.ELFDATA2LSB)
 	image[6] = byte(elf.EV_CURRENT)
 	binary.LittleEndian.PutUint16(image[16:18], uint16(elf.ET_EXEC))
-	binary.LittleEndian.PutUint16(image[18:20], uint16(elf.EM_AARCH64))
+	binary.LittleEndian.PutUint16(image[18:20], uint16(machine))
 	binary.LittleEndian.PutUint32(image[20:24], uint32(elf.EV_CURRENT))
 	binary.LittleEndian.PutUint16(image[52:54], 64)
 	return image
@@ -46,11 +60,11 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkg, err := repository.ImportPackage(ctx, software.ImportParams{
-		ProductID: "readiness.http-plugin", Version: "1.0.0", Platform: "linux", Architecture: "arm64",
+		ProductID: "readiness.http-plugin", Version: "1.0.0", Platform: "linux", Architecture: runtime.GOARCH,
 		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "readiness-http-plugin",
 		SigningStatus: store.SoftwareSigningSigned, NotarizationStatus: store.SoftwareNotarizationNotApplicable,
 		ReleaseChannel: store.SoftwareChannelRelease,
-	}, bytes.NewReader(minimalHTTPPluginELF()))
+	}, bytes.NewReader(minimalHTTPPluginELF(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +80,7 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 		"source":"LOCAL",
 		"name":{"en":"Readiness HTTP Plugin","ar-IQ":"إضافة اختبار جاهزية HTTP"},
 		"summary":{"en":"Tests readiness HTTP boundaries.","ar-IQ":"تختبر حدود HTTP لتقييم الجاهزية."},
-		"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]},
+		"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["` + runtime.GOARCH + `"]},
 		"capabilities":["test.execute"],
 		"runtime":{"protocol":"stagecore.plugin.v1","artifact":"native-executable","capability_permissions":{"test.execute":[]}}
 	}`)
@@ -104,7 +118,7 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 	get.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: viewer.Token})
 	getRes := httptest.NewRecorder()
 	handler.ServeHTTP(getRes, get)
-	if getRes.Code != http.StatusOK || !strings.Contains(getRes.Body.String(), `"status":"READY_FOR_ACTIVATION"`) || !strings.Contains(getRes.Body.String(), `"code":"RUNTIME_ARTIFACT_VERIFIED"`) || !strings.Contains(getRes.Body.String(), `"code":"ACTIVATION_NOT_IMPLEMENTED"`) {
+	if getRes.Code != http.StatusOK || !strings.Contains(getRes.Body.String(), `"status":"READY_FOR_ACTIVATION"`) || !strings.Contains(getRes.Body.String(), `"code":"RUNTIME_ARTIFACT_VERIFIED"`) || !strings.Contains(getRes.Body.String(), `"code":"RUNTIME_HOST_COMPATIBLE"`) || !strings.Contains(getRes.Body.String(), `"code":"ACTIVATION_NOT_IMPLEMENTED"`) {
 		t.Fatalf("VIEWER readiness status=%d body=%s", getRes.Code, getRes.Body.String())
 	}
 	if strings.Contains(getRes.Body.String(), `"running"`) || strings.Contains(getRes.Body.String(), `"enabled"`) {

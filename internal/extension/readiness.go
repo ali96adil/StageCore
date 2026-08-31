@@ -73,7 +73,7 @@ func (a *ReadinessAssessor) Assess(ctx context.Context, installationID string) (
 		ExtensionID: installed.ExtensionID,
 		Version: installed.Version,
 		Status: ReadinessReadyForActivation,
-		Checks: make([]ReadinessCheck, 0, 7),
+		Checks: make([]ReadinessCheck, 0, 8),
 		Advisories: []InstallPlanWarning{},
 	}
 	assessment.Checks = append(assessment.Checks, ReadinessCheck{
@@ -113,20 +113,28 @@ func (a *ReadinessAssessor) Assess(ctx context.Context, installationID string) (
 				Code: "RUNTIME_ARTIFACT_VERIFIED",
 				Detail: fmt.Sprintf("%s %s/%s artifact verified for protocol %s", artifact.Artifact, artifact.Platform, artifact.Architecture, artifact.Protocol),
 			})
+			if hostErr := runtimeHostCompatibility(artifact.Platform, artifact.Architecture); hostErr != nil {
+				assessment.block("runtime_host", "RUNTIME_HOST_MISMATCH", hostErr.Error())
+			} else {
+				assessment.Checks = append(assessment.Checks, ReadinessCheck{
+					ID: "runtime_host",
+					Status: ReadinessCheckPass,
+					Code: "RUNTIME_HOST_COMPATIBLE",
+					Detail: "runtime artifact platform and architecture match this StageCore Hub",
+				})
+			}
 		} else if errors.Is(artifactErr, ErrRuntimeContractMissing) {
 			assessment.block("runtime_artifact", "RUNTIME_CONTRACT_MISSING", "plugin manifest does not declare an activation runtime contract")
+			assessment.notApplicable("runtime_host", "RUNTIME_ARTIFACT_REQUIRED_FIRST", "runtime host compatibility cannot be evaluated until the plugin has a valid runtime artifact")
 		} else if errors.Is(artifactErr, ErrRuntimeArtifactInvalid) {
 			assessment.block("runtime_artifact", "RUNTIME_ARTIFACT_INVALID", artifactErr.Error())
+			assessment.notApplicable("runtime_host", "RUNTIME_ARTIFACT_REQUIRED_FIRST", "runtime host compatibility cannot be evaluated until the plugin has a valid runtime artifact")
 		} else {
 			return ReadinessAssessment{}, artifactErr
 		}
 	} else {
-		assessment.Checks = append(assessment.Checks, ReadinessCheck{
-			ID: "runtime_artifact",
-			Status: ReadinessCheckNotApplicable,
-			Code: "ADDON_RUNTIME_NOT_REQUIRED",
-			Detail: "ADDON installations do not use the native plugin runtime artifact contract",
-		})
+		assessment.notApplicable("runtime_artifact", "ADDON_RUNTIME_NOT_REQUIRED", "ADDON installations do not use the native plugin runtime artifact contract")
+		assessment.notApplicable("runtime_host", "ADDON_RUNTIME_NOT_REQUIRED", "ADDON installations do not execute through the native plugin runtime")
 	}
 
 	plan, err := a.installer.PlanInstall(ctx, installed.PackageID)
@@ -180,16 +188,15 @@ func (a *ReadinessAssessor) Assess(ctx context.Context, installationID string) (
 		assessment.block("permission_review", "PERMISSION_REVIEW_PENDING", "one or more requested permissions still require an explicit decision")
 	}
 
-	assessment.Checks = append(assessment.Checks, ReadinessCheck{
-		ID: "runtime_health",
-		Status: ReadinessCheckNotApplicable,
-		Code: "ACTIVATION_NOT_IMPLEMENTED",
-		Detail: "runtime process health is not evaluated before StageCore introduces an activation contract",
-	})
+	assessment.notApplicable("runtime_health", "ACTIVATION_NOT_IMPLEMENTED", "persistent runtime process health is not evaluated until StageCore introduces an enabled lifecycle")
 	return assessment, nil
 }
 
 func (a *ReadinessAssessment) block(id, code, detail string) {
 	a.Status = ReadinessNotReady
 	a.Checks = append(a.Checks, ReadinessCheck{ID: id, Status: ReadinessCheckBlocked, Code: code, Detail: detail})
+}
+
+func (a *ReadinessAssessment) notApplicable(id, code, detail string) {
+	a.Checks = append(a.Checks, ReadinessCheck{ID: id, Status: ReadinessCheckNotApplicable, Code: code, Detail: detail})
 }

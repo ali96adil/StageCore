@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -13,6 +14,7 @@ var (
 	ErrRuntimeContractMissing       = errors.New("extension runtime contract is missing")
 	ErrRuntimeArtifactNotApplicable = errors.New("extension runtime artifact is not applicable")
 	ErrRuntimeArtifactInvalid       = errors.New("extension runtime artifact is invalid")
+	ErrRuntimeHostMismatch          = errors.New("extension runtime artifact does not match this host")
 )
 
 type RuntimeArtifact struct {
@@ -99,12 +101,36 @@ func (i *Installer) InspectRuntimeArtifact(ctx context.Context, installationID s
 }
 
 func runtimeELFMachine(architecture string) (elf.Machine, error) {
-	switch strings.ToLower(strings.TrimSpace(architecture)) {
-	case "arm64", "aarch64":
+	switch normalizeRuntimeArchitecture(architecture) {
+	case "arm64":
 		return elf.EM_AARCH64, nil
-	case "amd64", "x86_64":
+	case "amd64":
 		return elf.EM_X86_64, nil
 	default:
 		return elf.EM_NONE, fmt.Errorf("%w: unsupported linux runtime architecture %q", ErrRuntimeArtifactInvalid, architecture)
+	}
+}
+
+func runtimeHostCompatibility(platform, architecture string) error {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform != runtime.GOOS {
+		return fmt.Errorf("%w: package platform %q does not match host %q", ErrRuntimeHostMismatch, platform, runtime.GOOS)
+	}
+	packageArchitecture := normalizeRuntimeArchitecture(architecture)
+	hostArchitecture := normalizeRuntimeArchitecture(runtime.GOARCH)
+	if packageArchitecture == "" || hostArchitecture == "" || packageArchitecture != hostArchitecture {
+		return fmt.Errorf("%w: package architecture %q does not match host %q", ErrRuntimeHostMismatch, architecture, runtime.GOARCH)
+	}
+	return nil
+}
+
+func normalizeRuntimeArchitecture(architecture string) string {
+	switch strings.ToLower(strings.TrimSpace(architecture)) {
+	case "arm64", "aarch64":
+		return "arm64"
+	case "amd64", "x86_64":
+		return "amd64"
+	default:
+		return ""
 	}
 }
