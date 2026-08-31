@@ -35,7 +35,7 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		"Quick target setup",
 		"Send OSC message",
 		"Advanced action settings",
-		"data.i18n",
+		"dataset.i18n",
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("guided-ux.js missing %q", required)
