@@ -9,6 +9,7 @@ It is a product backlog, not an implementation promise. A feature is promoted in
 - `[ ]` = planned / not yet complete.
 - `[x]` = implemented, verified, and documented.
 - Do not check an item merely because code exists; its acceptance path must also pass.
+- Foundation/capture/state-model slices do **not** close a broader feature: keep the feature unchecked until its full backlog intent and acceptance path are complete.
 - New user-approved ideas get a stable `F-xxx` ID and are appended here.
 - Proactively surface useful product improvements during StageCore work; new suggestions stay in **Proposals** until explicitly approved and promoted.
 - Stable `F-xxx` IDs are references, **not implementation-order numbers**. Priority and dependency order are tracked separately.
@@ -38,11 +39,13 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
 - [ ] **F-001 — Arabic UI and RTL support**
   - Provide a complete end-user Arabic interface with correct RTL layout and theatre-friendly terminology.
   - Keep English available as an alternate UI language.
+  - Phase 1 localization/RTL foundation is implemented and CI-verified; full cross-feature translation/polish remains ongoing.
 
 - [ ] **F-002 — No-code / low-code operator UX**
   - Common StageCore workflows must not require users to write scripts or raw code.
   - Prefer visual actions, device pickers, trigger/action builders, mappings, presets, and forms.
   - Advanced scripting may remain available as an optional expert capability.
+  - Phase 1 guided/no-code foundation is implemented and CI-verified; this remains a cross-cutting rule for every later workflow.
 
 - [ ] **F-003 — Android Tablet Player integration**
   - Revisit and audit the existing Android theatre video-player application after the StageCore core milestones are complete.
@@ -95,7 +98,7 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
   - Provide ready-made starting points for common workflows such as theatre video tablets, OSC control, projection workflows, and rehearsal setups.
   - Keep templates editable and understandable rather than hiding the resulting configuration.
 
-- [ ] **F-012 — Show Mode configuration lock**
+- [x] **F-012 — Show Mode configuration lock**
   - Reduce accidental configuration changes during a live show while preserving required operator actions.
   - Make the active lock state obvious and provide a deliberate authorized path back to configuration mode.
 
@@ -127,6 +130,7 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
   - A shared theme should map the same semantic intent across platforms while still allowing each native client to respect platform conventions, accessibility, contrast, typography, and control behavior.
   - Support choosing whether appearance is local to one device/user or synchronized as an account/site/show preference where appropriate; a stage-display theme may intentionally differ from the operator UI.
   - Theme changes must affect presentation only and must never change cue logic, runtime safety, permissions, or show behavior.
+  - Phase 1 semantic-token/System-Light-Dark/accent foundation is implemented and CI-verified; presets, portability, synchronization, Theme Packs, and native-client completion remain open.
 
 - [ ] **F-017 — Workspace Layouts & Operator Profiles**
   - Allow operators to arrange, resize, show/hide, dock, or prioritize supported StageCore panels/workspaces and save that arrangement as a reusable layout profile.
@@ -214,6 +218,7 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
   - Keep live SHOW recovery stricter than rehearsal shortcuts: never replay historical commands blindly after interruption or reconnect.
   - Integrate with Preflight, Show Mode, Timecode, Digital Twin, external execution snapshots, Self-Healing, Stage Display, and the shared future state/checkpoint model.
   - Detailed specification: [F-027 — Rehearsal & Show Session Modes](features/F-027-rehearsal-show-session-modes.md).
+  - Phase 1 Session Foundation is implemented and CI-verified; resume/checkpoint/range/SIMULATION and broader state-restore behavior remain open.
 
 - [ ] **F-028 — Rehearsal Timing Intelligence & Expected Next Cue**
   - Record trustworthy cue execution timing from the first real rehearsal/show sessions so historical data exists before predictive UI is added.
@@ -225,6 +230,7 @@ Use [Dependency-First Feature Implementation Order](FEATURE_IMPLEMENTATION_ORDER
   - Use the canonical event/result timeline plus reliable clock metadata; do not create a second incompatible analytics log.
   - Remain local-first and statistical/deterministic without requiring AI or Internet access; AI may explain trends later but is not the timing authority.
   - Detailed specification: [F-028 — Rehearsal Timing Intelligence & Expected Next Cue](features/F-028-rehearsal-timing-intelligence.md).
+  - Timing-capture foundation is implemented and CI-verified; expected-next-cue analytics/confidence/notes UI remains open.
 
 ## Proposals — awaiting approval
 
