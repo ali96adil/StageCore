@@ -1,9 +1,7 @@
 package extension
 
 import (
-	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,7 +95,7 @@ func TestPermissionReviewerRequiresExplicitReviewWithoutRuntimeGrant(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	granted, err := permissionService.Granted(context.Background(), pkg.Manifest.ExtensionID)
+	granted, err := permissionService.Granted(h.ctx, pkg.Manifest.ExtensionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +116,7 @@ func TestPermissionReviewerRequiresExplicitReviewWithoutRuntimeGrant(t *testing.
 	}
 }
 
-func TestPermissionReviewerDenialAndNoPermissionState(t *testing.T) {
+func TestPermissionReviewerDenialAndUnrequestedPermission(t *testing.T) {
 	h := newDependencyTestHarness(t)
 	pkg := registerPermissionReviewPackage(t, h, []string{"network.udp.send"})
 	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
@@ -139,9 +137,24 @@ func TestPermissionReviewerDenialAndNoPermissionState(t *testing.T) {
 	if _, err := reviewer.Decide(h.ctx, installed.InstallationID, "filesystem.write", PermissionDecisionApproved, "owner"); err != ErrPermissionNotRequested {
 		t.Fatalf("unrequested permission err=%v", err)
 	}
+}
 
-	ctx := context.Background()
-	dataRoot := t.TempDir()
-	_ = filepath.Join(dataRoot, "unused")
-	_ = ctx
+func TestPermissionReviewerNotRequiredWithoutRequestedPermissions(t *testing.T) {
+	h := newDependencyTestHarness(t)
+	pkg := registerPermissionReviewPackage(t, h, nil)
+	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := NewPermissionReviewer(h.installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := reviewer.Get(h.ctx, installed.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Status != PermissionReviewNotRequired || len(review.Items) != 0 {
+		t.Fatalf("no-permission review=%+v", review)
+	}
 }
