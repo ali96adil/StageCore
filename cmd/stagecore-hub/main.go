@@ -90,6 +90,11 @@ func main() {
 		logger.Error("extension installer startup failed", "error", err)
 		os.Exit(1)
 	}
+	extensionPermissionReviewer, err := extension.NewPermissionReviewer(extensionInstaller)
+	if err != nil {
+		logger.Error("extension permission review startup failed", "error", err)
+		os.Exit(1)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -99,6 +104,7 @@ func main() {
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
 		httpapi.WithOperatorExtensionInstaller(userAuth, extensionInstaller, application.SecurityAudit),
+		httpapi.WithOperatorExtensionPermissionReview(userAuth, extensionPermissionReviewer, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
