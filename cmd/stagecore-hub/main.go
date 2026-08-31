@@ -21,6 +21,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -80,7 +81,11 @@ func main() {
 		logger.Error("extension library startup failed", "error", err)
 		os.Exit(1)
 	}
-	extensionInstaller, err := extension.NewInstaller(extensionLibrary, filepath.Join(application.Config.DataRoot, "extensions"))
+	extensionInstaller, err := extension.NewInstaller(
+		extensionLibrary,
+		filepath.Join(application.Config.DataRoot, "extensions"),
+		extension.WithInstallerCapacityPolicy(storagehealth.NewPolicy(application.Config.RuntimeReserveBytes, application.Config.StorageWarningPercent)),
+	)
 	if err != nil {
 		logger.Error("extension installer startup failed", "error", err)
 		os.Exit(1)
