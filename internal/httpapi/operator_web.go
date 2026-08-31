@@ -16,6 +16,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /guided-ux.css", serveOperatorAsset("guided-ux.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /localization.css", serveOperatorAsset("localization.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /theme.css", serveOperatorAsset("theme.css", "text/css; charset=utf-8", false))
+		s.mux.HandleFunc("GET /workspace-profile.css", serveOperatorAsset("workspace-profile.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /app.js", serveOperatorAsset("app.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /bootstrap.js", serveOperatorAsset("bootstrap.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /preflight.js", serveOperatorAsset("preflight.js", "application/javascript; charset=utf-8", false))
@@ -26,6 +27,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /guided-ux.js", serveOperatorAsset("guided-ux.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /localization.js", serveOperatorAsset("localization.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /theme.js", serveOperatorAsset("theme.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /workspace-profile.js", serveOperatorAsset("workspace-profile.js", "application/javascript; charset=utf-8", false))
 	}
 }
 

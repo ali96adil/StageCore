@@ -248,6 +248,74 @@
         "appearance.reset",
         "appearance.close"
       ]
+    },
+    {
+      "feature_id": "F-017",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/workspace-profile.js", "static/workspace-profile.css"],
+      "name": {
+        "en": "Workspace Layouts and Operator Profiles",
+        "ar-IQ": "مساحات العمل وملفات المشغّل"
+      },
+      "summary": {
+        "en": "Device-local versioned workspace profiles with role presets, visibility/order preferences and safe workspace restoration.",
+        "ar-IQ": "ملفات مساحة عمل محلية ومؤرشفة بالإصدار مع إعدادات جاهزة للأدوار وتفضيلات الظهور والترتيب والاستعادة الآمنة."
+      },
+      "actions": [
+        {
+          "action_id": "switch-profile",
+          "label": {"en": "Switch Workspace Profile", "ar-IQ": "تبديل ملف مساحة العمل"}
+        },
+        {
+          "action_id": "edit-profile",
+          "label": {"en": "Edit Workspace Profile", "ar-IQ": "تعديل ملف مساحة العمل"}
+        },
+        {
+          "action_id": "create-profile",
+          "label": {"en": "Create Custom Profile", "ar-IQ": "إنشاء ملف مخصص"}
+        }
+      ],
+      "ui_keys": [
+        "workspace.title",
+        "workspace.profile",
+        "workspace.manage",
+        "workspace.builtin",
+        "workspace.custom",
+        "workspace.create_copy",
+        "workspace.name",
+        "workspace.visible",
+        "workspace.default",
+        "workspace.nav_size",
+        "workspace.compact",
+        "workspace.normal",
+        "workspace.wide",
+        "workspace.save",
+        "workspace.delete",
+        "workspace.reset",
+        "workspace.close",
+        "workspace.local_scope",
+        "workspace.presentation_only",
+        "workspace.locked",
+        "workspace.lock_unknown",
+        "workspace.saved",
+        "workspace.deleted",
+        "workspace.invalid_last",
+        "workspace.move_up",
+        "workspace.move_down",
+        "workspace.stage_manager",
+        "workspace.video",
+        "workspace.lighting",
+        "workspace.sound",
+        "workspace.rehearsal",
+        "workspace.monitoring",
+        "workspace.page.dashboard",
+        "workspace.page.configuration",
+        "workspace.page.cues",
+        "workspace.page.runtime",
+        "workspace.page.preflight",
+        "workspace.page.sessions",
+        "workspace.page.notes"
+      ]
     }
   ]
 }
