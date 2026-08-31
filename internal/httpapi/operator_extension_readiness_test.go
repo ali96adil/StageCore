@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"debug/elf"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +19,19 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
+
+func minimalHTTPPluginELF() []byte {
+	image := make([]byte, 64)
+	copy(image[:4], []byte{0x7f, 'E', 'L', 'F'})
+	image[4] = byte(elf.ELFCLASS64)
+	image[5] = byte(elf.ELFDATA2LSB)
+	image[6] = byte(elf.EV_CURRENT)
+	binary.LittleEndian.PutUint16(image[16:18], uint16(elf.ET_EXEC))
+	binary.LittleEndian.PutUint16(image[18:20], uint16(elf.EM_AARCH64))
+	binary.LittleEndian.PutUint32(image[20:24], uint32(elf.EV_CURRENT))
+	binary.LittleEndian.PutUint16(image[52:54], 64)
+	return image
+}
 
 func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 	h := newAuthHarness(t)
@@ -34,7 +50,7 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "readiness-http-plugin",
 		SigningStatus: store.SoftwareSigningSigned, NotarizationStatus: store.SoftwareNotarizationNotApplicable,
 		ReleaseChannel: store.SoftwareChannelRelease,
-	}, strings.NewReader("readiness HTTP payload"))
+	}, bytes.NewReader(minimalHTTPPluginELF()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +66,9 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 		"source":"LOCAL",
 		"name":{"en":"Readiness HTTP Plugin","ar-IQ":"إضافة اختبار جاهزية HTTP"},
 		"summary":{"en":"Tests readiness HTTP boundaries.","ar-IQ":"تختبر حدود HTTP لتقييم الجاهزية."},
-		"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]}
+		"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]},
+		"capabilities":["test.execute"],
+		"runtime":{"protocol":"stagecore.plugin.v1","artifact":"native-executable","capability_permissions":{"test.execute":[]}}
 	}`)
 	if _, err := library.Register(ctx, pkg.ID, manifest, "owner"); err != nil {
 		t.Fatal(err)
@@ -86,7 +104,7 @@ func TestOperatorExtensionReadinessViewerAndIntegrityBoundary(t *testing.T) {
 	get.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: viewer.Token})
 	getRes := httptest.NewRecorder()
 	handler.ServeHTTP(getRes, get)
-	if getRes.Code != http.StatusOK || !strings.Contains(getRes.Body.String(), `"status":"READY_FOR_ACTIVATION"`) || !strings.Contains(getRes.Body.String(), `"code":"ACTIVATION_NOT_IMPLEMENTED"`) {
+	if getRes.Code != http.StatusOK || !strings.Contains(getRes.Body.String(), `"status":"READY_FOR_ACTIVATION"`) || !strings.Contains(getRes.Body.String(), `"code":"RUNTIME_ARTIFACT_VERIFIED"`) || !strings.Contains(getRes.Body.String(), `"code":"ACTIVATION_NOT_IMPLEMENTED"`) {
 		t.Fatalf("VIEWER readiness status=%d body=%s", getRes.Code, getRes.Body.String())
 	}
 	if strings.Contains(getRes.Body.String(), `"running"`) || strings.Contains(getRes.Body.String(), `"enabled"`) {
