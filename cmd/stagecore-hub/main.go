@@ -12,6 +12,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/config"
+	"github.com/ali96adil/StageCore/internal/deviceprofile"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
@@ -71,12 +72,14 @@ func main() {
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 	)
 	memory := sessionmemory.New(application.Store)
+	deviceProfiles := deviceprofile.BuiltinCatalog()
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
