@@ -27,6 +27,9 @@ func TestParseManifestRequiresStrictBilingualTrustedShape(t *testing.T) {
 	}
 
 	withUnknown := strings.Replace(string(raw), `"capabilities":["osc.send"]`, `"capabilities":["osc.send"],"secret":"do-not-store"`, 1)
+	if withUnknown == string(raw) {
+		t.Fatal("test setup did not inject unknown field")
+	}
 	if _, _, err := ParseManifest([]byte(withUnknown)); err == nil {
 		t.Fatal("unknown manifest field was accepted")
 	}
