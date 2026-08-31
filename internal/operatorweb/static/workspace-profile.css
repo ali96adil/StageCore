@@ -152,12 +152,23 @@ html[dir="rtl"] .f017-profile-summary {
 }
 
 @media (max-width: 1000px) {
-  .f017-profile-control label,
-  .f017-profile-control .button {
+  .f017-profile-control label {
     display: none;
   }
   .f017-profile-control select {
-    width: 130px;
+    width: 128px;
+  }
+  .f017-profile-control .button {
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+    font-size: 0;
+    display: inline-grid;
+    place-items: center;
+  }
+  .f017-profile-control .button::before {
+    content: "⚙";
+    font-size: 1rem;
   }
 }
 
@@ -177,7 +188,11 @@ html[dir="rtl"] .f017-profile-summary {
 
 @media (max-width: 620px) {
   .f017-profile-control {
-    display: none;
+    gap: 4px;
+  }
+  .f017-profile-control select {
+    width: 105px;
+    min-width: 90px;
   }
   .f017-dialog-actions .button {
     flex: 1 1 auto;
