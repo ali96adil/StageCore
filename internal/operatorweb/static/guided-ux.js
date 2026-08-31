@@ -378,7 +378,10 @@ function f002EnhanceActionCard(card) {
   f002EnsureCapabilityDatalist();
   capability.setAttribute("list", "f002CapabilityList");
 
-  const parsedOSC = capability.value === "osc.send" ? f002ParseOSCParameters(params.value) : null;
+  const rawParameters = params.value.trim();
+  const parsedOSC = capability.value === "osc.send"
+    ? (f002ParseOSCParameters(params.value) || (["", "{}"].includes(rawParameters) ? { address: "", arguments: [] } : null))
+    : null;
   const builder = document.createElement("section");
   builder.className = "f002-builder f002-action-builder";
   builder.innerHTML = `
@@ -386,7 +389,7 @@ function f002EnhanceActionCard(card) {
       <label>Action type<select class="f002-action-kind"><option value="osc">Send OSC message</option><option value="advanced">Advanced capability</option></select></label>
     </div>
     <div class="f002-osc-action">
-      <label>OSC address<input class="f002-osc-address" placeholder="/stagecore/go"></label>
+      <label>OSC address<input class="f002-osc-address" placeholder="/stagecore/go" pattern="/.*" title="OSC address must start with /"></label>
       <div class="section-title-row"><div><strong>Values</strong><p class="muted">Optional OSC arguments in send order.</p></div><button class="button ghost f002-add-argument" type="button">+ Value</button></div>
       <div class="f002-arguments"></div>
     </div>`;
