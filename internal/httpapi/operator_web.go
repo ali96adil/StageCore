@@ -13,6 +13,7 @@ func WithOperatorWeb() Option {
 	return func(s *Server) {
 		s.mux.HandleFunc("GET /", serveOperatorAsset("index.html", "text/html; charset=utf-8", true))
 		s.mux.HandleFunc("GET /app.css", serveOperatorAsset("app.css", "text/css; charset=utf-8", false))
+		s.mux.HandleFunc("GET /guided-ux.css", serveOperatorAsset("guided-ux.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /app.js", serveOperatorAsset("app.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /bootstrap.js", serveOperatorAsset("bootstrap.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /preflight.js", serveOperatorAsset("preflight.js", "application/javascript; charset=utf-8", false))
@@ -20,6 +21,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /security.js", serveOperatorAsset("security.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /configuration.js", serveOperatorAsset("configuration.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-lock.js", serveOperatorAsset("show-lock.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /guided-ux.js", serveOperatorAsset("guided-ux.js", "application/javascript; charset=utf-8", false))
 	}
 }
 
