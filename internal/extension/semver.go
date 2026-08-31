@@ -1,14 +1,11 @@
 package extension
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
 type semanticVersion struct {
-	major uint64
-	minor uint64
-	patch uint64
+	major string
+	minor string
+	patch string
 	pre   []string
 }
 
@@ -24,18 +21,10 @@ func parseSemanticVersion(value string) (semanticVersion, bool) {
 		pre = value[index+1:]
 	}
 	parts := strings.Split(core, ".")
-	if len(parts) != 3 {
+	if len(parts) != 3 || !decimalDigits(parts[0]) || !decimalDigits(parts[1]) || !decimalDigits(parts[2]) {
 		return semanticVersion{}, false
 	}
-	numbers := make([]uint64, 3)
-	for index, part := range parts {
-		number, err := strconv.ParseUint(part, 10, 64)
-		if err != nil {
-			return semanticVersion{}, false
-		}
-		numbers[index] = number
-	}
-	parsed := semanticVersion{major: numbers[0], minor: numbers[1], patch: numbers[2]}
+	parsed := semanticVersion{major: parts[0], minor: parts[1], patch: parts[2]}
 	if pre != "" {
 		parsed.pre = strings.Split(pre, ".")
 	}
@@ -48,23 +37,14 @@ func compareSemanticVersions(left, right string) int {
 	if !lok || !rok {
 		return strings.Compare(left, right)
 	}
-	if l.major != r.major {
-		if l.major < r.major {
-			return -1
-		}
-		return 1
+	if comparison := compareDecimalStrings(l.major, r.major); comparison != 0 {
+		return comparison
 	}
-	if l.minor != r.minor {
-		if l.minor < r.minor {
-			return -1
-		}
-		return 1
+	if comparison := compareDecimalStrings(l.minor, r.minor); comparison != 0 {
+		return comparison
 	}
-	if l.patch != r.patch {
-		if l.patch < r.patch {
-			return -1
-		}
-		return 1
+	if comparison := compareDecimalStrings(l.patch, r.patch); comparison != 0 {
+		return comparison
 	}
 	if len(l.pre) == 0 && len(r.pre) == 0 {
 		return 0
@@ -95,17 +75,11 @@ func compareSemanticVersions(left, right string) int {
 }
 
 func comparePrereleaseIdentifier(left, right string) int {
-	leftNumber, leftNumeric := prereleaseNumber(left)
-	rightNumber, rightNumeric := prereleaseNumber(right)
+	leftNumeric := decimalDigits(left)
+	rightNumeric := decimalDigits(right)
 	switch {
 	case leftNumeric && rightNumeric:
-		if leftNumber < rightNumber {
-			return -1
-		}
-		if leftNumber > rightNumber {
-			return 1
-		}
-		return 0
+		return compareDecimalStrings(left, right)
 	case leftNumeric:
 		return -1
 	case rightNumeric:
@@ -115,17 +89,36 @@ func comparePrereleaseIdentifier(left, right string) int {
 	}
 }
 
-func prereleaseNumber(value string) (uint64, bool) {
+func decimalDigits(value string) bool {
 	if value == "" {
-		return 0, false
+		return false
 	}
 	for _, r := range value {
 		if r < '0' || r > '9' {
-			return 0, false
+			return false
 		}
 	}
-	number, err := strconv.ParseUint(value, 10, 64)
-	return number, err == nil
+	return true
+}
+
+func compareDecimalStrings(left, right string) int {
+	left = normalizeDecimal(left)
+	right = normalizeDecimal(right)
+	if len(left) < len(right) {
+		return -1
+	}
+	if len(left) > len(right) {
+		return 1
+	}
+	return strings.Compare(left, right)
+}
+
+func normalizeDecimal(value string) string {
+	value = strings.TrimLeft(value, "0")
+	if value == "" {
+		return "0"
+	}
+	return value
 }
 
 func versionInRange(version, minVersion, maxVersion string) bool {
