@@ -18,8 +18,10 @@ func TestOperatorDeviceProfileCatalogIsAuthenticatedAndMaterializesTypedTarget(t
 	catalog := deviceprofile.BuiltinCatalog()
 	handler := New(WithOperatorDeviceProfiles(h.auth, catalog)).Handler()
 
+	unauthenticatedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/device-profiles", nil)
+	unauthenticatedRequest.RemoteAddr = "127.0.0.1:19000"
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/device-profiles", nil))
+	handler.ServeHTTP(unauthorized, unauthenticatedRequest)
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated catalog status=%d want=401", unauthorized.Code)
 	}
