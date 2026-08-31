@@ -51,6 +51,7 @@ public actor WebSocketCompanionAgent {
     private let reconnectDelay: Duration
     private let maxReconnects: Int
     private let heartbeatInterval: Duration
+    private let tlsCertificateSHA256: String?
 
     public init(
         url: URL,
@@ -59,9 +60,13 @@ public actor WebSocketCompanionAgent {
         authenticator: any CompanionRuntimeAuthenticator,
         reconnectDelay: Duration = .milliseconds(250),
         maxReconnects: Int = 8,
-        heartbeatInterval: Duration = .seconds(5)
+        heartbeatInterval: Duration = .seconds(5),
+        tlsCertificateSHA256: String? = nil
     ) throws {
         try CompanionTransportPolicy.validate(url: url, policy: securityPolicy)
+        if let pin = tlsCertificateSHA256, !HubTLS.isValidCertificateSHA256(pin) {
+            throw CompanionTransportError.insecureTransportNotAllowed
+        }
         self.url = url
         self.securityPolicy = securityPolicy
         self.session = session
@@ -69,6 +74,7 @@ public actor WebSocketCompanionAgent {
         self.reconnectDelay = reconnectDelay
         self.maxReconnects = max(0, maxReconnects)
         self.heartbeatInterval = heartbeatInterval
+        self.tlsCertificateSHA256 = tlsCertificateSHA256
     }
 
     public func run() async throws {
@@ -96,7 +102,7 @@ public actor WebSocketCompanionAgent {
     private func runOneConnection() async throws {
         let credential = try await authenticator.authenticate()
         await session.establishAuthenticatedSession(credential)
-        let urlSession = URLSession(configuration: .ephemeral)
+        let urlSession = HubTLS.makeSession(pinnedCertificateSHA256: tlsCertificateSHA256)
         var request = URLRequest(url: url)
         request.setValue("StageCoreSession \(credential.token)", forHTTPHeaderField: "Authorization")
         let socket = urlSession.webSocketTask(with: request)
@@ -152,7 +158,6 @@ public actor WebSocketCompanionAgent {
         }
     }
 }
-
 
 func runCompanionHeartbeat(
     every interval: Duration,
