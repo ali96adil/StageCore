@@ -105,6 +105,16 @@ func main() {
 		logger.Error("extension activation staging startup failed", "error", err)
 		os.Exit(1)
 	}
+	extensionRuntimeIsolator, err := extension.NewRuntimeIsolator(extensionInstaller, extensionPermissionReviewer, extensionReadiness, "")
+	if err != nil {
+		logger.Error("extension runtime isolation startup failed", "error", err)
+		os.Exit(1)
+	}
+	extensionRuntimeProbe, err := extension.NewRuntimeProbe(extensionInstaller, extensionRuntimeIsolator)
+	if err != nil {
+		logger.Error("extension runtime probe startup failed", "error", err)
+		os.Exit(1)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -117,6 +127,7 @@ func main() {
 		httpapi.WithOperatorExtensionPermissionReview(userAuth, extensionPermissionReviewer, application.SecurityAudit),
 		httpapi.WithOperatorExtensionReadiness(userAuth, extensionReadiness),
 		httpapi.WithOperatorExtensionActivationStaging(userAuth, extensionActivationStager, application.SecurityAudit),
+		httpapi.WithOperatorExtensionRuntimeProbe(userAuth, extensionRuntimeProbe, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
