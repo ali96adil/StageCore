@@ -48,8 +48,11 @@ func TestDeviceTLSCertificateIsStableAndBoundToHubIdentity(t *testing.T) {
 	if leaf == nil {
 		t.Fatal("device certificate has no parsed leaf")
 	}
-	if err := leaf.CheckSignatureFrom(leaf); err != nil {
-		t.Fatalf("device certificate is not self-signed: %v", err)
+	if err := leaf.CheckSignature(leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature); err != nil {
+		t.Fatalf("device certificate self-signature is invalid: %v", err)
+	}
+	if leaf.IsCA {
+		t.Fatal("device certificate must remain an end-entity certificate, not a CA")
 	}
 	public, ok := leaf.PublicKey.(ed25519.PublicKey)
 	if !ok {
