@@ -6,12 +6,19 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"testing"
+
+	"github.com/ali96adil/StageCore/internal/db"
 )
 
 func TestDeviceTLSCertificateIsStableAndBoundToHubIdentity(t *testing.T) {
 	ctx := context.Background()
-	db := openTestDB(t)
-	service, err := Open(ctx, db, t.TempDir())
+	root := t.TempDir()
+	handle, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	service, err := Open(ctx, handle.DB, root)
 	if err != nil {
 		t.Fatal(err)
 	}
