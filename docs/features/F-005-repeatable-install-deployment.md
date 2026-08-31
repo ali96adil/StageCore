@@ -1,6 +1,6 @@
 # F-005 — Simple Repeatable Installation & Deployment
 
-**Status:** Foundation slice in implementation  
+**Status:** Foundation slice merged  
 **Feature ID:** F-005  
 **Phase:** 2 — Installation, diagnostics, discovery, update, and extension operations
 
@@ -27,9 +27,10 @@ The installer must not claim support for an OS/architecture it has not validated
 
 ## Foundation user path
 
-An unpacked release bundle contains:
+The canonical product-binary registry is shared by release building, validation and installation. After F-009 adds the umbrella CLI, an unpacked release bundle contains:
 
 ```text
+stagecore
 stagecore-hub
 stagecore-osc-plugin
 stagecore-pairing
@@ -56,13 +57,15 @@ Expert flags exist for non-default roots, listen address, service identity, dry-
 
 Before changing the host, the installer must:
 
-1. require all four product binaries;
+1. require every product binary in the canonical required-binary registry;
 2. require a `SHA256SUMS` entry for every required product binary;
-3. verify the bytes of every product binary against those checksums;
-4. inspect the ELF machine type and reject a bundle that does not match the executing Linux host architecture;
+3. verify the bytes of every required product binary against those checksums;
+4. inspect each ELF machine type and reject a bundle that does not match the executing Linux host architecture;
 5. reject symlinked required artifacts so the bundle boundary is explicit.
 
 SHA-256 detects bundle corruption/substitution relative to the supplied checksum manifest. It is **not** publisher authentication. Release signing/trust may be added separately and must not be falsely implied by this slice.
+
+F-009 extends the same registry with the `stagecore` CLI instead of creating a separate installation path. Therefore `stagecore doctor` receives the same checksum, ELF and atomic-copy rules as the original F-005 binaries.
 
 ## Fresh install behavior
 
@@ -72,7 +75,7 @@ For a fresh deployment, `stagecore-setup install`:
 2. requires root only after non-mutating validation (unless `--dry-run`);
 3. creates the configured system group/user when missing;
 4. creates installation, configuration, Data Root and Vault Root directories with bounded permissions;
-5. installs the four product binaries atomically into `/opt/stagecore/bin` by default;
+5. installs every required StageCore product binary atomically into `/opt/stagecore/bin` by default;
 6. writes a managed `/etc/stagecore/stagecore.env` with the production environment keys currently consumed by StageCore;
 7. installs a generated `stagecore-hub.service` under systemd;
 8. runs `systemctl daemon-reload` and enables the service;
@@ -169,6 +172,7 @@ Software acceptance requires:
 - systemd unit rendering contains the accepted local-first/sandbox/write-path rules;
 - dry-run produces a complete validated plan without root/system mutation;
 - `stagecore-setup` still supports existing `status` and `setup-code` commands;
+- the canonical release/installer registry includes every supported product binary, including later registered product CLIs such as F-009 `stagecore`;
 - Core CI Test/Vet/Race and Linux ARM64 CGo-free product-build gates pass.
 
 Physical acceptance is intentionally deferred until access to the qualified Raspberry Pi is available. The later Pi gate should use this installer/reinstall path where appropriate instead of manually reproducing deployment steps.
@@ -180,7 +184,7 @@ F-005 remains broader than this foundation. Deferred slices include:
 - remote/download bootstrap from a release URL;
 - distro package-manager integration;
 - interactive first-run product wizard (F-008);
-- complete diagnostics/repair workflow (F-009);
+- complete diagnostics/repair workflow beyond the read-only F-009 foundation;
 - signed release trust chain if adopted;
 - transactional data backup/automatic rollback/update policy (F-010);
 - offline release-media/catalog orchestration beyond a local unpacked bundle (F-014);
