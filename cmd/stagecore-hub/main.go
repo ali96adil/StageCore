@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/deviceprofile"
+	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
@@ -73,6 +74,11 @@ func main() {
 	)
 	memory := sessionmemory.New(application.Store)
 	deviceProfiles := deviceprofile.BuiltinCatalog()
+	extensionLibrary, err := extension.NewLibrary(application.Store, application.Software)
+	if err != nil {
+		logger.Error("extension library startup failed", "error", err)
+		os.Exit(1)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -80,6 +86,7 @@ func main() {
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
+		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
