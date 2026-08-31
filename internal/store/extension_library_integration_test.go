@@ -115,7 +115,10 @@ func TestExtensionLibraryRejectsSelfAssertedOfficialAndShowMutation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	official := strings.Replace(string(validLocalExtensionManifest()), `"source":"LOCAL"`, `"source":"OFFICIAL"`, 1)
+	official := strings.Replace(string(validLocalExtensionManifest()), "\"source\":\"LOCAL\"", "\"source\":\"OFFICIAL\"", 1)
+	if official == string(validLocalExtensionManifest()) {
+		t.Fatal("test setup did not set OFFICIAL source")
+	}
 	if _, err := library.Register(ctx, pkg.ID, []byte(official), "owner"); !errors.Is(err, extension.ErrOfficialSourceRequiresTrustedPath) {
 		t.Fatalf("self-asserted OFFICIAL err=%v", err)
 	}
