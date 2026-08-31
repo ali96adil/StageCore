@@ -7,5 +7,5 @@ func init() {
 			return
 		}
 	}
-	RequiredBinaries = append([]string{name}, RequiredBinaries...)
+	RequiredBinaries = append(RequiredBinaries, name)
 }
