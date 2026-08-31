@@ -98,7 +98,8 @@
         {"action_id": "reset-appearance", "label": {"en": "Reset Appearance", "ar-IQ": "إعادة المظهر الافتراضي"}}
       ],
       "ui_keys": [
-        "appearance.title", "appearance.mode", "appearance.system", "appearance.light", "appearance.dark",
+        "appearance.title", "appearance.mode", "appearance.system", "appearance.system_detail",
+        "appearance.light", "appearance.light_detail", "appearance.dark", "appearance.dark_detail",
         "appearance.accent", "appearance.blue", "appearance.teal", "appearance.violet", "appearance.amber",
         "appearance.preview", "appearance.ready", "appearance.warning", "appearance.blocker",
         "appearance.local_scope", "appearance.reset", "appearance.close"
