@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -79,6 +81,15 @@ func main() {
 		logger.Error("extension library startup failed", "error", err)
 		os.Exit(1)
 	}
+	extensionInstaller, err := extension.NewInstaller(
+		extensionLibrary,
+		filepath.Join(application.Config.DataRoot, "extensions"),
+		extension.WithInstallerCapacityPolicy(storagehealth.NewPolicy(application.Config.RuntimeReserveBytes, application.Config.StorageWarningPercent)),
+	)
+	if err != nil {
+		logger.Error("extension installer startup failed", "error", err)
+		os.Exit(1)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -87,6 +98,7 @@ func main() {
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
+		httpapi.WithOperatorExtensionInstaller(userAuth, extensionInstaller, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
