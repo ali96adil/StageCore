@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -158,5 +159,24 @@ func TestInspectRuntimeArtifactRejectsArchitectureMismatch(t *testing.T) {
 	}
 	if _, err := h.installer.InspectRuntimeArtifact(h.ctx, installed.InstallationID); !errors.Is(err, ErrRuntimeArtifactInvalid) || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("architecture mismatch err=%v", err)
+	}
+}
+
+func TestRuntimeHostCompatibilityRequiresCurrentHubPlatformAndArchitecture(t *testing.T) {
+	if normalizeRuntimeArchitecture(runtime.GOARCH) == "" {
+		t.Skipf("unsupported host architecture %s", runtime.GOARCH)
+	}
+	if err := runtimeHostCompatibility(runtime.GOOS, runtime.GOARCH); err != nil {
+		t.Fatalf("current host rejected: %v", err)
+	}
+	otherArchitecture := "arm64"
+	if normalizeRuntimeArchitecture(runtime.GOARCH) == "arm64" {
+		otherArchitecture = "amd64"
+	}
+	if err := runtimeHostCompatibility(runtime.GOOS, otherArchitecture); !errors.Is(err, ErrRuntimeHostMismatch) {
+		t.Fatalf("architecture host mismatch err=%v", err)
+	}
+	if err := runtimeHostCompatibility("definitely-not-"+runtime.GOOS, runtime.GOARCH); !errors.Is(err, ErrRuntimeHostMismatch) {
+		t.Fatalf("platform host mismatch err=%v", err)
 	}
 }

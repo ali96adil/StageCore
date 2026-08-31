@@ -6,7 +6,7 @@ Status: implementation checkpoint
 
 Define the first executable artifact contract required before StageCore may introduce extension activation authority.
 
-This checkpoint does not enable, start, stop, chmod, execute, or grant runtime permissions to any extension.
+This checkpoint does not enable, start, stop, chmod-to-executable, execute, or grant runtime permissions to any extension.
 
 ## Plugin runtime manifest
 
@@ -70,9 +70,20 @@ Architecture mappings in v1:
 
 Unsupported platforms or architectures fail closed with `ErrRuntimeArtifactInvalid`.
 
+## Host compatibility
+
+Readiness also verifies that the immutable package platform and architecture match the StageCore Hub that would eventually host the runtime.
+
+This is deliberately separate from internal ELF/package consistency: a valid ARM64 ELF inside an ARM64 package is still not activation-ready on an AMD64 Hub.
+
+PLUGIN readiness therefore includes a `runtime_host` check with results such as:
+
+- `PASS / RUNTIME_HOST_COMPATIBLE`
+- `BLOCKED / RUNTIME_HOST_MISMATCH`
+
 ## Readiness integration
 
-PLUGIN readiness now includes a `runtime_artifact` check.
+PLUGIN readiness includes a `runtime_artifact` check.
 
 Possible results include:
 
@@ -84,11 +95,13 @@ ADDON readiness reports:
 
 - `NOT_APPLICABLE / ADDON_RUNTIME_NOT_REQUIRED`
 
-This check is independent from runtime health. `runtime_health` remains:
+for both runtime artifact and runtime host checks.
+
+This remains independent from persistent runtime health. `runtime_health` remains:
 
 - `NOT_APPLICABLE / ACTIVATION_NOT_IMPLEMENTED`
 
-until an activation contract is implemented.
+until an isolated execution lifecycle is implemented.
 
 ## Security boundaries
 
@@ -102,6 +115,14 @@ This checkpoint deliberately preserves these boundaries:
 6. `READY_FOR_ACTIVATION` is not `enabled`, `running`, or `healthy`;
 7. SHOW-mode lifecycle mutation behavior is unchanged because this slice adds no lifecycle mutation.
 
+## Execution-isolation finding
+
+A logical capability/permission gate is not an operating-system sandbox.
+
+Starting an extension process would otherwise allow that process to inherit the StageCore service account's ambient filesystem and network access before any `execution.request` permission check occurs. Production-ready/signing metadata alone is not sufficient to turn arbitrary package bytes into safe executable authority.
+
+Therefore F-015 must not expose a general process-start boundary until StageCore has an enforceable runtime trust/isolation design. The immediate dependency-first slice is a non-executing activation staging gate, not a process probe.
+
 ## Verification
 
 Acceptance coverage includes:
@@ -114,20 +135,24 @@ Acceptance coverage includes:
 - valid Linux ARM64 ELF inspection;
 - installed payload remains non-executable after inspection;
 - ARM64 package metadata rejects an AMD64 ELF;
+- package/ELF consistency is distinct from Hub host compatibility;
 - PLUGIN without runtime contract is `NOT_READY`;
 - existing permission/dependency/trust readiness gates continue to work;
-- authenticated readiness API exposes `RUNTIME_ARTIFACT_VERIFIED` without inventing runtime state.
+- authenticated readiness API exposes runtime and host verification without inventing runtime state.
 
 ## Next dependency-first slice
 
-The next slice may introduce an activation probe/contract only after this checkpoint is green on `main`.
+The next slice may stage and re-verify an activation candidate only after this checkpoint is green on `main`.
 
-That later activation slice must still:
+That staging slice must:
 
 - require `READY_FOR_ACTIVATION`;
-- create an executable runtime copy/staging artifact rather than mutating the immutable installed payload;
-- bridge only explicitly reviewed permissions into runtime authority;
-- validate `plugin.ready` identity, protocol, and advertised capabilities;
-- fail closed and clean up on probe/start failure;
-- remain SHOW-gated for lifecycle mutations;
-- persist lifecycle intent separately from transient process health.
+- remain SHOW-gated;
+- derive reviewed permissions for the exact installation identity without creating durable runtime grants;
+- copy into a managed transient runtime staging root;
+- re-verify immutable hash and size;
+- keep the staged copy non-executable;
+- clean it before returning;
+- report explicitly that execution is not authorized until a separately reviewed isolation/trust gate exists.
+
+A later execution slice must additionally provide enforceable isolation before it may start arbitrary extension bytes. Only then should StageCore validate live `plugin.ready`, bridge runtime authority, and introduce persistent Enable/Disable semantics.
