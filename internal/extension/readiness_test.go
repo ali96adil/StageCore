@@ -1,11 +1,12 @@
 package extension
 
 import (
+	"bytes"
+	"debug/elf"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/software"
@@ -36,7 +37,7 @@ func newReadinessAssessorForHarness(t *testing.T, h *dependencyTestHarness) *Rea
 	return assessor
 }
 
-func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionID string, permissions []string, dependencies []Dependency, productionReady bool) Package {
+func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionID string, permissions []string, dependencies []Dependency, productionReady, withRuntime bool) Package {
 	t.Helper()
 	signing := store.SoftwareSigningSigned
 	channel := store.SoftwareChannelRelease
@@ -55,7 +56,7 @@ func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionI
 		SigningStatus: signing,
 		NotarizationStatus: store.SoftwareNotarizationNotApplicable,
 		ReleaseChannel: channel,
-	}, strings.NewReader(extensionID+" readiness payload"))
+	}, bytes.NewReader(minimalELF64(elf.EM_AARCH64)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +72,10 @@ func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionI
 		Permissions: permissions,
 		Dependencies: dependencies,
 	}
+	if withRuntime {
+		manifest.Capabilities = []string{"test.execute"}
+		manifest.Runtime = testPluginRuntime(permissions)
+	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +89,7 @@ func registerReadinessPackage(t *testing.T, h *dependencyTestHarness, extensionI
 
 func TestReadinessReadyOnlyAfterPermissionApproval(t *testing.T) {
 	h := newDependencyTestHarness(t)
-	pkg := registerReadinessPackage(t, h, "ready.permission-plugin", []string{"network.udp.send"}, nil, true)
+	pkg := registerReadinessPackage(t, h, "ready.permission-plugin", []string{"network.udp.send"}, nil, true, true)
 	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +122,7 @@ func TestReadinessReadyOnlyAfterPermissionApproval(t *testing.T) {
 	if ready.Status != ReadinessReadyForActivation {
 		t.Fatalf("ready status=%s checks=%+v", ready.Status, ready.Checks)
 	}
-	for _, id := range []string{"installed_integrity", "package_compatibility", "package_trust", "dependencies", "permission_review"} {
+	for _, id := range []string{"installed_integrity", "package_compatibility", "package_trust", "runtime_artifact", "dependencies", "permission_review"} {
 		if check := readinessCheckByID(t, ready, id); check.Status != ReadinessCheckPass {
 			t.Fatalf("%s check=%+v", id, check)
 		}
@@ -128,10 +133,30 @@ func TestReadinessReadyOnlyAfterPermissionApproval(t *testing.T) {
 	}
 }
 
+func TestReadinessBlocksPluginWithoutRuntimeContract(t *testing.T) {
+	h := newDependencyTestHarness(t)
+	pkg := registerReadinessPackage(t, h, "ready.legacy-plugin", nil, nil, true, false)
+	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment, err := newReadinessAssessorForHarness(t, h).Assess(h.ctx, installed.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.Status != ReadinessNotReady {
+		t.Fatalf("legacy plugin readiness=%s", assessment.Status)
+	}
+	check := readinessCheckByID(t, assessment, "runtime_artifact")
+	if check.Status != ReadinessCheckBlocked || check.Code != "RUNTIME_CONTRACT_MISSING" {
+		t.Fatalf("runtime artifact check=%+v", check)
+	}
+}
+
 func TestReadinessBlocksMissingRequiredDependencyThenRecovers(t *testing.T) {
 	h := newDependencyTestHarness(t)
-	dependency := registerReadinessPackage(t, h, "ready.required-dependency", nil, nil, true)
-	root := registerReadinessPackage(t, h, "ready.root-plugin", nil, []Dependency{{ExtensionID: dependency.Manifest.ExtensionID, MinVersion: "1.0.0"}}, true)
+	dependency := registerReadinessPackage(t, h, "ready.required-dependency", nil, nil, true, true)
+	root := registerReadinessPackage(t, h, "ready.root-plugin", nil, []Dependency{{ExtensionID: dependency.Manifest.ExtensionID, MinVersion: "1.0.0"}}, true, true)
 
 	installedRoot, err := h.installer.Install(h.ctx, root.PackageID, "owner")
 	if err != nil {
@@ -164,8 +189,8 @@ func TestReadinessBlocksMissingRequiredDependencyThenRecovers(t *testing.T) {
 
 func TestReadinessKeepsOptionalDependencyAsAdvisory(t *testing.T) {
 	h := newDependencyTestHarness(t)
-	_ = registerReadinessPackage(t, h, "ready.optional-dependency", nil, nil, true)
-	root := registerReadinessPackage(t, h, "ready.optional-root", nil, []Dependency{{ExtensionID: "ready.optional-dependency", MinVersion: "1.0.0", Optional: true}}, true)
+	_ = registerReadinessPackage(t, h, "ready.optional-dependency", nil, nil, true, true)
+	root := registerReadinessPackage(t, h, "ready.optional-root", nil, []Dependency{{ExtensionID: "ready.optional-dependency", MinVersion: "1.0.0", Optional: true}}, true, true)
 	installed, err := h.installer.InstallPlanned(h.ctx, root.PackageID, "owner")
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +209,7 @@ func TestReadinessKeepsOptionalDependencyAsAdvisory(t *testing.T) {
 
 func TestReadinessBlocksNonProductionPackageAndDetectsTamper(t *testing.T) {
 	h := newDependencyTestHarness(t)
-	pkg := registerReadinessPackage(t, h, "ready.local-development", nil, nil, false)
+	pkg := registerReadinessPackage(t, h, "ready.local-development", nil, nil, false, true)
 	installed, err := h.installer.Install(h.ctx, pkg.PackageID, "owner")
 	if err != nil {
 		t.Fatal(err)

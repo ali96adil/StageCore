@@ -2,6 +2,7 @@ package extension
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -72,7 +73,7 @@ func (a *ReadinessAssessor) Assess(ctx context.Context, installationID string) (
 		ExtensionID: installed.ExtensionID,
 		Version: installed.Version,
 		Status: ReadinessReadyForActivation,
-		Checks: make([]ReadinessCheck, 0, 5),
+		Checks: make([]ReadinessCheck, 0, 7),
 		Advisories: []InstallPlanWarning{},
 	}
 	assessment.Checks = append(assessment.Checks, ReadinessCheck{
@@ -101,6 +102,31 @@ func (a *ReadinessAssessor) Assess(ctx context.Context, installationID string) (
 		})
 	} else {
 		assessment.block("package_trust", "PACKAGE_NOT_PRODUCTION_READY", "software package is not production-ready under the current signing/release policy")
+	}
+
+	if pkg.Manifest.Kind == KindPlugin {
+		artifact, artifactErr := a.installer.InspectRuntimeArtifact(ctx, installed.InstallationID)
+		if artifactErr == nil {
+			assessment.Checks = append(assessment.Checks, ReadinessCheck{
+				ID: "runtime_artifact",
+				Status: ReadinessCheckPass,
+				Code: "RUNTIME_ARTIFACT_VERIFIED",
+				Detail: fmt.Sprintf("%s %s/%s artifact verified for protocol %s", artifact.Artifact, artifact.Platform, artifact.Architecture, artifact.Protocol),
+			})
+		} else if errors.Is(artifactErr, ErrRuntimeContractMissing) {
+			assessment.block("runtime_artifact", "RUNTIME_CONTRACT_MISSING", "plugin manifest does not declare an activation runtime contract")
+		} else if errors.Is(artifactErr, ErrRuntimeArtifactInvalid) {
+			assessment.block("runtime_artifact", "RUNTIME_ARTIFACT_INVALID", artifactErr.Error())
+		} else {
+			return ReadinessAssessment{}, artifactErr
+		}
+	} else {
+		assessment.Checks = append(assessment.Checks, ReadinessCheck{
+			ID: "runtime_artifact",
+			Status: ReadinessCheckNotApplicable,
+			Code: "ADDON_RUNTIME_NOT_REQUIRED",
+			Detail: "ADDON installations do not use the native plugin runtime artifact contract",
+		})
 	}
 
 	plan, err := a.installer.PlanInstall(ctx, installed.PackageID)

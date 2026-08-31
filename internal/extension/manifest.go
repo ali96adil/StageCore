@@ -140,7 +140,80 @@ func ValidateManifest(manifest Manifest) error {
 			return fmt.Errorf("dependency %s has min_version greater than max_version", dependency.ExtensionID)
 		}
 	}
+
+	if manifest.Kind == KindAddon && manifest.Runtime != nil {
+		return fmt.Errorf("ADDON manifests cannot declare a plugin runtime contract")
+	}
+	if manifest.Runtime != nil {
+		if err := validateRuntimeContract(manifest); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateRuntimeContract(manifest Manifest) error {
+	runtime := manifest.Runtime
+	if runtime == nil {
+		return nil
+	}
+	if manifest.Kind != KindPlugin {
+		return fmt.Errorf("runtime contract is only valid for PLUGIN manifests")
+	}
+	if runtime.Protocol != RuntimeProtocolPluginV1 {
+		return fmt.Errorf("unsupported runtime protocol %q", runtime.Protocol)
+	}
+	if runtime.Artifact != RuntimeArtifactNativeExecutable {
+		return fmt.Errorf("unsupported runtime artifact %q", runtime.Artifact)
+	}
+	if len(manifest.Capabilities) == 0 {
+		return fmt.Errorf("PLUGIN runtime contract requires at least one declared capability")
+	}
+	if len(runtime.CapabilityPermissions) != len(manifest.Capabilities) {
+		return fmt.Errorf("runtime capability_permissions must map every declared capability exactly once")
+	}
+	declaredPermissions := make(map[string]struct{}, len(manifest.Permissions))
+	for _, permission := range manifest.Permissions {
+		declaredPermissions[permission] = struct{}{}
+	}
+	usedPermissions := make(map[string]struct{}, len(manifest.Permissions))
+	for _, capability := range manifest.Capabilities {
+		permissions, ok := runtime.CapabilityPermissions[capability]
+		if !ok {
+			return fmt.Errorf("runtime capability_permissions is missing capability %q", capability)
+		}
+		seen := map[string]struct{}{}
+		for _, permission := range permissions {
+			if _, declared := declaredPermissions[permission]; !declared {
+				return fmt.Errorf("runtime capability %q references undeclared permission %q", capability, permission)
+			}
+			if _, duplicate := seen[permission]; duplicate {
+				return fmt.Errorf("runtime capability %q repeats permission %q", capability, permission)
+			}
+			seen[permission] = struct{}{}
+			usedPermissions[permission] = struct{}{}
+		}
+	}
+	for capability := range runtime.CapabilityPermissions {
+		if _, declared := seenCapability(manifest.Capabilities, capability); !declared {
+			return fmt.Errorf("runtime capability_permissions contains undeclared capability %q", capability)
+		}
+	}
+	for _, permission := range manifest.Permissions {
+		if _, used := usedPermissions[permission]; !used {
+			return fmt.Errorf("runtime contract requests unused permission %q", permission)
+		}
+	}
+	return nil
+}
+
+func seenCapability(values []string, value string) (string, bool) {
+	for _, item := range values {
+		if item == value {
+			return item, true
+		}
+	}
+	return "", false
 }
 
 func normalizeManifest(manifest Manifest) Manifest {
@@ -168,6 +241,17 @@ func normalizeManifest(manifest Manifest) Manifest {
 		manifest.Dependencies[i].ExtensionID = strings.ToLower(strings.TrimSpace(manifest.Dependencies[i].ExtensionID))
 		manifest.Dependencies[i].MinVersion = strings.TrimSpace(manifest.Dependencies[i].MinVersion)
 		manifest.Dependencies[i].MaxVersion = strings.TrimSpace(manifest.Dependencies[i].MaxVersion)
+	}
+	if manifest.Runtime != nil {
+		manifest.Runtime.Protocol = strings.ToLower(strings.TrimSpace(manifest.Runtime.Protocol))
+		manifest.Runtime.Artifact = strings.ToLower(strings.TrimSpace(manifest.Runtime.Artifact))
+		for capability, permissions := range manifest.Runtime.CapabilityPermissions {
+			for index := range permissions {
+				permissions[index] = strings.ToLower(strings.TrimSpace(permissions[index]))
+			}
+			sort.Strings(permissions)
+			manifest.Runtime.CapabilityPermissions[capability] = permissions
+		}
 	}
 	sort.Strings(manifest.Compatibility.Platforms)
 	sort.Strings(manifest.Compatibility.Architectures)
