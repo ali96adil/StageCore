@@ -8,6 +8,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -75,6 +76,9 @@ func (h *operatorExtensionInstaller) install(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, extension.ErrInstalledPayloadIntegrity):
 			status = http.StatusConflict
 			code = "EXTENSION_INSTALL_INTEGRITY_FAILED"
+		case errors.Is(err, storagehealth.ErrRuntimeReserve):
+			status = http.StatusInsufficientStorage
+			code = "EXTENSION_INSTALL_STORAGE_RESERVE"
 		}
 		h.record(r, session, packageID, securityaudit.ResultRejected, code, nil)
 		writeJSON(w, status, map[string]any{"error_code": code})
