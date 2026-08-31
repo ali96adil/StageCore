@@ -4,6 +4,8 @@ Describe the bounded change and the Feature ID(s) it implements or extends.
 
 ## Verification
 
+> These checkboxes intentionally remain unchecked in the repository template. Check each applicable item in the individual pull request only after its evidence is available.
+
 - [ ] Tests cover the behavior changed by this PR.
 - [ ] Runtime/security invariants remain unchanged unless explicitly in scope.
 - [ ] No unrelated dependency or architecture changes are included.
