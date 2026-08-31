@@ -1,6 +1,11 @@
 package extension
 
-import "context"
+import (
+	"context"
+	"fmt"
+
+	"github.com/ali96adil/StageCore/internal/domain"
+)
 
 // InstallPlanned is the lifecycle-safe installation entrypoint. It refuses to
 // materialize a root package until every required dependency is already
@@ -8,6 +13,17 @@ import "context"
 // storage materializer used by this package's crash/idempotency tests and by
 // future plan executors after they have satisfied prerequisite ordering.
 func (i *Installer) InstallPlanned(ctx context.Context, packageID, actor string) (Installation, error) {
+	if i == nil || i.library == nil || i.library.store == nil {
+		return Installation{}, fmt.Errorf("extension installer is unavailable")
+	}
+	activeType, err := i.library.store.ActiveOperationalSessionType(ctx)
+	if err != nil {
+		return Installation{}, err
+	}
+	if activeType == domain.SessionShow {
+		return Installation{}, domain.ErrShowConfigurationLocked
+	}
+
 	plan, err := i.PlanInstall(ctx, packageID)
 	if err != nil {
 		return Installation{}, err
