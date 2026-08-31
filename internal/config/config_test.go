@@ -30,3 +30,21 @@ func TestLoadRejectsPartialOSCInputConfiguration(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestLoadDeviceListenerDefaultsToSecureLANPort(t *testing.T) {
+	t.Setenv("STAGECORE_DEVICE_LISTEN", "")
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DeviceListen != "0.0.0.0:7841" {
+		t.Fatalf("device listen=%q, want 0.0.0.0:7841", cfg.DeviceListen)
+	}
+}
+
+func TestLoadRejectsInvalidDeviceListener(t *testing.T) {
+	_, err := Load([]string{"--device-listen", "stagecore.local"})
+	if err == nil || !strings.Contains(err.Error(), "invalid device listen address") {
+		t.Fatalf("error=%v", err)
+	}
+}
