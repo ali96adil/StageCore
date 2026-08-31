@@ -93,11 +93,12 @@
 }
 .f002-builder-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 240px);
+  grid-template-columns: 1fr;
   gap: 12px;
-  align-items: end;
+  align-items: stretch;
 }
 .f002-builder-head > div { display: grid; gap: 4px; min-width: 0; }
+.f002-builder-head > label { max-width: 280px; }
 .f002-builder-head span { color: var(--muted); font-size: .75rem; line-height: 1.4; overflow-wrap: anywhere; }
 .f002-action-builder { margin-block-start: 2px; }
 .f002-osc-action { display: grid; gap: 12px; }
@@ -110,7 +111,7 @@
 }
 .f002-argument-value { min-width: 0; }
 
-/* Setup is form-heavy: never trade usability for four narrow configuration cards. */
+/* Setup is form-heavy: never trade usability for narrow configuration cards. */
 .grid.cards:has(#targetForm) {
   grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
   align-items: start;
@@ -118,8 +119,13 @@
 
 .grid.cards:has(#targetForm) > .card,
 .grid.cards:has(#targetForm) form,
-.grid.cards:has(#targetForm) label {
+.grid.cards:has(#targetForm) label,
+.grid.cards:has(#targetForm) .action-editor {
   min-width: 0;
+}
+
+.grid.cards:has(#targetForm) .form-grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
 }
 
 .grid.cards:has(#targetForm) input,
@@ -128,8 +134,23 @@
   min-width: 0;
 }
 
+.grid.cards:has(#targetForm) pre.mono {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.grid.cards:has(#targetForm) p.mono,
+.grid.cards:has(#targetForm) code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 700px) {
   .f002-recommendation { align-items: stretch; flex-direction: column; }
   .f002-builder-head { grid-template-columns: 1fr; }
+  .f002-builder-head > label { max-width: none; }
   .f002-argument-row { grid-template-columns: 1fr; }
 }

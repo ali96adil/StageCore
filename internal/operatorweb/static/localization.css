@@ -75,8 +75,55 @@ html[dir="rtl"] #stopCueButton {
   unicode-bidi: plaintext;
 }
 
+/* Physical Arabic qualification: security administration needs explicit vertical rhythm. */
+#content:has(#createSecretForm) > .grid.cards {
+  gap: 22px;
+  margin-block-end: 22px;
+}
+
+#content:has(#createSecretForm) > article.card {
+  margin-block-start: 22px !important;
+}
+
+#content:has(#createSecretForm) .card > p.muted {
+  margin-block: 10px 18px;
+  line-height: 1.65;
+}
+
+#content:has(#createSecretForm) form,
+#content:has(#createSecretForm) .action-editor,
+#content:has(#createSecretForm) .section-title-row {
+  min-width: 0;
+}
+
+#content:has(#createSecretForm) #pairingApproveForm,
+#content:has(#createSecretForm) #companionRevokeForm {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+#content:has(#createSecretForm) #createUserForm.form-grid.three {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#content:has(#createSecretForm) .actions-editor,
+#content:has(#createSecretForm) .action-editor {
+  gap: 14px;
+}
+
+#content:has(#createSecretForm) .section-title-row {
+  row-gap: 12px;
+}
+
 @media (max-width: 700px) {
   .language-control {
     margin-inline-start: 0;
+  }
+
+  #content:has(#createSecretForm) #createUserForm.form-grid.three,
+  #content:has(#createSecretForm) .form-grid.two,
+  #content:has(#createSecretForm) .form-grid.three {
+    grid-template-columns: 1fr;
   }
 }
