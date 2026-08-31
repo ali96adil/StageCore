@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ type Config struct {
 	DataRoot              string
 	VaultRoot             string
 	Listen                string
+	DeviceListen          string
 	OSCPluginPath         string
 	OSCInputListen        string
 	OSCInputProjectID     string
@@ -26,6 +28,7 @@ func Load(args []string) (Config, error) {
 	defaultDataRoot := envOr("STAGECORE_DATA_ROOT", filepath.Join(".", "stagecore-data"))
 	defaultVaultRoot := envOr("STAGECORE_VAULT_ROOT", filepath.Join(defaultDataRoot, "vault"))
 	defaultListen := envOr("STAGECORE_LISTEN", "127.0.0.1:7840")
+	defaultDeviceListen := envOr("STAGECORE_DEVICE_LISTEN", "0.0.0.0:7841")
 	defaultOSCPlugin := defaultOSCPluginPath()
 	defaultOSCInputListen := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_LISTEN"))
 	defaultOSCInputProjectID := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_PROJECT_ID"))
@@ -41,7 +44,8 @@ func Load(args []string) (Config, error) {
 	fs := flag.NewFlagSet("stagecore-hub", flag.ContinueOnError)
 	dataRoot := fs.String("data-root", defaultDataRoot, "authoritative StageCore data root")
 	vaultRoot := fs.String("vault-root", defaultVaultRoot, "StageCore Vault root")
-	listen := fs.String("listen", defaultListen, "HTTP listen address")
+	listen := fs.String("listen", defaultListen, "local Operator HTTP listen address")
+	deviceListen := fs.String("device-listen", defaultDeviceListen, "TLS-only Companion/device listen address")
 	oscPluginPath := fs.String("osc-plugin-path", defaultOSCPlugin, "path to the StageCore OSC plugin executable")
 	oscInputListen := fs.String("osc-input-listen", defaultOSCInputListen, "OSC input UDP listen address (loopback only)")
 	oscInputProjectID := fs.String("osc-input-project-id", defaultOSCInputProjectID, "StageCore Project whose active Runtime Session receives OSC input")
@@ -53,7 +57,8 @@ func Load(args []string) (Config, error) {
 
 	cfg := Config{
 		DataRoot: strings.TrimSpace(*dataRoot), VaultRoot: strings.TrimSpace(*vaultRoot),
-		Listen: strings.TrimSpace(*listen), OSCPluginPath: strings.TrimSpace(*oscPluginPath),
+		Listen: strings.TrimSpace(*listen), DeviceListen: strings.TrimSpace(*deviceListen),
+		OSCPluginPath: strings.TrimSpace(*oscPluginPath),
 		OSCInputListen: strings.TrimSpace(*oscInputListen), OSCInputProjectID: strings.TrimSpace(*oscInputProjectID),
 		RuntimeReserveBytes: *reserveBytes, StorageWarningPercent: *warningPercent,
 	}
@@ -65,6 +70,15 @@ func Load(args []string) (Config, error) {
 	}
 	if cfg.Listen == "" {
 		return Config{}, fmt.Errorf("listen address is required")
+	}
+	if _, _, err := net.SplitHostPort(cfg.Listen); err != nil {
+		return Config{}, fmt.Errorf("invalid local listen address %q: %w", cfg.Listen, err)
+	}
+	if cfg.DeviceListen == "" {
+		return Config{}, fmt.Errorf("device listen address is required")
+	}
+	if _, _, err := net.SplitHostPort(cfg.DeviceListen); err != nil {
+		return Config{}, fmt.Errorf("invalid device listen address %q: %w", cfg.DeviceListen, err)
 	}
 	if cfg.OSCPluginPath == "" {
 		return Config{}, fmt.Errorf("OSC plugin path is required")
