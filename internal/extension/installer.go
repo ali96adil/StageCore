@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -43,15 +44,26 @@ type Installation struct {
 	InstalledAt         time.Time `json:"installed_at"`
 }
 
+type InstallerOption func(*Installer)
+
+func WithInstallerCapacityPolicy(policy *storagehealth.Policy) InstallerOption {
+	return func(installer *Installer) {
+		if policy != nil {
+			installer.capacity = policy
+		}
+	}
+}
+
 type Installer struct {
 	library       *Library
 	root          string
 	stagingRoot   string
 	installedRoot string
+	capacity      *storagehealth.Policy
 	mu            sync.Mutex
 }
 
-func NewInstaller(library *Library, root string) (*Installer, error) {
+func NewInstaller(library *Library, root string, options ...InstallerOption) (*Installer, error) {
 	if library == nil || library.store == nil || library.software == nil {
 		return nil, fmt.Errorf("extension installer requires an extension library")
 	}
@@ -68,6 +80,10 @@ func NewInstaller(library *Library, root string) (*Installer, error) {
 		root: absoluteRoot,
 		stagingRoot: filepath.Join(absoluteRoot, "staging"),
 		installedRoot: filepath.Join(absoluteRoot, "installed"),
+		capacity: storagehealth.NewPolicy(0, 0),
+	}
+	for _, option := range options {
+		option(installer)
 	}
 	for _, dir := range []string{installer.root, installer.stagingRoot, installer.installedRoot} {
 		if err := ensureManagedDirectory(dir); err != nil {
@@ -137,6 +153,10 @@ func (i *Installer) Install(ctx context.Context, packageID, actor string) (Insta
 		return i.persistInstalled(ctx, pkg, actor, relativePath, status.Package.ContentHash, status.Package.SizeBytes)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Installation{}, fmt.Errorf("inspect existing installed payload: %w", err)
+	}
+
+	if err := i.capacity.Admit(i.root, uint64(status.Package.SizeBytes)); err != nil {
+		return Installation{}, err
 	}
 
 	source, openedStatus, err := i.library.software.OpenPackage(ctx, packageID)
@@ -270,8 +290,11 @@ func makeInstallation(record store.ExtensionInstallation, pkg Package) Installat
 
 func (i *Installer) safeInstalledPath(extensionID, version, packageID string) (string, error) {
 	parent := i.installedRoot
+	if err := inspectManagedDirectory(parent); err != nil {
+		return "", err
+	}
 	for _, segment := range []string{extensionID, version, packageID} {
-		if segment == "" || filepath.Base(segment) != segment || strings.ContainsAny(segment, `/\\`) {
+		if !safePathSegment(segment) {
 			return "", fmt.Errorf("unsafe installed extension path segment")
 		}
 		parent = filepath.Join(parent, segment)
@@ -287,7 +310,24 @@ func (i *Installer) absoluteInstalledPath(relative string) (string, error) {
 	if relative == "." || path.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
 		return "", fmt.Errorf("%w: stored installed payload path is unsafe", ErrInstalledPayloadIntegrity)
 	}
-	absolute := filepath.Join(i.installedRoot, filepath.FromSlash(relative))
+	parts := strings.Split(relative, "/")
+	if len(parts) < 2 || parts[len(parts)-1] != installedPayloadName {
+		return "", fmt.Errorf("%w: stored installed payload path shape is invalid", ErrInstalledPayloadIntegrity)
+	}
+	current := i.installedRoot
+	if err := inspectManagedDirectory(current); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInstalledPayloadIntegrity, err)
+	}
+	for _, segment := range parts[:len(parts)-1] {
+		if !safePathSegment(segment) {
+			return "", fmt.Errorf("%w: stored installed payload path segment is unsafe", ErrInstalledPayloadIntegrity)
+		}
+		current = filepath.Join(current, segment)
+		if err := inspectManagedDirectory(current); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrInstalledPayloadIntegrity, err)
+		}
+	}
+	absolute := filepath.Join(current, installedPayloadName)
 	resolvedRelative, err := filepath.Rel(i.installedRoot, absolute)
 	if err != nil || resolvedRelative == ".." || strings.HasPrefix(resolvedRelative, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%w: installed payload escaped managed root", ErrInstalledPayloadIntegrity)
@@ -296,6 +336,9 @@ func (i *Installer) absoluteInstalledPath(relative string) (string, error) {
 }
 
 func (i *Installer) cleanStaging() error {
+	if err := inspectManagedDirectory(i.stagingRoot); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(i.stagingRoot)
 	if err != nil {
 		return fmt.Errorf("read extension staging directory: %w", err)
@@ -316,10 +359,18 @@ func (i *Installer) cleanStaging() error {
 	return nil
 }
 
+func safePathSegment(segment string) bool {
+	return segment != "" && filepath.Base(segment) == segment && !strings.ContainsAny(segment, `/\\`)
+}
+
 func ensureManagedDirectory(dir string) error {
 	if err := os.Mkdir(dir, installDirectoryMode); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("create managed extension directory %q: %w", dir, err)
 	}
+	return inspectManagedDirectory(dir)
+}
+
+func inspectManagedDirectory(dir string) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return fmt.Errorf("inspect managed extension directory %q: %w", dir, err)
@@ -334,10 +385,37 @@ func ensureManagedDirectory(dir string) error {
 }
 
 func verifyPayload(filename, expectedHash string, expectedSize int64) error {
-	info, err := os.Lstat(filename)
+	initialInfo, err := os.Lstat(filename)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInstalledPayloadIntegrity, err)
 	}
+	if err := validatePayloadInfo(initialInfo, expectedSize); err != nil {
+		return err
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("%w: open payload: %v", ErrInstalledPayloadIntegrity, err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !os.SameFile(initialInfo, openedInfo) {
+		return fmt.Errorf("%w: installed payload changed while opening", ErrInstalledPayloadIntegrity)
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("%w: hash payload: %v", ErrInstalledPayloadIntegrity, err)
+	}
+	if hex.EncodeToString(hasher.Sum(nil)) != strings.ToLower(strings.TrimSpace(expectedHash)) {
+		return fmt.Errorf("%w: installed payload SHA-256 mismatch", ErrInstalledPayloadIntegrity)
+	}
+	finalInfo, err := os.Lstat(filename)
+	if err != nil || !os.SameFile(openedInfo, finalInfo) {
+		return fmt.Errorf("%w: installed payload changed during verification", ErrInstalledPayloadIntegrity)
+	}
+	return validatePayloadInfo(finalInfo, expectedSize)
+}
+
+func validatePayloadInfo(info os.FileInfo, expectedSize int64) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return fmt.Errorf("%w: installed payload is not a regular file", ErrInstalledPayloadIntegrity)
 	}
@@ -346,18 +424,6 @@ func verifyPayload(filename, expectedHash string, expectedSize int64) error {
 	}
 	if info.Size() != expectedSize {
 		return fmt.Errorf("%w: installed payload size mismatch", ErrInstalledPayloadIntegrity)
-	}
-	file, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("%w: open payload: %v", ErrInstalledPayloadIntegrity, err)
-	}
-	defer file.Close()
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return fmt.Errorf("%w: hash payload: %v", ErrInstalledPayloadIntegrity, err)
-	}
-	if hex.EncodeToString(hasher.Sum(nil)) != strings.ToLower(strings.TrimSpace(expectedHash)) {
-		return fmt.Errorf("%w: installed payload SHA-256 mismatch", ErrInstalledPayloadIntegrity)
 	}
 	return nil
 }
