@@ -1,0 +1,116 @@
+/* F-002 foundation: use logical properties so the same components can mirror under F-001 RTL. */
+.f002-recommendation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-block-end: 14px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(145deg, var(--panel-2), var(--panel));
+}
+.f002-recommendation h2 { margin: 0; }
+.f002-recommendation p:not(.eyebrow) { margin: 6px 0 0; color: var(--muted); }
+
+.f002-journey {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-block-start: 14px;
+}
+.f002-step {
+  min-height: 120px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #10171f;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+.f002-step[role="button"] { cursor: pointer; }
+.f002-step[role="button"]:hover,
+.f002-step[role="button"]:focus-visible { border-color: var(--accent); outline: none; }
+.f002-step.done { border-color: #275d3a; }
+.f002-step.attention { border-color: #6a5125; }
+.f002-step strong { font-size: .92rem; }
+.f002-step small { color: var(--muted); line-height: 1.4; }
+.f002-step-state { min-height: 24px; }
+
+.f002-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-block: 14px;
+}
+.f002-task {
+  min-height: 112px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  text-align: start;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+.f002-task:hover, .f002-task:focus-visible { border-color: var(--accent); outline: none; }
+.f002-task.primary { background: var(--panel-2); border-color: var(--accent-strong); }
+.f002-task strong { font-size: 1rem; }
+.f002-task span { color: var(--muted); font-size: .78rem; line-height: 1.45; }
+
+.f002-advanced { margin-block-start: 12px; }
+.f002-advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: .78rem;
+}
+.f002-advanced[open] > summary { margin-block-end: 12px; color: var(--text); }
+.f002-advanced > label,
+.f002-advanced > .form-grid { margin-block-start: 10px; }
+
+.f002-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-block-start: 14px;
+}
+.f002-detail-grid div { display: grid; gap: 5px; }
+.f002-detail-grid span { color: var(--muted); font-size: .72rem; }
+.f002-detail-grid code { color: var(--muted); overflow-wrap: anywhere; font-size: .72rem; }
+
+.f002-builder {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #10171f;
+  display: grid;
+  gap: 12px;
+}
+.f002-builder-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 240px);
+  gap: 12px;
+  align-items: end;
+}
+.f002-builder-head > div { display: grid; gap: 4px; }
+.f002-builder-head span { color: var(--muted); font-size: .75rem; line-height: 1.4; }
+.f002-action-builder { margin-block-start: 2px; }
+.f002-osc-action { display: grid; gap: 12px; }
+.f002-arguments { display: grid; gap: 8px; }
+.f002-argument-row {
+  display: grid;
+  grid-template-columns: minmax(130px, .7fr) minmax(150px, 1.3fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.f002-argument-value { min-width: 0; }
+
+@media (max-width: 700px) {
+  .f002-recommendation { align-items: stretch; flex-direction: column; }
+  .f002-builder-head { grid-template-columns: 1fr; }
+  .f002-argument-row { grid-template-columns: 1fr; }
+}
