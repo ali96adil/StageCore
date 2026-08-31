@@ -8,6 +8,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
     public var configHash: String
     public var oscEndpoint: OSCEndpoint?
     public var mediaCacheRoot: URL?
+    public var hubBinding: CompanionHubBinding?
 
     public init(
         hubAPIBaseURL: URL,
@@ -16,7 +17,8 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         agentVersion: String = "0.1.0",
         configHash: String = "",
         oscEndpoint: OSCEndpoint? = nil,
-        mediaCacheRoot: URL? = nil
+        mediaCacheRoot: URL? = nil,
+        hubBinding: CompanionHubBinding? = nil
     ) {
         self.hubAPIBaseURL = hubAPIBaseURL
         self.hubRuntimeURL = hubRuntimeURL
@@ -25,6 +27,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         self.configHash = configHash
         self.oscEndpoint = oscEndpoint
         self.mediaCacheRoot = mediaCacheRoot
+        self.hubBinding = hubBinding
     }
 }
 
@@ -118,11 +121,13 @@ public actor CompanionBootstrap {
             capabilities: capabilities
         )
         self.report = report
+        let certificatePin = configuration.hubBinding?.tlsCertificateSHA256
         let securityClient = try HubSecurityClient(
             apiBaseURL: configuration.hubAPIBaseURL,
             securityPolicy: securityPolicy,
             identityStore: identityStore,
-            report: report
+            report: report,
+            session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
         )
         self.securityClient = securityClient
 
@@ -135,7 +140,8 @@ public actor CompanionBootstrap {
         mediaSynchronizer = try MediaCacheSynchronizer(
             apiBaseURL: configuration.hubAPIBaseURL,
             cacheRoot: cacheRoot,
-            securityPolicy: securityPolicy
+            securityPolicy: securityPolicy,
+            session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
         )
         #else
         mediaSynchronizer = nil
@@ -161,7 +167,8 @@ public actor CompanionBootstrap {
             url: configuration.hubRuntimeURL,
             securityPolicy: securityPolicy,
             session: companionSession,
-            authenticator: securityClient
+            authenticator: securityClient,
+            tlsCertificateSHA256: certificatePin
         )
     }
 
