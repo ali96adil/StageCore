@@ -18,12 +18,25 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		t.Fatalf("operator root status=%d body=%s", rootRes.Code, rootRes.Body.String())
 	}
 	body := rootRes.Body.String()
-	if !strings.Contains(body, `href="/guided-ux.css"`) || !strings.Contains(body, `src="/guided-ux.js"`) {
-		t.Fatal("operator root does not load F-002 guided UX assets")
+	if !strings.Contains(body, `href="/guided-ux.css"`) ||
+		!strings.Contains(body, `src="/show-lock.js"`) ||
+		!strings.Contains(body, `src="/guided-ux.js"`) {
+		t.Fatal("operator root does not load SHOW lock and F-002 guided UX assets")
+	}
+
+	showLockReq := httptest.NewRequest(http.MethodGet, "/show-lock.js", nil)
+	showLockReq.RemoteAddr = "127.0.0.1:17102"
+	showLockRes := httptest.NewRecorder()
+	handler.ServeHTTP(showLockRes, showLockReq)
+	if showLockRes.Code != http.StatusOK || !strings.HasPrefix(showLockRes.Header().Get("Content-Type"), "application/javascript") {
+		t.Fatalf("show-lock.js status=%d content-type=%q", showLockRes.Code, showLockRes.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(showLockRes.Body.String(), "SHOW MODE — CONFIGURATION LOCKED") {
+		t.Fatal("embedded SHOW lock client is missing the lock banner behavior")
 	}
 
 	jsReq := httptest.NewRequest(http.MethodGet, "/guided-ux.js", nil)
-	jsReq.RemoteAddr = "127.0.0.1:17102"
+	jsReq.RemoteAddr = "127.0.0.1:17103"
 	jsRes := httptest.NewRecorder()
 	handler.ServeHTTP(jsRes, jsReq)
 	if jsRes.Code != http.StatusOK || !strings.HasPrefix(jsRes.Header().Get("Content-Type"), "application/javascript") {
@@ -46,7 +59,7 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 	}
 
 	cssReq := httptest.NewRequest(http.MethodGet, "/guided-ux.css", nil)
-	cssReq.RemoteAddr = "127.0.0.1:17103"
+	cssReq.RemoteAddr = "127.0.0.1:17104"
 	cssRes := httptest.NewRecorder()
 	handler.ServeHTTP(cssRes, cssReq)
 	if cssRes.Code != http.StatusOK || !strings.HasPrefix(cssRes.Header().Get("Content-Type"), "text/css") {
