@@ -11,8 +11,11 @@ const f016Strings = {
   "appearance.title": { en: "Appearance", "ar-IQ": "المظهر" },
   "appearance.mode": { en: "Mode", "ar-IQ": "الوضع" },
   "appearance.system": { en: "System", "ar-IQ": "تلقائي حسب الجهاز" },
+  "appearance.system_detail": { en: "Follows this device automatically", "ar-IQ": "يتبع إعداد الجهاز تلقائياً" },
   "appearance.light": { en: "Light", "ar-IQ": "فاتح" },
+  "appearance.light_detail": { en: "Bright high-clarity surfaces", "ar-IQ": "سطوح فاتحة عالية الوضوح" },
   "appearance.dark": { en: "Dark", "ar-IQ": "داكن" },
+  "appearance.dark_detail": { en: "Suited to dark theatre environments", "ar-IQ": "مناسب لبيئات المسرح المظلمة" },
   "appearance.accent": { en: "Accent", "ar-IQ": "اللون المميز" },
   "appearance.blue": { en: "Blue", "ar-IQ": "أزرق" },
   "appearance.teal": { en: "Teal", "ar-IQ": "فيروزي" },
@@ -90,11 +93,11 @@ function f016Reset() {
   f016SyncControls();
 }
 
-function f016ModeOption(mode, titleKey, detail) {
+function f016ModeOption(mode, titleKey, detailKey) {
   return `<label class="appearance-option">
     <input type="radio" name="appearanceMode" value="${mode}">
     <strong>${f016Text(titleKey)}</strong>
-    <small>${detail}</small>
+    <small>${f016Text(detailKey)}</small>
   </label>`;
 }
 
@@ -122,9 +125,9 @@ function f016BuildDialog() {
     <section class="appearance-choice-group" aria-labelledby="appearanceModeHeading">
       <h3 id="appearanceModeHeading">${f016Text("appearance.mode")}</h3>
       <div class="appearance-options">
-        ${f016ModeOption("system", "appearance.system", f016Locale() === "ar-IQ" ? "يتبع إعداد الجهاز تلقائياً" : "Follows this device automatically")}
-        ${f016ModeOption("light", "appearance.light", f016Locale() === "ar-IQ" ? "سطوح فاتحة عالية الوضوح" : "Bright high-clarity surfaces")}
-        ${f016ModeOption("dark", "appearance.dark", f016Locale() === "ar-IQ" ? "مناسب لبيئات المسرح المظلمة" : "Suited to dark theatre environments")}
+        ${f016ModeOption("system", "appearance.system", "appearance.system_detail")}
+        ${f016ModeOption("light", "appearance.light", "appearance.light_detail")}
+        ${f016ModeOption("dark", "appearance.dark", "appearance.dark_detail")}
       </div>
     </section>
 
