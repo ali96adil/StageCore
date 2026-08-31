@@ -121,7 +121,10 @@ func TestFeatureLocalizationContract(t *testing.T) {
 				}
 				arabic, ok := localizedArabicValue(localizationSource, key)
 				if !ok {
-					t.Errorf("%s localization key %q has no Arabic dictionary entry", feature.FeatureID, key)
+					arabic, ok = localizedArabicValueFromSources(ownerSources, key)
+				}
+				if !ok {
+					t.Errorf("%s localization key %q has no Arabic dictionary entry in the shared or feature-owned catalog", feature.FeatureID, key)
 				} else if !containsArabic(arabic) {
 					t.Errorf("%s localization key %q Arabic value %q does not contain Arabic text", feature.FeatureID, key, arabic)
 				}
@@ -152,12 +155,21 @@ func validateLocalizedField(t *testing.T, label string, locales []string, values
 }
 
 func localizedArabicValue(source, key string) (string, bool) {
-	pattern := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*"([^"]+)"`)
+	pattern := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*(?:\{[^\n]*"ar-IQ"\s*:\s*)?"([^"]+)"`)
 	match := pattern.FindStringSubmatch(source)
 	if len(match) != 2 {
 		return "", false
 	}
 	return match[1], true
+}
+
+func localizedArabicValueFromSources(sources []string, key string) (string, bool) {
+	for _, source := range sources {
+		if value, ok := localizedArabicValue(source, key); ok {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func sourceSetContains(sources []string, needle string) bool {
