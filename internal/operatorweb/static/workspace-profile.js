@@ -415,7 +415,7 @@ function f017DefaultOptions(profile) {
   ).join("");
 }
 
-function f017RenderDialog(dialog, policy, draft = null, message = "") {
+function f017RenderDialog(dialog, policy, draft = null, message = "", messageKind = "success") {
   const active = draft || f017ActiveProfile();
   const editable = !active.built_in && policy.allowed;
   const policyMessage = policy.locked ? f017Text("workspace.locked") : policy.unknown ? f017Text("workspace.lock_unknown") : "";
@@ -426,7 +426,7 @@ function f017RenderDialog(dialog, policy, draft = null, message = "") {
       <button class="icon-button f017-close" type="button" aria-label="${esc(f017Text("workspace.close"))}">×</button>
     </div>
     ${policyMessage ? `<div class="message warn">${esc(policyMessage)}</div>` : ""}
-    ${message ? `<div class="message success">${esc(message)}</div>` : ""}
+    ${message ? `<div class="message ${esc(messageKind)}">${esc(message)}</div>` : ""}
 
     <section class="f017-profile-summary">
       <div><span>${esc(active.built_in ? f017Text("workspace.builtin") : f017Text("workspace.custom"))}</span><strong>${esc(f017ProfileLabel(active))}</strong></div>
@@ -462,11 +462,22 @@ function f017RenderDialog(dialog, policy, draft = null, message = "") {
   working.name = active.name;
   working.built_in = active.built_in;
 
-  const rerender = (nextMessage = "") => f017RenderDialog(dialog, policy, working, nextMessage);
+  const rerender = (nextMessage = "", nextKind = "success") => f017RenderDialog(dialog, policy, working, nextMessage, nextKind);
+  const refreshWritePolicy = async () => {
+    const currentPolicy = await f017ProfileEditPolicy();
+    if (!currentPolicy.allowed) {
+      f017RenderDialog(dialog, currentPolicy, working);
+      return null;
+    }
+    return currentPolicy;
+  };
+
   dialog.querySelectorAll(".f017-close").forEach((button) => button.addEventListener("click", () => dialog.close()));
-  dialog.querySelector(".f017-copy")?.addEventListener("click", () => {
+  dialog.querySelector(".f017-copy")?.addEventListener("click", async () => {
+    const currentPolicy = await refreshWritePolicy();
+    if (!currentPolicy) return;
     const created = f017CreateEditableCopy(active);
-    f017RenderDialog(dialog, policy, created);
+    f017RenderDialog(dialog, currentPolicy, created);
   });
   dialog.querySelector(".f017-reset")?.addEventListener("click", () => {
     f017Reset();
@@ -482,7 +493,7 @@ function f017RenderDialog(dialog, policy, draft = null, message = "") {
       checkbox.checked ? next.add(page) : next.delete(page);
       if (!next.size) {
         checkbox.checked = true;
-        rerender(f017Text("workspace.invalid_last"));
+        rerender(f017Text("workspace.invalid_last"), "warn");
         return;
       }
       working.visible_pages = working.page_order.filter((item) => next.has(item));
@@ -505,14 +516,18 @@ function f017RenderDialog(dialog, policy, draft = null, message = "") {
 
   dialog.querySelector("#f017DefaultPage")?.addEventListener("change", (event) => { working.default_page = event.target.value; });
   dialog.querySelector("#f017NavSize")?.addEventListener("change", (event) => { working.navigation_size = event.target.value; });
-  dialog.querySelector(".f017-save")?.addEventListener("click", () => {
+  dialog.querySelector(".f017-save")?.addEventListener("click", async () => {
+    const currentPolicy = await refreshWritePolicy();
+    if (!currentPolicy) return;
     working.name = (dialog.querySelector("#f017ProfileName")?.value || working.name).trim().slice(0, 80) || working.name;
     f017SaveCustom(working);
-    f017RenderDialog(dialog, policy, f017ActiveProfile(), f017Text("workspace.saved"));
+    f017RenderDialog(dialog, currentPolicy, f017ActiveProfile(), f017Text("workspace.saved"));
   });
-  dialog.querySelector(".f017-delete")?.addEventListener("click", () => {
+  dialog.querySelector(".f017-delete")?.addEventListener("click", async () => {
+    const currentPolicy = await refreshWritePolicy();
+    if (!currentPolicy) return;
     f017DeleteCustom(working.profile_id);
-    f017RenderDialog(dialog, policy, f017ActiveProfile(), f017Text("workspace.deleted"));
+    f017RenderDialog(dialog, currentPolicy, f017ActiveProfile(), f017Text("workspace.deleted"));
   });
 }
 
