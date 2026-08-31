@@ -494,8 +494,12 @@ func validateFieldBindings(node any, fields map[string]ConnectionField) error {
 			if !ok {
 				return fmt.Errorf("$field binding must be a string")
 			}
-			if _, exists := fields[key]; !exists {
+			boundField, exists := fields[key]
+			if !exists {
 				return fmt.Errorf("target template references unknown field %q", key)
+			}
+			if boundField.Type == FieldSecret {
+				return fmt.Errorf("target template must not materialize secret field %q; use a Secret Store reference", key)
 			}
 			return nil
 		}
