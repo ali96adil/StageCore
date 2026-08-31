@@ -89,6 +89,7 @@
   background: #10171f;
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 .f002-builder-head {
   display: grid;
@@ -96,8 +97,8 @@
   gap: 12px;
   align-items: end;
 }
-.f002-builder-head > div { display: grid; gap: 4px; }
-.f002-builder-head span { color: var(--muted); font-size: .75rem; line-height: 1.4; }
+.f002-builder-head > div { display: grid; gap: 4px; min-width: 0; }
+.f002-builder-head span { color: var(--muted); font-size: .75rem; line-height: 1.4; overflow-wrap: anywhere; }
 .f002-action-builder { margin-block-start: 2px; }
 .f002-osc-action { display: grid; gap: 12px; }
 .f002-arguments { display: grid; gap: 8px; }
@@ -108,6 +109,24 @@
   align-items: center;
 }
 .f002-argument-value { min-width: 0; }
+
+/* Setup is form-heavy: never trade usability for four narrow configuration cards. */
+.grid.cards:has(#targetForm) {
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  align-items: start;
+}
+
+.grid.cards:has(#targetForm) > .card,
+.grid.cards:has(#targetForm) form,
+.grid.cards:has(#targetForm) label {
+  min-width: 0;
+}
+
+.grid.cards:has(#targetForm) input,
+.grid.cards:has(#targetForm) select,
+.grid.cards:has(#targetForm) textarea {
+  min-width: 0;
+}
 
 @media (max-width: 700px) {
   .f002-recommendation { align-items: stretch; flex-direction: column; }
