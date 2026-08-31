@@ -1,15 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar-IQ" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>StageCore Operator</title>
+  <title>StageCore Operator — المشغّل</title>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/guided-ux.css">
+  <link rel="stylesheet" href="/localization.css">
 </head>
 <body>
-  <noscript>StageCore Operator requires JavaScript in this local browser.</noscript>
+  <noscript>يتطلب مشغّل StageCore تفعيل JavaScript في هذا المتصفح المحلي.</noscript>
 
   <header class="topbar">
     <div class="brand">
@@ -20,6 +21,13 @@
       </div>
     </div>
     <div id="hubBadge" class="hub-badge">Hub · connecting</div>
+    <div class="language-control">
+      <label for="languageSelect">اللغة</label>
+      <select id="languageSelect" aria-label="Language">
+        <option value="ar">العربية</option>
+        <option value="en">English</option>
+      </select>
+    </div>
     <div id="userArea" class="user-area hidden">
       <span id="userLabel"></span>
       <button id="logoutButton" class="button ghost" type="button">Sign out</button>
@@ -188,5 +196,6 @@
   <script src="/memory.js" defer></script>
   <script src="/security.js" defer></script>
   <script src="/guided-ux.js" defer></script>
+  <script src="/localization.js" defer></script>
 </body>
 </html>

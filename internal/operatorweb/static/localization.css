@@ -1,0 +1,82 @@
+/* F-001 Arabic/RTL presentation. Domain identifiers and machine-readable values remain LTR. */
+html[dir="rtl"] body {
+  direction: rtl;
+  text-align: start;
+}
+
+html[dir="rtl"] .topbar,
+html[dir="rtl"] .sidebar,
+html[dir="rtl"] .workspace,
+html[dir="rtl"] .card,
+html[dir="rtl"] .dialog,
+html[dir="rtl"] .auth-card {
+  direction: rtl;
+}
+
+html[dir="rtl"] th,
+html[dir="rtl"] td,
+html[dir="rtl"] label,
+html[dir="rtl"] .nav-button,
+html[dir="rtl"] .message,
+html[dir="rtl"] .empty,
+html[dir="rtl"] .f002-task {
+  text-align: start;
+}
+
+html[dir="rtl"] .mono,
+html[dir="rtl"] code,
+html[dir="rtl"] pre,
+html[dir="rtl"] textarea.mono,
+html[dir="rtl"] input.mono,
+html[dir="rtl"] #hubFingerprint,
+html[dir="rtl"] [data-project-id],
+html[dir="rtl"] [data-session-id] {
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+html[dir="rtl"] input[type="password"] {
+  direction: ltr;
+  text-align: left;
+}
+
+html[dir="rtl"] .runtime-meta .mono,
+html[dir="rtl"] .f002-detail-grid code {
+  direction: ltr;
+  text-align: left;
+}
+
+.language-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.language-control label {
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.language-control select {
+  min-width: 112px;
+  padding: 7px 30px 7px 10px;
+}
+
+html[dir="rtl"] .language-control select {
+  padding: 7px 10px 7px 30px;
+}
+
+/* Keep theatre command words visually stable inside Arabic sentences. */
+html[dir="rtl"] #goButton,
+html[dir="rtl"] #stopCueButton {
+  unicode-bidi: plaintext;
+}
+
+@media (max-width: 700px) {
+  .language-control {
+    margin-inline-start: 0;
+  }
+}
