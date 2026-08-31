@@ -198,3 +198,88 @@ html[dir="rtl"] .f017-profile-summary {
     flex: 1 1 auto;
   }
 }
+
+/* Cross-feature topbar integration: F-001 + F-016 + F-017 must share space without collisions. */
+.topbar {
+  height: auto;
+  min-height: 64px;
+  padding-block: 9px;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 8px;
+}
+
+.topbar > * {
+  min-width: 0;
+}
+
+.brand {
+  flex: 0 0 auto;
+}
+
+.hub-badge {
+  flex: 1 1 180px;
+  max-width: min(360px, 30vw);
+}
+
+.language-control,
+.appearance-trigger,
+.f017-profile-control {
+  margin-inline-start: 0;
+  flex: 0 0 auto;
+}
+
+.user-area {
+  margin-left: 0;
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+#userLabel {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1300px) {
+  .hub-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .language-control label {
+    display: none;
+  }
+
+  .language-control select {
+    min-width: 96px;
+  }
+}
+
+@media (max-width: 820px) {
+  .topbar {
+    position: static;
+    padding: 8px 12px;
+  }
+
+  .user-area {
+    margin-inline-start: 0;
+  }
+}
+
+@media (max-width: 620px) {
+  #userLabel {
+    display: none;
+  }
+
+  .f017-profile-control {
+    flex: 1 1 150px;
+  }
+
+  .f017-profile-control select {
+    width: 100%;
+  }
+}
