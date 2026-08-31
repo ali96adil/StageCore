@@ -26,11 +26,13 @@ func TestReleaseBundleScriptsKeepCanonicalInstallShape(t *testing.T) {
 	for _, marker := range []string{
 		"for arch in amd64 arm64",
 		"CGO_ENABLED=0 GOOS=linux GOARCH=\"$arch\"",
+		"./cmd/stagecore",
 		"./cmd/stagecore-hub",
 		"./cmd/stagecore-osc-plugin",
 		"./cmd/stagecore-pairing",
 		"./cmd/stagecore-setup",
-		"sha256sum stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS",
+		"chmod 0755 \"$bundle/install.sh\" \"$bundle/stagecore\"",
+		"sha256sum stagecore stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS",
 		"stagecore-linux-$arch.tar.gz",
 	} {
 		if !strings.Contains(buildText, marker) {
