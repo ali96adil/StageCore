@@ -53,7 +53,7 @@ func registerPermissionReviewPackage(t *testing.T, h *dependencyTestHarness, per
 
 func TestPermissionReviewerRequiresExplicitReviewWithoutRuntimeGrant(t *testing.T) {
 	h := newDependencyTestHarness(t)
-	pkg := registerPermissionReviewPackage(t, h, []string{"network.udp.send", "filesystem.read"})
+	pkg := registerPermissionReviewPackage(t, h, []string{"network.udp.send", "network.udp.listen"})
 	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestPermissionReviewerRequiresExplicitReviewWithoutRuntimeGrant(t *testing.
 	if partiallyApproved.Status != PermissionReviewPending {
 		t.Fatalf("partial status=%s want PENDING", partiallyApproved.Status)
 	}
-	approved, err := reviewer.Decide(h.ctx, installed.InstallationID, "filesystem.read", PermissionDecisionApproved, "owner")
+	approved, err := reviewer.Decide(h.ctx, installed.InstallationID, "network.udp.listen", PermissionDecisionApproved, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
