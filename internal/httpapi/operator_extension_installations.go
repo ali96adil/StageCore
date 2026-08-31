@@ -26,6 +26,7 @@ func WithOperatorExtensionInstaller(users *userauth.Service, installer *extensio
 		h := &operatorExtensionInstaller{users: users, installer: installer, audit: audit}
 		s.mux.HandleFunc("GET /api/v1/extensions/installations", withPermission(users, userauth.PermissionProjectRead, h.list))
 		s.mux.HandleFunc("GET /api/v1/extensions/installations/{installation_id}", withPermission(users, userauth.PermissionProjectRead, h.get))
+		s.mux.HandleFunc("GET /api/v1/extensions/packages/{package_id}/install-plan", withPermission(users, userauth.PermissionProjectRead, h.plan))
 		s.mux.HandleFunc("POST /api/v1/extensions/packages/{package_id}/install", withPermission(users, userauth.PermissionPluginManage, h.install))
 	}
 }
@@ -57,12 +58,27 @@ func (h *operatorExtensionInstaller) get(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+func (h *operatorExtensionInstaller) plan(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	plan, err := h.installer.PlanInstall(r.Context(), strings.TrimSpace(r.PathValue("package_id")))
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_PACKAGE_NOT_FOUND"})
+	case errors.Is(err, extension.ErrInstalledPayloadIntegrity):
+		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "EXTENSION_INSTALL_INTEGRITY_FAILED"})
+	case err != nil:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "EXTENSION_INSTALL_PLAN_UNAVAILABLE"})
+	default:
+		writeJSON(w, http.StatusOK, plan)
+	}
+}
+
 func (h *operatorExtensionInstaller) install(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	packageID := strings.TrimSpace(r.PathValue("package_id"))
-	item, err := h.installer.Install(r.Context(), packageID, session.User.Username)
+	item, err := h.installer.InstallPlanned(r.Context(), packageID, session.User.Username)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		code := "EXTENSION_INSTALL_FAILED"
+		response := map[string]any{}
 		switch {
 		case errors.Is(err, domain.ErrShowConfigurationLocked):
 			status = http.StatusConflict
@@ -79,9 +95,26 @@ func (h *operatorExtensionInstaller) install(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, storagehealth.ErrRuntimeReserve):
 			status = http.StatusInsufficientStorage
 			code = "EXTENSION_INSTALL_STORAGE_RESERVE"
+		case errors.Is(err, extension.ErrDependenciesRequired):
+			status = http.StatusConflict
+			code = "EXTENSION_DEPENDENCIES_REQUIRED"
+		case errors.Is(err, extension.ErrDependencyPlanBlocked):
+			status = http.StatusConflict
+			code = "EXTENSION_DEPENDENCY_PLAN_BLOCKED"
 		}
-		h.record(r, session, packageID, securityaudit.ResultRejected, code, nil)
-		writeJSON(w, status, map[string]any{"error_code": code})
+		response["error_code"] = code
+		var planErr *extension.InstallPlanError
+		if errors.As(err, &planErr) {
+			response["plan"] = planErr.Plan
+			h.record(r, session, packageID, securityaudit.ResultRejected, code, map[string]any{
+				"plan_status": planErr.Plan.Status,
+				"install_steps": len(planErr.Plan.Steps),
+				"blockers": len(planErr.Plan.Blockers),
+			})
+		} else {
+			h.record(r, session, packageID, securityaudit.ResultRejected, code, nil)
+		}
+		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, item.PackageID, securityaudit.ResultSuccess, "", map[string]any{

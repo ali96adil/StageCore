@@ -136,6 +136,9 @@ func ValidateManifest(manifest Manifest) error {
 		if dependency.MaxVersion != "" && !versionPattern.MatchString(dependency.MaxVersion) {
 			return fmt.Errorf("dependency %s has invalid max_version", dependency.ExtensionID)
 		}
+		if dependency.MinVersion != "" && dependency.MaxVersion != "" && compareSemanticVersions(dependency.MinVersion, dependency.MaxVersion) > 0 {
+			return fmt.Errorf("dependency %s has min_version greater than max_version", dependency.ExtensionID)
+		}
 	}
 	return nil
 }
