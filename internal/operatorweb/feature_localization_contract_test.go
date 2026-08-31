@@ -2,7 +2,6 @@ package operatorweb
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -17,13 +16,13 @@ type featureLocalizationManifest struct {
 }
 
 type featureLocalizationFeature struct {
-	FeatureID        string                       `json:"feature_id"`
-	LocalizationMode string                       `json:"localization_mode"`
-	OwnerAssets      []string                     `json:"owner_assets"`
-	Name             map[string]string            `json:"name"`
-	Summary          map[string]string            `json:"summary"`
-	Actions          []featureLocalizationAction  `json:"actions"`
-	UIKeys           []string                     `json:"ui_keys"`
+	FeatureID        string                      `json:"feature_id"`
+	LocalizationMode string                      `json:"localization_mode"`
+	OwnerAssets      []string                    `json:"owner_assets"`
+	Name             map[string]string           `json:"name"`
+	Summary          map[string]string           `json:"summary"`
+	Actions          []featureLocalizationAction `json:"actions"`
+	UIKeys           []string                    `json:"ui_keys"`
 }
 
 type featureLocalizationAction struct {
@@ -153,7 +152,7 @@ func validateLocalizedField(t *testing.T, label string, locales []string, values
 }
 
 func localizedArabicValue(source, key string) (string, bool) {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%q\s*:\s*"([^"]+)"`, regexp.QuoteMeta(key)))
+	pattern := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*"([^"]+)"`)
 	match := pattern.FindStringSubmatch(source)
 	if len(match) != 2 {
 		return "", false
