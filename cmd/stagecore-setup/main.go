@@ -20,11 +20,16 @@ func main() {
 		os.Exit(2)
 	}
 	command := os.Args[1]
-	if command == "install" {
+	switch command {
+	case "install":
 		runInstall(os.Args[2:])
 		return
+	case "update":
+		runUpdate(os.Args[2:])
+		return
+	default:
+		runSecurityCommand(command, os.Args[2:])
 	}
-	runSecurityCommand(command, os.Args[2:])
 }
 
 func runInstall(args []string) {
@@ -146,8 +151,9 @@ func runSecurityCommand(command string, args []string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: stagecore-setup <install|status|setup-code> [options]")
+	fmt.Fprintln(os.Stderr, "usage: stagecore-setup <install|update|status|setup-code> [options]")
 	fmt.Fprintln(os.Stderr, "  install     install/reinstall a validated local StageCore release bundle")
+	fmt.Fprintln(os.Stderr, "  update      safely update from a validated local bundle with automatic rollback")
 	fmt.Fprintln(os.Stderr, "  status      inspect Hub identity/bootstrap state")
 	fmt.Fprintln(os.Stderr, "  setup-code  issue the local one-time first-OWNER setup code")
 }
