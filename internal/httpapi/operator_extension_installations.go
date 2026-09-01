@@ -28,6 +28,13 @@ func WithOperatorExtensionInstaller(users *userauth.Service, installer *extensio
 		s.mux.HandleFunc("GET /api/v1/extensions/installations/{installation_id}", withPermission(users, userauth.PermissionProjectRead, h.get))
 		s.mux.HandleFunc("GET /api/v1/extensions/packages/{package_id}/install-plan", withPermission(users, userauth.PermissionProjectRead, h.plan))
 		s.mux.HandleFunc("POST /api/v1/extensions/packages/{package_id}/install", withPermission(users, userauth.PermissionPluginManage, h.install))
+
+		// A non-nil Installer is constructed only from a valid Library/Store/Software
+		// graph, which is exactly the ExtensionSetService constructor invariant.
+		setService, err := extension.NewExtensionSetService(installer)
+		if err == nil {
+			WithOperatorExtensionSetManifest(users, setService, audit)(s)
+		}
 	}
 }
 
