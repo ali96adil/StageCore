@@ -2,78 +2,51 @@
 
 ## Scope
 
-This slice exposes the already-proven F-015 Extension Library, installation planning, permission review, readiness assessment and supervised Plugin runtime lifecycle through one bilingual Hub-global Operator page.
+The Hub-global `Extensions` page is the bilingual Operator surface for the F-015 Extension Manager.
 
-It does **not** invent lifecycle actions that the backend cannot yet execute safely. Update, rollback, repair, uninstall, catalog synchronization and installed-manifest export remain deferred until their service-layer contracts exist.
+It exposes only service-layer operations that StageCore can execute safely. The current UI covers:
+
+- local Extension Library browsing;
+- verified install-plan review and ordered dependency installation;
+- installed-extension inspection;
+- explicit permission review;
+- readiness assessment;
+- supervised Plugin enable/disable;
+- safe uninstall;
+- dependency-aware update and rollback;
+- immutable-package repair.
+
+Catalog import/synchronization and installed-manifest export/restore remain separate later F-015 slices.
 
 ## Operator experience
 
-The Operator sidebar contains a global `Extensions` page. It is Hub-scoped rather than Project-scoped because extension packages, installations, permission reviews and Plugin runtime intent belong to the StageCore Hub.
+The page is Hub-scoped because extension packages, installations, permission reviews and Plugin runtime intent belong to the StageCore Hub rather than to one Project.
 
-The page provides:
-
-- local Extension Library package count and cards;
-- installed-extension count and cards;
-- activation-readiness and running-runtime summaries;
-- localized package name and summary from the Extension Manifest;
-- version, kind, source, Hub compatibility and production-readiness/trust state;
-- requested permission and required-dependency counts;
-- verified install-plan review before mutation;
-- ordered dependency/root installation using the existing plan steps;
-- per-installation permission review and explicit approve/deny decisions;
-- readiness checks and blocker/advisory details;
-- supervised Plugin desired/observed runtime state and generation;
-- enable/disable controls for supported Plugin installations.
+Each installed extension card shows its immutable package identity, version, permission state, readiness state and, for Plugins, desired/observed runtime state. Authorized operators also receive maintenance and removal controls.
 
 ADDON installations truthfully report that the native Plugin runtime is not applicable.
 
 ## Authorization
 
-All authenticated StageCore roles may read the Extension Manager because the underlying library/install/readiness/runtime status APIs use the existing project-read permission.
-
-Only roles with the existing `plugin.manage` authority — currently `OWNER` and `TECHNICIAN` — receive mutating controls in the UI.
+Authenticated roles may inspect the Manager through the existing read permission. Mutating controls are shown only to roles with `plugin.manage`, currently `OWNER` and `TECHNICIAN`.
 
 The browser-side role check is presentation only. Every mutation remains protected by the authenticated API permission and CSRF boundary.
 
-## Installation contract
+## Installation and dependency planning
 
-The UI does not construct its own dependency graph.
+The UI never constructs a dependency graph itself.
 
-For a selected package it requests:
+For a new package it requests:
 
 `GET /api/v1/extensions/packages/{package_id}/install-plan`
 
-The server remains authoritative for compatibility, installed-version conflicts, dependency constraints, cycles, candidate selection, warnings and blockers.
+The server remains authoritative for compatibility, installed-version conflicts, dependency constraints, cycles, candidate selection, warnings and blockers. Executable steps are applied in the exact order returned by the server, stopping on the first failure.
 
-When a plan is executable, the UI invokes the returned ordered steps sequentially through the existing verified installation endpoint. A failure stops the browser workflow at that step and is surfaced through normal Operator error handling; the UI never claims an unexecuted remainder succeeded.
+## Permission review and readiness
 
-## Trust and readiness
+Permission decisions are explicit. Installing a package, changing version or opening the Manager never grants a permission automatically.
 
-Compatibility and production readiness are displayed separately.
-
-A package can be compatible with the current Hub API while still failing the production-ready trust policy. The Manager therefore shows the package `production_ready` state before installation instead of presenting compatibility as equivalent to trust.
-
-After installation, the existing readiness assessment remains authoritative for:
-
-- installed payload integrity;
-- package compatibility;
-- package trust/production readiness;
-- runtime artifact and host compatibility where applicable;
-- required dependencies;
-- permission review;
-- later runtime/isolation checks already defined by F-015 contracts.
-
-The UI does not manufacture a second readiness model.
-
-## Permission review
-
-Requested permissions are read from:
-
-`GET /api/v1/extensions/installations/{installation_id}/permission-review`
-
-An authorized operator can submit explicit `APPROVED` or `DENIED` decisions through the existing permission-review API.
-
-No permission is auto-approved by installing a package or opening the Manager.
+The existing readiness assessment remains authoritative for payload integrity, compatibility, trust, runtime artifact compatibility, dependencies, permission review and runtime/isolation checks.
 
 ## Supervised Plugin runtime
 
@@ -81,55 +54,75 @@ For `PLUGIN` installations the page reads:
 
 `GET /api/v1/extensions/installations/{installation_id}/runtime`
 
-It displays desired state, observed state, generation and the latest runtime error when present.
+It displays desired state, observed state, generation and the latest runtime error. Enable/disable remains under the Runtime Supervisor; the browser never launches a process or bypasses isolation, probe, handshake, integrity or network-broker policy.
 
-Authorized enable/disable actions use the existing supervised lifecycle endpoints. The browser never launches an extension process itself and never bypasses runtime isolation, probe, handshake, integrity or broker policy.
+## Update and rollback
 
-## SHOW safety
+Version maintenance is plan-first:
 
-The page remains readable during SHOW.
+`GET /api/v1/extensions/installations/{installation_id}/update-plan?target_package_id={package_id}`
 
-Installation, permission decisions and runtime enable/disable continue to be rejected by the service/API layer while an authoritative SHOW Session is active. The Manager explains this boundary but does not attempt to replace it with a UI-only lock.
+The browser does not compare semantic versions to decide whether the operation is an update or rollback. Direction is returned by the server.
+
+Before execution the operator sees blockers, warnings and required dependency steps. If dependencies are required, the UI can install the verified steps first and then request a fresh plan.
+
+Execution uses:
+
+`POST /api/v1/extensions/installations/{installation_id}/update`
+
+Changing version preserves the stable `installation_id` but deliberately clears previous permission reviews and runtime enable intent. The replacement version therefore returns to a fail-closed state and permissions must be reviewed again before enable.
+
+## Repair
+
+Repair uses:
+
+`POST /api/v1/extensions/installations/{installation_id}/repair`
+
+It reconstructs the installed payload from the immutable local software/Vault object and verifies it against the stored hash and size. Repair does not change version and does not clear approved permissions.
+
+## Uninstall
+
+Uninstall removes the installation and its runtime state while leaving the immutable package in the local library for possible reinstall or rollback use elsewhere.
+
+Installed dependents and active Plugin runtime state can block removal.
+
+## SHOW and runtime safety
+
+The Manager remains readable during SHOW, but lifecycle mutations are rejected by the backend while an authoritative SHOW Session is active.
+
+Update, rollback, repair and uninstall additionally require a Plugin to be `DISABLED` with observed state `STOPPED`. UI button state is only advisory; the server re-checks the condition immediately before mutation.
 
 ## Localization and responsive layout
 
-This is a user-facing F-015 slice and therefore follows the F-001 Feature Localization Contract:
+F-015 Operator copy is bilingual English/`ar-IQ`, Arabic-first with RTL-safe logical layout. The maintenance layer owns bilingual copy for version-reset consequences, update/rollback planning, repair, blockers and SHOW/runtime safety.
 
-- keyed English and `ar-IQ` copy owned by the F-015 asset;
-- Arabic-first default consistent with the existing Operator preference;
-- RTL-safe logical layout;
-- responsive summary, cards, metadata, plan rows, permission rows and readiness rows for narrow viewports;
-- no hard-coded LTR requirement for operational labels.
-
-Technical identifiers, protocol values, extension IDs, package IDs and backend error/check codes remain canonical technical tokens where translating them would reduce diagnostic accuracy.
+Technical identifiers and backend error/check codes remain canonical tokens where translating them would reduce diagnostic accuracy.
 
 ## Asset delivery
 
-`extensions.js` and `extensions.css` are compiled into the Hub binary and served through the same secure, no-store, same-origin Operator asset path as the rest of the local UI.
+`extensions.js`, `extensions.css`, the uninstall layer and the maintenance layer are compiled into the Hub binary.
 
-Regression coverage verifies the compiled asset routes rather than relying only on source-file presence.
+The Hub composes the uninstall and maintenance JavaScript in deterministic order through the same secure, no-store, same-origin asset route. Regression coverage verifies both the embedded asset and composition order.
 
-## Explicitly deferred F-015 lifecycle operations
+## Remaining F-015 UI-adjacent work
 
-This UI slice intentionally does not expose:
+The current Manager intentionally does not yet claim completion for:
 
-- Update or rollback;
-- Repair;
-- Uninstall/remove;
-- online catalog refresh/download;
-- one-step offline package import;
+- official bundled/offline catalog import and optional online catalog synchronization;
 - installed extension manifest export/restore.
 
-Those operations remain part of the broader F-015 backlog and must be implemented service-first with SHOW gating, integrity, reference-preservation and audit semantics before buttons are added.
+Those require their own service-first contracts before final F-015 closure.
 
 ## Acceptance
 
-The slice is accepted when normal Core CI proves:
+Core CI must prove:
 
 - embedded extension assets are served by the compiled Hub;
-- the Operator shell owns the Extensions tab and assets;
-- F-015 uses the existing lifecycle APIs rather than parallel browser logic;
-- `OWNER`/`TECHNICIAN` mutation presentation matches `plugin.manage` authority;
-- unsupported lifecycle actions are absent;
-- bilingual keyed copy and RTL/responsive guardrails are present;
+- read and mutation authority remain separated by existing RBAC/CSRF boundaries;
+- install/update plans are server-authoritative;
+- update/rollback direction is not inferred in browser code;
+- update preserves installation identity but resets permission/runtime intent;
+- repair restores a tampered payload from the immutable package;
+- SHOW and runtime-stop gates remain fail-closed;
+- bilingual maintenance copy and responsive/RTL guardrails remain present;
 - module lock, Test, Vet, Race and Linux ARM64 CGo-free product builds remain green.

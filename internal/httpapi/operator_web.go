@@ -32,7 +32,8 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /workspace-profile.js", serveOperatorAsset("workspace-profile.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /first-run.js", serveOperatorAsset("first-run.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /extensions.js", serveOperatorAsset("extensions.js", "application/javascript; charset=utf-8", false))
-		s.mux.HandleFunc("GET /extensions-uninstall.js", serveOperatorAsset("extensions-uninstall.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /extensions-uninstall.js", serveOperatorAssetBundle([]string{"extensions-uninstall.js", "extensions-maintenance.js"}, "application/javascript; charset=utf-8"))
+		s.mux.HandleFunc("GET /extensions-maintenance.js", serveOperatorAsset("extensions-maintenance.js", "application/javascript; charset=utf-8", false))
 	}
 }
 
@@ -55,6 +56,31 @@ func serveOperatorAsset(name, contentType string, exactRoot bool) http.HandlerFu
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(content)
+	}
+}
+
+func serveOperatorAssetBundle(names []string, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !secureBrowserRequest(w, r) {
+			return
+		}
+		contents := make([][]byte, 0, len(names))
+		for _, name := range names {
+			content, err := operatorweb.Read(name)
+			if err != nil {
+				http.Error(w, "operator web unavailable", http.StatusInternalServerError)
+				return
+			}
+			contents = append(contents, content)
+		}
+		setOperatorWebSecurityHeaders(w)
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		for _, content := range contents {
+			_, _ = w.Write(content)
+			_, _ = w.Write([]byte("\n"))
+		}
 	}
 }
 

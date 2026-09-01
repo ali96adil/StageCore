@@ -37,28 +37,36 @@ type RegisterExtensionInstallationParams struct {
 	InstalledBy         string
 }
 
-func (s *Store) RegisterExtensionInstallation(ctx context.Context, p RegisterExtensionInstallationParams) (ExtensionInstallation, error) {
+func normalizeExtensionInstallationParams(p RegisterExtensionInstallationParams) (RegisterExtensionInstallationParams, error) {
 	p.PackageID = strings.TrimSpace(p.PackageID)
 	p.LifecycleState = strings.ToUpper(strings.TrimSpace(p.LifecycleState))
 	p.PayloadRelativePath = path.Clean(strings.TrimSpace(p.PayloadRelativePath))
 	p.ContentSHA256 = strings.ToLower(strings.TrimSpace(p.ContentSHA256))
 	p.InstalledBy = strings.TrimSpace(p.InstalledBy)
-
 	if p.PackageID == "" || p.InstalledBy == "" {
-		return ExtensionInstallation{}, fmt.Errorf("%w: package ID and installation actor are required", domain.ErrInvalidInput)
+		return RegisterExtensionInstallationParams{}, fmt.Errorf("%w: package ID and installation actor are required", domain.ErrInvalidInput)
 	}
 	if p.LifecycleState != ExtensionInstallationInstalled {
-		return ExtensionInstallation{}, fmt.Errorf("%w: unsupported extension installation lifecycle state", domain.ErrInvalidInput)
+		return RegisterExtensionInstallationParams{}, fmt.Errorf("%w: unsupported extension installation lifecycle state", domain.ErrInvalidInput)
 	}
 	if p.PayloadRelativePath == "." || path.IsAbs(p.PayloadRelativePath) || p.PayloadRelativePath == ".." || strings.HasPrefix(p.PayloadRelativePath, "../") {
-		return ExtensionInstallation{}, fmt.Errorf("%w: installed payload path must be a safe relative path", domain.ErrInvalidInput)
+		return RegisterExtensionInstallationParams{}, fmt.Errorf("%w: installed payload path must be a safe relative path", domain.ErrInvalidInput)
 	}
 	hash, err := hex.DecodeString(p.ContentSHA256)
 	if err != nil || len(hash) != 32 {
-		return ExtensionInstallation{}, fmt.Errorf("%w: installed payload SHA-256 is invalid", domain.ErrInvalidInput)
+		return RegisterExtensionInstallationParams{}, fmt.Errorf("%w: installed payload SHA-256 is invalid", domain.ErrInvalidInput)
 	}
 	if p.SizeBytes < 0 {
-		return ExtensionInstallation{}, fmt.Errorf("%w: installed payload size cannot be negative", domain.ErrInvalidInput)
+		return RegisterExtensionInstallationParams{}, fmt.Errorf("%w: installed payload size cannot be negative", domain.ErrInvalidInput)
+	}
+	return p, nil
+}
+
+func (s *Store) RegisterExtensionInstallation(ctx context.Context, p RegisterExtensionInstallationParams) (ExtensionInstallation, error) {
+	var err error
+	p, err = normalizeExtensionInstallationParams(p)
+	if err != nil {
+		return ExtensionInstallation{}, err
 	}
 	if _, err := s.GetExtensionPackage(ctx, p.PackageID); err != nil {
 		return ExtensionInstallation{}, fmt.Errorf("extension package: %w", err)
@@ -79,6 +87,65 @@ func (s *Store) RegisterExtensionInstallation(ctx context.Context, p RegisterExt
 	)
 	if err != nil {
 		return ExtensionInstallation{}, fmt.Errorf("register extension installation: %w", err)
+	}
+	return s.GetExtensionInstallation(ctx, installationID)
+}
+
+// ReplaceExtensionInstallation atomically moves one durable installation to a
+// different immutable package. Permission reviews and runtime intent are tied
+// to the exact installed artifact, so they are deliberately cleared instead
+// of being inherited by the replacement version.
+func (s *Store) ReplaceExtensionInstallation(ctx context.Context, installationID string, p RegisterExtensionInstallationParams) (ExtensionInstallation, error) {
+	installationID = strings.TrimSpace(installationID)
+	if installationID == "" {
+		return ExtensionInstallation{}, fmt.Errorf("%w: installation ID is required", domain.ErrInvalidInput)
+	}
+	var err error
+	p, err = normalizeExtensionInstallationParams(p)
+	if err != nil {
+		return ExtensionInstallation{}, err
+	}
+	if _, err := s.GetExtensionInstallation(ctx, installationID); err != nil {
+		return ExtensionInstallation{}, err
+	}
+	if _, err := s.GetExtensionPackage(ctx, p.PackageID); err != nil {
+		return ExtensionInstallation{}, fmt.Errorf("extension package: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ExtensionInstallation{}, fmt.Errorf("begin extension installation replacement: %w", err)
+	}
+	defer tx.Rollback()
+	for _, query := range []string{
+		`DELETE FROM extension_permission_reviews WHERE installation_id = ?`,
+		`DELETE FROM extension_runtime_lifecycle WHERE installation_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, installationID); err != nil {
+			return ExtensionInstallation{}, fmt.Errorf("clear extension replacement state: %w", err)
+		}
+	}
+	now := s.clock.Now().UTC()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE extension_installations
+		SET package_id = ?, lifecycle_state = ?, payload_relative_path = ?,
+		    content_sha256 = ?, size_bytes = ?, installed_by = ?, installed_at_us = ?
+		WHERE installation_id = ?`,
+		p.PackageID, p.LifecycleState, p.PayloadRelativePath,
+		p.ContentSHA256, p.SizeBytes, p.InstalledBy, clock.UnixMicros(now), installationID,
+	)
+	if err != nil {
+		return ExtensionInstallation{}, fmt.Errorf("replace extension installation: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return ExtensionInstallation{}, fmt.Errorf("replace extension installation rows affected: %w", err)
+	}
+	if rows != 1 {
+		return ExtensionInstallation{}, domain.ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return ExtensionInstallation{}, fmt.Errorf("commit extension installation replacement: %w", err)
 	}
 	return s.GetExtensionInstallation(ctx, installationID)
 }
