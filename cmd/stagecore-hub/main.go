@@ -105,7 +105,18 @@ func main() {
 		logger.Error("extension activation staging startup failed", "error", err)
 		os.Exit(1)
 	}
-	extensionRuntimeIsolator, err := extension.NewRuntimeIsolator(extensionInstaller, extensionPermissionReviewer, extensionReadiness, "")
+	extensionRuntimeNetworkBroker, err := extension.NewRuntimeNetworkBroker(extensionInstaller)
+	if err != nil {
+		logger.Error("extension runtime network broker startup failed", "error", err)
+		os.Exit(1)
+	}
+	extensionRuntimeIsolator, err := extension.NewRuntimeIsolator(
+		extensionInstaller,
+		extensionPermissionReviewer,
+		extensionReadiness,
+		"",
+		extension.WithRuntimeNetworkBroker(extensionRuntimeNetworkBroker),
+	)
 	if err != nil {
 		logger.Error("extension runtime isolation startup failed", "error", err)
 		os.Exit(1)

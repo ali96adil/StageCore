@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	RuntimeIsolationEngineBubblewrap = "bubblewrap-v1"
-	RuntimeIsolationReady            = "READY_FOR_ISOLATED_PROBE"
-	RuntimeIsolationNotReady         = "NOT_READY"
+	RuntimeIsolationEngineBubblewrap       = "bubblewrap-v1"
+	RuntimeIsolationReady                  = "READY_FOR_ISOLATED_PROBE"
+	RuntimeIsolationNotReady               = "NOT_READY"
+	RuntimeIsolationNetworkModeNone        = "PRIVATE_NONE"
+	RuntimeIsolationNetworkModeBrokeredUDP = "PRIVATE_BROKERED_UDP_SEND"
 
 	RuntimeIsolationBlockerActivationReadiness = "ACTIVATION_READINESS_REQUIRED"
 	RuntimeIsolationBlockerStaticExecutable     = "STATIC_EXECUTABLE_REQUIRED"
@@ -38,27 +40,52 @@ type RuntimeIsolationAssessment struct {
 type RuntimeIsolationPlan struct {
 	Command string   `json:"-"`
 	Args    []string `json:"-"`
+	broker  *RuntimeNetworkBrokerSession
+}
+
+func (p *RuntimeIsolationPlan) Close() error {
+	if p == nil || p.broker == nil {
+		return nil
+	}
+	broker := p.broker
+	p.broker = nil
+	return broker.Close()
+}
+
+type RuntimeIsolatorOption func(*RuntimeIsolator)
+
+func WithRuntimeNetworkBroker(broker *RuntimeNetworkBroker) RuntimeIsolatorOption {
+	return func(i *RuntimeIsolator) {
+		i.networkBroker = broker
+	}
 }
 
 type RuntimeIsolator struct {
-	installer   *Installer
-	reviewer    *PermissionReviewer
-	assessor    *ReadinessAssessor
-	sandboxPath string
-	lookPath    func(string) (string, error)
+	installer     *Installer
+	reviewer      *PermissionReviewer
+	assessor      *ReadinessAssessor
+	sandboxPath   string
+	lookPath      func(string) (string, error)
+	networkBroker *RuntimeNetworkBroker
 }
 
-func NewRuntimeIsolator(installer *Installer, reviewer *PermissionReviewer, assessor *ReadinessAssessor, sandboxPath string) (*RuntimeIsolator, error) {
+func NewRuntimeIsolator(installer *Installer, reviewer *PermissionReviewer, assessor *ReadinessAssessor, sandboxPath string, options ...RuntimeIsolatorOption) (*RuntimeIsolator, error) {
 	if installer == nil || reviewer == nil || assessor == nil {
 		return nil, fmt.Errorf("runtime isolator requires installer, permission reviewer and readiness assessor")
 	}
-	return &RuntimeIsolator{
+	isolator := &RuntimeIsolator{
 		installer:   installer,
 		reviewer:    reviewer,
 		assessor:    assessor,
 		sandboxPath: strings.TrimSpace(sandboxPath),
 		lookPath:    exec.LookPath,
-	}, nil
+	}
+	for _, option := range options {
+		if option != nil {
+			option(isolator)
+		}
+	}
+	return isolator, nil
 }
 
 func (i *RuntimeIsolator) Assess(ctx context.Context, installationID string) (RuntimeIsolationAssessment, error) {
@@ -81,7 +108,7 @@ func (i *RuntimeIsolator) Assess(ctx context.Context, installationID string) (Ru
 		Version:        installed.Version,
 		Status:         RuntimeIsolationNotReady,
 		Engine:         RuntimeIsolationEngineBubblewrap,
-		NetworkMode:    "PRIVATE_NONE",
+		NetworkMode:    RuntimeIsolationNetworkModeNone,
 	}
 
 	readiness, err := i.assessor.Assess(ctx, installationID)
@@ -115,11 +142,13 @@ func (i *RuntimeIsolator) Assess(ctx context.Context, installationID string) (Ru
 	}
 	sort.Strings(permissions)
 	assessment.RuntimePermissions = permissions
-	for _, permission := range permissions {
-		if strings.HasPrefix(permission, "network.") {
+	networkPermissions := runtimeNetworkPermissions(permissions)
+	if len(networkPermissions) > 0 {
+		if i.networkBroker == nil || !i.networkBroker.Supports(networkPermissions) {
 			assessment.Blocker = RuntimeIsolationBlockerNetworkBroker
 			return assessment, nil
 		}
+		assessment.NetworkMode = RuntimeIsolationNetworkModeBrokeredUDP
 	}
 
 	if _, err := i.resolveSandboxPath(); err != nil {
@@ -150,9 +179,25 @@ func (i *RuntimeIsolator) PlanProbe(ctx context.Context, installationID, executa
 	if !filepath.IsAbs(executablePath) {
 		return RuntimeIsolationPlan{}, assessment, fmt.Errorf("isolated runtime executable path must be absolute")
 	}
+
+	var brokerSession *RuntimeNetworkBrokerSession
+	if assessment.NetworkMode == RuntimeIsolationNetworkModeBrokeredUDP {
+		if i.networkBroker == nil {
+			assessment.Status = RuntimeIsolationNotReady
+			assessment.ProbeAuthorized = false
+			assessment.Blocker = RuntimeIsolationBlockerNetworkBroker
+			return RuntimeIsolationPlan{}, assessment, nil
+		}
+		brokerSession, err = i.networkBroker.OpenSession(assessment.RuntimePermissions)
+		if err != nil {
+			return RuntimeIsolationPlan{}, assessment, fmt.Errorf("open runtime network broker session: %w", err)
+		}
+	}
+
 	return RuntimeIsolationPlan{
 		Command: sandboxPath,
-		Args:    bubblewrapProbeArgs(executablePath),
+		Args:    bubblewrapProbeArgs(executablePath, brokerSession),
+		broker:  brokerSession,
 	}, assessment, nil
 }
 
@@ -221,8 +266,8 @@ func runtimeArtifactIsStaticELF(path string) (bool, error) {
 	return true, nil
 }
 
-func bubblewrapProbeArgs(executablePath string) []string {
-	return []string{
+func bubblewrapProbeArgs(executablePath string, broker *RuntimeNetworkBrokerSession) []string {
+	args := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--unshare-all",
@@ -234,6 +279,14 @@ func bubblewrapProbeArgs(executablePath string) []string {
 		"--tmpfs", "/tmp",
 		"--chdir", "/stagecore",
 		"--setenv", "STAGECORE_PLUGIN_PROTOCOL", RuntimeProtocolPluginV1,
-		"/stagecore/plugin",
 	}
+	if broker != nil {
+		args = append(args,
+			"--dir", RuntimeNetworkBrokerSandboxDirectory,
+			"--ro-bind", broker.HostDirectory(), RuntimeNetworkBrokerSandboxDirectory,
+			"--setenv", RuntimeNetworkBrokerSocketEnv, RuntimeNetworkBrokerSandboxSocket,
+			"--setenv", RuntimeNetworkBrokerTokenEnv, broker.Token(),
+		)
+	}
+	return append(args, "/stagecore/plugin")
 }

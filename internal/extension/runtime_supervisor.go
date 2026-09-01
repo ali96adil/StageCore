@@ -63,6 +63,7 @@ type supervisedRuntime struct {
 	host       runtimeLifecycleHost
 	path       string
 	ready      pluginprotocol.Ready
+	broker     *RuntimeNetworkBrokerSession
 }
 
 type RuntimeSupervisor struct {
@@ -138,8 +139,9 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 	}
 
 	// A bounded, hash-bound isolated probe must pass before an operator's ENABLED
-	// intent is persisted. Known blockers (including network broker requirements)
-	// therefore cannot leave a misleading enabled intent behind.
+	// intent is persisted. Broker-backed network permissions pass only when a
+	// scoped StageCore-owned broker session can be created inside the private
+	// sandbox; unsupported network permissions remain fail-closed.
 	if _, err := s.probe.Probe(ctx, installationID); err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
@@ -182,6 +184,11 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	if process := s.processes[installationID]; process != nil {
 		delete(s.processes, installationID)
 		process.host.Close()
+		if process.broker != nil {
+			if cleanupErr := process.broker.Close(); cleanupErr != nil {
+				return RuntimeLifecycleStatus{}, cleanupErr
+			}
+		}
 		if cleanupErr := s.removeActiveCopy(process.path); cleanupErr != nil {
 			return RuntimeLifecycleStatus{}, cleanupErr
 		}
@@ -251,6 +258,11 @@ func (s *RuntimeSupervisor) Close() error {
 	var joined error
 	for installationID, process := range processes {
 		process.host.Close()
+		if process.broker != nil {
+			if err := process.broker.Close(); err != nil {
+				joined = errors.Join(joined, err)
+			}
+		}
 		if err := s.removeActiveCopy(process.path); err != nil {
 			joined = errors.Join(joined, err)
 		}
@@ -282,13 +294,15 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 		return err
 	}
 	keep := false
+	var plan RuntimeIsolationPlan
 	defer func() {
 		if !keep {
+			_ = plan.Close()
 			_ = s.removeActiveCopy(activePath)
 		}
 	}()
 
-	plan, isolation, err := s.isolator.PlanProbe(ctx, lifecycle.InstallationID, activePath)
+	plan, isolation, err = s.isolator.PlanProbe(ctx, lifecycle.InstallationID, activePath)
 	if err != nil {
 		return err
 	}
@@ -296,9 +310,9 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 		return &RuntimeLifecycleNotReadyError{Assessment: isolation}
 	}
 	manifest := pluginhost.Manifest{
-		PluginID: installed.ExtensionID,
+		PluginID:              installed.ExtensionID,
 		CapabilityPermissions: cloneCapabilityPermissions(pkg.Manifest.Runtime.CapabilityPermissions),
-		GrantedPermissions: append([]string(nil), isolation.RuntimePermissions...),
+		GrantedPermissions:    append([]string(nil), isolation.RuntimePermissions...),
 	}
 	host := s.hostFactory(plan.Command, append([]string(nil), plan.Args...), manifest)
 	if host == nil {
@@ -332,10 +346,12 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 	}
 	process := &supervisedRuntime{
 		generation: lifecycle.Generation,
-		host: host,
-		path: activePath,
-		ready: *ready,
+		host:       host,
+		path:       activePath,
+		ready:      *ready,
+		broker:     plan.broker,
 	}
+	plan.broker = nil
 	s.processes[lifecycle.InstallationID] = process
 	keep = true
 	go s.watch(lifecycle.InstallationID, process)
@@ -352,6 +368,9 @@ func (s *RuntimeSupervisor) watch(installationID string, process *supervisedRunt
 		return
 	}
 	delete(s.processes, installationID)
+	if process.broker != nil {
+		_ = process.broker.Close()
+	}
 	_ = s.removeActiveCopy(process.path)
 	message := "plugin process exited while ENABLED"
 	if waitErr != nil {
@@ -370,14 +389,14 @@ func (s *RuntimeSupervisor) statusLocked(ctx context.Context, installationID str
 		return RuntimeLifecycleStatus{}, err
 	}
 	status := RuntimeLifecycleStatus{
-		InstallationID: installed.InstallationID,
-		PackageID: installed.PackageID,
-		ExtensionID: installed.ExtensionID,
-		Version: installed.Version,
-		DesiredState: lifecycle.DesiredState,
-		ObservedState: lifecycle.ObservedState,
-		Generation: lifecycle.Generation,
-		LastErrorCode: lifecycle.LastErrorCode,
+		InstallationID:   installed.InstallationID,
+		PackageID:        installed.PackageID,
+		ExtensionID:      installed.ExtensionID,
+		Version:          installed.Version,
+		DesiredState:     lifecycle.DesiredState,
+		ObservedState:    lifecycle.ObservedState,
+		Generation:       lifecycle.Generation,
+		LastErrorCode:    lifecycle.LastErrorCode,
 		LastErrorMessage: lifecycle.LastErrorMessage,
 	}
 	if process := s.processes[installationID]; process != nil && process.generation == lifecycle.Generation {
