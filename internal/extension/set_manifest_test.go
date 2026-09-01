@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -15,12 +16,12 @@ import (
 )
 
 type extensionSetTestRig struct {
-	store     *store.Store
+	store      *store.Store
 	repository *software.Repository
-	library   *Library
-	installer *Installer
-	service   *ExtensionSetService
-	close     func()
+	library    *Library
+	installer  *Installer
+	service    *ExtensionSetService
+	close      func()
 }
 
 func TestExtensionSetExportRestorePortableAndFailClosed(t *testing.T) {
@@ -30,21 +31,20 @@ func TestExtensionSetExportRestorePortableAndFailClosed(t *testing.T) {
 	target := newExtensionSetTestRig(t, ctx)
 	defer target.close()
 
-	baseManifest := extensionSetAddonManifest("example.base-addon", "1.0.0", "")
-	sceneManifest := extensionSetAddonManifest("example.scene-addon", "1.0.0", `,"dependencies":[{"extension_id":"example.base-addon","min_version":"1.0.0","max_version":"1.0.0"}]`)
-	pluginManifest := extensionSetPluginManifest()
+	baseManifest := extensionSetAddonManifest(t, "example.base-addon", nil)
+	sceneManifest := extensionSetAddonManifest(t, "example.scene-addon", []Dependency{{ExtensionID: "example.base-addon", MinVersion: "1.0.0", MaxVersion: "1.0.0"}})
+	pluginManifest := extensionSetPluginManifest(t)
 
-	sourceBase := extensionSetRegisterPackage(t, ctx, source, "example.base-addon", "1.0.0", []byte("base payload"), baseManifest)
-	sourceScene := extensionSetRegisterPackage(t, ctx, source, "example.scene-addon", "1.0.0", []byte("scene payload"), sceneManifest)
-	sourcePlugin := extensionSetRegisterPackage(t, ctx, source, "example.net-plugin", "1.0.0", []byte("plugin payload"), pluginManifest)
-	targetBase := extensionSetRegisterPackage(t, ctx, target, "example.base-addon", "1.0.0", []byte("base payload"), baseManifest)
-	targetScene := extensionSetRegisterPackage(t, ctx, target, "example.scene-addon", "1.0.0", []byte("scene payload"), sceneManifest)
-	targetPlugin := extensionSetRegisterPackage(t, ctx, target, "example.net-plugin", "1.0.0", []byte("plugin payload"), pluginManifest)
+	sourceBase := extensionSetRegisterPackage(t, ctx, source, "example.base-addon", []byte("base payload"), baseManifest)
+	sourceScene := extensionSetRegisterPackage(t, ctx, source, "example.scene-addon", []byte("scene payload"), sceneManifest)
+	sourcePlugin := extensionSetRegisterPackage(t, ctx, source, "example.net-plugin", []byte("plugin payload"), pluginManifest)
+	targetBase := extensionSetRegisterPackage(t, ctx, target, "example.base-addon", []byte("base payload"), baseManifest)
+	targetScene := extensionSetRegisterPackage(t, ctx, target, "example.scene-addon", []byte("scene payload"), sceneManifest)
+	targetPlugin := extensionSetRegisterPackage(t, ctx, target, "example.net-plugin", []byte("plugin payload"), pluginManifest)
 
 	if sourceBase.PackageID == targetBase.PackageID || sourceScene.PackageID == targetScene.PackageID || sourcePlugin.PackageID == targetPlugin.PackageID {
 		t.Fatal("test requires different local package IDs across Hubs")
 	}
-
 	if _, err := source.installer.InstallPlanned(ctx, sourceBase.PackageID, "source-owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -142,10 +142,10 @@ func TestExtensionSetRestoreBlocksTamperAndMissingRequiredDependency(t *testing.
 	ctx := context.Background()
 	rig := newExtensionSetTestRig(t, ctx)
 	defer rig.close()
-	baseManifest := extensionSetAddonManifest("example.base-addon", "1.0.0", "")
-	sceneManifest := extensionSetAddonManifest("example.scene-addon", "1.0.0", `,"dependencies":[{"extension_id":"example.base-addon","min_version":"1.0.0"}]`)
-	base := extensionSetRegisterPackage(t, ctx, rig, "example.base-addon", "1.0.0", []byte("base payload"), baseManifest)
-	scene := extensionSetRegisterPackage(t, ctx, rig, "example.scene-addon", "1.0.0", []byte("scene payload"), sceneManifest)
+	baseManifest := extensionSetAddonManifest(t, "example.base-addon", nil)
+	sceneManifest := extensionSetAddonManifest(t, "example.scene-addon", []Dependency{{ExtensionID: "example.base-addon", MinVersion: "1.0.0"}})
+	base := extensionSetRegisterPackage(t, ctx, rig, "example.base-addon", []byte("base payload"), baseManifest)
+	scene := extensionSetRegisterPackage(t, ctx, rig, "example.scene-addon", []byte("scene payload"), sceneManifest)
 	if _, err := rig.installer.InstallPlanned(ctx, base.PackageID, "owner"); err != nil {
 		t.Fatal(err)
 	}
@@ -157,16 +157,16 @@ func TestExtensionSetRestoreBlocksTamperAndMissingRequiredDependency(t *testing.
 		t.Fatal(err)
 	}
 
-	var manifest ExtensionSetManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	var tampered ExtensionSetManifest
+	if err := json.Unmarshal(raw, &tampered); err != nil {
 		t.Fatal(err)
 	}
-	for index := range manifest.Extensions {
-		if manifest.Extensions[index].ExtensionID == "example.scene-addon" {
-			manifest.Extensions[index].PayloadSHA256 = strings.Repeat("0", 64)
+	for index := range tampered.Extensions {
+		if tampered.Extensions[index].ExtensionID == "example.scene-addon" {
+			tampered.Extensions[index].PayloadSHA256 = strings.Repeat("0", 64)
 		}
 	}
-	tamperedRaw, _ := json.Marshal(manifest)
+	tamperedRaw, _ := json.Marshal(tampered)
 	tamperedPlan, err := rig.service.PlanRestore(ctx, tamperedRaw)
 	if err != nil {
 		t.Fatal(err)
@@ -175,19 +175,18 @@ func TestExtensionSetRestoreBlocksTamperAndMissingRequiredDependency(t *testing.
 		t.Fatalf("tampered plan=%+v", tamperedPlan)
 	}
 
-	manifest.Extensions = manifest.Extensions[:0]
-	var sceneEntry ExtensionSetEntry
 	var clean ExtensionSetManifest
 	if err := json.Unmarshal(raw, &clean); err != nil {
 		t.Fatal(err)
 	}
+	var sceneEntry ExtensionSetEntry
 	for _, entry := range clean.Extensions {
 		if entry.ExtensionID == "example.scene-addon" {
 			sceneEntry = entry
 		}
 	}
-	manifest = ExtensionSetManifest{Format: ExtensionSetFormatV1, SchemaVersion: ExtensionSetSchemaVersion, Extensions: []ExtensionSetEntry{sceneEntry}}
-	missingRaw, _ := json.Marshal(manifest)
+	missing := ExtensionSetManifest{Format: ExtensionSetFormatV1, SchemaVersion: ExtensionSetSchemaVersion, Extensions: []ExtensionSetEntry{sceneEntry}}
+	missingRaw, _ := json.Marshal(missing)
 	missingPlan, err := rig.service.PlanRestore(ctx, missingRaw)
 	if err != nil {
 		t.Fatal(err)
@@ -199,14 +198,18 @@ func TestExtensionSetRestoreBlocksTamperAndMissingRequiredDependency(t *testing.
 
 func TestParseExtensionSetManifestRejectsUnknownAndDuplicateEntries(t *testing.T) {
 	hash := strings.Repeat("a", 64)
-	unknown := `{"format":"stagecore-extension-set-v1","schema_version":1,"extensions":[],"unexpected":true}`
+	unknown := `{"format":"stagecore-extension-set-v1"}`
+	unknown = strings.ReplaceAll(unknown, `\"`, `"`)
+	unknown = strings.TrimSuffix(unknown, "}") + `,"schema_version":1,"extensions":[],"unexpected":true}`
 	if _, err := ParseExtensionSetManifest([]byte(unknown)); err == nil {
 		t.Fatal("parser accepted unknown field")
 	}
-	duplicate := `{"format":"stagecore-extension-set-v1","schema_version":1,"extensions":[` +
-		`{"extension_id":"example.addon","version":"1.0.0","kind":"ADDON","source":"LOCAL","manifest_sha256":"` + hash + `","payload_sha256":"` + hash + `","payload_size_bytes":1,"platform":"linux","architecture":"arm64"},` +
-		`{"extension_id":"example.addon","version":"1.0.0","kind":"ADDON","source":"LOCAL","manifest_sha256":"` + hash + `","payload_sha256":"` + hash + `","payload_size_bytes":1,"platform":"linux","architecture":"arm64"}]}`
-	if _, err := ParseExtensionSetManifest([]byte(duplicate)); err == nil {
+	entry := ExtensionSetEntry{ExtensionID: "example.addon", Version: "1.0.0", Kind: KindAddon, Source: SourceLocal, ManifestSHA256: hash, PayloadSHA256: hash, PayloadSizeBytes: 1, Platform: "linux", Architecture: "arm64"}
+	duplicateRaw, err := json.Marshal(ExtensionSetManifest{Format: ExtensionSetFormatV1, SchemaVersion: ExtensionSetSchemaVersion, Extensions: []ExtensionSetEntry{entry, entry}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseExtensionSetManifest(duplicateRaw); err == nil {
 		t.Fatal("parser accepted duplicate extension_id")
 	}
 }
@@ -247,20 +250,20 @@ func newExtensionSetTestRig(t *testing.T, ctx context.Context) *extensionSetTest
 	return &extensionSetTestRig{store: stageStore, repository: repository, library: library, installer: installer, service: service, close: func() { _ = h.Close() }}
 }
 
-func extensionSetRegisterPackage(t *testing.T, ctx context.Context, rig *extensionSetTestRig, extensionID, version string, payload, manifest []byte) Package {
+func extensionSetRegisterPackage(t *testing.T, ctx context.Context, rig *extensionSetTestRig, extensionID string, payload, manifest []byte) Package {
 	t.Helper()
 	softwarePackage, err := rig.repository.ImportPackage(ctx, software.ImportParams{
 		ProductID: extensionID,
-		Version: version,
+		Version: "1.0.0",
 		Platform: "linux",
 		Architecture: "arm64",
 		MinAPIVersion: 1,
 		MaxAPIVersion: 1,
-		OriginalFilename: extensionID + "-" + version,
+		OriginalFilename: extensionID + "-1.0.0",
 		SigningStatus: store.SoftwareSigningSigned,
 		NotarizationStatus: store.SoftwareNotarizationNotApplicable,
 		ReleaseChannel: store.SoftwareChannelRelease,
-	}, strings.NewReader(string(payload)))
+	}, bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,12 +274,43 @@ func extensionSetRegisterPackage(t *testing.T, ctx context.Context, rig *extensi
 	return registered
 }
 
-func extensionSetAddonManifest(extensionID, version, extra string) []byte {
-	return []byte(`{"schema_version":1,"extension_id":"` + extensionID + `","version":"` + version + `","kind":"ADDON","source":"LOCAL","name":{"en":"Test Addon","ar-IQ":"إضافة اختبار"},"summary":{"en":"Test addon.","ar-IQ":"إضافة للاختبار."},"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]}` + extra + `}`)
+func extensionSetAddonManifest(t *testing.T, extensionID string, dependencies []Dependency) []byte {
+	t.Helper()
+	raw, err := json.Marshal(Manifest{
+		SchemaVersion: 1,
+		ExtensionID: extensionID,
+		Version: "1.0.0",
+		Kind: KindAddon,
+		Source: SourceLocal,
+		Name: LocalizedText{EN: "Test Addon", ArIQ: "إضافة اختبار"},
+		Summary: LocalizedText{EN: "Test addon.", ArIQ: "إضافة للاختبار."},
+		Compatibility: Compatibility{APIMin: 1, APIMax: 1, Platforms: []string{"linux"}, Architectures: []string{"arm64"}},
+		Dependencies: dependencies,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
-func extensionSetPluginManifest() []byte {
-	return []byte(`{"schema_version":1,"extension_id":"example.net-plugin","version":"1.0.0","kind":"PLUGIN","source":"LOCAL","name":{"en":"Network Plugin","ar-IQ":"إضافة شبكة"},"summary":{"en":"Network test plugin.","ar-IQ":"إضافة شبكة للاختبار."},"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]},"permissions":["network.udp.send"],"capabilities":["osc.send"]}`)
+func extensionSetPluginManifest(t *testing.T) []byte {
+	t.Helper()
+	raw, err := json.Marshal(Manifest{
+		SchemaVersion: 1,
+		ExtensionID: "example.net-plugin",
+		Version: "1.0.0",
+		Kind: KindPlugin,
+		Source: SourceLocal,
+		Name: LocalizedText{EN: "Network Plugin", ArIQ: "إضافة شبكة"},
+		Summary: LocalizedText{EN: "Network test plugin.", ArIQ: "إضافة شبكة للاختبار."},
+		Compatibility: Compatibility{APIMin: 1, APIMax: 1, Platforms: []string{"linux"}, Architectures: []string{"arm64"}},
+		Permissions: []string{"network.udp.send"},
+		Capabilities: []string{"osc.send"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func extensionSetHasBlocker(plan ExtensionSetRestorePlan, code, extensionID string) bool {
