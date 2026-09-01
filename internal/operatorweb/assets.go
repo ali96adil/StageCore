@@ -2,7 +2,7 @@ package operatorweb
 
 import "embed"
 
-//go:embed static/index.html static/app.css static/guided-ux.css static/localization.css static/theme.css static/workspace-profile.css static/first-run.css static/extensions.css static/app.js static/bootstrap.js static/preflight.js static/memory.js static/security.js static/configuration.js static/show-lock.js static/guided-ux.js static/localization.js static/theme.js static/workspace-profile.js static/first-run.js static/extensions.js
+//go:embed static/index.html static/app.css static/guided-ux.css static/localization.css static/theme.css static/workspace-profile.css static/first-run.css static/extensions.css static/app.js static/bootstrap.js static/preflight.js static/memory.js static/security.js static/configuration.js static/show-lock.js static/guided-ux.js static/localization.js static/theme.js static/workspace-profile.js static/first-run.js static/extensions.js static/extensions-uninstall.js
 var assets embed.FS
 
 func Read(name string) ([]byte, error) {
