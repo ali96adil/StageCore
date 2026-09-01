@@ -18,6 +18,9 @@ const f015ManagerStrings = {
   "extensions.kind": { en: "Kind", "ar-IQ": "النوع" },
   "extensions.source": { en: "Source", "ar-IQ": "المصدر" },
   "extensions.compatibility": { en: "Compatibility", "ar-IQ": "التوافق" },
+  "extensions.trust": { en: "Trust", "ar-IQ": "الثقة" },
+  "extensions.production_ready": { en: "Production ready", "ar-IQ": "جاهزة للإنتاج" },
+  "extensions.not_production_ready": { en: "Not production ready", "ar-IQ": "غير جاهزة للإنتاج" },
   "extensions.permissions": { en: "Permissions", "ar-IQ": "الصلاحيات" },
   "extensions.dependencies": { en: "Dependencies", "ar-IQ": "الاعتماديات" },
   "extensions.review_install": { en: "Review install", "ar-IQ": "مراجعة التثبيت" },
@@ -27,7 +30,7 @@ const f015ManagerStrings = {
   "extensions.plan_ready": { en: "The install plan is ready.", "ar-IQ": "خطة التثبيت جاهزة." },
   "extensions.plan_dependencies": { en: "Required dependencies will be installed first in the verified order below.", "ar-IQ": "ستُثبت الاعتماديات المطلوبة أولاً حسب الترتيب المتحقق منه أدناه." },
   "extensions.plan_blocked": { en: "The install plan is blocked.", "ar-IQ": "خطة التثبيت محجوبة." },
-  "extensions.blockers": { en: "Blockers", "ar-IQ": "الحواجب" },
+  "extensions.blockers": { en: "Blockers", "ar-IQ": "العوائق" },
   "extensions.warnings": { en: "Warnings", "ar-IQ": "التحذيرات" },
   "extensions.steps": { en: "Steps", "ar-IQ": "الخطوات" },
   "extensions.installing": { en: "Installing verified plan…", "ar-IQ": "جارٍ تنفيذ خطة التثبيت المتحقق منها…" },
@@ -37,6 +40,7 @@ const f015ManagerStrings = {
   "extensions.deny": { en: "Deny", "ar-IQ": "رفض" },
   "extensions.readiness": { en: "Readiness", "ar-IQ": "الجاهزية" },
   "extensions.runtime": { en: "Runtime", "ar-IQ": "التشغيل" },
+  "extensions.generation": { en: "Generation", "ar-IQ": "جيل التشغيل" },
   "extensions.enable": { en: "Enable", "ar-IQ": "تفعيل" },
   "extensions.disable": { en: "Disable", "ar-IQ": "تعطيل" },
   "extensions.runtime_not_applicable": { en: "This Add-on does not use the native Plugin runtime.", "ar-IQ": "هذا الملحق لا يستخدم تشغيل الإضافات الأصلي." },
@@ -111,11 +115,13 @@ function f015PackageSummary(pkg) {
 
 function f015PackageMeta(pkg) {
   const manifest = pkg.manifest || {};
+  const trust = pkg.production_ready ? f015ManagerText("extensions.production_ready") : f015ManagerText("extensions.not_production_ready");
   return `<div class="f015-meta">
     <div><span>${esc(f015ManagerText("extensions.version"))}</span><strong>${esc(manifest.version || "—")}</strong></div>
     <div><span>${esc(f015ManagerText("extensions.kind"))}</span><strong>${esc(manifest.kind || "—")}</strong></div>
     <div><span>${esc(f015ManagerText("extensions.source"))}</span><strong>${esc(manifest.source || "—")}</strong></div>
     <div><span>${esc(f015ManagerText("extensions.compatibility"))}</span><strong>${esc(pkg.compatible ? "PASS" : "BLOCKED")}</strong></div>
+    <div><span>${esc(f015ManagerText("extensions.trust"))}</span><strong>${esc(trust)}</strong></div>
     <div><span>${esc(f015ManagerText("extensions.permissions"))}</span><strong>${esc((manifest.permissions || []).length)}</strong></div>
     <div><span>${esc(f015ManagerText("extensions.dependencies"))}</span><strong>${esc((manifest.dependencies || []).filter((item) => !item.optional).length)}</strong></div>
   </div>`;
@@ -170,7 +176,7 @@ function f015RenderRuntime(installation, runtime) {
   if (!runtime || runtime._error) return `<div class="f015-detail"><strong>${esc(f015ManagerText("extensions.runtime"))}</strong><p class="muted">${esc(f015ReviewStatus(runtime))}</p></div>`;
   const enabled = runtime.desired_state === "ENABLED";
   return `<div class="f015-detail">
-    <div class="section-title-row"><div><strong>${esc(f015ManagerText("extensions.runtime"))}</strong><p class="muted">${esc(runtime.desired_state || "—")} · ${esc(runtime.observed_state || "—")} · generation ${esc(runtime.generation ?? "—")}</p></div>${pill(runtime.observed_state || runtime.desired_state || "—", f015Kind(runtime.observed_state || runtime.desired_state))}</div>
+    <div class="section-title-row"><div><strong>${esc(f015ManagerText("extensions.runtime"))}</strong><p class="muted">${esc(runtime.desired_state || "—")} · ${esc(runtime.observed_state || "—")} · ${esc(f015ManagerText("extensions.generation"))} ${esc(runtime.generation ?? "—")}</p></div>${pill(runtime.observed_state || runtime.desired_state || "—", f015Kind(runtime.observed_state || runtime.desired_state))}</div>
     ${runtime.last_error_code ? `<p class="message error f015-warning">${esc(runtime.last_error_code)} · ${esc(runtime.last_error_message || "")}</p>` : ""}
     ${f015CanManage() ? `<div class="f015-actions"><button class="button ${enabled ? "ghost" : "primary"} f015-runtime-transition" data-transition="${enabled ? "disable" : "enable"}" type="button">${esc(enabled ? f015ManagerText("extensions.disable") : f015ManagerText("extensions.enable"))}</button></div>` : ""}
   </div>`;
@@ -208,8 +214,8 @@ async function renderExtensions() {
       <div class="f015-summary"><span data-i18n="extensions.ready">${esc(f015ManagerText("extensions.ready"))}</span><strong>${esc(readyCount)}</strong></div>
       <div class="f015-summary"><span data-i18n="extensions.running">${esc(f015ManagerText("extensions.running"))}</span><strong>${esc(runningCount)}</strong></div>
     </div>
-    <section class="f015-section"><div class="section-title-row"><div><p class="eyebrow">LIBRARY</p><h2 data-i18n="extensions.available_packages">${esc(f015ManagerText("extensions.available_packages"))}</h2></div></div><div id="f015PlanArea"></div><div class="f015-grid">${model.packages.length ? model.packages.map((pkg) => f015RenderPackage(pkg, installedByPackage)).join("") : `<div class="f015-empty" data-i18n="extensions.no_packages">${esc(f015ManagerText("extensions.no_packages"))}</div>`}</div></section>
-    <section class="f015-section"><div class="section-title-row"><div><p class="eyebrow">INSTALLED</p><h2 data-i18n="extensions.installed_extensions">${esc(f015ManagerText("extensions.installed_extensions"))}</h2></div></div><div class="f015-grid">${model.installations.length ? model.installations.map((item) => f015RenderInstallation(item, model.details[item.installation_id] || {}, packageByID)).join("") : `<div class="f015-empty" data-i18n="extensions.no_installations">${esc(f015ManagerText("extensions.no_installations"))}</div>`}</div></section>`;
+    <section class="f015-section"><div class="section-title-row"><div><p class="eyebrow" data-i18n="extensions.library">${esc(f015ManagerText("extensions.library"))}</p><h2 data-i18n="extensions.available_packages">${esc(f015ManagerText("extensions.available_packages"))}</h2></div></div><div id="f015PlanArea"></div><div class="f015-grid">${model.packages.length ? model.packages.map((pkg) => f015RenderPackage(pkg, installedByPackage)).join("") : `<div class="f015-empty" data-i18n="extensions.no_packages">${esc(f015ManagerText("extensions.no_packages"))}</div>`}</div></section>
+    <section class="f015-section"><div class="section-title-row"><div><p class="eyebrow" data-i18n="extensions.installed">${esc(f015ManagerText("extensions.installed"))}</p><h2 data-i18n="extensions.installed_extensions">${esc(f015ManagerText("extensions.installed_extensions"))}</h2></div></div><div class="f015-grid">${model.installations.length ? model.installations.map((item) => f015RenderInstallation(item, model.details[item.installation_id] || {}, packageByID)).join("") : `<div class="f015-empty" data-i18n="extensions.no_installations">${esc(f015ManagerText("extensions.no_installations"))}</div>`}</div></section>`;
 
   el("f015Refresh")?.addEventListener("click", () => renderExtensions().catch(f015Error));
   content.querySelectorAll(".f015-review-plan").forEach((button) => button.addEventListener("click", () => {
