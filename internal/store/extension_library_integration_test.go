@@ -57,8 +57,8 @@ func TestExtensionLibraryPersistsVerifiedPackageAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 18 {
-		t.Fatalf("schema version=%d want=18", version)
+	if version != 19 {
+		t.Fatalf("schema version=%d want=19", version)
 	}
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
