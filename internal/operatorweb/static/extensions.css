@@ -127,6 +127,30 @@
   gap: 6px;
 }
 
+.f015-maintenance-zone,
+.f015-maintenance-block {
+  display: grid;
+  gap: 10px;
+}
+
+.f015-maintenance-block + .f015-maintenance-block {
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--line);
+}
+
+.f015-maintenance-target-label {
+  display: grid;
+  gap: 6px;
+}
+
+.f015-maintenance-target {
+  width: 100%;
+}
+
+.f015-inline-plan {
+  margin-block-start: 4px;
+}
+
 .f015-empty {
   padding: 22px;
   text-align: center;
