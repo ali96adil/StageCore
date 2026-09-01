@@ -32,6 +32,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /workspace-profile.js", serveOperatorAsset("workspace-profile.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /first-run.js", serveOperatorAsset("first-run.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /extensions.js", serveOperatorAsset("extensions.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /extensions-uninstall.js", serveOperatorAsset("extensions-uninstall.js", "application/javascript; charset=utf-8", false))
 	}
 }
 
