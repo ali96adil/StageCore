@@ -44,10 +44,25 @@ validate_relative_bundle_path() {
   esac
 }
 
+validate_checksum_manifest() {
+  manifest=$1
+  label=$2
+  awk '
+    NF != 2 { exit 1 }
+    length($1) != 64 || $1 !~ /^[0-9A-Fa-f]+$/ { exit 1 }
+    $2 ~ /^\// { exit 1 }
+    $2 ~ /(^|\/)\.\.(\/|$)/ { exit 1 }
+    $2 ~ /\\/ { exit 1 }
+    END { if (NR == 0) exit 1 }
+  ' "$manifest" || fail "unsafe or malformed checksum manifest: $label"
+}
+
 verify_media() {
   [ "$(uname -s)" = "Linux" ] || fail "offline installation currently supports Linux only"
   command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to verify offline media"
-  command -v awk >/dev/null 2>&1 || fail "awk is required to read the offline media catalog"
+  command -v awk >/dev/null 2>&1 || fail "awk is required to read offline media metadata"
+  command -v find >/dev/null 2>&1 || fail "find is required to verify offline media"
+  command -v grep >/dev/null 2>&1 || fail "grep is required to verify offline media"
 
   [ -f "$CATALOG" ] && [ ! -L "$CATALOG" ] || fail "MEDIA_CATALOG is missing or symlinked"
   [ -f "$MEDIA_SUMS" ] && [ ! -L "$MEDIA_SUMS" ] || fail "MEDIA_SHA256SUMS is missing or symlinked"
@@ -60,6 +75,13 @@ verify_media() {
   actual_revision=$(cat "$MEDIA_REVISION")
   [ "$actual_revision" = "$revision" ] || fail "media revision does not match catalog revision"
 
+  [ -d "$MEDIA_DIR/bundles" ] && [ ! -L "$MEDIA_DIR/bundles" ] || fail "bundles directory is missing or symlinked"
+  if find "$MEDIA_DIR/bundles" -type l -print -quit 2>/dev/null | grep -q .; then
+    fail "symlinks are not permitted inside offline release bundles"
+  fi
+
+  validate_checksum_manifest "$MEDIA_SUMS" MEDIA_SHA256SUMS
+
   for arch in amd64 arm64; do
     relative=$(catalog_value "bundle.linux.$arch") || fail "catalog entry bundle.linux.$arch is missing"
     validate_relative_bundle_path "$arch" "$relative"
@@ -69,15 +91,12 @@ verify_media() {
     [ -f "$bundle/SHA256SUMS" ] && [ ! -L "$bundle/SHA256SUMS" ] || fail "bundle checksum manifest is missing or symlinked: $relative"
     bundle_revision=$(cat "$bundle/RELEASE_REVISION")
     [ "$bundle_revision" = "$revision" ] || fail "bundle revision mismatch: $relative"
+    validate_checksum_manifest "$bundle/SHA256SUMS" "$relative/SHA256SUMS"
     (
       cd "$bundle"
       sha256sum -c SHA256SUMS
     ) || fail "bundle checksum verification failed: $relative"
   done
-
-  if find "$MEDIA_DIR/bundles" -type l -print -quit 2>/dev/null | grep -q .; then
-    fail "symlinks are not permitted inside offline release bundles"
-  fi
 
   (
     cd "$MEDIA_DIR"
