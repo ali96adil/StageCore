@@ -26,6 +26,7 @@ func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *
 		s.mux.HandleFunc("GET /api/v1/extensions/installations/{installation_id}/runtime", withPermission(users, userauth.PermissionProjectRead, h.status))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/enable", withPermission(users, userauth.PermissionPluginManage, h.enable))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/disable", withPermission(users, userauth.PermissionPluginManage, h.disable))
+		s.mux.HandleFunc("DELETE /api/v1/extensions/installations/{installation_id}", withPermission(users, userauth.PermissionPluginManage, h.uninstall))
 	}
 }
 
@@ -49,6 +50,51 @@ func (h *operatorExtensionRuntimeLifecycle) enable(w http.ResponseWriter, r *htt
 
 func (h *operatorExtensionRuntimeLifecycle) disable(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	h.transition(w, r, session, false)
+}
+
+func (h *operatorExtensionRuntimeLifecycle) uninstall(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+	installationID := strings.TrimSpace(r.PathValue("installation_id"))
+	item, err := h.supervisor.Uninstall(r.Context(), installationID, session.User.Username)
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		code := "EXTENSION_UNINSTALL_FAILED"
+		response := map[string]any{}
+		switch {
+		case errors.Is(err, domain.ErrShowConfigurationLocked):
+			status = http.StatusConflict
+			code = "SHOW_CONFIGURATION_LOCKED"
+		case errors.Is(err, domain.ErrNotFound):
+			status = http.StatusNotFound
+			code = "EXTENSION_INSTALLATION_NOT_FOUND"
+		case errors.Is(err, extension.ErrExtensionRuntimeMustBeDisabled):
+			status = http.StatusConflict
+			code = "EXTENSION_RUNTIME_MUST_BE_DISABLED"
+		case errors.Is(err, extension.ErrExtensionRequiredByInstalled):
+			status = http.StatusConflict
+			code = "EXTENSION_REQUIRED_BY_INSTALLED"
+			var dependencyErr *extension.UninstallDependencyError
+			if errors.As(err, &dependencyErr) {
+				response["blockers"] = dependencyErr.Blockers
+			}
+		case errors.Is(err, extension.ErrInstalledPayloadIntegrity):
+			status = http.StatusConflict
+			code = "EXTENSION_INSTALL_INTEGRITY_FAILED"
+		}
+		response["error_code"] = code
+		h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultRejected, code, response["blockers"])
+		writeJSON(w, status, response)
+		return
+	}
+
+	h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultSuccess, "", map[string]any{
+		"package_id": item.PackageID,
+		"extension_id": item.ExtensionID,
+		"version": item.Version,
+		"payload_removed": item.PayloadRemoved,
+		"payload_already_absent": item.PayloadAlreadyAbsent,
+		"cleanup_warning": item.CleanupWarning,
+	})
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (h *operatorExtensionRuntimeLifecycle) transition(w http.ResponseWriter, r *http.Request, session userauth.Session, enable bool) {
