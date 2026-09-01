@@ -38,8 +38,10 @@ Required dependencies must also be present in the set at a compatible version. O
 A restore plan is one of:
 
 - `READY` — one or more exact packages can be installed;
-- `NOOP` — the Hub already has the exact set installed;
+- `NOOP` — every extension described by the manifest is already installed with the exact verified content;
 - `BLOCKED` — restore cannot proceed safely.
+
+Restore is intentionally non-destructive. Extensions already installed on the destination Hub but not listed in the manifest are left unchanged; restore never performs an implicit uninstall or prune operation.
 
 Typical blockers include unavailable exact packages, incompatible exact packages, a different artifact already installed, a missing required dependency, a dependency version mismatch, or a dependency cycle.
 
@@ -65,7 +67,7 @@ The guided flow is:
 4. Confirm execution only when the plan is `READY`.
 5. After restore, review permissions and explicitly enable Plugins as needed.
 
-The UI never invents restore readiness locally; plan and execution decisions come from the authenticated server APIs.
+The UI never invents restore readiness locally; plan and execution decisions come from the authenticated server APIs. It also states explicitly that unrelated installed extensions are not removed.
 
 ## Safety properties
 
@@ -77,8 +79,9 @@ The UI never invents restore readiness locally; plan and execution decisions com
 - Restore cannot import permission approvals.
 - Restore cannot import runtime enable intent or observed runtime truth.
 - New Plugins remain disabled.
+- Restore does not remove extensions that are absent from the manifest.
 - Restore remains subject to normal SHOW mutation locking and installer integrity checks.
-- Reapplying an already satisfied exact set is idempotent and returns `NOOP`.
+- Reapplying an already satisfied manifest is idempotent and returns `NOOP`.
 
 ## Relationship to offline bundles
 
