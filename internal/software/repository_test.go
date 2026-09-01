@@ -3,6 +3,8 @@ package software_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"testing"
 
@@ -87,5 +89,69 @@ func TestRepositoryImportsPrefersCompatibleAndRejectsIncompatible(t *testing.T) 
 	}
 	if err == nil || status.Compatible {
 		t.Fatalf("incompatible package was opened: status=%#v err=%v", status, err)
+	}
+}
+
+func TestRepositoryExpectedPayloadMetadataFailsBeforePackageRegistration(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s := store.New(h.DB, clock.Real{})
+	v, err := vault.Open(t.TempDir(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := software.New(v, s, software.CurrentHubAPIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("verified extension payload")
+	sum := sha256.Sum256(payload)
+	expectedHash := hex.EncodeToString(sum[:])
+	expectedSize := int64(len(payload))
+	base := software.ImportParams{
+		ProductID: "example.extension", Version: "1.0.0", Platform: "linux", Architecture: "arm64",
+		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "extension.bin",
+		SigningStatus: store.SoftwareSigningUnknown, NotarizationStatus: store.SoftwareNotarizationUnknown,
+		ReleaseChannel: store.SoftwareChannelDevelopment,
+	}
+
+	wrongHash := base
+	wrongHash.ExpectedContentHash = "0000000000000000000000000000000000000000000000000000000000000000"
+	wrongHash.ExpectedSizeBytes = &expectedSize
+	if _, err := repository.ImportPackage(ctx, wrongHash, bytes.NewReader(payload)); err == nil {
+		t.Fatal("expected payload hash mismatch")
+	}
+	packages, err := repository.List(ctx, "example.extension", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packages) != 0 {
+		t.Fatalf("hash mismatch registered package metadata: %#v", packages)
+	}
+
+	wrongSizeValue := expectedSize + 1
+	wrongSize := base
+	wrongSize.ExpectedContentHash = expectedHash
+	wrongSize.ExpectedSizeBytes = &wrongSizeValue
+	if _, err := repository.ImportPackage(ctx, wrongSize, bytes.NewReader(payload)); err == nil {
+		t.Fatal("expected payload size mismatch")
+	}
+	packages, err = repository.List(ctx, "example.extension", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packages) != 0 {
+		t.Fatalf("size mismatch registered package metadata: %#v", packages)
+	}
+
+	valid := base
+	valid.ExpectedContentHash = expectedHash
+	valid.ExpectedSizeBytes = &expectedSize
+	if _, err := repository.ImportPackage(ctx, valid, bytes.NewReader(payload)); err != nil {
+		t.Fatalf("valid expected payload metadata rejected: %v", err)
 	}
 }
