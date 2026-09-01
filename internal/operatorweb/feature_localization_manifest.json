@@ -316,6 +316,70 @@
         "workspace.page.sessions",
         "workspace.page.notes"
       ]
+    },
+    {
+      "feature_id": "F-008",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/first-run.js", "static/first-run.css"],
+      "name": {
+        "en": "First-run Setup Wizard",
+        "ar-IQ": "معالج إعداد التشغيل الأول"
+      },
+      "summary": {
+        "en": "Guides the first OWNER from a securely claimed Hub through local preferences and first-Project creation into the existing guided Setup workspace.",
+        "ar-IQ": "يرشد أول مالك من الـ Hub المهيأ بأمان عبر التفضيلات المحلية وإنشاء أول مشروع إلى مساحة الإعداد الموجهة الحالية."
+      },
+      "actions": [
+        {
+          "action_id": "review-hub-identity",
+          "label": {"en": "Review Hub Identity", "ar-IQ": "مراجعة هوية الـ Hub"}
+        },
+        {
+          "action_id": "choose-first-run-preferences",
+          "label": {"en": "Choose First-run Preferences", "ar-IQ": "اختيار تفضيلات التشغيل الأول"}
+        },
+        {
+          "action_id": "create-first-project",
+          "label": {"en": "Create First Project", "ar-IQ": "إنشاء أول مشروع"}
+        }
+      ],
+      "ui_keys": [
+        "first_run.title",
+        "first_run.summary",
+        "first_run.step_identity",
+        "first_run.step_preferences",
+        "first_run.step_project",
+        "first_run.identity_title",
+        "first_run.identity_detail",
+        "first_run.hub",
+        "first_run.fingerprint",
+        "first_run.local_only",
+        "first_run.continue",
+        "first_run.back",
+        "first_run.skip",
+        "first_run.preferences_title",
+        "first_run.preferences_detail",
+        "first_run.language",
+        "first_run.arabic",
+        "first_run.english",
+        "first_run.appearance",
+        "first_run.system",
+        "first_run.light",
+        "first_run.dark",
+        "first_run.accent",
+        "first_run.blue",
+        "first_run.teal",
+        "first_run.violet",
+        "first_run.amber",
+        "first_run.project_title",
+        "first_run.project_detail",
+        "first_run.project_name",
+        "first_run.project_description",
+        "first_run.create_continue",
+        "first_run.creating",
+        "first_run.handoff",
+        "first_run.error"
+      ]
     }
   ]
 }
