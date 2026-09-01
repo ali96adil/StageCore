@@ -69,6 +69,10 @@ verify_media() {
     [ -f "$bundle/SHA256SUMS" ] && [ ! -L "$bundle/SHA256SUMS" ] || fail "bundle checksum manifest is missing or symlinked: $relative"
     bundle_revision=$(cat "$bundle/RELEASE_REVISION")
     [ "$bundle_revision" = "$revision" ] || fail "bundle revision mismatch: $relative"
+    (
+      cd "$bundle"
+      sha256sum -c SHA256SUMS
+    ) || fail "bundle checksum verification failed: $relative"
   done
 
   if find "$MEDIA_DIR/bundles" -type l -print -quit 2>/dev/null | grep -q .; then
