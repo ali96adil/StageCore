@@ -64,6 +64,7 @@ case "${1:-}" in
 esac
 `
 	writeTestFile(t, filepath.Join(fakeBin, "uname"), []byte(uname), 0o755)
+	writeTestFile(t, filepath.Join(fakeBin, "bwrap"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	env := append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	output, err := runOfflineMedia(t, media, env, "install", "--dry-run")
@@ -72,6 +73,40 @@ esac
 	}
 	if !strings.Contains(output, "INSTALL_ARCH=arm64") || !strings.Contains(output, "ARGS=--dry-run") {
 		t.Fatalf("install did not select arm64 bundle: %s", output)
+	}
+}
+
+func TestOfflineMediaInstallBlocksBeforeDelegationWithoutBubblewrap(t *testing.T) {
+	media := createTestOfflineMedia(t)
+	fakeBin := t.TempDir()
+	uname := `#!/bin/sh
+case "${1:-}" in
+  -s) echo Linux ;;
+  -m) echo aarch64 ;;
+  *) echo Linux ;;
+esac
+`
+	writeTestFile(t, filepath.Join(fakeBin, "uname"), []byte(uname), 0o755)
+	for _, name := range []string{"awk", "cat", "dirname", "find", "grep", "sha256sum"} {
+		target, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatalf("resolve test prerequisite %s: %v", name, err)
+		}
+		if err := os.Symlink(target, filepath.Join(fakeBin, name)); err != nil {
+			t.Fatalf("link test prerequisite %s: %v", name, err)
+		}
+	}
+	env := []string{"PATH=" + fakeBin}
+
+	output, err := runOfflineMedia(t, media, env, "install", "--dry-run")
+	if err == nil {
+		t.Fatalf("offline install unexpectedly delegated without bwrap: %s", output)
+	}
+	if !strings.Contains(output, "Bubblewrap (bwrap) is required before install/update") {
+		t.Fatalf("missing actionable bwrap prerequisite error: %s", output)
+	}
+	if strings.Contains(output, "INSTALL_ARCH=") {
+		t.Fatalf("offline install delegated before prerequisite validation: %s", output)
 	}
 }
 
@@ -108,6 +143,7 @@ func TestOfflineReleaseBuilderCreatesSelfContainedMedia(t *testing.T) {
 		"stagecore-setup",
 		"update --bundle",
 		"unsupported Linux architecture",
+		"command -v bwrap",
 	} {
 		if !strings.Contains(offline, marker) {
 			t.Fatalf("offline launcher missing marker %q", marker)
