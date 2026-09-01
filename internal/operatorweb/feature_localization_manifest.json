@@ -380,6 +380,88 @@
         "first_run.handoff",
         "first_run.error"
       ]
+    },
+    {
+      "feature_id": "F-015",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/extensions.js", "static/extensions.css"],
+      "name": {
+        "en": "Plugin and Add-on Manager",
+        "ar-IQ": "مدير الإضافات والملحقات"
+      },
+      "summary": {
+        "en": "Bilingual guided management of the local extension library, verified installation, permissions, readiness and supervised Plugin runtime.",
+        "ar-IQ": "إدارة موجهة وثنائية اللغة لمكتبة الإضافات المحلية والتثبيت المتحقق والصلاحيات والجاهزية وتشغيل الإضافات تحت الإشراف."
+      },
+      "actions": [
+        {
+          "action_id": "browse-extension-library",
+          "label": {"en": "Browse Extension Library", "ar-IQ": "تصفح مكتبة الإضافات"}
+        },
+        {
+          "action_id": "review-install-plan",
+          "label": {"en": "Review Install Plan", "ar-IQ": "مراجعة خطة التثبيت"}
+        },
+        {
+          "action_id": "review-extension-permissions",
+          "label": {"en": "Review Extension Permissions", "ar-IQ": "مراجعة صلاحيات الإضافة"}
+        },
+        {
+          "action_id": "control-plugin-runtime",
+          "label": {"en": "Control Plugin Runtime", "ar-IQ": "التحكم بتشغيل الإضافة"}
+        }
+      ],
+      "ui_keys": [
+        "extensions.nav",
+        "extensions.eyebrow",
+        "extensions.title",
+        "extensions.summary",
+        "extensions.refresh",
+        "extensions.library",
+        "extensions.installed",
+        "extensions.ready",
+        "extensions.running",
+        "extensions.available_packages",
+        "extensions.installed_extensions",
+        "extensions.no_packages",
+        "extensions.no_installations",
+        "extensions.version",
+        "extensions.kind",
+        "extensions.source",
+        "extensions.compatibility",
+        "extensions.trust",
+        "extensions.production_ready",
+        "extensions.not_production_ready",
+        "extensions.permissions",
+        "extensions.dependencies",
+        "extensions.review_install",
+        "extensions.install_plan",
+        "extensions.install",
+        "extensions.already_installed",
+        "extensions.plan_ready",
+        "extensions.plan_dependencies",
+        "extensions.plan_blocked",
+        "extensions.blockers",
+        "extensions.warnings",
+        "extensions.steps",
+        "extensions.installing",
+        "extensions.install_complete",
+        "extensions.permission_review",
+        "extensions.approve",
+        "extensions.deny",
+        "extensions.readiness",
+        "extensions.runtime",
+        "extensions.generation",
+        "extensions.enable",
+        "extensions.disable",
+        "extensions.runtime_not_applicable",
+        "extensions.manage_role",
+        "extensions.show_note",
+        "extensions.package_id",
+        "extensions.installation_id",
+        "extensions.status",
+        "extensions.error"
+      ]
     }
   ]
 }
