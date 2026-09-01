@@ -12,6 +12,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+const defaultTrustedExtensionCatalogRoot = "/opt/stagecore/extensions/catalog"
+
 type operatorExtensionLibrary struct {
 	users   *userauth.Service
 	library *extension.Library
@@ -32,6 +34,18 @@ func WithOperatorExtensionLibrary(users *userauth.Service, library *extension.Li
 		s.mux.HandleFunc("GET /api/v1/extensions", withPermission(users, userauth.PermissionProjectRead, h.list))
 		s.mux.HandleFunc("GET /api/v1/extensions/packages/{package_id}", withPermission(users, userauth.PermissionProjectRead, h.get))
 		s.mux.HandleFunc("POST /api/v1/extensions/register", withPermission(users, userauth.PermissionPluginManage, h.register))
+
+		importer, err := extension.NewOfflineBundleImporter(library)
+		if err != nil {
+			return
+		}
+		catalog, err := extension.NewTrustedCatalog(importer, defaultTrustedExtensionCatalogRoot)
+		if err != nil {
+			return
+		}
+		offline := &operatorExtensionOfflineBundles{users: users, importer: importer, catalog: catalog, audit: audit}
+		s.mux.HandleFunc("POST /api/v1/extensions/import-bundle", withPermission(users, userauth.PermissionPluginManage, offline.importBundle))
+		s.mux.HandleFunc("POST /api/v1/extensions/catalog/sync", withPermission(users, userauth.PermissionPluginManage, offline.syncCatalog))
 	}
 }
 
