@@ -20,6 +20,8 @@ func main() {
 	switch os.Args[1] {
 	case "doctor":
 		os.Exit(runDoctor(os.Args[2:]))
+	case "support-bundle":
+		os.Exit(runSupportBundle(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -85,5 +87,6 @@ func runDoctor(args []string) int {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: stagecore <command> [options]")
-	fmt.Fprintln(os.Stderr, "  doctor  run read-only StageCore deployment and health diagnostics")
+	fmt.Fprintln(os.Stderr, "  doctor          run read-only StageCore deployment and health diagnostics")
+	fmt.Fprintln(os.Stderr, "  support-bundle  export a redacted diagnostics archive for support or offline review")
 }
