@@ -6,138 +6,462 @@
       "feature_id": "CORE-OPERATOR",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/app.js", "static/app.css"],
-      "name": {"en": "StageCore Operator", "ar-IQ": "مشغّل StageCore"},
-      "summary": {"en": "Core local operator shell for Projects, Cues and Runtime control.", "ar-IQ": "واجهة التشغيل المحلية الأساسية للمشاريع والإشارات والتحكم بالتشغيل."},
-      "actions": [{"action_id": "operate-project", "label": {"en": "Operate Project", "ar-IQ": "تشغيل المشروع"}}],
+      "name": {
+        "en": "StageCore Operator",
+        "ar-IQ": "مشغّل StageCore"
+      },
+      "summary": {
+        "en": "Core local operator shell for Projects, Cues and Runtime control.",
+        "ar-IQ": "واجهة التشغيل المحلية الأساسية للمشاريع والإشارات والتحكم بالتشغيل."
+      },
+      "actions": [
+        {
+          "action_id": "operate-project",
+          "label": {"en": "Operate Project", "ar-IQ": "تشغيل المشروع"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "CORE-AUTH",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/bootstrap.js"],
-      "name": {"en": "Local Access", "ar-IQ": "الدخول المحلي"},
-      "summary": {"en": "Local first-owner setup, sign-in and browser session entry.", "ar-IQ": "إعداد أول مالك وتسجيل الدخول وبدء جلسة المتصفح محلياً."},
-      "actions": [{"action_id": "claim-hub", "label": {"en": "Claim Hub", "ar-IQ": "تهيئة الـ Hub"}}],
+      "name": {
+        "en": "Local Access",
+        "ar-IQ": "الدخول المحلي"
+      },
+      "summary": {
+        "en": "Local first-owner setup, sign-in and browser session entry.",
+        "ar-IQ": "إعداد أول مالك وتسجيل الدخول وبدء جلسة المتصفح محلياً."
+      },
+      "actions": [
+        {
+          "action_id": "claim-hub",
+          "label": {"en": "Claim Hub", "ar-IQ": "تهيئة الـ Hub"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "CORE-CONFIGURATION",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/configuration.js"],
-      "name": {"en": "Project Configuration", "ar-IQ": "إعداد المشروع"},
-      "summary": {"en": "Targets, inputs, outputs and routing configuration for a Project.", "ar-IQ": "إعداد الأهداف والمدخلات والمخرجات والتوجيه الخاص بالمشروع."},
-      "actions": [{"action_id": "configure-project", "label": {"en": "Configure Project", "ar-IQ": "إعداد المشروع"}}],
+      "name": {
+        "en": "Project Configuration",
+        "ar-IQ": "إعداد المشروع"
+      },
+      "summary": {
+        "en": "Targets, inputs, outputs and routing configuration for a Project.",
+        "ar-IQ": "إعداد الأهداف والمدخلات والمخرجات والتوجيه الخاص بالمشروع."
+      },
+      "actions": [
+        {
+          "action_id": "configure-project",
+          "label": {"en": "Configure Project", "ar-IQ": "إعداد المشروع"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "CORE-PREFLIGHT",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/preflight.js"],
-      "name": {"en": "Preflight", "ar-IQ": "الفحص المسبق"},
-      "summary": {"en": "Authoritative readiness checks before SHOW entry.", "ar-IQ": "فحوصات الجاهزية المعتمدة قبل الدخول إلى وضع العرض."},
-      "actions": [{"action_id": "check-readiness", "label": {"en": "Check Readiness", "ar-IQ": "فحص الجاهزية"}}],
+      "name": {
+        "en": "Preflight",
+        "ar-IQ": "الفحص المسبق"
+      },
+      "summary": {
+        "en": "Authoritative readiness checks before SHOW entry.",
+        "ar-IQ": "فحوصات الجاهزية المعتمدة قبل الدخول إلى وضع العرض."
+      },
+      "actions": [
+        {
+          "action_id": "check-readiness",
+          "label": {"en": "Check Readiness", "ar-IQ": "فحص الجاهزية"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "CORE-MEMORY",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/memory.js"],
-      "name": {"en": "Session Memory and Notes", "ar-IQ": "سجل الجلسات والملاحظات"},
-      "summary": {"en": "Review rehearsal/show history, execution traces and operator notes.", "ar-IQ": "مراجعة سجل البروفات والعروض وتفاصيل التنفيذ وملاحظات المشغّل."},
-      "actions": [{"action_id": "review-history", "label": {"en": "Review History", "ar-IQ": "مراجعة السجل"}}],
+      "name": {
+        "en": "Session Memory and Notes",
+        "ar-IQ": "سجل الجلسات والملاحظات"
+      },
+      "summary": {
+        "en": "Review rehearsal/show history, execution traces and operator notes.",
+        "ar-IQ": "مراجعة سجل البروفات والعروض وتفاصيل التنفيذ وملاحظات المشغّل."
+      },
+      "actions": [
+        {
+          "action_id": "review-history",
+          "label": {"en": "Review History", "ar-IQ": "مراجعة السجل"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "CORE-SECURITY",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/security.js"],
-      "name": {"en": "Hub Security", "ar-IQ": "أمان الـ Hub"},
-      "summary": {"en": "Local users, secrets, permissions, trust and security audit controls.", "ar-IQ": "إدارة المستخدمين والأسرار والصلاحيات والثقة وسجل الأمان محلياً."},
-      "actions": [{"action_id": "administer-security", "label": {"en": "Administer Security", "ar-IQ": "إدارة الأمان"}}],
+      "name": {
+        "en": "Hub Security",
+        "ar-IQ": "أمان الـ Hub"
+      },
+      "summary": {
+        "en": "Local users, secrets, permissions, trust and security audit controls.",
+        "ar-IQ": "إدارة المستخدمين والأسرار والصلاحيات والثقة وسجل الأمان محلياً."
+      },
+      "actions": [
+        {
+          "action_id": "administer-security",
+          "label": {"en": "Administer Security", "ar-IQ": "إدارة الأمان"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "F-012",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/show-lock.js"],
-      "name": {"en": "SHOW Configuration Lock", "ar-IQ": "قفل الإعدادات أثناء العرض"},
-      "summary": {"en": "Prevents structural Project changes while an authoritative SHOW Session is active.", "ar-IQ": "يمنع التغييرات الهيكلية للمشروع أثناء وجود جلسة عرض معتمدة ونشطة."},
-      "actions": [{"action_id": "view-lock-state", "label": {"en": "View Lock State", "ar-IQ": "عرض حالة القفل"}}],
+      "name": {
+        "en": "SHOW Configuration Lock",
+        "ar-IQ": "قفل الإعدادات أثناء العرض"
+      },
+      "summary": {
+        "en": "Prevents structural Project changes while an authoritative SHOW Session is active.",
+        "ar-IQ": "يمنع التغييرات الهيكلية للمشروع أثناء وجود جلسة عرض معتمدة ونشطة."
+      },
+      "actions": [
+        {
+          "action_id": "view-lock-state",
+          "label": {"en": "View Lock State", "ar-IQ": "عرض حالة القفل"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "F-002",
       "localization_mode": "keyed",
       "owner_assets": ["static/guided-ux.js", "static/guided-ux.css"],
-      "name": {"en": "Guided No-code Operator Experience", "ar-IQ": "تجربة تشغيل موجهة بدون كود"},
-      "summary": {"en": "Goal-first Project workflows, progressive disclosure and visual builders for common operator tasks.", "ar-IQ": "مسارات تشغيل مبنية على الهدف مع إظهار التفاصيل تدريجياً ومنشئات مرئية للمهام الشائعة."},
+      "name": {
+        "en": "Guided No-code Operator Experience",
+        "ar-IQ": "تجربة تشغيل موجهة بدون كود"
+      },
+      "summary": {
+        "en": "Goal-first Project workflows, progressive disclosure and visual builders for common operator tasks.",
+        "ar-IQ": "مسارات تشغيل مبنية على الهدف مع إظهار التفاصيل تدريجياً ومنشئات مرئية للمهام الشائعة."
+      },
       "actions": [
-        {"action_id": "follow-next-step", "label": {"en": "Follow Recommended Step", "ar-IQ": "اتباع الخطوة المقترحة"}},
-        {"action_id": "build-osc-action", "label": {"en": "Build OSC Action", "ar-IQ": "إنشاء إجراء OSC"}}
+        {
+          "action_id": "follow-next-step",
+          "label": {"en": "Follow Recommended Step", "ar-IQ": "اتباع الخطوة المقترحة"}
+        },
+        {
+          "action_id": "build-osc-action",
+          "label": {"en": "Build OSC Action", "ar-IQ": "إنشاء إجراء OSC"}
+        }
       ],
-      "ui_keys": ["nav.projects", "nav.home", "nav.setup", "nav.cues", "nav.run", "nav.check", "nav.history", "nav.notes", "nav.security", "home.eyebrow", "home.summary", "home.next", "home.journey"]
+      "ui_keys": [
+        "nav.projects",
+        "nav.home",
+        "nav.setup",
+        "nav.cues",
+        "nav.run",
+        "nav.check",
+        "nav.history",
+        "nav.notes",
+        "nav.security",
+        "home.eyebrow",
+        "home.summary",
+        "home.next",
+        "home.journey"
+      ]
     },
     {
       "feature_id": "F-001",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/localization.js", "static/localization.css"],
-      "name": {"en": "Arabic UI and RTL Foundation", "ar-IQ": "واجهة عربية وأساس RTL"},
-      "summary": {"en": "Arabic-first local Operator UI with RTL layout, English switching and localized operator feedback.", "ar-IQ": "واجهة تشغيل محلية عربية أولاً مع RTL وإمكانية التبديل للإنكليزية وتعريب رسائل المستخدم."},
-      "actions": [{"action_id": "switch-language", "label": {"en": "Switch Language", "ar-IQ": "تبديل اللغة"}}],
+      "name": {
+        "en": "Arabic UI and RTL Foundation",
+        "ar-IQ": "واجهة عربية وأساس RTL"
+      },
+      "summary": {
+        "en": "Arabic-first local Operator UI with RTL layout, English switching and localized operator feedback.",
+        "ar-IQ": "واجهة تشغيل محلية عربية أولاً مع RTL وإمكانية التبديل للإنكليزية وتعريب رسائل المستخدم."
+      },
+      "actions": [
+        {
+          "action_id": "switch-language",
+          "label": {"en": "Switch Language", "ar-IQ": "تبديل اللغة"}
+        }
+      ],
       "ui_keys": []
     },
     {
       "feature_id": "F-016",
       "localization_mode": "keyed",
       "owner_assets": ["static/theme.js", "static/theme.css"],
-      "name": {"en": "Appearance and Theme System", "ar-IQ": "نظام المظهر والثيمات"},
-      "summary": {"en": "Semantic appearance tokens with local System, Light, Dark and accent choices that never change show behavior.", "ar-IQ": "رموز مظهر دلالية مع أوضاع تلقائي وفاتح وداكن وألوان مميزة محلية لا تغيّر سلوك العرض."},
+      "name": {
+        "en": "Appearance and Theme System",
+        "ar-IQ": "نظام المظهر والثيمات"
+      },
+      "summary": {
+        "en": "Semantic appearance tokens with local System, Light, Dark and accent choices that never change show behavior.",
+        "ar-IQ": "رموز مظهر دلالية مع أوضاع تلقائي وفاتح وداكن وألوان مميزة محلية لا تغيّر سلوك العرض."
+      },
       "actions": [
-        {"action_id": "choose-mode", "label": {"en": "Choose Appearance Mode", "ar-IQ": "اختيار وضع المظهر"}},
-        {"action_id": "choose-accent", "label": {"en": "Choose Accent", "ar-IQ": "اختيار اللون المميز"}},
-        {"action_id": "reset-appearance", "label": {"en": "Reset Appearance", "ar-IQ": "إعادة المظهر الافتراضي"}}
+        {
+          "action_id": "choose-mode",
+          "label": {"en": "Choose Appearance Mode", "ar-IQ": "اختيار وضع المظهر"}
+        },
+        {
+          "action_id": "choose-accent",
+          "label": {"en": "Choose Accent", "ar-IQ": "اختيار اللون المميز"}
+        },
+        {
+          "action_id": "reset-appearance",
+          "label": {"en": "Reset Appearance", "ar-IQ": "إعادة المظهر الافتراضي"}
+        }
       ],
-      "ui_keys": ["appearance.title", "appearance.mode", "appearance.system", "appearance.system_detail", "appearance.light", "appearance.light_detail", "appearance.dark", "appearance.dark_detail", "appearance.accent", "appearance.blue", "appearance.teal", "appearance.violet", "appearance.amber", "appearance.preview", "appearance.ready", "appearance.warning", "appearance.blocker", "appearance.local_scope", "appearance.reset", "appearance.close"]
+      "ui_keys": [
+        "appearance.title",
+        "appearance.mode",
+        "appearance.system",
+        "appearance.system_detail",
+        "appearance.light",
+        "appearance.light_detail",
+        "appearance.dark",
+        "appearance.dark_detail",
+        "appearance.accent",
+        "appearance.blue",
+        "appearance.teal",
+        "appearance.violet",
+        "appearance.amber",
+        "appearance.preview",
+        "appearance.ready",
+        "appearance.warning",
+        "appearance.blocker",
+        "appearance.local_scope",
+        "appearance.reset",
+        "appearance.close"
+      ]
     },
     {
       "feature_id": "F-017",
       "localization_mode": "keyed",
       "owner_assets": ["static/workspace-profile.js", "static/workspace-profile.css"],
-      "name": {"en": "Workspace Layouts and Operator Profiles", "ar-IQ": "مساحات العمل وملفات المشغّل"},
-      "summary": {"en": "Device-local versioned workspace profiles with role presets, visibility/order preferences and safe workspace restoration.", "ar-IQ": "ملفات مساحة عمل محلية ومؤرشفة بالإصدار مع إعدادات جاهزة للأدوار وتفضيلات الظهور والترتيب والاستعادة الآمنة."},
+      "name": {
+        "en": "Workspace Layouts and Operator Profiles",
+        "ar-IQ": "مساحات العمل وملفات المشغّل"
+      },
+      "summary": {
+        "en": "Device-local versioned workspace profiles with role presets, visibility/order preferences and safe workspace restoration.",
+        "ar-IQ": "ملفات مساحة عمل محلية ومؤرشفة بالإصدار مع إعدادات جاهزة للأدوار وتفضيلات الظهور والترتيب والاستعادة الآمنة."
+      },
       "actions": [
-        {"action_id": "switch-profile", "label": {"en": "Switch Workspace Profile", "ar-IQ": "تبديل ملف مساحة العمل"}},
-        {"action_id": "edit-profile", "label": {"en": "Edit Workspace Profile", "ar-IQ": "تعديل ملف مساحة العمل"}},
-        {"action_id": "create-profile", "label": {"en": "Create Custom Profile", "ar-IQ": "إنشاء ملف مخصص"}}
+        {
+          "action_id": "switch-profile",
+          "label": {"en": "Switch Workspace Profile", "ar-IQ": "تبديل ملف مساحة العمل"}
+        },
+        {
+          "action_id": "edit-profile",
+          "label": {"en": "Edit Workspace Profile", "ar-IQ": "تعديل ملف مساحة العمل"}
+        },
+        {
+          "action_id": "create-profile",
+          "label": {"en": "Create Custom Profile", "ar-IQ": "إنشاء ملف مخصص"}
+        }
       ],
-      "ui_keys": ["workspace.title", "workspace.profile", "workspace.manage", "workspace.builtin", "workspace.custom", "workspace.create_copy", "workspace.name", "workspace.visible", "workspace.default", "workspace.nav_size", "workspace.compact", "workspace.normal", "workspace.wide", "workspace.save", "workspace.delete", "workspace.reset", "workspace.close", "workspace.local_scope", "workspace.presentation_only", "workspace.locked", "workspace.lock_unknown", "workspace.saved", "workspace.deleted", "workspace.invalid_last", "workspace.move_up", "workspace.move_down", "workspace.stage_manager", "workspace.video", "workspace.lighting", "workspace.sound", "workspace.rehearsal", "workspace.monitoring", "workspace.page.dashboard", "workspace.page.configuration", "workspace.page.cues", "workspace.page.runtime", "workspace.page.preflight", "workspace.page.sessions", "workspace.page.notes"]
+      "ui_keys": [
+        "workspace.title",
+        "workspace.profile",
+        "workspace.manage",
+        "workspace.builtin",
+        "workspace.custom",
+        "workspace.create_copy",
+        "workspace.name",
+        "workspace.visible",
+        "workspace.default",
+        "workspace.nav_size",
+        "workspace.compact",
+        "workspace.normal",
+        "workspace.wide",
+        "workspace.save",
+        "workspace.delete",
+        "workspace.reset",
+        "workspace.close",
+        "workspace.local_scope",
+        "workspace.presentation_only",
+        "workspace.locked",
+        "workspace.lock_unknown",
+        "workspace.saved",
+        "workspace.deleted",
+        "workspace.invalid_last",
+        "workspace.move_up",
+        "workspace.move_down",
+        "workspace.stage_manager",
+        "workspace.video",
+        "workspace.lighting",
+        "workspace.sound",
+        "workspace.rehearsal",
+        "workspace.monitoring",
+        "workspace.page.dashboard",
+        "workspace.page.configuration",
+        "workspace.page.cues",
+        "workspace.page.runtime",
+        "workspace.page.preflight",
+        "workspace.page.sessions",
+        "workspace.page.notes"
+      ]
     },
     {
       "feature_id": "F-008",
       "localization_mode": "keyed",
       "owner_assets": ["static/first-run.js", "static/first-run.css"],
-      "name": {"en": "First-run Setup Wizard", "ar-IQ": "معالج إعداد التشغيل الأول"},
-      "summary": {"en": "Guides the first OWNER from a securely claimed Hub through local preferences and first-Project creation into the existing guided Setup workspace.", "ar-IQ": "يرشد أول مالك من الـ Hub المهيأ بأمان عبر التفضيلات المحلية وإنشاء أول مشروع إلى مساحة الإعداد الموجهة الحالية."},
+      "name": {
+        "en": "First-run Setup Wizard",
+        "ar-IQ": "معالج إعداد التشغيل الأول"
+      },
+      "summary": {
+        "en": "Guides the first OWNER from a securely claimed Hub through local preferences and first-Project creation into the existing guided Setup workspace.",
+        "ar-IQ": "يرشد أول مالك من الـ Hub المهيأ بأمان عبر التفضيلات المحلية وإنشاء أول مشروع إلى مساحة الإعداد الموجهة الحالية."
+      },
       "actions": [
-        {"action_id": "review-hub-identity", "label": {"en": "Review Hub Identity", "ar-IQ": "مراجعة هوية الـ Hub"}},
-        {"action_id": "choose-first-run-preferences", "label": {"en": "Choose First-run Preferences", "ar-IQ": "اختيار تفضيلات التشغيل الأول"}},
-        {"action_id": "create-first-project", "label": {"en": "Create First Project", "ar-IQ": "إنشاء أول مشروع"}}
+        {
+          "action_id": "review-hub-identity",
+          "label": {"en": "Review Hub Identity", "ar-IQ": "مراجعة هوية الـ Hub"}
+        },
+        {
+          "action_id": "choose-first-run-preferences",
+          "label": {"en": "Choose First-run Preferences", "ar-IQ": "اختيار تفضيلات التشغيل الأول"}
+        },
+        {
+          "action_id": "create-first-project",
+          "label": {"en": "Create First Project", "ar-IQ": "إنشاء أول مشروع"}
+        }
       ],
-      "ui_keys": ["first_run.title", "first_run.summary", "first_run.step_identity", "first_run.step_preferences", "first_run.step_project", "first_run.identity_title", "first_run.identity_detail", "first_run.hub", "first_run.fingerprint", "first_run.local_only", "first_run.continue", "first_run.back", "first_run.skip", "first_run.preferences_title", "first_run.preferences_detail", "first_run.language", "first_run.arabic", "first_run.english", "first_run.appearance", "first_run.system", "first_run.light", "first_run.dark", "first_run.accent", "first_run.blue", "first_run.teal", "first_run.violet", "first_run.amber", "first_run.project_title", "first_run.project_detail", "first_run.project_name", "first_run.project_description", "first_run.create_continue", "first_run.creating", "first_run.handoff", "first_run.error"]
+      "ui_keys": [
+        "first_run.title",
+        "first_run.summary",
+        "first_run.step_identity",
+        "first_run.step_preferences",
+        "first_run.step_project",
+        "first_run.identity_title",
+        "first_run.identity_detail",
+        "first_run.hub",
+        "first_run.fingerprint",
+        "first_run.local_only",
+        "first_run.continue",
+        "first_run.back",
+        "first_run.skip",
+        "first_run.preferences_title",
+        "first_run.preferences_detail",
+        "first_run.language",
+        "first_run.arabic",
+        "first_run.english",
+        "first_run.appearance",
+        "first_run.system",
+        "first_run.light",
+        "first_run.dark",
+        "first_run.accent",
+        "first_run.blue",
+        "first_run.teal",
+        "first_run.violet",
+        "first_run.amber",
+        "first_run.project_title",
+        "first_run.project_detail",
+        "first_run.project_name",
+        "first_run.project_description",
+        "first_run.create_continue",
+        "first_run.creating",
+        "first_run.handoff",
+        "first_run.error"
+      ]
     },
     {
       "feature_id": "F-015",
       "localization_mode": "keyed",
       "owner_assets": ["static/extensions.js", "static/extensions.css"],
-      "name": {"en": "Plugin and Add-on Manager", "ar-IQ": "مدير الإضافات والملحقات"},
-      "summary": {"en": "Bilingual guided management of the local extension library, verified installation, permissions, readiness and supervised Plugin runtime.", "ar-IQ": "إدارة موجهة وثنائية اللغة لمكتبة الإضافات المحلية والتثبيت المتحقق والصلاحيات والجاهزية وتشغيل الإضافات تحت الإشراف."},
+      "name": {
+        "en": "Plugin and Add-on Manager",
+        "ar-IQ": "مدير الإضافات والملحقات"
+      },
+      "summary": {
+        "en": "Bilingual guided management of the local extension library, verified installation, permissions, readiness and supervised Plugin runtime.",
+        "ar-IQ": "إدارة موجهة وثنائية اللغة لمكتبة الإضافات المحلية والتثبيت المتحقق والصلاحيات والجاهزية وتشغيل الإضافات تحت الإشراف."
+      },
       "actions": [
-        {"action_id": "browse-extension-library", "label": {"en": "Browse Extension Library", "ar-IQ": "تصفح مكتبة الإضافات"}},
-        {"action_id": "review-install-plan", "label": {"en": "Review Install Plan", "ar-IQ": "مراجعة خطة التثبيت"}},
-        {"action_id": "review-extension-permissions", "label": {"en": "Review Extension Permissions", "ar-IQ": "مراجعة صلاحيات الإضافة"}},
-        {"action_id": "control-plugin-runtime", "label": {"en": "Control Plugin Runtime", "ar-IQ": "التحكم بتشغيل الإضافة"}}
+        {
+          "action_id": "browse-extension-library",
+          "label": {"en": "Browse Extension Library", "ar-IQ": "تصفح مكتبة الإضافات"}
+        },
+        {
+          "action_id": "review-install-plan",
+          "label": {"en": "Review Install Plan", "ar-IQ": "مراجعة خطة التثبيت"}
+        },
+        {
+          "action_id": "review-extension-permissions",
+          "label": {"en": "Review Extension Permissions", "ar-IQ": "مراجعة صلاحيات الإضافة"}
+        },
+        {
+          "action_id": "control-plugin-runtime",
+          "label": {"en": "Control Plugin Runtime", "ar-IQ": "التحكم بتشغيل الإضافة"}
+        }
       ],
-      "ui_keys": ["extensions.nav", "extensions.eyebrow", "extensions.title", "extensions.summary", "extensions.refresh", "extensions.library", "extensions.installed", "extensions.ready", "extensions.running", "extensions.available_packages", "extensions.installed_extensions", "extensions.no_packages", "extensions.no_installations", "extensions.version", "extensions.kind", "extensions.source", "extensions.compatibility", "extensions.trust", "extensions.production_ready", "extensions.not_production_ready", "extensions.permissions", "extensions.dependencies", "extensions.review_install", "extensions.install_plan", "extensions.install", "extensions.already_installed", "extensions.plan_ready", "extensions.plan_dependencies", "extensions.plan_blocked", "extensions.blockers", "extensions.warnings", "extensions.steps", "extensions.installing", "extensions.install_complete", "extensions.permission_review", "extensions.approve", "extensions.deny", "extensions.readiness", "extensions.runtime", "extensions.generation", "extensions.enable", "extensions.disable", "extensions.runtime_not_applicable", "extensions.manage_role", "extensions.show_note", "extensions.package_id", "extensions.installation_id", "extensions.status", "extensions.error"]
+      "ui_keys": [
+        "extensions.nav",
+        "extensions.eyebrow",
+        "extensions.title",
+        "extensions.summary",
+        "extensions.refresh",
+        "extensions.library",
+        "extensions.installed",
+        "extensions.ready",
+        "extensions.running",
+        "extensions.available_packages",
+        "extensions.installed_extensions",
+        "extensions.no_packages",
+        "extensions.no_installations",
+        "extensions.version",
+        "extensions.kind",
+        "extensions.source",
+        "extensions.compatibility",
+        "extensions.trust",
+        "extensions.production_ready",
+        "extensions.not_production_ready",
+        "extensions.permissions",
+        "extensions.dependencies",
+        "extensions.review_install",
+        "extensions.install_plan",
+        "extensions.install",
+        "extensions.already_installed",
+        "extensions.plan_ready",
+        "extensions.plan_dependencies",
+        "extensions.plan_blocked",
+        "extensions.blockers",
+        "extensions.warnings",
+        "extensions.steps",
+        "extensions.installing",
+        "extensions.install_complete",
+        "extensions.permission_review",
+        "extensions.approve",
+        "extensions.deny",
+        "extensions.readiness",
+        "extensions.runtime",
+        "extensions.generation",
+        "extensions.enable",
+        "extensions.disable",
+        "extensions.runtime_not_applicable",
+        "extensions.manage_role",
+        "extensions.show_note",
+        "extensions.package_id",
+        "extensions.installation_id",
+        "extensions.status",
+        "extensions.error"
+      ]
     }
   ]
 }
