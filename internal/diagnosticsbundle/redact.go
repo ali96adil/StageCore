@@ -80,11 +80,17 @@ func sanitizeJSONValue(value any) int {
 	case map[string]any:
 		redactions := 0
 		for key, item := range typed {
-			if stringValue, ok := item.(string); ok && sensitiveFieldName(key) {
-				if stringValue != "" && stringValue != "<redacted>" {
-					typed[key] = "<redacted>"
-					redactions++
+			if stringValue, ok := item.(string); ok {
+				if sensitiveFieldName(key) {
+					if stringValue != "" && stringValue != "<redacted>" {
+						typed[key] = "<redacted>"
+						redactions++
+					}
+					continue
 				}
+				redacted, count := RedactString(stringValue)
+				typed[key] = redacted
+				redactions += count
 				continue
 			}
 			redactions += sanitizeJSONValue(item)
@@ -102,10 +108,6 @@ func sanitizeJSONValue(value any) int {
 			redactions += sanitizeJSONValue(item)
 		}
 		return redactions
-	case string:
-		// A string reached through an interface cannot be replaced in-place here.
-		// Parent maps/slices handle string replacement explicitly.
-		return 0
 	default:
 		return 0
 	}
