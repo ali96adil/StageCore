@@ -1,46 +1,19 @@
 "use strict";
 
 Object.assign(f015ManagerStrings, {
-  "extensions.show_note": {
-    en: "Installation, permission changes, runtime enable/disable and uninstall remain server-side blocked during an active SHOW.",
-    "ar-IQ": "يبقى التثبيت وتغيير الصلاحيات وتفعيل أو تعطيل التشغيل وإلغاء التثبيت محجوباً من الخادم أثناء العرض النشط.",
-  },
+  "extensions.show_note": { en: "Installation, permission changes, runtime enable/disable and uninstall remain server-side blocked during an active SHOW.", "ar-IQ": "يبقى التثبيت وتغيير الصلاحيات وتفعيل أو تعطيل التشغيل وإلغاء التثبيت محجوباً من الخادم أثناء العرض النشط." },
   "extensions.removal": { en: "Removal", "ar-IQ": "الإزالة" },
   "extensions.uninstall": { en: "Uninstall", "ar-IQ": "إلغاء التثبيت" },
-  "extensions.uninstall_ready": {
-    en: "Removes this installation and its runtime state. The immutable package stays in the local library so it can be installed again later.",
-    "ar-IQ": "يزيل هذا التثبيت وحالة تشغيله. تبقى الحزمة الثابتة في المكتبة المحلية حتى يمكن تثبيتها مرة أخرى لاحقاً.",
-  },
-  "extensions.uninstall_runtime_blocked": {
-    en: "Disable the Plugin and wait until its runtime is STOPPED before uninstalling it.",
-    "ar-IQ": "عطّل الإضافة وانتظر حتى تصبح حالة التشغيل STOPPED قبل إلغاء تثبيتها.",
-  },
-  "extensions.uninstall_runtime_unknown": {
-    en: "Runtime status is unavailable. Refresh the page before uninstalling.",
-    "ar-IQ": "حالة التشغيل غير متاحة. حدّث الصفحة قبل إلغاء التثبيت.",
-  },
-  "extensions.uninstall_confirm": {
-    en: "Uninstall {name} v{version}? The package will remain in the local library for reinstall.",
-    "ar-IQ": "إلغاء تثبيت {name} الإصدار {version}؟ ستبقى الحزمة في المكتبة المحلية لإعادة تثبيتها لاحقاً.",
-  },
+  "extensions.uninstall_ready": { en: "Removes this installation and its runtime state. The immutable package stays in the local library so it can be installed again later.", "ar-IQ": "يزيل هذا التثبيت وحالة تشغيله. تبقى الحزمة الثابتة في المكتبة المحلية حتى يمكن تثبيتها مرة أخرى لاحقاً." },
+  "extensions.uninstall_runtime_blocked": { en: "Disable the Plugin and wait until its runtime is STOPPED before uninstalling it.", "ar-IQ": "عطّل الإضافة وانتظر حتى تصبح حالة التشغيل STOPPED قبل إلغاء تثبيتها." },
+  "extensions.uninstall_runtime_unknown": { en: "Runtime status is unavailable. Refresh the page before uninstalling.", "ar-IQ": "حالة التشغيل غير متاحة. حدّث الصفحة قبل إلغاء التثبيت." },
+  "extensions.uninstall_confirm": { en: "Uninstall {name} v{version}? The package will remain in the local library for reinstall.", "ar-IQ": "إلغاء تثبيت {name} الإصدار {version}؟ ستبقى الحزمة في المكتبة المحلية لإعادة تثبيتها لاحقاً." },
   "extensions.uninstalling": { en: "Uninstalling…", "ar-IQ": "جارٍ إلغاء التثبيت…" },
   "extensions.uninstall_complete": { en: "Extension uninstalled.", "ar-IQ": "تم إلغاء تثبيت الإضافة." },
-  "extensions.uninstall_dependency_blocked": {
-    en: "Uninstall is blocked because another installed extension still requires this extension",
-    "ar-IQ": "إلغاء التثبيت محجوب لأن إضافة مثبتة أخرى ما زالت تعتمد على هذه الإضافة",
-  },
-  "extensions.uninstall_runtime_required": {
-    en: "Disable the Plugin and wait until it is STOPPED before uninstalling.",
-    "ar-IQ": "عطّل الإضافة وانتظر حتى تصبح STOPPED قبل إلغاء التثبيت.",
-  },
-  "extensions.uninstall_show_locked": {
-    en: "Uninstall is blocked while a SHOW session is active.",
-    "ar-IQ": "إلغاء التثبيت محجوب أثناء وجود جلسة SHOW نشطة.",
-  },
-  "extensions.uninstall_cleanup_warning": {
-    en: "The installation was removed, but an inert payload file could not be cleaned up. Reinstall will verify it before reuse.",
-    "ar-IQ": "تمت إزالة التثبيت، لكن تعذر تنظيف ملف حزمة غير نشط. ستتحقق إعادة التثبيت من الملف قبل إعادة استخدامه.",
-  },
+  "extensions.uninstall_dependency_blocked": { en: "Uninstall is blocked because another installed extension still requires this extension", "ar-IQ": "إلغاء التثبيت محجوب لأن إضافة مثبتة أخرى ما زالت تعتمد على هذه الإضافة" },
+  "extensions.uninstall_runtime_required": { en: "Disable the Plugin and wait until it is STOPPED before uninstalling.", "ar-IQ": "عطّل الإضافة وانتظر حتى تصبح STOPPED قبل إلغاء التثبيت." },
+  "extensions.uninstall_show_locked": { en: "Uninstall is blocked while a SHOW session is active.", "ar-IQ": "إلغاء التثبيت محجوب أثناء وجود جلسة SHOW نشطة." },
+  "extensions.uninstall_cleanup_warning": { en: "The installation was removed, but an inert payload file could not be cleaned up. Reinstall will verify it before reuse.", "ar-IQ": "تمت إزالة التثبيت، لكن تعذر تنظيف ملف حزمة غير نشط. ستتحقق إعادة التثبيت من الملف قبل إعادة استخدامه." },
 });
 
 function f015FormatManagerText(key, values = {}) {
