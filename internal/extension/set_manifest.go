@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	ExtensionSetFormatV1       = "stagecore-extension-set-v1"
-	ExtensionSetSchemaVersion  = 1
+	ExtensionSetFormatV1        = "stagecore-extension-set-v1"
+	ExtensionSetSchemaVersion   = 1
 	MaxExtensionSetManifestSize = 1 << 20
 )
 
@@ -26,15 +26,15 @@ var (
 )
 
 type ExtensionSetEntry struct {
-	ExtensionID     string `json:"extension_id"`
-	Version         string `json:"version"`
-	Kind            Kind   `json:"kind"`
-	Source          Source `json:"source"`
-	ManifestSHA256  string `json:"manifest_sha256"`
-	PayloadSHA256   string `json:"payload_sha256"`
+	ExtensionID      string `json:"extension_id"`
+	Version          string `json:"version"`
+	Kind             Kind   `json:"kind"`
+	Source           Source `json:"source"`
+	ManifestSHA256   string `json:"manifest_sha256"`
+	PayloadSHA256    string `json:"payload_sha256"`
 	PayloadSizeBytes int64  `json:"payload_size_bytes"`
-	Platform        string `json:"platform"`
-	Architecture    string `json:"architecture"`
+	Platform         string `json:"platform"`
+	Architecture     string `json:"architecture"`
 }
 
 type ExtensionSetManifest struct {
@@ -97,9 +97,8 @@ func NewExtensionSetService(installer *Installer) (*ExtensionSetService, error) 
 	return &ExtensionSetService{installer: installer}, nil
 }
 
-// Export returns a portable, content-bound inventory. It intentionally omits
-// permission decisions, runtime observed state, runtime enable intent, local
-// installation IDs and local package IDs.
+// Export is a portable content-bound inventory. It intentionally omits local
+// database IDs, permission approvals, observed runtime state and enable intent.
 func (s *ExtensionSetService) Export(ctx context.Context) (ExtensionSetManifest, []byte, error) {
 	if s == nil || s.installer == nil {
 		return ExtensionSetManifest{}, nil, fmt.Errorf("extension set service is unavailable")
@@ -114,11 +113,11 @@ func (s *ExtensionSetService) Export(ctx context.Context) (ExtensionSetManifest,
 		if err != nil {
 			return ExtensionSetManifest{}, nil, err
 		}
-		softwareStatus, err := s.installer.library.software.Get(ctx, installation.PackageID)
+		status, err := s.installer.library.software.Get(ctx, installation.PackageID)
 		if err != nil {
 			return ExtensionSetManifest{}, nil, err
 		}
-		softwarePackage := softwareStatus.Package
+		softwarePackage := status.Package
 		if installation.ContentSHA256 != softwarePackage.ContentHash || installation.SizeBytes != softwarePackage.SizeBytes {
 			return ExtensionSetManifest{}, nil, fmt.Errorf("%w: installed payload metadata differs from immutable package metadata for %s", ErrInstalledPayloadIntegrity, installation.ExtensionID)
 		}
@@ -134,19 +133,17 @@ func (s *ExtensionSetService) Export(ctx context.Context) (ExtensionSetManifest,
 			Architecture: softwarePackage.Architecture,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].ExtensionID != entries[j].ExtensionID {
-			return entries[i].ExtensionID < entries[j].ExtensionID
-		}
-		return entries[i].Version < entries[j].Version
-	})
-	manifest := ExtensionSetManifest{Format: ExtensionSetFormatV1, SchemaVersion: ExtensionSetSchemaVersion, Extensions: entries}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ExtensionID < entries[j].ExtensionID })
+	manifest := ExtensionSetManifest{
+		Format: ExtensionSetFormatV1,
+		SchemaVersion: ExtensionSetSchemaVersion,
+		Extensions: entries,
+	}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return ExtensionSetManifest{}, nil, fmt.Errorf("encode extension set manifest: %w", err)
 	}
-	raw = append(raw, '\n')
-	return manifest, raw, nil
+	return manifest, append(raw, '\n'), nil
 }
 
 func ParseExtensionSetManifest(raw []byte) (ExtensionSetManifest, error) {
@@ -256,11 +253,19 @@ func (s *ExtensionSetService) PlanRestore(ctx context.Context, raw []byte) (Exte
 				return ExtensionSetRestorePlan{}, err
 			}
 			if !matches {
-				plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{Code: "DIFFERENT_ARTIFACT_INSTALLED", ExtensionID: entry.ExtensionID, Detail: existing.Version})
+				plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{
+					Code: "DIFFERENT_ARTIFACT_INSTALLED",
+					ExtensionID: entry.ExtensionID,
+					Detail: existing.Version,
+				})
 				continue
 			}
+			installedPackage, err := s.installer.library.Get(ctx, existing.PackageID)
+			if err != nil {
+				return ExtensionSetRestorePlan{}, err
+			}
+			resolved[entry.ExtensionID] = installedPackage
 			actions[entry.ExtensionID] = ExtensionSetRestoreAlreadyInstalled
-			resolved[entry.ExtensionID] = pkgForInstalledOrResolved(s, ctx, existing, pkg)
 		} else {
 			actions[entry.ExtensionID] = ExtensionSetRestoreInstall
 		}
@@ -270,13 +275,24 @@ func (s *ExtensionSetService) PlanRestore(ctx context.Context, raw []byte) (Exte
 		for _, entry := range manifest.Extensions {
 			pkg := resolved[entry.ExtensionID]
 			for _, dependency := range pkg.Manifest.Dependencies {
+				if dependency.Optional {
+					continue
+				}
 				dependencyEntry, ok := entries[dependency.ExtensionID]
 				if !ok {
-					plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{Code: "DEPENDENCY_MISSING_FROM_SET", ExtensionID: dependency.ExtensionID, Detail: "required by " + entry.ExtensionID})
+					plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{
+						Code: "DEPENDENCY_MISSING_FROM_SET",
+						ExtensionID: dependency.ExtensionID,
+						Detail: "required by " + entry.ExtensionID,
+					})
 					continue
 				}
 				if !versionWithinDependencyRange(dependencyEntry.Version, dependency) {
-					plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{Code: "DEPENDENCY_VERSION_MISMATCH", ExtensionID: dependency.ExtensionID, Detail: "required by " + entry.ExtensionID})
+					plan.Blockers = append(plan.Blockers, ExtensionSetRestoreBlocker{
+						Code: "DEPENDENCY_VERSION_MISMATCH",
+						ExtensionID: dependency.ExtensionID,
+						Detail: "required by " + entry.ExtensionID,
+					})
 				}
 			}
 		}
@@ -304,7 +320,13 @@ func (s *ExtensionSetService) PlanRestore(ctx context.Context, raw []byte) (Exte
 		if action == ExtensionSetRestoreInstall {
 			installCount++
 		}
-		plan.Steps = append(plan.Steps, ExtensionSetRestoreStep{Order: index + 1, ExtensionID: extensionID, Version: entries[extensionID].Version, PackageID: pkg.PackageID, Action: action})
+		plan.Steps = append(plan.Steps, ExtensionSetRestoreStep{
+			Order: index + 1,
+			ExtensionID: extensionID,
+			Version: entries[extensionID].Version,
+			PackageID: pkg.PackageID,
+			Action: action,
+		})
 	}
 	if installCount == 0 {
 		plan.Status = ExtensionSetRestoreNoop
@@ -403,14 +425,6 @@ func (s *ExtensionSetService) installationMatchesEntry(ctx context.Context, inst
 	return status.Package.Platform == entry.Platform && status.Package.Architecture == entry.Architecture, nil
 }
 
-func pkgForInstalledOrResolved(s *ExtensionSetService, ctx context.Context, installation Installation, fallback Package) Package {
-	pkg, err := s.installer.library.Get(ctx, installation.PackageID)
-	if err == nil {
-		return pkg
-	}
-	return fallback
-}
-
 func versionWithinDependencyRange(version string, dependency Dependency) bool {
 	if dependency.MinVersion != "" && compareSemanticVersions(version, dependency.MinVersion) < 0 {
 		return false
@@ -433,6 +447,9 @@ func extensionSetTopologicalOrder(entries []ExtensionSetEntry, resolved map[stri
 			continue
 		}
 		for _, dependency := range pkg.Manifest.Dependencies {
+			if dependency.Optional {
+				continue
+			}
 			if _, exists := indegree[dependency.ExtensionID]; !exists {
 				continue
 			}
@@ -448,7 +465,7 @@ func extensionSetTopologicalOrder(entries []ExtensionSetEntry, resolved map[stri
 	}
 	sort.Strings(ready)
 	order := make([]string, 0, len(entries))
-	for len(ready) != 0 {
+	for len(ready) > 0 {
 		current := ready[0]
 		ready = ready[1:]
 		order = append(order, current)
