@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -120,6 +122,19 @@ func TestCreateProducesPrivateRedactedArchive(t *testing.T) {
 	for _, required := range []string{"manifest.json", "doctor.json", "system.json", "deployment.json", "binaries.json", "logs/stagecore-hub.log"} {
 		if _, ok := entries[required]; !ok {
 			t.Fatalf("archive missing %s; entries=%v", required, mapKeys(entries))
+		}
+	}
+	for _, manifestEntry := range result.Manifest.Entries {
+		data, ok := entries[manifestEntry.Path]
+		if !ok {
+			t.Fatalf("manifest entry %s missing from archive", manifestEntry.Path)
+		}
+		digest := sha256.Sum256(data)
+		if got := hex.EncodeToString(digest[:]); got != manifestEntry.SHA256 {
+			t.Fatalf("manifest SHA-256 for %s = %s, want %s", manifestEntry.Path, manifestEntry.SHA256, got)
+		}
+		if manifestEntry.SizeBytes != len(data) {
+			t.Fatalf("manifest size for %s = %d, want %d", manifestEntry.Path, manifestEntry.SizeBytes, len(data))
 		}
 	}
 	all := strings.Builder{}
