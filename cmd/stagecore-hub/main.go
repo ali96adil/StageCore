@@ -115,6 +115,19 @@ func main() {
 		logger.Error("extension runtime probe startup failed", "error", err)
 		os.Exit(1)
 	}
+	extensionRuntimeSupervisor, err := extension.NewRuntimeSupervisor(extensionInstaller, extensionRuntimeIsolator, extensionRuntimeProbe)
+	if err != nil {
+		logger.Error("extension runtime supervisor startup failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := extensionRuntimeSupervisor.Close(); err != nil {
+			logger.Error("extension runtime supervisor shutdown failed", "error", err)
+		}
+	}()
+	if err := extensionRuntimeSupervisor.Reconcile(ctx); err != nil {
+		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
+	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
@@ -128,6 +141,7 @@ func main() {
 		httpapi.WithOperatorExtensionReadiness(userAuth, extensionReadiness),
 		httpapi.WithOperatorExtensionActivationStaging(userAuth, extensionActivationStager, application.SecurityAudit),
 		httpapi.WithOperatorExtensionRuntimeProbe(userAuth, extensionRuntimeProbe, application.SecurityAudit),
+		httpapi.WithOperatorExtensionRuntimeLifecycle(userAuth, extensionRuntimeSupervisor, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),

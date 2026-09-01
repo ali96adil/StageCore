@@ -19,6 +19,8 @@ var (
 	ErrPluginExited           = errors.New("plugin process exited")
 	ErrPluginTimeout          = errors.New("plugin execution timed out")
 	ErrPluginPermissionDenied = errors.New("plugin permission denied")
+	ErrPluginNotRunning       = errors.New("plugin process is not running")
+	ErrPluginWaitInProgress   = errors.New("plugin process wait is already in progress")
 )
 
 type Manifest struct {
@@ -36,10 +38,11 @@ type Host struct {
 	stderr         io.Writer
 	manifest       Manifest
 
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	scanner *bufio.Scanner
-	ready   *pluginprotocol.Ready
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	scanner        *bufio.Scanner
+	ready          *pluginprotocol.Ready
+	waitInProgress bool
 }
 
 func New(command string, args []string, env []string, stderr io.Writer, manifest Manifest) *Host {
@@ -136,6 +139,35 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 		return failed(req.ExecutionID, "PLUGIN_PROTOCOL_ERROR", "PLUGIN_FAILURE", err.Error()), err
 	}
 	return result, nil
+}
+
+// Wait blocks until the currently running Plugin exits. It is intended for a
+// supervisor that owns the Host lifetime. Close may be called concurrently;
+// Close will kill the child and the active waiter remains responsible for
+// reaping it.
+func (h *Host) Wait() error {
+	h.mu.Lock()
+	if h.cmd == nil {
+		h.mu.Unlock()
+		return ErrPluginNotRunning
+	}
+	if h.waitInProgress {
+		h.mu.Unlock()
+		return ErrPluginWaitInProgress
+	}
+	cmd := h.cmd
+	h.waitInProgress = true
+	h.mu.Unlock()
+
+	err := cmd.Wait()
+
+	h.mu.Lock()
+	if h.cmd == cmd {
+		h.cmd, h.stdin, h.scanner, h.ready = nil, nil, nil, nil
+	}
+	h.waitInProgress = false
+	h.mu.Unlock()
+	return err
 }
 
 func (h *Host) Close() {
@@ -238,11 +270,16 @@ func (h *Host) stopLocked() {
 	if h.stdin != nil {
 		_ = h.stdin.Close()
 	}
-	if h.cmd != nil && h.cmd.Process != nil {
-		_ = h.cmd.Process.Kill()
-		_ = h.cmd.Wait()
+	cmd := h.cmd
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+		if !h.waitInProgress {
+			_ = cmd.Wait()
+		}
 	}
-	h.cmd, h.stdin, h.scanner, h.ready = nil, nil, nil, nil
+	if !h.waitInProgress {
+		h.cmd, h.stdin, h.scanner, h.ready = nil, nil, nil, nil
+	}
 }
 
 func failed(id, code, category, message string) pluginprotocol.ExecutionResult {
