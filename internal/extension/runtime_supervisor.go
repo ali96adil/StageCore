@@ -201,10 +201,6 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	return s.statusLocked(ctx, installationID)
 }
 
-// Reconcile restores previously ENABLED intent after a Hub restart. Every
-// restored process must pass the same bounded isolated probe and fresh
-// plugin.ready verification. A failed restore is recorded as FAILED without
-// making Hub startup itself fail closed.
 func (s *RuntimeSupervisor) Reconcile(ctx context.Context) error {
 	if s == nil || s.installer == nil {
 		return fmt.Errorf("extension runtime supervisor is unavailable")
@@ -240,9 +236,6 @@ func (s *RuntimeSupervisor) Reconcile(ctx context.Context) error {
 	return joined
 }
 
-// Close stops supervised processes while preserving ENABLED intent. This lets
-// the next Hub process reconcile the desired state instead of converting a Hub
-// shutdown into an operator Disable action.
 func (s *RuntimeSupervisor) Close() error {
 	if s == nil {
 		return nil
@@ -295,6 +288,7 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 	}
 	keep := false
 	var plan RuntimeIsolationPlan
+	var isolation RuntimeIsolationAssessment
 	defer func() {
 		if !keep {
 			_ = plan.Close()
