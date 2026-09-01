@@ -12,7 +12,7 @@ F-014 does not create a second installer or updater. It packages and orchestrate
 
 - F-005 owns fresh/repeat installation;
 - F-010 owns update preflight, SHOW blocking, backup, candidate activation, postflight, and automatic rollback;
-- F-014 owns offline release-media layout, verification, architecture selection, and delegation.
+- F-014 owns offline release-media layout, verification, architecture selection, host-prerequisite gating, and delegation.
 
 ## Built media
 
@@ -106,9 +106,11 @@ The launcher selects only:
 
 Other OS/architectures fail with an actionable error rather than guessing.
 
+`verify` and `info` are intentionally usable even when the target is not yet deployment-ready. Before `install` or `update` delegates to any mutating workflow, the launcher additionally requires the F-015 runtime sandbox primitive `bwrap` (Bubblewrap). A missing sandbox engine is a fail-closed host-prerequisite error, not a reason to install extensions without isolation.
+
 ## Install delegation
 
-`stagecore-offline install` verifies the entire media, selects the matching bundle, then executes that bundle's `install.sh`.
+`stagecore-offline install` verifies the entire media, verifies deployment prerequisites, selects the matching bundle, then executes that bundle's `install.sh`.
 
 All service identity, paths, configuration preservation, checksum/ELF validation, systemd handling, readiness checks, and fresh/repeat-install semantics remain owned by F-005.
 
@@ -116,7 +118,7 @@ F-014 does not duplicate those rules.
 
 ## Update delegation
 
-`stagecore-offline update` verifies the entire media, selects the matching bundle, elevates locally when required, and executes:
+`stagecore-offline update` verifies the entire media, verifies deployment prerequisites, selects the matching bundle, elevates locally when required, and executes:
 
 ```text
 stagecore-setup update --bundle <selected-bundle>
@@ -145,9 +147,11 @@ F-014 must never bypass those gates.
 - Git;
 - a compiler/toolchain.
 
-Once the release-media archive is present on a supported target host, StageCore product bytes needed for either supported architecture are already local.
+Once the release-media archive is present on a supported target host, every StageCore-owned product byte needed for either supported architecture is already local.
 
-The base supported Linux environment is still expected to provide ordinary system administration/core utilities used by the existing deployment contract, including POSIX shell, `awk`, `find`, `grep`, `sha256sum`, systemd, and `sudo` when the operator is not already root.
+The release media is not a Linux distribution image. The base supported Linux environment is expected to provide the operating-system primitives used by the deployment/security contract, including POSIX shell, `awk`, `find`, `grep`, `sha256sum`, systemd, `sudo` when the operator is not already root, and Bubblewrap (`bwrap`) for F-015 third-party extension isolation.
+
+F-014 deliberately does not vendor an arbitrary `bwrap` executable or install a distro package itself. Bubblewrap must come from the supported target OS/image or an approved offline OS-administration package source. This preserves distro ownership of the sandbox primitive and keeps the StageCore offline launcher free of hidden package-manager/network behavior.
 
 ## Trust boundary
 
@@ -159,7 +163,7 @@ F-014 therefore does not claim a signed supply-chain trust boundary. Publisher s
 
 The F-014 launcher itself does not open or mutate the StageCore database, Vault, Project state, security state, runtime state, or extension payloads.
 
-It only verifies release media and delegates to F-005/F-010. Therefore:
+It only verifies release media/prerequisites and delegates to F-005/F-010. Therefore:
 
 - fresh/repeat installation data preservation remains F-005 policy;
 - update SHOW gate and rollback remain F-010 policy;
@@ -175,6 +179,7 @@ Foundation acceptance requires automated tests proving:
 - symlinks under release bundles are rejected;
 - checksum-manifest path traversal is rejected before checksum reads;
 - an `aarch64` host selects the arm64 bundle;
+- install/update refuse to delegate when `bwrap` is missing;
 - build-release creates both architecture entries, catalog, media checksum manifest, launcher, and portable archive;
 - the launcher contains no network downloader/package-manager command;
 - normal Core CI Test/Vet/Race and Linux ARM64 CGo-free product builds remain green.
@@ -185,9 +190,10 @@ Later cumulative Raspberry Pi qualification should build the exact current `main
 
 1. `./stagecore-offline verify` passes;
 2. `./stagecore-offline info` reports the exact revision;
-3. `./stagecore-offline install --dry-run` selects arm64 and remains non-mutating;
-4. a supported offline update delegates to F-010 and preserves its SHOW/backup/rollback guarantees;
-5. the workflow succeeds with target WAN access disabled.
+3. the supported OS/image provides `bwrap` before deployment;
+4. `./stagecore-offline install --dry-run` selects arm64 and remains non-mutating;
+5. a supported offline update delegates to F-010 and preserves its SHOW/backup/rollback guarantees;
+6. the workflow succeeds with target WAN access disabled.
 
 Fresh-media destructive qualification still requires an external rollback copy before reformatting any currently qualified StageCore disk.
 
