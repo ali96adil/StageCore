@@ -32,28 +32,28 @@ const (
 )
 
 var (
-	ErrOfflineBundleInvalid       = errors.New("invalid StageCore extension bundle")
-	ErrOfflineBundleSource        = errors.New("offline extension bundle source is not allowed on this import path")
-	ErrOfflineBundleIntegrity     = errors.New("offline extension bundle payload integrity mismatch")
-	ErrOfflineBundleTooLarge      = errors.New("offline extension bundle exceeds size limits")
-	ErrTrustedCatalogUnavailable  = errors.New("trusted extension catalog is unavailable")
+	ErrOfflineBundleInvalid      = errors.New("invalid StageCore extension bundle")
+	ErrOfflineBundleSource       = errors.New("offline extension bundle source is not allowed on this import path")
+	ErrOfflineBundleIntegrity    = errors.New("offline extension bundle payload integrity mismatch")
+	ErrOfflineBundleTooLarge     = errors.New("offline extension bundle exceeds size limits")
+	ErrTrustedCatalogUnavailable = errors.New("trusted extension catalog is unavailable")
 )
 
 type OfflineBundleMetadata struct {
-	Format               string `json:"format"`
-	ProductID            string `json:"product_id"`
-	Version              string `json:"version"`
-	Platform             string `json:"platform"`
-	Architecture         string `json:"architecture"`
-	MinAPIVersion        int    `json:"min_api_version"`
-	MaxAPIVersion        int    `json:"max_api_version"`
-	OriginalFilename     string `json:"original_filename"`
-	SigningStatus        string `json:"signing_status"`
-	NotarizationStatus   string `json:"notarization_status"`
-	ReleaseChannel       string `json:"release_channel"`
-	ReleaseNotes         string `json:"release_notes"`
-	PayloadSHA256        string `json:"payload_sha256"`
-	PayloadSizeBytes     int64  `json:"payload_size_bytes"`
+	Format             string `json:"format"`
+	ProductID          string `json:"product_id"`
+	Version            string `json:"version"`
+	Platform           string `json:"platform"`
+	Architecture       string `json:"architecture"`
+	MinAPIVersion      int    `json:"min_api_version"`
+	MaxAPIVersion      int    `json:"max_api_version"`
+	OriginalFilename   string `json:"original_filename"`
+	SigningStatus      string `json:"signing_status"`
+	NotarizationStatus string `json:"notarization_status"`
+	ReleaseChannel     string `json:"release_channel"`
+	ReleaseNotes       string `json:"release_notes"`
+	PayloadSHA256      string `json:"payload_sha256"`
+	PayloadSizeBytes   int64  `json:"payload_size_bytes"`
 }
 
 type OfflineBundleImportResult struct {
@@ -75,14 +75,13 @@ func NewOfflineBundleImporter(library *Library) (*OfflineBundleImporter, error) 
 	return &OfflineBundleImporter{library: library}, nil
 }
 
-// Import accepts operator-supplied offline bundles. It never grants OFFICIAL
+// Import accepts operator-supplied bundles. It never grants OFFICIAL
 // provenance and deliberately downgrades unverified signing/release metadata.
 func (i *OfflineBundleImporter) Import(ctx context.Context, source io.Reader, actor string) (OfflineBundleImportResult, error) {
 	return i.importBundle(ctx, source, actor, false)
 }
 
-// ImportTrustedOfficial is reserved for StageCore-owned catalog roots. Callers
-// must not expose a user-supplied path as a trusted catalog root.
+// ImportTrustedOfficial is reserved for StageCore-owned catalog roots.
 func (i *OfflineBundleImporter) ImportTrustedOfficial(ctx context.Context, source io.Reader, actor string) (OfflineBundleImportResult, error) {
 	return i.importBundle(ctx, source, actor, true)
 }
@@ -129,9 +128,11 @@ func (i *OfflineBundleImporter) importBundle(ctx context.Context, source io.Read
 	}
 
 	manifestHash := sha256.Sum256(canonicalManifest)
-	if existing, ok, err := i.findExisting(ctx, metadata, manifest, hex.EncodeToString(manifestHash[:])); err != nil {
+	existing, found, err := i.findExisting(ctx, metadata, manifest, hex.EncodeToString(manifestHash[:]))
+	if err != nil {
 		return OfflineBundleImportResult{}, err
-	} else if ok {
+	}
+	if found {
 		return OfflineBundleImportResult{
 			Package: existing, PayloadSHA256: metadata.PayloadSHA256, PayloadSizeBytes: metadata.PayloadSizeBytes,
 			TrustedOfficial: trustedOfficial, AlreadyRegistered: true,
@@ -186,6 +187,7 @@ func stageOfflineBundle(source io.Reader) (OfflineBundleMetadata, []byte, []byte
 	if err := decodeStrictBundleJSON(metadataRaw, &metadata); err != nil {
 		return OfflineBundleMetadata{}, nil, nil, nil, fmt.Errorf("%w: bundle metadata: %v", ErrOfflineBundleInvalid, err)
 	}
+	metadata = normalizeBundleMetadata(metadata)
 	if err := validateBundleMetadata(metadata); err != nil {
 		return OfflineBundleMetadata{}, nil, nil, nil, err
 	}
@@ -217,11 +219,11 @@ func stageOfflineBundle(source io.Reader) (OfflineBundleMetadata, []byte, []byte
 	if err != nil {
 		return OfflineBundleMetadata{}, nil, nil, nil, fmt.Errorf("create extension import staging file: %w", err)
 	}
-	cleanup := func(err error) (OfflineBundleMetadata, []byte, []byte, *os.File, error) {
+	cleanup := func(cause error) (OfflineBundleMetadata, []byte, []byte, *os.File, error) {
 		name := staged.Name()
 		_ = staged.Close()
 		_ = os.Remove(name)
-		return OfflineBundleMetadata{}, nil, nil, nil, nil, err
+		return OfflineBundleMetadata{}, nil, nil, nil, cause
 	}
 	if err := staged.Chmod(0o600); err != nil {
 		return cleanup(err)
@@ -265,10 +267,7 @@ func readStrictTarEntry(tr *tar.Reader, expectedName string, maxSize int64) ([]b
 }
 
 func strictRegularHeader(header *tar.Header, expectedName string) bool {
-	if header == nil || header.Name != expectedName {
-		return false
-	}
-	return header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA
+	return header != nil && header.Name == expectedName && (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA)
 }
 
 func decodeStrictBundleJSON(raw []byte, target any) error {
@@ -287,15 +286,26 @@ func decodeStrictBundleJSON(raw []byte, target any) error {
 	return nil
 }
 
-func validateBundleMetadata(metadata OfflineBundleMetadata) error {
+func normalizeBundleMetadata(metadata OfflineBundleMetadata) OfflineBundleMetadata {
 	metadata.Format = strings.TrimSpace(metadata.Format)
 	metadata.ProductID = strings.TrimSpace(metadata.ProductID)
 	metadata.Version = strings.TrimSpace(metadata.Version)
 	metadata.Platform = strings.ToLower(strings.TrimSpace(metadata.Platform))
 	metadata.Architecture = strings.ToLower(strings.TrimSpace(metadata.Architecture))
+	metadata.OriginalFilename = strings.TrimSpace(metadata.OriginalFilename)
+	metadata.SigningStatus = strings.ToUpper(strings.TrimSpace(metadata.SigningStatus))
+	metadata.NotarizationStatus = strings.ToUpper(strings.TrimSpace(metadata.NotarizationStatus))
+	metadata.ReleaseChannel = strings.ToLower(strings.TrimSpace(metadata.ReleaseChannel))
 	metadata.PayloadSHA256 = strings.ToLower(strings.TrimSpace(metadata.PayloadSHA256))
-	if metadata.Format != OfflineBundleFormatV1 || metadata.ProductID == "" || metadata.Version == "" || metadata.Platform == "" || metadata.Architecture == "" {
+	return metadata
+}
+
+func validateBundleMetadata(metadata OfflineBundleMetadata) error {
+	if metadata.Format != OfflineBundleFormatV1 || metadata.ProductID == "" || metadata.Version == "" || metadata.Platform == "" || metadata.Architecture == "" || metadata.OriginalFilename == "" {
 		return fmt.Errorf("%w: required bundle identity metadata is missing", ErrOfflineBundleInvalid)
+	}
+	if filepath.Base(metadata.OriginalFilename) != metadata.OriginalFilename {
+		return fmt.Errorf("%w: original_filename must be a base filename", ErrOfflineBundleInvalid)
 	}
 	if metadata.MinAPIVersion < 0 || metadata.MaxAPIVersion < metadata.MinAPIVersion {
 		return fmt.Errorf("%w: invalid API compatibility range", ErrOfflineBundleInvalid)
@@ -307,19 +317,35 @@ func validateBundleMetadata(metadata OfflineBundleMetadata) error {
 	if err != nil || len(decoded) != sha256.Size {
 		return fmt.Errorf("%w: payload_sha256 must be a 64-character SHA-256 hex digest", ErrOfflineBundleInvalid)
 	}
+	if !oneOf(metadata.SigningStatus, store.SoftwareSigningUnknown, store.SoftwareSigningUnsigned, store.SoftwareSigningSigned) {
+		return fmt.Errorf("%w: invalid signing_status", ErrOfflineBundleInvalid)
+	}
+	if !oneOf(metadata.NotarizationStatus, store.SoftwareNotarizationUnknown, store.SoftwareNotarizationNotApplicable, store.SoftwareNotarizationNotNotarized, store.SoftwareNotarizationNotarized) {
+		return fmt.Errorf("%w: invalid notarization_status", ErrOfflineBundleInvalid)
+	}
+	if !oneOf(metadata.ReleaseChannel, store.SoftwareChannelDevelopment, store.SoftwareChannelRelease) {
+		return fmt.Errorf("%w: invalid release_channel", ErrOfflineBundleInvalid)
+	}
 	return nil
 }
 
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func validateBundleBinding(metadata OfflineBundleMetadata, manifest Manifest) error {
-	if strings.TrimSpace(metadata.ProductID) != manifest.ExtensionID || strings.TrimSpace(metadata.Version) != manifest.Version {
+	if metadata.ProductID != manifest.ExtensionID || metadata.Version != manifest.Version {
 		return fmt.Errorf("%w: bundle identity does not match extension manifest", ErrOfflineBundleInvalid)
 	}
 	if metadata.MinAPIVersion != manifest.Compatibility.APIMin || metadata.MaxAPIVersion != manifest.Compatibility.APIMax {
 		return fmt.Errorf("%w: bundle API range does not match extension manifest", ErrOfflineBundleInvalid)
 	}
-	platform := strings.ToLower(strings.TrimSpace(metadata.Platform))
-	architecture := strings.ToLower(strings.TrimSpace(metadata.Architecture))
-	if !contains(manifest.Compatibility.Platforms, platform) || !contains(manifest.Compatibility.Architectures, architecture) {
+	if !contains(manifest.Compatibility.Platforms, metadata.Platform) || !contains(manifest.Compatibility.Architectures, metadata.Architecture) {
 		return fmt.Errorf("%w: bundle platform or architecture is not declared by extension manifest", ErrOfflineBundleInvalid)
 	}
 	return nil
@@ -339,7 +365,7 @@ func (i *OfflineBundleImporter) findExisting(ctx context.Context, metadata Offli
 			return Package{}, false, err
 		}
 		pkg := status.Package
-		if pkg.ContentHash == metadata.PayloadSHA256 && pkg.SizeBytes == metadata.PayloadSizeBytes && pkg.Platform == strings.ToLower(strings.TrimSpace(metadata.Platform)) && pkg.Architecture == strings.ToLower(strings.TrimSpace(metadata.Architecture)) {
+		if pkg.ContentHash == metadata.PayloadSHA256 && pkg.SizeBytes == metadata.PayloadSizeBytes && pkg.Platform == metadata.Platform && pkg.Architecture == metadata.Architecture {
 			return candidate, true, nil
 		}
 	}
@@ -347,7 +373,7 @@ func (i *OfflineBundleImporter) findExisting(ctx context.Context, metadata Offli
 }
 
 type TrustedCatalogSyncResult struct {
-	Root     string                      `json:"root"`
+	Root     string                      `json:"-"`
 	Imported []TrustedCatalogImportEntry `json:"imported"`
 }
 
