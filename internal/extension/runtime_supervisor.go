@@ -63,6 +63,7 @@ type supervisedRuntime struct {
 	host       runtimeLifecycleHost
 	path       string
 	ready      pluginprotocol.Ready
+	broker     *RuntimeNetworkBrokerSession
 }
 
 type RuntimeSupervisor struct {
@@ -138,8 +139,9 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 	}
 
 	// A bounded, hash-bound isolated probe must pass before an operator's ENABLED
-	// intent is persisted. Known blockers (including network broker requirements)
-	// therefore cannot leave a misleading enabled intent behind.
+	// intent is persisted. Broker-backed network permissions pass only when a
+	// scoped StageCore-owned broker session can be created inside the private
+	// sandbox; unsupported network permissions remain fail-closed.
 	if _, err := s.probe.Probe(ctx, installationID); err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
@@ -182,6 +184,11 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	if process := s.processes[installationID]; process != nil {
 		delete(s.processes, installationID)
 		process.host.Close()
+		if process.broker != nil {
+			if cleanupErr := process.broker.Close(); cleanupErr != nil {
+				return RuntimeLifecycleStatus{}, cleanupErr
+			}
+		}
 		if cleanupErr := s.removeActiveCopy(process.path); cleanupErr != nil {
 			return RuntimeLifecycleStatus{}, cleanupErr
 		}
@@ -194,10 +201,6 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	return s.statusLocked(ctx, installationID)
 }
 
-// Reconcile restores previously ENABLED intent after a Hub restart. Every
-// restored process must pass the same bounded isolated probe and fresh
-// plugin.ready verification. A failed restore is recorded as FAILED without
-// making Hub startup itself fail closed.
 func (s *RuntimeSupervisor) Reconcile(ctx context.Context) error {
 	if s == nil || s.installer == nil {
 		return fmt.Errorf("extension runtime supervisor is unavailable")
@@ -233,9 +236,6 @@ func (s *RuntimeSupervisor) Reconcile(ctx context.Context) error {
 	return joined
 }
 
-// Close stops supervised processes while preserving ENABLED intent. This lets
-// the next Hub process reconcile the desired state instead of converting a Hub
-// shutdown into an operator Disable action.
 func (s *RuntimeSupervisor) Close() error {
 	if s == nil {
 		return nil
@@ -251,6 +251,11 @@ func (s *RuntimeSupervisor) Close() error {
 	var joined error
 	for installationID, process := range processes {
 		process.host.Close()
+		if process.broker != nil {
+			if err := process.broker.Close(); err != nil {
+				joined = errors.Join(joined, err)
+			}
+		}
 		if err := s.removeActiveCopy(process.path); err != nil {
 			joined = errors.Join(joined, err)
 		}
@@ -282,13 +287,16 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 		return err
 	}
 	keep := false
+	var plan RuntimeIsolationPlan
+	var isolation RuntimeIsolationAssessment
 	defer func() {
 		if !keep {
+			_ = plan.Close()
 			_ = s.removeActiveCopy(activePath)
 		}
 	}()
 
-	plan, isolation, err := s.isolator.PlanProbe(ctx, lifecycle.InstallationID, activePath)
+	plan, isolation, err = s.isolator.PlanProbe(ctx, lifecycle.InstallationID, activePath)
 	if err != nil {
 		return err
 	}
@@ -296,9 +304,9 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 		return &RuntimeLifecycleNotReadyError{Assessment: isolation}
 	}
 	manifest := pluginhost.Manifest{
-		PluginID: installed.ExtensionID,
+		PluginID:              installed.ExtensionID,
 		CapabilityPermissions: cloneCapabilityPermissions(pkg.Manifest.Runtime.CapabilityPermissions),
-		GrantedPermissions: append([]string(nil), isolation.RuntimePermissions...),
+		GrantedPermissions:    append([]string(nil), isolation.RuntimePermissions...),
 	}
 	host := s.hostFactory(plan.Command, append([]string(nil), plan.Args...), manifest)
 	if host == nil {
@@ -332,10 +340,12 @@ func (s *RuntimeSupervisor) startGenerationLocked(ctx context.Context, lifecycle
 	}
 	process := &supervisedRuntime{
 		generation: lifecycle.Generation,
-		host: host,
-		path: activePath,
-		ready: *ready,
+		host:       host,
+		path:       activePath,
+		ready:      *ready,
+		broker:     plan.broker,
 	}
+	plan.broker = nil
 	s.processes[lifecycle.InstallationID] = process
 	keep = true
 	go s.watch(lifecycle.InstallationID, process)
@@ -352,6 +362,9 @@ func (s *RuntimeSupervisor) watch(installationID string, process *supervisedRunt
 		return
 	}
 	delete(s.processes, installationID)
+	if process.broker != nil {
+		_ = process.broker.Close()
+	}
 	_ = s.removeActiveCopy(process.path)
 	message := "plugin process exited while ENABLED"
 	if waitErr != nil {
@@ -370,14 +383,14 @@ func (s *RuntimeSupervisor) statusLocked(ctx context.Context, installationID str
 		return RuntimeLifecycleStatus{}, err
 	}
 	status := RuntimeLifecycleStatus{
-		InstallationID: installed.InstallationID,
-		PackageID: installed.PackageID,
-		ExtensionID: installed.ExtensionID,
-		Version: installed.Version,
-		DesiredState: lifecycle.DesiredState,
-		ObservedState: lifecycle.ObservedState,
-		Generation: lifecycle.Generation,
-		LastErrorCode: lifecycle.LastErrorCode,
+		InstallationID:   installed.InstallationID,
+		PackageID:        installed.PackageID,
+		ExtensionID:      installed.ExtensionID,
+		Version:          installed.Version,
+		DesiredState:     lifecycle.DesiredState,
+		ObservedState:    lifecycle.ObservedState,
+		Generation:       lifecycle.Generation,
+		LastErrorCode:    lifecycle.LastErrorCode,
 		LastErrorMessage: lifecycle.LastErrorMessage,
 	}
 	if process := s.processes[installationID]; process != nil && process.generation == lifecycle.Generation {

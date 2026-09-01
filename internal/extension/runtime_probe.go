@@ -38,21 +38,21 @@ func (e *RuntimeProbeNotReadyError) Error() string { return ErrRuntimeProbeNotRe
 func (e *RuntimeProbeNotReadyError) Unwrap() error { return ErrRuntimeProbeNotReady }
 
 type RuntimeProbeResult struct {
-	InstallationID               string               `json:"installation_id"`
-	PackageID                    string               `json:"package_id"`
-	ExtensionID                  string               `json:"extension_id"`
-	Version                      string               `json:"version"`
-	Status                       string               `json:"status"`
-	Engine                       string               `json:"engine"`
-	NetworkMode                  string               `json:"network_mode"`
-	ContentSHA256                string               `json:"content_sha256"`
-	RuntimePermissions           []string             `json:"runtime_permissions"`
-	PluginReady                  pluginprotocol.Ready `json:"plugin_ready"`
-	ProbeExecutionAuthorized     bool                 `json:"probe_execution_authorized"`
-	ProcessStarted               bool                 `json:"process_started"`
-	ProcessStopped               bool                 `json:"process_stopped"`
-	PersistentExecutionAuthorized bool                `json:"persistent_execution_authorized"`
-	PersistentExecutionBlocker   string               `json:"persistent_execution_blocker"`
+	InstallationID                 string               `json:"installation_id"`
+	PackageID                      string               `json:"package_id"`
+	ExtensionID                    string               `json:"extension_id"`
+	Version                        string               `json:"version"`
+	Status                         string               `json:"status"`
+	Engine                         string               `json:"engine"`
+	NetworkMode                    string               `json:"network_mode"`
+	ContentSHA256                  string               `json:"content_sha256"`
+	RuntimePermissions             []string             `json:"runtime_permissions"`
+	PluginReady                    pluginprotocol.Ready `json:"plugin_ready"`
+	ProbeExecutionAuthorized       bool                 `json:"probe_execution_authorized"`
+	ProcessStarted                 bool                 `json:"process_started"`
+	ProcessStopped                 bool                 `json:"process_stopped"`
+	PersistentExecutionAuthorized  bool                 `json:"persistent_execution_authorized"`
+	PersistentExecutionBlocker     string               `json:"persistent_execution_blocker"`
 }
 
 type runtimeProbeHost interface {
@@ -152,6 +152,11 @@ func (p *RuntimeProbe) Probe(ctx context.Context, installationID string) (result
 	if err != nil {
 		return RuntimeProbeResult{}, err
 	}
+	defer func() {
+		if cleanupErr := plan.Close(); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("runtime network broker cleanup failed: %w", cleanupErr))
+		}
+	}()
 	if !plannedIsolation.ProbeAuthorized {
 		return RuntimeProbeResult{}, &RuntimeProbeNotReadyError{Assessment: plannedIsolation}
 	}
