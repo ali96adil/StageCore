@@ -112,12 +112,11 @@ async function f015ExecuteUninstall(button) {
   setMessage(globalMessage, "");
   try {
     const result = await api(`/api/v1/extensions/installations/${encodeURIComponent(installationID)}`, { method: "DELETE" });
-    if (result?.cleanup_warning) {
-      setMessage(globalMessage, f015ManagerText("extensions.uninstall_cleanup_warning"), "warn");
-    } else {
-      setMessage(globalMessage, f015ManagerText("extensions.uninstall_complete"), "success");
-    }
+    const notice = result?.cleanup_warning
+      ? { text: f015ManagerText("extensions.uninstall_cleanup_warning"), kind: "warn" }
+      : { text: f015ManagerText("extensions.uninstall_complete"), kind: "success" };
     await renderExtensions();
+    setMessage(globalMessage, notice.text, notice.kind);
   } catch (error) {
     button.disabled = false;
     button.textContent = originalText;
