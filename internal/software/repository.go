@@ -32,6 +32,8 @@ type ImportParams struct {
 	NotarizationStatus string
 	ReleaseChannel     string
 	ReleaseNotes       string
+	ExpectedContentHash string
+	ExpectedSizeBytes   *int64
 }
 
 type PackageStatus struct {
@@ -59,6 +61,12 @@ func (r *Repository) ImportPackage(ctx context.Context, p ImportParams, source i
 	object, err := r.vault.ImportObject(ctx, source)
 	if err != nil {
 		return store.SoftwarePackage{}, fmt.Errorf("import software package object: %w", err)
+	}
+	if expected := strings.ToLower(strings.TrimSpace(p.ExpectedContentHash)); expected != "" && object.ContentHash != expected {
+		return store.SoftwarePackage{}, fmt.Errorf("software package content hash mismatch: got %s want %s", object.ContentHash, expected)
+	}
+	if p.ExpectedSizeBytes != nil && object.SizeBytes != *p.ExpectedSizeBytes {
+		return store.SoftwarePackage{}, fmt.Errorf("software package size mismatch: got %d want %d", object.SizeBytes, *p.ExpectedSizeBytes)
 	}
 	pkg, err := r.store.RegisterSoftwarePackage(ctx, store.RegisterSoftwarePackageParams{
 		ProductID: p.ProductID, Version: p.Version, Platform: p.Platform, Architecture: p.Architecture,
