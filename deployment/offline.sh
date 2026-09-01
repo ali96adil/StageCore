@@ -104,6 +104,10 @@ verify_media() {
   ) || fail "offline media checksum verification failed"
 }
 
+require_deployment_prerequisites() {
+  command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap (bwrap) is required before install/update so F-015 extensions can run inside the supported sandbox; install the distribution-provided bubblewrap package using an approved offline OS administration path, then retry"
+}
+
 selected_bundle() {
   arch=$(host_arch)
   relative=$(catalog_value "bundle.linux.$arch") || fail "catalog does not contain a Linux/$arch bundle"
@@ -143,6 +147,7 @@ case "$command" in
     ;;
   install)
     verify_media
+    require_deployment_prerequisites
     bundle=$(selected_bundle)
     installer="$bundle/install.sh"
     [ -x "$installer" ] && [ ! -L "$installer" ] || fail "matching bundle install.sh is missing, not executable, or symlinked"
@@ -150,6 +155,7 @@ case "$command" in
     ;;
   update)
     verify_media
+    require_deployment_prerequisites
     bundle=$(selected_bundle)
     run_update "$bundle" "$@"
     ;;
