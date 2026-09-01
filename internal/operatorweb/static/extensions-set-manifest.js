@@ -12,13 +12,13 @@ Object.assign(f015ManagerStrings, {
   "extensions.set_execute": { en: "Restore verified set", "ar-IQ": "استعادة المجموعة المتحقق منها" },
   "extensions.set_restoring": { en: "Restoring…", "ar-IQ": "جارٍ الاستعادة…" },
   "extensions.set_complete": { en: "Extension set restored. New Plugins remain disabled; review permissions before enabling them.", "ar-IQ": "تمت استعادة مجموعة الإضافات. تبقى الإضافات الجديدة معطلة؛ راجع الصلاحيات قبل تفعيلها." },
-  "extensions.set_noop": { en: "This Hub already has the exact installed extension set.", "ar-IQ": "هذا الـ Hub يحتوي مسبقاً على نفس مجموعة الإضافات المثبتة بالضبط." },
+  "extensions.set_noop": { en: "Every extension in this file is already installed with the exact verified content. No changes are required.", "ar-IQ": "كل إضافة موجودة في هذا الملف مثبتة مسبقاً بنفس المحتوى المتحقق منه. لا توجد تغييرات مطلوبة." },
   "extensions.set_blocked": { en: "Restore is blocked until every exact required package is available and compatible in the local library.", "ar-IQ": "الاستعادة محجوبة إلى أن تتوفر كل الحزم المطلوبة المطابقة والمتوافقة في المكتبة المحلية." },
-  "extensions.set_safety": { en: "Restore never imports permission approvals or runtime enable state. Newly restored Plugins stay DISABLED and require a fresh permission review.", "ar-IQ": "الاستعادة لا تستورد موافقات الصلاحيات ولا حالة التفعيل. تبقى الإضافات المستعادة حديثاً DISABLED وتحتاج مراجعة صلاحيات جديدة." },
+  "extensions.set_safety": { en: "Restore is non-destructive: it does not remove other installed extensions. It never imports permission approvals or runtime enable state. Newly restored Plugins stay DISABLED and require a fresh permission review.", "ar-IQ": "الاستعادة غير إتلافية: لا تحذف الإضافات الأخرى المثبتة. كما لا تستورد موافقات الصلاحيات ولا حالة التفعيل. تبقى الإضافات المستعادة حديثاً DISABLED وتحتاج مراجعة صلاحيات جديدة." },
   "extensions.set_choose_file": { en: "Choose a StageCore extension set JSON file first.", "ar-IQ": "اختر أولاً ملف JSON لمجموعة إضافات StageCore." },
   "extensions.set_invalid": { en: "The extension set file is invalid.", "ar-IQ": "ملف مجموعة الإضافات غير صالح." },
   "extensions.set_show_locked": { en: "Extension restore is blocked while a SHOW session is active.", "ar-IQ": "استعادة الإضافات محجوبة أثناء وجود جلسة SHOW نشطة." },
-  "extensions.set_confirm": { en: "Restore this verified extension set? New Plugins will remain disabled and permission approvals will not be restored.", "ar-IQ": "استعادة مجموعة الإضافات المتحقق منها؟ ستبقى الإضافات الجديدة معطلة ولن تتم استعادة موافقات الصلاحيات." },
+  "extensions.set_confirm": { en: "Restore this verified extension set? Other installed extensions will not be removed. New Plugins will remain disabled and permission approvals will not be restored.", "ar-IQ": "استعادة مجموعة الإضافات المتحقق منها؟ لن تُحذف الإضافات الأخرى المثبتة، وستبقى الإضافات الجديدة معطلة ولن تتم استعادة موافقات الصلاحيات." },
 });
 
 let f015ExtensionSetRaw = "";
