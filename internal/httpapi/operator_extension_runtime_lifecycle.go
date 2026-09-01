@@ -27,6 +27,7 @@ func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/enable", withPermission(users, userauth.PermissionPluginManage, h.enable))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/disable", withPermission(users, userauth.PermissionPluginManage, h.disable))
 		s.mux.HandleFunc("DELETE /api/v1/extensions/installations/{installation_id}", withPermission(users, userauth.PermissionPluginManage, h.uninstall))
+		registerOperatorExtensionMaintenanceRoutes(s.mux, users, supervisor, audit)
 	}
 }
 
