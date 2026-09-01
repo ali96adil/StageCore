@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/osc"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
+	"github.com/ali96adil/StageCore/internal/runtimebroker"
 )
 
 type oscParams struct {
@@ -99,8 +101,6 @@ func runReceive(args []string) error {
 		}
 		message, err := osc.DecodeMessage(buffer[:n])
 		if err != nil {
-			// A malformed UDP datagram is isolated to itself. It must not kill the
-			// external Plugin process or invent an input event.
 			continue
 		}
 		value, err := inputValue(message.Arguments)
@@ -160,7 +160,9 @@ func execute(req pluginprotocol.ExecutionRequest) pluginprotocol.ExecutionResult
 		base.ErrorMessage = "invalid OSC parameters"
 		return base
 	}
-	if _, err := osc.EncodeMessage(osc.Message{Address: p.Address, Arguments: p.Arguments}); err != nil {
+	message := osc.Message{Address: p.Address, Arguments: p.Arguments}
+	packet, err := osc.EncodeMessage(message)
+	if err != nil {
 		base.Status = "FAILED"
 		base.ErrorCode = "OSC_INVALID_PARAMETERS"
 		base.ErrorCategory = "VALIDATION"
@@ -175,10 +177,12 @@ func execute(req pluginprotocol.ExecutionRequest) pluginprotocol.ExecutionResult
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMS)*time.Millisecond)
 	defer cancel()
 
-	sendResult, err := (osc.Sender{WriteTimeout: time.Duration(timeoutMS) * time.Millisecond}).Send(
+	sendResult, err := sendOSC(
 		ctx,
 		osc.Endpoint{Host: req.Target.Host, Port: req.Target.Port},
-		osc.Message{Address: p.Address, Arguments: p.Arguments},
+		message,
+		packet,
+		time.Duration(timeoutMS)*time.Millisecond,
 	)
 	if err != nil {
 		switch sendResult.Status {
@@ -201,6 +205,35 @@ func execute(req pluginprotocol.ExecutionRequest) pluginprotocol.ExecutionResult
 	base.Status = sendResult.Status
 	base.AckLevel = sendResult.AckLevel
 	return base
+}
+
+func sendOSC(ctx context.Context, endpoint osc.Endpoint, message osc.Message, packet []byte, timeout time.Duration) (osc.SendResult, error) {
+	client, brokerConfigured, err := runtimebroker.FromEnvironment()
+	if err != nil {
+		return osc.SendResult{Status: "FAILED", AckLevel: "NONE"}, err
+	}
+	if !brokerConfigured {
+		return (osc.Sender{WriteTimeout: timeout}).Send(ctx, endpoint, message)
+	}
+
+	started := time.Now()
+	bytesSent, err := client.SendUDP(ctx, endpoint.Host, endpoint.Port, packet)
+	if err != nil {
+		status := "FAILED"
+		switch {
+		case errors.Is(err, context.Canceled):
+			status = "CANCELLED"
+		case errors.Is(err, context.DeadlineExceeded):
+			status = "TIMED_OUT"
+		default:
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				status = "TIMED_OUT"
+			}
+		}
+		return osc.SendResult{Status: status, AckLevel: "NONE", BytesSent: bytesSent, Duration: time.Since(started)}, err
+	}
+	return osc.SendResult{Status: "COMPLETED", AckLevel: "TRANSPORT_ONLY", BytesSent: bytesSent, Duration: time.Since(started)}, nil
 }
 
 func write(out *bufio.Writer, v any) {
