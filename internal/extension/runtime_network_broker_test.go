@@ -20,6 +20,12 @@ func TestRuntimeNetworkBrokerSendsApprovedUDPAndCleansSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len([]byte(session.HostSocketPath())) > runtimeNetworkBrokerMaxSocketPathBytes {
+		t.Fatalf("broker socket path is too long: %s", session.HostSocketPath())
+	}
+	if strings.Contains(session.HostSocketPath(), h.installer.root) {
+		t.Fatalf("broker socket path should not inherit potentially long install root: %s", session.HostSocketPath())
+	}
 
 	udpListener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -151,6 +157,25 @@ func TestRuntimeNetworkBrokerRejectsHostnameBadTokenAndUnapprovedOperation(t *te
 	}
 	if response.ErrorCode != RuntimeNetworkBrokerErrorTarget {
 		t.Fatalf("hostname response=%+v", response)
+	}
+}
+
+func TestRuntimeNetworkBrokerRejectsTrailingJSONGarbage(t *testing.T) {
+	h := newDependencyTestHarness(t)
+	broker, err := NewRuntimeNetworkBroker(h.installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := broker.OpenSession([]string{RuntimeNetworkBrokerPermissionUDPSend})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	raw := []byte(`{"type":"network.request","schema_version":1,"request_id":"req","operation":"udp.send","token":"` + session.Token() + `","host":"127.0.0.1","port":9000,"payload_base64":"eA=="} trailing`)
+	response := session.handleRequest(raw)
+	if response.ErrorCode != RuntimeNetworkBrokerErrorRequest || response.Status != RuntimeNetworkBrokerStatusFailed {
+		t.Fatalf("trailing garbage response=%+v", response)
 	}
 }
 

@@ -3,14 +3,15 @@ package extension
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,6 +31,9 @@ const (
 	RuntimeNetworkBrokerSandboxDirectory   = "/stagecore/network"
 	RuntimeNetworkBrokerSandboxSocket      = "/stagecore/network/n.sock"
 	runtimeNetworkBrokerSocketName         = "n.sock"
+	runtimeNetworkBrokerRootPrefix         = "scnb-"
+	runtimeNetworkBrokerSessionPrefix      = "s-"
+	runtimeNetworkBrokerMaxSocketPathBytes = 100
 	runtimeNetworkBrokerMaxRequestBytes    = 128 * 1024
 	runtimeNetworkBrokerMaxUDPPayloadBytes = 65507
 	runtimeNetworkBrokerMaxConnections     = 4
@@ -94,12 +98,11 @@ func NewRuntimeNetworkBroker(installer *Installer) (*RuntimeNetworkBroker, error
 	if installer == nil || strings.TrimSpace(installer.root) == "" {
 		return nil, fmt.Errorf("runtime network broker requires installer")
 	}
-	runtimeRoot := filepath.Join(installer.root, "runtime")
-	root := filepath.Join(runtimeRoot, "broker")
-	if err := ensureManagedDirectory(runtimeRoot); err != nil {
+	root, err := runtimeNetworkBrokerRoot(installer.root)
+	if err != nil {
 		return nil, err
 	}
-	if err := ensureManagedDirectory(root); err != nil {
+	if err := ensureRuntimeNetworkBrokerRoot(root); err != nil {
 		return nil, err
 	}
 	broker := &RuntimeNetworkBroker{root: root}
@@ -107,6 +110,47 @@ func NewRuntimeNetworkBroker(installer *Installer) (*RuntimeNetworkBroker, error
 		return nil, err
 	}
 	return broker, nil
+}
+
+func runtimeNetworkBrokerRoot(installerRoot string) (string, error) {
+	cleanRoot, err := filepath.Abs(filepath.Clean(strings.TrimSpace(installerRoot)))
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime network broker identity: %w", err)
+	}
+	sum := sha256.Sum256([]byte(cleanRoot))
+	name := runtimeNetworkBrokerRootPrefix + hex.EncodeToString(sum[:8])
+	bases := []string{filepath.Clean(os.TempDir())}
+	if bases[0] != "/tmp" {
+		bases = append(bases, "/tmp")
+	}
+	for _, base := range bases {
+		if !filepath.IsAbs(base) {
+			continue
+		}
+		root := filepath.Join(base, name)
+		probePath := filepath.Join(root, runtimeNetworkBrokerSessionPrefix+strings.Repeat("0", 16), runtimeNetworkBrokerSocketName)
+		if len([]byte(probePath)) <= runtimeNetworkBrokerMaxSocketPathBytes {
+			return root, nil
+		}
+	}
+	return "", fmt.Errorf("no sufficiently short runtime network broker socket root is available")
+}
+
+func ensureRuntimeNetworkBrokerRoot(root string) error {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(root, 0o700); err != nil {
+			return fmt.Errorf("create runtime network broker root: %w", err)
+		}
+		return syncActivationDirectory(filepath.Dir(root))
+	}
+	if err != nil {
+		return fmt.Errorf("inspect runtime network broker root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("runtime network broker root must be a private non-symlink directory")
+	}
+	return nil
 }
 
 func (b *RuntimeNetworkBroker) Supports(permissions []string) bool {
@@ -129,22 +173,8 @@ func (b *RuntimeNetworkBroker) OpenSession(permissions []string) (*RuntimeNetwor
 	if !b.Supports(permissions) {
 		return nil, fmt.Errorf("runtime network broker does not support requested network permissions")
 	}
-	if err := inspectManagedDirectory(b.root); err != nil {
+	if err := ensureRuntimeNetworkBrokerRoot(b.root); err != nil {
 		return nil, err
-	}
-
-	directory, err := os.MkdirTemp(b.root, "b-")
-	if err != nil {
-		return nil, fmt.Errorf("create runtime network broker directory: %w", err)
-	}
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.RemoveAll(directory)
-		}
-	}()
-	if err := os.Chmod(directory, 0o700); err != nil {
-		return nil, fmt.Errorf("secure runtime network broker directory: %w", err)
 	}
 
 	tokenBytes := make([]byte, 32)
@@ -152,7 +182,22 @@ func (b *RuntimeNetworkBroker) OpenSession(permissions []string) (*RuntimeNetwor
 		return nil, fmt.Errorf("generate runtime network broker token: %w", err)
 	}
 	token := hex.EncodeToString(tokenBytes)
+
+	directory, err := b.createSessionDirectory()
+	if err != nil {
+		return nil, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.RemoveAll(directory)
+		}
+	}()
+
 	socketPath := filepath.Join(directory, runtimeNetworkBrokerSocketName)
+	if len([]byte(socketPath)) > runtimeNetworkBrokerMaxSocketPathBytes {
+		return nil, fmt.Errorf("runtime network broker socket path exceeds safe platform limit")
+	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if err != nil {
 		return nil, fmt.Errorf("listen on runtime network broker socket: %w", err)
@@ -184,6 +229,22 @@ func (b *RuntimeNetworkBroker) OpenSession(permissions []string) (*RuntimeNetwor
 	session.wg.Add(1)
 	go session.serve()
 	return session, nil
+}
+
+func (b *RuntimeNetworkBroker) createSessionDirectory() (string, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		randomID := make([]byte, 8)
+		if _, err := rand.Read(randomID); err != nil {
+			return "", fmt.Errorf("generate runtime network broker session ID: %w", err)
+		}
+		directory := filepath.Join(b.root, runtimeNetworkBrokerSessionPrefix+hex.EncodeToString(randomID))
+		if err := os.Mkdir(directory, 0o700); err == nil {
+			return directory, nil
+		} else if !errors.Is(err, os.ErrExist) {
+			return "", fmt.Errorf("create runtime network broker session directory: %w", err)
+		}
+	}
+	return "", fmt.Errorf("create unique runtime network broker session directory")
 }
 
 func (s *RuntimeNetworkBrokerSession) HostDirectory() string {
@@ -298,7 +359,7 @@ func (s *RuntimeNetworkBrokerSession) handleRequest(raw []byte) RuntimeNetworkBr
 		return response
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err == nil {
+	if err := decoder.Decode(&extra); err != io.EOF {
 		response.ErrorCode = RuntimeNetworkBrokerErrorRequest
 		response.ErrorMessage = "network broker request contains trailing data"
 		return response
@@ -359,7 +420,7 @@ func (s *RuntimeNetworkBrokerSession) handleRequest(raw []byte) RuntimeNetworkBr
 }
 
 func (b *RuntimeNetworkBroker) cleanRoot() error {
-	if err := inspectManagedDirectory(b.root); err != nil {
+	if err := ensureRuntimeNetworkBrokerRoot(b.root); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(b.root)
@@ -367,7 +428,7 @@ func (b *RuntimeNetworkBroker) cleanRoot() error {
 		return fmt.Errorf("read runtime network broker root: %w", err)
 	}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "b-") {
+		if !strings.HasPrefix(entry.Name(), runtimeNetworkBrokerSessionPrefix) {
 			return fmt.Errorf("unexpected entry in managed runtime network broker root: %s", entry.Name())
 		}
 		fullPath := filepath.Join(b.root, entry.Name())
@@ -391,8 +452,4 @@ func runtimeNetworkPermissions(permissions []string) []string {
 		}
 	}
 	return out
-}
-
-func runtimeNetworkBrokerContext() context.Context {
-	return context.Background()
 }
