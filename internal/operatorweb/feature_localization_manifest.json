@@ -126,6 +126,19 @@
       "ui_keys": ["first_run.title", "first_run.summary", "first_run.step_identity", "first_run.step_preferences", "first_run.step_project", "first_run.identity_title", "first_run.identity_detail", "first_run.hub", "first_run.fingerprint", "first_run.local_only", "first_run.continue", "first_run.back", "first_run.skip", "first_run.preferences_title", "first_run.preferences_detail", "first_run.language", "first_run.arabic", "first_run.english", "first_run.appearance", "first_run.system", "first_run.light", "first_run.dark", "first_run.accent", "first_run.blue", "first_run.teal", "first_run.violet", "first_run.amber", "first_run.project_title", "first_run.project_detail", "first_run.project_name", "first_run.project_description", "first_run.create_continue", "first_run.creating", "first_run.handoff", "first_run.error"]
     },
     {
+      "feature_id": "F-021",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/device-profiles.js"],
+      "name": {"en": "Device Profile Library and Guided Configuration", "ar-IQ": "مكتبة تعريف الأجهزة والإعداد الموجّه"},
+      "summary": {"en": "Turns trusted device profile knowledge into a bilingual no-code Project target workflow while keeping normal Project APIs authoritative.", "ar-IQ": "تحوّل معرفة ملفات تعريف الأجهزة الموثوقة إلى مسار ثنائي اللغة بدون كود لإضافة أهداف المشروع مع بقاء واجهات المشروع الاعتيادية هي المرجع."},
+      "actions": [
+        {"action_id": "choose-device-profile", "label": {"en": "Choose Device Profile", "ar-IQ": "اختيار ملف تعريف الجهاز"}},
+        {"action_id": "review-device-configuration", "label": {"en": "Review Device Configuration", "ar-IQ": "مراجعة إعداد الجهاز"}},
+        {"action_id": "add-profile-target", "label": {"en": "Add Device to Project", "ar-IQ": "إضافة الجهاز إلى المشروع"}}
+      ],
+      "ui_keys": ["device_profiles.title", "device_profiles.summary", "device_profiles.profile", "device_profiles.logical_name", "device_profiles.capabilities", "device_profiles.protocol", "device_profiles.review", "device_profiles.save", "device_profiles.review_note", "device_profiles.preview", "device_profiles.preview_ready", "device_profiles.preview_changed", "device_profiles.advanced", "device_profiles.saved", "device_profiles.unavailable", "device_profiles.required"]
+    },
+    {
       "feature_id": "F-015",
       "localization_mode": "keyed",
       "owner_assets": ["static/extensions.js", "static/extensions.css", "static/extensions-uninstall.js", "static/extensions-maintenance.js", "static/extensions-set-manifest.js"],
