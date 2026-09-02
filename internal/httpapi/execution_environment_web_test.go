@@ -29,7 +29,15 @@ func TestEmbeddedExecutionEnvironmentManagerBundle(t *testing.T) {
 		t.Fatalf("F-025 bundle status=%d content-type=%q", assetRes.Code, assetRes.Header().Get("Content-Type"))
 	}
 	body := assetRes.Body.String()
-	if !strings.Contains(body, "stagecore.adapter.vdmx") || !strings.Contains(body, "workspace.page.environments") {
-		t.Fatal("F-025 bundle is missing environment manager or workspace-profile bridge")
+	for _, token := range []string{
+		"stagecore.adapter.vdmx",
+		"workspace.page.environments",
+		"f025.capture_file",
+		`"vault-status"`,
+		"body: file",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("F-025 bundle is missing token %q", token)
+		}
 	}
 }
