@@ -188,7 +188,7 @@ public actor CompanionBootstrap {
             } catch HubSecurityClientError.hubRejected(let code) where code == "COMPANION_UNPAIRED" {
                 let receipt = try await securityClient.requestPairing()
                 phase = .pairingRequired
-                event(.pairingRequired(phase == .pairingRequired ? receipt : receipt))
+                event(.pairingRequired(receipt))
                 phase = .waitingForApproval
                 event(.phaseChanged(phase))
                 try await waitForPairingApproval(receipt)
