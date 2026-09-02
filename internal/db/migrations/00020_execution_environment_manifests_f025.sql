@@ -61,7 +61,37 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- Project revision forks clone the complete editable configuration graph. Keep
+-- execution-environment requirements with that graph while retaining the same
+-- canonical bytes/content hash and recording the new revision's creation actor/time.
+-- +goose StatementBegin
+CREATE TRIGGER f025_clone_execution_environment_manifests_after_revision_insert
+AFTER INSERT ON project_revisions
+WHEN NEW.parent_revision_id IS NOT NULL
+BEGIN
+    INSERT INTO execution_environment_manifests (
+        environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
+        manifest_json, content_sha256, created_by, created_at_us
+    )
+    SELECT
+        lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+        lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+        lower(hex(randomblob(6))),
+        NEW.revision_id,
+        source.environment_key,
+        source.adapter_key,
+        source.application_key,
+        source.manifest_json,
+        source.content_sha256,
+        NEW.created_by,
+        NEW.created_at_us
+    FROM execution_environment_manifests source
+    WHERE source.revision_id = NEW.parent_revision_id;
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS f025_clone_execution_environment_manifests_after_revision_insert;
 DROP TRIGGER IF EXISTS f012_lock_execution_environment_manifests_delete;
 DROP TRIGGER IF EXISTS f012_lock_execution_environment_manifests_update;
 DROP TRIGGER IF EXISTS f012_lock_execution_environment_manifests_insert;
