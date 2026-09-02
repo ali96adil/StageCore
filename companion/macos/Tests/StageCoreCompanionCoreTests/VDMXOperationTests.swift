@@ -18,7 +18,7 @@ final class VDMXOperationTests: XCTestCase {
         let outcome = await provider.perform(
             kind: .open,
             manifest: manifest(launch: .asset(workspace.path)),
-            sourceManifestSHA256: hash
+            sourceManifestSHA256: manifestHash
         )
 
         XCTAssertEqual(outcome.status, .completed)
@@ -43,7 +43,7 @@ final class VDMXOperationTests: XCTestCase {
         let outcome = await provider.perform(
             kind: .open,
             manifest: manifest(launch: .locator(workspace.absoluteString)),
-            sourceManifestSHA256: hash
+            sourceManifestSHA256: manifestHash
         )
 
         XCTAssertEqual(outcome.status, .completed)
@@ -62,7 +62,7 @@ final class VDMXOperationTests: XCTestCase {
             opener: { target, app in recorder.record(target: target, application: app) }
         )
 
-        var outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(workspace.path)), sourceManifestSHA256: hash)
+        var outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(workspace.path)), sourceManifestSHA256: manifestHash)
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_APPLICATION_NOT_FOUND")
         XCTAssertEqual(recorder.count, 0)
@@ -76,7 +76,7 @@ final class VDMXOperationTests: XCTestCase {
         outcome = await missingTargetProvider.perform(
             kind: .open,
             manifest: manifest(launch: .asset(root.appendingPathComponent("Missing.vdmx6").path)),
-            sourceManifestSHA256: hash
+            sourceManifestSHA256: manifestHash
         )
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_LAUNCH_TARGET_UNAVAILABLE")
@@ -97,12 +97,12 @@ final class VDMXOperationTests: XCTestCase {
             opener: { target, app in recorder.record(target: target, application: app) }
         )
 
-        var outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(symlink.path)), sourceManifestSHA256: hash)
+        var outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(symlink.path)), sourceManifestSHA256: manifestHash)
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_LAUNCH_TARGET_UNAVAILABLE")
         XCTAssertEqual(recorder.count, 0)
 
-        outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(workspace.path)), sourceManifestSHA256: hash)
+        outcome = await provider.perform(kind: .open, manifest: manifest(launch: .asset(workspace.path)), sourceManifestSHA256: manifestHash)
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_OPEN_FAILED")
         XCTAssertEqual(recorder.count, 1)
@@ -119,7 +119,7 @@ final class VDMXOperationTests: XCTestCase {
         let outcome = await provider.perform(
             kind: .captureSnapshot,
             manifest: manifest(launch: .asset(workspace.path)),
-            sourceManifestSHA256: hash.uppercased()
+            sourceManifestSHA256: manifestHash.uppercased()
         )
 
         XCTAssertEqual(outcome.status, .completed)
@@ -127,7 +127,7 @@ final class VDMXOperationTests: XCTestCase {
         XCTAssertEqual(snapshot["schema_version"], .int(1))
         XCTAssertEqual(snapshot["environment_key"], .string("video-main"))
         XCTAssertEqual(snapshot["adapter_key"], .string("stagecore.adapter.vdmx"))
-        XCTAssertEqual(snapshot["source_manifest_sha256"], .string(hash))
+        XCTAssertEqual(snapshot["source_manifest_sha256"], .string(manifestHash))
         XCTAssertEqual(snapshot["capture_status"], .string("PARTIAL"))
         guard case .array(let items) = snapshot["items"] else {
             return XCTFail("snapshot items missing")
@@ -150,18 +150,18 @@ final class VDMXOperationTests: XCTestCase {
         let provider = VDMXOperationProvider(applicationCandidates: [], opener: { _, _ in true })
         XCTAssertFalse(provider.supportedOperations.contains(.reconnect))
 
-        var outcome = await provider.perform(kind: .reconnect, manifest: manifest(launch: .locator("/tmp/show.vdmx6")), sourceManifestSHA256: hash)
+        var outcome = await provider.perform(kind: .reconnect, manifest: manifest(launch: .locator("/tmp/show.vdmx6")), sourceManifestSHA256: manifestHash)
         XCTAssertEqual(outcome.status, .unsupported)
         XCTAssertEqual(outcome.errorCode, "ENVIRONMENT_OPERATION_UNSUPPORTED")
 
         var invalid = manifest(launch: .locator("/tmp/show.vdmx6"))
         invalid["adapter_key"] = .string("stagecore.adapter.qlab")
-        outcome = await provider.perform(kind: .open, manifest: invalid, sourceManifestSHA256: hash)
+        outcome = await provider.perform(kind: .open, manifest: invalid, sourceManifestSHA256: manifestHash)
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_MANIFEST_INVALID")
     }
 
-    private let hash = String(repeating: "a", count: 64)
+    private let manifestHash = String(repeating: "a", count: 64)
 
     private enum LaunchFixture {
         case asset(String)
