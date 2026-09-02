@@ -54,6 +54,14 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	if err != nil {
 		return domain.ProjectRevision{}, err
 	}
+	executionEnvironmentSnapshots := make(map[string][]ExecutionEnvironmentSnapshot, len(executionEnvironments))
+	for _, environment := range executionEnvironments {
+		snapshots, err := s.ListExecutionEnvironmentSnapshots(ctx, environment.ID)
+		if err != nil {
+			return domain.ProjectRevision{}, err
+		}
+		executionEnvironmentSnapshots[environment.ID] = snapshots
+	}
 
 	newRevisionID, err := stageid.New()
 	if err != nil {
@@ -113,6 +121,27 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			string(canonical), environment.ContentSHA256, createdBy, nowUS, machineRoleID,
 		); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment: %w", err)
+		}
+		for _, environmentSnapshot := range executionEnvironmentSnapshots[environment.ID] {
+			newEnvironmentSnapshotID, err := stageid.New()
+			if err != nil {
+				return domain.ProjectRevision{}, err
+			}
+			snapshotCanonical, err := executionenv.SnapshotCanonicalBytes(environmentSnapshot.Snapshot)
+			if err != nil {
+				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot canonical data: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO execution_environment_snapshots (
+					environment_snapshot_id, environment_manifest_id, revision_id, source_manifest_sha256,
+					snapshot_json, content_sha256, created_by, created_at_us
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				newEnvironmentSnapshotID, newEnvironmentID, newRevisionID,
+				environmentSnapshot.Snapshot.SourceManifestSHA256, string(snapshotCanonical),
+				environmentSnapshot.ContentSHA256, createdBy, nowUS,
+			); err != nil {
+				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot: %w", err)
+			}
 		}
 	}
 
