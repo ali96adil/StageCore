@@ -29,10 +29,12 @@ type RuntimeChannel struct {
 	store *store.Store
 	auth  *companionauth.Service
 
-	mu             sync.Mutex
-	connections    map[string]*runtimeConnection
-	executions     map[string]*runtimeExecution
-	executionOrder []string
+	mu              sync.Mutex
+	connections     map[string]*runtimeConnection
+	executions      map[string]*runtimeExecution
+	executionOrder  []string
+	inspections     map[string]*runtimeInspection
+	inspectionOrder []string
 }
 
 type runtimeConnection struct {
@@ -119,6 +121,7 @@ func NewRuntime(s *store.Store, auth *companionauth.Service) *RuntimeChannel {
 		store: s, auth: auth,
 		connections: make(map[string]*runtimeConnection),
 		executions:  make(map[string]*runtimeExecution),
+		inspections: make(map[string]*runtimeInspection),
 	}
 }
 
@@ -301,6 +304,8 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			}
 		case "execution.result":
 			c.acceptResult(connection, data)
+		case "inspection.result":
+			c.acceptInspectionResult(connection, data)
 		default:
 			return
 		}
