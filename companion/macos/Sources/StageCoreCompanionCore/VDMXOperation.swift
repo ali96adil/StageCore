@@ -78,7 +78,9 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
         else {
             return failure(code: "VDMX_LAUNCH_TARGET_UNAVAILABLE", summary: "declared VDMX launch target is missing or cannot be opened safely")
         }
-        try? Task.checkCancellation()
+        if Task.isCancelled {
+            return failure(code: "VDMX_OPERATION_CANCELLED", summary: "VDMX operation was cancelled")
+        }
         guard await opener(target, application) else {
             return failure(code: "VDMX_OPEN_FAILED", summary: "macOS could not open the declared target with VDMX")
         }
@@ -286,6 +288,11 @@ private struct VDMXOperationApplication: Decodable {
 private struct VDMXOperationAsset: Decodable {
     let key: String
     let locator: String
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case locator
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
