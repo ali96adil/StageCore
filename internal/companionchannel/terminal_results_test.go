@@ -2,6 +2,7 @@ package companionchannel_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/companionchannel"
@@ -32,7 +33,7 @@ func TestSimulatedChannelReportsTimeoutExplicitlyAndCachesIt(t *testing.T) {
 		t.Fatalf("timeout=%#v", first)
 	}
 	second := channel.Execute(context.Background(), request)
-	if second != first {
+	if !reflect.DeepEqual(second, first) {
 		t.Fatalf("timeout result was not cached: second=%#v first=%#v", second, first)
 	}
 	if got := channel.ExecutionCount("companion-timeout"); got != 1 {
