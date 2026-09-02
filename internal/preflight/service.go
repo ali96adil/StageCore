@@ -37,31 +37,31 @@ type Check struct {
 }
 
 type RoleStatus struct {
-	MachineRoleID           string                     `json:"machine_role_id"`
-	RoleKey                 string                     `json:"role_key"`
-	Required                bool                       `json:"required"`
-	AssignmentID            string                     `json:"assignment_id,omitempty"`
-	CompanionID             string                     `json:"companion_id,omitempty"`
-	CompanionName           string                     `json:"companion_name,omitempty"`
-	Connected               bool                       `json:"connected"`
-	TrustState              domain.CompanionTrustState `json:"trust_state,omitempty"`
-	Readiness               domain.CompanionReadiness  `json:"readiness,omitempty"`
-	RoleState               domain.RoleAssignmentState `json:"role_state"`
+	MachineRoleID            string                     `json:"machine_role_id"`
+	RoleKey                  string                     `json:"role_key"`
+	Required                 bool                       `json:"required"`
+	AssignmentID             string                     `json:"assignment_id,omitempty"`
+	CompanionID              string                     `json:"companion_id,omitempty"`
+	CompanionName            string                     `json:"companion_name,omitempty"`
+	Connected                bool                       `json:"connected"`
+	TrustState               domain.CompanionTrustState `json:"trust_state,omitempty"`
+	Readiness                domain.CompanionReadiness  `json:"readiness,omitempty"`
+	RoleState                domain.RoleAssignmentState `json:"role_state"`
 	AppliedRuntimeSnapshotID string                     `json:"applied_runtime_snapshot_id,omitempty"`
 	Status                   Status                     `json:"status"`
 	Summary                  string                     `json:"summary"`
 }
 
 type MediaStatus struct {
-	MachineRoleID   string `json:"machine_role_id"`
-	RoleKey         string `json:"role_key"`
-	MediaAssetID    string `json:"media_asset_id"`
+	MachineRoleID    string `json:"machine_role_id"`
+	RoleKey          string `json:"role_key"`
+	MediaAssetID     string `json:"media_asset_id"`
 	ContentVersionID string `json:"content_version_id"`
-	ContentHash     string `json:"content_hash"`
-	SizeBytes       int64  `json:"size_bytes"`
-	Required        bool   `json:"required"`
-	Status          Status `json:"status"`
-	Summary         string `json:"summary"`
+	ContentHash      string `json:"content_hash"`
+	SizeBytes        int64  `json:"size_bytes"`
+	Required         bool   `json:"required"`
+	Status           Status `json:"status"`
+	Summary          string `json:"summary"`
 }
 
 type StorageStatus struct {
@@ -75,15 +75,15 @@ type StorageStatus struct {
 }
 
 type Report struct {
-	Status          Status        `json:"status"`
-	ProjectID       string        `json:"project_id"`
-	RuntimeSnapshotID string      `json:"runtime_snapshot_id,omitempty"`
-	SnapshotVersion int64         `json:"snapshot_version,omitempty"`
-	EvaluatedAt     time.Time     `json:"evaluated_at"`
-	Checks          []Check       `json:"checks"`
-	Roles           []RoleStatus  `json:"roles"`
-	Media           []MediaStatus `json:"media"`
-	Storage         StorageStatus `json:"storage"`
+	Status            Status        `json:"status"`
+	ProjectID         string        `json:"project_id"`
+	RuntimeSnapshotID string        `json:"runtime_snapshot_id,omitempty"`
+	SnapshotVersion   int64         `json:"snapshot_version,omitempty"`
+	EvaluatedAt       time.Time     `json:"evaluated_at"`
+	Checks            []Check       `json:"checks"`
+	Roles             []RoleStatus  `json:"roles"`
+	Media             []MediaStatus `json:"media"`
+	Storage           StorageStatus `json:"storage"`
 }
 
 func (r Report) AllowsShow() bool { return r.Status != Block }
@@ -91,12 +91,13 @@ func (r Report) AllowsShow() bool { return r.Status != Block }
 type ConnectionCheck func(string) bool
 
 type Service struct {
-	store            *store.Store
-	capabilities     *capability.Registry
-	storage          *storagehealth.Monitor
-	connected        ConnectionCheck
-	now              func() time.Time
-	heartbeatTimeout time.Duration
+	store              *store.Store
+	capabilities       *capability.Registry
+	storage            *storagehealth.Monitor
+	connected          ConnectionCheck
+	inspectEnvironment EnvironmentInspection
+	now                func() time.Time
+	heartbeatTimeout   time.Duration
 }
 
 type Option func(*Service)
@@ -159,7 +160,11 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 
 	manifest, snapshotUsable := s.evaluateSnapshot(ctx, &report, project, runtimeSnapshot)
 	if snapshotUsable {
-		s.evaluateCapabilitiesAndRoles(ctx, &report, manifest, runtimeSnapshot)
+		environments, environmentsUsable := s.loadExecutionEnvironments(ctx, &report, runtimeSnapshot.RevisionID)
+		s.evaluateCapabilitiesAndRoles(ctx, &report, manifest, runtimeSnapshot, environments)
+		if environmentsUsable {
+			s.evaluateExecutionEnvironments(ctx, &report, environments)
+		}
 		s.evaluateMedia(&report, manifest)
 	}
 	s.evaluateStorage(&report)
@@ -256,7 +261,7 @@ type roleDependency struct {
 	capabilities map[string]struct{}
 }
 
-func (s *Service) evaluateCapabilitiesAndRoles(ctx context.Context, report *Report, manifest snapshot.Manifest, runtimeSnapshot domain.RuntimeSnapshot) {
+func (s *Service) evaluateCapabilitiesAndRoles(ctx context.Context, report *Report, manifest snapshot.Manifest, runtimeSnapshot domain.RuntimeSnapshot, environments []store.ExecutionEnvironmentManifest) {
 	targetByRef := make(map[string]snapshot.Target, len(manifest.Targets))
 	for _, target := range manifest.Targets {
 		targetByRef[target.TargetRef] = target
@@ -334,6 +339,7 @@ func (s *Service) evaluateCapabilitiesAndRoles(ctx context.Context, report *Repo
 			dep.required = true
 		}
 	}
+	addExecutionEnvironmentRoleDependencies(dependencies, environments)
 
 	ids := make([]string, 0, len(dependencies))
 	for id := range dependencies {

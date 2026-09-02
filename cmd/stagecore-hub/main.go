@@ -61,6 +61,7 @@ func main() {
 		application.Capabilities,
 		application.StorageHealth,
 		preflight.WithConnectionCheck(application.CompanionRuntime.IsConnected),
+		preflight.WithEnvironmentInspection(application.CompanionRuntime.Inspect),
 	)
 	preflightService := securitypreflight.New(
 		basePreflight,
