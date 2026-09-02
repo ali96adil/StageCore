@@ -135,6 +135,7 @@ public struct CompanionInspectionRequest: Codable, Sendable, Equatable {
     public let inspectionID: String
     public let adapterKey: String
     public let manifest: [String: JSONValue]
+    public let timeoutMS: Int64
 
     enum CodingKeys: String, CodingKey {
         case type
@@ -143,6 +144,7 @@ public struct CompanionInspectionRequest: Codable, Sendable, Equatable {
         case inspectionID = "inspection_id"
         case adapterKey = "adapter_key"
         case manifest
+        case timeoutMS = "timeout_ms"
     }
 
     public init(
@@ -150,7 +152,8 @@ public struct CompanionInspectionRequest: Codable, Sendable, Equatable {
         messageID: String = UUID().uuidString.lowercased(),
         inspectionID: String,
         adapterKey: String,
-        manifest: [String: JSONValue]
+        manifest: [String: JSONValue],
+        timeoutMS: Int64 = 5_000
     ) {
         self.type = "inspection.request"
         self.schemaVersion = schemaVersion
@@ -158,6 +161,7 @@ public struct CompanionInspectionRequest: Codable, Sendable, Equatable {
         self.inspectionID = inspectionID
         self.adapterKey = adapterKey
         self.manifest = manifest
+        self.timeoutMS = timeoutMS
     }
 }
 
@@ -294,6 +298,17 @@ public actor CompanionInspectionRouter {
                 )
             )
         }
+        guard request.timeoutMS > 0 && request.timeoutMS <= 30_000 else {
+            return try encoder.encode(
+                CompanionInspectionResult(
+                    inspectionID: request.inspectionID,
+                    adapterKey: request.adapterKey,
+                    status: .failed,
+                    errorCode: "INSPECTION_TIMEOUT_INVALID",
+                    responseSummary: "inspection timeout must be between 1 and 30000 ms"
+                )
+            )
+        }
         guard let provider = providers[request.adapterKey] else {
             return try encoder.encode(
                 CompanionInspectionResult(
@@ -306,7 +321,7 @@ public actor CompanionInspectionRouter {
             )
         }
 
-        let outcome = await provider.inspect(manifest: request.manifest)
+        let outcome = await inspectBounded(provider, request: request)
         return try encoder.encode(
             CompanionInspectionResult(
                 inspectionID: request.inspectionID,
@@ -317,5 +332,40 @@ public actor CompanionInspectionRouter {
                 observation: outcome.observation
             )
         )
+    }
+
+    private func inspectBounded(
+        _ provider: any CompanionInspectionProvider,
+        request: CompanionInspectionRequest
+    ) async -> CompanionInspectionOutcome {
+        await withTaskGroup(of: CompanionInspectionOutcome.self) { group in
+            group.addTask {
+                await provider.inspect(manifest: request.manifest)
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .milliseconds(request.timeoutMS))
+                } catch {
+                    return CompanionInspectionOutcome(
+                        status: .failed,
+                        errorCode: "COMPANION_INSPECTION_CANCELLED",
+                        responseSummary: "inspection timer was cancelled"
+                    )
+                }
+                return CompanionInspectionOutcome(
+                    status: .failed,
+                    errorCode: "COMPANION_INSPECTION_TIMEOUT",
+                    responseSummary: "read-only inspection did not complete before timeout"
+                )
+            }
+
+            let first = await group.next() ?? CompanionInspectionOutcome(
+                status: .failed,
+                errorCode: "COMPANION_INSPECTION_FAILED",
+                responseSummary: "inspection provider produced no result"
+            )
+            group.cancelAll()
+            return first
+        }
     }
 }
