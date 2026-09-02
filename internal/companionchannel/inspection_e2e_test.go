@@ -84,6 +84,16 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 		t.Fatalf("duplicate result=%#v count=%d", duplicate, inspectionCount.Load())
 	}
 
+	conflict := runtime.Inspect(ctx, companionchannel.InspectionRequest{
+		InspectionID: "inspect-1",
+		CompanionID:  companionID,
+		Manifest:     inspectionManifest("different.adapter"),
+		TimeoutMS:    500,
+	})
+	if conflict.Status != companionchannel.InspectionFailed || conflict.ErrorCode != "INSPECTION_ID_CONFLICT" || inspectionCount.Load() != 1 {
+		t.Fatalf("conflicting duplicate result=%#v count=%d", conflict, inspectionCount.Load())
+	}
+
 	unsupported := runtime.Inspect(ctx, companionchannel.InspectionRequest{
 		InspectionID: "inspect-unsupported",
 		CompanionID:  companionID,
