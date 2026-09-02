@@ -7,6 +7,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/executionenv"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
 
@@ -49,6 +50,10 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	if err != nil {
 		return domain.ProjectRevision{}, err
 	}
+	executionEnvironments, err := s.ListExecutionEnvironmentManifests(ctx, source.ID)
+	if err != nil {
+		return domain.ProjectRevision{}, err
+	}
 
 	newRevisionID, err := stageid.New()
 	if err != nil {
@@ -83,6 +88,28 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?)
 	`, newRevisionID, projectID, nextNumber, source.ID, nowUS, createdBy, changeNote); err != nil {
 		return domain.ProjectRevision{}, fmt.Errorf("insert draft successor: %w", err)
+	}
+
+	for _, environment := range executionEnvironments {
+		newEnvironmentID, err := stageid.New()
+		if err != nil {
+			return domain.ProjectRevision{}, err
+		}
+		canonical, err := executionenv.CanonicalBytes(environment.Manifest)
+		if err != nil {
+			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment canonical manifest: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO execution_environment_manifests (
+				environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
+				manifest_json, content_sha256, created_by, created_at_us
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			newEnvironmentID, newRevisionID, environment.Manifest.EnvironmentKey,
+			environment.Manifest.AdapterKey, environment.Manifest.Application.Key,
+			string(canonical), environment.ContentSHA256, createdBy, nowUS,
+		); err != nil {
+			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment: %w", err)
+		}
 	}
 
 	cueIDs := make(map[string]string, len(cues))
