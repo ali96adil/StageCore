@@ -134,6 +134,30 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 		}
 		writeJSON(w, http.StatusCreated, makeRoleAssignmentView(assignment))
 	}))
+
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/assignment", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		roleID := strings.TrimSpace(r.PathValue("machine_role_id"))
+		role, err := stageStore.GetMachineRole(r.Context(), roleID)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RELEASE_FAILED")
+			return
+		}
+		if role.ProjectID != projectID {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "MACHINE_ROLE_NOT_FOUND"})
+			return
+		}
+		assignment, err := stageStore.GetActiveRoleAssignment(r.Context(), roleID)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RELEASE_FAILED")
+			return
+		}
+		if err := stageStore.ReleaseRoleAssignment(r.Context(), assignment.ID); err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RELEASE_FAILED")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 }
 
 func writeMachineRoleStoreError(w http.ResponseWriter, err error, fallback string) {
