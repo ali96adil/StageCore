@@ -2,7 +2,9 @@ package hubsecurity
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -19,10 +21,19 @@ var (
 	deviceCertificateNotAfter  = time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
 )
 
-// DeviceTLSCertificate returns the deterministic self-signed certificate used
-// by the F-004 LAN device gateway. It deliberately reuses the durable Hub
-// Ed25519 identity key: the Hub has one cryptographic identity, not a parallel
-// discovery/TLS identity that could drift from pairing trust.
+const deviceTLSTransportKeyContext = "StageCore Device TLS P-256 v1\x00"
+
+// DeviceTLSCertificate returns the deterministic certificate used by the F-004
+// LAN device gateway. The durable Hub Ed25519 identity remains authoritative:
+// it signs the TLS leaf. The leaf itself uses a P-256 transport key because the
+// Apple TLS stack used by the macOS Companion cannot negotiate a server
+// CertificateVerify with the Hub's Ed25519 key.
+//
+// The P-256 transport key is deterministically and domain-separately derived
+// from the durable Hub private key, so the certificate pin remains stable
+// across restart, backup, and restore without introducing another persisted
+// private key. Compromise of the transport key does not expose the Hub identity
+// key through this one-way derivation.
 //
 // The returned SHA-256 value is the lowercase hex digest of the leaf DER and
 // is safe to advertise as a public certificate pin. It is not a secret.
@@ -41,10 +52,19 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 	if len(privateBytes) != ed25519.PrivateKeySize {
 		return tls.Certificate{}, "", fmt.Errorf("%w: invalid private key length", ErrIdentityMismatch)
 	}
-	private := ed25519.PrivateKey(privateBytes)
-	public := private.Public().(ed25519.PublicKey)
-	if fingerprint(public) != identity.Fingerprint {
+	identityPrivate := ed25519.PrivateKey(privateBytes)
+	identityPublic := identityPrivate.Public().(ed25519.PublicKey)
+	if fingerprint(identityPublic) != identity.Fingerprint {
 		return tls.Certificate{}, "", ErrIdentityMismatch
+	}
+
+	transportPrivate, err := deriveDeviceTLSTransportKey(identityPrivate)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	transportPublicDER, err := x509.MarshalPKIXPublicKey(&transportPrivate.PublicKey)
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("marshal device TLS public key: %w", err)
 	}
 
 	idDigest := sha256.Sum256([]byte(identity.HubID))
@@ -52,7 +72,23 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 	if serial.Sign() == 0 {
 		serial.SetInt64(1)
 	}
-	keyDigest := sha256.Sum256(public)
+	identityKeyDigest := sha256.Sum256(identityPublic)
+	transportKeyDigest := sha256.Sum256(transportPublicDER)
+
+	issuer := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"StageCore"},
+			CommonName:   "StageCore Hub Identity",
+		},
+		NotBefore:             deviceCertificateNotBefore,
+		NotAfter:              deviceCertificateNotAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		SubjectKeyId:          append([]byte(nil), identityKeyDigest[:20]...),
+		PublicKey:             identityPublic,
+	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
@@ -64,14 +100,13 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		SubjectKeyId:          append([]byte(nil), keyDigest[:20]...),
+		SubjectKeyId:          append([]byte(nil), transportKeyDigest[:20]...),
 	}
-	der, err := x509.CreateCertificate(nil, template, template, public, private)
+	der, err := x509.CreateCertificate(nil, template, issuer, &transportPrivate.PublicKey, identityPrivate)
 	if err != nil {
-		// crypto/x509 currently does not consume randomness for Ed25519
-		// signatures. A nil reader keeps the resulting certificate explicitly
-		// deterministic; if that contract changes, fail rather than silently
-		// rotating the advertised pin at restart.
+		// The certificate is signed by Ed25519, which is deterministic and does
+		// not consume randomness. A nil reader keeps pin generation explicit: if
+		// that contract changes, fail rather than silently rotating the pin.
 		return tls.Certificate{}, "", fmt.Errorf("create deterministic device TLS certificate: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(der)
@@ -81,7 +116,31 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 	certificateDigest := sha256.Sum256(der)
 	return tls.Certificate{
 		Certificate: [][]byte{der},
-		PrivateKey:  private,
+		PrivateKey:  transportPrivate,
 		Leaf:        leaf,
 	}, hex.EncodeToString(certificateDigest[:]), nil
+}
+
+func deriveDeviceTLSTransportKey(identityPrivate ed25519.PrivateKey) (*ecdsa.PrivateKey, error) {
+	if len(identityPrivate) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("%w: invalid private key length", ErrIdentityMismatch)
+	}
+	seed := identityPrivate.Seed()
+	material := make([]byte, 0, len(deviceTLSTransportKeyContext)+len(seed))
+	material = append(material, deviceTLSTransportKeyContext...)
+	material = append(material, seed...)
+	digest := sha256.Sum256(material)
+
+	curve := elliptic.P256()
+	nMinusOne := new(big.Int).Sub(curve.Params().N, big.NewInt(1))
+	d := new(big.Int).SetBytes(digest[:])
+	d.Mod(d, nMinusOne)
+	d.Add(d, big.NewInt(1))
+
+	private := &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{Curve: curve},
+		D:         d,
+	}
+	private.PublicKey.X, private.PublicKey.Y = curve.ScalarBaseMult(d.Bytes())
+	return private, nil
 }
