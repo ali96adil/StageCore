@@ -17,6 +17,7 @@ import (
 type ExecutionEnvironmentManifest struct {
 	ID            string
 	RevisionID    string
+	MachineRoleID *string
 	Manifest      executionenv.Manifest
 	ContentSHA256 string
 	CreatedBy     string
@@ -76,10 +77,13 @@ func (s *Store) CreateExecutionEnvironmentManifest(ctx context.Context, revision
 
 func (s *Store) GetExecutionEnvironmentManifest(ctx context.Context, manifestID string) (ExecutionEnvironmentManifest, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
-		       manifest_json, content_sha256, created_by, created_at_us
-		FROM execution_environment_manifests
-		WHERE environment_manifest_id = ?`, strings.TrimSpace(manifestID))
+		SELECT eem.environment_manifest_id, eem.revision_id, eem.environment_key, eem.adapter_key, eem.application_key,
+		       eem.manifest_json, eem.content_sha256, eem.created_by, eem.created_at_us,
+		       eem.machine_role_id, mr.project_id, pr.project_id
+		FROM execution_environment_manifests eem
+		JOIN project_revisions pr ON pr.revision_id = eem.revision_id
+		LEFT JOIN machine_roles mr ON mr.machine_role_id = eem.machine_role_id
+		WHERE eem.environment_manifest_id = ?`, strings.TrimSpace(manifestID))
 	return scanExecutionEnvironmentManifest(row)
 }
 
@@ -92,11 +96,14 @@ func (s *Store) ListExecutionEnvironmentManifests(ctx context.Context, revisionI
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
-		       manifest_json, content_sha256, created_by, created_at_us
-		FROM execution_environment_manifests
-		WHERE revision_id = ?
-		ORDER BY environment_key, environment_manifest_id`, revisionID)
+		SELECT eem.environment_manifest_id, eem.revision_id, eem.environment_key, eem.adapter_key, eem.application_key,
+		       eem.manifest_json, eem.content_sha256, eem.created_by, eem.created_at_us,
+		       eem.machine_role_id, mr.project_id, pr.project_id
+		FROM execution_environment_manifests eem
+		JOIN project_revisions pr ON pr.revision_id = eem.revision_id
+		LEFT JOIN machine_roles mr ON mr.machine_role_id = eem.machine_role_id
+		WHERE eem.revision_id = ?
+		ORDER BY eem.environment_key, eem.environment_manifest_id`, revisionID)
 	if err != nil {
 		return nil, fmt.Errorf("list execution environment manifests: %w", err)
 	}
@@ -113,6 +120,59 @@ func (s *Store) ListExecutionEnvironmentManifests(ctx context.Context, revisionI
 		return nil, fmt.Errorf("iterate execution environment manifests: %w", err)
 	}
 	return items, nil
+}
+
+func (s *Store) SetExecutionEnvironmentMachineRole(ctx context.Context, manifestID string, machineRoleID *string) (ExecutionEnvironmentManifest, error) {
+	manifestID = strings.TrimSpace(manifestID)
+	if manifestID == "" {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment manifest is required", domain.ErrInvalidInput)
+	}
+	item, err := s.GetExecutionEnvironmentManifest(ctx, manifestID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	revision, err := s.GetRevision(ctx, item.RevisionID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, revision.ProjectID); err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	if err := s.ensureDraft(ctx, s.db, item.RevisionID); err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+
+	var boundRole any
+	if machineRoleID != nil {
+		roleID := strings.TrimSpace(*machineRoleID)
+		if roleID == "" {
+			return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: machine role must be non-empty when provided", domain.ErrInvalidInput)
+		}
+		role, err := s.GetMachineRole(ctx, roleID)
+		if err != nil {
+			return ExecutionEnvironmentManifest{}, err
+		}
+		if role.ProjectID != revision.ProjectID {
+			return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment machine role must belong to the revision project", domain.ErrConflict)
+		}
+		boundRole = roleID
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE execution_environment_manifests
+		SET machine_role_id = ?
+		WHERE environment_manifest_id = ?`, boundRole, item.ID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, mapExecutionEnvironmentWriteError("set execution environment machine role", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("set execution environment machine role rows affected: %w", err)
+	}
+	if rows != 1 {
+		return ExecutionEnvironmentManifest{}, domain.ErrNotFound
+	}
+	return s.GetExecutionEnvironmentManifest(ctx, item.ID)
 }
 
 func (s *Store) DeleteExecutionEnvironmentManifest(ctx context.Context, manifestID string) error {
@@ -148,9 +208,12 @@ func scanExecutionEnvironmentManifest(row executionEnvironmentScanner) (Executio
 	var item ExecutionEnvironmentManifest
 	var environmentKey, adapterKey, applicationKey, manifestJSON string
 	var createdUS int64
+	var machineRoleID, machineRoleProjectID sql.NullString
+	var revisionProjectID string
 	if err := row.Scan(
 		&item.ID, &item.RevisionID, &environmentKey, &adapterKey, &applicationKey,
 		&manifestJSON, &item.ContentSHA256, &item.CreatedBy, &createdUS,
+		&machineRoleID, &machineRoleProjectID, &revisionProjectID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ExecutionEnvironmentManifest{}, domain.ErrNotFound
@@ -171,6 +234,13 @@ func scanExecutionEnvironmentManifest(row executionEnvironmentScanner) (Executio
 	if manifest.EnvironmentKey != environmentKey || manifest.AdapterKey != adapterKey || manifest.Application.Key != applicationKey {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: stored execution environment manifest identity columns mismatch", domain.ErrConflict)
 	}
+	if machineRoleID.Valid {
+		if !machineRoleProjectID.Valid || machineRoleProjectID.String != revisionProjectID {
+			return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: stored execution environment machine role binding crosses project boundary", domain.ErrConflict)
+		}
+		value := machineRoleID.String
+		item.MachineRoleID = &value
+	}
 	item.Manifest = manifest
 	item.ContentSHA256 = strings.ToLower(contentHash)
 	item.CreatedAt = clock.FromUnixMicros(createdUS)
@@ -180,6 +250,9 @@ func scanExecutionEnvironmentManifest(row executionEnvironmentScanner) (Executio
 func mapExecutionEnvironmentWriteError(operation string, err error) error {
 	if IsShowConfigurationLockedError(err) {
 		return fmt.Errorf("%w: %s", domain.ErrShowConfigurationLocked, operation)
+	}
+	if strings.Contains(err.Error(), "EXECUTION_ENVIRONMENT_MACHINE_ROLE_PROJECT_MISMATCH") {
+		return fmt.Errorf("%w: execution environment machine role must belong to the revision project", domain.ErrConflict)
 	}
 	if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		return fmt.Errorf("%w: execution environment key already exists for revision", domain.ErrConflict)
