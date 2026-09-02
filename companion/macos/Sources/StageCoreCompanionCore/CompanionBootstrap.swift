@@ -109,12 +109,14 @@ public actor CompanionBootstrap {
         }
         #if os(macOS)
         executors.append(try MIDISendExecutor())
+        let operationProviders: [any ExecutionEnvironmentOperationProvider] = [VDMXOperationProvider()]
+        #else
+        let operationProviders: [any ExecutionEnvironmentOperationProvider] = []
         #endif
-        // F-025 advertises the bounded typed operation framework separately
-        // from app-specific support. With no registered operation provider the
-        // executor returns a truthful UNSUPPORTED result; it never falls back
-        // to arbitrary command or shell execution.
-        executors.append(try ExecutionEnvironmentOperationExecutor())
+        // F-025 keeps the operation capability generic while registration is
+        // explicit per adapter. Unknown adapters and unsupported operation
+        // kinds fail truthfully; there is never a command/shell fallback.
+        executors.append(try ExecutionEnvironmentOperationExecutor(providers: operationProviders))
         let capabilities = executors.map(\.capabilityKey).sorted()
 
         let report = CompanionReportIdentity(

@@ -157,6 +157,7 @@ func main() {
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
 		httpapi.WithOperatorExecutionEnvironments(userAuth, application.Store),
 		httpapi.WithOperatorExecutionEnvironmentCapture(userAuth, application.Store, application.Vault),
+		httpapi.WithOperatorExecutionEnvironmentOperations(userAuth, application.Store, application.CompanionRuntime),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
