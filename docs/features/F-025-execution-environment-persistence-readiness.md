@@ -1,7 +1,7 @@
 # F-025 — Execution Environment Persistence & Readiness
 
-**Status:** Phase 3 implementation slice  
-**Feature ID:** F-025  
+**Status:** Phase 3 implementation slice
+**Feature ID:** F-025
 **Builds on:** `F-025-execution-environment-manifest-v1.md`, Project revisions, F-012 SHOW configuration lock, canonical JSON/content identity
 
 ## Purpose
