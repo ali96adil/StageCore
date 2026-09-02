@@ -29,6 +29,7 @@ type ExecutionResult struct {
 	AckLevel        contracts.AckLevel
 	ErrorCode       string
 	ResponseSummary string
+	Output          json.RawMessage
 }
 
 type Channel interface {
@@ -174,7 +175,7 @@ func (c *SimulatedChannel) Execute(ctx context.Context, request ExecutionRequest
 		result = failed(request.ExecutionID, "COMPANION_EXECUTION_TIMEOUT", "Companion execution timed out without verified completion", domain.ExecutionTimedOut)
 	case agent.behavior == SimulationInterrupted:
 		agent.executionCount++
-		result = failed(request.ExecutionID, "COMPANION_EXECUTION_INTERRUPTED", "Companion execution was interrupted and completion is unknown", domain.ExecutionFailed)
+		result = failed(request.ExecutionID, "COMPANION_EXECUTION_INTERRUPTED", "simulated Companion execution was interrupted and completion is unknown", domain.ExecutionFailed)
 	default:
 		agent.executionCount++
 		result = ExecutionResult{
@@ -182,6 +183,7 @@ func (c *SimulatedChannel) Execute(ctx context.Context, request ExecutionRequest
 			Result:          domain.ExecutionCompleted,
 			AckLevel:        contracts.AckAccepted,
 			ResponseSummary: "simulated Companion accepted and completed execution",
+			Output:          json.RawMessage(`{}`),
 		}
 	}
 	agent.results[request.ExecutionID] = result
