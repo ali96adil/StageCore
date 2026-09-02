@@ -110,6 +110,11 @@ public actor CompanionBootstrap {
         #if os(macOS)
         executors.append(try MIDISendExecutor())
         #endif
+        // F-025 advertises the bounded typed operation framework separately
+        // from app-specific support. With no registered operation provider the
+        // executor returns a truthful UNSUPPORTED result; it never falls back
+        // to arbitrary command or shell execution.
+        executors.append(try ExecutionEnvironmentOperationExecutor())
         let capabilities = executors.map(\.capabilityKey).sorted()
 
         let report = CompanionReportIdentity(
