@@ -99,14 +99,18 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		if err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment canonical manifest: %w", err)
 		}
+		var machineRoleID any
+		if environment.MachineRoleID != nil {
+			machineRoleID = *environment.MachineRoleID
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO execution_environment_manifests (
 				environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
-				manifest_json, content_sha256, created_by, created_at_us
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				manifest_json, content_sha256, created_by, created_at_us, machine_role_id
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			newEnvironmentID, newRevisionID, environment.Manifest.EnvironmentKey,
 			environment.Manifest.AdapterKey, environment.Manifest.Application.Key,
-			string(canonical), environment.ContentSHA256, createdBy, nowUS,
+			string(canonical), environment.ContentSHA256, createdBy, nowUS, machineRoleID,
 		); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment: %w", err)
 		}
