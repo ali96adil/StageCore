@@ -163,11 +163,18 @@ public actor CompanionBootstrap {
             mediaSynchronizer: mediaSynchronizer
         )
         self.companionSession = companionSession
+
+        #if os(macOS)
+        let inspectionProviders: [any CompanionInspectionProvider] = [VDMXInspectionProvider()]
+        #else
+        let inspectionProviders: [any CompanionInspectionProvider] = []
+        #endif
         self.runtimeAgent = try WebSocketCompanionAgent(
             url: configuration.hubRuntimeURL,
             securityPolicy: securityPolicy,
             session: companionSession,
             authenticator: securityClient,
+            inspectionProviders: inspectionProviders,
             tlsCertificateSHA256: certificatePin
         )
     }
@@ -181,7 +188,7 @@ public actor CompanionBootstrap {
             } catch HubSecurityClientError.hubRejected(let code) where code == "COMPANION_UNPAIRED" {
                 let receipt = try await securityClient.requestPairing()
                 phase = .pairingRequired
-                event(.pairingRequired(receipt))
+                event(.pairingRequired(phase == .pairingRequired ? receipt : receipt))
                 phase = .waitingForApproval
                 event(.phaseChanged(phase))
                 try await waitForPairingApproval(receipt)
