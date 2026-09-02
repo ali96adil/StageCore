@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -21,38 +22,62 @@ func WithOperatorExecutionEnvironmentCapture(auth *userauth.Service, stageStore 
 		if auth == nil || stageStore == nil || vault == nil {
 			return
 		}
-		registerOperatorExecutionEnvironmentCaptureRoute(s.mux, auth, stageStore, vault)
+		registerOperatorExecutionEnvironmentCaptureRoutes(s.mux, auth, stageStore, vault)
 	}
 }
 
-func registerOperatorExecutionEnvironmentCaptureRoute(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault) {
-	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/assets/{asset_key}/capture"
-	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault) {
+	base := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/assets/{asset_key}"
+
+	mux.HandleFunc("GET "+base+"/vault-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		_, _, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
 		if !ok {
 			return
 		}
+		status := map[string]any{
+			"execution_environment_id": environment.ID,
+			"asset_key":                asset.Key,
+			"capture_policy":           asset.CapturePolicy,
+			"content_hash":             asset.ContentHash,
+			"size_bytes":               asset.SizeBytes,
+			"vault_available":          false,
+		}
+		if asset.CapturePolicy != executionenv.CaptureContentBound || asset.SizeBytes == nil {
+			status["reason"] = "REFERENCE_ONLY"
+			writeJSON(w, http.StatusOK, status)
+			return
+		}
 
-		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
-		assetKey := strings.TrimSpace(r.PathValue("asset_key"))
-		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
+		object, err := stageStore.GetVaultObject(r.Context(), asset.ContentHash)
+		if errors.Is(err, domain.ErrNotFound) {
+			status["reason"] = "NOT_IN_VAULT"
+			writeJSON(w, http.StatusOK, status)
+			return
+		}
 		if err != nil {
-			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_VAULT_STATUS_UNAVAILABLE"})
 			return
 		}
-		if environment.RevisionID != revision.ID {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
+		if object.SizeBytes != *asset.SizeBytes {
+			status["reason"] = "SIZE_MISMATCH"
+			writeJSON(w, http.StatusOK, status)
 			return
 		}
-		assetFound := false
-		for _, asset := range environment.Manifest.Assets {
-			if asset.Key == assetKey {
-				assetFound = true
-				break
-			}
+		file, _, err := vault.OpenObject(r.Context(), asset.ContentHash)
+		if err != nil {
+			status["reason"] = "VAULT_OBJECT_UNAVAILABLE"
+			writeJSON(w, http.StatusOK, status)
+			return
 		}
-		if !assetFound {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_ASSET_NOT_FOUND"})
+		_ = file.Close()
+		status["vault_available"] = true
+		status["reason"] = "AVAILABLE"
+		writeJSON(w, http.StatusOK, status)
+	}))
+
+	mux.HandleFunc("POST "+base+"/capture", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		project, revision, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
+		if !ok {
 			return
 		}
 
@@ -77,7 +102,7 @@ func registerOperatorExecutionEnvironmentCaptureRoute(mux *http.ServeMux, auth *
 			return
 		}
 
-		updated, err := stageStore.CaptureExecutionEnvironmentAsset(r.Context(), environment.ID, assetKey, object.ContentHash, object.SizeBytes)
+		updated, err := stageStore.CaptureExecutionEnvironmentAsset(r.Context(), environment.ID, asset.Key, object.ContentHash, object.SizeBytes)
 		if err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 			return
@@ -90,4 +115,29 @@ func registerOperatorExecutionEnvironmentCaptureRoute(mux *http.ServeMux, auth *
 			},
 		})
 	}))
+}
+
+func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stageStore *store.Store) (domain.Project, domain.ProjectRevision, store.ExecutionEnvironmentManifest, executionenv.AssetRequirement, bool) {
+	project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+	if !ok {
+		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+	}
+	environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
+	assetKey := strings.TrimSpace(r.PathValue("asset_key"))
+	environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
+	if err != nil {
+		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
+		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+	}
+	if environment.RevisionID != revision.ID {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
+		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+	}
+	for _, asset := range environment.Manifest.Assets {
+		if asset.Key == assetKey {
+			return project, revision, environment, asset, true
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_ASSET_NOT_FOUND"})
+	return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
 }
