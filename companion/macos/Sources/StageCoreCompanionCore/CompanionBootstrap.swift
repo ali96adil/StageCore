@@ -163,11 +163,18 @@ public actor CompanionBootstrap {
             mediaSynchronizer: mediaSynchronizer
         )
         self.companionSession = companionSession
+
+        #if os(macOS)
+        let inspectionProviders: [any CompanionInspectionProvider] = [VDMXInspectionProvider()]
+        #else
+        let inspectionProviders: [any CompanionInspectionProvider] = []
+        #endif
         self.runtimeAgent = try WebSocketCompanionAgent(
             url: configuration.hubRuntimeURL,
             securityPolicy: securityPolicy,
             session: companionSession,
             authenticator: securityClient,
+            inspectionProviders: inspectionProviders,
             tlsCertificateSHA256: certificatePin
         )
     }
