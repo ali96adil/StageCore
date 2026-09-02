@@ -1,7 +1,7 @@
 # F-025 — Authenticated Workstation Inspection Transport
 
-**Status:** Phase 3 implementation slice  
-**Feature ID:** F-025  
+**Status:** Phase 3 implementation slice
+**Feature ID:** F-025
 **Builds on:** Execution Environment Manifest v1, F-025 persistence/readiness, authenticated macOS Companion runtime session
 
 ## Purpose
@@ -86,8 +86,9 @@ The Hub retains a bounded inspection result window.
 
 For a given Companion and `inspection_id`:
 
-- the first request owns the pending record;
-- concurrent/duplicate calls wait for or reuse that same terminal result;
+- the first request owns the pending record and binds the ID to the SHA-256 of its canonical manifest;
+- concurrent/duplicate calls with the same declared requirements wait for or reuse that same terminal result;
+- reuse of the same ID with different declared requirements fails with `INSPECTION_ID_CONFLICT` before another probe runs;
 - a terminal ID is not immediately recycled;
 - late results cannot replace an already terminal result;
 - results from a replacement connection cannot satisfy a request owned by the old connection;
@@ -139,7 +140,8 @@ Acceptance requires tests proving:
 - non-inspection runtime messages continue to fall through to the existing Companion session;
 - authenticated Hub inspection reaches the Companion over the existing runtime WebSocket;
 - the returned observation can drive the existing readiness evaluator;
-- duplicate `inspection_id` does not repeat the workstation probe;
+- duplicate `inspection_id` with identical requirements does not repeat the workstation probe;
+- duplicate `inspection_id` with different requirements fails before a second probe;
 - revocation removes inspection authority;
 - invalid manifests and excessive timeout values fail before transport;
 - Core CI and Companion macOS CI pass on the exact PR head.
