@@ -48,9 +48,9 @@ Execution-environment mutation is Project configuration:
 - validated/superseded revisions remain immutable historical truth;
 - read access is allowed for any retained revision.
 
-When `EnsureProjectDraft` forks a validated revision, migration-level revision-fork behavior clones each execution-environment requirement into the successor Draft with:
+When `EnsureProjectDraft` forks a validated revision, the existing Store revision-fork transaction clones each execution-environment requirement into the successor Draft with:
 
-- a new manifest row identity;
+- a new canonical UUIDv7 manifest row identity from the shared StageCore ID generator;
 - the same canonical manifest bytes and content SHA-256;
 - the new revision ID;
 - the fork actor/time as creation audit metadata.
