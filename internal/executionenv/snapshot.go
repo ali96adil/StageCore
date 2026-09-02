@@ -1,9 +1,12 @@
 package executionenv
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -11,9 +14,10 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion = 1
-	maxSnapshotItems      = 512
-	maxSnapshotNotesBytes = 8192
+	SnapshotSchemaVersion       = 1
+	maxSnapshotItems            = 512
+	maxSnapshotNotesBytes       = 8192
+	maxSnapshotItemNotesBytes   = 4096
 )
 
 type SnapshotCaptureStatus string
@@ -27,23 +31,23 @@ const (
 type SnapshotItemKind string
 
 const (
-	SnapshotProjectExport       SnapshotItemKind = "PROJECT_EXPORT"
-	SnapshotTemplate            SnapshotItemKind = "TEMPLATE"
-	SnapshotPreset              SnapshotItemKind = "PRESET"
-	SnapshotConfig              SnapshotItemKind = "CONFIG"
-	SnapshotResource            SnapshotItemKind = "RESOURCE"
-	SnapshotControlNamespace    SnapshotItemKind = "CONTROL_NAMESPACE"
-	SnapshotControlState        SnapshotItemKind = "CONTROL_STATE"
-	SnapshotExtensionInventory  SnapshotItemKind = "EXTENSION_INVENTORY"
-	SnapshotOutputNotes         SnapshotItemKind = "OUTPUT_NOTES"
-	SnapshotReferenceMaterial   SnapshotItemKind = "REFERENCE_MATERIAL"
-	SnapshotOther               SnapshotItemKind = "OTHER"
+	SnapshotProjectExport      SnapshotItemKind = "PROJECT_EXPORT"
+	SnapshotTemplate           SnapshotItemKind = "TEMPLATE"
+	SnapshotPreset             SnapshotItemKind = "PRESET"
+	SnapshotConfig             SnapshotItemKind = "CONFIG"
+	SnapshotResource           SnapshotItemKind = "RESOURCE"
+	SnapshotControlNamespace   SnapshotItemKind = "CONTROL_NAMESPACE"
+	SnapshotControlState       SnapshotItemKind = "CONTROL_STATE"
+	SnapshotExtensionInventory SnapshotItemKind = "EXTENSION_INVENTORY"
+	SnapshotOutputNotes        SnapshotItemKind = "OUTPUT_NOTES"
+	SnapshotReferenceMaterial  SnapshotItemKind = "REFERENCE_MATERIAL"
+	SnapshotOther              SnapshotItemKind = "OTHER"
 )
 
 type SnapshotItemProvenance string
 
 const (
-	ProvenanceApplicationExport SnapshotItemProvenance = "APPLICATION_EXPORT"
+	ProvenanceApplicationExport  SnapshotItemProvenance = "APPLICATION_EXPORT"
 	ProvenanceFilesystemResource SnapshotItemProvenance = "FILESYSTEM_RESOURCE"
 	ProvenanceAdapterObservation SnapshotItemProvenance = "ADAPTER_OBSERVATION"
 	ProvenanceOSCQuery           SnapshotItemProvenance = "OSCQUERY"
@@ -94,7 +98,6 @@ type SnapshotItem struct {
 func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	normalized := snapshot
 	normalized.Items = append([]SnapshotItem(nil), snapshot.Items...)
-
 	if normalized.SchemaVersion != SnapshotSchemaVersion {
 		return Snapshot{}, fmt.Errorf("schema_version must be %d", SnapshotSchemaVersion)
 	}
@@ -125,7 +128,6 @@ func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	if normalized.CaptureStatus == SnapshotUnsupported && len(normalized.Items) != 0 {
 		return Snapshot{}, fmt.Errorf("UNSUPPORTED snapshot must not contain items")
 	}
-
 	seen := make(map[string]struct{}, len(normalized.Items))
 	for i := range normalized.Items {
 		item := &normalized.Items[i]
@@ -169,10 +171,9 @@ func normalizeSnapshotItem(item *SnapshotItem) error {
 	default:
 		return fmt.Errorf("snapshot item %q has unsupported capture_status %q", item.Key, item.Capture)
 	}
-	if err := validateText("snapshot_item.notes", item.Notes, maxNotesBytes, false); err != nil {
+	if err := validateText("snapshot_item.notes", item.Notes, maxSnapshotItemNotesBytes, false); err != nil {
 		return err
 	}
-
 	switch item.Portability {
 	case SnapshotContentBound:
 		if item.Capture != ItemCaptured {
@@ -220,4 +221,35 @@ func SnapshotContentHash(snapshot Snapshot) (string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func DecodeCanonicalSnapshot(payload []byte) (Snapshot, error) {
+	if len(payload) == 0 {
+		return Snapshot{}, fmt.Errorf("execution environment snapshot is empty")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var snapshot Snapshot
+	if err := decoder.Decode(&snapshot); err != nil {
+		return Snapshot{}, fmt.Errorf("decode execution environment snapshot: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("decode execution environment snapshot trailing data: %w", err)
+		}
+		return Snapshot{}, fmt.Errorf("execution environment snapshot contains trailing JSON data")
+	}
+	normalized, err := NormalizeSnapshot(snapshot)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("validate execution environment snapshot: %w", err)
+	}
+	canonical, err := SnapshotCanonicalBytes(normalized)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !bytes.Equal(payload, canonical) {
+		return Snapshot{}, fmt.Errorf("execution environment snapshot bytes are not canonical")
+	}
+	return normalized, nil
 }
