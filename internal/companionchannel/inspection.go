@@ -2,6 +2,8 @@ package companionchannel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -30,18 +32,19 @@ type InspectionRequest struct {
 }
 
 type InspectionResult struct {
-	InspectionID     string
-	AdapterKey       string
-	Status           InspectionStatus
-	ErrorCode        string
-	ResponseSummary  string
-	Observation      *executionenv.Observation
+	InspectionID    string
+	AdapterKey      string
+	Status          InspectionStatus
+	ErrorCode       string
+	ResponseSummary string
+	Observation     *executionenv.Observation
 }
 
 type runtimeInspection struct {
 	companionID  string
 	inspectionID string
 	adapterKey   string
+	manifestHash string
 	connection   *runtimeConnection
 	done         chan struct{}
 	result       InspectionResult
@@ -122,6 +125,8 @@ func (c *RuntimeChannel) Inspect(ctx context.Context, request InspectionRequest)
 	if err != nil {
 		return failedInspection(request.InspectionID, normalized.AdapterKey, InspectionFailed, "INSPECTION_MANIFEST_INVALID", err.Error())
 	}
+	manifestSum := sha256.Sum256(canonical)
+	manifestHash := hex.EncodeToString(manifestSum[:])
 
 	timeoutMS := request.TimeoutMS
 	if timeoutMS <= 0 {
@@ -134,6 +139,10 @@ func (c *RuntimeChannel) Inspect(ctx context.Context, request InspectionRequest)
 	key := inspectionKey(request.CompanionID, request.InspectionID)
 	c.mu.Lock()
 	if existing := c.inspections[key]; existing != nil {
+		if existing.adapterKey != normalized.AdapterKey || existing.manifestHash != manifestHash {
+			c.mu.Unlock()
+			return failedInspection(request.InspectionID, normalized.AdapterKey, InspectionFailed, "INSPECTION_ID_CONFLICT", "inspection_id is already bound to different declared requirements")
+		}
 		c.mu.Unlock()
 		return waitForRuntimeInspection(ctx, existing)
 	}
@@ -145,7 +154,8 @@ func (c *RuntimeChannel) Inspect(ctx context.Context, request InspectionRequest)
 	connection := c.connections[request.CompanionID]
 	record := &runtimeInspection{
 		companionID: request.CompanionID, inspectionID: request.InspectionID,
-		adapterKey: normalized.AdapterKey, connection: connection, done: make(chan struct{}),
+		adapterKey: normalized.AdapterKey, manifestHash: manifestHash,
+		connection: connection, done: make(chan struct{}),
 	}
 	c.inspections[key] = record
 	c.inspectionOrder = append(c.inspectionOrder, key)
@@ -216,9 +226,9 @@ func (c *RuntimeChannel) acceptInspectionResult(connection *runtimeConnection, d
 
 func inspectionResultFromWire(wire runtimeInspectionResult) InspectionResult {
 	base := InspectionResult{
-		InspectionID: strings.TrimSpace(wire.InspectionID),
-		AdapterKey: strings.TrimSpace(wire.AdapterKey),
-		ErrorCode: strings.TrimSpace(wire.ErrorCode),
+		InspectionID:    strings.TrimSpace(wire.InspectionID),
+		AdapterKey:      strings.TrimSpace(wire.AdapterKey),
+		ErrorCode:       strings.TrimSpace(wire.ErrorCode),
 		ResponseSummary: strings.TrimSpace(wire.ResponseSummary),
 	}
 	switch InspectionStatus(wire.Status) {
@@ -245,16 +255,16 @@ func inspectionResultFromWire(wire runtimeInspectionResult) InspectionResult {
 
 func observationFromWire(wire runtimeInspectionObservation) executionenv.Observation {
 	observation := executionenv.Observation{
-		OS: wire.OS,
+		OS:           wire.OS,
 		Architecture: wire.Architecture,
 		Application: executionenv.ApplicationObservation{
-			Present: wire.Application.Present,
-			ObservedVersion: wire.Application.ObservedVersion,
+			Present:                    wire.Application.Present,
+			ObservedVersion:            wire.Application.ObservedVersion,
 			VersionConstraintSatisfied: wire.Application.VersionConstraintSatisfied,
 		},
-		Assets: make([]executionenv.AssetObservation, 0, len(wire.Assets)),
+		Assets:     make([]executionenv.AssetObservation, 0, len(wire.Assets)),
 		Extensions: make([]executionenv.ExternalExtensionObservation, 0, len(wire.Extensions)),
-		Bindings: make([]executionenv.BindingObservation, 0, len(wire.Bindings)),
+		Bindings:   make([]executionenv.BindingObservation, 0, len(wire.Bindings)),
 	}
 	for _, asset := range wire.Assets {
 		observation.Assets = append(observation.Assets, executionenv.AssetObservation{
@@ -265,7 +275,7 @@ func observationFromWire(wire runtimeInspectionObservation) executionenv.Observa
 	for _, extension := range wire.Extensions {
 		observation.Extensions = append(observation.Extensions, executionenv.ExternalExtensionObservation{
 			Key: extension.Key, Present: extension.Present,
-			ObservedVersion: extension.ObservedVersion,
+			ObservedVersion:            extension.ObservedVersion,
 			VersionConstraintSatisfied: extension.VersionConstraintSatisfied,
 		})
 	}
@@ -318,10 +328,10 @@ func inspectionKey(companionID, inspectionID string) string {
 
 func failedInspection(inspectionID, adapterKey string, status InspectionStatus, code, summary string) InspectionResult {
 	return InspectionResult{
-		InspectionID: strings.TrimSpace(inspectionID),
-		AdapterKey: strings.TrimSpace(adapterKey),
-		Status: status,
-		ErrorCode: strings.TrimSpace(code),
+		InspectionID:    strings.TrimSpace(inspectionID),
+		AdapterKey:      strings.TrimSpace(adapterKey),
+		Status:          status,
+		ErrorCode:       strings.TrimSpace(code),
 		ResponseSummary: strings.TrimSpace(summary),
 	}
 }
