@@ -139,6 +139,19 @@
       "ui_keys": ["device_profiles.title", "device_profiles.summary", "device_profiles.profile", "device_profiles.logical_name", "device_profiles.capabilities", "device_profiles.protocol", "device_profiles.review", "device_profiles.save", "device_profiles.review_note", "device_profiles.preview", "device_profiles.preview_ready", "device_profiles.preview_changed", "device_profiles.advanced", "device_profiles.saved", "device_profiles.unavailable", "device_profiles.required"]
     },
     {
+      "feature_id": "F-025",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/execution-environments.js"],
+      "name": {"en": "Execution Environment Manager", "ar-IQ": "مدير بيئات التشغيل"},
+      "summary": {"en": "Guided revision-scoped external execution environment setup and explicit Machine Role binding.", "ar-IQ": "إعداد موجه لبيئات التشغيل الخارجية المرتبطة بالمسودة وربطها بشكل صريح بأدوار الأجهزة."},
+      "actions": [
+        {"action_id": "create-environment", "label": {"en": "Create Execution Environment", "ar-IQ": "إنشاء بيئة تشغيل"}},
+        {"action_id": "bind-machine-role", "label": {"en": "Bind Machine Role", "ar-IQ": "ربط دور جهاز"}},
+        {"action_id": "remove-environment", "label": {"en": "Remove Execution Environment", "ar-IQ": "إزالة بيئة التشغيل"}}
+      ],
+      "ui_keys": ["f025.nav", "f025.eyebrow", "f025.title", "f025.summary", "f025.guided", "f025.advanced", "f025.environment_key", "f025.name", "f025.version", "f025.architecture", "f025.workspace_locator", "f025.capture_policy", "f025.reference_only", "f025.content_bound", "f025.content_hash", "f025.size_bytes", "f025.machine_role", "f025.unbound_option", "f025.create", "f025.start_edit", "f025.refresh", "f025.unbound", "f025.portability_warning", "f025.remove", "f025.empty", "f025.read_only", "f025.manifest_json", "f025.created", "f025.bound", "f025.removed", "f025.invalid_content_bound", "f025.delete_confirm", "f025.identity", "f025.reference_badge", "f025.content_badge", "f025.readiness_note"]
+    },
+    {
       "feature_id": "F-015",
       "localization_mode": "keyed",
       "owner_assets": ["static/extensions.js", "static/extensions.css", "static/extensions-uninstall.js", "static/extensions-maintenance.js", "static/extensions-set-manifest.js"],
