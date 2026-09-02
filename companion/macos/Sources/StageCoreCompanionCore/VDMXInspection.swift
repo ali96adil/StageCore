@@ -165,6 +165,7 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
 
     private func safeExistingURL(_ url: URL) -> URL? {
         let standardized = url.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: standardized.path) else { return nil }
         let resolved = standardized.resolvingSymlinksInPath().standardizedFileURL
         guard standardized.path == resolved.path else { return nil }
         return standardized
