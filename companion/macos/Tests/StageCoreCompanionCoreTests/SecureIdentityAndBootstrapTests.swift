@@ -35,9 +35,9 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
         )
         let withoutStatus = await withoutOSC.status()
         #if os(macOS)
-        XCTAssertEqual(withoutStatus.capabilities, ["local.echo", "midi.send"])
+        XCTAssertEqual(withoutStatus.capabilities, ["execution.environment.operation", "local.echo", "midi.send"])
         #else
-        XCTAssertEqual(withoutStatus.capabilities, ["local.echo"])
+        XCTAssertEqual(withoutStatus.capabilities, ["execution.environment.operation", "local.echo"])
         #endif
 
         let withOSC = try CompanionBootstrap(
@@ -49,9 +49,9 @@ final class SecureIdentityAndBootstrapTests: XCTestCase {
         )
         let withStatus = await withOSC.status()
         #if os(macOS)
-        XCTAssertEqual(withStatus.capabilities, ["local.echo", "midi.send", "osc.send"])
+        XCTAssertEqual(withStatus.capabilities, ["execution.environment.operation", "local.echo", "midi.send", "osc.send"])
         #else
-        XCTAssertEqual(withStatus.capabilities, ["local.echo", "osc.send"])
+        XCTAssertEqual(withStatus.capabilities, ["execution.environment.operation", "local.echo", "osc.send"])
         #endif
     }
 

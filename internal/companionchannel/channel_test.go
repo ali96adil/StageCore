@@ -2,6 +2,7 @@ package companionchannel_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/companionchannel"
@@ -43,7 +44,7 @@ func TestSimulatedChannelDuplicateAfterReconnectDoesNotReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate := channel.Execute(context.Background(), request)
-	if duplicate != first {
+	if !reflect.DeepEqual(duplicate, first) {
 		t.Fatalf("duplicate=%#v want cached %#v", duplicate, first)
 	}
 	if got := channel.ExecutionCount("companion-a"); got != 1 {
@@ -81,7 +82,7 @@ func TestSimulatedChannelStaleSnapshotIsCachedAndRequiresNewExecutionAfterSync(t
 		t.Fatal(err)
 	}
 	cached := channel.Execute(context.Background(), request)
-	if cached != stale {
+	if !reflect.DeepEqual(cached, stale) {
 		t.Fatalf("same execution id after sync was not cached: got=%#v want=%#v", cached, stale)
 	}
 	if got := channel.ExecutionCount("companion-a"); got != 0 {
@@ -128,7 +129,7 @@ func TestSimulatedChannelOfflineAttemptDoesNotReplayOnReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	cached := channel.Execute(context.Background(), request)
-	if cached != offline {
+	if !reflect.DeepEqual(cached, offline) {
 		t.Fatalf("offline execution id replayed on reconnect: got=%#v want=%#v", cached, offline)
 	}
 	if got := channel.ExecutionCount("companion-a"); got != 0 {

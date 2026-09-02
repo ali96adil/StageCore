@@ -29,12 +29,14 @@ type RuntimeChannel struct {
 	store *store.Store
 	auth  *companionauth.Service
 
-	mu              sync.Mutex
-	connections     map[string]*runtimeConnection
-	executions      map[string]*runtimeExecution
-	executionOrder  []string
-	inspections     map[string]*runtimeInspection
-	inspectionOrder []string
+	mu                           sync.Mutex
+	connections                  map[string]*runtimeConnection
+	executions                   map[string]*runtimeExecution
+	executionOrder               []string
+	inspections                  map[string]*runtimeInspection
+	inspectionOrder              []string
+	environmentOperationBindings map[string]environmentOperationBinding
+	environmentOperationOrder    []string
 }
 
 type runtimeConnection struct {
@@ -107,21 +109,23 @@ type runtimeExecutionRequest struct {
 }
 
 type runtimeExecutionResult struct {
-	Type            string `json:"type"`
-	SchemaVersion   int    `json:"schema_version"`
-	ExecutionID     string `json:"execution_id"`
-	Status          string `json:"status"`
-	AckLevel        string `json:"ack_level"`
-	ErrorCode       string `json:"error_code"`
-	ResponseSummary string `json:"response_summary"`
+	Type            string          `json:"type"`
+	SchemaVersion   int             `json:"schema_version"`
+	ExecutionID     string          `json:"execution_id"`
+	Status          string          `json:"status"`
+	AckLevel        string          `json:"ack_level"`
+	ErrorCode       string          `json:"error_code"`
+	ResponseSummary string          `json:"response_summary"`
+	Output          json.RawMessage `json:"output"`
 }
 
 func NewRuntime(s *store.Store, auth *companionauth.Service) *RuntimeChannel {
 	return &RuntimeChannel{
 		store: s, auth: auth,
-		connections: make(map[string]*runtimeConnection),
-		executions:  make(map[string]*runtimeExecution),
-		inspections: make(map[string]*runtimeInspection),
+		connections:                  make(map[string]*runtimeConnection),
+		executions:                   make(map[string]*runtimeExecution),
+		inspections:                  make(map[string]*runtimeInspection),
+		environmentOperationBindings: make(map[string]environmentOperationBinding),
 	}
 }
 
@@ -504,9 +508,18 @@ func executionKey(companionID, executionID string) string {
 }
 
 func resultFromWire(wire runtimeExecutionResult) ExecutionResult {
+	output := wire.Output
+	if len(output) == 0 {
+		output = json.RawMessage(`{}`)
+	}
+	var outputObject map[string]json.RawMessage
+	if err := json.Unmarshal(output, &outputObject); err != nil || outputObject == nil {
+		return failed(wire.ExecutionID, "COMPANION_RESULT_INVALID", "Companion returned invalid structured execution output", domain.ExecutionFailed)
+	}
 	result := ExecutionResult{
 		ExecutionID: wire.ExecutionID, ErrorCode: wire.ErrorCode,
 		ResponseSummary: strings.TrimSpace(wire.ResponseSummary),
+		Output:          append(json.RawMessage(nil), output...),
 	}
 	switch wire.Status {
 	case "COMPLETED":
