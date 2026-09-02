@@ -7,16 +7,13 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
 
     private let applicationCandidates: [URL]
     private let architecture: String
-    private let fileManager: FileManager
 
     public init(
         applicationCandidates: [URL] = Self.defaultApplicationCandidates(),
-        architecture: String = Self.currentArchitecture,
-        fileManager: FileManager = .default
+        architecture: String = Self.currentArchitecture
     ) {
         self.applicationCandidates = applicationCandidates
         self.architecture = architecture
-        self.fileManager = fileManager
     }
 
     public func inspect(manifest: [String: JSONValue]) async -> CompanionInspectionOutcome {
@@ -77,7 +74,8 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
             let infoURL = candidate
                 .appendingPathComponent("Contents", isDirectory: true)
                 .appendingPathComponent("Info.plist", isDirectory: false)
-            guard let infoData = try? Data(contentsOf: infoURL),
+            guard safeExistingURL(infoURL) != nil,
+                  let infoData = try? Data(contentsOf: infoURL),
                   let plist = try? PropertyListSerialization.propertyList(
                     from: infoData,
                     options: [],
@@ -109,6 +107,7 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
     }
 
     private func inspectAsset(_ asset: VDMXAssetRequirement) async throws -> CompanionInspectionAssetObservation {
+        let fileManager = FileManager.default
         guard let url = declaredFileURL(asset.locator) else {
             return .init(key: asset.key, present: false, inspectable: false)
         }
