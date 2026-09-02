@@ -35,6 +35,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /extensions-uninstall.js", serveOperatorAssetBundle([]string{"extensions-uninstall.js", "extensions-maintenance.js"}, "application/javascript; charset=utf-8"))
 		s.mux.HandleFunc("GET /extensions-maintenance.js", serveOperatorAsset("extensions-maintenance.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /extensions-set-manifest.js", serveOperatorAsset("extensions-set-manifest.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /execution-environments.js", serveOperatorAssetBundle([]string{"execution-environments.js", "execution-environments-workspace.js"}, "application/javascript; charset=utf-8"))
 	}
 }
 
