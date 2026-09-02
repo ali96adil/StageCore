@@ -9,8 +9,8 @@ func TestExecutionEnvironmentCaptureContract(t *testing.T) {
 	capture := string(mustReadOperatorContractFile(t, "static/execution-environment-capture.js"))
 	for _, token := range []string{
 		"/assets/",
-		"/capture",
-		"/vault-status",
+		`suffix = "capture"`,
+		`"vault-status"`,
 		"CONTENT_BOUND",
 		"REFERENCE_ONLY",
 		"f025.capture_file",
