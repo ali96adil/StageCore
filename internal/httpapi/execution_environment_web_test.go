@@ -33,7 +33,7 @@ func TestEmbeddedExecutionEnvironmentManagerBundle(t *testing.T) {
 		"stagecore.adapter.vdmx",
 		"workspace.page.environments",
 		"f025.capture_file",
-		"/vault-status",
+		`"vault-status"`,
 		"body: file",
 	} {
 		if !strings.Contains(body, token) {
