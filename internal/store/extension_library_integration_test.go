@@ -119,7 +119,30 @@ func TestExtensionLibraryRejectsSelfAssertedOfficialAndShowMutation(t *testing.T
 	if official == string(validLocalExtensionManifest()) {
 		t.Fatal("test setup did not set OFFICIAL source")
 	}
-	if _, err := library.Register(ctx, pkg.ID, []byte(official), "owner"); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Fatalf("self-asserted official err=%v", err)
+	if _, err := library.Register(ctx, pkg.ID, []byte(official), "owner"); !errors.Is(err, extension.ErrOfficialSourceRequiresTrustedPath) {
+		t.Fatalf("self-asserted OFFICIAL err=%v", err)
 	}
+
+	_, runtimeSnapshot, _ := createSessionFoundationFixture(t, s)
+	if _, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionShow, "extension lock test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := library.Register(ctx, pkg.ID, validLocalExtensionManifest(), "owner"); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+		t.Fatalf("SHOW registration err=%v", err)
+	}
+}
+
+func validLocalExtensionManifest() []byte {
+	return []byte(`{
+		"schema_version":1,
+		"extension_id":"example.osc-plugin",
+		"version":"1.2.3",
+		"kind":"PLUGIN",
+		"source":"LOCAL",
+		"name":{"en":"Example OSC Plugin","ar-IQ":"إضافة OSC تجريبية"},
+		"summary":{"en":"Sends OSC messages.","ar-IQ":"ترسل رسائل OSC إلى أجهزة المسرح."},
+		"compatibility":{"api_min":1,"api_max":1,"platforms":["linux"],"architectures":["arm64"]},
+		"permissions":["network.udp.send"],
+		"capabilities":["osc.send"]
+	}`)
 }
