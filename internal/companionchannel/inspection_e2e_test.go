@@ -3,6 +3,8 @@ package companionchannel_test
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,8 +17,6 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
-	"net/http/httptest"
-	"strings"
 )
 
 func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testing.T) {
@@ -53,14 +53,14 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 	manifest := inspectionManifest("test.readonly")
 	result := runtime.Inspect(ctx, companionchannel.InspectionRequest{
 		InspectionID: "inspect-1",
-		CompanionID: companionID,
-		Manifest: manifest,
-		TimeoutMS: 500,
+		CompanionID:  companionID,
+		Manifest:     manifest,
+		TimeoutMS:    500,
 	})
 	if result.Status != companionchannel.InspectionCompleted || result.Observation == nil {
 		t.Fatalf("inspection result=%#v", result)
 	}
-	if result.AdapterKey != "test.readonly" || result.Observation.OS != "macos" || result.Observation.Architecture != "arm64" {
+	if result.AdapterKey != "test.readonly" || result.Observation.OS != "darwin" || result.Observation.Architecture != "arm64" {
 		t.Fatalf("inspection observation=%#v", result.Observation)
 	}
 	readiness, err := executionenv.EvaluateReadiness(manifest, *result.Observation)
@@ -76,9 +76,9 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 
 	duplicate := runtime.Inspect(ctx, companionchannel.InspectionRequest{
 		InspectionID: "inspect-1",
-		CompanionID: companionID,
-		Manifest: manifest,
-		TimeoutMS: 500,
+		CompanionID:  companionID,
+		Manifest:     manifest,
+		TimeoutMS:    500,
 	})
 	if duplicate.Status != companionchannel.InspectionCompleted || inspectionCount.Load() != 1 {
 		t.Fatalf("duplicate result=%#v count=%d", duplicate, inspectionCount.Load())
@@ -86,9 +86,9 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 
 	unsupported := runtime.Inspect(ctx, companionchannel.InspectionRequest{
 		InspectionID: "inspect-unsupported",
-		CompanionID: companionID,
-		Manifest: inspectionManifest("unsupported.adapter"),
-		TimeoutMS: 500,
+		CompanionID:  companionID,
+		Manifest:     inspectionManifest("unsupported.adapter"),
+		TimeoutMS:    500,
 	})
 	if unsupported.Status != companionchannel.InspectionUnsupported || unsupported.ErrorCode != "INSPECTION_ADAPTER_UNSUPPORTED" || unsupported.Observation != nil {
 		t.Fatalf("unsupported result=%#v", unsupported)
@@ -100,9 +100,9 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 	waitForRuntime(t, func() bool { return !runtime.IsConnected(companionID) })
 	revoked := runtime.Inspect(ctx, companionchannel.InspectionRequest{
 		InspectionID: "inspect-after-revoke",
-		CompanionID: companionID,
-		Manifest: manifest,
-		TimeoutMS: 500,
+		CompanionID:  companionID,
+		Manifest:     manifest,
+		TimeoutMS:    500,
 	})
 	if revoked.Status != companionchannel.InspectionFailed || revoked.ErrorCode != "COMPANION_OFFLINE" {
 		t.Fatalf("revoked result=%#v", revoked)
@@ -112,15 +112,15 @@ func TestAuthenticatedRuntimeInspectionIsReadOnlyCorrelatedAndRevocable(t *testi
 
 func inspectionManifest(adapterKey string) executionenv.Manifest {
 	return executionenv.Manifest{
-		SchemaVersion: executionenv.ManifestSchemaVersion,
+		SchemaVersion:  executionenv.ManifestSchemaVersion,
 		EnvironmentKey: "video-main",
-		Name: "Video Main",
-		AdapterKey: adapterKey,
+		Name:           "Video Main",
+		AdapterKey:     adapterKey,
 		Application: executionenv.ApplicationRequirement{
-			Key: "test-app",
-			Name: "Test App",
+			Key:               "test-app",
+			Name:              "Test App",
 			VersionConstraint: "1.x",
-			Hosts: []executionenv.HostRequirement{{OS: "macos", Architecture: "arm64"}},
+			Hosts:             []executionenv.HostRequirement{{OS: "darwin", Architecture: "arm64"}},
 		},
 	}
 }
@@ -181,11 +181,11 @@ func serveInspectionRuntimeAgent(connection *websocket.Conn, companionID string,
 		}
 		count.Add(1)
 		result := map[string]any{
-			"type": "inspection.result",
-			"schema_version": 1,
-			"message_id": request.InspectionID,
-			"inspection_id": request.InspectionID,
-			"adapter_key": request.AdapterKey,
+			"type":             "inspection.result",
+			"schema_version":   1,
+			"message_id":       request.InspectionID,
+			"inspection_id":    request.InspectionID,
+			"adapter_key":      request.AdapterKey,
 			"response_summary": "declared requirements inspected",
 		}
 		if request.AdapterKey == "unsupported.adapter" {
@@ -195,16 +195,16 @@ func serveInspectionRuntimeAgent(connection *websocket.Conn, companionID string,
 			compatible := true
 			result["status"] = "COMPLETED"
 			result["observation"] = map[string]any{
-				"os": "macos",
+				"os":           "darwin",
 				"architecture": "arm64",
 				"application": map[string]any{
-					"present": true,
-					"observed_version": "1.2.3",
+					"present":                      true,
+					"observed_version":             "1.2.3",
 					"version_constraint_satisfied": compatible,
 				},
-				"assets": []any{},
+				"assets":              []any{},
 				"external_extensions": []any{},
-				"bindings": []any{},
+				"bindings":            []any{},
 			}
 		}
 		if err := websocket.JSON.Send(connection, result); err != nil {
@@ -218,8 +218,8 @@ func TestInspectionRejectsInvalidManifestAndTimeoutBeforeTransport(t *testing.T)
 	invalidManifest := executionenv.Manifest{}
 	result := runtime.Inspect(context.Background(), companionchannel.InspectionRequest{
 		InspectionID: "invalid-manifest",
-		CompanionID: "companion",
-		Manifest: invalidManifest,
+		CompanionID:  "companion",
+		Manifest:     invalidManifest,
 	})
 	if result.Status != companionchannel.InspectionFailed || result.ErrorCode != "INSPECTION_MANIFEST_INVALID" {
 		t.Fatalf("invalid manifest result=%#v", result)
@@ -228,9 +228,9 @@ func TestInspectionRejectsInvalidManifestAndTimeoutBeforeTransport(t *testing.T)
 	manifest := inspectionManifest("test.readonly")
 	result = runtime.Inspect(context.Background(), companionchannel.InspectionRequest{
 		InspectionID: "invalid-timeout",
-		CompanionID: "companion",
-		Manifest: manifest,
-		TimeoutMS: int64((31 * time.Second) / time.Millisecond),
+		CompanionID:  "companion",
+		Manifest:     manifest,
+		TimeoutMS:    int64((31 * time.Second) / time.Millisecond),
 	})
 	if result.Status != companionchannel.InspectionFailed || result.ErrorCode != "INSPECTION_TIMEOUT_INVALID" {
 		t.Fatalf("invalid timeout result=%#v", result)
