@@ -48,6 +48,7 @@ public actor WebSocketCompanionAgent {
     private let securityPolicy: CompanionTransportSecurityPolicy
     private let session: CompanionSession
     private let authenticator: any CompanionRuntimeAuthenticator
+    private let inspectionRouter: CompanionInspectionRouter
     private let reconnectDelay: Duration
     private let maxReconnects: Int
     private let heartbeatInterval: Duration
@@ -58,6 +59,7 @@ public actor WebSocketCompanionAgent {
         securityPolicy: CompanionTransportSecurityPolicy = .production,
         session: CompanionSession,
         authenticator: any CompanionRuntimeAuthenticator,
+        inspectionProviders: [any CompanionInspectionProvider] = [],
         reconnectDelay: Duration = .milliseconds(250),
         maxReconnects: Int = 8,
         heartbeatInterval: Duration = .seconds(5),
@@ -71,6 +73,7 @@ public actor WebSocketCompanionAgent {
         self.securityPolicy = securityPolicy
         self.session = session
         self.authenticator = authenticator
+        self.inspectionRouter = try CompanionInspectionRouter(providers: inspectionProviders)
         self.reconnectDelay = reconnectDelay
         self.maxReconnects = max(0, maxReconnects)
         self.heartbeatInterval = heartbeatInterval
@@ -129,6 +132,14 @@ public actor WebSocketCompanionAgent {
             try await send(try await session.helloData(), socket: socket)
             while !Task.isCancelled {
                 let data = try await receive(socket: socket)
+                let runtimeState = await session.runtimeState()
+                if let response = try await inspectionRouter.handleIfInspection(
+                    data,
+                    authenticated: runtimeState.isAuthenticated()
+                ) {
+                    try await send(response, socket: socket)
+                    continue
+                }
                 if let response = try await session.handle(data) {
                     try await send(response, socket: socket)
                 }
