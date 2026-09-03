@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/app"
+	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/deviceprofile"
 	"github.com/ali96adil/StageCore/internal/extension"
@@ -21,6 +22,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
+	"github.com/ali96adil/StageCore/internal/showcapsule"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
@@ -81,6 +83,11 @@ func main() {
 	)
 	memory := sessionmemory.New(application.Store)
 	timing := timingintelligence.New(application.Store, nil)
+	showCapsules, err := showcapsule.New(application.Store, application.Vault, clock.Real{})
+	if err != nil {
+		logger.Error("show capsule startup failed", "error", err)
+		os.Exit(1)
+	}
 	deviceProfiles := deviceprofile.BuiltinCatalog()
 	extensionLibrary, err := extension.NewLibrary(application.Store, application.Software)
 	if err != nil {
@@ -169,6 +176,7 @@ func main() {
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),
 		httpapi.WithOperatorTimingIntelligence(userAuth, timing),
+		httpapi.WithOperatorShowCapsules(userAuth, showCapsules, filepath.Join(application.Config.DataRoot, "show-capsules")),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
 		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
 		httpapi.WithSecurityOperations(
