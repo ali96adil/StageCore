@@ -34,16 +34,20 @@ var featureIDPattern = regexp.MustCompile(`^(?:F-[0-9]{3}|CORE-[A-Z0-9-]+)$`)
 var operatorAssetPattern = regexp.MustCompile(`(?:src|href)="/([^"?#]+\.(?:js|css))"`)
 
 func TestFeatureLocalizationContract(t *testing.T) {
-	manifestBytes := mustReadOperatorContractFile(t, "feature_localization_manifest.json")
-	var manifest featureLocalizationManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		t.Fatalf("decode feature localization manifest: %v", err)
-	}
-	if manifest.ContractVersion != 1 {
-		t.Fatalf("feature localization contract version=%d, want 1", manifest.ContractVersion)
-	}
-	if !sameStringSet(manifest.RequiredLocales, []string{"en", "ar-IQ"}) {
-		t.Fatalf("required locales=%v, want en and ar-IQ", manifest.RequiredLocales)
+	manifest := featureLocalizationManifest{ContractVersion: 1, RequiredLocales: []string{"en", "ar-IQ"}}
+	for _, path := range []string{"feature_localization_manifest.json", "feature_localization_manifest_f011.json"} {
+		partBytes := mustReadOperatorContractFile(t, path)
+		var part featureLocalizationManifest
+		if err := json.Unmarshal(partBytes, &part); err != nil {
+			t.Fatalf("decode feature localization manifest %s: %v", path, err)
+		}
+		if part.ContractVersion != manifest.ContractVersion {
+			t.Fatalf("feature localization contract %s version=%d, want %d", path, part.ContractVersion, manifest.ContractVersion)
+		}
+		if !sameStringSet(part.RequiredLocales, manifest.RequiredLocales) {
+			t.Fatalf("required locales in %s=%v, want %v", path, part.RequiredLocales, manifest.RequiredLocales)
+		}
+		manifest.Features = append(manifest.Features, part.Features...)
 	}
 
 	index := string(mustReadOperatorContractFile(t, "static/index.html"))
@@ -135,7 +139,7 @@ func TestFeatureLocalizationContract(t *testing.T) {
 	for _, match := range operatorAssetPattern.FindAllStringSubmatch(index, -1) {
 		asset := "static/" + match[1]
 		if _, ok := assetOwners[asset]; !ok {
-			t.Errorf("Operator asset %q has no feature localization owner; add it to feature_localization_manifest.json", asset)
+			t.Errorf("Operator asset %q has no feature localization owner; register it in a feature localization manifest", asset)
 		}
 	}
 }
@@ -157,63 +161,39 @@ func validateLocalizedField(t *testing.T, label string, locales []string, values
 func localizedArabicValue(source, key string) (string, bool) {
 	pattern := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*(?:\{[^\n]*"ar-IQ"\s*:\s*)?"([^"]+)"`)
 	match := pattern.FindStringSubmatch(source)
-	if len(match) != 2 {
-		return "", false
-	}
+	if len(match) != 2 { return "", false }
 	return match[1], true
 }
 
 func localizedArabicValueFromSources(sources []string, key string) (string, bool) {
 	for _, source := range sources {
-		if value, ok := localizedArabicValue(source, key); ok {
-			return value, true
-		}
+		if value, ok := localizedArabicValue(source, key); ok { return value, true }
 	}
 	return "", false
 }
 
 func sourceSetContains(sources []string, needle string) bool {
-	for _, source := range sources {
-		if strings.Contains(source, needle) {
-			return true
-		}
-	}
+	for _, source := range sources { if strings.Contains(source, needle) { return true } }
 	return false
 }
 
 func containsArabic(value string) bool {
-	for _, r := range value {
-		if unicode.In(r, unicode.Arabic) {
-			return true
-		}
-	}
+	for _, r := range value { if unicode.In(r, unicode.Arabic) { return true } }
 	return false
 }
 
 func sameStringSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
+	if len(a) != len(b) { return false }
 	seen := make(map[string]int, len(a))
-	for _, value := range a {
-		seen[value]++
-	}
-	for _, value := range b {
-		seen[value]--
-	}
-	for _, count := range seen {
-		if count != 0 {
-			return false
-		}
-	}
+	for _, value := range a { seen[value]++ }
+	for _, value := range b { seen[value]-- }
+	for _, count := range seen { if count != 0 { return false } }
 	return true
 }
 
 func mustReadOperatorContractFile(t *testing.T, path string) []byte {
 	t.Helper()
 	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	if err != nil { t.Fatalf("read %s: %v", path, err) }
 	return content
 }
