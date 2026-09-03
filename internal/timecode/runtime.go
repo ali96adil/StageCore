@@ -272,7 +272,13 @@ func (s *Scheduler) Evaluate(previous, current Sample, health HealthSnapshot, bi
 func commandID(ctx CommandContext, b Binding) string {
 	canonical := strings.Join([]string{"timecode.cue.v1", ctx.ProjectID, ctx.RuntimeSnapshotID, ctx.SessionID, ctx.SourceID, ctx.Epoch, b.BindingID, fmt.Sprintf("%d", b.TargetFrame)}, "|")
 	digest := sha256.Sum256([]byte(canonical))
-	return "tc_" + hex.EncodeToString(digest[:])
+	// command_records requires the repository-wide 36-character command ID
+	// contract. Preserve deterministic SHA-256 identity while encoding the first
+	// 128 bits in UUID form with stable version/variant bits.
+	digest[6] = (digest[6] & 0x0f) | 0x50
+	digest[8] = (digest[8] & 0x3f) | 0x80
+	raw := hex.EncodeToString(digest[:16])
+	return raw[0:8] + "-" + raw[8:12] + "-" + raw[12:16] + "-" + raw[16:20] + "-" + raw[20:32]
 }
 
 type RecorderEvent struct {
