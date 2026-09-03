@@ -31,7 +31,7 @@ const f018Copy = {
   "timecode.safety": { en: "StageCore never auto-fires a timecode cue while the selected source is missing, stale, unstable, jumping or discontinuous. During SHOW the selected source remains locked with no silent fallback, and a bound cue can execute only when it is the next enabled cue.", "ar-IQ": "StageCore لا يشغّل أي كيو تلقائياً من التايم كود إذا كان المصدر مفقوداً أو قديماً أو غير مستقر أو حدثت قفزة أو حالة انقطاع. أثناء SHOW يبقى المصدر المحدد مقفولاً بلا استبدال صامت، والكيو المرتبط لا ينفذ إلا إذا كان هو الكيو المفعّل التالي." },
   "timecode.config_title": { en: "Configuration model", "ar-IQ": "طريقة الإعداد" },
   "timecode.config": { en: "Define the source in Configuration as a TIMECODE_SOURCE target and add cue timing under timecode in each Cue execution policy. Publishing seals both into the immutable Runtime Snapshot.", "ar-IQ": "يُعرّف المصدر داخل Configuration كهدف من نوع TIMECODE_SOURCE، ويضاف توقيت الكيو تحت timecode في Execution policy. عند النشر تصبح القيمتان جزءاً من Runtime Snapshot غير القابل للتغيير." },
-  "timecode.published": { en: "Runtime Snapshot", "ar-IQ": "Runtime Snapshot" },
+  "timecode.published": { en: "Runtime Snapshot", "ar-IQ": "لقطة Runtime Snapshot المنشورة" },
   "timecode.stale": { en: "Stale", "ar-IQ": "قديم أو متوقف" },
   "timecode.missing": { en: "Missing", "ar-IQ": "غير موجود" },
   "timecode.healthy": { en: "Healthy", "ar-IQ": "سليم" },
