@@ -58,7 +58,9 @@ func (g *Generator) Stop() {
 	g.anchorAt = time.Time{}
 }
 
-func (g *Generator) Seek(frame int64, now time.Time) error {
+// SeekFrame moves the generator to an exact raw frame without pretending to
+// implement io.Seeker's byte-oriented Seek contract.
+func (g *Generator) SeekFrame(frame int64, now time.Time) error {
 	if frame < 0 {
 		return errors.New("negative seek frame")
 	}
