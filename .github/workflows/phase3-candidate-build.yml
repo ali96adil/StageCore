@@ -1,0 +1,52 @@
+name: Phase 3 Candidate Build
+
+on:
+  push:
+    branches:
+      - qualification/phase3-candidate-build
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 54bc07236efb516d84a7b9f136767de85fff9029
+
+jobs:
+  build-frozen-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frozen candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache: true
+      - name: Verify migration chain
+        run: go test ./internal/db -run TestOpenAppliesMigrationAndRequiredPragmas -count=1
+      - name: Build release and offline media
+        run: bash scripts/build-release.sh dist
+      - name: Verify release revision and manifests
+        run: |
+          test "$(cat dist/stagecore-linux-arm64/RELEASE_REVISION)" = "$CANDIDATE_SHA"
+          test "$(cat dist/stagecore-offline-media/RELEASE_REVISION)" = "$CANDIDATE_SHA"
+          test "$(awk -F= '$1 == "revision" {print $2}' dist/stagecore-offline-media/MEDIA_CATALOG)" = "$CANDIDATE_SHA"
+          (cd dist/stagecore-linux-arm64 && sha256sum -c SHA256SUMS)
+          (cd dist/stagecore-linux-amd64 && sha256sum -c SHA256SUMS)
+          (cd dist/stagecore-offline-media && sha256sum -c MEDIA_SHA256SUMS)
+          sha256sum dist/stagecore-linux-arm64.tar.gz dist/stagecore-offline-media.tar.gz > dist/QUALIFICATION_ARCHIVE_SHA256SUMS
+      - name: Upload frozen candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagecore-phase3-candidate-54bc072
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/stagecore-linux-arm64.tar.gz
+            dist/stagecore-offline-media.tar.gz
+            dist/QUALIFICATION_ARCHIVE_SHA256SUMS
