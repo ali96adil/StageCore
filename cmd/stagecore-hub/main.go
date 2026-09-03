@@ -23,6 +23,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
+	"github.com/ali96adil/StageCore/internal/timingintelligence"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -79,6 +80,7 @@ func main() {
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 	)
 	memory := sessionmemory.New(application.Store)
+	timing := timingintelligence.New(application.Store, nil)
 	deviceProfiles := deviceprofile.BuiltinCatalog()
 	extensionLibrary, err := extension.NewLibrary(application.Store, application.Software)
 	if err != nil {
@@ -166,6 +168,7 @@ func main() {
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),
+		httpapi.WithOperatorTimingIntelligence(userAuth, timing),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
 		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
 		httpapi.WithSecurityOperations(

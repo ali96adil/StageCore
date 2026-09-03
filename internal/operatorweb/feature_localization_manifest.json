@@ -164,6 +164,19 @@
       "ui_keys": ["timecode.nav", "timecode.eyebrow", "timecode.title", "timecode.subtitle", "timecode.refresh", "timecode.source", "timecode.kind", "timecode.rate", "timecode.drop_frame", "timecode.non_drop_frame", "timecode.offset", "timecode.health", "timecode.lock", "timecode.last", "timecode.frame", "timecode.bindings", "timecode.binding", "timecode.cue", "timecode.target", "timecode.expiry", "timecode.enabled", "timecode.disabled", "timecode.yes", "timecode.no", "timecode.none", "timecode.no_snapshot", "timecode.safety_title", "timecode.safety", "timecode.config_title", "timecode.config", "timecode.published", "timecode.stale", "timecode.missing", "timecode.healthy", "timecode.unstable", "timecode.jump", "timecode.discontinuity", "timecode.drift"]
     },
     {
+      "feature_id": "F-028",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/timing-intelligence.js"],
+      "name": {"en": "Expected Next Cue & Timing Intelligence", "ar-IQ": "توقع الكيو التالي وذكاء التوقيت"},
+      "summary": {"en": "Advisory rehearsal-derived cue timing, confidence and contextual next-cue guidance without autonomous GO.", "ar-IQ": "إرشاد استشاري لتوقيت الكيو والثقة والسياق اعتماداً على البروفات بدون تشغيل GO تلقائياً."},
+      "actions": [
+        {"action_id": "review-next-cue", "label": {"en": "Review Expected Next Cue", "ar-IQ": "مراجعة الكيو التالي المتوقع"}},
+        {"action_id": "review-rehearsal-timing", "label": {"en": "Review Rehearsal Timing", "ar-IQ": "مراجعة توقيت البروفات"}},
+        {"action_id": "choose-trusted-rehearsals", "label": {"en": "Choose Trusted Rehearsals", "ar-IQ": "اختيار البروفات الموثوقة"}}
+      ],
+      "ui_keys": ["timing.nav", "timing.eyebrow", "timing.title", "timing.subtitle", "timing.refresh", "timing.advisory", "timing.no_snapshot", "timing.next", "timing.current", "timing.expected", "timing.window", "timing.pace", "timing.confidence", "timing.reason", "timing.early", "timing.normal", "timing.late", "timing.diverged", "timing.unknown", "timing.withheld", "timing.low", "timing.medium", "timing.high", "timing.no_live", "timing.notes", "timing.notes_due", "timing.notes_not_due", "timing.lead", "timing.seconds", "timing.rehearsals", "timing.rehearsals_detail", "timing.session", "timing.lifecycle", "timing.observations", "timing.snapshot_match", "timing.training", "timing.selection", "timing.auto", "timing.include", "timing.exclude", "timing.used", "timing.not_used", "timing.yes", "timing.no", "timing.read_only", "timing.transitions", "timing.from", "timing.to", "timing.median", "timing.range", "timing.samples", "timing.no_transitions", "timing.section", "timing.section_detail", "timing.section_from", "timing.section_to", "timing.calculate", "timing.clear", "timing.section_withheld", "timing.saved", "timing.partial_truth"]
+    },
+    {
       "feature_id": "F-015",
       "localization_mode": "keyed",
       "owner_assets": ["static/extensions.js", "static/extensions.css", "static/extensions-uninstall.js", "static/extensions-maintenance.js", "static/extensions-set-manifest.js"],
