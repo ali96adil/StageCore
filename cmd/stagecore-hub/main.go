@@ -224,6 +224,8 @@ func main() {
 		}
 		logger.Info("StageCore OSC input listening", "listen", listen, "project_id", cfg.OSCInputProjectID)
 	}
+	timecodeSupervisor := timecode.NewSupervisor(application.Store, timecodeRuntime)
+	go timecodeSupervisor.Run(ctx)
 	go func() {
 		logger.Info("StageCore Hub listening", "listen", cfg.Listen, "data_root", cfg.DataRoot)
 		httpErrCh <- server.ListenAndServe()
