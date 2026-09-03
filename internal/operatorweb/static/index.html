@@ -20,41 +20,74 @@
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">SC</div>
-      <div><strong>StageCore</strong><span>Operator</span></div>
+      <div>
+        <strong>StageCore</strong>
+        <span>Operator</span>
+      </div>
     </div>
     <div id="hubBadge" class="hub-badge">Hub · connecting</div>
     <div class="language-control">
       <label for="languageSelect">اللغة</label>
-      <select id="languageSelect" aria-label="Language"><option value="ar">العربية</option><option value="en">English</option></select>
+      <select id="languageSelect" aria-label="Language">
+        <option value="ar">العربية</option>
+        <option value="en">English</option>
+      </select>
     </div>
-    <div id="userArea" class="user-area hidden"><span id="userLabel"></span><button id="logoutButton" class="button ghost" type="button">Sign out</button></div>
+    <div id="userArea" class="user-area hidden">
+      <span id="userLabel"></span>
+      <button id="logoutButton" class="button ghost" type="button">Sign out</button>
+    </div>
   </header>
 
   <main id="loginView" class="auth-layout">
     <section class="auth-card">
       <p class="eyebrow">LOCAL OPERATOR ACCESS</p>
+
       <div id="loginPanel">
         <h1>Sign in to the Hub</h1>
         <p class="muted">Authentication stays on this StageCore Hub. No Internet account is required.</p>
         <form id="loginForm" autocomplete="on">
-          <label>Username<input id="username" name="username" autocomplete="username" required></label>
-          <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+          <label>
+            Username
+            <input id="username" name="username" autocomplete="username" required>
+          </label>
+          <label>
+            Password
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
           <button class="button primary wide" type="submit">Sign in</button>
         </form>
       </div>
+
       <div id="bootstrapPanel" class="hidden">
         <h1>Claim this fresh Hub</h1>
         <p class="muted">On the Hub machine, run <span class="mono">stagecore-setup setup-code</span>. Enter that one-time local code here to create the first OWNER. No Internet account is involved.</p>
         <form id="bootstrapForm" autocomplete="off">
-          <label>Setup code<input id="bootstrapCode" class="mono" autocomplete="off" required></label>
-          <label>OWNER username<input id="bootstrapUsername" autocomplete="username" minlength="3" maxlength="64" required></label>
-          <label>OWNER password<input id="bootstrapPassword" type="password" autocomplete="new-password" minlength="12" required></label>
-          <label>Confirm password<input id="bootstrapPasswordConfirm" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label>
+            Setup code
+            <input id="bootstrapCode" class="mono" autocomplete="off" required>
+          </label>
+          <label>
+            OWNER username
+            <input id="bootstrapUsername" autocomplete="username" minlength="3" maxlength="64" required>
+          </label>
+          <label>
+            OWNER password
+            <input id="bootstrapPassword" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <label>
+            Confirm password
+            <input id="bootstrapPasswordConfirm" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
           <button class="button primary wide" type="submit">Create first OWNER</button>
         </form>
       </div>
+
       <div id="loginMessage" class="message hidden" role="status"></div>
-      <dl class="identity-grid"><div><dt>Hub</dt><dd id="hubName">—</dd></div><div><dt>Fingerprint</dt><dd id="hubFingerprint" class="mono">—</dd></div></dl>
+      <dl class="identity-grid">
+        <div><dt>Hub</dt><dd id="hubName">—</dd></div>
+        <div><dt>Fingerprint</dt><dd id="hubFingerprint" class="mono">—</dd></div>
+      </dl>
     </section>
   </main>
 
@@ -76,41 +109,91 @@
         <button data-page="sessions" class="nav-button" type="button">Sessions</button>
         <button data-page="notes" class="nav-button" type="button">Notes</button>
       </div>
-      <div class="sidebar-foot"><span id="roleBadge" class="role-badge"></span><small>Local MVP interface</small></div>
+      <div class="sidebar-foot">
+        <span id="roleBadge" class="role-badge"></span>
+        <small>Local MVP interface</small>
+      </div>
     </aside>
-    <main class="workspace"><div id="globalMessage" class="message hidden" role="status"></div><section id="content" aria-live="polite"></section></main>
+
+    <main class="workspace">
+      <div id="globalMessage" class="message hidden" role="status"></div>
+      <section id="content" aria-live="polite"></section>
+    </main>
   </div>
 
   <dialog id="cueDialog" class="dialog">
     <form id="cueForm" method="dialog">
-      <div class="dialog-head"><div><p class="eyebrow">DRAFT CUE</p><h2 id="cueDialogTitle">Create Cue</h2></div><button id="closeCueDialog" class="icon-button" type="button" aria-label="Close">×</button></div>
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">DRAFT CUE</p>
+          <h2 id="cueDialogTitle">Create Cue</h2>
+        </div>
+        <button id="closeCueDialog" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+
       <input id="cueId" type="hidden">
       <div class="form-grid two">
-        <label>Label<input id="cueLabel" required></label><label>Name<input id="cueName" required></label>
-        <label>Criticality<select id="cueCriticality"><option value="NORMAL">NORMAL</option><option value="CRITICAL">CRITICAL</option></select></label>
+        <label>Label<input id="cueLabel" required></label>
+        <label>Name<input id="cueName" required></label>
+        <label>Criticality
+          <select id="cueCriticality">
+            <option value="NORMAL">NORMAL</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+        </label>
         <label class="check-row"><input id="cueEnabled" type="checkbox" checked> Enabled</label>
       </div>
       <label>Execution policy (JSON)<textarea id="cueExecutionPolicy" class="mono" rows="3">{}</textarea></label>
       <label>Notes summary<textarea id="cueNotes" rows="2"></textarea></label>
-      <div class="section-title-row"><div><p class="eyebrow">ACTIONS</p><h3>Execution steps</h3></div><button id="addActionButton" class="button ghost" type="button">+ Action</button></div>
+
+      <div class="section-title-row">
+        <div>
+          <p class="eyebrow">ACTIONS</p>
+          <h3>Execution steps</h3>
+        </div>
+        <button id="addActionButton" class="button ghost" type="button">+ Action</button>
+      </div>
       <div id="actionsEditor" class="actions-editor"></div>
-      <div class="dialog-actions"><button id="cancelCueButton" class="button ghost" type="button">Cancel</button><button class="button primary" type="submit">Save Draft Cue</button></div>
+
+      <div class="dialog-actions">
+        <button id="cancelCueButton" class="button ghost" type="button">Cancel</button>
+        <button class="button primary" type="submit">Save Draft Cue</button>
+      </div>
     </form>
   </dialog>
 
   <template id="actionTemplate">
     <article class="action-editor">
-      <div class="action-head"><strong class="action-title">Action</strong><button class="icon-button remove-action" type="button" aria-label="Remove action">×</button></div>
+      <div class="action-head">
+        <strong class="action-title">Action</strong>
+        <button class="icon-button remove-action" type="button" aria-label="Remove action">×</button>
+      </div>
       <input class="action-id" type="hidden">
       <div class="form-grid three">
         <label>Target ref<input class="action-target" placeholder="VIDEO-MAIN" required></label>
         <label>Capability<input class="action-capability" value="osc.send" required></label>
-        <label>Mode<select class="action-mode"><option value="SEQUENTIAL">SEQUENTIAL</option><option value="PARALLEL">PARALLEL</option><option value="PARALLEL_BARRIER">PARALLEL_BARRIER</option></select></label>
-        <label>Priority<select class="action-priority"><option value="P1">P1</option><option value="P0">P0</option><option value="P2">P2</option><option value="P3">P3</option></select></label>
+        <label>Mode
+          <select class="action-mode">
+            <option value="SEQUENTIAL">SEQUENTIAL</option>
+            <option value="PARALLEL">PARALLEL</option>
+            <option value="PARALLEL_BARRIER">PARALLEL_BARRIER</option>
+          </select>
+        </label>
+        <label>Priority
+          <select class="action-priority">
+            <option value="P1">P1</option>
+            <option value="P0">P0</option>
+            <option value="P2">P2</option>
+            <option value="P3">P3</option>
+          </select>
+        </label>
         <label class="check-row"><input class="action-enabled" type="checkbox" checked> Enabled</label>
       </div>
       <label>Parameters (JSON)<textarea class="action-parameters mono" rows="4">{}</textarea></label>
-      <div class="form-grid two"><label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3">{}</textarea></label><label>Error policy (JSON)<textarea class="action-error mono" rows="3">{}</textarea></label></div>
+      <div class="form-grid two">
+        <label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3">{}</textarea></label>
+        <label>Error policy (JSON)<textarea class="action-error mono" rows="3">{}</textarea></label>
+      </div>
     </article>
   </template>
 
