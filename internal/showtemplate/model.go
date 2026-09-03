@@ -3,8 +3,8 @@ package showtemplate
 import "encoding/json"
 
 const (
-	SchemaVersion      = 1
-	CurrentAPIVersion  = 1
+	SchemaVersion     = 1
+	CurrentAPIVersion = 1
 )
 
 type Source string
@@ -44,7 +44,7 @@ type TargetSpec struct {
 	Key           string          `json:"key"`
 	LogicalName   string          `json:"logical_name"`
 	LogicalType   string          `json:"logical_type"`
-	TargetRef     string          `json:"target_ref,omitempty"`
+	TargetRef     string          `json:"-"`
 	GroupName     string          `json:"group_name,omitempty"`
 	Configuration json.RawMessage `json:"configuration"`
 }
@@ -63,16 +63,16 @@ type ActionSpec struct {
 }
 
 type CueSpec struct {
-	Key              string          `json:"key"`
-	DisplayLabel     string          `json:"display_label"`
-	Name             LocalizedText   `json:"name"`
-	OrderIndex       int             `json:"order_index"`
-	CueType          string          `json:"cue_type"`
-	Criticality      string          `json:"criticality"`
-	Enabled          bool            `json:"enabled"`
-	ExecutionPolicy  json.RawMessage `json:"execution_policy"`
-	Notes            LocalizedText   `json:"notes"`
-	Actions          []ActionSpec    `json:"actions,omitempty"`
+	Key             string          `json:"key"`
+	DisplayLabel    string          `json:"display_label"`
+	Name            LocalizedText   `json:"name"`
+	OrderIndex      int             `json:"order_index"`
+	CueType         string          `json:"cue_type"`
+	Criticality     string          `json:"criticality"`
+	Enabled         bool            `json:"enabled"`
+	ExecutionPolicy json.RawMessage `json:"execution_policy"`
+	Notes           LocalizedText   `json:"notes"`
+	Actions         []ActionSpec    `json:"actions,omitempty"`
 }
 
 type InputSpec struct {
@@ -94,25 +94,25 @@ type OutputSpec struct {
 }
 
 type RouteActionSpec struct {
-	Key         string          `json:"key"`
-	OrderIndex  int             `json:"order_index"`
-	OutputKey   string          `json:"output_key,omitempty"`
-	CueKey      string          `json:"cue_key,omitempty"`
-	Parameters  json.RawMessage `json:"parameters"`
+	Key        string          `json:"key"`
+	OrderIndex int             `json:"order_index"`
+	OutputKey  string          `json:"output_key,omitempty"`
+	CueKey     string          `json:"cue_key,omitempty"`
+	Parameters json.RawMessage `json:"parameters"`
 }
 
 type RouteSpec struct {
-	Key                  string            `json:"key"`
-	Name                 LocalizedText     `json:"name"`
-	InputKey             string            `json:"input_key"`
-	ConditionDefinition  json.RawMessage   `json:"condition_definition"`
-	TransformDefinition  json.RawMessage   `json:"transform_definition"`
-	DelayMS              *int64            `json:"delay_ms,omitempty"`
-	DebounceMS           *int64            `json:"debounce_ms,omitempty"`
-	PriorityClass        string            `json:"priority_class"`
-	ErrorPolicy          json.RawMessage   `json:"error_policy"`
-	Enabled              bool              `json:"enabled"`
-	Actions              []RouteActionSpec `json:"actions"`
+	Key                 string            `json:"key"`
+	Name                LocalizedText     `json:"name"`
+	InputKey            string            `json:"input_key"`
+	ConditionDefinition json.RawMessage   `json:"condition_definition"`
+	TransformDefinition json.RawMessage   `json:"transform_definition"`
+	DelayMS             *int64            `json:"delay_ms,omitempty"`
+	DebounceMS          *int64            `json:"debounce_ms,omitempty"`
+	PriorityClass       string            `json:"priority_class"`
+	ErrorPolicy         json.RawMessage   `json:"error_policy"`
+	Enabled             bool              `json:"enabled"`
+	Actions             []RouteActionSpec `json:"actions"`
 }
 
 type ProjectSpec struct {
