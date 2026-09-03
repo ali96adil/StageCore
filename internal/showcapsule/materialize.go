@@ -18,15 +18,15 @@ type MaterializeOptions struct {
 }
 
 type MaterializeResult struct {
-	CapsuleID            string                            `json:"capsule_id"`
-	ProjectID            string                            `json:"project_id"`
-	RevisionID           string                            `json:"revision_id"`
-	RuntimeSnapshotID    string                            `json:"runtime_snapshot_id"`
-	ImportedObjects      []string                          `json:"imported_objects,omitempty"`
-	ReusedObjects        []string                          `json:"reused_objects,omitempty"`
-	ImportedExtensions   []string                          `json:"imported_extensions,omitempty"`
-	ReplacementHostReady bool                              `json:"replacement_host_ready"`
-	Plan                 ImportPlan                        `json:"plan"`
+	CapsuleID            string   `json:"capsule_id"`
+	ProjectID            string   `json:"project_id"`
+	RevisionID           string   `json:"revision_id"`
+	RuntimeSnapshotID    string   `json:"runtime_snapshot_id"`
+	ImportedObjects      []string `json:"imported_objects,omitempty"`
+	ReusedObjects        []string `json:"reused_objects,omitempty"`
+	ImportedExtensions   []string `json:"imported_extensions,omitempty"`
+	ReplacementHostReady bool     `json:"replacement_host_ready"`
+	Plan                 ImportPlan `json:"plan"`
 }
 
 func (s *Service) Materialize(ctx context.Context, capsulePath string, options MaterializeOptions) (MaterializeResult, error) {
@@ -43,6 +43,17 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	}
 
 	importedObjects := make([]string, 0, len(plan.IncludedObjects))
+	projectCommitted := false
+	defer func() {
+		if projectCommitted || len(importedObjects) == 0 {
+			return
+		}
+		cleanupCtx := context.WithoutCancel(ctx)
+		for _, contentHash := range importedObjects {
+			_, _ = s.vault.RemoveObjectIfUnreferenced(cleanupCtx, contentHash)
+		}
+	}()
+
 	for _, object := range plan.IncludedObjects {
 		path := filepath.Join(filepath.Clean(capsulePath), filepath.FromSlash(object.ArchivePath))
 		file, err := os.Open(path)
@@ -82,6 +93,7 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	if err != nil {
 		return MaterializeResult{}, err
 	}
+	projectCommitted = true
 
 	finalPlan, err := s.planImportedProject(ctx, capsulePath, plan.Manifest)
 	if err != nil {
@@ -290,7 +302,7 @@ func (s *Service) planImportedProject(ctx context.Context, capsulePath string, m
 		plan.warnShow("extension.activation_required", fmt.Sprintf("Extension %s@%s package is restored but installation/permission review must be completed through F-015 before SHOW.", extension.ExtensionID, extension.Version))
 	}
 	if manifest.Presentation.AppearanceDeviceLocal || manifest.Presentation.WorkspaceDeviceLocal {
-		plan.warnShow("presentation.device_local", "Appearance/workspace state is device-local and is intentionally not restored.")
+		plan.Checks = append(plan.Checks, ReadinessCheck{Code: "presentation.device_local", Severity: ReadinessWarning, Message: "Appearance/workspace state is device-local and is intentionally not restored; this does not affect SHOW readiness."})
 	}
 	return plan, nil
 }
