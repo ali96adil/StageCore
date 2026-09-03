@@ -48,6 +48,9 @@ func (s *Service) PlanImport(ctx context.Context, capsulePath string) (ImportPla
 	if err != nil {
 		return ImportPlan{}, err
 	}
+	if err := validateObjectReferences(manifest); err != nil {
+		return ImportPlan{}, err
+	}
 	plan := ImportPlan{
 		CapsuleID: manifest.CapsuleID,
 		ProjectID: manifest.Project.ProjectID,
