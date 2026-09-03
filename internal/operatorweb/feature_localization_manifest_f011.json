@@ -1,0 +1,22 @@
+{
+  "contract_version": 1,
+  "required_locales": ["en", "ar-IQ"],
+  "features": [
+    {
+      "feature_id": "F-011",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/show-templates.js"],
+      "name": {"en": "Show / Profile Templates", "ar-IQ": "قوالب العرض والملفات الجاهزة"},
+      "summary": {"en": "Versioned reusable show recipes that create ordinary editable Project Drafts without bypassing Publish, Preflight or Runtime authority.", "ar-IQ": "وصفات عرض قابلة لإعادة الاستخدام ومؤرشفة بالإصدار تنشئ مسودات مشاريع اعتيادية قابلة للتعديل دون تجاوز صلاحيات النشر أو الفحص المسبق أو التشغيل."},
+      "actions": [
+        {"action_id": "choose-template", "label": {"en": "Choose Starter Template", "ar-IQ": "اختيار قالب بداية"}},
+        {"action_id": "materialize-template", "label": {"en": "Create Editable Draft", "ar-IQ": "إنشاء مسودة قابلة للتعديل"}},
+        {"action_id": "import-template", "label": {"en": "Validate and Import Template", "ar-IQ": "التحقق من القالب واستيراده"}},
+        {"action_id": "export-template", "label": {"en": "Export Project Template", "ar-IQ": "تصدير قالب المشروع"}}
+      ],
+      "ui_keys": [
+        "templates.nav", "templates.eyebrow", "templates.title", "templates.summary", "templates.refresh", "templates.official", "templates.use", "templates.read_only", "templates.version", "templates.fields", "templates.no_fields", "templates.project_name", "templates.project_description", "templates.default_hint", "templates.create", "templates.creating", "templates.created", "templates.cancel", "templates.safety", "templates.import_title", "templates.import_summary", "templates.choose_file", "templates.validate", "templates.validating", "templates.compatible", "templates.incompatible", "templates.import_ready", "templates.import_create", "templates.export_title", "templates.export_summary", "templates.no_project", "templates.export", "templates.exported", "templates.required", "templates.optional", "templates.string", "templates.int", "templates.bool", "templates.none"
+      ]
+    }
+  ]
+}
