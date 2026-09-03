@@ -23,6 +23,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
+	"github.com/ali96adil/StageCore/internal/showtemplate"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
@@ -86,6 +87,11 @@ func main() {
 	showCapsules, err := showcapsule.New(application.Store, application.Vault, clock.Real{})
 	if err != nil {
 		logger.Error("show capsule startup failed", "error", err)
+		os.Exit(1)
+	}
+	showTemplates, err := showtemplate.NewService(application.Store, showtemplate.BuiltinCatalog())
+	if err != nil {
+		logger.Error("show template startup failed", "error", err)
 		os.Exit(1)
 	}
 	deviceProfiles := deviceprofile.BuiltinCatalog()
@@ -159,6 +165,7 @@ func main() {
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
+		httpapi.WithOperatorShowTemplates(userAuth, showTemplates),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
 		httpapi.WithOperatorExtensionInstaller(userAuth, extensionInstaller, application.SecurityAudit),
 		httpapi.WithOperatorExtensionPermissionReview(userAuth, extensionPermissionReviewer, application.SecurityAudit),
