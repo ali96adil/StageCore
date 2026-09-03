@@ -202,7 +202,9 @@ func (p *ImportPlan) pass(code, message string) {
 }
 
 func (p *ImportPlan) warnShow(code, message string) {
-	p.ReplacementHostReady = false
+	if !strings.HasPrefix(code, "presentation.") {
+		p.ReplacementHostReady = false
+	}
 	p.Checks = append(p.Checks, ReadinessCheck{Code: code, Severity: ReadinessWarning, Message: message})
 }
 
