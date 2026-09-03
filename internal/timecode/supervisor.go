@@ -13,6 +13,8 @@ import (
 
 const defaultSupervisorReconcileInterval = 250 * time.Millisecond
 
+var ErrSessionInactive = errors.New("timecode session is not active")
+
 type Supervisor struct {
 	store             *store.Store
 	runtime           *RuntimeService
@@ -85,7 +87,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 
 		state, loadedSession, _, err := s.runtime.stateForSession(ctx, session.ID)
 		if err != nil {
-			if !errors.Is(err, ErrSessionInactive) && ctx.Err() == nil {
+			if ctx.Err() == nil {
 				slog.Warn("StageCore internal timecode configuration lookup failed", "session_id", session.ID, "error", err)
 			}
 			continue
@@ -117,11 +119,20 @@ func (s *Supervisor) startWorker(parent context.Context, session domain.Session,
 func (s *Supervisor) runInternal(ctx context.Context, session domain.Session, cfg ManifestConfiguration) {
 	defer s.removeWorker(session.ID)
 
+	fresh, err := s.activeSession(ctx, session.ID)
+	if err != nil {
+		if !errors.Is(err, ErrSessionInactive) && ctx.Err() == nil {
+			slog.Warn("StageCore internal timecode active-session check failed", "session_id", session.ID, "error", err)
+		}
+		return
+	}
+	session = fresh
+
 	// Anchor to the persisted Session start time rather than process start time.
 	// A Hub restart therefore resumes the same logical show clock instead of
 	// silently resetting INTERNAL timecode to the configured start frame.
 	if err := s.runtime.StartInternal(ctx, session.ID, session.StartedAt); err != nil {
-		if !errors.Is(err, ErrSessionInactive) && ctx.Err() == nil {
+		if ctx.Err() == nil {
 			slog.Warn("StageCore internal timecode start failed", "session_id", session.ID, "error", err)
 		}
 		return
@@ -139,11 +150,18 @@ func (s *Supervisor) runInternal(ctx context.Context, session domain.Session, cf
 	)
 
 	poll := func(now time.Time) bool {
+		if _, err := s.activeSession(ctx, session.ID); err != nil {
+			if errors.Is(err, ErrSessionInactive) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return false
+			}
+			slog.Warn("StageCore internal timecode active-session check failed", "session_id", session.ID, "error", err)
+			return true
+		}
 		_, err := s.runtime.PollInternal(ctx, session.ID, now.UTC())
 		if err == nil {
 			return true
 		}
-		if errors.Is(err, ErrSessionInactive) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return false
 		}
 		slog.Warn("StageCore internal timecode poll failed", "session_id", session.ID, "error", err)
@@ -169,17 +187,27 @@ func (s *Supervisor) runInternal(ctx context.Context, session domain.Session, cf
 	}
 }
 
+func (s *Supervisor) activeSession(ctx context.Context, sessionID string) (domain.Session, error) {
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if session.Status != domain.SessionActive {
+		return domain.Session{}, ErrSessionInactive
+	}
+	return session, nil
+}
+
 func internalPollInterval(rate Rate) time.Duration {
 	if rate.Numerator <= 0 || rate.Denominator <= 0 {
-		return 10 * time.Millisecond
-	}
-	frame := time.Duration(float64(time.Second) * float64(rate.Denominator) / float64(rate.Numerator))
-	interval := frame / 2
-	if interval < 5*time.Millisecond {
-		return 5 * time.Millisecond
-	}
-	if interval > 20*time.Millisecond {
 		return 20 * time.Millisecond
+	}
+	interval := time.Duration(float64(time.Second) * float64(rate.Denominator) / float64(rate.Numerator))
+	if interval < 8*time.Millisecond {
+		return 8 * time.Millisecond
+	}
+	if interval > 40*time.Millisecond {
+		return 40 * time.Millisecond
 	}
 	return interval
 }
@@ -199,7 +227,6 @@ func (s *Supervisor) cancelInactive(active map[string]struct{}) {
 			continue
 		}
 		cancel()
-		delete(s.workers, sessionID)
 	}
 }
 
@@ -212,8 +239,7 @@ func (s *Supervisor) removeWorker(sessionID string) {
 func (s *Supervisor) cancelAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for sessionID, cancel := range s.workers {
+	for _, cancel := range s.workers {
 		cancel()
-		delete(s.workers, sessionID)
 	}
 }
