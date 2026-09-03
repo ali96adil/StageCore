@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  CANDIDATE_SHA: 4ab575e1e569bc27bccdf66a50b02a9995e8fbf4
+  CANDIDATE_SHA: 9faaa80c666c47edfbb03a863fda6ac5a2bb7c41
 
 jobs:
   build-frozen-candidate:
@@ -43,7 +43,7 @@ jobs:
       - name: Upload frozen candidate artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: stagecore-phase3-candidate-4ab575e
+          name: stagecore-phase3-candidate-9faaa80
           if-no-files-found: error
           retention-days: 30
           path: |
