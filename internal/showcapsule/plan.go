@@ -119,14 +119,29 @@ func (s *Service) PlanImport(ctx context.Context, capsulePath string) (ImportPla
 	}
 
 	for _, item := range manifest.Media {
-		if strings.EqualFold(item.AssetPolicy, "REFERENCE_ONLY") {
-			message := fmt.Sprintf("Media %s for role %s is REFERENCE_ONLY and must be resolved externally.", item.MediaAssetID, item.RoleKey)
-			if item.Required {
-				plan.warnShow("media.required_reference_only", message)
-			} else {
-				plan.Checks = append(plan.Checks, ReadinessCheck{Code: "media.optional_reference_only", Severity: ReadinessWarning, Message: message})
-			}
+		if !strings.EqualFold(item.AssetPolicy, "REFERENCE_ONLY") {
+			continue
 		}
+		message := fmt.Sprintf("Media %s for role %s is REFERENCE_ONLY and must be resolved externally.", item.MediaAssetID, item.RoleKey)
+		local, err := s.store.GetVaultObject(ctx, item.ContentSHA256)
+		if errors.Is(err, domain.ErrNotFound) {
+			plan.blockMaterialization("media.reference_only_unresolved", message+" No exact content object is available in the local Vault, so identity-preserving materialization is blocked.")
+			continue
+		}
+		if err != nil {
+			return ImportPlan{}, fmt.Errorf("inspect REFERENCE_ONLY media %s: %w", item.MediaAssetID, err)
+		}
+		if local.SizeBytes != item.SizeBytes {
+			plan.blockMaterialization("media.reference_only_conflict", message+" The local content hash has conflicting size metadata.")
+			continue
+		}
+		file, _, err := s.vault.OpenObject(ctx, item.ContentSHA256)
+		if err != nil {
+			plan.blockMaterialization("media.reference_only_unreadable", message+" The matching local content object cannot be verified.")
+			continue
+		}
+		_ = file.Close()
+		plan.warnShow("media.reference_only_resolved", message+" Exact bytes are locally available for materialization, but the REFERENCE_ONLY policy remains visible for replacement-host review.")
 	}
 
 	for _, environment := range manifest.ExecutionEnvironments {
