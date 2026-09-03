@@ -27,25 +27,25 @@ type RuntimeSummary struct {
 	Configuration     ManifestConfiguration `json:"configuration"`
 	Health            HealthSnapshot        `json:"health"`
 	ShowLocked        bool                  `json:"show_locked"`
-	LastSample        *Sample                `json:"last_sample,omitempty"`
+	LastSample        *Sample               `json:"last_sample,omitempty"`
 }
 
 type ObservationResult struct {
-	Health   HealthSnapshot             `json:"health"`
+	Health    HealthSnapshot            `json:"health"`
 	Decisions []Decision                `json:"decisions,omitempty"`
-	Commands []contracts.CommandResult  `json:"commands,omitempty"`
+	Commands  []contracts.CommandResult `json:"commands,omitempty"`
 }
 
 type runtimeState struct {
-	snapshotID  string
+	snapshotID    string
 	configuration ManifestConfiguration
-	monitor     *Monitor
-	coordinator *Coordinator
-	scheduler   *Scheduler
-	previous    *Sample
-	lastHealth  HealthState
-	generator   *Generator
-	mtc         MTCDecoder
+	monitor       *Monitor
+	coordinator   *Coordinator
+	scheduler     *Scheduler
+	previous      *Sample
+	lastHealth    HealthState
+	generator     *Generator
+	mtc           MTCDecoder
 }
 
 type RuntimeService struct {
@@ -68,11 +68,11 @@ func (s *RuntimeService) Summary(ctx context.Context, projectID, runtimeSnapshot
 		return RuntimeSummary{}, err
 	}
 	summary := RuntimeSummary{
-		Enabled: cfg.Enabled,
-		ProjectID: runtimeSnapshot.ProjectID,
+		Enabled:           cfg.Enabled,
+		ProjectID:         runtimeSnapshot.ProjectID,
 		RuntimeSnapshotID: runtimeSnapshot.ID,
-		Configuration: cfg,
-		Health: HealthSnapshot{State: HealthMissing, Detail: "no live timecode sample has been observed"},
+		Configuration:     cfg,
+		Health:            HealthSnapshot{State: HealthMissing, Detail: "no live timecode sample has been observed"},
 	}
 	_ = manifest
 	s.mu.Lock()
@@ -110,8 +110,8 @@ func (s *RuntimeService) StartInternal(ctx context.Context, sessionID string, no
 	s.mu.Unlock()
 	return s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.transport.started", map[string]any{
 		"source_id": state.configuration.Source.SourceID,
-		"kind": SourceInternal,
-		"rate": state.configuration.Source.Rate.Name,
+		"kind":      SourceInternal,
+		"rate":      state.configuration.Source.Rate.Name,
 	})
 }
 
@@ -130,6 +130,9 @@ func (s *RuntimeService) PollInternal(ctx context.Context, sessionID string, now
 	if err != nil {
 		return ObservationResult{}, err
 	}
+	// The generator owns frame progression, while source identity is sealed by
+	// the Runtime Snapshot. Keep custom INTERNAL source IDs authoritative.
+	sample.SourceID = state.configuration.Source.SourceID
 	return s.observeNormalized(ctx, sessionID, sample)
 }
 
@@ -150,16 +153,16 @@ func (s *RuntimeService) IngestFrame(ctx context.Context, sessionID string, sour
 		return ObservationResult{}, err
 	}
 	return s.observeNormalized(ctx, sessionID, Sample{
-		SourceID: sourceID,
-		Kind: kind,
-		Rate: rate,
-		Timecode: tc,
-		FrameNumber: frame,
-		RawFrame: rawFrame,
-		OffsetFrames: state.configuration.Source.OffsetFrames,
-		ObservedAt: observedAt.UTC(),
-		Transport: TransportRunning,
-		DriftFrames: driftFrames,
+		SourceID:      sourceID,
+		Kind:          kind,
+		Rate:          rate,
+		Timecode:      tc,
+		FrameNumber:   frame,
+		RawFrame:      rawFrame,
+		OffsetFrames:  state.configuration.Source.OffsetFrames,
+		ObservedAt:    observedAt.UTC(),
+		Transport:     TransportRunning,
+		DriftFrames:   driftFrames,
 		Discontinuity: discontinuity,
 	})
 }
@@ -230,8 +233,7 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 	previous := state.previous
 	copySample := sample
 	state.previous = &copySample
-	showLocked := session.Type == domain.SessionShow
-	if showLocked {
+	if session.Type == domain.SessionShow {
 		_ = state.coordinator.LockForShow()
 	}
 	s.mu.Unlock()
@@ -239,10 +241,10 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 	if previousHealth != health.State {
 		if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.health.changed", map[string]any{
 			"source_id": sample.SourceID,
-			"state": health.State,
-			"detail": health.Detail,
-			"frame": sample.FrameNumber,
-			"timecode": sample.Timecode.String(),
+			"state":     health.State,
+			"detail":    health.Detail,
+			"frame":     sample.FrameNumber,
+			"timecode":  sample.Timecode.String(),
 		}); err != nil {
 			return ObservationResult{}, err
 		}
@@ -257,27 +259,33 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 	}
 
 	ctxID := CommandContext{
-		ProjectID: session.ProjectID,
+		ProjectID:         session.ProjectID,
 		RuntimeSnapshotID: session.RuntimeSnapshotID,
-		SessionID: session.ID,
-		SourceID: sample.SourceID,
-		Epoch: session.ID,
+		SessionID:         session.ID,
+		SourceID:          sample.SourceID,
+		Epoch:             session.ID,
 	}
 	s.mu.Lock()
 	decisions := state.scheduler.Evaluate(*previous, sample, health, state.configuration.Bindings, ctxID)
 	s.mu.Unlock()
-	result.Decisions = decisions
-	for _, decision := range decisions {
+	result.Decisions = append([]Decision(nil), decisions...)
+	for i := range decisions {
+		decision := decisions[i]
 		if decision.State != DecisionFire || decision.Command == nil {
 			continue
 		}
 		nextCue := nextEnabledCueID(manifest, session.CurrentCueID)
 		if nextCue == "" || nextCue != decision.Command.CueID {
+			result.Decisions[i] = Decision{
+				State:     DecisionInhibited,
+				BindingID: decision.BindingID,
+				Reason:    "bound cue is not the next enabled cue",
+			}
 			if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.binding.inhibited", map[string]any{
 				"binding_id": decision.BindingID,
-				"cue_id": decision.Command.CueID,
+				"cue_id":     decision.Command.CueID,
 				"next_cue_id": nextCue,
-				"reason": "bound cue is not the next enabled cue",
+				"reason":      "bound cue is not the next enabled cue",
 			}); err != nil {
 				return result, err
 			}
@@ -289,25 +297,25 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 		payload, _ := json.Marshal(cueengine.CueGoPayload{ExpectedCurrentCueID: session.CurrentCueID, RequestedNextCueID: &decision.Command.CueID})
 		deadline := sample.ObservedAt.Add(framesToDuration(decision.Command.ExpiresAtFrame-sample.FrameNumber, sample.Rate))
 		envelope := contracts.CommandEnvelope{
-			CommandID: decision.Command.CommandID,
-			CommandType: cueengine.CueGoCommandType,
-			SchemaVersion: contracts.SchemaVersion1,
-			IssuedAt: sample.ObservedAt,
-			DeadlineAt: &deadline,
-			ProjectID: session.ProjectID,
+			CommandID:         decision.Command.CommandID,
+			CommandType:       cueengine.CueGoCommandType,
+			SchemaVersion:     contracts.SchemaVersion1,
+			IssuedAt:          sample.ObservedAt,
+			DeadlineAt:        &deadline,
+			ProjectID:         session.ProjectID,
 			RuntimeSnapshotID: session.RuntimeSnapshotID,
-			Issuer: "timecode:" + sample.SourceID,
-			CorrelationID: "timecode:" + decision.BindingID,
-			Priority: "P1",
-			IdempotencyKey: decision.Command.CommandID,
-			Payload: payload,
+			Issuer:            "timecode:" + sample.SourceID,
+			CorrelationID:     "timecode:" + decision.BindingID,
+			Priority:          "P1",
+			IdempotencyKey:    decision.Command.CommandID,
+			Payload:           payload,
 		}
 		if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.binding.triggered", map[string]any{
 			"binding_id": decision.BindingID,
-			"cue_id": decision.Command.CueID,
+			"cue_id":     decision.Command.CueID,
 			"command_id": decision.Command.CommandID,
-			"frame": sample.FrameNumber,
-			"timecode": sample.Timecode.String(),
+			"frame":      sample.FrameNumber,
+			"timecode":   sample.Timecode.String(),
 		}); err != nil {
 			return result, err
 		}
@@ -318,9 +326,9 @@ func (s *RuntimeService) observeNormalized(ctx context.Context, sessionID string
 		result.Commands = append(result.Commands, commandResult)
 		if err := s.record(ctx, &session.ID, session.ProjectID, session.RuntimeSnapshotID, "timecode.binding.result", map[string]any{
 			"binding_id": decision.BindingID,
-			"cue_id": decision.Command.CueID,
+			"cue_id":     decision.Command.CueID,
 			"command_id": decision.Command.CommandID,
-			"status": commandResult.Status,
+			"status":     commandResult.Status,
 		}); err != nil {
 			return result, err
 		}
@@ -358,14 +366,19 @@ func (s *RuntimeService) stateForSession(ctx context.Context, sessionID string) 
 		if err := coordinator.Select(cfg.Source); err != nil {
 			return nil, domain.Session{}, snapshot.Manifest{}, err
 		}
+		if session.Type == domain.SessionShow {
+			if err := coordinator.LockForShow(); err != nil {
+				return nil, domain.Session{}, snapshot.Manifest{}, err
+			}
+		}
 	}
 	state := &runtimeState{
-		snapshotID: runtimeSnapshot.ID,
+		snapshotID:    runtimeSnapshot.ID,
 		configuration: cfg,
-		monitor: NewMonitor(HealthConfig{}),
-		coordinator: coordinator,
-		scheduler: NewScheduler(),
-		lastHealth: HealthMissing,
+		monitor:       NewMonitor(HealthConfig{}),
+		coordinator:   coordinator,
+		scheduler:     NewScheduler(),
+		lastHealth:    HealthMissing,
 	}
 	state.mtc.Reset()
 	s.states[key] = state
@@ -410,14 +423,14 @@ func (s *RuntimeService) record(ctx context.Context, sessionID *string, projectI
 		return err
 	}
 	_, err = s.store.AppendEvent(ctx, sessionID, contracts.EventEnvelope{
-		EventType: eventType,
-		SchemaVersion: contracts.SchemaVersion1,
-		Source: "hub.timecode",
-		ProjectID: projectID,
+		EventType:         eventType,
+		SchemaVersion:     contracts.SchemaVersion1,
+		Source:            "hub.timecode",
+		ProjectID:         projectID,
 		RuntimeSnapshotID: snapshotID,
-		Priority: "P1",
-		TraceContext: json.RawMessage(`{}`),
-		Payload: body,
+		Priority:          "P1",
+		TraceContext:      json.RawMessage(`{}`),
+		Payload:           body,
 	})
 	return err
 }
