@@ -22,6 +22,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
+	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -63,13 +64,15 @@ func main() {
 		preflight.WithConnectionCheck(application.CompanionRuntime.IsConnected),
 		preflight.WithEnvironmentInspection(application.CompanionRuntime.Inspect),
 	)
-	preflightService := securitypreflight.New(
+	securityPreflight := securitypreflight.New(
 		basePreflight,
 		application.Store,
 		application.HubSecurity,
 		application.SecretStore,
 		application.PluginPermissions,
 	)
+	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
+	preflightService := timecode.NewPreflightService(securityPreflight, timecodeRuntime)
 	runtime := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
@@ -162,6 +165,7 @@ func main() {
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
+		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
 		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
 		httpapi.WithSecurityOperations(
