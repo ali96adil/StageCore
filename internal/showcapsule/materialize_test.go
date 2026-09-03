@@ -34,8 +34,8 @@ func TestSelfContainedMaterializePreservesRuntimeIdentity(t *testing.T) {
 	if !plan.MaterializationReady {
 		t.Fatalf("materialization unexpectedly blocked: %+v", plan.Checks)
 	}
-	if plan.ReplacementHostReady {
-		t.Fatal("replacement host unexpectedly claims full readiness while device-local presentation state is excluded")
+	if !plan.ReplacementHostReady {
+		t.Fatalf("device-local presentation warning unexpectedly blocks SHOW readiness: %+v", plan.Checks)
 	}
 	if len(plan.IncludedObjects) != 1 || plan.IncludedObjects[0].ContentSHA256 != source.contentHash {
 		t.Fatalf("included objects=%+v", plan.IncludedObjects)
@@ -47,6 +47,9 @@ func TestSelfContainedMaterializePreservesRuntimeIdentity(t *testing.T) {
 	}
 	if result.ProjectID != source.projectID || result.RevisionID != source.revisionID || result.RuntimeSnapshotID != source.snapshotID {
 		t.Fatalf("materialized identity=%+v", result)
+	}
+	if !result.ReplacementHostReady {
+		t.Fatalf("simple self-contained restore unexpectedly not SHOW-ready: %+v", result.Plan.Checks)
 	}
 	if len(result.ImportedObjects) != 1 || result.ImportedObjects[0] != source.contentHash {
 		t.Fatalf("imported objects=%v", result.ImportedObjects)
