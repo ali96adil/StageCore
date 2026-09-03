@@ -1,89 +1,64 @@
 "use strict";
 
-const timecodeCopy = {
-  ar: {
-    eyebrow: "مزامنة العرض",
-    title: "التايم كود ومزامنة العرض",
-    subtitle: "مراقبة مصدر التايم كود، معدل الإطارات، الإزاحة، صحة الإشارة وارتباطات الكيو من الـRuntime Snapshot المنشور.",
-    refresh: "تحديث",
-    source: "المصدر",
-    kind: "النوع",
-    rate: "معدل الإطارات",
-    offset: "الإزاحة",
-    health: "حالة المصدر",
-    lock: "قفل SHOW",
-    last: "آخر تايم كود",
-    frame: "الإطار",
-    bindings: "ارتباطات الكيو",
-    binding: "الارتباط",
-    cue: "الكيو",
-    target: "الإطار الهدف",
-    expiry: "نافذة الانتهاء",
-    enabled: "مفعّل",
-    disabled: "معطّل",
-    yes: "نعم",
-    no: "لا",
-    none: "لا توجد ارتباطات تايم كود في الـSnapshot الحالي.",
-    noSnapshot: "لا يوجد Runtime Snapshot منشور يمكن قراءة إعدادات التايم كود منه.",
-    safetyTitle: "سلوك الأمان",
-    safety: "StageCore لا يشغّل أي كيو تلقائياً من التايم كود إذا كان المصدر مفقوداً أو قديماً أو غير مستقر أو حدثت قفزة/انقطاع. أثناء SHOW يبقى المصدر المحدد مقفولاً ولا يتم استبداله بصمت، والكيو المرتبط لا ينفذ إلا إذا كان هو الكيو المفعّل التالي.",
-    configTitle: "طريقة الإعداد",
-    config: "المصدر يُعرّف ضمن Configuration كـTarget من نوع TIMECODE_SOURCE، ووقت تشغيل الكيو يضاف داخل Execution policy للكيو تحت timecode. عند النشر تصبح هذه القيم جزءاً من الـRuntime Snapshot غير القابل للتغيير.",
-    published: "Runtime Snapshot",
-    stale: "قديم/متوقف",
-    missing: "غير موجود",
-    healthy: "سليم",
-    unstable: "غير مستقر",
-    jump: "قفزة",
-    discontinuity: "انقطاع",
-    drift: "انحراف",
-  },
-  en: {
-    eyebrow: "SHOW SYNCHRONIZATION",
-    title: "Timecode & Show Sync",
-    subtitle: "Monitor the selected timecode source, frame rate, offset, signal health and cue bindings sealed in the published Runtime Snapshot.",
-    refresh: "Refresh",
-    source: "Source",
-    kind: "Kind",
-    rate: "Frame rate",
-    offset: "Offset",
-    health: "Source health",
-    lock: "SHOW lock",
-    last: "Last timecode",
-    frame: "Frame",
-    bindings: "Cue bindings",
-    binding: "Binding",
-    cue: "Cue",
-    target: "Target frame",
-    expiry: "Expiry window",
-    enabled: "Enabled",
-    disabled: "Disabled",
-    yes: "Yes",
-    no: "No",
-    none: "No timecode cue bindings are present in the current Snapshot.",
-    noSnapshot: "No published Runtime Snapshot is available for timecode configuration.",
-    safetyTitle: "Safety behavior",
-    safety: "StageCore never auto-fires a timecode cue while the selected source is missing, stale, unstable, jumping or discontinuous. During SHOW the selected source remains locked with no silent fallback, and a bound cue can execute only when it is the next enabled cue.",
-    configTitle: "Configuration model",
-    config: "Define the source in Configuration as a TIMECODE_SOURCE target and add cue timing under timecode in each Cue execution policy. Publishing seals both into the immutable Runtime Snapshot.",
-    published: "Runtime Snapshot",
-    stale: "Stale",
-    missing: "Missing",
-    healthy: "Healthy",
-    unstable: "Unstable",
-    jump: "Jump",
-    discontinuity: "Discontinuity",
-    drift: "Drift",
-  },
+const f018Copy = {
+  "timecode.nav": { en: "Timecode", "ar-IQ": "التايم كود" },
+  "timecode.eyebrow": { en: "SHOW SYNCHRONIZATION", "ar-IQ": "مزامنة العرض" },
+  "timecode.title": { en: "Timecode & Show Sync", "ar-IQ": "التايم كود ومزامنة العرض" },
+  "timecode.subtitle": { en: "Monitor the selected timecode source, frame rate, offset, signal health and cue bindings sealed in the published Runtime Snapshot.", "ar-IQ": "مراقبة مصدر التايم كود ومعدل الإطارات والإزاحة وصحة الإشارة وارتباطات الكيو المثبتة داخل Runtime Snapshot المنشور." },
+  "timecode.refresh": { en: "Refresh", "ar-IQ": "تحديث" },
+  "timecode.source": { en: "Source", "ar-IQ": "المصدر" },
+  "timecode.kind": { en: "Kind", "ar-IQ": "النوع" },
+  "timecode.rate": { en: "Frame rate", "ar-IQ": "معدل الإطارات" },
+  "timecode.drop_frame": { en: "Drop-frame", "ar-IQ": "إسقاط الإطارات" },
+  "timecode.non_drop_frame": { en: "Non-drop-frame", "ar-IQ": "بدون إسقاط إطارات" },
+  "timecode.offset": { en: "Offset", "ar-IQ": "الإزاحة" },
+  "timecode.health": { en: "Source health", "ar-IQ": "حالة المصدر" },
+  "timecode.lock": { en: "SHOW lock", "ar-IQ": "قفل SHOW" },
+  "timecode.last": { en: "Last timecode", "ar-IQ": "آخر تايم كود" },
+  "timecode.frame": { en: "frame", "ar-IQ": "إطار" },
+  "timecode.bindings": { en: "Cue bindings", "ar-IQ": "ارتباطات الكيو" },
+  "timecode.binding": { en: "Binding", "ar-IQ": "الارتباط" },
+  "timecode.cue": { en: "Cue", "ar-IQ": "الكيو" },
+  "timecode.target": { en: "Target frame", "ar-IQ": "الإطار الهدف" },
+  "timecode.expiry": { en: "Expiry window", "ar-IQ": "نافذة الانتهاء" },
+  "timecode.enabled": { en: "Enabled", "ar-IQ": "مفعّل" },
+  "timecode.disabled": { en: "Disabled", "ar-IQ": "معطّل" },
+  "timecode.yes": { en: "Yes", "ar-IQ": "نعم" },
+  "timecode.no": { en: "No", "ar-IQ": "لا" },
+  "timecode.none": { en: "No timecode cue bindings are present in the current Snapshot.", "ar-IQ": "لا توجد ارتباطات تايم كود للكيو داخل الـSnapshot الحالي." },
+  "timecode.no_snapshot": { en: "No published Runtime Snapshot is available for timecode configuration.", "ar-IQ": "لا يوجد Runtime Snapshot منشور يمكن قراءة إعدادات التايم كود منه." },
+  "timecode.safety_title": { en: "Safety behavior", "ar-IQ": "سلوك الأمان" },
+  "timecode.safety": { en: "StageCore never auto-fires a timecode cue while the selected source is missing, stale, unstable, jumping or discontinuous. During SHOW the selected source remains locked with no silent fallback, and a bound cue can execute only when it is the next enabled cue.", "ar-IQ": "StageCore لا يشغّل أي كيو تلقائياً من التايم كود إذا كان المصدر مفقوداً أو قديماً أو غير مستقر أو حدثت قفزة أو حالة انقطاع. أثناء SHOW يبقى المصدر المحدد مقفولاً بلا استبدال صامت، والكيو المرتبط لا ينفذ إلا إذا كان هو الكيو المفعّل التالي." },
+  "timecode.config_title": { en: "Configuration model", "ar-IQ": "طريقة الإعداد" },
+  "timecode.config": { en: "Define the source in Configuration as a TIMECODE_SOURCE target and add cue timing under timecode in each Cue execution policy. Publishing seals both into the immutable Runtime Snapshot.", "ar-IQ": "يُعرّف المصدر داخل Configuration كهدف من نوع TIMECODE_SOURCE، ويضاف توقيت الكيو تحت timecode في Execution policy. عند النشر تصبح القيمتان جزءاً من Runtime Snapshot غير القابل للتغيير." },
+  "timecode.published": { en: "Runtime Snapshot", "ar-IQ": "Runtime Snapshot" },
+  "timecode.stale": { en: "Stale", "ar-IQ": "قديم أو متوقف" },
+  "timecode.missing": { en: "Missing", "ar-IQ": "غير موجود" },
+  "timecode.healthy": { en: "Healthy", "ar-IQ": "سليم" },
+  "timecode.unstable": { en: "Unstable", "ar-IQ": "غير مستقر" },
+  "timecode.jump": { en: "Jump", "ar-IQ": "قفزة" },
+  "timecode.discontinuity": { en: "Discontinuity", "ar-IQ": "انقطاع" },
+  "timecode.drift": { en: "Drift", "ar-IQ": "انحراف" },
 };
 
-function timecodeLanguage() {
-  return el("languageSelect")?.value === "en" ? "en" : "ar";
+function f018Locale() {
+  if (el("languageSelect")?.value === "en") return "en";
+  return localStorage.getItem("stagecore_locale") === "en" ? "en" : "ar-IQ";
 }
 
-function timecodeHealthLabel(value, copy) {
+function f018T(key) {
+  const entry = f018Copy[key];
+  return entry?.[f018Locale()] || entry?.en || key;
+}
+
+function f018UpdateNav() {
+  const button = document.querySelector('[data-page="timecode"]');
+  if (button) button.textContent = f018T("timecode.nav");
+}
+
+function timecodeHealthLabel(value) {
   const key = String(value || "MISSING").toLowerCase();
-  return copy[key] || value || copy.missing;
+  return f018T(`timecode.${key}`);
 }
 
 function timecodeHealthKind(value) {
@@ -103,8 +78,7 @@ async function renderTimecodeWorkspace() {
   if (!state.project) return;
   setPage("timecode");
   setMessage(globalMessage, "");
-  const lang = timecodeLanguage();
-  const copy = timecodeCopy[lang];
+  f018UpdateNav();
   const projectID = encodeURIComponent(state.project.project_id);
 
   let payload;
@@ -113,10 +87,10 @@ async function renderTimecodeWorkspace() {
   } catch (error) {
     content.innerHTML = `
       <div class="page-head">
-        <div><p class="eyebrow">${esc(copy.eyebrow)}</p><h1>${esc(copy.title)}</h1><p>${esc(copy.subtitle)}</p></div>
-        <button id="timecodeRefresh" class="button" type="button">${esc(copy.refresh)}</button>
+        <div><p class="eyebrow">${esc(f018T("timecode.eyebrow"))}</p><h1>${esc(f018T("timecode.title"))}</h1><p>${esc(f018T("timecode.subtitle"))}</p></div>
+        <button id="timecodeRefresh" class="button" type="button">${esc(f018T("timecode.refresh"))}</button>
       </div>
-      <section class="card"><div class="empty">${esc(error.status === 404 ? copy.noSnapshot : errorMessage(error))}</div></section>`;
+      <section class="card"><div class="empty">${esc(error.status === 404 ? f018T("timecode.no_snapshot") : errorMessage(error))}</div></section>`;
     el("timecodeRefresh")?.addEventListener("click", renderTimecodeWorkspace);
     return;
   }
@@ -132,44 +106,44 @@ async function renderTimecodeWorkspace() {
 
   content.innerHTML = `
     <div class="page-head">
-      <div><p class="eyebrow">${esc(copy.eyebrow)}</p><h1>${esc(copy.title)}</h1><p>${esc(copy.subtitle)}</p></div>
-      <button id="timecodeRefresh" class="button" type="button">${esc(copy.refresh)}</button>
+      <div><p class="eyebrow">${esc(f018T("timecode.eyebrow"))}</p><h1>${esc(f018T("timecode.title"))}</h1><p>${esc(f018T("timecode.subtitle"))}</p></div>
+      <button id="timecodeRefresh" class="button" type="button">${esc(f018T("timecode.refresh"))}</button>
     </div>
 
     <div class="stat-grid">
-      <article class="stat"><span class="label">${esc(copy.published)}</span><span class="value">${esc(summary.runtime_snapshot_id || "—")}</span><span class="sub mono">${esc(cfg.target_ref || "—")}</span></article>
-      <article class="stat"><span class="label">${esc(copy.source)}</span><span class="value">${esc(source.source_id || (summary.enabled ? "—" : copy.disabled))}</span><span class="sub">${esc(copy.kind)} · ${esc(source.kind || "—")}</span></article>
-      <article class="stat"><span class="label">${esc(copy.rate)}</span><span class="value">${esc(rate.name || "—")}</span><span class="sub">${rate.drop_frame ? "Drop-frame" : "Non-drop-frame"}</span></article>
-      <article class="stat"><span class="label">${esc(copy.offset)}</span><span class="value">${esc(source.offset_frames ?? 0)} ${esc(copy.frame)}</span><span class="sub">${esc(copy.lock)} · ${summary.show_locked ? esc(copy.yes) : esc(copy.no)}</span></article>
-      <article class="stat"><span class="label">${esc(copy.health)}</span><span class="value">${pill(timecodeHealthLabel(healthState, copy), timecodeHealthKind(healthState))}</span><span class="sub">${esc(health.detail || "")}</span></article>
-      <article class="stat"><span class="label">${esc(copy.last)}</span><span class="value mono">${esc(formatTimecodeValue(sample?.timecode, sample?.rate || rate))}</span><span class="sub">${sample ? `${esc(copy.frame)} ${esc(sample.frame_number)} · ${esc(fmtDate(sample.observed_at))}` : "—"}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.published"))}</span><span class="value">${esc(summary.runtime_snapshot_id || "—")}</span><span class="sub mono">${esc(cfg.target_ref || "—")}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.source"))}</span><span class="value">${esc(source.source_id || (summary.enabled ? "—" : f018T("timecode.disabled")))}</span><span class="sub">${esc(f018T("timecode.kind"))} · ${esc(source.kind || "—")}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.rate"))}</span><span class="value">${esc(rate.name || "—")}</span><span class="sub">${esc(rate.drop_frame ? f018T("timecode.drop_frame") : f018T("timecode.non_drop_frame"))}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.offset"))}</span><span class="value">${esc(source.offset_frames ?? 0)} ${esc(f018T("timecode.frame"))}</span><span class="sub">${esc(f018T("timecode.lock"))} · ${summary.show_locked ? esc(f018T("timecode.yes")) : esc(f018T("timecode.no"))}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.health"))}</span><span class="value">${pill(timecodeHealthLabel(healthState), timecodeHealthKind(healthState))}</span><span class="sub">${esc(health.detail || "")}</span></article>
+      <article class="stat"><span class="label">${esc(f018T("timecode.last"))}</span><span class="value mono">${esc(formatTimecodeValue(sample?.timecode, sample?.rate || rate))}</span><span class="sub">${sample ? `${esc(f018T("timecode.frame"))} ${esc(sample.frame_number)} · ${esc(fmtDate(sample.observed_at))}` : "—"}</span></article>
     </div>
 
     <section class="card" style="margin-top:16px">
-      <div class="section-title-row"><div><h2>${esc(copy.safetyTitle)}</h2><p class="muted">${esc(copy.safety)}</p></div></div>
+      <div class="section-title-row"><div><h2>${esc(f018T("timecode.safety_title"))}</h2><p class="muted">${esc(f018T("timecode.safety"))}</p></div></div>
     </section>
 
     <section class="card" style="margin-top:16px">
-      <div class="section-title-row"><div><h2>${esc(copy.bindings)}</h2><p class="muted">${esc(copy.config)}</p></div></div>
+      <div class="section-title-row"><div><h2>${esc(f018T("timecode.bindings"))}</h2><p class="muted">${esc(f018T("timecode.config"))}</p></div></div>
       ${bindings.length ? `
         <div class="table-wrap" style="margin-top:12px">
           <table>
-            <thead><tr><th>${esc(copy.binding)}</th><th>${esc(copy.cue)}</th><th>${esc(copy.target)}</th><th>${esc(copy.expiry)}</th><th>${esc(copy.enabled)}</th></tr></thead>
+            <thead><tr><th>${esc(f018T("timecode.binding"))}</th><th>${esc(f018T("timecode.cue"))}</th><th>${esc(f018T("timecode.target"))}</th><th>${esc(f018T("timecode.expiry"))}</th><th>${esc(f018T("timecode.enabled"))}</th></tr></thead>
             <tbody>${bindings.map((binding) => `
               <tr>
                 <td class="mono">${esc(binding.binding_id)}</td>
                 <td class="mono">${esc(binding.cue_id)}</td>
                 <td>${esc(binding.target_frame)}</td>
-                <td>${esc(binding.expiry_frames)} ${esc(copy.frame)}</td>
-                <td>${pill(binding.enabled ? copy.enabled : copy.disabled, binding.enabled ? "good" : "neutral")}</td>
+                <td>${esc(binding.expiry_frames)} ${esc(f018T("timecode.frame"))}</td>
+                <td>${pill(binding.enabled ? f018T("timecode.enabled") : f018T("timecode.disabled"), binding.enabled ? "good" : "neutral")}</td>
               </tr>`).join("")}</tbody>
           </table>
-        </div>` : `<div class="empty" style="margin-top:12px">${esc(copy.none)}</div>`}
+        </div>` : `<div class="empty" style="margin-top:12px">${esc(f018T("timecode.none"))}</div>`}
     </section>
 
     <section class="card" style="margin-top:16px">
-      <h2>${esc(copy.configTitle)}</h2>
-      <p class="muted">${esc(copy.config)}</p>
+      <h2>${esc(f018T("timecode.config_title"))}</h2>
+      <p class="muted">${esc(f018T("timecode.config"))}</p>
       <pre class="mono" style="white-space:pre-wrap">TIMECODE_SOURCE
 {
   "source_id": "show-clock",
@@ -196,8 +170,10 @@ timecodeNav?.addEventListener("click", (event) => {
   event.preventDefault();
   renderTimecodeWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
 });
+f018UpdateNav();
 
 el("languageSelect")?.addEventListener("change", () => {
+  f018UpdateNav();
   if (state.page === "timecode") {
     renderTimecodeWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
   }
