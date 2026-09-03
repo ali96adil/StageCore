@@ -28,26 +28,26 @@ const (
 type Pace string
 
 const (
-	PaceUnknown   Pace = "UNKNOWN"
-	PaceEarly     Pace = "EARLY"
-	PaceNormal    Pace = "NORMAL"
-	PaceLate      Pace = "LATE"
-	PaceDiverged  Pace = "DIVERGED"
+	PaceUnknown  Pace = "UNKNOWN"
+	PaceEarly    Pace = "EARLY"
+	PaceNormal   Pace = "NORMAL"
+	PaceLate     Pace = "LATE"
+	PaceDiverged Pace = "DIVERGED"
 )
 
 type SessionCandidate struct {
-	SessionID         string                    `json:"session_id"`
-	Name              string                    `json:"name"`
+	SessionID         string                       `json:"session_id"`
+	Name              string                       `json:"name"`
 	LifecycleState    domain.SessionLifecycleState `json:"lifecycle_state"`
-	StartedAt         time.Time                 `json:"started_at"`
-	EndedAt           *time.Time                `json:"ended_at,omitempty"`
-	RuntimeSnapshotID string                    `json:"runtime_snapshot_id"`
-	SnapshotMatch     bool                      `json:"snapshot_match"`
-	SelectionMode     store.TimingSelectionMode `json:"selection_mode"`
-	Eligible          bool                      `json:"eligible"`
-	Effective         bool                      `json:"effective"`
-	ObservationCount  int                       `json:"observation_count"`
-	Reason            string                    `json:"reason,omitempty"`
+	StartedAt         time.Time                    `json:"started_at"`
+	EndedAt           *time.Time                   `json:"ended_at,omitempty"`
+	RuntimeSnapshotID string                       `json:"runtime_snapshot_id"`
+	SnapshotMatch     bool                         `json:"snapshot_match"`
+	SelectionMode     store.TimingSelectionMode    `json:"selection_mode"`
+	Eligible          bool                         `json:"eligible"`
+	Effective         bool                         `json:"effective"`
+	ObservationCount  int                          `json:"observation_count"`
+	Reason            string                       `json:"reason,omitempty"`
 }
 
 type CueRef struct {
@@ -89,34 +89,34 @@ type ContextNote struct {
 }
 
 type Projection struct {
-	SessionID        string              `json:"session_id"`
-	CurrentCue       *CueRef             `json:"current_cue,omitempty"`
-	NextCue          *CueRef             `json:"next_cue,omitempty"`
-	CurrentCueAt     *time.Time          `json:"current_cue_at,omitempty"`
-	ExpectedAt       *time.Time          `json:"expected_at,omitempty"`
-	WindowStartAt    *time.Time          `json:"window_start_at,omitempty"`
-	WindowEndAt      *time.Time          `json:"window_end_at,omitempty"`
-	ElapsedUS        *int64              `json:"elapsed_us,omitempty"`
-	Pace             Pace                `json:"pace"`
-	Confidence       Confidence          `json:"confidence"`
-	Transition       *IntervalStatistics `json:"transition,omitempty"`
-	DivergenceKind   string              `json:"divergence_kind,omitempty"`
-	Reason           string              `json:"reason,omitempty"`
-	ContextNotes     []ContextNote       `json:"context_notes,omitempty"`
-	ContextNotesDue  bool                `json:"context_notes_due"`
-	AdvisoryOnly     bool                `json:"advisory_only"`
+	SessionID       string              `json:"session_id"`
+	CurrentCue      *CueRef             `json:"current_cue,omitempty"`
+	NextCue         *CueRef             `json:"next_cue,omitempty"`
+	CurrentCueAt    *time.Time          `json:"current_cue_at,omitempty"`
+	ExpectedAt      *time.Time          `json:"expected_at,omitempty"`
+	WindowStartAt   *time.Time          `json:"window_start_at,omitempty"`
+	WindowEndAt     *time.Time          `json:"window_end_at,omitempty"`
+	ElapsedUS       *int64              `json:"elapsed_us,omitempty"`
+	Pace            Pace                `json:"pace"`
+	Confidence      Confidence          `json:"confidence"`
+	Transition      *IntervalStatistics `json:"transition,omitempty"`
+	DivergenceKind  string              `json:"divergence_kind,omitempty"`
+	Reason          string              `json:"reason,omitempty"`
+	ContextNotes    []ContextNote       `json:"context_notes,omitempty"`
+	ContextNotesDue bool                `json:"context_notes_due"`
+	AdvisoryOnly    bool                `json:"advisory_only"`
 }
 
 type Report struct {
-	ProjectID         string                 `json:"project_id"`
-	RuntimeSnapshotID string                 `json:"runtime_snapshot_id"`
-	SnapshotContentHash string               `json:"snapshot_content_hash"`
-	GeneratedAt       time.Time              `json:"generated_at"`
-	Sessions          []SessionCandidate     `json:"sessions"`
-	Transitions       []TransitionStatistics `json:"transitions"`
-	Section           *SectionStatistics     `json:"section,omitempty"`
-	Projection        *Projection            `json:"projection,omitempty"`
-	AdvisoryOnly      bool                   `json:"advisory_only"`
+	ProjectID           string                 `json:"project_id"`
+	RuntimeSnapshotID   string                 `json:"runtime_snapshot_id"`
+	SnapshotContentHash string                 `json:"snapshot_content_hash"`
+	GeneratedAt         time.Time              `json:"generated_at"`
+	Sessions            []SessionCandidate     `json:"sessions"`
+	Transitions         []TransitionStatistics `json:"transitions"`
+	Section             *SectionStatistics     `json:"section,omitempty"`
+	Projection          *Projection            `json:"projection,omitempty"`
+	AdvisoryOnly        bool                   `json:"advisory_only"`
 }
 
 type ReportOptions struct {
@@ -130,6 +130,11 @@ type ReportOptions struct {
 type Service struct {
 	store *store.Store
 	clock clock.Clock
+}
+
+type transitionKey struct {
+	from string
+	to   string
 }
 
 func New(stageStore *store.Store, stageClock clock.Clock) *Service {
@@ -242,7 +247,6 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 		})
 	}
 
-	type transitionKey struct{ from, to string }
 	transitionSamples := make(map[transitionKey][]sample)
 	sessionObservations := make(map[string][]observation)
 	for _, record := range observations {
@@ -369,10 +373,10 @@ func enabledCueIndex(manifest snapshot.Manifest) ([]CueRef, map[string]CueRef) {
 }
 
 type observation struct {
-	SessionID          string
-	CueID              string `json:"cue_id"`
-	CueStartedAtUS     int64  `json:"cue_started_at_us"`
-	CueToCueElapsedUS  *int64 `json:"cue_to_cue_elapsed_us"`
+	SessionID         string
+	CueID             string `json:"cue_id"`
+	CueStartedAtUS    int64  `json:"cue_started_at_us"`
+	CueToCueElapsedUS *int64 `json:"cue_to_cue_elapsed_us"`
 	Path struct {
 		Kind          string   `json:"kind"`
 		FromCueID     string   `json:"from_cue_id"`
@@ -399,21 +403,25 @@ func calculateStatistics(samples []sample) IntervalStatistics {
 	if len(samples) == 0 {
 		return IntervalStatistics{Confidence: ConfidenceWithheld}
 	}
-	values := make([]int64, 0, len(samples))
-	sessions := map[string]struct{}{}
-	var total float64
+	perSession := make(map[string][]int64)
 	for _, item := range samples {
-		if item.value <= 0 {
-			continue
+		if item.value > 0 {
+			perSession[item.sessionID] = append(perSession[item.sessionID], item.value)
 		}
-		values = append(values, item.value)
-		total += float64(item.value)
-		sessions[item.sessionID] = struct{}{}
+	}
+	values := make([]int64, 0, len(perSession))
+	for _, sessionValues := range perSession {
+		sort.Slice(sessionValues, func(i, j int) bool { return sessionValues[i] < sessionValues[j] })
+		values = append(values, percentile(sessionValues, 0.5))
 	}
 	if len(values) == 0 {
 		return IntervalStatistics{Confidence: ConfidenceWithheld}
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	var total float64
+	for _, value := range values {
+		total += float64(value)
+	}
 	median := percentile(values, 0.5)
 	lower := percentile(values, 0.25)
 	upper := percentile(values, 0.75)
@@ -423,7 +431,7 @@ func calculateStatistics(samples []sample) IntervalStatistics {
 	}
 	confidence := confidenceFor(len(values), spread)
 	return IntervalStatistics{
-		SampleCount: len(values), TrustedSessionCount: len(sessions), MeanUS: int64(math.Round(total / float64(len(values)))),
+		SampleCount: len(values), TrustedSessionCount: len(values), MeanUS: int64(math.Round(total / float64(len(values)))),
 		MedianUS: median, LowerUS: lower, UpperUS: upper, MinUS: values[0], MaxUS: values[len(values)-1],
 		SpreadRatio: spread, Confidence: confidence,
 	}
@@ -491,6 +499,9 @@ func buildSectionStatistics(fromID, toID string, cues []CueRef, cueByID map[stri
 			break
 		}
 	}
+	if len(expected) < 2 || expected[0] != from.CueID || expected[len(expected)-1] != to.CueID {
+		return &SectionStatistics{From: from, To: to, Statistics: IntervalStatistics{Confidence: ConfidenceWithheld}}
+	}
 	samples := make([]sample, 0)
 	for sessionID, observations := range sessionObs {
 		if !trusted[sessionID] {
@@ -532,7 +543,7 @@ func valueOrZero(value *int64) int64 {
 	return *value
 }
 
-func (s *Service) buildProjection(ctx context.Context, session domain.Session, cueByID map[string]CueRef, stats map[struct{ from, to string }]IntervalStatistics, leadTime time.Duration) (*Projection, error) {
+func (s *Service) buildProjection(ctx context.Context, session domain.Session, cueByID map[string]CueRef, stats map[transitionKey]IntervalStatistics, leadTime time.Duration) (*Projection, error) {
 	projection := &Projection{SessionID: session.ID, Pace: PaceUnknown, Confidence: ConfidenceWithheld, AdvisoryOnly: true}
 	if session.NextCueID == nil || strings.TrimSpace(*session.NextCueID) == "" {
 		projection.Reason = "session has no next enabled cue"
@@ -589,7 +600,7 @@ func (s *Service) buildProjection(ctx context.Context, session domain.Session, c
 	}
 	projection.ElapsedUS = &elapsed
 
-	key := struct{ from, to string }{from: current.CueID, to: next.CueID}
+	key := transitionKey{from: current.CueID, to: next.CueID}
 	transition, ok := stats[key]
 	if !ok || transition.Confidence == ConfidenceWithheld {
 		projection.Reason = "not enough trusted rehearsal evidence for this transition"
