@@ -84,7 +84,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
-	if _, err := s.ReconcileInterruptedRuntime(ctx); err != nil {
+	if _, err := s.ReconcileInterruptedRuntimeForHub(ctx); err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("reconcile interrupted runtime: %w", err)
 	}
