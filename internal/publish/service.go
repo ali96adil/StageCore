@@ -94,6 +94,16 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 		report.Findings = append(report.Findings, Finding{Severity: SeverityBlock, Code: code, Message: message, Ref: ref})
 	}
 
+	timecodeSourceCount := 0
+	for _, alias := range aliases {
+		if strings.EqualFold(strings.TrimSpace(alias.LogicalType), "TIMECODE_SOURCE") {
+			timecodeSourceCount++
+		}
+	}
+	if timecodeSourceCount > 1 {
+		block("TIMECODE_SOURCE_MULTIPLE", "Project must contain at most one TIMECODE_SOURCE target before publishing", projectID)
+	}
+
 	for _, alias := range aliases {
 		if hasInlineCredential(alias.ProjectConfig) {
 			block("INLINE_CREDENTIAL_FORBIDDEN", "Project target configuration must use secret_ref instead of inline password/token/secret values", alias.ID)
