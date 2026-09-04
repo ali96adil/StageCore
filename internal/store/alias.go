@@ -38,6 +38,31 @@ func (s *Store) CreateAlias(ctx context.Context, alias domain.ProjectDeviceAlias
 	return alias, nil
 }
 
+func (s *Store) DeleteAlias(ctx context.Context, projectID, aliasID string) error {
+	projectID = strings.TrimSpace(projectID)
+	aliasID = strings.TrimSpace(aliasID)
+	if projectID == "" || aliasID == "" {
+		return domain.ErrInvalidInput
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM project_device_aliases
+		WHERE project_id = ? AND alias_id = ?`, projectID, aliasID)
+	if err != nil {
+		return fmt.Errorf("delete alias: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete alias rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ListAliases(ctx context.Context, projectID string) ([]domain.ProjectDeviceAlias, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT alias_id, project_id, logical_name, logical_type, target_ref, group_name, project_config_json
