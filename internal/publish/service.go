@@ -102,6 +102,8 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 	}
 	if timecodeSourceCount > 1 {
 		block("TIMECODE_SOURCE_MULTIPLE", "Project must contain at most one TIMECODE_SOURCE target before publishing", projectID)
+	} else if err := validateTimecodeDraft(aliases, cues); err != nil {
+		block("TIMECODE_CONFIGURATION_INVALID", err.Error(), projectID)
 	}
 
 	for _, alias := range aliases {
@@ -217,9 +219,3 @@ func (s *Service) Publish(ctx context.Context, projectID, revisionID, createdBy 
 	}
 	return created, report, nil
 }
-
-func IsValidationFailure(snapshot domain.RuntimeSnapshot, report Report, err error) bool {
-	return err == nil && snapshot.ID == "" && !report.Valid
-}
-
-var _ = errors.Is
