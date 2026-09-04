@@ -20,6 +20,8 @@ type Config struct {
 	OSCPluginPath         string
 	OSCInputListen        string
 	OSCInputProjectID     string
+	MTCInputDevice        string
+	MTCInputSourceID      string
 	RuntimeReserveBytes   int64
 	StorageWarningPercent float64
 }
@@ -32,6 +34,8 @@ func Load(args []string) (Config, error) {
 	defaultOSCPlugin := defaultOSCPluginPath()
 	defaultOSCInputListen := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_LISTEN"))
 	defaultOSCInputProjectID := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_PROJECT_ID"))
+	defaultMTCInputDevice := strings.TrimSpace(os.Getenv("STAGECORE_MTC_INPUT_DEVICE"))
+	defaultMTCInputSourceID := strings.TrimSpace(os.Getenv("STAGECORE_MTC_INPUT_SOURCE_ID"))
 	defaultReserve, err := envInt64("STAGECORE_RUNTIME_RESERVE_BYTES", storagehealth.DefaultRuntimeReserveBytes)
 	if err != nil {
 		return Config{}, err
@@ -49,6 +53,8 @@ func Load(args []string) (Config, error) {
 	oscPluginPath := fs.String("osc-plugin-path", defaultOSCPlugin, "path to the StageCore OSC plugin executable")
 	oscInputListen := fs.String("osc-input-listen", defaultOSCInputListen, "OSC input UDP listen address (loopback only)")
 	oscInputProjectID := fs.String("osc-input-project-id", defaultOSCInputProjectID, "StageCore Project whose active Runtime Session receives OSC input")
+	mtcInputDevice := fs.String("mtc-input-device", defaultMTCInputDevice, "Linux raw MIDI device path for MTC quarter-frame input")
+	mtcInputSourceID := fs.String("mtc-input-source-id", defaultMTCInputSourceID, "published TIMECODE_SOURCE source_id accepted from the raw MIDI MTC input")
 	reserveBytes := fs.Int64("runtime-reserve-bytes", defaultReserve, "bytes reserved for critical runtime persistence")
 	warningPercent := fs.Float64("storage-warning-percent", defaultWarning, "free-space percentage that produces storage WARNING")
 	if err := fs.Parse(args); err != nil {
@@ -60,6 +66,7 @@ func Load(args []string) (Config, error) {
 		Listen: strings.TrimSpace(*listen), DeviceListen: strings.TrimSpace(*deviceListen),
 		OSCPluginPath: strings.TrimSpace(*oscPluginPath),
 		OSCInputListen: strings.TrimSpace(*oscInputListen), OSCInputProjectID: strings.TrimSpace(*oscInputProjectID),
+		MTCInputDevice: strings.TrimSpace(*mtcInputDevice), MTCInputSourceID: strings.TrimSpace(*mtcInputSourceID),
 		RuntimeReserveBytes: *reserveBytes, StorageWarningPercent: *warningPercent,
 	}
 	if cfg.DataRoot == "" {
@@ -85,6 +92,9 @@ func Load(args []string) (Config, error) {
 	}
 	if (cfg.OSCInputListen == "") != (cfg.OSCInputProjectID == "") {
 		return Config{}, fmt.Errorf("OSC input listen address and project ID must be configured together")
+	}
+	if (cfg.MTCInputDevice == "") != (cfg.MTCInputSourceID == "") {
+		return Config{}, fmt.Errorf("MTC input device and source ID must be configured together")
 	}
 	if cfg.RuntimeReserveBytes <= 0 {
 		return Config{}, fmt.Errorf("runtime reserve bytes must be greater than zero")
