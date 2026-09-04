@@ -189,6 +189,39 @@ func TestValidateSkipsLocalOSCConfigForTargetTypeDispatcher(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsMultipleTimecodeSourceTargets(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s := store.New(h.DB, clock.Real{})
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Timecode Source Validation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"TIMECODE-INTERNAL", "TIMECODE-MTC"} {
+		if _, err := s.CreateAlias(ctx, domain.ProjectDeviceAlias{
+			ProjectID: project.ID,
+			LogicalName: name,
+			LogicalType: "TIMECODE_SOURCE",
+			TargetRef: name,
+			ProjectConfig: json.RawMessage(`{"source_id":"phase3","kind":"MTC","rate":"25","offset_frames":0}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := New(s, capability.NewRegistry())
+	report, err := service.Validate(ctx, project.ID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Valid || !hasFinding(report, "TIMECODE_SOURCE_MULTIPLE") {
+		t.Fatalf("multiple timecode sources must block publish: %#v", report)
+	}
+}
+
 func hasFinding(report Report, code string) bool {
 	for _, finding := range report.Findings {
 		if finding.Code == code {
