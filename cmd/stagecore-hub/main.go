@@ -224,6 +224,15 @@ func main() {
 		}
 		logger.Info("StageCore OSC input listening", "listen", listen, "project_id", cfg.OSCInputProjectID)
 	}
+	if cfg.MTCInputDevice != "" {
+		mtcInput, err := timecode.NewMTCInput(application.Store, timecodeRuntime, cfg.MTCInputDevice, cfg.MTCInputSourceID)
+		if err != nil {
+			logger.Error("MTC input startup failed", "error", err)
+			os.Exit(1)
+		}
+		go mtcInput.Run(ctx)
+		logger.Info("StageCore MTC input configured", "device", cfg.MTCInputDevice, "source_id", cfg.MTCInputSourceID)
+	}
 	timecodeSupervisor := timecode.NewSupervisor(application.Store, timecodeRuntime)
 	go timecodeSupervisor.Run(ctx)
 	go func() {
