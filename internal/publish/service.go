@@ -219,3 +219,9 @@ func (s *Service) Publish(ctx context.Context, projectID, revisionID, createdBy 
 	}
 	return created, report, nil
 }
+
+func IsValidationFailure(snapshot domain.RuntimeSnapshot, report Report, err error) bool {
+	return err == nil && snapshot.ID == "" && !report.Valid
+}
+
+var _ = errors.Is
