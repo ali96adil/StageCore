@@ -31,6 +31,32 @@ func TestLoadRejectsPartialOSCInputConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadMTCInputConfiguration(t *testing.T) {
+	t.Setenv("STAGECORE_MTC_INPUT_DEVICE", "")
+	t.Setenv("STAGECORE_MTC_INPUT_SOURCE_ID", "")
+
+	cfg, err := Load([]string{
+		"--mtc-input-device", "/dev/snd/midiC1D0",
+		"--mtc-input-source-id", "mtc-main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MTCInputDevice != "/dev/snd/midiC1D0" || cfg.MTCInputSourceID != "mtc-main" {
+		t.Fatalf("MTC input config = %q, %q", cfg.MTCInputDevice, cfg.MTCInputSourceID)
+	}
+}
+
+func TestLoadRejectsPartialMTCInputConfiguration(t *testing.T) {
+	t.Setenv("STAGECORE_MTC_INPUT_DEVICE", "")
+	t.Setenv("STAGECORE_MTC_INPUT_SOURCE_ID", "")
+
+	_, err := Load([]string{"--mtc-input-device", "/dev/snd/midiC1D0"})
+	if err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLoadDeviceListenerDefaultsToSecureLANPort(t *testing.T) {
 	t.Setenv("STAGECORE_DEVICE_LISTEN", "")
 	cfg, err := Load(nil)
