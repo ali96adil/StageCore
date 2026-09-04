@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,29 +21,46 @@ type Supervisor struct {
 	store             *store.Store
 	runtime           *RuntimeService
 	reconcileInterval time.Duration
+	mtcInput          *MTCInput
 
 	mu      sync.Mutex
 	workers map[string]context.CancelFunc
 }
 
 func NewSupervisor(stageStore *store.Store, runtime *RuntimeService) *Supervisor {
-	return &Supervisor{
+	s := &Supervisor{
 		store:             stageStore,
 		runtime:           runtime,
 		reconcileInterval: defaultSupervisorReconcileInterval,
 		workers:           make(map[string]context.CancelFunc),
 	}
+	device := strings.TrimSpace(os.Getenv("STAGECORE_MTC_INPUT_DEVICE"))
+	sourceID := strings.TrimSpace(os.Getenv("STAGECORE_MTC_INPUT_SOURCE_ID"))
+	if device != "" && sourceID != "" {
+		input, err := NewMTCInput(stageStore, runtime, device, sourceID)
+		if err != nil {
+			slog.Warn("StageCore MTC input configuration rejected", "error", err)
+		} else {
+			s.mtcInput = input
+		}
+	}
+	return s
 }
 
 // Run reconciles active Sessions with the INTERNAL timecode source sealed into
-// each Session's immutable Runtime Snapshot. External MTC/LTC sources remain at
-// their explicit adapter boundaries and are never silently substituted here.
+// each Session's immutable Runtime Snapshot. When explicitly configured, a
+// physical raw-MIDI adapter feeds only MTC quarter-frame messages whose
+// source_id matches an active immutable Runtime Snapshot. LTC remains at its
+// explicit adapter boundary and is never silently substituted here.
 func (s *Supervisor) Run(ctx context.Context) {
 	if s == nil || s.store == nil || s.runtime == nil {
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if s.mtcInput != nil {
+		go s.mtcInput.Run(ctx)
 	}
 
 	s.reconcile(ctx)
