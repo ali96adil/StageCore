@@ -179,6 +179,20 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		writeJSON(w, http.StatusCreated, targetView(created))
 	}))
 
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/targets/{alias_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		aliasID := strings.TrimSpace(r.PathValue("alias_id"))
+		if err := stageStore.DeleteAlias(r.Context(), projectID, aliasID); err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/inputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
@@ -228,7 +242,6 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		}
 		writeJSON(w, http.StatusCreated, outputView(created))
 	}))
-
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/outputs/{output_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
