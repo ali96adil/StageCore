@@ -39,7 +39,7 @@ async function renderConfiguration() {
           <button class="button primary" type="submit" ${disabled}>Add target</button>
         </form>
         <div class="actions-editor" style="margin-top:14px">${(model.targets || []).length ? model.targets.map((target) => `
-          <div class="action-editor"><strong>${esc(target.logical_name)}</strong><p class="muted">${esc(target.logical_type)}</p><pre class="mono muted">${esc(jsonText(target.configuration))}</pre></div>`).join("") : `<div class="empty">No logical targets yet.</div>`}</div>
+          <div class="action-editor"><div class="section-title-row"><strong>${esc(target.logical_name)}</strong>${editable ? `<button class="button danger target-remove" type="button" data-alias-id="${esc(target.alias_id)}" data-target-name="${esc(target.logical_name)}">Remove</button>` : ""}</div><p class="muted">${esc(target.logical_type)}</p><pre class="mono muted">${esc(jsonText(target.configuration))}</pre></div>`).join("") : `<div class="empty">No logical targets yet.</div>`}</div>
       </article>
 
       <article class="card">
@@ -113,6 +113,17 @@ async function renderConfiguration() {
       await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/targets`, { method: "POST", json: { logical_name: el("targetName").value.trim(), logical_type: el("targetType").value.trim(), configuration: parseJSONField(el("targetConfig").value, "Target configuration") } });
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
+  });
+  document.querySelectorAll(".target-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const targetName = button.dataset.targetName || "this target";
+      if (!window.confirm(`Remove ${targetName}? Published Runtime Snapshots remain unchanged.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/targets/${encodeURIComponent(button.dataset.aliasId)}?confirm=true`, { method: "DELETE" });
+        await refreshProjectAndConfiguration();
+        setMessage(globalMessage, `Removed target ${targetName}.`, "good");
+      } catch (error) { configurationError(error); }
+    });
   });
   el("inputForm").addEventListener("submit", async (event) => {
     event.preventDefault();
