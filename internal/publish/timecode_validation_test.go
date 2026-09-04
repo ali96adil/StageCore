@@ -14,11 +14,11 @@ import (
 
 func TestValidateTimecodeDraftUsesRuntimeDropFrameRules(t *testing.T) {
 	tests := []struct {
-		name       string
-		rate       string
-		start      string
-		at         string
-		wantErr    bool
+		name    string
+		rate    string
+		start   string
+		at      string
+		wantErr bool
 	}{
 		{name: "drop-frame delimiter mismatch", rate: "29.97 DF", start: "00:00:00;00", at: "00:00:05:00", wantErr: true},
 		{name: "dropped frame number", rate: "29.97 DF", start: "00:00:00;00", at: "00:01:00;00", wantErr: true},
@@ -60,21 +60,21 @@ func TestValidateBlocksRuntimeInvalidDropFrameBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateAlias(ctx, domain.ProjectDeviceAlias{
-		ProjectID: project.ID,
-		LogicalName: "TIMECODE-MTC",
-		LogicalType: "TIMECODE_SOURCE",
-		TargetRef: "TIMECODE-MTC",
+		ProjectID:     project.ID,
+		LogicalName:   "TIMECODE-MTC",
+		LogicalType:   "TIMECODE_SOURCE",
+		TargetRef:     "TIMECODE-MTC",
 		ProjectConfig: json.RawMessage(`{"source_id":"phase3-mtc","kind":"MTC","rate":"29.97 DF","offset_frames":0,"start_timecode":"00:00:00;00"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateCueWithActions(ctx, domain.Cue{
-		RevisionID: revision.ID,
-		DisplayLabel: "1",
-		Name: "Invalid DF Cue",
-		OrderIndex: 1,
-		Criticality: "NORMAL",
-		Enabled: true,
+		RevisionID:      revision.ID,
+		DisplayLabel:    "1",
+		Name:            "Invalid DF Cue",
+		OrderIndex:      1,
+		Criticality:     "NORMAL",
+		Enabled:         true,
 		ExecutionPolicy: json.RawMessage(`{"timecode":{"binding_id":"phase3-tc-cue-1","at":"00:01:00;00","expiry_frames":25,"enabled":true}}`),
 	}, nil); err != nil {
 		t.Fatal(err)
