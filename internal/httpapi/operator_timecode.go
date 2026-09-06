@@ -9,7 +9,7 @@ import (
 )
 
 type TimecodeSummaryReader interface {
-	Summary(context.Context, string, string) (timecode.RuntimeSummary, error)
+	LiveSummary(context.Context, string, string) (timecode.RuntimeSummary, error)
 }
 
 func WithOperatorTimecode(auth *userauth.Service, service TimecodeSummaryReader) Option {
@@ -18,7 +18,7 @@ func WithOperatorTimecode(auth *userauth.Service, service TimecodeSummaryReader)
 			return
 		}
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timecode", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-			summary, err := service.Summary(r.Context(), r.PathValue("project_id"), r.URL.Query().Get("runtime_snapshot_id"))
+			summary, err := service.LiveSummary(r.Context(), r.PathValue("project_id"), r.URL.Query().Get("runtime_snapshot_id"))
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
