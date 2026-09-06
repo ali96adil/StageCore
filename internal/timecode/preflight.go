@@ -32,7 +32,7 @@ func (s *PreflightService) Evaluate(ctx context.Context, projectID, runtimeSnaps
 	if strings.TrimSpace(report.RuntimeSnapshotID) == "" {
 		return report, nil
 	}
-	summary, err := s.runtime.Summary(ctx, report.ProjectID, report.RuntimeSnapshotID)
+	summary, err := s.runtime.LiveSummary(ctx, report.ProjectID, report.RuntimeSnapshotID)
 	if err != nil {
 		addTimecodeCheck(&report, preflight.Block, "timecode.configuration", "Timecode configuration is invalid", err.Error(), report.RuntimeSnapshotID)
 		return report, nil
