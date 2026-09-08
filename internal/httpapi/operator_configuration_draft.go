@@ -65,8 +65,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				return
 			}
 			var input struct {
-				Reason            string `json:"reason"`
-				ConfirmRevisionID string `json:"confirm_revision_id"`
+				Reason string `json:"reason"`
 			}
 			if r.Body != nil {
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil && err != io.EOF {
@@ -74,26 +73,9 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					return
 				}
 			}
-			project, err := stageStore.GetProject(r.Context(), projectID)
-			if err != nil {
-				writeProjectStoreError(w, err)
-				return
-			}
-			currentRevisionID := strings.TrimSpace(project.CurrentRevisionID)
-			if strings.TrimSpace(input.ConfirmRevisionID) == "" || input.ConfirmRevisionID != currentRevisionID {
-				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultRejected, "Draft confirmation does not match current revision", map[string]any{
-					"confirmed_revision_id": strings.TrimSpace(input.ConfirmRevisionID),
-					"current_revision_id":   currentRevisionID,
-				})
-				writeJSON(w, http.StatusConflict, map[string]any{
-					"error_code":          "DRAFT_CONFIRMATION_MISMATCH",
-					"current_revision_id": currentRevisionID,
-				})
-				return
-			}
 			restored, discarded, err := stageStore.DiscardProjectDraft(r.Context(), projectID, session.User.ID, input.Reason)
 			if err != nil {
-				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), map[string]any{"confirmed_revision_id": input.ConfirmRevisionID})
+				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), nil)
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -102,7 +84,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					EventType: "project.draft.discard", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
 					Source: "operator_web", ResourceType: "project", ResourceID: projectID,
 					Result: securityaudit.ResultSuccess, Reason: strings.TrimSpace(input.Reason),
-					Metadata: map[string]any{"discarded": discarded, "discarded_revision_id": input.ConfirmRevisionID, "restored_revision_id": restored.ID},
+					Metadata: map[string]any{"discarded": discarded, "restored_revision_id": restored.ID},
 				}); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "AUDIT_RECORD_FAILED"})
 					return
