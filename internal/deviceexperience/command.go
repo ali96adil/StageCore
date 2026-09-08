@@ -106,7 +106,12 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 		}
 		return DeviceCommand{}, false, fmt.Errorf("create stage device command: %w", err)
 	}
-	return DeviceCommand{Envelope: envelope, SessionID: input.SessionID, DeviceID: input.DeviceID, Status: contracts.CommandAccepted}, false, nil
+	created := DeviceCommand{Envelope: envelope, SessionID: input.SessionID, DeviceID: input.DeviceID, Status: contracts.CommandAccepted}
+	if err := r.recordCommandEvent(ctx, created, "stage_device.command.accepted"); err != nil {
+		_, _ = r.db.ExecContext(context.WithoutCancel(ctx), `DELETE FROM stage_device_commands WHERE command_id = ? AND status = 'ACCEPTED'`, commandID)
+		return DeviceCommand{}, false, fmt.Errorf("record stage device command accepted event: %w", err)
+	}
+	return created, false, nil
 }
 
 func (r *Repository) CompleteCommand(ctx context.Context, commandID string, status contracts.CommandStatus, result json.RawMessage) (DeviceCommand, error) {
@@ -138,7 +143,14 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 		}
 		return DeviceCommand{}, ErrInvalidState
 	}
-	return r.GetCommand(ctx, commandID)
+	completed, err := r.GetCommand(ctx, commandID)
+	if err != nil {
+		return DeviceCommand{}, err
+	}
+	if err := r.recordCommandEvent(ctx, completed, commandResultEventType(status)); err != nil {
+		return completed, fmt.Errorf("record stage device command result event: %w", err)
+	}
+	return completed, nil
 }
 
 func (r *Repository) GetCommand(ctx context.Context, commandID string) (DeviceCommand, error) {
@@ -157,6 +169,59 @@ func (r *Repository) getCommandByIdempotency(ctx context.Context, deviceID, key 
 		       result_json, completed_at_us
 		FROM stage_device_commands WHERE device_id = ? AND idempotency_key = ?
 	`, deviceID, key))
+}
+
+func (r *Repository) recordCommandEvent(ctx context.Context, command DeviceCommand, eventType string) error {
+	if r.events == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"command_id":   command.Envelope.CommandID,
+		"device_id":    command.DeviceID,
+		"command_type": command.Envelope.CommandType,
+		"status":       command.Status,
+		"result":       command.Result,
+	})
+	if err != nil {
+		return err
+	}
+	priority := command.Envelope.Priority
+	if priority == "" {
+		priority = "P1"
+	}
+	var sessionID *string
+	if command.SessionID != "" {
+		value := command.SessionID
+		sessionID = &value
+	}
+	_, err = r.events.AppendEvent(ctx, sessionID, contracts.EventEnvelope{
+		EventType:         eventType,
+		SchemaVersion:     contracts.SchemaVersion1,
+		Source:            "hub.stage_device_runtime",
+		ProjectID:         command.Envelope.ProjectID,
+		RuntimeSnapshotID: command.Envelope.RuntimeSnapshotID,
+		CorrelationID:     command.Envelope.CorrelationID,
+		CausationID:       command.Envelope.CausationID,
+		Priority:          priority,
+		TraceContext:      json.RawMessage(`{}`),
+		Payload:           payload,
+	})
+	return err
+}
+
+func commandResultEventType(status contracts.CommandStatus) string {
+	switch status {
+	case contracts.CommandCompleted:
+		return "stage_device.command.completed"
+	case contracts.CommandTimedOut:
+		return "stage_device.command.timed_out"
+	case contracts.CommandCancelled:
+		return "stage_device.command.cancelled"
+	case contracts.CommandRejected:
+		return "stage_device.command.rejected"
+	default:
+		return "stage_device.command.failed"
+	}
 }
 
 type scanner interface {
