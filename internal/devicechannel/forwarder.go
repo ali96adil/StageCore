@@ -127,15 +127,13 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	for {
 		select {
 		case <-waitCtx.Done():
-			terminal := contracts.CommandCancelled
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				terminal = contracts.CommandTimedOut
-			}
-			completed := f.finishInterrupted(command, terminal, waitCtx.Err())
-			return capabilityResultForDeviceCommand(completed)
+			return f.interruptedResult(command, waitCtx.Err())
 		case <-ticker.C:
 			current, err := f.repository.GetCommand(waitCtx, command.Envelope.CommandID)
 			if err != nil {
+				if waitErr := waitCtx.Err(); waitErr != nil {
+					return f.interruptedResult(command, waitErr)
+				}
 				return stageDeviceFailure("STAGE_DEVICE_RESULT_LOOKUP_FAILED", err.Error())
 			}
 			if terminalDeviceCommand(current.Status) {
@@ -143,6 +141,15 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 			}
 		}
 	}
+}
+
+func (f *Forwarder) interruptedResult(command deviceexperience.DeviceCommand, cause error) capability.Result {
+	terminal := contracts.CommandCancelled
+	if errors.Is(cause, context.DeadlineExceeded) {
+		terminal = contracts.CommandTimedOut
+	}
+	completed := f.finishInterrupted(command, terminal, cause)
+	return capabilityResultForDeviceCommand(completed)
 }
 
 func (f *Forwarder) resolveSession(ctx context.Context, req capability.Request, projectID, snapshotID string) (string, *capability.Result) {
