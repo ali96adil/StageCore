@@ -95,6 +95,83 @@ func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
 	}
 }
 
+func TestOperatorStageDeviceGroupCommandSharesCorrelation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Callboard Group", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range []deviceexperience.Device{
+		{ID: "display-01", ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay, DisplayName: "Left", ProtocolVersion: deviceexperience.ProtocolVersion1, Capabilities: []string{"display.message.show"}, GroupName: "actors", Enabled: true},
+		{ID: "display-02", ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay, DisplayName: "Right", ProtocolVersion: deviceexperience.ProtocolVersion1, Capabilities: []string{"display.message.show"}, GroupName: "actors", Enabled: true},
+		{ID: "display-03", ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay, DisplayName: "Crew", ProtocolVersion: deviceexperience.ProtocolVersion1, Capabilities: []string{"display.message.show"}, GroupName: "crew", Enabled: true},
+	} {
+		if _, err := devices.UpsertDevice(ctx, device); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	body := bytes.NewBufferString(`{"group_name":"actors","command_type":"DISPLAY_MESSAGE","correlation_id":"corr-callboard-group","idempotency_key":"places","payload":{"message":"Places"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/stage-device-commands", body)
+	req.RemoteAddr = "127.0.0.1:19004"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, credential.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("group command status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		CorrelationID string `json:"correlation_id"`
+		Results       []struct {
+			DeviceID string                          `json:"device_id"`
+			Command  *deviceexperience.DeviceCommand `json:"command"`
+			Error    string                          `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.CorrelationID != "corr-callboard-group" || len(response.Results) != 2 {
+		t.Fatalf("response=%+v", response)
+	}
+	seen := map[string]bool{}
+	commandIDs := map[string]bool{}
+	for _, item := range response.Results {
+		if item.Error != "" || item.Command == nil {
+			t.Fatalf("result=%+v", item)
+		}
+		if item.Command.Status != contracts.CommandFailed || item.Command.Envelope.CorrelationID != response.CorrelationID {
+			t.Fatalf("command=%+v", item.Command)
+		}
+		seen[item.DeviceID] = true
+		commandIDs[item.Command.Envelope.CommandID] = true
+	}
+	if !seen["display-01"] || !seen["display-02"] || seen["display-03"] || len(commandIDs) != 2 {
+		t.Fatalf("target expansion seen=%v commands=%v", seen, commandIDs)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM stage_device_commands WHERE correlation_id = ?`, response.CorrelationID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("persisted group commands=%d want=2", count)
+	}
+}
+
 func TestOperatorNetworkCockpitReturnsLatestTargetState(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
