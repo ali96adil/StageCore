@@ -25,6 +25,8 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		!strings.Contains(rootRes.Body.String(), `src="/app.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `src="/preflight.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `src="/memory.js"`) ||
+		!strings.Contains(rootRes.Body.String(), `href="/phase4.css"`) ||
+		!strings.Contains(rootRes.Body.String(), `src="/phase4.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="preflight"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="sessions"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="notes"`) {
@@ -73,16 +75,27 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatal("embedded Session Memory client is missing structured session and note flows")
 	}
 
-	cssReq := httptest.NewRequest(http.MethodGet, "/app.css", nil)
-	cssReq.RemoteAddr = "127.0.0.1:17005"
+	phase4Req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	phase4Req.RemoteAddr = "127.0.0.1:17005"
+	phase4Res := httptest.NewRecorder()
+	handler.ServeHTTP(phase4Res, phase4Req)
+	if phase4Res.Code != http.StatusOK || !strings.HasPrefix(phase4Res.Header().Get("Content-Type"), "application/javascript") {
+		t.Fatalf("phase4.js status=%d content-type=%q", phase4Res.Code, phase4Res.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(phase4Res.Body.String(), "/stage-devices") || !strings.Contains(phase4Res.Body.String(), "/live-video-sources") || !strings.Contains(phase4Res.Body.String(), "/network/cockpit") {
+		t.Fatal("embedded Phase 4 client is missing Stage Device, live-video or network workflows")
+	}
+
+	cssReq := httptest.NewRequest(http.MethodGet, "/phase4.css", nil)
+	cssReq.RemoteAddr = "127.0.0.1:17006"
 	cssRes := httptest.NewRecorder()
 	handler.ServeHTTP(cssRes, cssReq)
 	if cssRes.Code != http.StatusOK || !strings.HasPrefix(cssRes.Header().Get("Content-Type"), "text/css") {
-		t.Fatalf("app.css status=%d content-type=%q", cssRes.Code, cssRes.Header().Get("Content-Type"))
+		t.Fatalf("phase4.css status=%d content-type=%q", cssRes.Code, cssRes.Header().Get("Content-Type"))
 	}
 
 	lanReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	lanReq.RemoteAddr = "10.20.30.40:17006"
+	lanReq.RemoteAddr = "10.20.30.40:17007"
 	lanRes := httptest.NewRecorder()
 	handler.ServeHTTP(lanRes, lanReq)
 	if lanRes.Code != http.StatusUpgradeRequired || !strings.Contains(lanRes.Body.String(), "SECURE_TRANSPORT_REQUIRED") {
@@ -90,7 +103,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	}
 
 	missingReq := httptest.NewRequest(http.MethodGet, "/not-a-stagecore-route", nil)
-	missingReq.RemoteAddr = "127.0.0.1:17007"
+	missingReq.RemoteAddr = "127.0.0.1:17008"
 	missingRes := httptest.NewRecorder()
 	handler.ServeHTTP(missingRes, missingReq)
 	if missingRes.Code != http.StatusNotFound {
