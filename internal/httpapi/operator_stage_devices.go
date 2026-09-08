@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -87,16 +88,7 @@ func WithOperatorStageDevices(
 				DeadlineAt:        input.DeadlineAt,
 			})
 			if err != nil {
-				status := http.StatusConflict
-				switch {
-				case errors.Is(err, deviceexperience.ErrCommandExpired):
-					status = http.StatusGone
-				case errors.Is(err, deviceexperience.ErrInvalidState), errors.Is(err, deviceexperience.ErrInvalidDevice):
-					status = http.StatusBadRequest
-				case errors.Is(err, deviceexperience.ErrCapabilityMissing):
-					status = http.StatusConflict
-				}
-				writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_COMMAND_REJECTED", "detail": err.Error()})
+				writeStageDeviceCommandError(w, err)
 				return
 			}
 			status := http.StatusAccepted
@@ -104,6 +96,87 @@ func WithOperatorStageDevices(
 				status = http.StatusOK
 			}
 			writeJSON(w, status, command)
+		}))
+
+		// A group send is expanded server-side to independent command identities
+		// while preserving one correlation ID. This keeps broad Callboard/tablet
+		// actions auditable and prevents the browser from becoming the canonical
+		// group-expansion boundary.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-device-commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			var input struct {
+				All               bool            `json:"all"`
+				GroupName         string          `json:"group_name"`
+				DeviceIDs         []string        `json:"device_ids"`
+				CommandType       string          `json:"command_type"`
+				SessionID         string          `json:"session_id"`
+				RuntimeSnapshotID string          `json:"runtime_snapshot_id"`
+				CorrelationID     string          `json:"correlation_id"`
+				CausationID       string          `json:"causation_id"`
+				Priority          string          `json:"priority"`
+				IdempotencyKey    string          `json:"idempotency_key"`
+				Payload           json.RawMessage `json:"payload"`
+				DeadlineAt        *time.Time      `json:"deadline_at"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			allDevices, err := devices.ListDevices(r.Context(), projectID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
+				return
+			}
+			targets, ok := selectStageDeviceTargets(allDevices, input.All, input.GroupName, input.DeviceIDs)
+			if !ok {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_TARGET_INVALID", "detail": "choose exactly one of all, group_name or device_ids"})
+				return
+			}
+			if len(targets) == 0 {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_TARGET_EMPTY"})
+				return
+			}
+
+			correlationID := strings.TrimSpace(input.CorrelationID)
+			if correlationID == "" {
+				correlationID, err = stageid.New()
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "CORRELATION_ID_FAILED", "detail": err.Error()})
+					return
+				}
+			}
+			baseKey := strings.TrimSpace(input.IdempotencyKey)
+			if baseKey == "" {
+				baseKey = correlationID + ":" + strings.TrimSpace(input.CommandType)
+			}
+			type batchResult struct {
+				DeviceID string                          `json:"device_id"`
+				Command  *deviceexperience.DeviceCommand `json:"command,omitempty"`
+				Error    string                          `json:"error,omitempty"`
+			}
+			results := make([]batchResult, 0, len(targets))
+			for _, device := range targets {
+				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+					ProjectID:         projectID,
+					SessionID:         input.SessionID,
+					DeviceID:          device.ID,
+					CommandType:       input.CommandType,
+					Issuer:            session.User.ID,
+					CorrelationID:     correlationID,
+					CausationID:       input.CausationID,
+					RuntimeSnapshotID: input.RuntimeSnapshotID,
+					Priority:          input.Priority,
+					IdempotencyKey:    baseKey + ":" + device.ID,
+					Payload:           input.Payload,
+					DeadlineAt:        input.DeadlineAt,
+				})
+				if dispatchErr != nil {
+					results = append(results, batchResult{DeviceID: device.ID, Error: dispatchErr.Error()})
+					continue
+				}
+				copy := command
+				results = append(results, batchResult{DeviceID: device.ID, Command: &copy})
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -149,4 +222,55 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, map[string]any{"targets": items, "stale_after_ms": 15000})
 		}))
 	}
+}
+
+func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
+	status := http.StatusConflict
+	switch {
+	case errors.Is(err, deviceexperience.ErrCommandExpired):
+		status = http.StatusGone
+	case errors.Is(err, deviceexperience.ErrInvalidState), errors.Is(err, deviceexperience.ErrInvalidDevice):
+		status = http.StatusBadRequest
+	case errors.Is(err, deviceexperience.ErrCapabilityMissing):
+		status = http.StatusConflict
+	}
+	writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_COMMAND_REJECTED", "detail": err.Error()})
+}
+
+func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, groupName string, deviceIDs []string) ([]deviceexperience.Device, bool) {
+	groupName = strings.TrimSpace(groupName)
+	wantedIDs := make(map[string]struct{}, len(deviceIDs))
+	for _, id := range deviceIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			wantedIDs[id] = struct{}{}
+		}
+	}
+	selectors := 0
+	if all {
+		selectors++
+	}
+	if groupName != "" {
+		selectors++
+	}
+	if len(wantedIDs) > 0 {
+		selectors++
+	}
+	if selectors != 1 {
+		return nil, false
+	}
+	out := make([]deviceexperience.Device, 0)
+	for _, device := range devices {
+		switch {
+		case all:
+			out = append(out, device)
+		case groupName != "" && device.GroupName == groupName:
+			out = append(out, device)
+		default:
+			if _, ok := wantedIDs[device.ID]; ok {
+				out = append(out, device)
+			}
+		}
+	}
+	return out, true
 }
