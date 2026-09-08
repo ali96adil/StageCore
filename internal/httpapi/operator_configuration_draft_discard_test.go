@@ -10,6 +10,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -17,6 +18,10 @@ func TestOperatorCanDiscardDraftAndRestoreValidatedRevision(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
 	stageStore := store.New(h.db.DB, clock.Real{})
+	audit, err := securityaudit.New(h.db.DB, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	project, validated, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Discard UX", CreatedBy: "owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +38,7 @@ func TestOperatorCanDiscardDraftAndRestoreValidatedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(WithOperatorConfigurationDraft(h.auth, stageStore)).Handler()
+	handler := New(WithOperatorConfigurationDraft(h.auth, stageStore, audit)).Handler()
 	body := bytes.NewBufferString(`{"reason":"cancelled from Operator"}`)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/configuration/draft", body)
 	req.RemoteAddr = "127.0.0.1:18003"
@@ -63,5 +68,12 @@ func TestOperatorCanDiscardDraftAndRestoreValidatedRevision(t *testing.T) {
 	}
 	if abandoned.Status != domain.RevisionSuperseded {
 		t.Fatalf("draft status=%s want SUPERSEDED", abandoned.Status)
+	}
+	records, err := audit.List(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].EventType != "project.draft.discard" || records[0].Result != securityaudit.ResultSuccess || records[0].ResourceID != project.ID {
+		t.Fatalf("audit records=%+v", records)
 	}
 }
