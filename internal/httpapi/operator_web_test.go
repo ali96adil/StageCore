@@ -27,6 +27,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		!strings.Contains(rootRes.Body.String(), `src="/memory.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `href="/phase4.css"`) ||
 		!strings.Contains(rootRes.Body.String(), `src="/phase4.js"`) ||
+		!strings.Contains(rootRes.Body.String(), `src="/phase4-polish.js"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="preflight"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="sessions"`) ||
 		!strings.Contains(rootRes.Body.String(), `data-page="notes"`) {
@@ -86,8 +87,21 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatal("embedded Phase 4 client is missing Stage Device, live-video or network workflows")
 	}
 
+	polishReq := httptest.NewRequest(http.MethodGet, "/phase4-polish.js", nil)
+	polishReq.RemoteAddr = "127.0.0.1:17006"
+	polishRes := httptest.NewRecorder()
+	handler.ServeHTTP(polishRes, polishReq)
+	if polishRes.Code != http.StatusOK || !strings.HasPrefix(polishRes.Header().Get("Content-Type"), "application/javascript") {
+		t.Fatalf("phase4-polish.js status=%d content-type=%q", polishRes.Code, polishRes.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(polishRes.Body.String(), "/stage-device-commands") ||
+		!strings.Contains(polishRes.Body.String(), "VIDEO_SOURCE_OPEN") ||
+		!strings.Contains(polishRes.Body.String(), "VIDEO_SOURCE_INSPECT") {
+		t.Fatal("embedded Phase 4 polish client is missing grouped Callboard or live-video controls")
+	}
+
 	cssReq := httptest.NewRequest(http.MethodGet, "/phase4.css", nil)
-	cssReq.RemoteAddr = "127.0.0.1:17006"
+	cssReq.RemoteAddr = "127.0.0.1:17007"
 	cssRes := httptest.NewRecorder()
 	handler.ServeHTTP(cssRes, cssReq)
 	if cssRes.Code != http.StatusOK || !strings.HasPrefix(cssRes.Header().Get("Content-Type"), "text/css") {
@@ -95,7 +109,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	}
 
 	lanReq := httptest.NewRequest(http.MethodGet, "/", nil)
-	lanReq.RemoteAddr = "10.20.30.40:17007"
+	lanReq.RemoteAddr = "10.20.30.40:17008"
 	lanRes := httptest.NewRecorder()
 	handler.ServeHTTP(lanRes, lanReq)
 	if lanRes.Code != http.StatusUpgradeRequired || !strings.Contains(lanRes.Body.String(), "SECURE_TRANSPORT_REQUIRED") {
@@ -103,7 +117,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	}
 
 	missingReq := httptest.NewRequest(http.MethodGet, "/not-a-stagecore-route", nil)
-	missingReq.RemoteAddr = "127.0.0.1:17008"
+	missingReq.RemoteAddr = "127.0.0.1:17009"
 	missingRes := httptest.NewRecorder()
 	handler.ServeHTTP(missingRes, missingReq)
 	if missingRes.Code != http.StatusNotFound {
