@@ -62,6 +62,47 @@ func TestDisplayCountdownRejectsPastAbsoluteTarget(t *testing.T) {
 	}
 }
 
+func TestDisplayAlertCanonicalizesSemanticPresentationAndChime(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	if _, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "display-alert", ProjectID: projectID, Kind: deviceexperience.DeviceStageDisplay,
+		DisplayName: "Alert", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"display.alert.show", "display.chime.play"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	command, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, DeviceID: "display-alert", CommandType: "DISPLAY_ALERT", Issuer: "operator:test",
+		Payload: json.RawMessage(`{"message":"Stand by","role":"warning","motion":"flash","intensity_percent":75,"duration_seconds":8,"chime_id":"places"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(command.Envelope.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["role"] != "WARNING" || payload["motion"] != "FLASH" || payload["intensity_percent"] != float64(75) || payload["duration_seconds"] != float64(8) || payload["chime_id"] != "places" {
+		t.Fatalf("canonical alert payload=%s", command.Envelope.Payload)
+	}
+	if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, DeviceID: "display-alert", CommandType: "DISPLAY_ALERT", Issuer: "operator:test",
+		Payload: json.RawMessage(`{"role":"neon","motion":"pulse"}`),
+	}); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("unsupported alert role err=%v want ErrInvalidState", err)
+	}
+	chime, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, DeviceID: "display-alert", CommandType: "DISPLAY_CHIME", Issuer: "operator:test", Payload: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(chime.Envelope.Payload) != `{"chime_id":"default"}` {
+		t.Fatalf("default chime payload=%s", chime.Envelope.Payload)
+	}
+}
+
 func TestDisplayMessageAndVideoSourcePayloadValidation(t *testing.T) {
 	ctx := context.Background()
 	repo, _, projectID := newRepository(t)
