@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -87,5 +89,78 @@ func TestDiscardProjectDraftRejectsInitialParentlessDraft(t *testing.T) {
 	}
 	if _, _, err := s.DiscardProjectDraft(ctx, project.ID, "owner", "cancel"); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("discard initial Draft err=%v want conflict", err)
+	}
+}
+
+func TestDiscardProjectDraftBlockedDuringShow(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "SHOW locked discard", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.CreateRuntimeSnapshot(ctx, revision.ID, "owner", strings.Repeat("c", 64), json.RawMessage(`{"show":"locked"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := s.EnsureProjectDraft(ctx, project.ID, "owner", "accidental edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateSession(ctx, snapshot.ID, domain.SessionShow, "Live SHOW"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.DiscardProjectDraft(ctx, project.ID, "owner", "attempt during SHOW"); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+		t.Fatalf("discard during SHOW err=%v want ErrShowConfigurationLocked", err)
+	}
+	loaded, err := s.GetRevision(ctx, draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != domain.RevisionDraft {
+		t.Fatalf("SHOW-blocked discard changed Draft status=%s", loaded.Status)
+	}
+	loadedProject, err := s.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedProject.CurrentRevisionID != draft.ID {
+		t.Fatalf("SHOW-blocked discard changed current revision=%s want=%s", loadedProject.CurrentRevisionID, draft.ID)
+	}
+}
+
+func TestDiscardProjectDraftPreservesPublishedRuntimeSnapshot(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot safe discard", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	manifest := json.RawMessage(`{"immutable":"phase4","version":1}`)
+	snapshot, err := s.CreateRuntimeSnapshot(ctx, revision.ID, "owner", strings.Repeat("d", 64), manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnsureProjectDraft(ctx, project.ID, "owner", "accidental edit"); err != nil {
+		t.Fatal(err)
+	}
+	if _, discarded, err := s.DiscardProjectDraft(ctx, project.ID, "owner", "restore validated"); err != nil || !discarded {
+		t.Fatalf("discarded=%v err=%v", discarded, err)
+	}
+	after, err := s.GetRuntimeSnapshot(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ID != snapshot.ID || after.ProjectID != snapshot.ProjectID || after.RevisionID != snapshot.RevisionID ||
+		after.SnapshotVersion != snapshot.SnapshotVersion || after.CreatedBy != snapshot.CreatedBy ||
+		after.ContentHash != snapshot.ContentHash || after.Status != snapshot.Status || string(after.Manifest) != string(snapshot.Manifest) ||
+		!after.CreatedAt.Equal(snapshot.CreatedAt) {
+		t.Fatalf("Runtime Snapshot changed across Draft discard\nbefore=%+v\nafter=%+v", snapshot, after)
 	}
 }
