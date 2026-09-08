@@ -98,15 +98,15 @@ func WithOperatorStageDevices(
 			writeJSON(w, status, command)
 		}))
 
-		// A group send is expanded server-side to independent command identities
-		// while preserving one correlation ID. This keeps broad Callboard/tablet
-		// actions auditable and prevents the browser from becoming the canonical
-		// group-expansion boundary.
+		// Broad sends are expanded server-side to independent command identities
+		// while preserving one correlation ID. Group and location selectors are
+		// canonical Stage Device metadata, not browser-only filtering.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-device-commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			var input struct {
 				All               bool            `json:"all"`
 				GroupName         string          `json:"group_name"`
+				LocationName      string          `json:"location_name"`
 				DeviceIDs         []string        `json:"device_ids"`
 				CommandType       string          `json:"command_type"`
 				SessionID         string          `json:"session_id"`
@@ -126,9 +126,9 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
-			targets, ok := selectStageDeviceTargets(allDevices, input.All, input.GroupName, input.DeviceIDs)
+			targets, ok := selectStageDeviceTargets(allDevices, input.All, input.GroupName, input.LocationName, input.DeviceIDs)
 			if !ok {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_TARGET_INVALID", "detail": "choose exactly one of all, group_name or device_ids"})
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_TARGET_INVALID", "detail": "choose exactly one of all, group_name, location_name or device_ids"})
 				return
 			}
 			if len(targets) == 0 {
@@ -237,8 +237,9 @@ func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 	writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_COMMAND_REJECTED", "detail": err.Error()})
 }
 
-func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, groupName string, deviceIDs []string) ([]deviceexperience.Device, bool) {
+func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, groupName, locationName string, deviceIDs []string) ([]deviceexperience.Device, bool) {
 	groupName = strings.TrimSpace(groupName)
+	locationName = strings.TrimSpace(locationName)
 	wantedIDs := make(map[string]struct{}, len(deviceIDs))
 	for _, id := range deviceIDs {
 		id = strings.TrimSpace(id)
@@ -253,6 +254,9 @@ func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, group
 	if groupName != "" {
 		selectors++
 	}
+	if locationName != "" {
+		selectors++
+	}
 	if len(wantedIDs) > 0 {
 		selectors++
 	}
@@ -265,6 +269,8 @@ func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, group
 		case all:
 			out = append(out, device)
 		case groupName != "" && device.GroupName == groupName:
+			out = append(out, device)
+		case locationName != "" && device.LocationName == locationName:
 			out = append(out, device)
 		default:
 			if _, ok := wantedIDs[device.ID]; ok {
