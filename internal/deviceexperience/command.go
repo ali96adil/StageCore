@@ -153,6 +153,11 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 	if err := r.recordCommandEvent(ctx, completed, commandResultEventType(status)); err != nil {
 		return completed, fmt.Errorf("record stage device command result event: %w", err)
 	}
+	if status == contracts.CommandCompleted {
+		if err := r.applyCompletedDisplayCommand(ctx, completed); err != nil {
+			return completed, fmt.Errorf("update safe Stage Display reconnect state: %w", err)
+		}
+	}
 	return completed, nil
 }
 
