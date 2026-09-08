@@ -37,7 +37,7 @@
     {
       "feature_id": "CORE-PHASE4-DEVICE-EXPERIENCE",
       "localization_mode": "keyed",
-      "owner_assets": ["static/phase4.js", "static/phase4.css"],
+      "owner_assets": ["static/phase4.js", "static/phase4.css", "static/phase4-polish.js"],
       "name": {"en": "Stage Device Operator Experience", "ar-IQ": "تجربة تشغيل أجهزة المسرح"},
       "summary": {"en": "Guided bilingual control and diagnostics for tablets, callboards, live-video sources and the Stage Network Cockpit.", "ar-IQ": "تحكم وتشخيص موجه وثنائي اللغة للتابلت وشاشات الكواليس ومصادر الفيديو الحي ومراقبة شبكة المسرح."},
       "actions": [
