@@ -2,6 +2,7 @@ package devicechannel_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ func (f dispatchFunc) Dispatch(ctx context.Context, input deviceexperience.Creat
 }
 
 type forwarderFixture struct {
+	db         *sql.DB
 	store      *store.Store
 	repository *deviceexperience.Repository
 	projectID  string
@@ -72,7 +74,7 @@ func newForwarderFixture(t *testing.T) forwarderFixture {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return forwarderFixture{store: stageStore, repository: repository, projectID: project.ID, snapshotID: snapshot.ID, sessionID: session.ID, now: now}
+	return forwarderFixture{db: h.DB, store: stageStore, repository: repository, projectID: project.ID, snapshotID: snapshot.ID, sessionID: session.ID, now: now}
 }
 
 func stageDeviceRequest(f forwarderFixture, executionID string) capability.Request {
@@ -152,7 +154,7 @@ func TestForwarderTimeoutBecomesTerminalAndIdempotent(t *testing.T) {
 	}
 
 	var commands int
-	if err := fixture.repositoryDBCount(context.Background(), &commands); err != nil {
+	if err := fixture.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM stage_device_commands`).Scan(&commands); err != nil {
 		t.Fatal(err)
 	}
 	if commands != 1 {
@@ -165,22 +167,4 @@ func TestForwarderTimeoutBecomesTerminalAndIdempotent(t *testing.T) {
 	if len(events) != 2 || events[1].EventType != "stage_device.command.timed_out" {
 		t.Fatalf("events=%+v", events)
 	}
-}
-
-func (f forwarderFixture) repositoryDBCount(ctx context.Context, count *int) error {
-	return f.storeDBQuery(ctx, `SELECT COUNT(*) FROM stage_device_commands`, count)
-}
-
-func (f forwarderFixture) storeDBQuery(ctx context.Context, query string, dest ...any) error {
-	// Store intentionally does not expose its SQL handle. Use the canonical event
-	// count as the externally observable idempotency proof instead of reaching
-	// through repository internals.
-	if query == "" || countDestInvalid(dest) {
-		return nil
-	}
-	return nil
-}
-
-func countDestInvalid(dest []any) bool {
-	return len(dest) == 0
 }
