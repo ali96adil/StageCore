@@ -64,6 +64,47 @@ func TestRequiredLiveSourceBlocksWhenRenderNodeOffline(t *testing.T) {
 	}
 }
 
+func TestRequiredLiveSourceBlocksWhenRenderNodeCapabilityMissing(t *testing.T) {
+	ctx := context.Background()
+	repo, projectID := newFixture(t)
+	render, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "render-capability", ProjectID: projectID, Kind: deviceexperience.DeviceRenderNode,
+		DisplayName: "Render Capability", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"video.source.open"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: render.ID, Connection: deviceexperience.ConnectionOnline, Readiness: deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := repo.UpsertLiveSource(ctx, deviceexperience.LiveSource{
+		ProjectID: projectID, Name: "Routed Capture", Class: deviceexperience.SourceUSBCapture,
+		ExecutionDeviceID: render.ID, EndpointRef: "capture-route",
+		Capabilities: []string{"video.source.open", "video.source.route"},
+		Config: json.RawMessage(`{"port":"capture-route"}`), Required: true, DesiredEnabled: true,
+		Readiness: deviceexperience.ReadinessReady,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := baseReport{report: preflight.Report{Status: preflight.Pass, ProjectID: projectID, RuntimeSnapshotID: "snapshot-1", Checks: []preflight.Check{}}}
+	report, err := devicepreflight.New(base, repo).Evaluate(ctx, projectID, "snapshot-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != preflight.Block || !hasCheck(report.Checks, "live_video."+source.ID+".capabilities", preflight.Block) {
+		t.Fatalf("missing capability did not block required source: %+v", report)
+	}
+	for _, check := range report.Checks {
+		if check.Key == "live_video."+source.ID+".capabilities" && check.Detail != "video.source.route" {
+			t.Fatalf("missing capability detail=%q", check.Detail)
+		}
+	}
+}
+
 func TestOptionalOfflineDeviceAndElevatedNetworkAreWarnings(t *testing.T) {
 	ctx := context.Background()
 	repo, projectID := newFixture(t)
