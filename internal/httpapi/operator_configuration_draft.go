@@ -50,13 +50,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 		s.mux.HandleFunc("DELETE /api/v1/projects/{project_id}/configuration/draft", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if session.User.Role != userauth.RoleOwner {
-				if audit != nil {
-					_, _ = audit.Append(r.Context(), securityaudit.Event{
-						EventType: "project.draft.discard", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
-						Source: "operator_web", ResourceType: "project", ResourceID: projectID,
-						Result: securityaudit.ResultRejected, Reason: "OWNER role required",
-					})
-				}
+				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultRejected, "OWNER role required", nil)
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "OWNER_REQUIRED"})
 				return
 			}
@@ -66,11 +60,13 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				return
 			}
 			if lock.Locked {
+				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultRejected, "SHOW configuration lock is active", nil)
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED", "show_configuration_lock": lock})
 				return
 			}
 			var input struct {
-				Reason string `json:"reason"`
+				Reason            string `json:"reason"`
+				ConfirmRevisionID string `json:"confirm_revision_id"`
 			}
 			if r.Body != nil {
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil && err != io.EOF {
@@ -78,15 +74,26 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					return
 				}
 			}
+			project, err := stageStore.GetProject(r.Context(), projectID)
+			if err != nil {
+				writeProjectStoreError(w, err)
+				return
+			}
+			currentRevisionID := strings.TrimSpace(project.CurrentRevisionID)
+			if strings.TrimSpace(input.ConfirmRevisionID) == "" || input.ConfirmRevisionID != currentRevisionID {
+				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultRejected, "Draft confirmation does not match current revision", map[string]any{
+					"confirmed_revision_id": strings.TrimSpace(input.ConfirmRevisionID),
+					"current_revision_id":   currentRevisionID,
+				})
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error_code":          "DRAFT_CONFIRMATION_MISMATCH",
+					"current_revision_id": currentRevisionID,
+				})
+				return
+			}
 			restored, discarded, err := stageStore.DiscardProjectDraft(r.Context(), projectID, session.User.ID, input.Reason)
 			if err != nil {
-				if audit != nil {
-					_, _ = audit.Append(r.Context(), securityaudit.Event{
-						EventType: "project.draft.discard", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
-						Source: "operator_web", ResourceType: "project", ResourceID: projectID,
-						Result: securityaudit.ResultFailed, Reason: err.Error(),
-					})
-				}
+				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), map[string]any{"confirmed_revision_id": input.ConfirmRevisionID})
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -95,7 +102,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					EventType: "project.draft.discard", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
 					Source: "operator_web", ResourceType: "project", ResourceID: projectID,
 					Result: securityaudit.ResultSuccess, Reason: strings.TrimSpace(input.Reason),
-					Metadata: map[string]any{"discarded": discarded, "restored_revision_id": restored.ID},
+					Metadata: map[string]any{"discarded": discarded, "discarded_revision_id": input.ConfirmRevisionID, "restored_revision_id": restored.ID},
 				}); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "AUDIT_RECORD_FAILED"})
 					return
@@ -107,4 +114,15 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			})
 		}))
 	}
+}
+
+func appendDraftDiscardAudit(r *http.Request, audit *securityaudit.Service, session userauth.Session, projectID, result, reason string, metadata any) {
+	if audit == nil {
+		return
+	}
+	_, _ = audit.Append(r.Context(), securityaudit.Event{
+		EventType: "project.draft.discard", ActorUserID: session.User.ID, ActorUsername: session.User.Username,
+		Source: "operator_web", ResourceType: "project", ResourceID: projectID,
+		Result: result, Reason: reason, Metadata: metadata,
+	})
 }
