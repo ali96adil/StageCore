@@ -178,7 +178,7 @@ func main() {
 		httpapi.WithOperatorExecutionEnvironmentCapture(userAuth, application.Store, application.Vault),
 		httpapi.WithOperatorExecutionEnvironmentOperations(userAuth, application.Store, application.CompanionRuntime),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
-		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
+		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorStageDevices(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
