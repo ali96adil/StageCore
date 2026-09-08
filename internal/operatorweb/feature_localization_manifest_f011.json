@@ -17,6 +17,22 @@
       "ui_keys": [
         "templates.nav", "templates.eyebrow", "templates.title", "templates.summary", "templates.refresh", "templates.official", "templates.use", "templates.read_only", "templates.version", "templates.fields", "templates.no_fields", "templates.project_name", "templates.project_description", "templates.default_hint", "templates.create", "templates.creating", "templates.created", "templates.cancel", "templates.safety", "templates.import_title", "templates.import_summary", "templates.choose_file", "templates.validate", "templates.validating", "templates.compatible", "templates.incompatible", "templates.import_ready", "templates.import_create", "templates.export_title", "templates.export_summary", "templates.no_project", "templates.export", "templates.exported", "templates.required", "templates.optional", "templates.string", "templates.int", "templates.bool", "templates.none"
       ]
+    },
+    {
+      "feature_id": "F-019",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/show-capsules.js", "static/show-capsules-nav.js"],
+      "name": {"en": "Show Capsule / Complete Environment Restore", "ar-IQ": "حزمة العرض واستعادة البيئة الكاملة"},
+      "summary": {"en": "Portable, checksum-verified show environment transfer and restore for replacement StageCore Hubs, including zero-project recovery.", "ar-IQ": "نقل واستعادة بيئة العرض بشكل محمول ومتحقق بالبصمات لأجهزة StageCore البديلة، بما في ذلك الاستعادة عندما لا توجد مشاريع."},
+      "actions": [
+        {"action_id": "browse-capsules", "label": {"en": "Browse Capsule Library", "ar-IQ": "تصفح مكتبة الحزم"}},
+        {"action_id": "check-readiness", "label": {"en": "Check Restore Readiness", "ar-IQ": "فحص جاهزية الاستعادة"}},
+        {"action_id": "materialize-capsule", "label": {"en": "Restore Project", "ar-IQ": "استعادة المشروع"}},
+        {"action_id": "export-capsule", "label": {"en": "Export Capsule", "ar-IQ": "تصدير الحزمة"}}
+      ],
+      "ui_keys": [
+        "capsule.nav", "capsule.eyebrow", "capsule.title", "capsule.subtitle", "capsule.manifest_only", "capsule.self_contained", "capsule.preview", "capsule.export", "capsule.refresh", "capsule.snapshot", "capsule.media", "capsule.environments", "capsule.extensions", "capsule.objects", "capsule.warnings", "capsule.library", "capsule.library_detail", "capsule.imports", "capsule.exports", "capsule.plan", "capsule.materialize", "capsule.materialization_ready", "capsule.materialization_blocked", "capsule.host_ready", "capsule.host_not_ready", "capsule.no_capsules", "capsule.owner_restore", "capsule.no_overwrite", "capsule.show_lock", "capsule.extensions_review", "capsule.presentation_local", "capsule.exported", "capsule.restored", "capsule.read_only"
+      ]
     }
   ]
 }

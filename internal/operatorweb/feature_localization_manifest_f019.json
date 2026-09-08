@@ -1,0 +1,22 @@
+{
+  "contract_version": 1,
+  "required_locales": ["en", "ar-IQ"],
+  "features": [
+    {
+      "feature_id": "F-019",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/show-capsules.js", "static/show-capsules-nav.js"],
+      "name": {"en": "Show Capsule / Complete Environment Restore", "ar-IQ": "حزمة العرض واستعادة البيئة الكاملة"},
+      "summary": {"en": "Portable, checksum-verified show environment transfer and restore for replacement StageCore Hubs, including zero-project recovery.", "ar-IQ": "نقل واستعادة بيئة العرض بشكل محمول ومتحقق بالبصمات لأجهزة StageCore البديلة، بما في ذلك الاستعادة عندما لا توجد مشاريع."},
+      "actions": [
+        {"action_id": "browse-capsules", "label": {"en": "Browse Capsule Library", "ar-IQ": "تصفح مكتبة الحزم"}},
+        {"action_id": "check-readiness", "label": {"en": "Check Restore Readiness", "ar-IQ": "فحص جاهزية الاستعادة"}},
+        {"action_id": "materialize-capsule", "label": {"en": "Restore Project", "ar-IQ": "استعادة المشروع"}},
+        {"action_id": "export-capsule", "label": {"en": "Export Capsule", "ar-IQ": "تصدير الحزمة"}}
+      ],
+      "ui_keys": [
+        "capsule.nav", "capsule.eyebrow", "capsule.title", "capsule.subtitle", "capsule.manifest_only", "capsule.self_contained", "capsule.preview", "capsule.export", "capsule.refresh", "capsule.snapshot", "capsule.media", "capsule.environments", "capsule.extensions", "capsule.objects", "capsule.warnings", "capsule.library", "capsule.library_detail", "capsule.imports", "capsule.exports", "capsule.plan", "capsule.materialize", "capsule.materialization_ready", "capsule.materialization_blocked", "capsule.host_ready", "capsule.host_not_ready", "capsule.no_capsules", "capsule.owner_restore", "capsule.no_overwrite", "capsule.show_lock", "capsule.extensions_review", "capsule.presentation_local", "capsule.exported", "capsule.restored", "capsule.read_only"
+      ]
+    }
+  ]
+}
