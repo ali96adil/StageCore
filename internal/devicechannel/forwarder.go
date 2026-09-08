@@ -17,7 +17,10 @@ import (
 
 const StageDeviceLogicalType = "stage_device"
 
-const commandPollInterval = 10 * time.Millisecond
+const (
+	commandPollInterval       = 10 * time.Millisecond
+	defaultStageDeviceTimeout = 5 * time.Second
+)
 
 type CommandDispatcher interface {
 	Dispatch(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
@@ -91,7 +94,14 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	}
 
 	deadline := commandDeadline(ctx, req.TimeoutMS, f.now)
-	command, err := f.dispatcher.Dispatch(ctx, deviceexperience.CreateCommandInput{
+	if deadline == nil {
+		value := f.now().UTC().Add(defaultStageDeviceTimeout)
+		deadline = &value
+	}
+	waitCtx, cancel := context.WithDeadline(ctx, *deadline)
+	defer cancel()
+
+	command, err := f.dispatcher.Dispatch(waitCtx, deviceexperience.CreateCommandInput{
 		ProjectID:         projectID,
 		SessionID:         sessionID,
 		DeviceID:          targetConfig.DeviceID,
@@ -116,15 +126,15 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	defer ticker.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-waitCtx.Done():
 			terminal := contracts.CommandCancelled
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 				terminal = contracts.CommandTimedOut
 			}
-			completed := f.finishInterrupted(command, terminal, ctx.Err())
+			completed := f.finishInterrupted(command, terminal, waitCtx.Err())
 			return capabilityResultForDeviceCommand(completed)
 		case <-ticker.C:
-			current, err := f.repository.GetCommand(ctx, command.Envelope.CommandID)
+			current, err := f.repository.GetCommand(waitCtx, command.Envelope.CommandID)
 			if err != nil {
 				return stageDeviceFailure("STAGE_DEVICE_RESULT_LOOKUP_FAILED", err.Error())
 			}
@@ -164,9 +174,11 @@ func (f *Forwarder) resolveSession(ctx context.Context, req capability.Request, 
 func (f *Forwarder) finishInterrupted(command deviceexperience.DeviceCommand, status contracts.CommandStatus, cause error) deviceexperience.DeviceCommand {
 	message := "Stage Device action was cancelled"
 	code := "STAGE_DEVICE_COMMAND_CANCELLED"
+	category := "CANCELLED"
 	if status == contracts.CommandTimedOut {
 		message = "Stage Device action timed out"
 		code = "STAGE_DEVICE_COMMAND_TIMED_OUT"
+		category = "TIMEOUT"
 	}
 	if cause != nil {
 		message = cause.Error()
@@ -176,7 +188,7 @@ func (f *Forwarder) finishInterrupted(command deviceexperience.DeviceCommand, st
 		Status:    status,
 		Error: &contracts.ContractError{
 			ErrorCode:        code,
-			Category:         "TIMEOUT",
+			Category:         category,
 			Message:          message,
 			Retryable:        false,
 			AffectedEntityID: command.DeviceID,
