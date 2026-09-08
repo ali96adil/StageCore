@@ -20,7 +20,11 @@ type Target struct {
 
 type Request struct {
 	ExecutionID       string
+	ProjectID         string
+	SessionID         string
 	RuntimeSnapshotID string
+	Issuer            string
+	CausationID       string
 	Capability        string
 	Target            *Target
 	Parameters        json.RawMessage
