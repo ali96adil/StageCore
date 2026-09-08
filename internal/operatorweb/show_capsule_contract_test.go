@@ -15,6 +15,10 @@ func TestShowCapsuleWorkspaceBilingualSafetyContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	index, err := Read("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
 	source := string(workspace)
 	for _, required := range []string{
 		`"capsule.title"`,
@@ -39,8 +43,22 @@ func TestShowCapsuleWorkspaceBilingualSafetyContract(t *testing.T) {
 	if !strings.Contains(source, `en:`) || !strings.Contains(source, `"ar-IQ":`) {
 		t.Fatal("Show Capsule workspace does not expose both en and ar-IQ keyed copy")
 	}
-	if !strings.Contains(string(nav), `data-page`) && !strings.Contains(string(nav), `dataset.page = "capsules"`) {
-		t.Fatal("Show Capsule workspace navigation is not registered")
+	navSource := string(nav)
+	for _, required := range []string{
+		`dataset.page = "capsules"`,
+		`renderGlobalShowCapsuleLibrary`,
+		`state.project ? renderShowCapsuleWorkspace : renderGlobalShowCapsuleLibrary`,
+		`/api/v1/show-capsules/imports/`,
+		`/materialize`,
+	} {
+		if !strings.Contains(navSource, required) {
+			t.Errorf("zero-project Show Capsule navigation missing contract marker %q", required)
+		}
+	}
+	indexSource := string(index)
+	if !strings.Contains(indexSource, `<script src="/show-capsules.js" defer></script>`) ||
+		!strings.Contains(indexSource, `<script src="/show-capsules-nav.js" defer></script>`) {
+		t.Fatal("Operator shell does not load Show Capsule workspace scripts")
 	}
 }
 
