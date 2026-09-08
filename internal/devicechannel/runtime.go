@@ -20,6 +20,7 @@ import (
 const (
 	runtimeSchemaVersion = 1
 	maxRuntimeMessage    = 64 << 10
+	revocationPoll       = 250 * time.Millisecond
 )
 
 type Runtime struct {
@@ -37,26 +38,27 @@ type connection struct {
 	deviceID string
 	writeMu  sync.Mutex
 	once     sync.Once
+	closed   chan struct{}
 }
 
 type helloMessage struct {
-	Type            string                         `json:"type"`
-	SchemaVersion   int                            `json:"schema_version"`
-	DeviceID        string                         `json:"device_id"`
-	ProjectID       string                         `json:"project_id"`
-	ProfileID       string                         `json:"profile_id,omitempty"`
-	DeviceKind      deviceexperience.DeviceKind    `json:"device_kind"`
-	DisplayName     string                         `json:"display_name"`
-	Platform        string                         `json:"platform"`
-	Architecture    string                         `json:"architecture"`
-	ClientVersion   string                         `json:"client_version"`
-	ProtocolVersion string                         `json:"protocol_version"`
-	Capabilities    []string                       `json:"capabilities"`
-	GroupName       string                         `json:"group_name,omitempty"`
-	LocationName    string                         `json:"location_name,omitempty"`
-	Readiness       deviceexperience.Readiness     `json:"readiness"`
-	ObservedState   json.RawMessage                `json:"observed_state"`
-	NetworkState    json.RawMessage                `json:"network_state"`
+	Type            string                      `json:"type"`
+	SchemaVersion   int                         `json:"schema_version"`
+	DeviceID        string                      `json:"device_id"`
+	ProjectID       string                      `json:"project_id"`
+	ProfileID       string                      `json:"profile_id,omitempty"`
+	DeviceKind      deviceexperience.DeviceKind `json:"device_kind"`
+	DisplayName     string                      `json:"display_name"`
+	Platform        string                      `json:"platform"`
+	Architecture    string                      `json:"architecture"`
+	ClientVersion   string                      `json:"client_version"`
+	ProtocolVersion string                      `json:"protocol_version"`
+	Capabilities    []string                    `json:"capabilities"`
+	GroupName       string                      `json:"group_name,omitempty"`
+	LocationName    string                      `json:"location_name,omitempty"`
+	Readiness       deviceexperience.Readiness  `json:"readiness"`
+	ObservedState   json.RawMessage             `json:"observed_state"`
+	NetworkState    json.RawMessage             `json:"network_state"`
 }
 
 type inboundMessage struct {
@@ -235,11 +237,30 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		Details:        json.RawMessage(`{"authenticated":true}`),
 	})
 
-	current := &connection{owner: r, ws: ws, deviceID: device.ID}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, closed: make(chan struct{})}
 	if previous := r.register(current); previous != nil {
 		previous.close()
 	}
 	defer r.unregister(current)
+
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		ticker := time.NewTicker(revocationPoll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-current.closed:
+				return
+			case <-ticker.C:
+				if _, err := r.auth.ValidateRuntimeSession(context.Background(), token); err != nil {
+					current.close()
+					return
+				}
+			}
+		}
+	}()
+	defer func() { <-monitorDone }()
 
 	if err := current.send(map[string]any{
 		"type":             "runtime.ready",
@@ -251,9 +272,6 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	}
 
 	for {
-		if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
-			return
-		}
 		var message inboundMessage
 		if err := websocket.JSON.Receive(ws, &message); err != nil {
 			return
@@ -263,6 +281,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		}
 		switch message.Type {
 		case "command.result":
+			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+				return
+			}
 			resultBytes, err := json.Marshal(contracts.CommandResult{
 				CommandID: strings.TrimSpace(message.CommandID),
 				Status:    message.Status,
@@ -276,6 +297,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				return
 			}
 		case "device.observation":
+			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+				return
+			}
 			readiness := message.Readiness
 			if readiness == "" {
 				readiness = deviceexperience.ReadinessUnknown
@@ -369,6 +393,11 @@ func (c *connection) send(value any) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	select {
+	case <-c.closed:
+		return errors.New("stage device connection is closed")
+	default:
+	}
 	return websocket.JSON.Send(c.ws, value)
 }
 
@@ -377,6 +406,9 @@ func (c *connection) close() {
 		return
 	}
 	c.once.Do(func() {
+		if c.closed != nil {
+			close(c.closed)
+		}
 		if c.ws != nil {
 			_ = c.ws.Close()
 		}
