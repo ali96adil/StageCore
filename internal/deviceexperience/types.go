@@ -3,6 +3,7 @@ package deviceexperience
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/contracts"
@@ -204,4 +205,14 @@ var commandCapability = map[string]string{
 
 func RequiredCapability(commandType string) string {
 	return commandCapability[commandType]
+}
+
+func CommandTypeForCapability(capability string) string {
+	capability = strings.TrimSpace(capability)
+	for commandType, required := range commandCapability {
+		if required == capability {
+			return commandType
+		}
+	}
+	return ""
 }
