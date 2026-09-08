@@ -124,6 +124,7 @@ func TestCueGoDispatchesStageDeviceActionThroughCanonicalRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"cue.timing_observed",
 		"cue.started",
 		"action.started",
 		"stage_device.command.accepted",
@@ -147,7 +148,7 @@ func TestCueGoDispatchesStageDeviceActionThroughCanonicalRuntime(t *testing.T) {
 	var completedPayload struct {
 		AckLevel contracts.AckLevel `json:"ack_level"`
 	}
-	if err := json.Unmarshal(events[4].Payload, &completedPayload); err != nil {
+	if err := json.Unmarshal(events[5].Payload, &completedPayload); err != nil {
 		t.Fatal(err)
 	}
 	if completedPayload.AckLevel != contracts.AckDevice {
