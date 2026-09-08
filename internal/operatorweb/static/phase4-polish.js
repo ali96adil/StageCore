@@ -3,8 +3,8 @@
 
   const copy = {
     en: {
-      broadSendConfirm: "Send this command to {count} displays?",
-      broadTabletConfirm: "Send this command to {count} tablets?",
+      broadSendConfirm: "Send {command} to {count} displays ({target})?",
+      broadTabletConfirm: "Send {command} to {count} tablets ({target})?",
       openSource: "Open source",
       closeSource: "Close source",
       testSource: "Test source",
@@ -29,10 +29,30 @@
       selectMedia: "Select media",
       mediaRequired: "Enter a media reference for Prepare or Select media.",
       commandFailed: "One or more device commands failed.",
+      preset: "Message preset",
+      custom: "Custom",
+      audienceEntry: "Audience entering",
+      standby: "Standby",
+      places: "Places",
+      showStart: "Show starts soon",
+      countdownAt: "Countdown target time (optional)",
+      alertRole: "Alert role",
+      alertIntensity: "Alert intensity %",
+      alertMotion: "Alert motion",
+      alertDuration: "Alert duration seconds",
+      chimeId: "Chime identifier",
+      steady: "Steady",
+      pulse: "Pulse",
+      flash: "Flash",
+      info: "Info",
+      warning: "Warning",
+      critical: "Critical",
+      results: "Per-device results",
+      unsupported: "Selected target includes a device that does not support this action.",
     },
     ar: {
-      broadSendConfirm: "إرسال هذا الأمر إلى {count} شاشة؟",
-      broadTabletConfirm: "إرسال هذا الأمر إلى {count} جهاز تابلت؟",
+      broadSendConfirm: "إرسال {command} إلى {count} شاشة ({target})؟",
+      broadTabletConfirm: "إرسال {command} إلى {count} جهاز تابلت ({target})؟",
       openSource: "فتح المصدر",
       closeSource: "إغلاق المصدر",
       testSource: "فحص المصدر",
@@ -57,7 +77,36 @@
       selectMedia: "اختيار الميديا",
       mediaRequired: "أدخل مرجع الميديا لأمر التهيئة أو اختيار الميديا.",
       commandFailed: "فشل أمر واحد أو أكثر من أوامر الأجهزة.",
+      preset: "رسالة جاهزة",
+      custom: "مخصص",
+      audienceEntry: "دخول الجمهور",
+      standby: "استعداد",
+      places: "إلى الأماكن",
+      showStart: "العرض يبدأ قريباً",
+      countdownAt: "وقت نهاية العد التنازلي (اختياري)",
+      alertRole: "دور التنبيه",
+      alertIntensity: "شدة التنبيه %",
+      alertMotion: "حركة التنبيه",
+      alertDuration: "مدة التنبيه بالثواني",
+      chimeId: "معرف الجرس",
+      steady: "ثابت",
+      pulse: "نبض",
+      flash: "وميض",
+      info: "معلومة",
+      warning: "تحذير",
+      critical: "حرج",
+      results: "نتائج كل جهاز",
+      unsupported: "الهدف المحدد يتضمن جهازاً لا يدعم هذا الإجراء.",
     },
+  };
+
+  const displayCapabilities = {
+    DISPLAY_MESSAGE: "display.message.show",
+    DISPLAY_COUNTDOWN: "display.countdown.show",
+    DISPLAY_ALERT: "display.alert.show",
+    DISPLAY_CLEAR: "display.clear",
+    DISPLAY_BLACKOUT: "display.blackout",
+    DISPLAY_CHIME: "display.chime.play",
   };
 
   function lang() {
@@ -100,6 +149,14 @@
     return { device_ids: selected.map((device) => device.device_id) };
   }
 
+  function targetLabel(target) {
+    if (target === "all") return text("allDisplays");
+    if (target.startsWith("group:")) return `${text("group")}: ${target.slice(6)}`;
+    if (target.startsWith("location:")) return `${text("location")}: ${target.slice(9)}`;
+    if (target.startsWith("device:")) return `${text("device")}: ${target.slice(7)}`;
+    return target;
+  }
+
   function targetOptions(devices, allLabel) {
     const groups = unique(devices.map((device) => device.group_name));
     const locations = unique(devices.map((device) => device.location_name));
@@ -118,10 +175,29 @@
     });
   }
 
+  function renderBatchResults(response, devices) {
+    const body = document.getElementById("phase4Body");
+    if (!body || !response?.results) return;
+    let panel = document.getElementById("phase4BatchResults");
+    if (!panel) {
+      panel = document.createElement("section");
+      panel.id = "phase4BatchResults";
+      panel.className = "phase4-card";
+      body.appendChild(panel);
+    }
+    const names = new Map(devices.map((device) => [device.device_id, device.display_name || device.device_id]));
+    panel.innerHTML = `
+      <div class="phase4-card-head"><div><p class="eyebrow">${text("results")}</p><h3 class="mono">${esc(response.correlation_id || "—")}</h3></div></div>
+      <dl class="phase4-kv">${response.results.map((item) => {
+        const status = item.error ? "ERROR" : item.command?.status || "UNKNOWN";
+        return `<div><dt>${esc(names.get(item.device_id) || item.device_id)}</dt><dd>${esc(status)}</dd></div>`;
+      }).join("")}</dl>`;
+  }
+
   async function sendBatch(currentProject, devices, target, command, payload, idempotencyPrefix, confirmKey, button) {
     const selected = targetSelection(devices, target);
     if (!selected.length) return { selected, empty: true };
-    if (selected.length > 1 && !globalThis.confirm(text(confirmKey, { count: selected.length }))) {
+    if (selected.length > 1 && !globalThis.confirm(text(confirmKey, { count: selected.length, command, target: targetLabel(target) }))) {
       return { selected, cancelled: true };
     }
     const correlationID = requestID();
@@ -140,10 +216,66 @@
         method: "POST",
         body: JSON.stringify(body),
       });
+      renderBatchResults(response, selected);
       return { selected, response, failed: responseFailed(response) };
     } finally {
       button.disabled = false;
     }
+  }
+
+  function presetDefinition(value) {
+    const arabic = lang() === "ar";
+    const presets = {
+      audience: { category: "INFO", message: arabic ? "دخول الجمهور" : "Audience entering" },
+      standby: { category: "STANDBY", message: arabic ? "استعداد" : "Standby" },
+      places: { category: "PLACES", message: arabic ? "إلى الأماكن" : "Places" },
+      show_start: { category: "SHOW_START", message: arabic ? "العرض يبدأ قريباً" : "Show starts soon" },
+    };
+    return presets[value] || null;
+  }
+
+  function callboardPayload(command) {
+    const message = document.getElementById("callboardMessage")?.value.trim() || "";
+    const preset = presetDefinition(document.getElementById("callboardPreset")?.value || "");
+    if (command === "DISPLAY_MESSAGE") {
+      return { message, ...(preset ? { category: preset.category } : {}) };
+    }
+    if (command === "DISPLAY_COUNTDOWN") {
+      const targetValue = document.getElementById("callboardTargetAt")?.value || "";
+      if (targetValue) {
+        const target = new Date(targetValue);
+        if (!Number.isNaN(target.getTime())) return { target_at: target.toISOString(), message };
+      }
+      return { duration_seconds: Number(document.getElementById("callboardCountdown")?.value || 0), message };
+    }
+    if (command === "DISPLAY_ALERT") {
+      const payload = {
+        message,
+        role: document.getElementById("callboardAlertRole")?.value || "WARNING",
+        intensity_percent: Number(document.getElementById("callboardAlertIntensity")?.value || 100),
+        motion: document.getElementById("callboardAlertMotion")?.value || "PULSE",
+        duration_seconds: Number(document.getElementById("callboardAlertDuration")?.value || 10),
+      };
+      const chime = document.getElementById("callboardChime")?.value.trim() || "";
+      if (chime) payload.chime_id = chime;
+      return payload;
+    }
+    if (command === "DISPLAY_CHIME") {
+      return { chime_id: document.getElementById("callboardChime")?.value.trim() || "default" };
+    }
+    return {};
+  }
+
+  function updateCallboardCapabilities(displays) {
+    const target = document.getElementById("callboardTarget")?.value || "";
+    const selected = targetSelection(displays, target);
+    document.querySelectorAll("[data-display-command]").forEach((button) => {
+      const required = displayCapabilities[button.dataset.displayCommand];
+      if (!required) return;
+      const unsupported = selected.length === 0 || selected.some((device) => !(device.capabilities || []).includes(required));
+      button.disabled = unsupported;
+      button.title = unsupported ? text("unsupported") : "";
+    });
   }
 
   async function sendCallboardBatch(button) {
@@ -153,13 +285,8 @@
     const devicesPayload = await api(`/api/v1/projects/${encodeURIComponent(currentProject)}/stage-devices`);
     const displays = (devicesPayload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
     const command = button.dataset.displayCommand;
-    const message = document.getElementById("callboardMessage")?.value.trim() || "";
-    const countdown = Number(document.getElementById("callboardCountdown")?.value || 0);
-    const payload = command === "DISPLAY_COUNTDOWN"
-      ? { duration_seconds: countdown, message }
-      : message ? { message } : {};
     try {
-      const result = await sendBatch(currentProject, displays, target, command, payload, "callboard", "broadSendConfirm", button);
+      const result = await sendBatch(currentProject, displays, target, command, callboardPayload(command), "callboard", "broadSendConfirm", button);
       if (result.empty) {
         show(text("noTargets"), "error");
         return;
@@ -168,6 +295,8 @@
       show(result.failed ? text("commandFailed") : `${result.selected.length} · ${result.response.correlation_id}`, result.failed ? "error" : "success");
     } catch (error) {
       show(errorMessage(error), "error");
+    } finally {
+      updateCallboardCapabilities(displays);
     }
   }
 
@@ -227,17 +356,64 @@
     }
   }
 
-  async function enhanceCallboardTargets() {
+  async function enhanceCallboard() {
     if (state.page !== "callboard" || !projectID()) return;
     const select = document.getElementById("callboardTarget");
-    if (!select || select.dataset.phase4PolishTargets === "true") return;
+    const body = document.getElementById("phase4Body");
+    if (!select || !body) return;
     try {
       const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/stage-devices`);
       const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
-      const previous = select.value;
-      select.innerHTML = targetOptions(displays, text("allDisplays"));
-      if ([...select.options].some((option) => option.value === previous)) select.value = previous;
-      select.dataset.phase4PolishTargets = "true";
+      if (select.dataset.phase4PolishTargets !== "true") {
+        const previous = select.value;
+        select.innerHTML = targetOptions(displays, text("allDisplays"));
+        if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+        select.dataset.phase4PolishTargets = "true";
+        select.addEventListener("change", () => updateCallboardCapabilities(displays));
+      }
+      const grid = body.querySelector(".phase4-form-grid");
+      if (grid && !document.getElementById("callboardPreset")) {
+        grid.insertAdjacentHTML("beforeend", `
+          <label>${text("preset")}
+            <select id="callboardPreset">
+              <option value="">${text("custom")}</option>
+              <option value="audience">${text("audienceEntry")}</option>
+              <option value="standby">${text("standby")}</option>
+              <option value="places">${text("places")}</option>
+              <option value="show_start">${text("showStart")}</option>
+            </select>
+          </label>
+          <label>${text("countdownAt")}<input id="callboardTargetAt" type="datetime-local"></label>
+          <label>${text("alertRole")}
+            <select id="callboardAlertRole">
+              <option value="INFO">${text("info")}</option>
+              <option value="STANDBY">${text("standby")}</option>
+              <option value="PLACES">${text("places")}</option>
+              <option value="SHOW_START">${text("showStart")}</option>
+              <option value="WARNING" selected>${text("warning")}</option>
+              <option value="CRITICAL">${text("critical")}</option>
+            </select>
+          </label>
+          <label>${text("alertIntensity")}<input id="callboardAlertIntensity" type="number" min="0" max="100" value="100"></label>
+          <label>${text("alertMotion")}
+            <select id="callboardAlertMotion">
+              <option value="STEADY">${text("steady")}</option>
+              <option value="PULSE" selected>${text("pulse")}</option>
+              <option value="FLASH">${text("flash")}</option>
+            </select>
+          </label>
+          <label>${text("alertDuration")}<input id="callboardAlertDuration" type="number" min="1" max="3600" value="10"></label>
+          <label>${text("chimeId")}<input id="callboardChime" maxlength="64" dir="ltr" placeholder="default"></label>`);
+        document.getElementById("callboardPreset")?.addEventListener("change", (event) => {
+          const preset = presetDefinition(event.target.value);
+          if (!preset) return;
+          const message = document.getElementById("callboardMessage");
+          if (message) message.value = preset.message;
+          const role = document.getElementById("callboardAlertRole");
+          if (role && [...role.options].some((option) => option.value === preset.category)) role.value = preset.category;
+        });
+      }
+      updateCallboardCapabilities(displays);
     } catch (_) {
       // Base Callboard remains usable if the enhancement cannot refresh targets.
     }
@@ -323,7 +499,7 @@
     enhanceScheduled = true;
     queueMicrotask(async () => {
       enhanceScheduled = false;
-      await enhanceCallboardTargets();
+      await enhanceCallboard();
       await enhanceTabletBatch();
       await enhanceLiveVideo();
     });
