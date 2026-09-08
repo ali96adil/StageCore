@@ -88,7 +88,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
-	deviceRepository, err := deviceexperience.NewRepository(handle.DB)
+	deviceRepository, err := deviceexperience.NewRepository(handle.DB, deviceexperience.WithEventRecorder(s))
 	if err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("open Stage Device repository: %w", err)
@@ -149,6 +149,15 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register Script capability: %w", err)
+	}
+	if err := registry.RegisterTargetType(
+		devicechannel.StageDeviceLogicalType,
+		devicechannel.NewForwarder(s, deviceRepository, deviceRuntime),
+	); err != nil {
+		deviceRuntime.Close()
+		companionRuntime.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("register Stage Device target dispatch: %w", err)
 	}
 
 	grantedPermissions, err := pluginGrants.Granted(ctx, oscplugin.PluginID)
