@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
+	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -38,6 +39,7 @@ type App struct {
 	Config            config.Config
 	DB                *db.Handle
 	Store             *store.Store
+	DeviceExperience  *deviceexperience.Repository
 	HubSecurity       *hubsecurity.Service
 	SecretStore       *secretstore.Service
 	SecurityAudit     *securityaudit.Service
@@ -84,6 +86,11 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	s := store.New(handle.DB, clock.Real{})
+	deviceRepository, err := deviceexperience.NewRepository(handle.DB)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Stage Device repository: %w", err)
+	}
 	if _, err := s.ReconcileInterruptedRuntimeForHub(ctx); err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("reconcile interrupted runtime: %w", err)
@@ -173,7 +180,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, HubSecurity: hubSecurity, SecretStore: secrets,
+		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository,
+		HubSecurity: hubSecurity, SecretStore: secrets,
 		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
