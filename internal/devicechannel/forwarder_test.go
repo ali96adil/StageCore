@@ -98,7 +98,7 @@ func stageDeviceRequest(f forwarderFixture, executionID string) capability.Reque
 	}
 }
 
-func waitForForwarderEvents(t *testing.T, fixture forwarderFixture, count int) []domain.EventRecord {
+func waitForForwarderEvents(t *testing.T, fixture forwarderFixture, count int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -107,7 +107,7 @@ func waitForForwarderEvents(t *testing.T, fixture forwarderFixture, count int) [
 			t.Fatal(err)
 		}
 		if len(events) >= count {
-			return events
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("events=%+v; want at least %d", events, count)
@@ -140,7 +140,11 @@ func TestForwarderDispatchesTypedCommandAndWaitsForDeviceResult(t *testing.T) {
 	// asynchronous test device may still be finishing the canonical event append
 	// immediately after that status becomes visible, so synchronize on the event
 	// count instead of assuming scheduler ordering between those two writes.
-	events := waitForForwarderEvents(t, fixture, 2)
+	waitForForwarderEvents(t, fixture, 2)
+	events, err := fixture.store.ListEvents(context.Background(), fixture.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 2 || events[0].EventType != "stage_device.command.accepted" || events[1].EventType != "stage_device.command.completed" {
 		t.Fatalf("events=%+v", events)
 	}
@@ -179,7 +183,11 @@ func TestForwarderTimeoutBecomesTerminalAndIdempotent(t *testing.T) {
 	if commands != 1 {
 		t.Fatalf("commands=%d want=1", commands)
 	}
-	events := waitForForwarderEvents(t, fixture, 2)
+	waitForForwarderEvents(t, fixture, 2)
+	events, err := fixture.store.ListEvents(context.Background(), fixture.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 2 || events[1].EventType != "stage_device.command.timed_out" {
 		t.Fatalf("events=%+v", events)
 	}
