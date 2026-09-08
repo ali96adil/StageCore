@@ -16,6 +16,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companionauth"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -106,10 +107,15 @@ func (f *runtimeFixture) connect(t *testing.T) *websocket.Conn {
 		"architecture":     "arm64",
 		"client_version":   "1.0.0",
 		"protocol_version": deviceexperience.ProtocolVersion1,
-		"capabilities":     []string{"tablet.media.play", "tablet.media.stop"},
-		"readiness":        deviceexperience.ReadinessReady,
-		"observed_state":   json.RawMessage(`{"state":"READY"}`),
-		"network_state":    json.RawMessage(`{"transport":"TLS_WEBSOCKET"}`),
+		"capabilities": []string{
+			"tablet.media.play",
+			"tablet.media.stop",
+			"display.message.show",
+			"display.countdown.show",
+		},
+		"readiness":      deviceexperience.ReadinessReady,
+		"observed_state": json.RawMessage(`{"state":"READY"}`),
+		"network_state":  json.RawMessage(`{"transport":"TLS_WEBSOCKET"}`),
 	}
 	if err := websocket.JSON.Send(ws, hello); err != nil {
 		t.Fatal(err)
@@ -186,6 +192,58 @@ func TestReconnectDoesNotReplayPendingOrDuplicateCommand(t *testing.T) {
 	}
 }
 
+func TestReconnectResyncsSafeDisplayStateButNotExpiredState(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	first := f.connect(t)
+
+	command, _, err := f.repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID, CommandType: "DISPLAY_MESSAGE", Issuer: "operator:test",
+		CorrelationID: "corr-display-state", Payload: json.RawMessage(`{"message":"Places"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.repo.CompleteCommand(ctx, command.Envelope.CommandID, contracts.CommandCompleted, json.RawMessage(`{"ack":"DEVICE_ACK"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close()
+
+	second := f.connect(t)
+	var sync struct {
+		Type     string                        `json:"type"`
+		DeviceID string                        `json:"device_id"`
+		State    deviceexperience.DisplayState `json:"state"`
+	}
+	if err := websocket.JSON.Receive(second, &sync); err != nil {
+		t.Fatal(err)
+	}
+	if sync.Type != "display.state" || sync.DeviceID != testDeviceID || sync.State.Mode != deviceexperience.DisplayMessage || sync.State.CommandID != command.Envelope.CommandID {
+		t.Fatalf("safe display sync=%+v", sync)
+	}
+	if !strings.Contains(string(sync.State.Payload), "Places") {
+		t.Fatalf("safe display payload=%s", sync.State.Payload)
+	}
+	_ = second.Close()
+
+	now := time.Now().UTC()
+	effective := now.Add(-2 * time.Minute)
+	expires := now.Add(-time.Minute)
+	if _, err := f.repo.SetDisplayState(ctx, deviceexperience.DisplayState{
+		DeviceID: testDeviceID, Mode: deviceexperience.DisplayCountdown,
+		Payload: json.RawMessage(`{"target_at":"expired"}`), EffectiveAt: effective, ExpiresAt: &expires,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	third := f.connect(t)
+	defer third.Close()
+	_ = third.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	var expiredReplay map[string]any
+	if err := websocket.JSON.Receive(third, &expiredReplay); err == nil {
+		t.Fatalf("expired display state replayed after reconnect: %+v", expiredReplay)
+	}
+}
+
 func TestIdleRuntimeSessionRevocationDisconnectsDevice(t *testing.T) {
 	f := newRuntimeFixture(t)
 	ws := f.connect(t)
@@ -222,7 +280,12 @@ func testPairingInput(deviceID, publicKey string) companionauth.PairingRequestIn
 		Platform: "android",
 		Architecture: "arm64",
 		Version: "1.0.0",
-		Capabilities: []string{"tablet.media.play", "tablet.media.stop"},
+		Capabilities: []string{
+			"tablet.media.play",
+			"tablet.media.stop",
+			"display.message.show",
+			"display.countdown.show",
+		},
 		PublicKeyAlgorithm: domain.CompanionPublicKeyAlgorithm,
 		PublicKeyBase64: publicKey,
 		ClientNonceBase64: base64.StdEncoding.EncodeToString(nonce),
