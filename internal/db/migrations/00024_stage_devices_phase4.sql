@@ -43,6 +43,7 @@ CREATE TABLE stage_device_commands (
     session_id TEXT,
     device_id TEXT NOT NULL,
     command_type TEXT NOT NULL,
+    runtime_snapshot_id TEXT NOT NULL DEFAULT '',
     issued_at_us INTEGER NOT NULL,
     deadline_at_us INTEGER,
     issuer TEXT NOT NULL,
