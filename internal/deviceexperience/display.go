@@ -83,7 +83,8 @@ func (r *Repository) GetDisplayState(ctx context.Context, deviceID string) (Disp
 
 // SafeDisplayStateForReconnect returns presentation state, never a command, so
 // reconnect cannot replay an execution identity. Transient alerts/chimes are
-// deliberately excluded. Expired message/countdown state is also excluded.
+// deliberately excluded. Expired state and state no longer supported by the
+// client's currently advertised capabilities are also excluded.
 func (r *Repository) SafeDisplayStateForReconnect(ctx context.Context, deviceID string) (DisplayState, bool, error) {
 	state, err := r.GetDisplayState(ctx, deviceID)
 	if err != nil {
@@ -97,10 +98,17 @@ func (r *Repository) SafeDisplayStateForReconnect(ctx context.Context, deviceID 
 	}
 	switch state.Mode {
 	case DisplayIdle, DisplayMessage, DisplayCountdown, DisplayBlackout:
-		return state, true, nil
 	default:
 		return DisplayState{}, false, nil
 	}
+	device, err := r.GetDevice(ctx, state.DeviceID)
+	if err != nil {
+		return DisplayState{}, false, err
+	}
+	if !device.Enabled || !contains(device.Capabilities, displayCapability(state.Mode)) {
+		return DisplayState{}, false, nil
+	}
+	return state, true, nil
 }
 
 func (r *Repository) applyCompletedDisplayCommand(ctx context.Context, command DeviceCommand) error {
@@ -114,6 +122,9 @@ func (r *Repository) applyCompletedDisplayCommand(ctx context.Context, command D
 	}
 	if command.CompletedAt != nil {
 		state.EffectiveAt = command.CompletedAt.UTC()
+	}
+	if state.EffectiveAt.IsZero() {
+		state.EffectiveAt = r.now().UTC()
 	}
 	switch command.Envelope.CommandType {
 	case "DISPLAY_MESSAGE":
@@ -131,6 +142,9 @@ func (r *Repository) applyCompletedDisplayCommand(ctx context.Context, command D
 	default:
 		// DISPLAY_ALERT and DISPLAY_CHIME are intentionally transient and never
 		// replace the safe reconnect state underneath them.
+		return nil
+	}
+	if state.ExpiresAt != nil && !state.ExpiresAt.After(state.EffectiveAt) {
 		return nil
 	}
 	_, err := r.SetDisplayState(ctx, state)
