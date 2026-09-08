@@ -4,21 +4,59 @@
   const copy = {
     en: {
       broadSendConfirm: "Send this command to {count} displays?",
+      broadTabletConfirm: "Send this command to {count} tablets?",
       openSource: "Open source",
       closeSource: "Close source",
       testSource: "Test source",
       sourceCommandAccepted: "Live-video command accepted.",
       sourceCommandFailed: "Live-video command failed.",
       noTargets: "No matching Stage Displays are available for this target.",
+      noTabletTargets: "No matching Stage Tablets are available for this target.",
+      allDisplays: "All displays",
+      allTablets: "All tablets",
+      group: "Group",
+      location: "Location",
+      device: "Device",
+      tabletTarget: "Tablet target",
+      tabletMedia: "Media file / logical media name",
+      tabletBatchTitle: "Group tablet control",
+      tabletBatchHint: "Target all tablets, a group, a location, or one device without managing raw IP/OSC.",
+      prepare: "Prepare",
+      play: "Play",
+      pause: "Pause",
+      stop: "Stop",
+      blackout: "Blackout",
+      selectMedia: "Select media",
+      mediaRequired: "Enter a media reference for Prepare or Select media.",
+      commandFailed: "One or more device commands failed.",
     },
     ar: {
       broadSendConfirm: "إرسال هذا الأمر إلى {count} شاشة؟",
+      broadTabletConfirm: "إرسال هذا الأمر إلى {count} جهاز تابلت؟",
       openSource: "فتح المصدر",
       closeSource: "إغلاق المصدر",
       testSource: "فحص المصدر",
       sourceCommandAccepted: "تم قبول أمر الفيديو الحي.",
       sourceCommandFailed: "فشل أمر الفيديو الحي.",
       noTargets: "ماكو شاشات Stage Display مطابقة لهذا الهدف.",
+      noTabletTargets: "ماكو أجهزة تابلت مسرح مطابقة لهذا الهدف.",
+      allDisplays: "كل الشاشات",
+      allTablets: "كل أجهزة التابلت",
+      group: "المجموعة",
+      location: "الموقع",
+      device: "الجهاز",
+      tabletTarget: "هدف التابلت",
+      tabletMedia: "ملف الفيديو / اسم الميديا المنطقي",
+      tabletBatchTitle: "تحكم جماعي بالتابلت",
+      tabletBatchHint: "استهدف كل أجهزة التابلت أو مجموعة أو موقع أو جهاز واحد بدون إدارة IP أو OSC خام.",
+      prepare: "تهيئة",
+      play: "تشغيل",
+      pause: "إيقاف مؤقت",
+      stop: "إيقاف",
+      blackout: "إظلام",
+      selectMedia: "اختيار الميديا",
+      mediaRequired: "أدخل مرجع الميديا لأمر التهيئة أو اختيار الميديا.",
+      commandFailed: "فشل أمر واحد أو أكثر من أوامر الأجهزة.",
     },
   };
 
@@ -43,17 +81,69 @@
     if (target) setMessage(target, message, kind);
   }
 
-  function displaySelection(displays, target) {
-    if (target === "all") return displays;
-    if (target.startsWith("group:")) return displays.filter((device) => device.group_name === target.slice(6));
-    if (target.startsWith("device:")) return displays.filter((device) => device.device_id === target.slice(7));
+  function unique(values) {
+    return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }
+
+  function targetSelection(devices, target) {
+    if (target === "all") return devices;
+    if (target.startsWith("group:")) return devices.filter((device) => device.group_name === target.slice(6));
+    if (target.startsWith("location:")) return devices.filter((device) => device.location_name === target.slice(9));
+    if (target.startsWith("device:")) return devices.filter((device) => device.device_id === target.slice(7));
     return [];
   }
 
   function targetBody(target, selected) {
     if (target === "all") return { all: true };
     if (target.startsWith("group:")) return { group_name: target.slice(6) };
+    if (target.startsWith("location:")) return { location_name: target.slice(9) };
     return { device_ids: selected.map((device) => device.device_id) };
+  }
+
+  function targetOptions(devices, allLabel) {
+    const groups = unique(devices.map((device) => device.group_name));
+    const locations = unique(devices.map((device) => device.location_name));
+    return [
+      `<option value="all">${allLabel}</option>`,
+      ...groups.map((group) => `<option value="group:${esc(group)}">${text("group")}: ${esc(group)}</option>`),
+      ...locations.map((location) => `<option value="location:${esc(location)}">${text("location")}: ${esc(location)}</option>`),
+      ...devices.map((device) => `<option value="device:${esc(device.device_id)}">${text("device")}: ${esc(device.display_name || device.device_id)}</option>`),
+    ].join("");
+  }
+
+  function responseFailed(response) {
+    return (response.results || []).some((item) => {
+      const status = item.command?.status;
+      return item.error || ["FAILED", "REJECTED", "TIMED_OUT", "CANCELLED"].includes(status);
+    });
+  }
+
+  async function sendBatch(currentProject, devices, target, command, payload, idempotencyPrefix, confirmKey, button) {
+    const selected = targetSelection(devices, target);
+    if (!selected.length) return { selected, empty: true };
+    if (selected.length > 1 && !globalThis.confirm(text(confirmKey, { count: selected.length }))) {
+      return { selected, cancelled: true };
+    }
+    const correlationID = requestID();
+    const body = {
+      ...targetBody(target, selected),
+      command_type: command,
+      correlation_id: correlationID,
+      idempotency_key: `${idempotencyPrefix}:${command}:${correlationID}`,
+      priority: command.includes("BLACKOUT") || command === "DISPLAY_ALERT" ? "P0" : "P1",
+      deadline_at: new Date(Date.now() + 10000).toISOString(),
+      payload,
+    };
+    button.disabled = true;
+    try {
+      const response = await api(`/api/v1/projects/${encodeURIComponent(currentProject)}/stage-device-commands`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return { selected, response, failed: responseFailed(response) };
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function sendCallboardBatch(button) {
@@ -62,45 +152,48 @@
     const target = document.getElementById("callboardTarget")?.value || "";
     const devicesPayload = await api(`/api/v1/projects/${encodeURIComponent(currentProject)}/stage-devices`);
     const displays = (devicesPayload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
-    const selected = displaySelection(displays, target);
-    if (!selected.length) {
-      show(text("noTargets"), "error");
-      return;
-    }
-    if (selected.length > 1 && !globalThis.confirm(text("broadSendConfirm", { count: selected.length }))) return;
-
     const command = button.dataset.displayCommand;
     const message = document.getElementById("callboardMessage")?.value.trim() || "";
     const countdown = Number(document.getElementById("callboardCountdown")?.value || 0);
     const payload = command === "DISPLAY_COUNTDOWN"
       ? { duration_seconds: countdown, message }
       : message ? { message } : {};
-    const correlationID = requestID();
-    const body = {
-      ...targetBody(target, selected),
-      command_type: command,
-      correlation_id: correlationID,
-      idempotency_key: `callboard:${command}:${correlationID}`,
-      priority: command.includes("BLACKOUT") || command === "DISPLAY_ALERT" ? "P0" : "P1",
-      deadline_at: new Date(Date.now() + 10000).toISOString(),
-      payload,
-    };
-
-    button.disabled = true;
     try {
-      const response = await api(`/api/v1/projects/${encodeURIComponent(currentProject)}/stage-device-commands`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      const failed = (response.results || []).some((item) => {
-        const status = item.command?.status;
-        return item.error || ["FAILED", "REJECTED", "TIMED_OUT", "CANCELLED"].includes(status);
-      });
-      show(failed ? text("sourceCommandFailed") : `${selected.length} · ${response.correlation_id}`, failed ? "error" : "success");
+      const result = await sendBatch(currentProject, displays, target, command, payload, "callboard", "broadSendConfirm", button);
+      if (result.empty) {
+        show(text("noTargets"), "error");
+        return;
+      }
+      if (result.cancelled) return;
+      show(result.failed ? text("commandFailed") : `${result.selected.length} · ${result.response.correlation_id}`, result.failed ? "error" : "success");
     } catch (error) {
       show(errorMessage(error), "error");
-    } finally {
-      button.disabled = false;
+    }
+  }
+
+  async function sendTabletBatch(button) {
+    const currentProject = projectID();
+    if (!currentProject) return;
+    const target = document.getElementById("tabletBatchTarget")?.value || "";
+    const media = document.getElementById("tabletBatchMedia")?.value.trim() || "";
+    const command = button.dataset.tabletBatchCommand;
+    if (["TABLET_PREPARE", "TABLET_SELECT_MEDIA"].includes(command) && !media) {
+      show(text("mediaRequired"), "error");
+      return;
+    }
+    const devicesPayload = await api(`/api/v1/projects/${encodeURIComponent(currentProject)}/stage-devices`);
+    const tablets = (devicesPayload.devices || []).filter((device) => device.device_kind === "TABLET_PLAYER");
+    const payload = media ? { media_ref: media } : {};
+    try {
+      const result = await sendBatch(currentProject, tablets, target, command, payload, "tablet", "broadTabletConfirm", button);
+      if (result.empty) {
+        show(text("noTabletTargets"), "error");
+        return;
+      }
+      if (result.cancelled) return;
+      show(result.failed ? text("commandFailed") : `${result.selected.length} · ${result.response.correlation_id}`, result.failed ? "error" : "success");
+    } catch (error) {
+      show(errorMessage(error), "error");
     }
   }
 
@@ -134,7 +227,64 @@
     }
   }
 
-  let enhanceScheduled = false;
+  async function enhanceCallboardTargets() {
+    if (state.page !== "callboard" || !projectID()) return;
+    const select = document.getElementById("callboardTarget");
+    if (!select || select.dataset.phase4PolishTargets === "true") return;
+    try {
+      const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/stage-devices`);
+      const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
+      const previous = select.value;
+      select.innerHTML = targetOptions(displays, text("allDisplays"));
+      if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+      select.dataset.phase4PolishTargets = "true";
+    } catch (_) {
+      // Base Callboard remains usable if the enhancement cannot refresh targets.
+    }
+  }
+
+  async function enhanceTabletBatch() {
+    if (state.page !== "devices" || !projectID()) return;
+    const body = document.getElementById("phase4Body");
+    if (!body || document.getElementById("tabletBatchControls")) return;
+    const runtimeAllowed = typeof canRuntime === "function" ? canRuntime() : true;
+    if (!runtimeAllowed) return;
+    try {
+      const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/stage-devices`);
+      const tablets = (payload.devices || []).filter((device) => device.device_kind === "TABLET_PLAYER");
+      if (!tablets.length) return;
+      const controls = document.createElement("section");
+      controls.id = "tabletBatchControls";
+      controls.className = "phase4-form";
+      controls.innerHTML = `
+        <div class="phase4-card-head">
+          <div>
+            <p class="eyebrow">TABLET PLAYER</p>
+            <h3>${text("tabletBatchTitle")}</h3>
+            <p class="muted">${text("tabletBatchHint")}</p>
+          </div>
+        </div>
+        <div class="phase4-form-grid">
+          <label>${text("tabletTarget")}<select id="tabletBatchTarget">${targetOptions(tablets, text("allTablets"))}</select></label>
+          <label>${text("tabletMedia")}<input id="tabletBatchMedia" dir="ltr" placeholder="01.mp4"></label>
+        </div>
+        <div class="phase4-actions">
+          <button class="button ghost" data-tablet-batch-command="TABLET_SELECT_MEDIA" type="button">${text("selectMedia")}</button>
+          <button class="button ghost" data-tablet-batch-command="TABLET_PREPARE" type="button">${text("prepare")}</button>
+          <button class="button primary" data-tablet-batch-command="TABLET_PLAY" type="button">${text("play")}</button>
+          <button class="button ghost" data-tablet-batch-command="TABLET_PAUSE" type="button">${text("pause")}</button>
+          <button class="button ghost" data-tablet-batch-command="TABLET_STOP" type="button">${text("stop")}</button>
+          <button class="button warn" data-tablet-batch-command="TABLET_BLACKOUT" type="button">${text("blackout")}</button>
+        </div>`;
+      controls.querySelectorAll("[data-tablet-batch-command]").forEach((button) => {
+        button.addEventListener("click", () => sendTabletBatch(button));
+      });
+      body.insertBefore(controls, body.firstChild);
+    } catch (_) {
+      // Per-device controls remain the canonical fallback.
+    }
+  }
+
   async function enhanceLiveVideo() {
     if (state.page !== "video" || !projectID()) return;
     const body = document.getElementById("phase4Body");
@@ -167,11 +317,14 @@
     }
   }
 
+  let enhanceScheduled = false;
   function scheduleEnhance() {
     if (enhanceScheduled) return;
     enhanceScheduled = true;
     queueMicrotask(async () => {
       enhanceScheduled = false;
+      await enhanceCallboardTargets();
+      await enhanceTabletBatch();
       await enhanceLiveVideo();
     });
   }
