@@ -83,6 +83,13 @@ type executeMessage struct {
 	Command       contracts.CommandEnvelope `json:"command"`
 }
 
+type displayStateMessage struct {
+	Type          string                        `json:"type"`
+	SchemaVersion int                           `json:"schema_version"`
+	DeviceID      string                        `json:"device_id"`
+	State         deviceexperience.DisplayState `json:"state"`
+}
+
 func New(repository *deviceexperience.Repository, auth *companionauth.Service) *Runtime {
 	return &Runtime{
 		repository:  repository,
@@ -269,6 +276,18 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		"protocol_version": deviceexperience.ProtocolVersion1,
 	}); err != nil {
 		return
+	}
+	if state, ok, err := r.repository.SafeDisplayStateForReconnect(ctx, device.ID); err != nil {
+		return
+	} else if ok {
+		if err := current.send(displayStateMessage{
+			Type:          "display.state",
+			SchemaVersion: runtimeSchemaVersion,
+			DeviceID:      device.ID,
+			State:         state,
+		}); err != nil {
+			return
+		}
 	}
 
 	for {
