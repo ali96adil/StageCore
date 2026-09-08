@@ -3,6 +3,7 @@ package devicepreflight
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -145,6 +146,12 @@ func evaluateSource(report *preflight.Report, source deviceexperience.LiveSource
 				status = preflight.Block
 			}
 			add(report, status, key+".execution_device", "live_video", "Live-video Render Node is unavailable: "+name, source.ExecutionDeviceID, source.ID)
+		} else if missing := missingCapabilities(source.Capabilities, device.Capabilities); len(missing) > 0 {
+			status := preflight.Warn
+			if source.Required {
+				status = preflight.Block
+			}
+			add(report, status, key+".capabilities", "live_video", "Live-video Render Node lacks required capabilities: "+name, strings.Join(missing, ", "), source.ID)
 		}
 	}
 	if source.Readiness == deviceexperience.ReadinessReady {
@@ -156,6 +163,33 @@ func evaluateSource(report *preflight.Report, source deviceexperience.LiveSource
 		status = preflight.Block
 	}
 	add(report, status, key, "live_video", "Live-video source is not READY: "+name, string(source.Readiness), source.ID)
+}
+
+func missingCapabilities(required, advertised []string) []string {
+	available := make(map[string]struct{}, len(advertised))
+	for _, capability := range advertised {
+		capability = strings.TrimSpace(capability)
+		if capability != "" {
+			available[capability] = struct{}{}
+		}
+	}
+	missing := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, capability := range required {
+		capability = strings.TrimSpace(capability)
+		if capability == "" {
+			continue
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			continue
+		}
+		seen[capability] = struct{}{}
+		if _, ok := available[capability]; !ok {
+			missing = append(missing, capability)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func projectNetworkTarget(target deviceexperience.CockpitTarget, devices map[string]deviceexperience.Device, sources map[string]deviceexperience.LiveSource, endpoints map[string]bool) bool {
