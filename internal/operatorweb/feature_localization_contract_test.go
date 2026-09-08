@@ -159,10 +159,18 @@ func validateLocalizedField(t *testing.T, label string, locales []string, values
 }
 
 func localizedArabicValue(source, key string) (string, bool) {
-	pattern := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*(?:\{[^\n]*"ar-IQ"\s*:\s*)?"([^"]+)"`)
-	match := pattern.FindStringSubmatch(source)
-	if len(match) != 2 { return "", false }
-	return match[1], true
+	quoted := regexp.QuoteMeta(key)
+	pattern := regexp.MustCompile(`(?:"` + quoted + `"|\b` + quoted + `\b)\s*:\s*(?:\{[^\n]*"ar-IQ"\s*:\s*)?"([^"]+)"`)
+	matches := pattern.FindAllStringSubmatch(source, -1)
+	for _, match := range matches {
+		if len(match) == 2 && containsArabic(match[1]) {
+			return match[1], true
+		}
+	}
+	if len(matches) > 0 && len(matches[0]) == 2 {
+		return matches[0][1], true
+	}
+	return "", false
 }
 
 func localizedArabicValueFromSources(sources []string, key string) (string, bool) {
