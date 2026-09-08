@@ -58,7 +58,10 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 			return DeviceCommand{}, false, err
 		}
 	}
-	payload := normalizeJSON(input.Payload, `{}`)
+	payload, err := canonicalCommandPayload(input.CommandType, input.Payload, now)
+	if err != nil {
+		return DeviceCommand{}, false, err
+	}
 	commandID, err := stageid.New()
 	if err != nil {
 		return DeviceCommand{}, false, err
