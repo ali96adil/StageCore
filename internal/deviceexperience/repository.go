@@ -1,14 +1,22 @@
 package deviceexperience
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/contracts"
 )
 
+type EventRecorder interface {
+	AppendEvent(context.Context, *string, contracts.EventEnvelope) (contracts.EventEnvelope, error)
+}
+
 type Repository struct {
-	db  *sql.DB
-	now func() time.Time
+	db     *sql.DB
+	now    func() time.Time
+	events EventRecorder
 }
 
 type Option func(*Repository)
@@ -18,6 +26,12 @@ func WithClock(now func() time.Time) Option {
 		if now != nil {
 			r.now = now
 		}
+	}
+}
+
+func WithEventRecorder(events EventRecorder) Option {
+	return func(r *Repository) {
+		r.events = events
 	}
 }
 
