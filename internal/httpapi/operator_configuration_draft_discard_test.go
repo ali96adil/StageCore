@@ -12,6 +12,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorCanDiscardDraftAndRestoreValidatedRevision(t *testing.T) {
@@ -75,5 +76,58 @@ func TestOperatorCanDiscardDraftAndRestoreValidatedRevision(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].EventType != "project.draft.discard" || records[0].Result != securityaudit.ResultSuccess || records[0].ResourceID != project.ID {
 		t.Fatalf("audit records=%+v", records)
+	}
+}
+
+func TestTechnicianCannotDiscardProjectDraft(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	audit, err := securityaudit.New(h.db.DB, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, validated, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Owner-only discard", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, validated.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := stageStore.EnsureProjectDraft(ctx, project.ID, "owner", "operator edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.auth.CreateUser(ctx, "tech", "technician password 123", userauth.RoleTechnician); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := h.auth.Login(ctx, "tech", "technician password 123", "127.0.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorConfigurationDraft(h.auth, stageStore, audit)).Handler()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/configuration/draft", bytes.NewBufferString(`{"reason":"technician attempt"}`))
+	req.RemoteAddr = "127.0.0.2:18004"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, credential.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden || !bytes.Contains(res.Body.Bytes(), []byte("OWNER_REQUIRED")) {
+		t.Fatalf("technician discard status=%d body=%s", res.Code, res.Body.String())
+	}
+	current, err := stageStore.GetRevision(ctx, draft.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != domain.RevisionDraft {
+		t.Fatalf("technician changed draft status=%s", current.Status)
+	}
+	records, err := audit.List(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].EventType != "project.draft.discard" || records[0].Result != securityaudit.ResultRejected || records[0].ActorUsername != "tech" {
+		t.Fatalf("rejection audit=%+v", records)
 	}
 }
