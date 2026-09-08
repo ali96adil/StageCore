@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
+	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
@@ -40,6 +41,7 @@ type App struct {
 	DB                *db.Handle
 	Store             *store.Store
 	DeviceExperience  *deviceexperience.Repository
+	DeviceRuntime     *devicechannel.Runtime
 	HubSecurity       *hubsecurity.Service
 	SecretStore       *secretstore.Service
 	SecurityAudit     *securityaudit.Service
@@ -128,17 +130,22 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	companionAuth := companionauth.New(s, nil)
 	companionRuntime := companionchannel.NewRuntime(s, companionAuth)
+	deviceRuntime := devicechannel.New(deviceRepository, companionAuth)
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
+		deviceRuntime.Close()
+		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register simulator capability: %w", err)
 	}
 	if err := registry.Register(httpaction.CapabilityKey, httpaction.NewWithSecretResolver(secrets)); err != nil {
+		deviceRuntime.Close()
 		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register HTTP capability: %w", err)
 	}
 	if err := registry.Register(scriptaction.CapabilityKey, scriptaction.New()); err != nil {
+		deviceRuntime.Close()
 		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("register Script capability: %w", err)
@@ -146,6 +153,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 
 	grantedPermissions, err := pluginGrants.Granted(ctx, oscplugin.PluginID)
 	if err != nil {
+		deviceRuntime.Close()
 		companionRuntime.Close()
 		_ = handle.Close()
 		return nil, fmt.Errorf("load OSC plugin permissions: %w", err)
@@ -164,6 +172,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		},
 	)
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(oscHost)); err != nil {
+		deviceRuntime.Close()
 		companionRuntime.Close()
 		oscHost.Close()
 		_ = handle.Close()
@@ -173,6 +182,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		companion.MachineRoleLogicalType,
 		companion.NewForwarder(s, companionRuntime, 5*time.Second, nil),
 	); err != nil {
+		deviceRuntime.Close()
 		companionRuntime.Close()
 		oscHost.Close()
 		_ = handle.Close()
@@ -180,7 +190,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return &App{
-		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository,
+		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
 		HubSecurity: hubSecurity, SecretStore: secrets,
 		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
@@ -275,6 +285,9 @@ func (a *App) Close() error {
 	}
 	if a.OSCInput != nil {
 		a.OSCInput.Close()
+	}
+	if a.DeviceRuntime != nil {
+		a.DeviceRuntime.Close()
 	}
 	if a.CompanionRuntime != nil {
 		a.CompanionRuntime.Close()
