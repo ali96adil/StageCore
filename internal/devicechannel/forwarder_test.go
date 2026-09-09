@@ -155,23 +155,23 @@ func TestForwarderDispatchesTypedCommandAndWaitsForDeviceResult(t *testing.T) {
 
 func TestForwarderTimeoutBecomesTerminalAndIdempotent(t *testing.T) {
 	fixture := newForwarderFixture(t)
-	dispatcher := dispatchFunc(func(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
-		command, _, err := fixture.repository.CreateCommand(ctx, input)
+	dispatcher := dispatchFunc(func(_ context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		// This test is specifically about the forwarder's accepted-command timeout
+		// path. Persist the synthetic accepted command independently from the short
+		// wait deadline so race-instrumented SQLite/event I/O cannot turn the setup
+		// into a dispatch-cancellation test instead.
+		command, _, err := fixture.repository.CreateCommand(context.Background(), input)
 		return command, err
 	})
 	forwarder := devicechannel.NewForwarder(fixture.store, fixture.repository, dispatcher)
 	request := stageDeviceRequest(fixture, "action-timeout")
 	request.TimeoutMS = 25
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	result := forwarder.Execute(ctx, request)
-	cancel()
+	result := forwarder.Execute(context.Background(), request)
 	if result.Result != domain.ExecutionTimedOut || result.ErrorCode != "STAGE_DEVICE_COMMAND_TIMED_OUT" {
 		t.Fatalf("timeout result=%+v", result)
 	}
 
-	secondCtx, secondCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer secondCancel()
-	second := forwarder.Execute(secondCtx, request)
+	second := forwarder.Execute(context.Background(), request)
 	if second.Result != domain.ExecutionTimedOut {
 		t.Fatalf("duplicate result=%+v", second)
 	}
