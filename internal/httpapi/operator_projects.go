@@ -27,10 +27,11 @@ type projectView struct {
 }
 
 type revisionView struct {
-	ID             string                `json:"revision_id"`
-	RevisionNumber int64                 `json:"revision_number"`
-	Status         domain.RevisionStatus `json:"status"`
-	CreatedAt      time.Time             `json:"created_at"`
+	ID               string                `json:"revision_id"`
+	RevisionNumber   int64                 `json:"revision_number"`
+	Status           domain.RevisionStatus `json:"status"`
+	ParentRevisionID *string               `json:"parent_revision_id,omitempty"`
+	CreatedAt        time.Time             `json:"created_at"`
 }
 
 type snapshotView struct {
@@ -57,17 +58,17 @@ type cueSummaryView struct {
 }
 
 type dashboardView struct {
-	Project             projectView      `json:"project"`
-	DraftRevision       revisionView     `json:"draft_revision"`
-	PublishedSnapshot   *snapshotView    `json:"published_snapshot"`
-	PublicationState    string           `json:"publication_state"`
-	UnpublishedChanges  bool             `json:"unpublished_changes"`
-	Mode                string           `json:"mode"`
-	ActiveSession       *sessionView     `json:"active_session"`
-	CurrentCue          *cueSummaryView  `json:"current_cue"`
-	NextCue             *cueSummaryView  `json:"next_cue"`
-	RuntimeErrorCount   int64            `json:"runtime_error_count"`
-	RuntimeWarningCount int64            `json:"runtime_warning_count"`
+	Project             projectView        `json:"project"`
+	DraftRevision       revisionView       `json:"draft_revision"`
+	PublishedSnapshot   *snapshotView      `json:"published_snapshot"`
+	PublicationState    string             `json:"publication_state"`
+	UnpublishedChanges  bool               `json:"unpublished_changes"`
+	Mode                string             `json:"mode"`
+	ActiveSession       *sessionView       `json:"active_session"`
+	CurrentCue          *cueSummaryView    `json:"current_cue"`
+	NextCue             *cueSummaryView    `json:"next_cue"`
+	RuntimeErrorCount   int64              `json:"runtime_error_count"`
+	RuntimeWarningCount int64              `json:"runtime_warning_count"`
 	Readiness           dashboardReadiness `json:"readiness"`
 }
 
@@ -119,7 +120,7 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"project": makeProjectView(project),
+			"project":        makeProjectView(project),
 			"draft_revision": makeRevisionView(revision),
 		})
 	}))
@@ -130,7 +131,7 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"project": makeProjectView(project),
+			"project":        makeProjectView(project),
 			"draft_revision": makeRevisionView(revision),
 		})
 	}))
@@ -258,7 +259,10 @@ func makeProjectView(project domain.Project) projectView {
 }
 
 func makeRevisionView(revision domain.ProjectRevision) revisionView {
-	return revisionView{ID: revision.ID, RevisionNumber: revision.RevisionNumber, Status: revision.Status, CreatedAt: revision.CreatedAt}
+	return revisionView{
+		ID: revision.ID, RevisionNumber: revision.RevisionNumber, Status: revision.Status,
+		ParentRevisionID: revision.ParentRevisionID, CreatedAt: revision.CreatedAt,
+	}
 }
 
 func makeSnapshotView(snapshot domain.RuntimeSnapshot) snapshotView {
