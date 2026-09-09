@@ -6,7 +6,7 @@ import (
 )
 
 func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
-	workspace := string(mustReadOperatorContractFile(t, "static/workspace-profile.js"))
+	css := string(mustReadOperatorContractFile(t, "static/workspace-profile.css"))
 	phase4 := string(mustReadOperatorContractFile(t, "static/phase4.js"))
 
 	for _, marker := range []string{
@@ -22,12 +22,11 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		`if (!F017_PAGES.includes(page)) {`,
-		`button.classList.remove("f017-profile-hidden")`,
-		`continue;`,
+		`#workspaceNav [data-phase4-nav="true"].f017-profile-hidden`,
+		`display: block !important;`,
 	} {
-		if !strings.Contains(workspace, marker) {
-			t.Fatalf("workspace profile compatibility guard missing %q", marker)
+		if !strings.Contains(css, marker) {
+			t.Fatalf("workspace profile Phase 4 compatibility rule missing %q", marker)
 		}
 	}
 }
