@@ -2,6 +2,14 @@
   display: none !important;
 }
 
+/* Phase 4 workspaces are injected after the original F-017 page registry.
+   Keep those feature-owned navigation entries visible when F-017 reapplies a
+   legacy profile; Phase 4 owns their availability until they are explicitly
+   added to the profile contract. */
+#workspaceNav [data-phase4-nav="true"].f017-profile-hidden {
+  display: block !important;
+}
+
 .f017-profile-control {
   display: flex;
   align-items: center;
@@ -256,30 +264,5 @@ html[dir="rtl"] .f017-profile-summary {
 
   .language-control select {
     min-width: 96px;
-  }
-}
-
-@media (max-width: 820px) {
-  .topbar {
-    position: static;
-    padding: 8px 12px;
-  }
-
-  .user-area {
-    margin-inline-start: 0;
-  }
-}
-
-@media (max-width: 620px) {
-  #userLabel {
-    display: none;
-  }
-
-  .f017-profile-control {
-    flex: 1 1 150px;
-  }
-
-  .f017-profile-control select {
-    width: 100%;
   }
 }
