@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/config"
+	"github.com/ali96adil/StageCore/internal/devicepreflight"
 	"github.com/ali96adil/StageCore/internal/deviceprofile"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
@@ -75,8 +76,9 @@ func main() {
 		application.SecretStore,
 		application.PluginPermissions,
 	)
+	devicePreflight := devicepreflight.New(securityPreflight, application.DeviceExperience)
 	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
-	preflightService := timecode.NewPreflightService(securityPreflight, timecodeRuntime)
+	preflightService := timecode.NewPreflightService(devicePreflight, timecodeRuntime)
 	runtime := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
@@ -178,7 +180,8 @@ func main() {
 		httpapi.WithOperatorExecutionEnvironmentCapture(userAuth, application.Store, application.Vault),
 		httpapi.WithOperatorExecutionEnvironmentOperations(userAuth, application.Store, application.CompanionRuntime),
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
-		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store),
+		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store, application.SecurityAudit),
+		httpapi.WithOperatorStageDevices(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),

@@ -1,6 +1,6 @@
 # StageCore Feature Status Ledger
 
-**Status date:** 2026-09-08  
+**Status date:** 2026-09-09  
 **Qualified Phase 3 candidate:** `ced3af067ff72deedf3c942922774071374fad07`
 
 This document is the operational status ledger for StageCore feature work. It complements `FEATURE_BACKLOG.md` and `FEATURE_IMPLEMENTATION_ORDER.md` by separating **implementation status** from **real qualification status**.
@@ -8,6 +8,7 @@ This document is the operational status ledger for StageCore feature work. It co
 ## Status rules
 
 - **COMPLETE** — the promoted StageCore scope is implemented, CI-verified, physically/product-qualified where required, and documented.
+- **SOFTWARE READY** — the promoted software scope is implemented and deterministic CI has passed, but required cumulative real-device/physical qualification has not yet passed.
 - **VERIFIED FOUNDATION** — a deliberately bounded foundation/slice is implemented and verified, but the broader backlog feature remains open.
 - **CROSS-CUTTING** — an early verified foundation exists, but completion is intentionally distributed across later feature work.
 - **PLANNED** — implementation has not yet reached a verified promoted slice.
@@ -32,28 +33,28 @@ M0–M6 physical Raspberry Pi ARM64 qualification closed PASS through Issue #21.
 
 | Feature | Implementation | Qualification | Status | Notes |
 | --- | --- | --- | --- | --- |
-| F-001 — Arabic UI / RTL | Foundation implemented | Foundation physically exercised | **CROSS-CUTTING** | Localization/RTL architecture is real; full cross-feature translation and polish continue. |
-| F-002 — No-code / low-code UX | Foundation implemented | Foundation physically exercised | **CROSS-CUTTING** | Remains a product rule for every later operator workflow. |
-| F-003 — Android Tablet Player | Not started | Not run | **PLANNED** | Phase 4. |
+| F-001 — Arabic UI / RTL | Foundation implemented; Phase 4 surfaces integrated | Earlier foundation physically exercised; Phase 4 product qualification pending | **CROSS-CUTTING** | Localization/RTL architecture is real; Phase 4 Stage Devices, Callboard, Live Video and Network Cockpit use the established localization ownership/RTL path. Broader cross-feature polish remains open. |
+| F-002 — No-code / low-code UX | Foundation implemented; Phase 4 guided workflows integrated | Earlier foundation physically exercised; Phase 4 product qualification pending | **CROSS-CUTTING** | Phase 4 normal workflows avoid raw JSON/OSC/IP configuration, but this remains a product rule across later features. |
+| F-003 — Android Tablet Player | Implemented StageCore protocol/server/operator boundary | Deterministic software CI PASS; real Android tablet qualification pending | **SOFTWARE READY** | `stagecore.device/1`, secure runtime/reconnect/revocation, typed Command Envelopes, readiness, Select/Prepare/Play/Pause/Stop/Blackout, and server-side All/Group/Location/Device batch targeting are implemented. Real APK playback remains cumulative Phase 4 product evidence. |
 | F-004 — Discovery / pairing / reconnect | Implemented | PASS, including Apple TLS re-qualification | **COMPLETE** | Phase 2 PASS; later real Pi + Apple Silicon re-qualification cleared the SecureTransport blocker. |
 | F-005 — Repeatable installation / deployment | Implemented | PASS | **COMPLETE** | Supported appliance install/update path physically qualified. |
-| F-006 — Stage Display / Callboard | Not started | Not run | **PLANNED** | Phase 4. |
-| F-007 — Live Video / Camera Inputs | Not started | Not run | **PLANNED** | Phase 4. |
+| F-006 — Stage Display / Callboard | Implemented | Deterministic software CI PASS; real display qualification pending | **SOFTWARE READY** | Shared Stage Device identity/runtime, All/Group/Location/Device targeting, message presets, absolute countdown semantics, semantic alert role/intensity/motion/duration, optional chime IDs, per-device batch results, cue/timeline dispatch and canonical Flight Recorder events are implemented. Real rendering/timing/chime behavior remains cumulative qualification. |
+| F-007 — Live Video / Camera Inputs | Implemented Core source/control/readiness boundary | Deterministic software CI PASS; real source qualification pending | **SOFTWARE READY** | Generic source classes, Render Node placement, typed open/close/select/route/inspect controls, Preflight integration and guided Operator source status/open/close/test surface are implemented. At least one real available source class must still pass. |
 | F-008 — First-run setup wizard | Implemented | PASS | **COMPLETE** | Included in cumulative Phase 2 qualification. |
 | F-009 — `stagecore doctor` | Implemented | PASS | **COMPLETE** | Real Pi Doctor path qualified. |
 | F-010 — Safe update + backup / rollback | Implemented | PASS | **COMPLETE** | Transactional update, SHOW gate, rollback protection and real appliance update path re-qualified during Phase 3 closure. |
 | F-011 — Show / profile templates | Implemented | PASS | **COMPLETE** | Representative template materialization passed through Operator UI; resulting configuration remained ordinary editable StageCore state. |
-| F-012 — Show Mode configuration lock | Implemented | PASS | **COMPLETE** | Regressed during Phase 3; structural mutation and update blocking during SHOW remained fail-closed. |
+| F-012 — Show Mode configuration lock | Implemented | PASS | **COMPLETE** | Structural mutation and update blocking during SHOW remain fail-closed; Phase 4 Draft discard also reuses the same lock. |
 | F-013 — Diagnostics bundle | Implemented | PASS | **COMPLETE** | Included in cumulative Phase 2 qualification. |
 | F-014 — Offline installer / package path | Implemented | PASS | **COMPLETE** | Offline media and WAN-independent supported path qualified. |
 | F-015 — Plugin & Add-on Manager | Implemented | PASS | **COMPLETE** | Phase 2 extension lifecycle/trust/isolation/restore scope accepted as verified baseline. |
-| F-016 — Appearance / Theme System | Foundation implemented | Foundation physically exercised | **CROSS-CUTTING** | Semantic tokens/System-Light-Dark/accent are real; advanced presets/portability/sync/native-client completion remain. |
-| F-017 — Workspace Layouts / Operator Profiles | State-model foundation implemented | Foundation physically exercised | **CROSS-CUTTING** | Full multi-window/profile/platform polish remains. |
+| F-016 — Appearance / Theme System | Foundation implemented; Phase 4 semantic-token surfaces integrated | Foundation physically exercised; Phase 4 product qualification pending | **CROSS-CUTTING** | Semantic tokens/System-Light-Dark/accent are real; Phase 4 uses them, while advanced presets/portability/sync/native-client completion remain. |
+| F-017 — Workspace Layouts / Operator Profiles | State-model foundation implemented; Phase 4 workspaces integrated in Operator shell | Foundation physically exercised; Phase 4 product qualification pending | **CROSS-CUTTING** | Stage Devices, Callboard, Live Video and Network Cockpit participate in the existing Operator shell; full multi-window/profile/platform polish remains. |
 | F-018 — Universal Timecode & Show Synchronization | Implemented | PASS for internal + production raw-MIDI MTC path | **COMPLETE** | Frame rate, 29.97 DF, offset, stale/jump/discontinuity and fail-closed cue safety qualified. No LTC hardware/source was available, so no physical LTC PASS is claimed; LTC boundary remains deterministically covered. |
 | F-019 — Portable Show Capsule | Implemented | PASS | **COMPLETE** | Real capsule export/integrity/zero-project restore passed; tamper detection failed closed. Missing/incompatible external-requirement behavior is deterministic/software-qualified because the real qualified capsule had no applicable external requirement. |
 | F-020 — Self-Healing / HA | Not started | Not run | **PLANNED** | Phase 5. |
 | F-021 — Device Profile Library | Implemented | PASS | **COMPLETE** | Guided Operator device-profile workflow included in Phase 2 closure. |
-| F-022 — Stage Network Cockpit | Not started | Not run | **PLANNED** | Phase 4. |
+| F-022 — Stage Network Cockpit | Implemented | Deterministic software CI PASS; real Stage LAN qualification pending | **SOFTWARE READY** | Canonical bounded observations, truthful null metrics, stale/unreachable/revoked/identity-conflict/elevated-latency classification, Preflight integration and guided bilingual Cockpit are implemented. |
 | F-023 — StageCore Assistant | Not started | Not run | **PLANNED** | Phase 7. |
 | F-024 — Full Show Simulation / Digital Twin | Not started | Not run | **PLANNED** | Phase 5. |
 | F-025 — External Execution Environment | Implemented | PASS on real Pi + Apple Silicon Mac + VDMX | **COMPLETE** | Re-qualified during Phase 3 against the original canonical VDMX manifest identity; real OPEN and truthful PARTIAL CAPTURE_SNAPSHOT passed. |
@@ -98,8 +99,33 @@ Phase 3 product qualification also covered:
 
 Qualification limits are explicit: no physical LTC hardware/source was available, no physical DIN/external MTC source was claimed, and the qualified real F-019 capsule contained no applicable external requirement for a physical missing/incompatible test. Those paths remain deterministically covered rather than being falsely represented as physical evidence.
 
-Issue #137 tracks the separate Operator UX gap discovered during final F-025 regression: an accidental Draft currently cannot be discarded/reverted from the project UI. It is a follow-up UX defect and does not invalidate the immutable published qualification evidence or Phase 3 runtime PASS.
+### Phase 4 software checkpoint
+
+Issue #138 is the cumulative Phase 4 software + physical qualification tracker. PR #139 implements the promoted Phase 4 software campaign without intermediate Raspberry Pi deployments.
+
+Final software code checkpoint before documentation-only refresh:
+
+- `7f2d84172e96b6579dfaa218237bf5586a80533c`
+- Core CI #746: PASS
+- Go 1.26: module lock, tests, vet, race tests and Linux ARM64 CGo-free product builds PASS
+- Go 1.27: module lock, tests and vet PASS
+
+The checkpoint includes F-003/F-006/F-007/F-022 software boundaries, Phase 4 guided Operator workspaces, Stage Device secure runtime/reconnect/revocation, canonical cue-driven Stage Device dispatch, canonical `event_records` Flight Recorder command lifecycle, device/live-source Preflight integration, deterministic timeout handling, and the Issue #137 Draft discard/revert implementation.
+
+Final acceptance additions include:
+
+- server-side Stage Device batch expansion by Location with per-device results;
+- broad Tablet All / Group / Location / Device controls and media selection;
+- Callboard All / Group / Location / Device targeting, message presets, absolute countdown target semantics, semantic alert role/intensity/steady-pulse-flash/duration and optional chime IDs;
+- OPERATOR runtime authorization, VIEWER denial and OWNER structural mutation blocking during active SHOW;
+- Go 1.27-safe synchronization of the forwarder Flight Recorder acceptance assertion without changing production runtime behavior.
+
+`docs/checkpoints/2026-09-08-phase4-software-ready.md` records the detailed software evidence and explicit physical-qualification boundary.
+
+Issue #137 is software-resolved in the Phase 4 campaign: OWNER-only Discard Draft restores the validated parent, retains the abandoned Draft as `SUPERSEDED`, preserves immutable Runtime Snapshot content, obeys SHOW mutation lock, records security audit evidence and permits a clean new Draft. The issue is closed only after the implementation is promoted to `main`.
+
+No Phase 4 physical/product PASS is claimed yet. F-003, F-006, F-007 and F-022 remain SOFTWARE READY and their backlog rows remain intentionally unchecked until the one cumulative Raspberry Pi / Stage LAN / real-device qualification defined by Issue #138 passes.
 
 ## Current transition
 
-`M0–M6 COMPLETE -> Phase 1 foundations -> Phase 2 COMPLETE/QUALIFIED -> F-025 COMPLETE -> Phase 3 COMPLETE/QUALIFIED -> PHASE 4 READY`
+`M0–M6 COMPLETE -> Phase 2 COMPLETE/QUALIFIED -> F-025 COMPLETE -> Phase 3 COMPLETE/QUALIFIED -> PHASE 4 SOFTWARE READY -> PHYSICAL QUALIFICATION PENDING`

@@ -33,6 +33,20 @@
       "ui_keys": [
         "capsule.nav", "capsule.eyebrow", "capsule.title", "capsule.subtitle", "capsule.manifest_only", "capsule.self_contained", "capsule.preview", "capsule.export", "capsule.refresh", "capsule.snapshot", "capsule.media", "capsule.environments", "capsule.extensions", "capsule.objects", "capsule.warnings", "capsule.library", "capsule.library_detail", "capsule.imports", "capsule.exports", "capsule.plan", "capsule.materialize", "capsule.materialization_ready", "capsule.materialization_blocked", "capsule.host_ready", "capsule.host_not_ready", "capsule.no_capsules", "capsule.owner_restore", "capsule.no_overwrite", "capsule.show_lock", "capsule.extensions_review", "capsule.presentation_local", "capsule.exported", "capsule.restored", "capsule.read_only"
       ]
+    },
+    {
+      "feature_id": "CORE-PHASE4-DEVICE-EXPERIENCE",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/phase4.js", "static/phase4.css", "static/phase4-polish.js"],
+      "name": {"en": "Stage Device Operator Experience", "ar-IQ": "تجربة تشغيل أجهزة المسرح"},
+      "summary": {"en": "Guided bilingual control and diagnostics for tablets, callboards, live-video sources and the Stage Network Cockpit.", "ar-IQ": "تحكم وتشخيص موجه وثنائي اللغة للتابلت وشاشات الكواليس ومصادر الفيديو الحي ومراقبة شبكة المسرح."},
+      "actions": [
+        {"action_id": "control-tablets", "label": {"en": "Control Stage Tablets", "ar-IQ": "التحكم بتابلت المسرح"}},
+        {"action_id": "operate-callboard", "label": {"en": "Operate Callboard", "ar-IQ": "تشغيل شاشة الكواليس"}},
+        {"action_id": "manage-live-video", "label": {"en": "Manage Live Video", "ar-IQ": "إدارة الفيديو الحي"}},
+        {"action_id": "inspect-stage-network", "label": {"en": "Inspect Stage Network", "ar-IQ": "فحص شبكة المسرح"}}
+      ],
+      "ui_keys": ["devices", "callboard", "video", "network", "devicesTitle", "callboardTitle", "videoTitle", "networkTitle"]
     }
   ]
 }
