@@ -26,21 +26,21 @@ func (p *physicalExecutionProbe) Execute(context.Context, capability.Request) ca
 }
 
 func TestSimulationSessionContainsRealCapabilityInsideDigitalTwinBoundary(t *testing.T) {
+	errorPolicy, err := json.Marshal(map[string]any{"on_error": "FAIL_CUE"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	action := domain.Action{
 		ExecutionMode: "SEQUENTIAL",
 		TargetRef:     "SIM",
 		CapabilityKey: "osc.send",
 		Parameters:    json.RawMessage(`{}`),
 		TimeoutPolicy: json.RawMessage(`{}`),
-		ErrorPolicy:   json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+		ErrorPolicy:   errorPolicy,
 		PriorityClass: domain.PriorityP1,
 		Enabled:       true,
 		OrderIndex:    0,
 	}
-	// Keep the policy fixture valid JSON. It is written this way instead of
-	// inheriting a simulator-only action helper because this action deliberately
-	// carries a real capability identity.
-	action.ErrorPolicy = json.RawMessage(`{"on_error":"FAIL_CUE"}`)
 	f := newFixture(t, []domain.Action{action})
 	physical := &physicalExecutionProbe{}
 	engine := cueengine.NewWithExecutor(f.store, simulator.NewSessionExecutor(f.store, physical))
