@@ -23,8 +23,8 @@ func (f *fakeSessionResolver) SessionTypeForActionExecution(context.Context, str
 }
 
 type recordingExecutor struct {
-	calls int
-	last  capability.Request
+	calls  int
+	last   capability.Request
 	result capability.Result
 }
 
@@ -37,13 +37,13 @@ func (e *recordingExecutor) Execute(_ context.Context, req capability.Request) c
 func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
 	resolver := &fakeSessionResolver{sessionType: domain.SessionSimulation}
 	physical := &recordingExecutor{result: capability.Result{
-		Result: domain.ExecutionCompleted,
-		AckLevel: contracts.AckExecuted,
+		Result:          domain.ExecutionCompleted,
+		AckLevel:        contracts.AckDevice,
 		ResponseSummary: "physical output",
 	}}
 	executor := NewSessionExecutor(resolver, physical)
 	parameters, err := json.Marshal(map[string]any{
-		"simulation": map[string]any{"behavior": "COMPLETE", "message": "digital twin completion"},
+		"simulation":     map[string]any{"behavior": "COMPLETE", "message": "digital twin completion"},
 		"real_parameter": "preserved-but-not-dispatched",
 	})
 	if err != nil {
@@ -52,9 +52,9 @@ func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
 
 	result := executor.Execute(context.Background(), capability.Request{
 		ExecutionID: "action-execution-1",
-		Capability: "osc.send",
-		Parameters: parameters,
-		Target: &capability.Target{Ref: "lighting.front", LogicalType: "osc"},
+		Capability:  "osc.send",
+		Parameters:  parameters,
+		Target:      &capability.Target{Ref: "lighting.front", LogicalType: "osc"},
 	})
 
 	if result.Result != domain.ExecutionCompleted || result.AckLevel != contracts.AckNone {
@@ -79,8 +79,8 @@ func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
 
 	result := executor.Execute(context.Background(), capability.Request{
 		ExecutionID: "action-execution-2",
-		Capability: "tablet.media.play",
-		Parameters: parameters,
+		Capability:  "tablet.media.play",
+		Parameters:  parameters,
 	})
 
 	if result.Result != domain.ExecutionFailed || result.ErrorCode != "VIRTUAL_DEVICE_OFFLINE" {
@@ -94,15 +94,15 @@ func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
 func TestSessionExecutorRehearsalDelegatesToPhysicalExecutor(t *testing.T) {
 	resolver := &fakeSessionResolver{sessionType: domain.SessionRehearsal}
 	physical := &recordingExecutor{result: capability.Result{
-		Result: domain.ExecutionCompleted,
-		AckLevel: contracts.AckExecuted,
+		Result:          domain.ExecutionCompleted,
+		AckLevel:        contracts.AckDevice,
 		ResponseSummary: "real rehearsal output",
 	}}
 	executor := NewSessionExecutor(resolver, physical)
 	req := capability.Request{ExecutionID: "action-execution-3", Capability: "osc.send"}
 
 	result := executor.Execute(context.Background(), req)
-	if result.ResponseSummary != "real rehearsal output" || result.AckLevel != contracts.AckExecuted {
+	if result.ResponseSummary != "real rehearsal output" || result.AckLevel != contracts.AckDevice {
 		t.Fatalf("result=%#v", result)
 	}
 	if physical.calls != 1 || physical.last.ExecutionID != req.ExecutionID {
@@ -112,7 +112,7 @@ func TestSessionExecutorRehearsalDelegatesToPhysicalExecutor(t *testing.T) {
 
 func TestSessionExecutorShowDelegatesToPhysicalExecutor(t *testing.T) {
 	resolver := &fakeSessionResolver{sessionType: domain.SessionShow}
-	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckExecuted}}
+	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}}
 	executor := NewSessionExecutor(resolver, physical)
 
 	result := executor.Execute(context.Background(), capability.Request{ExecutionID: "action-execution-4", Capability: "http.request"})
