@@ -198,6 +198,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("register Companion target dispatch: %w", err)
 	}
 
+	cueExecutor := simulator.NewSessionExecutor(s, registry)
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
 		HubSecurity: hubSecurity, SecretStore: secrets,
@@ -205,7 +206,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
-		CueEngine: cueengine.NewWithExecutor(s, registry), RoutingEngine: routing.New(s, registry),
+		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.New(s, registry),
 		OSCPlugin: oscHost,
 	}, nil
 }
