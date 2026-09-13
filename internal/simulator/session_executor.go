@@ -39,6 +39,9 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 	if e == nil || e.resolver == nil || e.physical == nil || e.simulation == nil {
 		return gateFailure("SIMULATION_GATE_UNAVAILABLE", "simulation execution gate is unavailable")
 	}
+	if strings.TrimSpace(req.ExecutionID) == "" && strings.TrimSpace(req.RuntimeSnapshotID) == "" {
+		return gateFailure("ACTION_EXECUTION_ID_REQUIRED", "action execution identity or runtime snapshot is required")
+	}
 
 	sessionType, err := e.resolveSessionType(ctx, req)
 	if err != nil {
@@ -71,18 +74,8 @@ func (e *SessionExecutor) resolveSessionType(ctx context.Context, req capability
 	if snapshotID != "" {
 		return e.resolver.SessionTypeForRuntimeSnapshotExecution(ctx, snapshotID)
 	}
-	if executionID == "" {
-		return "", fmtExecutionIdentityRequired{}
-	}
 	return "", domain.ErrNotFound
 }
-
-// fmtExecutionIdentityRequired is intentionally private and dependency-free;
-// callers receive the stable gate error code rather than an implementation
-// detail string.
-type fmtExecutionIdentityRequired struct{}
-
-func (fmtExecutionIdentityRequired) Error() string { return "execution identity or runtime snapshot is required" }
 
 func gateFailure(code, summary string) capability.Result {
 	return capability.Result{
