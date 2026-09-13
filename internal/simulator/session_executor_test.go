@@ -12,14 +12,22 @@ import (
 )
 
 type fakeSessionResolver struct {
-	sessionType domain.SessionType
-	err         error
-	calls       int
+	actionSessionType   domain.SessionType
+	actionErr           error
+	snapshotSessionType domain.SessionType
+	snapshotErr         error
+	actionCalls         int
+	snapshotCalls       int
 }
 
 func (f *fakeSessionResolver) SessionTypeForActionExecution(context.Context, string) (domain.SessionType, error) {
-	f.calls++
-	return f.sessionType, f.err
+	f.actionCalls++
+	return f.actionSessionType, f.actionErr
+}
+
+func (f *fakeSessionResolver) SessionTypeForRuntimeSnapshotExecution(context.Context, string) (domain.SessionType, error) {
+	f.snapshotCalls++
+	return f.snapshotSessionType, f.snapshotErr
 }
 
 type recordingExecutor struct {
@@ -35,7 +43,7 @@ func (e *recordingExecutor) Execute(_ context.Context, req capability.Request) c
 }
 
 func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{sessionType: domain.SessionSimulation}
+	resolver := &fakeSessionResolver{actionSessionType: domain.SessionSimulation}
 	physical := &recordingExecutor{result: capability.Result{
 		Result:          domain.ExecutionCompleted,
 		AckLevel:        contracts.AckDevice,
@@ -66,13 +74,13 @@ func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
 	if physical.calls != 0 {
 		t.Fatalf("physical executor was called %d time(s) during SIMULATION", physical.calls)
 	}
-	if resolver.calls != 1 {
-		t.Fatalf("resolver calls=%d want=1", resolver.calls)
+	if resolver.actionCalls != 1 || resolver.snapshotCalls != 0 {
+		t.Fatalf("resolver action calls=%d snapshot calls=%d", resolver.actionCalls, resolver.snapshotCalls)
 	}
 }
 
 func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
-	resolver := &fakeSessionResolver{sessionType: domain.SessionSimulation}
+	resolver := &fakeSessionResolver{actionSessionType: domain.SessionSimulation}
 	physical := &recordingExecutor{}
 	executor := NewSessionExecutor(resolver, physical)
 	parameters, err := json.Marshal(map[string]any{
@@ -100,8 +108,32 @@ func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestSessionExecutorRoutingFallsBackToRuntimeSnapshotAuthority(t *testing.T) {
+	resolver := &fakeSessionResolver{
+		actionErr:           domain.ErrNotFound,
+		snapshotSessionType: domain.SessionSimulation,
+	}
+	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}}
+	executor := NewSessionExecutor(resolver, physical)
+
+	result := executor.Execute(context.Background(), capability.Request{
+		ExecutionID:       "route-execution-1",
+		RuntimeSnapshotID: "snapshot-1",
+		Capability:        "osc.send",
+	})
+	if result.Result != domain.ExecutionCompleted || result.AckLevel != contracts.AckNone {
+		t.Fatalf("result=%#v", result)
+	}
+	if physical.calls != 0 {
+		t.Fatalf("physical executor was called %d time(s) for simulated route output", physical.calls)
+	}
+	if resolver.actionCalls != 1 || resolver.snapshotCalls != 1 {
+		t.Fatalf("resolver action calls=%d snapshot calls=%d", resolver.actionCalls, resolver.snapshotCalls)
+	}
+}
+
 func TestSessionExecutorRehearsalDelegatesToPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{sessionType: domain.SessionRehearsal}
+	resolver := &fakeSessionResolver{actionSessionType: domain.SessionRehearsal}
 	physical := &recordingExecutor{result: capability.Result{
 		Result:          domain.ExecutionCompleted,
 		AckLevel:        contracts.AckDevice,
@@ -120,7 +152,7 @@ func TestSessionExecutorRehearsalDelegatesToPhysicalExecutor(t *testing.T) {
 }
 
 func TestSessionExecutorShowDelegatesToPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{sessionType: domain.SessionShow}
+	resolver := &fakeSessionResolver{actionSessionType: domain.SessionShow}
 	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}}
 	executor := NewSessionExecutor(resolver, physical)
 
@@ -131,7 +163,7 @@ func TestSessionExecutorShowDelegatesToPhysicalExecutor(t *testing.T) {
 }
 
 func TestSessionExecutorFailsClosedWhenSessionModeCannotBeResolved(t *testing.T) {
-	resolver := &fakeSessionResolver{err: errors.New("database unavailable")}
+	resolver := &fakeSessionResolver{actionErr: errors.New("database unavailable")}
 	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted}}
 	executor := NewSessionExecutor(resolver, physical)
 
@@ -144,8 +176,8 @@ func TestSessionExecutorFailsClosedWhenSessionModeCannotBeResolved(t *testing.T)
 	}
 }
 
-func TestSessionExecutorRequiresPersistedActionIdentity(t *testing.T) {
-	resolver := &fakeSessionResolver{sessionType: domain.SessionShow}
+func TestSessionExecutorRequiresPersistedExecutionAuthority(t *testing.T) {
+	resolver := &fakeSessionResolver{actionSessionType: domain.SessionShow}
 	physical := &recordingExecutor{}
 	executor := NewSessionExecutor(resolver, physical)
 
@@ -153,7 +185,7 @@ func TestSessionExecutorRequiresPersistedActionIdentity(t *testing.T) {
 	if result.Result != domain.ExecutionFailed || result.ErrorCode != "ACTION_EXECUTION_ID_REQUIRED" {
 		t.Fatalf("result=%#v", result)
 	}
-	if resolver.calls != 0 || physical.calls != 0 {
-		t.Fatalf("resolver calls=%d physical calls=%d", resolver.calls, physical.calls)
+	if resolver.actionCalls != 0 || resolver.snapshotCalls != 0 || physical.calls != 0 {
+		t.Fatalf("resolver action calls=%d snapshot calls=%d physical calls=%d", resolver.actionCalls, resolver.snapshotCalls, physical.calls)
 	}
 }
