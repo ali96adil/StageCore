@@ -75,7 +75,16 @@ func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
 	resolver := &fakeSessionResolver{sessionType: domain.SessionSimulation}
 	physical := &recordingExecutor{}
 	executor := NewSessionExecutor(resolver, physical)
-	parameters := json.RawMessage(`{"simulation":{"behavior":"FAIL","error_code":"VIRTUAL_DEVICE_OFFLINE","message":"virtual target offline"}}`)
+	parameters, err := json.Marshal(map[string]any{
+		"simulation": map[string]any{
+			"behavior":   "FAIL",
+			"error_code": "VIRTUAL_DEVICE_OFFLINE",
+			"message":    "virtual target offline",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	result := executor.Execute(context.Background(), capability.Request{
 		ExecutionID: "action-execution-2",
