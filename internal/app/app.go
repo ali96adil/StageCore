@@ -206,7 +206,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
-		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.New(s, registry),
+		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.NewSimulationSafe(s, registry),
 		OSCPlugin: oscHost,
 	}, nil
 }
