@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -9,24 +10,24 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
-// ActionExecutionSessionResolver resolves the authoritative Session mode for a
-// persisted ActionExecution. The Cue Engine creates the ActionExecution before
-// invoking the capability executor, so the decision cannot be supplied by an
-// untrusted action payload.
-type ActionExecutionSessionResolver interface {
+// ExecutionSessionResolver resolves authoritative Session mode from either a
+// persisted ActionExecution (Cue path) or the single ACTIVE Session that owns
+// an immutable Runtime Snapshot (direct Route-output path).
+type ExecutionSessionResolver interface {
 	SessionTypeForActionExecution(context.Context, string) (domain.SessionType, error)
+	SessionTypeForRuntimeSnapshotExecution(context.Context, string) (domain.SessionType, error)
 }
 
-// SessionExecutor is the F-024 safety boundary between Cue execution and real
-// capability transports. SIMULATION actions are always consumed by the
+// SessionExecutor is the F-024 safety boundary between runtime execution and
+// real capability transports. SIMULATION work is always consumed by the
 // deterministic simulator and never delegated to the physical executor.
 type SessionExecutor struct {
-	resolver   ActionExecutionSessionResolver
+	resolver   ExecutionSessionResolver
 	physical   capability.Executor
 	simulation capability.Executor
 }
 
-func NewSessionExecutor(resolver ActionExecutionSessionResolver, physical capability.Executor) *SessionExecutor {
+func NewSessionExecutor(resolver ExecutionSessionResolver, physical capability.Executor) *SessionExecutor {
 	return &SessionExecutor{
 		resolver:   resolver,
 		physical:   physical,
@@ -38,11 +39,8 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 	if e == nil || e.resolver == nil || e.physical == nil || e.simulation == nil {
 		return gateFailure("SIMULATION_GATE_UNAVAILABLE", "simulation execution gate is unavailable")
 	}
-	if strings.TrimSpace(req.ExecutionID) == "" {
-		return gateFailure("ACTION_EXECUTION_ID_REQUIRED", "action execution identity is required")
-	}
 
-	sessionType, err := e.resolver.SessionTypeForActionExecution(ctx, req.ExecutionID)
+	sessionType, err := e.resolveSessionType(ctx, req)
 	if err != nil {
 		return gateFailure("SESSION_MODE_UNAVAILABLE", "authoritative session mode could not be resolved")
 	}
@@ -56,6 +54,35 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 		return gateFailure("SESSION_MODE_UNSUPPORTED", "unsupported session mode at execution boundary")
 	}
 }
+
+func (e *SessionExecutor) resolveSessionType(ctx context.Context, req capability.Request) (domain.SessionType, error) {
+	executionID := strings.TrimSpace(req.ExecutionID)
+	if executionID != "" {
+		sessionType, err := e.resolver.SessionTypeForActionExecution(ctx, executionID)
+		if err == nil {
+			return sessionType, nil
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			return "", err
+		}
+	}
+
+	snapshotID := strings.TrimSpace(req.RuntimeSnapshotID)
+	if snapshotID != "" {
+		return e.resolver.SessionTypeForRuntimeSnapshotExecution(ctx, snapshotID)
+	}
+	if executionID == "" {
+		return "", fmtExecutionIdentityRequired{}
+	}
+	return "", domain.ErrNotFound
+}
+
+// fmtExecutionIdentityRequired is intentionally private and dependency-free;
+// callers receive the stable gate error code rather than an implementation
+// detail string.
+type fmtExecutionIdentityRequired struct{}
+
+func (fmtExecutionIdentityRequired) Error() string { return "execution identity or runtime snapshot is required" }
 
 func gateFailure(code, summary string) capability.Result {
 	return capability.Result{
