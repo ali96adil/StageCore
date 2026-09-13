@@ -37,6 +37,10 @@ func TestSimulationSessionContainsRealCapabilityInsideDigitalTwinBoundary(t *tes
 		Enabled:       true,
 		OrderIndex:    0,
 	}
+	// Keep the policy fixture valid JSON. It is written this way instead of
+	// inheriting a simulator-only action helper because this action deliberately
+	// carries a real capability identity.
+	action.ErrorPolicy = json.RawMessage(`{"on_error":"FAIL_CUE"}`)
 	f := newFixture(t, []domain.Action{action})
 	physical := &physicalExecutionProbe{}
 	engine := cueengine.NewWithExecutor(f.store, simulator.NewSessionExecutor(f.store, physical))
