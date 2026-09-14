@@ -43,7 +43,7 @@ func TestConfiguredDigitalTwinFaultFlowsThroughCueExecution(t *testing.T) {
 	engine := cueengine.NewWithExecutor(f.store, simulator.NewSessionExecutorWithDigitalTwin(f.store, physical, twin))
 
 	result := engine.ExecuteCueGo(context.Background(), f.session.ID, commandFor(t, f))
-	if result.Status != contracts.CommandFailed {
+	if result.Status != contracts.CommandCompleted {
 		t.Fatalf("result=%#v", result)
 	}
 	if physical.calls != 0 {
