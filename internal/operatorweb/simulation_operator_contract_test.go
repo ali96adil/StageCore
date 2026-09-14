@@ -17,7 +17,7 @@ func TestOperatorSimulationWorkspaceSafetyAndBilingualContract(t *testing.T) {
 		"CHECKPOINT",
 		"UNAVAILABLE",
 		"GO · SIMULATION",
-		"replay: false",
+		"without replay",
 		"SIMULATION_ONLY",
 		"simulationNav",
 	}
