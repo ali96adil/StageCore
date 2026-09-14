@@ -32,6 +32,11 @@ func NewSessionExecutor(resolver ExecutionSessionResolver, physical capability.E
 }
 
 func NewSessionExecutorWithDigitalTwin(resolver ExecutionSessionResolver, physical capability.Executor, twin *DigitalTwin) *SessionExecutor {
+	if twin != nil {
+		if stateStore, ok := resolver.(SimulationStateStore); ok {
+			twin.SetStateStore(stateStore)
+		}
+	}
 	return &SessionExecutor{
 		resolver:    resolver,
 		physical:    physical,
@@ -64,6 +69,9 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 
 	switch session.Type {
 	case domain.SessionSimulation:
+		if err := e.digitalTwin.BindSession(session); err != nil {
+			return gateFailure("SIM_RUNTIME_SNAPSHOT_MISMATCH", "simulation session runtime snapshot binding failed")
+		}
 		return e.digitalTwin.Execute(ctx, req)
 	case domain.SessionRehearsal, domain.SessionShow:
 		return e.physical.Execute(ctx, req)
