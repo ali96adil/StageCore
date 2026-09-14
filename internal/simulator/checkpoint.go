@@ -57,7 +57,7 @@ func (m *CheckpointManager) Capture(ctx context.Context, sessionID string) (doma
 
 // Restore installs checkpointed virtual state directly. Historical cue/action
 // commands are never replayed. If durable Session truth cannot be committed,
-// the previous in-memory Twin state is restored before returning the error.
+// the previous in-memory Twin state is restored exactly before returning the error.
 func (m *CheckpointManager) Restore(ctx context.Context, sessionID, checkpointID string) (domain.SimulationCheckpoint, error) {
 	if m == nil || m.store == nil || m.twin == nil {
 		return domain.SimulationCheckpoint{}, fmt.Errorf("simulation checkpoint manager is unavailable")
@@ -92,16 +92,27 @@ func (m *CheckpointManager) Restore(ctx context.Context, sessionID, checkpointID
 		return domain.SimulationCheckpoint{}, err
 	}
 	if err := m.store.MarkSimulationCheckpointRestored(ctx, session.ID, checkpoint.ID); err != nil {
-		_ = m.twin.RestoreSnapshot(session, previous)
+		_ = m.twin.restoreSnapshotExact(session, previous)
 		return domain.SimulationCheckpoint{}, err
 	}
 	return checkpoint, nil
 }
 
-// RestoreSnapshot copies a previously validated simulation state into an
-// authoritative target Session. Session identity is intentionally rebased;
-// Runtime Snapshot authority may not change.
+// RestoreSnapshot copies a previously validated checkpoint into an authoritative
+// target Session and marks its virtual truth as restored from a checkpoint.
+// Session identity is intentionally rebased; Runtime Snapshot authority may not change.
 func (d *DigitalTwin) RestoreSnapshot(session domain.Session, snapshot SessionSnapshot) error {
+	return d.installSnapshot(session, snapshot, true)
+}
+
+// restoreSnapshotExact is reserved for transactional rollback. Unlike a normal
+// checkpoint restoration it preserves the prior truth metadata byte-for-byte in
+// semantic terms and therefore cannot claim that a checkpoint was restored.
+func (d *DigitalTwin) restoreSnapshotExact(session domain.Session, snapshot SessionSnapshot) error {
+	return d.installSnapshot(session, snapshot, false)
+}
+
+func (d *DigitalTwin) installSnapshot(session domain.Session, snapshot SessionSnapshot, markCheckpointRestored bool) error {
 	if d == nil {
 		return fmt.Errorf("digital twin is unavailable")
 	}
@@ -124,8 +135,10 @@ func (d *DigitalTwin) RestoreSnapshot(session domain.Session, snapshot SessionSn
 		copy := cloneTargetState(target)
 		copy.StateTruth.Version = DigitalTwinStateContractVersion1
 		copy.StateTruth.Scope = "SIMULATION_ONLY"
-		copy.StateTruth.Restorable = true
-		copy.StateTruth.RestorationReason = "checkpoint_restored"
+		if markCheckpointRestored {
+			copy.StateTruth.Restorable = true
+			copy.StateTruth.RestorationReason = "checkpoint_restored"
+		}
 		state.targets[copy.TargetRef] = &copy
 	}
 
