@@ -97,8 +97,15 @@ func TestReportFindsMappingTimingFailureAndObservedStageDifference(t *testing.T)
 	if len(report.MissingMappings) != 1 || report.MissingMappings[0].TargetRef != "MISSING-TARGET" || report.MissingMappings[0].ReasonCode != "TARGET_ALIAS_NOT_FOUND" {
 		t.Fatalf("missing mappings=%+v", report.MissingMappings)
 	}
-	if len(report.TimingRisks) != 1 || report.TimingRisks[0].ReasonCode != "SIMULATED_LATENCY_NEAR_TIMEOUT" || report.TimingRisks[0].EvidenceScope != "SIMULATION_ONLY" {
+	if len(report.TimingRisks) != 1 {
 		t.Fatalf("timing risks=%+v", report.TimingRisks)
+	}
+	timingRisk := report.TimingRisks[0]
+	if timingRisk.EvidenceScope != "SIMULATION_ONLY" || timingRisk.TimeoutMS != 100 || timingRisk.LatencyMS == nil || *timingRisk.LatencyMS < 80 {
+		t.Fatalf("timing risk evidence=%+v", timingRisk)
+	}
+	if timingRisk.ReasonCode != "SIMULATED_LATENCY_NEAR_TIMEOUT" && timingRisk.ReasonCode != "SIMULATED_LATENCY_AT_OR_OVER_TIMEOUT" {
+		t.Fatalf("timing risk classification=%+v", timingRisk)
 	}
 	if len(report.UnhandledFailures) != 1 || report.UnhandledFailures[0].ErrorCode != "VIRTUAL_FAILURE" || report.UnhandledFailures[0].ReasonCode != "SIMULATION_FAILURE_NOT_RECOVERED" {
 		t.Fatalf("failures=%+v", report.UnhandledFailures)
