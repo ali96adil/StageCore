@@ -10,47 +10,61 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
-// ExecutionSessionResolver resolves authoritative Session mode from either a
-// persisted ActionExecution (Cue path) or the single ACTIVE Session that owns
+// ExecutionSessionResolver resolves authoritative Session ownership from either
+// a persisted ActionExecution (Cue path) or the single ACTIVE Session that owns
 // an immutable Runtime Snapshot (direct Route-output path).
 type ExecutionSessionResolver interface {
-	SessionTypeForActionExecution(context.Context, string) (domain.SessionType, error)
-	SessionTypeForRuntimeSnapshotExecution(context.Context, string) (domain.SessionType, error)
+	SessionForActionExecution(context.Context, string) (domain.Session, error)
+	SessionForRuntimeSnapshotExecution(context.Context, string) (domain.Session, error)
 }
 
 // SessionExecutor is the F-024 safety boundary between runtime execution and
 // real capability transports. SIMULATION work is always consumed by the
-// deterministic simulator and never delegated to the physical executor.
+// session-scoped Digital Twin and never delegated to the physical executor.
 type SessionExecutor struct {
-	resolver   ExecutionSessionResolver
-	physical   capability.Executor
-	simulation capability.Executor
+	resolver    ExecutionSessionResolver
+	physical    capability.Executor
+	digitalTwin *DigitalTwin
 }
 
 func NewSessionExecutor(resolver ExecutionSessionResolver, physical capability.Executor) *SessionExecutor {
+	return NewSessionExecutorWithDigitalTwin(resolver, physical, NewDigitalTwin())
+}
+
+func NewSessionExecutorWithDigitalTwin(resolver ExecutionSessionResolver, physical capability.Executor, twin *DigitalTwin) *SessionExecutor {
 	return &SessionExecutor{
-		resolver:   resolver,
-		physical:   physical,
-		simulation: Adapter{},
+		resolver:    resolver,
+		physical:    physical,
+		digitalTwin: twin,
 	}
 }
 
 func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) capability.Result {
-	if e == nil || e.resolver == nil || e.physical == nil || e.simulation == nil {
+	if e == nil || e.resolver == nil || e.physical == nil || e.digitalTwin == nil {
 		return gateFailure("SIMULATION_GATE_UNAVAILABLE", "simulation execution gate is unavailable")
 	}
 	if strings.TrimSpace(req.ExecutionID) == "" && strings.TrimSpace(req.RuntimeSnapshotID) == "" {
 		return gateFailure("ACTION_EXECUTION_ID_REQUIRED", "action execution identity or runtime snapshot is required")
 	}
 
-	sessionType, err := e.resolveSessionType(ctx, req)
+	session, err := e.resolveSession(ctx, req)
 	if err != nil {
 		return gateFailure("SESSION_MODE_UNAVAILABLE", "authoritative session mode could not be resolved")
 	}
+	if session.Status != domain.SessionActive {
+		return gateFailure("SESSION_NOT_ACTIVE", "authoritative execution session is not active")
+	}
 
-	switch sessionType {
+	// Canonicalize authority before either execution path. Caller-supplied
+	// SessionID/SnapshotID can never redirect Digital Twin state or physical
+	// execution to another Session.
+	req.SessionID = session.ID
+	req.ProjectID = session.ProjectID
+	req.RuntimeSnapshotID = session.RuntimeSnapshotID
+
+	switch session.Type {
 	case domain.SessionSimulation:
-		return e.simulation.Execute(ctx, req)
+		return e.digitalTwin.Execute(ctx, req)
 	case domain.SessionRehearsal, domain.SessionShow:
 		return e.physical.Execute(ctx, req)
 	default:
@@ -58,23 +72,23 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 	}
 }
 
-func (e *SessionExecutor) resolveSessionType(ctx context.Context, req capability.Request) (domain.SessionType, error) {
+func (e *SessionExecutor) resolveSession(ctx context.Context, req capability.Request) (domain.Session, error) {
 	executionID := strings.TrimSpace(req.ExecutionID)
 	if executionID != "" {
-		sessionType, err := e.resolver.SessionTypeForActionExecution(ctx, executionID)
+		session, err := e.resolver.SessionForActionExecution(ctx, executionID)
 		if err == nil {
-			return sessionType, nil
+			return session, nil
 		}
 		if !errors.Is(err, domain.ErrNotFound) {
-			return "", err
+			return domain.Session{}, err
 		}
 	}
 
 	snapshotID := strings.TrimSpace(req.RuntimeSnapshotID)
 	if snapshotID != "" {
-		return e.resolver.SessionTypeForRuntimeSnapshotExecution(ctx, snapshotID)
+		return e.resolver.SessionForRuntimeSnapshotExecution(ctx, snapshotID)
 	}
-	return "", domain.ErrNotFound
+	return domain.Session{}, domain.ErrNotFound
 }
 
 func gateFailure(code, summary string) capability.Result {

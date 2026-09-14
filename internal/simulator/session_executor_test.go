@@ -12,22 +12,22 @@ import (
 )
 
 type fakeSessionResolver struct {
-	actionSessionType   domain.SessionType
-	actionErr           error
-	snapshotSessionType domain.SessionType
-	snapshotErr         error
-	actionCalls         int
-	snapshotCalls       int
+	actionSession   domain.Session
+	actionErr       error
+	snapshotSession domain.Session
+	snapshotErr     error
+	actionCalls     int
+	snapshotCalls   int
 }
 
-func (f *fakeSessionResolver) SessionTypeForActionExecution(context.Context, string) (domain.SessionType, error) {
+func (f *fakeSessionResolver) SessionForActionExecution(context.Context, string) (domain.Session, error) {
 	f.actionCalls++
-	return f.actionSessionType, f.actionErr
+	return f.actionSession, f.actionErr
 }
 
-func (f *fakeSessionResolver) SessionTypeForRuntimeSnapshotExecution(context.Context, string) (domain.SessionType, error) {
+func (f *fakeSessionResolver) SessionForRuntimeSnapshotExecution(context.Context, string) (domain.Session, error) {
 	f.snapshotCalls++
-	return f.snapshotSessionType, f.snapshotErr
+	return f.snapshotSession, f.snapshotErr
 }
 
 type recordingExecutor struct {
@@ -42,14 +42,25 @@ func (e *recordingExecutor) Execute(_ context.Context, req capability.Request) c
 	return e.result
 }
 
+func activeSession(id string, sessionType domain.SessionType) domain.Session {
+	return domain.Session{
+		ID:                id,
+		ProjectID:         "project-1",
+		RuntimeSnapshotID: "snapshot-1",
+		Type:              sessionType,
+		Status:            domain.SessionActive,
+	}
+}
+
 func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{actionSessionType: domain.SessionSimulation}
+	resolver := &fakeSessionResolver{actionSession: activeSession("simulation-1", domain.SessionSimulation)}
 	physical := &recordingExecutor{result: capability.Result{
 		Result:          domain.ExecutionCompleted,
 		AckLevel:        contracts.AckDevice,
 		ResponseSummary: "physical output",
 	}}
-	executor := NewSessionExecutor(resolver, physical)
+	twin := NewDigitalTwin()
+	executor := NewSessionExecutorWithDigitalTwin(resolver, physical, twin)
 	parameters, err := json.Marshal(map[string]any{
 		"simulation":     map[string]any{"behavior": "COMPLETE", "message": "digital twin completion"},
 		"real_parameter": "preserved-but-not-dispatched",
@@ -60,6 +71,7 @@ func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
 
 	result := executor.Execute(context.Background(), capability.Request{
 		ExecutionID: "action-execution-1",
+		SessionID:   "spoofed-session",
 		Capability:  "osc.send",
 		Parameters:  parameters,
 		Target:      &capability.Target{Ref: "lighting.front", LogicalType: "osc"},
@@ -77,10 +89,16 @@ func TestSessionExecutorSimulationNeverCallsPhysicalExecutor(t *testing.T) {
 	if resolver.actionCalls != 1 || resolver.snapshotCalls != 0 {
 		t.Fatalf("resolver action calls=%d snapshot calls=%d", resolver.actionCalls, resolver.snapshotCalls)
 	}
+	if len(twin.Snapshot("simulation-1").Targets) != 1 {
+		t.Fatal("canonical simulation session did not receive twin state")
+	}
+	if len(twin.Snapshot("spoofed-session").Targets) != 0 {
+		t.Fatal("caller-supplied session contaminated twin state")
+	}
 }
 
 func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
-	resolver := &fakeSessionResolver{actionSessionType: domain.SessionSimulation}
+	resolver := &fakeSessionResolver{actionSession: activeSession("simulation-1", domain.SessionSimulation)}
 	physical := &recordingExecutor{}
 	executor := NewSessionExecutor(resolver, physical)
 	parameters, err := json.Marshal(map[string]any{
@@ -110,11 +128,12 @@ func TestSessionExecutorSimulationFailureIsDeterministic(t *testing.T) {
 
 func TestSessionExecutorRoutingFallsBackToRuntimeSnapshotAuthority(t *testing.T) {
 	resolver := &fakeSessionResolver{
-		actionErr:           domain.ErrNotFound,
-		snapshotSessionType: domain.SessionSimulation,
+		actionErr:       domain.ErrNotFound,
+		snapshotSession: activeSession("simulation-route", domain.SessionSimulation),
 	}
 	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}}
-	executor := NewSessionExecutor(resolver, physical)
+	twin := NewDigitalTwin()
+	executor := NewSessionExecutorWithDigitalTwin(resolver, physical, twin)
 
 	result := executor.Execute(context.Background(), capability.Request{
 		ExecutionID:       "route-execution-1",
@@ -130,29 +149,35 @@ func TestSessionExecutorRoutingFallsBackToRuntimeSnapshotAuthority(t *testing.T)
 	if resolver.actionCalls != 1 || resolver.snapshotCalls != 1 {
 		t.Fatalf("resolver action calls=%d snapshot calls=%d", resolver.actionCalls, resolver.snapshotCalls)
 	}
+	if len(twin.Snapshot("simulation-route").Targets) != 1 {
+		t.Fatal("route execution was not scoped to canonical simulation session")
+	}
 }
 
-func TestSessionExecutorRehearsalDelegatesToPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{actionSessionType: domain.SessionRehearsal}
+func TestSessionExecutorRehearsalDelegatesCanonicalSessionToPhysicalExecutor(t *testing.T) {
+	resolver := &fakeSessionResolver{actionSession: activeSession("rehearsal-1", domain.SessionRehearsal)}
 	physical := &recordingExecutor{result: capability.Result{
 		Result:          domain.ExecutionCompleted,
 		AckLevel:        contracts.AckDevice,
 		ResponseSummary: "real rehearsal output",
 	}}
 	executor := NewSessionExecutor(resolver, physical)
-	req := capability.Request{ExecutionID: "action-execution-3", Capability: "osc.send"}
+	req := capability.Request{ExecutionID: "action-execution-3", SessionID: "spoofed", Capability: "osc.send"}
 
 	result := executor.Execute(context.Background(), req)
 	if result.ResponseSummary != "real rehearsal output" || result.AckLevel != contracts.AckDevice {
 		t.Fatalf("result=%#v", result)
 	}
-	if physical.calls != 1 || physical.last.ExecutionID != req.ExecutionID {
+	if physical.calls != 1 || physical.last.ExecutionID != req.ExecutionID || physical.last.SessionID != "rehearsal-1" {
 		t.Fatalf("physical calls=%d last=%#v", physical.calls, physical.last)
+	}
+	if physical.last.ProjectID != "project-1" || physical.last.RuntimeSnapshotID != "snapshot-1" {
+		t.Fatalf("canonical physical authority=%#v", physical.last)
 	}
 }
 
 func TestSessionExecutorShowDelegatesToPhysicalExecutor(t *testing.T) {
-	resolver := &fakeSessionResolver{actionSessionType: domain.SessionShow}
+	resolver := &fakeSessionResolver{actionSession: activeSession("show-1", domain.SessionShow)}
 	physical := &recordingExecutor{result: capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}}
 	executor := NewSessionExecutor(resolver, physical)
 
@@ -176,8 +201,24 @@ func TestSessionExecutorFailsClosedWhenSessionModeCannotBeResolved(t *testing.T)
 	}
 }
 
+func TestSessionExecutorRejectsInactiveCanonicalSession(t *testing.T) {
+	session := activeSession("simulation-1", domain.SessionSimulation)
+	session.Status = domain.SessionCompleted
+	resolver := &fakeSessionResolver{actionSession: session}
+	physical := &recordingExecutor{}
+	executor := NewSessionExecutor(resolver, physical)
+
+	result := executor.Execute(context.Background(), capability.Request{ExecutionID: "action-execution-6", Capability: "osc.send"})
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != "SESSION_NOT_ACTIVE" {
+		t.Fatalf("result=%#v", result)
+	}
+	if physical.calls != 0 {
+		t.Fatalf("inactive session reached physical executor %d time(s)", physical.calls)
+	}
+}
+
 func TestSessionExecutorRequiresPersistedExecutionAuthority(t *testing.T) {
-	resolver := &fakeSessionResolver{actionSessionType: domain.SessionShow}
+	resolver := &fakeSessionResolver{actionSession: activeSession("show-1", domain.SessionShow)}
 	physical := &recordingExecutor{}
 	executor := NewSessionExecutor(resolver, physical)
 

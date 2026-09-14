@@ -56,6 +56,7 @@ type App struct {
 	CompanionRuntime  *companionchannel.RuntimeChannel
 	CueEngine         *cueengine.Engine
 	RoutingEngine     *routing.Engine
+	DigitalTwin       *simulator.DigitalTwin
 	OSCPlugin         *pluginhost.Host
 	OSCInput          *oscinputplugin.Host
 }
@@ -198,7 +199,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, fmt.Errorf("register Companion target dispatch: %w", err)
 	}
 
-	cueExecutor := simulator.NewSessionExecutor(s, registry)
+	digitalTwin := simulator.NewDigitalTwin()
+	cueExecutor := simulator.NewSessionExecutorWithDigitalTwin(s, registry, digitalTwin)
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
 		HubSecurity: hubSecurity, SecretStore: secrets,
@@ -206,7 +208,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
-		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.NewSimulationSafe(s, registry),
+		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.NewSimulationSafeWithDigitalTwin(s, registry, digitalTwin),
+		DigitalTwin: digitalTwin,
 		OSCPlugin: oscHost,
 	}, nil
 }
