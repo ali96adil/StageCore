@@ -42,12 +42,25 @@ func TestSimulationSafeRoutingContainsDirectOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRouteEventTypes(t, events, []string{"input.received", "route.triggered", "route.action.completed"})
+	assertRouteEventTypes(t, events, []string{"input.received", "route.triggered", "simulation.execution.completed", "route.action.completed"})
+
+	var simulationPayload struct {
+		Scope    string `json:"scope"`
+		AckLevel string `json:"ack_level"`
+		Result   string `json:"result"`
+	}
+	if err := json.Unmarshal(events[2].Payload, &simulationPayload); err != nil {
+		t.Fatal(err)
+	}
+	if simulationPayload.Scope != "SIMULATION_ONLY" || simulationPayload.AckLevel != string(contracts.AckNone) || simulationPayload.Result != string(domain.ExecutionCompleted) {
+		t.Fatalf("simulation execution trace=%#v", simulationPayload)
+	}
+
 	var actionPayload struct {
 		AckLevel string `json:"ack_level"`
 		Result   string `json:"result"`
 	}
-	if err := json.Unmarshal(events[2].Payload, &actionPayload); err != nil {
+	if err := json.Unmarshal(events[3].Payload, &actionPayload); err != nil {
 		t.Fatal(err)
 	}
 	if actionPayload.AckLevel != string(contracts.AckNone) || actionPayload.Result != string(domain.ExecutionCompleted) {
