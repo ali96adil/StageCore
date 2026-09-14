@@ -94,7 +94,7 @@ func TestOperatorSimulationReportAndInputRBACPreserveNoRealOutput(t *testing.T) 
 	}, []domain.RouteAction{{
 		OrderIndex: 0,
 		OutputID:   &outputID,
-		Parameters: json.RawMessage(`{}`),
+		Parameters: json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
 	}}); err != nil {
 		t.Fatal(err)
 	}
