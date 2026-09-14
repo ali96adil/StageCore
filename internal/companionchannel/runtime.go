@@ -54,6 +54,7 @@ type runtimeConnection struct {
 type runtimeExecution struct {
 	companionID string
 	executionID string
+	connection  *runtimeConnection
 	done        chan struct{}
 	result      ExecutionResult
 	completed   bool
@@ -176,10 +177,15 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 		c.mu.Unlock()
 		return failed(request.ExecutionID, "COMPANION_CHANNEL_BUSY", "Companion runtime result window is full", domain.ExecutionFailed)
 	}
-	record := &runtimeExecution{companionID: request.CompanionID, executionID: request.ExecutionID, done: make(chan struct{})}
+	connection := c.connections[request.CompanionID]
+	record := &runtimeExecution{
+		companionID: request.CompanionID,
+		executionID: request.ExecutionID,
+		connection:  connection,
+		done:        make(chan struct{}),
+	}
 	c.executions[key] = record
 	c.executionOrder = append(c.executionOrder, key)
-	connection := c.connections[request.CompanionID]
 	c.mu.Unlock()
 
 	if connection == nil {
@@ -303,7 +309,14 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 		}
 		switch header.Type {
 		case "companion.hello":
-			if err := c.updateHello(ctx, connection, data); err != nil {
+			c.mu.Lock()
+			if c.connections[connection.companionID] != connection {
+				c.mu.Unlock()
+				return
+			}
+			err := c.updateHello(ctx, connection, data)
+			c.mu.Unlock()
+			if err != nil {
 				return
 			}
 		case "execution.result":
@@ -319,10 +332,11 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 }
 
 func (c *RuntimeChannel) acceptHello(ctx context.Context, connection *runtimeConnection, data []byte) error {
+	c.mu.Lock()
 	if err := c.updateHello(ctx, connection, data); err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	c.mu.Lock()
 	old := c.connections[connection.companionID]
 	c.connections[connection.companionID] = connection
 	c.mu.Unlock()
@@ -387,12 +401,15 @@ func (c *RuntimeChannel) updateHello(ctx context.Context, connection *runtimeCon
 	default:
 		return errors.New("invalid Companion readiness")
 	}
-	_, err := c.store.UpdateCompanionReport(ctx, connection.companionID, store.CompanionReportParams{
+	companion, err := c.store.UpdateCompanionReport(ctx, connection.companionID, store.CompanionReportParams{
 		DisplayName: hello.DisplayName, Hostname: hello.Hostname, Platform: hello.Platform,
 		Architecture: hello.Architecture, Version: hello.AgentVersion, Capabilities: hello.Capabilities,
 		Readiness: readiness, AppliedRuntimeSnapshotID: hello.AppliedRuntimeSnapshotID, ConfigHash: hello.ConfigHash,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return c.updateRoleStateFromFreshReport(ctx, companion)
 }
 
 func (c *RuntimeChannel) acceptResult(connection *runtimeConnection, data []byte) {
@@ -409,7 +426,7 @@ func (c *RuntimeChannel) acceptResult(connection *runtimeConnection, data []byte
 	c.mu.Lock()
 	record := c.executions[key]
 	c.mu.Unlock()
-	if record == nil {
+	if record == nil || record.connection != connection {
 		return
 	}
 	c.finish(key, resultFromWire(wire))
@@ -457,10 +474,11 @@ func (c *RuntimeChannel) removeConnection(connection *runtimeConnection) {
 	c.mu.Lock()
 	if c.connections[connection.companionID] == connection {
 		delete(c.connections, connection.companionID)
+		_ = c.store.MarkCompanionRuntimeDisconnected(context.Background(), connection.companionID)
 	}
 	pending := make(map[string]string)
 	for key, execution := range c.executions {
-		if execution.companionID == connection.companionID && !execution.completed {
+		if execution.connection == connection && !execution.completed {
 			pending[key] = execution.executionID
 		}
 	}
