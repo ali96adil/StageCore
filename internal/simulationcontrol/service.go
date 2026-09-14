@@ -28,14 +28,14 @@ type Service struct {
 }
 
 type StartRequest struct {
-	ProjectID     string
-	Name          string
-	Issuer        string
-	RequestID     string
-	StartKind     domain.SessionStartPositionKind
-	StartCueID    string
-	EndCueID      string
-	CheckpointID  string
+	ProjectID    string
+	Name         string
+	Issuer       string
+	RequestID    string
+	StartKind    domain.SessionStartPositionKind
+	StartCueID   string
+	EndCueID     string
+	CheckpointID string
 }
 
 type CueRequest struct {
@@ -54,13 +54,13 @@ type StopRequest struct {
 }
 
 type Status struct {
-	ProjectID         string                         `json:"project_id"`
-	RuntimeSnapshotID string                         `json:"runtime_snapshot_id,omitempty"`
-	Session           *domain.Session                `json:"session,omitempty"`
-	Twin              simulator.SessionSnapshot      `json:"digital_twin"`
-	Checkpoints       []domain.SimulationCheckpoint  `json:"checkpoints"`
-	CueExecutions     []domain.CueExecution          `json:"cue_executions"`
-	Events            []contracts.EventEnvelope      `json:"events"`
+	ProjectID         string                        `json:"project_id"`
+	RuntimeSnapshotID string                        `json:"runtime_snapshot_id,omitempty"`
+	Session           *domain.Session               `json:"session,omitempty"`
+	Twin              simulator.SessionSnapshot     `json:"digital_twin"`
+	Checkpoints       []domain.SimulationCheckpoint `json:"checkpoints"`
+	CueExecutions     []domain.CueExecution         `json:"cue_executions"`
+	Events            []contracts.EventEnvelope     `json:"events"`
 }
 
 func New(s *store.Store, engine *cueengine.Engine, twin *simulator.DigitalTwin) *Service {
@@ -68,9 +68,9 @@ func New(s *store.Store, engine *cueengine.Engine, twin *simulator.DigitalTwin) 
 		return nil
 	}
 	return &Service{
-		store: s,
-		engine: engine,
-		twin: twin,
+		store:       s,
+		engine:      engine,
+		twin:        twin,
 		checkpoints: simulator.NewCheckpointManager(s, twin),
 	}
 }
@@ -125,9 +125,9 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (domain.Session, 
 		return finish(domain.Session{}, rejected(command.CommandID, "INVALID_SIMULATION_START", err.Error(), project.ID))
 	}
 	session, err := s.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
-		SnapshotID: snapshot.ID,
-		SessionType: domain.SessionSimulation,
-		Name: strings.TrimSpace(req.Name),
+		SnapshotID:    snapshot.ID,
+		SessionType:   domain.SessionSimulation,
+		Name:          strings.TrimSpace(req.Name),
 		StartPosition: position,
 	})
 	if err != nil {
@@ -152,18 +152,18 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (domain.Session, 
 		}
 	}
 	if err := s.appendEvent(ctx, session, "simulation.started", command, map[string]any{
-		"session_id": session.ID,
-		"start_position": session.StartPosition,
+		"session_id":        session.ID,
+		"start_position":    session.StartPosition,
 		"physical_dispatch": false,
 	}); err != nil {
 		abort("SIMULATION_STARTED_EVENT_FAILED")
 		return finish(domain.Session{}, failed(command.CommandID, "SIMULATION_STARTED_EVENT_FAILED", err.Error(), session.ID))
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"session_id": session.ID,
-		"session_type": session.Type,
+		"session_id":          session.ID,
+		"session_type":        session.Type,
 		"runtime_snapshot_id": session.RuntimeSnapshotID,
-		"start_position": session.StartPosition,
+		"start_position":      session.StartPosition,
 	})
 	return finish(session, contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
@@ -221,8 +221,8 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	}
 	payload, _ := json.Marshal(cueengine.CueGoPayload{
 		ExpectedCurrentCueID: req.ExpectedCurrentCueID,
-		RequestedNextCueID: req.RequestedCueID,
-		OperatorNote: req.OperatorNote,
+		RequestedNextCueID:   req.RequestedCueID,
+		OperatorNote:         req.OperatorNote,
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
 	return s.engine.ExecuteCueGo(ctx, session.ID, command)
@@ -262,11 +262,11 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) contracts.CommandRe
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
 
-func (s *Service) ConfirmStartState(ctx context.Context, sessionID, issuer string) (domain.Session, error) {
+func (s *Service) ConfirmStartState(ctx context.Context, sessionID, _ string) (domain.Session, error) {
 	if s == nil {
 		return domain.Session{}, fmt.Errorf("simulation control is unavailable")
 	}
-	if err := s.store.ConfirmSimulationStartState(ctx, strings.TrimSpace(sessionID), strings.TrimSpace(issuer)); err != nil {
+	if err := s.store.ConfirmSimulationStartState(ctx, strings.TrimSpace(sessionID)); err != nil {
 		return domain.Session{}, err
 	}
 	return s.store.GetSessionFoundation(ctx, strings.TrimSpace(sessionID))
@@ -385,7 +385,9 @@ func (s *Service) sessionFromResult(ctx context.Context, result contracts.Comman
 	if result.Status != contracts.CommandCompleted || len(result.Payload) == 0 {
 		return domain.Session{}
 	}
-	var payload struct { SessionID string `json:"session_id"` }
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
 	if json.Unmarshal(result.Payload, &payload) != nil || strings.TrimSpace(payload.SessionID) == "" {
 		return domain.Session{}
 	}
@@ -402,49 +404,61 @@ func (s *Service) appendEvent(ctx context.Context, session domain.Session, event
 		return err
 	}
 	_, err = s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
-		EventType: eventType,
-		SchemaVersion: contracts.SchemaVersion1,
-		Source: "hub.simulation_control",
-		ProjectID: session.ProjectID,
+		EventType:         eventType,
+		SchemaVersion:     contracts.SchemaVersion1,
+		Source:            "hub.simulation_control",
+		ProjectID:         session.ProjectID,
 		RuntimeSnapshotID: session.RuntimeSnapshotID,
-		CorrelationID: command.CorrelationID,
-		CausationID: command.CommandID,
-		Priority: "P1",
-		TraceContext: json.RawMessage(`{}`),
-		Payload: body,
+		CorrelationID:     command.CorrelationID,
+		CausationID:       command.CommandID,
+		Priority:          "P1",
+		TraceContext:      json.RawMessage(`{}`),
+		Payload:           body,
 	})
 	return err
 }
 
 func commandEnvelope(requestID, commandType, projectID, snapshotID, issuer string, payload json.RawMessage) contracts.CommandEnvelope {
 	return contracts.CommandEnvelope{
-		CommandID: requestID,
-		CommandType: commandType,
-		SchemaVersion: contracts.SchemaVersion1,
-		IssuedAt: time.Now().UTC(),
-		ProjectID: projectID,
+		CommandID:         requestID,
+		CommandType:       commandType,
+		SchemaVersion:     contracts.SchemaVersion1,
+		IssuedAt:          time.Now().UTC(),
+		ProjectID:         projectID,
 		RuntimeSnapshotID: snapshotID,
-		Issuer: issuer,
-		CorrelationID: requestID,
-		Priority: "P1",
-		IdempotencyKey: requestID,
-		Payload: payload,
+		Issuer:            issuer,
+		CorrelationID:     requestID,
+		Priority:          "P1",
+		IdempotencyKey:    requestID,
+		Payload:           payload,
 	}
 }
 
 func rejected(commandID, code, message, affected string) contracts.CommandResult {
 	return contracts.CommandResult{
 		CommandID: commandID,
-		Status: contracts.CommandRejected,
-		Error: &contracts.ContractError{ErrorCode: code, Category: "VALIDATION", Message: message, Retryable: false, AffectedEntityID: affected},
+		Status:    contracts.CommandRejected,
+		Error: &contracts.ContractError{
+			ErrorCode:        code,
+			Category:         "VALIDATION",
+			Message:          message,
+			Retryable:        false,
+			AffectedEntityID: affected,
+		},
 	}
 }
 
 func failed(commandID, code, message, affected string) contracts.CommandResult {
 	return contracts.CommandResult{
 		CommandID: commandID,
-		Status: contracts.CommandFailed,
-		Error: &contracts.ContractError{ErrorCode: code, Category: "INTERNAL", Message: message, Retryable: false, AffectedEntityID: affected},
+		Status:    contracts.CommandFailed,
+		Error: &contracts.ContractError{
+			ErrorCode:        code,
+			Category:         "INTERNAL",
+			Message:          message,
+			Retryable:        false,
+			AffectedEntityID: affected,
+		},
 	}
 }
 
