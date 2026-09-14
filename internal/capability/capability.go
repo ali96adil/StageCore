@@ -26,11 +26,16 @@ type Request struct {
 	Issuer            string
 	CausationID       string
 	Capability        string
-	Target            *Target
-	Parameters        json.RawMessage
-	Priority          string
-	TimeoutMS         int64
-	CorrelationID     string
+	// LogicalTargetRef preserves the authored action/output target identity even
+	// when the immutable Runtime Snapshot has no resolved target alias. Physical
+	// executors continue to use Target; simulation/reporting may use this field to
+	// truthfully expose missing mappings instead of collapsing them to a capability.
+	LogicalTargetRef string
+	Target           *Target
+	Parameters       json.RawMessage
+	Priority         string
+	TimeoutMS        int64
+	CorrelationID    string
 }
 
 type Result struct {
