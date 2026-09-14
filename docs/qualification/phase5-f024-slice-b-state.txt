@@ -1,0 +1,2 @@
+F-024 Slice B candidate branch: phase5/f024-digital-twin-state
+Qualification policy: exact-head CI only; physical Raspberry Pi qualification deferred under #148.
