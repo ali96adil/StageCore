@@ -408,6 +408,15 @@ func (d *DigitalTwin) executeScenario(ctx context.Context, sessionID, targetRef 
 			code = "SIMULATED_FAILURE"
 		}
 		return twinFailure(code, scenarioMessage(scenario, "simulated failure"))
+	case "UNAVAILABLE", "CAPABILITY_UNAVAILABLE":
+		if interrupted := waitDelay(ctx, scenario.DelayMS); interrupted != nil {
+			return fromContext(interrupted)
+		}
+		code := strings.TrimSpace(scenario.ErrorCode)
+		if code == "" {
+			code = "SIM_CAPABILITY_UNAVAILABLE"
+		}
+		return twinFailure(code, scenarioMessage(scenario, "simulated capability unavailable"))
 	case "REJECT":
 		if interrupted := waitDelay(ctx, scenario.DelayMS); interrupted != nil {
 			return fromContext(interrupted)
@@ -671,7 +680,7 @@ func sameFaultSelector(a, b FaultScenario) bool {
 
 func validFaultBehavior(behavior string) bool {
 	switch behavior {
-	case "COMPLETE", "DELAY", "FAIL", "TIMEOUT", "OFFLINE", "DISCONNECT", "REJECT", "RECONNECT":
+	case "COMPLETE", "DELAY", "FAIL", "TIMEOUT", "OFFLINE", "DISCONNECT", "REJECT", "RECONNECT", "UNAVAILABLE", "CAPABILITY_UNAVAILABLE":
 		return true
 	default:
 		return false
