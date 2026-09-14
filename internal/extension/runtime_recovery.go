@@ -19,10 +19,12 @@ var extensionStartupRecoveryPolicy = recovery.BackoffPolicy{
 // handshake failures. Integrity, permission, isolation, configuration and
 // other failures remain fail-fast.
 //
-// This is component liveness recovery only. It does not replay Cue/Action
-// commands and does not alter the F-020 runtime recovery decision contract,
-// where command replay remains unauthorized.
+// The production bounded-recovery path also enables ongoing bounded crash
+// recovery for subsequently supervised extension processes. Both paths restore
+// component liveness only: neither authorizes Cue/Action or transport command
+// replay, and the F-020 runtime recovery decision remains fail-closed.
 func (s *RuntimeSupervisor) ReconcileBounded(ctx context.Context) error {
+	s.EnableAutomaticCrashRecovery()
 	return s.reconcileBounded(ctx, extensionStartupRecoveryPolicy)
 }
 

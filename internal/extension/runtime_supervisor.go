@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	RuntimeLifecycleErrorProcessExited = "RUNTIME_PROCESS_EXITED"
-	RuntimeLifecycleErrorStartFailed   = "RUNTIME_START_FAILED"
-	RuntimeLifecycleErrorProbeFailed   = "RUNTIME_PROBE_FAILED"
+	RuntimeLifecycleErrorProcessExited          = "RUNTIME_PROCESS_EXITED"
+	RuntimeLifecycleErrorStartFailed            = "RUNTIME_START_FAILED"
+	RuntimeLifecycleErrorProbeFailed            = "RUNTIME_PROBE_FAILED"
+	RuntimeLifecycleErrorCrashRecoveryExhausted = "RUNTIME_CRASH_RECOVERY_EXHAUSTED"
 )
 
 var ErrRuntimeLifecycleNotReady = errors.New("extension runtime lifecycle is not ready")
@@ -75,6 +76,12 @@ type RuntimeSupervisor struct {
 
 	mu        sync.Mutex
 	processes map[string]*supervisedRuntime
+
+	recoveryMu             sync.Mutex
+	automaticCrashRecovery bool
+	recoveryClosed         bool
+	crashRecoveries        map[string]*runtimeCrashRecovery
+	crashBudgets           map[string]*runtimeCrashBudget
 }
 
 func NewRuntimeSupervisor(installer *Installer, isolator *RuntimeIsolator, probe runtimeLifecycleProbe) (*RuntimeSupervisor, error) {
@@ -90,11 +97,13 @@ func NewRuntimeSupervisor(installer *Installer, isolator *RuntimeIsolator, probe
 		return nil, err
 	}
 	supervisor := &RuntimeSupervisor{
-		installer:  installer,
-		isolator:   isolator,
-		probe:      probe,
-		activeRoot: activeRoot,
-		processes:  make(map[string]*supervisedRuntime),
+		installer:        installer,
+		isolator:         isolator,
+		probe:            probe,
+		activeRoot:       activeRoot,
+		processes:        make(map[string]*supervisedRuntime),
+		crashRecoveries:  make(map[string]*runtimeCrashRecovery),
+		crashBudgets:     make(map[string]*runtimeCrashBudget),
 		hostFactory: func(command string, args []string, manifest pluginhost.Manifest) runtimeLifecycleHost {
 			return pluginhost.New(command, args, nil, io.Discard, manifest)
 		},
@@ -124,6 +133,9 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 		return RuntimeLifecycleStatus{}, fmt.Errorf("installation ID and actor are required")
 	}
 
+	// Operator intent takes precedence over any pending automatic recovery.
+	s.cancelCrashRecovery(installationID)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -149,6 +161,7 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 	if err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
+	s.resetCrashBudget(installationID)
 	if err := s.startGenerationLocked(ctx, lifecycle); err != nil {
 		code := runtimeLifecycleErrorCode(err)
 		_, _ = s.installer.library.store.UpdateExtensionRuntimeObservedState(context.Background(), installationID, lifecycle.Generation, store.ExtensionRuntimeObservedFailed, code, err.Error())
@@ -171,6 +184,10 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 		return RuntimeLifecycleStatus{}, fmt.Errorf("installation ID and actor are required")
 	}
 
+	// Cancel before waiting on the process mutex so an in-flight recovery probe
+	// or backoff observes cancellation as early as possible.
+	s.cancelCrashRecovery(installationID)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -181,6 +198,10 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	if err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
+	// Catch a recovery scheduled between the first cancellation and the durable
+	// desired-state generation change, then reset the per-generation budget.
+	s.cancelCrashRecovery(installationID)
+	s.resetCrashBudget(installationID)
 	if process := s.processes[installationID]; process != nil {
 		delete(s.processes, installationID)
 		process.host.Close()
@@ -240,6 +261,10 @@ func (s *RuntimeSupervisor) Close() error {
 	if s == nil {
 		return nil
 	}
+	// Prevent any crash watcher from scheduling a new recovery while shutdown is
+	// draining supervised processes, and cancel pending retry/backoff immediately.
+	s.stopAutomaticCrashRecovery()
+
 	s.mu.Lock()
 	processes := make(map[string]*supervisedRuntime, len(s.processes))
 	for installationID, process := range s.processes {
@@ -356,9 +381,9 @@ func (s *RuntimeSupervisor) watch(installationID string, process *supervisedRunt
 	waitErr := process.host.Wait()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	current := s.processes[installationID]
 	if current != process {
+		s.mu.Unlock()
 		return
 	}
 	delete(s.processes, installationID)
@@ -371,6 +396,12 @@ func (s *RuntimeSupervisor) watch(installationID string, process *supervisedRunt
 		message = waitErr.Error()
 	}
 	_, _ = s.installer.library.store.UpdateExtensionRuntimeObservedState(context.Background(), installationID, process.generation, store.ExtensionRuntimeObservedFailed, RuntimeLifecycleErrorProcessExited, message)
+	s.mu.Unlock()
+
+	// Recovery is scheduled only after the crashed process is fully removed and
+	// its failure is durably observed. Scheduling re-checks desired-state and
+	// generation authority before any retry can start.
+	s.scheduleCrashRecovery(installationID, process.generation)
 }
 
 func (s *RuntimeSupervisor) statusLocked(ctx context.Context, installationID string) (RuntimeLifecycleStatus, error) {
