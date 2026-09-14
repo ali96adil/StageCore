@@ -31,7 +31,6 @@ func TestConfiguredDigitalTwinFaultFlowsThroughCueExecution(t *testing.T) {
 	physical := &physicalExecutionProbe{}
 	twin := simulator.NewDigitalTwin()
 	if err := twin.ConfigureFault(f.session.ID, simulator.FaultScenario{
-		TargetRef:  "SIM",
 		Capability: "osc.send",
 		Behavior:   "FAIL",
 		ErrorCode:  "SIMULATED_OSC_DEVICE_FAULT",
