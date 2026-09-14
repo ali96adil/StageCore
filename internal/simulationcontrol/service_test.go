@@ -113,8 +113,10 @@ func TestOperatorSimulationStartGoFaultCheckpointNeverReachesPhysicalExecutor(t 
 		t.Fatalf("checkpoint=%+v", checkpoint)
 	}
 
+	// SIM-TARGET is intentionally not present in the Runtime Snapshot target
+	// alias table. Faulting by capability is therefore the truthful selector for
+	// this missing-mapping case; Slice E reports that authored target separately.
 	if err := control.ConfigureFault(ctx, session.ID, simulator.FaultScenario{
-		TargetRef: "SIM-TARGET",
 		Capability: "osc.send",
 		Behavior: "FAIL",
 		ErrorCode: "VIRTUAL_DEVICE_FAILURE",
