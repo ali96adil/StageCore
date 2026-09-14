@@ -97,8 +97,14 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (domain.Session, 
 	if snapshot == nil {
 		return domain.Session{}, rejected(req.RequestID, "SNAPSHOT_REQUIRED", "a published Runtime Snapshot is required", project.ID)
 	}
-
-	command := commandEnvelope(req.RequestID, CommandStart, project.ID, snapshot.ID, req.Issuer, json.RawMessage(`{}`))
+	commandPayload, _ := json.Marshal(map[string]any{
+		"name":          strings.TrimSpace(req.Name),
+		"start_kind":    req.StartKind,
+		"start_cue_id":  strings.TrimSpace(req.StartCueID),
+		"end_cue_id":    strings.TrimSpace(req.EndCueID),
+		"checkpoint_id": strings.TrimSpace(req.CheckpointID),
+	})
+	command := commandEnvelope(req.RequestID, CommandStart, project.ID, snapshot.ID, req.Issuer, commandPayload)
 	if existing, terminal, ok := s.reserve(ctx, command); !ok {
 		if terminal {
 			return s.sessionFromResult(ctx, existing), existing
@@ -219,9 +225,14 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 			return rejected(req.RequestID, "SIMULATION_CHECKPOINT_RESTORE_REQUIRED", "checkpoint state has not been restored and verified in the virtual runtime", session.ID)
 		}
 	}
+	requested := req.RequestedCueID
+	if requested == nil && session.CurrentCueID == nil && session.NextCueID != nil {
+		value := *session.NextCueID
+		requested = &value
+	}
 	payload, _ := json.Marshal(cueengine.CueGoPayload{
 		ExpectedCurrentCueID: req.ExpectedCurrentCueID,
-		RequestedNextCueID:   req.RequestedCueID,
+		RequestedNextCueID:   requested,
 		OperatorNote:         req.OperatorNote,
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
@@ -252,11 +263,11 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) contracts.CommandRe
 	if session.Type != domain.SessionSimulation || session.Status != domain.SessionActive || session.LifecycleState != domain.SessionLifecycleActive {
 		return finish(rejected(command.CommandID, "SIMULATION_NOT_ACTIVE", "an ACTIVE SIMULATION Session is required", session.ID))
 	}
-	if err := s.appendEvent(ctx, session, "simulation.stopped", command, map[string]any{"session_id": session.ID}); err != nil {
-		return finish(failed(command.CommandID, "SIMULATION_STOP_EVENT_FAILED", err.Error(), session.ID))
-	}
 	if err := s.store.EndSessionLifecycle(ctx, session.ID, domain.SessionLifecycleStopped, "operator stopped simulation"); err != nil {
 		return finish(fromStoreError(command.CommandID, "SIMULATION_STOP_FAILED", err, session.ID))
+	}
+	if err := s.appendEvent(ctx, session, "simulation.stopped", command, map[string]any{"session_id": session.ID}); err != nil {
+		return finish(failed(command.CommandID, "SIMULATION_STOP_EVENT_FAILED", err.Error(), session.ID))
 	}
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
