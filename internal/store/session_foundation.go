@@ -58,7 +58,7 @@ func (s *Store) CreateSessionAtPosition(ctx context.Context, p CreateSessionFoun
 		return domain.Session{}, fmt.Errorf("%w: session requires PUBLISHED snapshot", domain.ErrConflict)
 	}
 
-	var nextCueID *string
+	var nextCueID, initialCurrentCueID, initialLastCompletedCueID *string
 	truth := domain.SessionStateTruth{
 		Version:           domain.SessionContractVersion1,
 		RestorationStatus: domain.SessionRestorationNotAssessed,
@@ -77,23 +77,82 @@ func (s *Store) CreateSessionAtPosition(ctx context.Context, p CreateSessionFoun
 		if cueID == nil {
 			return domain.Session{}, fmt.Errorf("%w: CUE start requires cue_id", domain.ErrInvalidInput)
 		}
-		var enabled int
-		if err := s.db.QueryRowContext(ctx, `
-			SELECT enabled FROM cues WHERE cue_id = ? AND revision_id = ?`, *cueID, revisionID).Scan(&enabled); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return domain.Session{}, fmt.Errorf("%w: start cue is not part of the Runtime Snapshot", domain.ErrConflict)
-			}
-			return domain.Session{}, fmt.Errorf("read session start cue: %w", err)
-		}
-		if enabled != 1 {
-			return domain.Session{}, fmt.Errorf("%w: start cue is disabled", domain.ErrConflict)
+		if err := s.requireEnabledCueInRevision(ctx, revisionID, *cueID); err != nil {
+			return domain.Session{}, err
 		}
 		position.CueID = cueID
 		nextCueID = cueID
 		truth.RestorationStatus = domain.SessionRestorationManualConfirmationRequired
 		truth.ManualConfirmationRequired = true
-	case domain.SessionStartScene, domain.SessionStartRange, domain.SessionStartCheckpoint:
-		return domain.Session{}, fmt.Errorf("%w: %s start is reserved for a later F-027 slice", domain.ErrConflict, position.Kind)
+	case domain.SessionStartRange:
+		if p.SessionType != domain.SessionSimulation {
+			return domain.Session{}, fmt.Errorf("%w: RANGE start is currently simulation-only", domain.ErrConflict)
+		}
+		startCueID := cleanOptional(position.CueID)
+		if startCueID == nil {
+			return domain.Session{}, fmt.Errorf("%w: RANGE start requires cue_id", domain.ErrInvalidInput)
+		}
+		var metadata domain.SimulationRangeMetadata
+		if err := json.Unmarshal(position.Metadata, &metadata); err != nil {
+			return domain.Session{}, fmt.Errorf("%w: invalid RANGE metadata", domain.ErrInvalidInput)
+		}
+		metadata.EndCueID = strings.TrimSpace(metadata.EndCueID)
+		if metadata.EndCueID == "" {
+			return domain.Session{}, fmt.Errorf("%w: RANGE metadata requires end_cue_id", domain.ErrInvalidInput)
+		}
+		startOrder, err := s.enabledCueOrder(ctx, revisionID, *startCueID)
+		if err != nil {
+			return domain.Session{}, err
+		}
+		endOrder, err := s.enabledCueOrder(ctx, revisionID, metadata.EndCueID)
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if startOrder > endOrder || (startOrder == endOrder && *startCueID > metadata.EndCueID) {
+			return domain.Session{}, fmt.Errorf("%w: RANGE start cue must not follow end cue", domain.ErrInvalidInput)
+		}
+		position.CueID = startCueID
+		nextCueID = startCueID
+		firstCueID, err := s.firstEnabledCueID(ctx, revisionID)
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if firstCueID != nil && *firstCueID == *startCueID {
+			truth.RestorationStatus = domain.SessionRestorationNotRequired
+		} else {
+			truth.RestorationStatus = domain.SessionRestorationManualConfirmationRequired
+			truth.ManualConfirmationRequired = true
+		}
+	case domain.SessionStartCheckpoint:
+		if p.SessionType != domain.SessionSimulation {
+			return domain.Session{}, fmt.Errorf("%w: CHECKPOINT start is currently simulation-only", domain.ErrConflict)
+		}
+		if position.CueID != nil {
+			return domain.Session{}, fmt.Errorf("%w: CHECKPOINT start derives cue position from checkpoint", domain.ErrInvalidInput)
+		}
+		var metadata domain.SimulationCheckpointStartMetadata
+		if err := json.Unmarshal(position.Metadata, &metadata); err != nil {
+			return domain.Session{}, fmt.Errorf("%w: invalid CHECKPOINT metadata", domain.ErrInvalidInput)
+		}
+		metadata.CheckpointID = strings.TrimSpace(metadata.CheckpointID)
+		if metadata.CheckpointID == "" {
+			return domain.Session{}, fmt.Errorf("%w: CHECKPOINT metadata requires checkpoint_id", domain.ErrInvalidInput)
+		}
+		checkpoint, err := s.GetSimulationCheckpoint(ctx, metadata.CheckpointID)
+		if err != nil {
+			return domain.Session{}, err
+		}
+		if checkpoint.ProjectID != projectID || checkpoint.RuntimeSnapshotID != p.SnapshotID {
+			return domain.Session{}, fmt.Errorf("%w: checkpoint does not belong to the requested Runtime Snapshot", domain.ErrConflict)
+		}
+		initialCurrentCueID = checkpoint.CurrentCueID
+		initialLastCompletedCueID = checkpoint.LastCompletedCueID
+		nextCueID = checkpoint.NextCueID
+		position.CueID = checkpoint.NextCueID
+		truth.RestorationStatus = domain.SessionRestorationRestorable
+		truth.DesiredStateRef = &checkpoint.ID
+	case domain.SessionStartScene:
+		return domain.Session{}, fmt.Errorf("%w: SCENE start is unavailable because the published project schema has no Scene model", domain.ErrConflict)
 	case domain.SessionStartUnspecified:
 		return domain.Session{}, fmt.Errorf("%w: UNSPECIFIED is reserved for migrated historical sessions", domain.ErrInvalidInput)
 	default:
@@ -108,20 +167,56 @@ func (s *Store) CreateSessionAtPosition(ctx context.Context, p CreateSessionFoun
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO sessions (
 			session_id, project_id, runtime_snapshot_id, session_type, name,
-			started_at_us, status, session_contract_version, lifecycle_state,
+			started_at_us, status, current_cue_id, session_contract_version, lifecycle_state,
 			start_position_version, start_position_kind, start_cue_id,
-			start_position_metadata_json, next_cue_id, state_truth_version,
+			start_position_metadata_json, last_completed_cue_id, next_cue_id, state_truth_version,
 			restoration_status, desired_state_ref, verified_state_ref,
 			manual_confirmation_required
-		) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, projectID, p.SnapshotID, p.SessionType, strings.TrimSpace(p.Name), clock.UnixMicros(now),
-		domain.SessionContractVersion1, position.Version, position.Kind, nullableString(position.CueID), metadataJSON,
-		nullableString(nextCueID), truth.Version, truth.RestorationStatus, boolInt(truth.ManualConfirmationRequired),
+		nullableString(initialCurrentCueID), domain.SessionContractVersion1, position.Version, position.Kind,
+		nullableString(position.CueID), metadataJSON, nullableString(initialLastCompletedCueID), nullableString(nextCueID),
+		truth.Version, truth.RestorationStatus, nullableString(truth.DesiredStateRef), nullableString(truth.VerifiedStateRef),
+		boolInt(truth.ManualConfirmationRequired),
 	)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("insert session foundation: %w", err)
 	}
 	return s.GetSessionFoundation(ctx, sessionID)
+}
+
+func (s *Store) requireEnabledCueInRevision(ctx context.Context, revisionID, cueID string) error {
+	_, err := s.enabledCueOrder(ctx, revisionID, cueID)
+	return err
+}
+
+func (s *Store) enabledCueOrder(ctx context.Context, revisionID, cueID string) (int64, error) {
+	var order int64
+	var enabled int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT order_index, enabled FROM cues WHERE cue_id = ? AND revision_id = ?`, cueID, revisionID).Scan(&order, &enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("%w: cue is not part of the Runtime Snapshot", domain.ErrConflict)
+		}
+		return 0, fmt.Errorf("read session start cue: %w", err)
+	}
+	if enabled != 1 {
+		return 0, fmt.Errorf("%w: cue is disabled", domain.ErrConflict)
+	}
+	return order, nil
+}
+
+func (s *Store) firstEnabledCueID(ctx context.Context, revisionID string) (*string, error) {
+	var cueID string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT cue_id FROM cues WHERE revision_id = ? AND enabled = 1
+		ORDER BY order_index, cue_id LIMIT 1`, revisionID).Scan(&cueID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read first enabled cue: %w", err)
+	}
+	return &cueID, nil
 }
 
 func (s *Store) GetSessionFoundation(ctx context.Context, sessionID string) (domain.Session, error) {
