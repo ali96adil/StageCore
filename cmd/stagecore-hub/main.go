@@ -175,7 +175,7 @@ func main() {
 			logger.Error("extension runtime supervisor shutdown failed", "error", err)
 		}
 	}()
-	if err := extensionRuntimeSupervisor.Reconcile(ctx); err != nil {
+	if err := extensionRuntimeSupervisor.ReconcileBounded(ctx); err != nil {
 		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
 	}
 
