@@ -6,11 +6,14 @@ import (
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-// NewSimulationSafe constructs Routing with the same F-024 execution boundary
-// used by Cue GO. Direct Route outputs resolve Session authority from the
-// active immutable Runtime Snapshot, while Route-triggered Cues resolve it from
-// their persisted ActionExecutions. SIMULATION therefore cannot escape through
-// either Routing path.
+// NewSimulationSafe constructs Routing with an F-024 execution boundary.
 func NewSimulationSafe(s *store.Store, physical capability.Executor) *Engine {
-	return New(s, simulator.NewSessionExecutor(s, physical))
+	return NewSimulationSafeWithDigitalTwin(s, physical, simulator.NewDigitalTwin())
+}
+
+// NewSimulationSafeWithDigitalTwin allows the application to share one
+// session-scoped Digital Twin between direct Cue GO, direct Route outputs and
+// Route-triggered Cues.
+func NewSimulationSafeWithDigitalTwin(s *store.Store, physical capability.Executor, twin *simulator.DigitalTwin) *Engine {
+	return New(s, simulator.NewSessionExecutorWithDigitalTwin(s, physical, twin))
 }
