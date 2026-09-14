@@ -25,6 +25,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
 	"github.com/ali96adil/StageCore/internal/showtemplate"
+	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
@@ -84,6 +85,11 @@ func main() {
 		application.Capabilities,
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 	)
+	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin)
+	if simulation == nil {
+		logger.Error("simulation control startup failed")
+		os.Exit(1)
+	}
 	memory := sessionmemory.New(application.Store)
 	timing := timingintelligence.New(application.Store, nil)
 	showCapsules, err := showcapsule.New(application.Store, application.Vault, clock.Real{})
@@ -188,6 +194,7 @@ func main() {
 		httpapi.WithOperatorTimingIntelligence(userAuth, timing),
 		httpapi.WithOperatorShowCapsules(userAuth, showCapsules, filepath.Join(application.Config.DataRoot, "show-capsules")),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
+		httpapi.WithOperatorSimulation(userAuth, simulation),
 		httpapi.WithOperatorMemory(userAuth, application.Store, memory),
 		httpapi.WithSecurityOperations(
 			userAuth,
