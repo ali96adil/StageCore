@@ -1,6 +1,6 @@
 # F-020 — Self-Healing Runtime & Optional High Availability
 
-Status: single-Hub recovery implementation and B6 fault qualification complete; optional HA dispatch-authority foundation in progress. Software qualification only.
+Status: single-Hub recovery and B6 fault qualification complete; HA-A1 physical-dispatch authority foundation complete; HA-A2 durable witness lease authority in progress. Software qualification only.
 
 Physical/product qualification remains deferred under GitHub Issue #148. This feature must not be described as physically qualified until the cumulative hardware campaign passes.
 
@@ -83,7 +83,7 @@ If decision evidence cannot be persisted, the reconciliation transaction fails i
 
 B6 is SOFTWARE COMPLETE on exact `main` SHA `323771bd665d9abb4da9ab9cef05c0aff710e7f7`. Exact-main Core CI #847 / run `34939096619` passed module lock, tests, vet, race tests and Linux ARM64 CGo-free product builds.
 
-## Optional HA — current gate
+## Optional HA — HA-A1 delivered
 
 HA-A1 establishes one physical-dispatch authority boundary before any real capability transport.
 
@@ -97,33 +97,62 @@ Unknown, malformed, or unavailable authority fails closed.
 
 The same gated physical executor is used by Cue/Action execution and Routing outputs. F-024 SIMULATION is consumed by the Digital Twin before this authority boundary and therefore does not consult HA authority or reach physical transports.
 
-The product remains statically `STANDALONE` during HA-A1. A later slice must provide a real cross-node authority/lease source before `LEADER` or `STANDBY` becomes a production configuration.
+The product remains statically `STANDALONE`; HA-A1 deliberately did not expose a mutable local leader switch.
+
+HA-A1 is SOFTWARE COMPLETE on exact `main` SHA `d15e83b1261a74df58c72024c63b4d3f5b5cd4fb`. Exact-main Core CI #856 / run `34977009301` passed module lock, tests, vet, race tests and Linux ARM64 CGo-free product builds.
 
 See `docs/features/F-020_HA_DISPATCH_AUTHORITY.md`.
 
-## HA-A1 acceptance gate
+## Optional HA — HA-A2 current scope
+
+HA-A2 adds the durable lease state machine for a future external witness authority.
+
+The witness owns one bounded lease containing:
+
+- one holder identity;
+- one monotonically increasing fencing epoch;
+- one expiry timestamp under witness time.
+
+The intended holder identity is the existing durable `hubsecurity.Identity.HubID`; no second HA node-identity model is introduced.
+
+Rules:
+
+- `Acquire` succeeds only when no active lease exists;
+- same-holder acquire is idempotent and never renews implicitly;
+- `Renew` requires the exact active holder+epoch;
+- expired epochs cannot be revived;
+- release preserves the epoch so it can never be reused;
+- witness restart preserves the last epoch;
+- concurrent acquisition is serialized to one winner;
+- the witness, not a Hub request, controls bounded lease duration.
+
+HA-A2 is intentionally persistence/state-machine only. Network transport, authentication, Hub configuration, automatic promotion and failover remain later slices.
+
+See `docs/features/F-020_HA_LEASE_AUTHORITY.md`.
+
+## HA-A2 acceptance gate
 
 CI must prove:
 
-- standalone product behavior remains unchanged;
-- standby cannot invoke a physical capability backend;
-- leader-shaped authority is rejected without holder identity and non-zero epoch;
-- authority lookup failures and unknown modes fail closed;
-- SIMULATION never consults physical-dispatch authority;
-- REHEARSAL and SHOW honor the authority gate;
+- exactly one active holder may acquire the witness lease;
+- expiry removes authority without erasing fencing history;
+- stale holder/epoch operations cannot renew or release a newer grant;
+- epochs remain monotonic across release, expiry and process restart;
+- separate service instances racing on the same witness database produce one winner;
+- invalid holder/duration/epoch input fails closed;
 - exact-head and exact-main Core CI are green.
 
-Only after HA-A1 passes may StageCore add cross-node lease/epoch ownership, renewal/expiry, standby promotion rules, and later failover qualification.
+Only after HA-A2 passes may StageCore add an authenticated witness transport and Hub-side lease source.
 
-## Explicit HA non-goals for A1
+## Explicit HA non-goals through A2
 
-HA-A1 does not implement:
+HA-A1/A2 do not yet implement:
 
-- cross-node state replication;
-- leader election;
-- lease acquisition or renewal;
+- Runtime Snapshot/Session state replication between Hubs;
+- authenticated witness network transport;
+- peer-based leader election;
 - automatic standby promotion;
 - automatic command replay after failover;
-- external-device fencing-token propagation;
-- complete split-brain protection;
+- downstream device fencing-token propagation;
+- complete automatic split-brain failover qualification;
 - Raspberry Pi deployment while #148 is active.
