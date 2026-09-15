@@ -33,6 +33,7 @@ const (
 	ReasonCleanInternalTimecodeRehearsal = "CLEAN_INTERNAL_TIMECODE_REHEARSAL"
 	ReasonShowRestartFailClosed           = "SHOW_RESTART_FAIL_CLOSED"
 	ReasonSimulationRestartFailClosed     = "SIMULATION_RESTART_FAIL_CLOSED"
+	ReasonSimulationCheckpointManual      = "SIMULATION_CHECKPOINT_MANUAL_RECONSTRUCTION"
 	ReasonUnsupportedSessionType          = "UNSUPPORTED_SESSION_TYPE"
 	ReasonSessionLifecycleNotActive       = "SESSION_LIFECYCLE_NOT_ACTIVE"
 	ReasonExternalTimecodeAuthority       = "EXTERNAL_TIMECODE_AUTHORITY"
@@ -45,25 +46,29 @@ const (
 // RestartContext contains only authoritative facts needed to classify a Hub
 // restart. Recovery policy must not guess device state or replay intent.
 type RestartContext struct {
-	SessionType       domain.SessionType
-	LifecycleState    domain.SessionLifecycleState
-	TimecodeAuthority TimecodeAuthority
-	HasInFlightWork   bool
+	SessionType          domain.SessionType
+	LifecycleState       domain.SessionLifecycleState
+	TimecodeAuthority    TimecodeAuthority
+	HasInFlightWork      bool
+	HasTrustedCheckpoint bool
 }
 
-// Decision is durable policy evidence. ReplayAllowed remains false in the
-// first F-020 slice: reconnect/restart never authorizes replay by itself.
+// Decision is durable policy evidence. Reconnect/restart never authorizes live
+// command replay by itself. ManualConfirmationRequired means StageCore can
+// point at trusted recovery state, but an operator must deliberately start a
+// new compatible runtime path before that state is used.
 type Decision struct {
-	Disposition               Disposition
-	ReasonCode                string
-	Automatic                 bool
-	ReplayAllowed             bool
+	Disposition                Disposition
+	ReasonCode                 string
+	Automatic                  bool
+	ReplayAllowed              bool
 	ManualConfirmationRequired bool
 }
 
-// EvaluateRestart preserves the pre-F-020 runtime behavior while making the
-// authority and reason explicit. Only a clean ACTIVE REHEARSAL with exactly
-// one INTERNAL timecode source may survive a Hub restart.
+// EvaluateRestart preserves existing fail-closed restart behavior while making
+// trusted simulation checkpoint recovery visible. A checkpoint never resumes a
+// crashed SIMULATION automatically: the interrupted Session ends and the
+// operator may explicitly start a new SIMULATION from that checkpoint.
 func EvaluateRestart(input RestartContext) Decision {
 	abort := func(reason string) Decision {
 		return Decision{
@@ -73,11 +78,23 @@ func EvaluateRestart(input RestartContext) Decision {
 			ReplayAllowed: false,
 		}
 	}
+	manual := func(reason string) Decision {
+		return Decision{
+			Disposition:                 DispositionManualConfirmation,
+			ReasonCode:                  reason,
+			Automatic:                   false,
+			ReplayAllowed:               false,
+			ManualConfirmationRequired: true,
+		}
+	}
 
 	switch input.SessionType {
 	case domain.SessionShow:
 		return abort(ReasonShowRestartFailClosed)
 	case domain.SessionSimulation:
+		if input.LifecycleState == domain.SessionLifecycleActive && input.HasTrustedCheckpoint {
+			return manual(ReasonSimulationCheckpointManual)
+		}
 		return abort(ReasonSimulationRestartFailClosed)
 	case domain.SessionRehearsal:
 		// Continue below.
