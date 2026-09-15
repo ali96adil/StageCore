@@ -2,6 +2,7 @@ package dispatchauthority
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -40,6 +41,9 @@ type Source interface {
 type SourceFunc func(context.Context) (Snapshot, error)
 
 func (f SourceFunc) Current(ctx context.Context) (Snapshot, error) {
+	if f == nil {
+		return Snapshot{}, errors.New("physical dispatch authority source is nil")
+	}
 	return f(ctx)
 }
 
