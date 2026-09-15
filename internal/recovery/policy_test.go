@@ -20,6 +20,20 @@ func TestEvaluateRestartPreservesOnlyCleanInternalRehearsal(t *testing.T) {
 	}
 }
 
+func TestEvaluateRestartRequiresManualReconstructionForSimulationCheckpoint(t *testing.T) {
+	decision := EvaluateRestart(RestartContext{
+		SessionType:          domain.SessionSimulation,
+		LifecycleState:       domain.SessionLifecycleActive,
+		HasTrustedCheckpoint: true,
+	})
+	if decision.Disposition != DispositionManualConfirmation || decision.ReasonCode != ReasonSimulationCheckpointManual {
+		t.Fatalf("decision=%+v", decision)
+	}
+	if decision.Automatic || decision.ReplayAllowed || !decision.ManualConfirmationRequired {
+		t.Fatalf("checkpoint recovery authority=%+v", decision)
+	}
+}
+
 func TestEvaluateRestartFailsClosedForUnsafeAuthorities(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -27,23 +41,23 @@ func TestEvaluateRestartFailsClosedForUnsafeAuthorities(t *testing.T) {
 		reason string
 	}{
 		{
-			name: "show",
-			input: RestartContext{SessionType: domain.SessionShow, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal},
+			name:   "show",
+			input:  RestartContext{SessionType: domain.SessionShow, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal},
 			reason: ReasonShowRestartFailClosed,
 		},
 		{
-			name: "simulation",
-			input: RestartContext{SessionType: domain.SessionSimulation, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal},
+			name:   "simulation without checkpoint",
+			input:  RestartContext{SessionType: domain.SessionSimulation, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal},
 			reason: ReasonSimulationRestartFailClosed,
 		},
 		{
-			name: "external timecode",
-			input: RestartContext{SessionType: domain.SessionRehearsal, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityExternal},
+			name:   "external timecode",
+			input:  RestartContext{SessionType: domain.SessionRehearsal, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityExternal},
 			reason: ReasonExternalTimecodeAuthority,
 		},
 		{
-			name: "in flight",
-			input: RestartContext{SessionType: domain.SessionRehearsal, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal, HasInFlightWork: true},
+			name:   "in flight",
+			input:  RestartContext{SessionType: domain.SessionRehearsal, LifecycleState: domain.SessionLifecycleActive, TimecodeAuthority: TimecodeAuthorityInternal, HasInFlightWork: true},
 			reason: ReasonInFlightExecutionInterrupted,
 		},
 	}
@@ -78,6 +92,5 @@ func TestClassifyTimecodeAuthorityIsConservative(t *testing.T) {
 			if got := ClassifyTimecodeAuthority([]byte(tt.raw)); got != tt.want {
 				t.Fatalf("authority=%s want %s", got, tt.want)
 			}
-		})
 	}
 }
