@@ -237,7 +237,9 @@ func latestSimulationRecoveryCheckpointTx(ctx context.Context, tx *sql.Tx, sessi
 		       next_cue_id, twin_state_json, content_hash
 		FROM simulation_checkpoints
 		WHERE source_session_id = ? AND project_id = ? AND runtime_snapshot_id = ?
-		ORDER BY captured_at_us DESC, checkpoint_id DESC`, session.id, session.projectID, session.snapshotID)
+		  AND state_contract_version = ?
+		ORDER BY captured_at_us DESC, checkpoint_id DESC`,
+		session.id, session.projectID, session.snapshotID, domain.SimulationCheckpointStateContractVersion1)
 	if err != nil {
 		return nil, fmt.Errorf("read simulation checkpoint recovery evidence: %w", err)
 	}
