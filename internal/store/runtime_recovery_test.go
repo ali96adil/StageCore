@@ -110,12 +110,15 @@ func TestHubRestartNeverAutoPreservesShow(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("reconciled Sessions=%d want 1", count)
 	}
-	loaded, err := s.GetSession(ctx, show.ID)
+	loaded, err := s.GetSessionFoundation(ctx, show.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.Status != domain.SessionAborted || loaded.EndedAt == nil {
 		t.Fatalf("SHOW after restart=%+v", loaded)
+	}
+	if loaded.StateTruth.RestorationStatus != domain.SessionRestorationUnavailable || loaded.StateTruth.ManualConfirmationRequired {
+		t.Fatalf("SHOW recovery truth=%+v", loaded.StateTruth)
 	}
 }
 
@@ -152,5 +155,77 @@ func TestHubRestartDoesNotPreserveInternalRehearsalWithInFlightCue(t *testing.T)
 	}
 	if len(executions) != 1 || executions[0].ID != execution.ID || executions[0].Result != domain.ExecutionCancelled {
 		t.Fatalf("in-flight cue reconciliation=%+v", executions)
+	}
+}
+
+func TestHubRestartMarksSimulationCheckpointForManualReconstruction(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	runtimeSnapshot, _ := createInternalRestartFixture(t, s, "INTERNAL")
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionSimulation, "simulation-checkpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := s.ReconcileInterruptedRuntimeForHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("reconciled Sessions=%d want 1", count)
+	}
+	loaded, err := s.GetSessionFoundation(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != domain.SessionAborted || loaded.LifecycleState != domain.SessionLifecycleAborted || loaded.EndedAt == nil {
+		t.Fatalf("simulation after restart=%+v", loaded)
+	}
+	if loaded.EndReason != "HUB_RESTART_INTERRUPTED" {
+		t.Fatalf("end reason=%q", loaded.EndReason)
+	}
+	if loaded.StateTruth.RestorationStatus != domain.SessionRestorationManualConfirmationRequired || !loaded.StateTruth.ManualConfirmationRequired {
+		t.Fatalf("checkpoint recovery truth=%+v", loaded.StateTruth)
+	}
+	if loaded.StateTruth.DesiredStateRef == nil || *loaded.StateTruth.DesiredStateRef != checkpoint.ID {
+		t.Fatalf("desired recovery state=%v want checkpoint %s", loaded.StateTruth.DesiredStateRef, checkpoint.ID)
+	}
+	if loaded.StateTruth.VerifiedStateRef != nil {
+		t.Fatalf("verified recovery state must remain unset: %v", loaded.StateTruth.VerifiedStateRef)
+	}
+}
+
+func TestHubRestartSimulationWithoutCheckpointIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	runtimeSnapshot, _ := createInternalRestartFixture(t, s, "INTERNAL")
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionSimulation, "simulation-no-checkpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := s.ReconcileInterruptedRuntimeForHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("reconciled Sessions=%d want 1", count)
+	}
+	loaded, err := s.GetSessionFoundation(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != domain.SessionAborted || loaded.LifecycleState != domain.SessionLifecycleAborted {
+		t.Fatalf("simulation after restart=%+v", loaded)
+	}
+	if loaded.StateTruth.RestorationStatus != domain.SessionRestorationUnavailable || loaded.StateTruth.ManualConfirmationRequired {
+		t.Fatalf("unavailable simulation recovery truth=%+v", loaded.StateTruth)
+	}
+	if loaded.StateTruth.DesiredStateRef != nil || loaded.StateTruth.VerifiedStateRef != nil {
+		t.Fatalf("simulation without checkpoint must not advertise state refs: %+v", loaded.StateTruth)
 	}
 }
