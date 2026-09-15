@@ -1,6 +1,6 @@
 # F-020 — Self-Healing Runtime & Optional High Availability
 
-Status: single-Hub implementation complete through checkpoint-aware reconstruction; B6 fault qualification in progress. Software qualification only.
+Status: single-Hub recovery implementation and B6 fault qualification complete; optional HA dispatch-authority foundation in progress. Software qualification only.
 
 Physical/product qualification remains deferred under GitHub Issue #148. This feature must not be described as physically qualified until the cumulative hardware campaign passes.
 
@@ -8,7 +8,7 @@ Physical/product qualification remains deferred under GitHub Issue #148. This fe
 
 Make StageCore recover from bounded, non-safety-critical runtime faults without turning restart or reconnect into implicit permission to replay live commands.
 
-F-020 is intentionally staged. Safe single-Hub recovery semantics come first. Optional High Availability and leader fencing come only after single-node behavior is proven through F-024 simulation and CI.
+F-020 is intentionally staged. Safe single-Hub recovery semantics are proven first. Optional High Availability proceeds only by adding explicit authority/fencing layers that preserve those semantics.
 
 ## Authority boundaries
 
@@ -34,7 +34,7 @@ Recovery must not infer that a device executed a command merely because it recon
 
 `replay_allowed=false` for all restart decisions.
 
-A Hub restart, component restart, reconnect, timeout, or checkpoint discovery never authorizes replay of a prior live command. Bounded retry is restricted to explicitly classified component-liveness work and is not a generic Cue/Action retry wrapper.
+A Hub restart, component restart, reconnect, timeout, checkpoint discovery, HA role change, or future failover event never authorizes replay of a prior live command by itself. Bounded retry remains restricted to explicitly classified component-liveness work and is not a generic Cue/Action retry wrapper.
 
 ### Current automatic preservation rule
 
@@ -79,28 +79,51 @@ If decision evidence cannot be persisted, the reconciliation transaction fails i
 4. Companion disconnect/reconnect presence recovery without treating connectivity as command acknowledgement.
 5. Stage Device stale-command terminalization without reconnect replay.
 6. Checkpoint-aware SIMULATION reconstruction with SHA-256 integrity, state-contract/version checks, immutable Runtime Snapshot binding, newest-valid fallback, and explicit manual confirmation/new-Session semantics.
-7. B6 F-024 fault-driven cross-layer qualification for disconnect, timeout, reconnect and fail-closed fault outcomes — in progress on `phase5/f020-fault-policy-qualification`.
+7. B6 F-024 fault-driven cross-layer qualification for disconnect, timeout, reconnect and fail-closed fault outcomes.
 
-## Next gate
+B6 is SOFTWARE COMPLETE on exact `main` SHA `323771bd665d9abb4da9ab9cef05c0aff710e7f7`. Exact-main Core CI #847 / run `34939096619` passed module lock, tests, vet, race tests and Linux ARM64 CGo-free product builds.
 
-B6 must prove the single-Hub semantics through deterministic F-024 fault scenarios with:
+## Optional HA — current gate
 
-- no physical dispatch from SIMULATION;
-- no historical Cue/Action replay;
-- explicit `UNAVAILABLE` vs `MANUAL_CONFIRMATION_REQUIRED` restoration truth;
-- fresh-session-only checkpoint reconstruction;
-- exact-head and exact-main Core CI PASS.
+HA-A1 establishes one physical-dispatch authority boundary before any real capability transport.
 
-After B6 passes, Optional standby Hub / HA may begin with explicit leader ownership and fencing. HA must not weaken any single-Hub authority, idempotency, Session, SHOW, pairing/trust, or Flight Recorder invariant.
+The authority contract uses:
 
-## Non-goals before HA
+- `STANDALONE` — preserves current single-Hub behavior;
+- `LEADER` — requires explicit holder identity plus a non-zero epoch before physical dispatch may proceed;
+- `STANDBY` — rejects physical dispatch before the backend executor is called.
 
-The single-Hub slices do not:
+Unknown, malformed, or unavailable authority fails closed.
 
-- replay or generically retry Cue/Action commands;
-- infer physical device acknowledgement from reconnect;
-- preserve SHOW across Hub restart;
-- recover interrupted in-flight Cue or Action executions as completed work;
-- introduce a second runtime state model;
-- implement elections, quorum, leases, or leader fencing;
-- deploy to the Raspberry Pi while #148 is active.
+The same gated physical executor is used by Cue/Action execution and Routing outputs. F-024 SIMULATION is consumed by the Digital Twin before this authority boundary and therefore does not consult HA authority or reach physical transports.
+
+The product remains statically `STANDALONE` during HA-A1. A later slice must provide a real cross-node authority/lease source before `LEADER` or `STANDBY` becomes a production configuration.
+
+See `docs/features/F-020_HA_DISPATCH_AUTHORITY.md`.
+
+## HA-A1 acceptance gate
+
+CI must prove:
+
+- standalone product behavior remains unchanged;
+- standby cannot invoke a physical capability backend;
+- leader-shaped authority is rejected without holder identity and non-zero epoch;
+- authority lookup failures and unknown modes fail closed;
+- SIMULATION never consults physical-dispatch authority;
+- REHEARSAL and SHOW honor the authority gate;
+- exact-head and exact-main Core CI are green.
+
+Only after HA-A1 passes may StageCore add cross-node lease/epoch ownership, renewal/expiry, standby promotion rules, and later failover qualification.
+
+## Explicit HA non-goals for A1
+
+HA-A1 does not implement:
+
+- cross-node state replication;
+- leader election;
+- lease acquisition or renewal;
+- automatic standby promotion;
+- automatic command replay after failover;
+- external-device fencing-token propagation;
+- complete split-brain protection;
+- Raspberry Pi deployment while #148 is active.
