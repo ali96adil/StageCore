@@ -232,14 +232,20 @@ func appendRuntimeRecoveryDecisionEventTx(ctx context.Context, tx *sql.Tx, nowUS
 }
 
 func latestSimulationRecoveryCheckpointTx(ctx context.Context, tx *sql.Tx, session restartActiveSession) (*restartCheckpointEvidence, error) {
-	var checkpoint restartCheckpointEvidence
+	var checkpoint domain.SimulationCheckpoint
+	var currentCue, lastCompleted, nextCue sql.NullString
+	var twinState string
 	err := tx.QueryRowContext(ctx, `
-		SELECT checkpoint_id, state_contract_version, content_hash
+		SELECT checkpoint_id, source_session_id, project_id, runtime_snapshot_id,
+		       state_contract_version, current_cue_id, last_completed_cue_id,
+		       next_cue_id, twin_state_json, content_hash
 		FROM simulation_checkpoints
 		WHERE source_session_id = ? AND project_id = ? AND runtime_snapshot_id = ?
 		ORDER BY captured_at_us DESC, checkpoint_id DESC
 		LIMIT 1`, session.id, session.projectID, session.snapshotID).Scan(
-		&checkpoint.id, &checkpoint.stateContractVersion, &checkpoint.contentHash,
+		&checkpoint.ID, &checkpoint.SourceSessionID, &checkpoint.ProjectID, &checkpoint.RuntimeSnapshotID,
+		&checkpoint.StateContractVersion, &currentCue, &lastCompleted, &nextCue,
+		&twinState, &checkpoint.ContentHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -247,7 +253,22 @@ func latestSimulationRecoveryCheckpointTx(ctx context.Context, tx *sql.Tx, sessi
 	if err != nil {
 		return nil, fmt.Errorf("read simulation checkpoint recovery evidence: %w", err)
 	}
-	return &checkpoint, nil
+	checkpoint.TwinState = json.RawMessage(twinState)
+	assignCheckpointOptional(currentCue, &checkpoint.CurrentCueID)
+	assignCheckpointOptional(lastCompleted, &checkpoint.LastCompletedCueID)
+	assignCheckpointOptional(nextCue, &checkpoint.NextCueID)
+	expectedHash, err := simulationCheckpointContentHash(checkpoint)
+	if err != nil || expectedHash != checkpoint.ContentHash {
+		// Corrupt or structurally invalid checkpoint state cannot become recovery
+		// authority. The caller will fall back to the normal fail-closed SIMULATION
+		// restart decision rather than preventing the Hub itself from starting.
+		return nil, nil
+	}
+	return &restartCheckpointEvidence{
+		id:                   checkpoint.ID,
+		stateContractVersion: checkpoint.StateContractVersion,
+		contentHash:          checkpoint.ContentHash,
+	}, nil
 }
 
 func hasRunningRuntimeWorkTx(ctx context.Context, tx *sql.Tx, sessionID string) (bool, error) {
