@@ -18,6 +18,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/dispatchauthority"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -200,7 +201,8 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	digitalTwin := simulator.NewDigitalTwin()
-	cueExecutor := simulator.NewSessionExecutorWithDigitalTwin(s, registry, digitalTwin)
+	physicalDispatch := dispatchauthority.NewStandalone(registry)
+	cueExecutor := simulator.NewSessionExecutorWithDigitalTwin(s, physicalDispatch, digitalTwin)
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
 		HubSecurity: hubSecurity, SecretStore: secrets,
@@ -208,7 +210,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
 		CompanionAuth: companionAuth, CompanionRuntime: companionRuntime,
-		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.NewSimulationSafeWithDigitalTwin(s, registry, digitalTwin),
+		CueEngine: cueengine.NewWithExecutor(s, cueExecutor), RoutingEngine: routing.NewSimulationSafeWithDigitalTwin(s, physicalDispatch, digitalTwin),
 		DigitalTwin: digitalTwin,
 		OSCPlugin: oscHost,
 	}, nil
