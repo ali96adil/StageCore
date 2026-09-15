@@ -166,7 +166,7 @@ func TestHubRestartMarksSimulationCheckpointForManualReconstruction(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{}}`))
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, runtimeSnapshot.ID, "manual-reconstruction"))
 	if err != nil {
 		t.Fatal(err)
 	}
