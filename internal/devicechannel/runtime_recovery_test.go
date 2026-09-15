@@ -12,7 +12,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func TestDisconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
+func TestReconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
 	f := newRuntimeFixture(t)
 	ctx := context.Background()
 	first := f.connect(t)
@@ -45,7 +45,11 @@ func TestDisconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
 		t.Fatalf("execute=%+v command=%+v", execute, command)
 	}
 
-	_ = first.Close()
+	// A replacement connection is the authoritative reconnect event. Registering
+	// it closes the previous server-side runtime connection deterministically,
+	// which must terminalize commands dispatched through that old generation.
+	second := f.connect(t)
+	defer second.Close()
 	interrupted := waitForDeviceCommandStatus(t, f, command.Envelope.CommandID, contracts.CommandFailed)
 	if !strings.Contains(string(interrupted.Result), "DEVICE_EXECUTION_INTERRUPTED") {
 		t.Fatalf("interrupted result=%s", interrupted.Result)
@@ -54,8 +58,6 @@ func TestDisconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
 		t.Fatalf("ambiguous interrupted command must not authorize retry: %s", interrupted.Result)
 	}
 
-	second := f.connect(t)
-	defer second.Close()
 	_ = second.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	var replay map[string]any
 	if err := websocket.JSON.Receive(second, &replay); err == nil {
