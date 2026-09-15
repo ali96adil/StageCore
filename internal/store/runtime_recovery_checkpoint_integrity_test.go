@@ -133,3 +133,58 @@ func TestHubRestartFallsBackToLatestValidSimulationCheckpoint(t *testing.T) {
 	}
 	t.Fatal("runtime.recovery.decision event not found")
 }
+
+func TestHubRestartUnsupportedSimulationCheckpointVersionFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	runtimeSnapshot, _ := createInternalRestartFixture(t, s, "INTERNAL")
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionSimulation, "unsupported-checkpoint-version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1+1, json.RawMessage(`{"version":2,"targets":{},"faults":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := s.ReconcileInterruptedRuntimeForHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("reconciled Sessions=%d want 1", count)
+	}
+	loaded, err := s.GetSessionFoundation(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateTruth.RestorationStatus != domain.SessionRestorationUnavailable || loaded.StateTruth.ManualConfirmationRequired {
+		t.Fatalf("unsupported checkpoint recovery truth=%+v", loaded.StateTruth)
+	}
+	if loaded.StateTruth.DesiredStateRef != nil || loaded.StateTruth.VerifiedStateRef != nil {
+		t.Fatalf("unsupported checkpoint version must not become recovery authority: %+v", loaded.StateTruth)
+	}
+
+	events, err := s.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.EventType != "runtime.recovery.decision" {
+			continue
+		}
+		var payload struct {
+			Disposition  recovery.Disposition `json:"disposition"`
+			ReasonCode   string               `json:"reason_code"`
+			CheckpointID string               `json:"checkpoint_id"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Disposition != recovery.DispositionAbort || payload.ReasonCode != recovery.ReasonSimulationRestartFailClosed || payload.CheckpointID != "" {
+			t.Fatalf("unsupported checkpoint recovery event=%+v checkpoint=%s", payload, checkpoint.ID)
+		}
+		return
+	}
+	t.Fatal("runtime.recovery.decision event not found")
+}
