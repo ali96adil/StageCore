@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -24,21 +25,25 @@ type restartActiveSession struct {
 	manifest   string
 }
 
+type restartCheckpointEvidence struct {
+	id                   string
+	stateContractVersion int
+	contentHash          string
+}
+
 type restartDecisionEvidence struct {
 	decision          recovery.Decision
 	timecodeAuthority recovery.TimecodeAuthority
 	hasInFlightWork   bool
+	checkpoint        *restartCheckpointEvidence
 }
 
-// ReconcileInterruptedRuntimeForHub applies the normal fail-closed restart
-// reconciliation while preserving the one runtime shape that is explicitly
-// restart-continuous: a clean REHEARSAL driven by INTERNAL timecode.
-//
-// F-020 makes the recovery decision explicit and records it atomically, but
-// this first slice deliberately does not expand automatic recovery. SHOW,
-// SIMULATION, external/ambiguous timecode, and any Session with in-flight cue
-// or action work keep the existing interrupted-runtime behavior. A restart or
-// reconnect never authorizes command replay by itself.
+// ReconcileInterruptedRuntimeForHub applies the fail-closed Hub restart
+// boundary. A clean INTERNAL-timecode REHEARSAL is the only runtime that may
+// remain active automatically. SHOW and unsafe REHEARSAL shapes are closed as
+// before. An interrupted SIMULATION may expose a durable F-024 checkpoint as a
+// manual reconstruction target, but the old Session still ends and no command,
+// Cue, action, transport result, or Digital Twin execution is replayed.
 func (s *Store) ReconcileInterruptedRuntimeForHub(ctx context.Context) (int64, error) {
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
@@ -77,31 +82,44 @@ func (s *Store) ReconcileInterruptedRuntimeForHub(ctx context.Context) (int64, e
 	for _, session := range active {
 		authority := recovery.ClassifyTimecodeAuthority([]byte(session.manifest))
 		hasInFlightWork := false
-		if domain.SessionType(session.typeName) == domain.SessionRehearsal &&
-			domain.SessionLifecycleState(session.lifecycle) == domain.SessionLifecycleActive &&
+		var checkpoint *restartCheckpointEvidence
+
+		sessionType := domain.SessionType(session.typeName)
+		lifecycle := domain.SessionLifecycleState(session.lifecycle)
+		if sessionType == domain.SessionRehearsal &&
+			lifecycle == domain.SessionLifecycleActive &&
 			authority == recovery.TimecodeAuthorityInternal {
 			hasInFlightWork, err = hasRunningRuntimeWorkTx(ctx, tx, session.id)
 			if err != nil {
 				return 0, err
 			}
 		}
+		if sessionType == domain.SessionSimulation && lifecycle == domain.SessionLifecycleActive {
+			checkpoint, err = latestSimulationRecoveryCheckpointTx(ctx, tx, session)
+			if err != nil {
+				return 0, err
+			}
+		}
+
 		decision := recovery.EvaluateRestart(recovery.RestartContext{
-			SessionType:       domain.SessionType(session.typeName),
-			LifecycleState:    domain.SessionLifecycleState(session.lifecycle),
-			TimecodeAuthority: authority,
-			HasInFlightWork:   hasInFlightWork,
+			SessionType:          sessionType,
+			LifecycleState:       lifecycle,
+			TimecodeAuthority:    authority,
+			HasInFlightWork:      hasInFlightWork,
+			HasTrustedCheckpoint: checkpoint != nil,
 		})
 		decisions[session.id] = restartDecisionEvidence{
 			decision:          decision,
 			timecodeAuthority: authority,
 			hasInFlightWork:   hasInFlightWork,
+			checkpoint:        checkpoint,
 		}
 	}
 
 	var reconciled int64
 	for _, session := range active {
 		evidence := decisions[session.id]
-		if evidence.decision.Disposition == recovery.DispositionAbort {
+		if evidence.decision.Disposition != recovery.DispositionPreserve {
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE action_executions
 				SET completed_at_us = ?, result = 'CANCELLED', latency_ms = COALESCE(latency_ms, 0),
@@ -130,6 +148,34 @@ func (s *Store) ReconcileInterruptedRuntimeForHub(ctx context.Context) (int64, e
 				return 0, fmt.Errorf("interrupted Session rows affected: %w", err)
 			}
 			reconciled += count
+
+			switch evidence.decision.Disposition {
+			case recovery.DispositionManualConfirmation:
+				if evidence.checkpoint == nil {
+					return 0, fmt.Errorf("manual simulation reconstruction has no checkpoint evidence")
+				}
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE sessions
+					SET restoration_status = 'MANUAL_CONFIRMATION_REQUIRED',
+					    desired_state_ref = ?, verified_state_ref = NULL,
+					    manual_confirmation_required = 1
+					WHERE session_id = ? AND status = 'ABORTED'`, evidence.checkpoint.id, session.id); err != nil {
+					return 0, fmt.Errorf("record simulation checkpoint recovery truth: %w", err)
+				}
+			case recovery.DispositionAbort:
+				// The F-027 interruption trigger intentionally leaves REHEARSAL as a
+				// manually inspectable SUSPENDED candidate. SHOW and SIMULATION have
+				// no recoverable state unless a checkpoint path was selected above.
+				if domain.SessionType(session.typeName) != domain.SessionRehearsal {
+					if _, err := tx.ExecContext(ctx, `
+						UPDATE sessions
+						SET restoration_status = 'UNAVAILABLE', desired_state_ref = NULL,
+						    verified_state_ref = NULL, manual_confirmation_required = 0
+						WHERE session_id = ? AND status = 'ABORTED'`, session.id); err != nil {
+						return 0, fmt.Errorf("record unavailable restart recovery truth: %w", err)
+					}
+				}
+			}
 		}
 		if err := appendRuntimeRecoveryDecisionEventTx(ctx, tx, nowUS, session, evidence); err != nil {
 			return 0, err
@@ -147,7 +193,7 @@ func appendRuntimeRecoveryDecisionEventTx(ctx context.Context, tx *sql.Tx, nowUS
 	if err != nil {
 		return fmt.Errorf("create runtime recovery event id: %w", err)
 	}
-	payload, err := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"decision_version":             1,
 		"scope":                        "SESSION_RESTART",
 		"session_id":                   session.id,
@@ -160,7 +206,15 @@ func appendRuntimeRecoveryDecisionEventTx(ctx context.Context, tx *sql.Tx, nowUS
 		"manual_confirmation_required": evidence.decision.ManualConfirmationRequired,
 		"timecode_authority":           evidence.timecodeAuthority,
 		"in_flight_work":               evidence.hasInFlightWork,
-	})
+	}
+	if evidence.checkpoint != nil {
+		payloadMap["checkpoint_id"] = evidence.checkpoint.id
+		payloadMap["checkpoint_state_contract_version"] = evidence.checkpoint.stateContractVersion
+		payloadMap["checkpoint_content_hash"] = evidence.checkpoint.contentHash
+		payloadMap["reconstruction_start_kind"] = string(domain.SessionStartCheckpoint)
+		payloadMap["reconstruction_requires_new_session"] = true
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		return fmt.Errorf("encode runtime recovery decision event: %w", err)
 	}
@@ -175,6 +229,25 @@ func appendRuntimeRecoveryDecisionEventTx(ctx context.Context, tx *sql.Tx, nowUS
 		return fmt.Errorf("append runtime recovery decision event: %w", err)
 	}
 	return nil
+}
+
+func latestSimulationRecoveryCheckpointTx(ctx context.Context, tx *sql.Tx, session restartActiveSession) (*restartCheckpointEvidence, error) {
+	var checkpoint restartCheckpointEvidence
+	err := tx.QueryRowContext(ctx, `
+		SELECT checkpoint_id, state_contract_version, content_hash
+		FROM simulation_checkpoints
+		WHERE source_session_id = ? AND project_id = ? AND runtime_snapshot_id = ?
+		ORDER BY captured_at_us DESC, checkpoint_id DESC
+		LIMIT 1`, session.id, session.projectID, session.snapshotID).Scan(
+		&checkpoint.id, &checkpoint.stateContractVersion, &checkpoint.contentHash,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read simulation checkpoint recovery evidence: %w", err)
+	}
+	return &checkpoint, nil
 }
 
 func hasRunningRuntimeWorkTx(ctx context.Context, tx *sql.Tx, sessionID string) (bool, error) {
