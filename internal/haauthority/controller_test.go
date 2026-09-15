@@ -14,26 +14,26 @@ import (
 type fakeWitnessClient struct {
 	mu sync.Mutex
 
-	hubID string
+	hubID              string
 	acquireObservation hawitness.LeaseObservation
-	acquireErr error
-	renewObservation hawitness.LeaseObservation
-	renewErr error
-	releaseErr error
+	acquireErr         error
+	renewObservation   hawitness.LeaseObservation
+	renewErr           error
+	releaseErr         error
 
-	acquireCalls int
-	renewCalls int
-	releaseCalls int
-	lastRenewEpoch uint64
+	acquireCalls     int
+	renewCalls       int
+	releaseCalls     int
+	lastRenewEpoch   uint64
 	lastReleaseEpoch uint64
 
 	acquireStarted chan struct{}
-	acquireBlock chan struct{}
-	renewStarted chan struct{}
-	renewBlock chan struct{}
+	acquireBlock   chan struct{}
+	renewStarted   chan struct{}
+	renewBlock     chan struct{}
 
 	acquireOnce sync.Once
-	renewOnce sync.Once
+	renewOnce   sync.Once
 }
 
 func (f *fakeWitnessClient) HubID() string { return f.hubID }
@@ -98,22 +98,25 @@ func (f *fakeWitnessClient) counts() (int, int, int) {
 func observation(holder string, epoch uint64, requestStarted, witnessTime time.Time, remaining time.Duration) hawitness.LeaseObservation {
 	return hawitness.LeaseObservation{
 		LeaseResponse: hawitness.LeaseResponse{
-			HolderID: holder,
-			Epoch: epoch,
-			ExpiresAt: witnessTime.Add(remaining),
-			Active: true,
+			HolderID:    holder,
+			Epoch:       epoch,
+			ExpiresAt:   witnessTime.Add(remaining),
+			Active:      true,
 			WitnessTime: witnessTime,
 		},
 		RequestStartedAt: requestStarted,
-		ReceivedAt: requestStarted.Add(10 * time.Millisecond),
+		ReceivedAt:       requestStarted.Add(10 * time.Millisecond),
 	}
 }
 
 func newTestController(t *testing.T, client WitnessClient, wallNow *time.Time, elapsed *time.Duration) *Controller {
 	t.Helper()
+	origin := *wallNow
 	controller, err := New(client, WithTimeSources(
 		func() time.Time { return *wallNow },
-		func(time.Time) time.Duration { return *elapsed },
+		func(start time.Time) time.Duration {
+			return *elapsed - wallTime(start).Sub(wallTime(origin))
+		},
 	))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -153,9 +156,9 @@ func TestControllerAcquireAndRenewUseExactLeaseAuthority(t *testing.T) {
 	wallNow := base
 	elapsed := time.Duration(0)
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 7, base, witnessTime, 5*time.Second),
-		renewObservation: observation("hub-a", 7, base, witnessTime.Add(time.Second), 5*time.Second),
+		renewObservation:   observation("hub-a", 7, base, witnessTime.Add(time.Second), 5*time.Second),
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 
@@ -187,7 +190,7 @@ func TestControllerRejectsInvalidWitnessObservations(t *testing.T) {
 	base := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	witnessTime := base.Add(3 * time.Hour)
 	tests := []struct {
-		name string
+		name        string
 		observation hawitness.LeaseObservation
 	}{
 		{name: "foreign holder", observation: observation("hub-b", 1, base, witnessTime, 5*time.Second)},
@@ -218,9 +221,9 @@ func TestControllerRenewFailureDemotesImmediately(t *testing.T) {
 	wallNow := base
 	elapsed := time.Duration(0)
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 3, base, base, 5*time.Second),
-		renewErr: errors.New("witness unavailable"),
+		renewErr:           errors.New("witness unavailable"),
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 	if err := controller.Acquire(context.Background()); err != nil {
@@ -237,9 +240,9 @@ func TestControllerReleaseDemotesEvenWhenWitnessReleaseFails(t *testing.T) {
 	wallNow := base
 	elapsed := time.Duration(0)
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 11, base, base, 5*time.Second),
-		releaseErr: errors.New("witness unavailable"),
+		releaseErr:         errors.New("witness unavailable"),
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 	if err := controller.Acquire(context.Background()); err != nil {
@@ -260,8 +263,8 @@ func TestControllerReleaseDemotesEvenWhenWitnessReleaseFails(t *testing.T) {
 func TestControllerFailsClosedForExpirySuspendAndWallRollback(t *testing.T) {
 	base := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name string
-		wallElapsed time.Duration
+		name             string
+		wallElapsed      time.Duration
 		monotonicElapsed time.Duration
 	}{
 		{name: "monotonic expiry", wallElapsed: 5 * time.Second, monotonicElapsed: 5 * time.Second},
@@ -291,11 +294,11 @@ func TestControllerDemoteFencesInflightRenewResponse(t *testing.T) {
 	renewStarted := make(chan struct{})
 	renewBlock := make(chan struct{})
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 5, base, base, 5*time.Second),
-		renewObservation: observation("hub-a", 5, base, base.Add(time.Second), 5*time.Second),
-		renewStarted: renewStarted,
-		renewBlock: renewBlock,
+		renewObservation:   observation("hub-a", 5, base, base.Add(time.Second), 5*time.Second),
+		renewStarted:       renewStarted,
+		renewBlock:         renewBlock,
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 	if err := controller.Acquire(context.Background()); err != nil {
@@ -322,10 +325,10 @@ func TestControllerDemoteFencesInflightAcquireResponse(t *testing.T) {
 	acquireStarted := make(chan struct{})
 	acquireBlock := make(chan struct{})
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 1, base, base, 5*time.Second),
-		acquireStarted: acquireStarted,
-		acquireBlock: acquireBlock,
+		acquireStarted:     acquireStarted,
+		acquireBlock:       acquireBlock,
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 
@@ -348,11 +351,11 @@ func TestControllerReleaseDemotesBeforeInflightRenewCompletes(t *testing.T) {
 	renewStarted := make(chan struct{})
 	renewBlock := make(chan struct{})
 	client := &fakeWitnessClient{
-		hubID: "hub-a",
+		hubID:              "hub-a",
 		acquireObservation: observation("hub-a", 9, base, base, 5*time.Second),
-		renewObservation: observation("hub-a", 9, base, base.Add(time.Second), 5*time.Second),
-		renewStarted: renewStarted,
-		renewBlock: renewBlock,
+		renewObservation:   observation("hub-a", 9, base, base.Add(time.Second), 5*time.Second),
+		renewStarted:       renewStarted,
+		renewBlock:         renewBlock,
 	}
 	controller := newTestController(t, client, &wallNow, &elapsed)
 	if err := controller.Acquire(context.Background()); err != nil {
