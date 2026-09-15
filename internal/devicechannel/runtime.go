@@ -29,6 +29,7 @@ type Runtime struct {
 
 	mu          sync.Mutex
 	connections map[string]*connection
+	inflight    map[string]*connection
 	closed      bool
 }
 
@@ -95,6 +96,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		repository:  repository,
 		auth:        auth,
 		connections: make(map[string]*connection),
+		inflight:    make(map[string]*connection),
 	}
 }
 
@@ -167,6 +169,9 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	r.mu.Lock()
 	current := r.connections[command.DeviceID]
 	closed := r.closed
+	if !closed && current != nil {
+		r.inflight[command.Envelope.CommandID] = current
+	}
 	r.mu.Unlock()
 	if closed || current == nil {
 		return r.failCommand(ctx, command, "DEVICE_OFFLINE", "Stage Device is not connected")
@@ -178,6 +183,7 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 		Command:       command.Envelope,
 	}
 	if err := current.send(message); err != nil {
+		r.unbindCommand(command.Envelope.CommandID, current)
 		current.close()
 		return r.failCommand(ctx, command, "TRANSPORT_SEND_FAILED", err.Error())
 	}
@@ -303,6 +309,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
 				return
 			}
+			if !r.commandBoundTo(message.CommandID, current) {
+				continue
+			}
 			resultBytes, err := json.Marshal(contracts.CommandResult{
 				CommandID: strings.TrimSpace(message.CommandID),
 				Status:    message.Status,
@@ -315,6 +324,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if _, err := r.repository.CompleteCommand(ctx, message.CommandID, message.Status, resultBytes); err != nil {
 				return
 			}
+			r.unbindCommand(message.CommandID, current)
 		case "device.observation":
 			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
 				return
@@ -363,16 +373,27 @@ func (r *Runtime) unregister(current *connection) {
 		return
 	}
 	shouldObserveOffline := false
+	pending := make([]string, 0)
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		delete(r.connections, current.deviceID)
 		shouldObserveOffline = !r.closed
 	}
+	for commandID, bound := range r.inflight {
+		if bound == current {
+			delete(r.inflight, commandID)
+			pending = append(pending, commandID)
+		}
+	}
 	r.mu.Unlock()
 	current.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for _, commandID := range pending {
+		r.failInterruptedCommand(ctx, commandID, current.deviceID)
+	}
 	if shouldObserveOffline {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
 		_, _ = r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
 			DeviceID:   current.deviceID,
 			Connection: deviceexperience.ConnectionOffline,
@@ -385,6 +406,43 @@ func (r *Runtime) unregister(current *connection) {
 			TransportState: "WEBSOCKET_DISCONNECTED",
 		})
 	}
+}
+
+func (r *Runtime) commandBoundTo(commandID string, current *connection) bool {
+	commandID = strings.TrimSpace(commandID)
+	if commandID == "" || current == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inflight[commandID] == current
+}
+
+func (r *Runtime) unbindCommand(commandID string, current *connection) {
+	commandID = strings.TrimSpace(commandID)
+	if commandID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inflight[commandID] == current {
+		delete(r.inflight, commandID)
+	}
+}
+
+func (r *Runtime) failInterruptedCommand(ctx context.Context, commandID, deviceID string) {
+	result, _ := json.Marshal(contracts.CommandResult{
+		CommandID: commandID,
+		Status:    contracts.CommandFailed,
+		Error: &contracts.ContractError{
+			ErrorCode:        "DEVICE_EXECUTION_INTERRUPTED",
+			Category:         "TRANSPORT",
+			Message:          "Stage Device connection ended before a terminal command result",
+			Retryable:        false,
+			AffectedEntityID: deviceID,
+		},
+	})
+	_, _ = r.repository.CompleteCommand(ctx, commandID, contracts.CommandFailed, result)
 }
 
 func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.DeviceCommand, code, message string) (deviceexperience.DeviceCommand, error) {
