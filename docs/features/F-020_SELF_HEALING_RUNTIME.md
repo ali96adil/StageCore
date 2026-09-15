@@ -1,6 +1,6 @@
 # F-020 — Self-Healing Runtime & Optional High Availability
 
-Status: single-Hub recovery and B6 fault qualification complete; HA-A1 physical-dispatch authority foundation complete; HA-A2 durable witness lease authority in progress. Software qualification only.
+Status: single-Hub recovery and B6 fault qualification complete; HA-A1 physical-dispatch authority and HA-A2 durable witness lease authority complete; HA-A3 authenticated witness transport in progress. Software qualification only.
 
 Physical/product qualification remains deferred under GitHub Issue #148. This feature must not be described as physically qualified until the cumulative hardware campaign passes.
 
@@ -103,9 +103,9 @@ HA-A1 is SOFTWARE COMPLETE on exact `main` SHA `d15e83b1261a74df58c72024c63b4d3f
 
 See `docs/features/F-020_HA_DISPATCH_AUTHORITY.md`.
 
-## Optional HA — HA-A2 current scope
+## Optional HA — HA-A2 delivered
 
-HA-A2 adds the durable lease state machine for a future external witness authority.
+HA-A2 adds the durable lease state machine for an external witness authority.
 
 The witness owns one bounded lease containing:
 
@@ -126,31 +126,59 @@ Rules:
 - concurrent acquisition is serialized to one winner;
 - the witness, not a Hub request, controls bounded lease duration.
 
-HA-A2 is intentionally persistence/state-machine only. Network transport, authentication, Hub configuration, automatic promotion and failover remain later slices.
+HA-A2 is SOFTWARE COMPLETE on exact `main` SHA `b42f96e0719cb770733677de1ad49ca85929649b`. Exact-main Core CI #858 / run `34980595236` passed module lock, tests, vet, race tests and Linux ARM64 CGo-free product builds.
 
 See `docs/features/F-020_HA_LEASE_AUTHORITY.md`.
 
-## HA-A2 acceptance gate
+## Optional HA — HA-A3 current scope
+
+HA-A3 adds the authenticated network boundary around the HA-A2 witness without yet changing Hub role behavior.
+
+The transport model uses:
+
+- a persistent Ed25519 witness transport identity;
+- TLS 1.3 mutual authentication;
+- explicit StageCore certificate identities for `hub` and `witness` roles;
+- pinned SHA-256 fingerprints of raw Ed25519 public keys rather than public-Web PKI trust or a shared bearer secret;
+- an explicit witness allowlist mapping durable Hub IDs to pinned Hub fingerprints;
+- a Hub client that pins the expected witness ID and fingerprint;
+- a narrow lease API for current/acquire/renew/release.
+
+The witness derives `holder_id` exclusively from the authenticated Hub certificate. Request JSON cannot choose or spoof another Hub identity.
+
+Lease responses include witness-owned time and expiry. The client converts the remaining witness interval into a conservative local deadline from request start, avoiding any requirement that Hub and witness wall clocks be synchronized.
+
+`stagecore-ha-witness` is an optional standalone product process with its own identity and lease database. It refuses startup without an explicit authorized-Hub allowlist. The Linux ARM64 CGo-free CI product-build gate includes this binary.
+
+HA-A3 does **not** yet wire the witness client into the Hub application. `app.Open()` therefore remains statically `STANDALONE` until the next HA slice deliberately introduces a Hub-side lease controller/source.
+
+See `docs/features/F-020_HA_WITNESS_TRANSPORT.md`.
+
+## HA-A3 acceptance gate
 
 CI must prove:
 
-- exactly one active holder may acquire the witness lease;
-- expiry removes authority without erasing fencing history;
-- stale holder/epoch operations cannot renew or release a newer grant;
-- epochs remain monotonic across release, expiry and process restart;
-- separate service instances racing on the same witness database produce one winner;
-- invalid holder/duration/epoch input fails closed;
+- witness identity/fingerprint survive restart and unsafe key permissions fail closed;
+- authorized Hub certificates can acquire/renew/release the durable lease;
+- an unauthorized Hub certificate cannot authenticate;
+- a wrong witness identity or fingerprint pin fails closed;
+- request JSON cannot spoof `holder_id`;
+- stale fencing epochs remain rejected;
+- conservative lease deadlines do not depend on synchronized wall clocks;
+- witness configuration refuses an empty Hub allowlist and invalid lease duration;
+- the witness binary builds through the Linux ARM64 CGo-free product gate;
 - exact-head and exact-main Core CI are green.
 
-Only after HA-A2 passes may StageCore add an authenticated witness transport and Hub-side lease source.
+Only after HA-A3 passes may StageCore wire a Hub-side lease supervisor into the HA-A1 dispatch authority source.
 
-## Explicit HA non-goals through A2
+## Explicit HA non-goals through A3
 
-HA-A1/A2 do not yet implement:
+HA-A1/A2/A3 do not yet implement:
 
+- Hub product HA configuration or role UI;
+- a Hub-side witness lease supervisor;
+- witness-driven `dispatchauthority.Source` wiring;
 - Runtime Snapshot/Session state replication between Hubs;
-- authenticated witness network transport;
-- peer-based leader election;
 - automatic standby promotion;
 - automatic command replay after failover;
 - downstream device fencing-token propagation;
