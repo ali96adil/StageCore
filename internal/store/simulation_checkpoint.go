@@ -40,31 +40,23 @@ func (s *Store) CreateSimulationCheckpoint(ctx context.Context, sessionID string
 		return domain.SimulationCheckpoint{}, err
 	}
 	now := s.clock.Now().UTC()
-	hashInput := struct {
-		SessionID            string          `json:"session_id"`
-		ProjectID            string          `json:"project_id"`
-		RuntimeSnapshotID    string          `json:"runtime_snapshot_id"`
-		StateContractVersion int             `json:"state_contract_version"`
-		CurrentCueID         *string         `json:"current_cue_id,omitempty"`
-		LastCompletedCueID   *string         `json:"last_completed_cue_id,omitempty"`
-		NextCueID            *string         `json:"next_cue_id,omitempty"`
-		TwinState            json.RawMessage `json:"twin_state"`
-	}{
-		SessionID:            session.ID,
+	checkpoint := domain.SimulationCheckpoint{
+		ID:                   checkpointID,
+		SourceSessionID:      session.ID,
 		ProjectID:            session.ProjectID,
 		RuntimeSnapshotID:    session.RuntimeSnapshotID,
 		StateContractVersion: stateContractVersion,
+		CapturedAt:           now,
 		CurrentCueID:         session.CurrentCueID,
 		LastCompletedCueID:   session.LastCompletedCueID,
 		NextCueID:            session.NextCueID,
 		TwinState:            json.RawMessage(stateJSON),
 	}
-	canonical, err := json.Marshal(hashInput)
+	contentHash, err := simulationCheckpointContentHash(checkpoint)
 	if err != nil {
-		return domain.SimulationCheckpoint{}, fmt.Errorf("marshal checkpoint hash input: %w", err)
+		return domain.SimulationCheckpoint{}, err
 	}
-	digest := sha256.Sum256(canonical)
-	contentHash := hex.EncodeToString(digest[:])
+	checkpoint.ContentHash = contentHash
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -77,36 +69,24 @@ func (s *Store) CreateSimulationCheckpoint(ctx context.Context, sessionID string
 			state_contract_version, captured_at_us, current_cue_id,
 			last_completed_cue_id, next_cue_id, twin_state_json, content_hash
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		checkpointID, session.ID, session.ProjectID, session.RuntimeSnapshotID,
-		stateContractVersion, clock.UnixMicros(now), nullableString(session.CurrentCueID),
-		nullableString(session.LastCompletedCueID), nullableString(session.NextCueID), stateJSON, contentHash,
+		checkpoint.ID, checkpoint.SourceSessionID, checkpoint.ProjectID, checkpoint.RuntimeSnapshotID,
+		checkpoint.StateContractVersion, clock.UnixMicros(checkpoint.CapturedAt), nullableString(checkpoint.CurrentCueID),
+		nullableString(checkpoint.LastCompletedCueID), nullableString(checkpoint.NextCueID), string(checkpoint.TwinState), checkpoint.ContentHash,
 	)
 	if err != nil {
 		return domain.SimulationCheckpoint{}, fmt.Errorf("insert simulation checkpoint: %w", err)
 	}
 	if err := s.appendSimulationCheckpointEventTx(ctx, tx, session, "simulation.checkpoint.captured", map[string]any{
-		"checkpoint_id":          checkpointID,
-		"state_contract_version": stateContractVersion,
-		"content_hash":           contentHash,
+		"checkpoint_id":          checkpoint.ID,
+		"state_contract_version": checkpoint.StateContractVersion,
+		"content_hash":           checkpoint.ContentHash,
 	}); err != nil {
 		return domain.SimulationCheckpoint{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.SimulationCheckpoint{}, fmt.Errorf("commit simulation checkpoint: %w", err)
 	}
-	return domain.SimulationCheckpoint{
-		ID:                   checkpointID,
-		SourceSessionID:      session.ID,
-		ProjectID:            session.ProjectID,
-		RuntimeSnapshotID:    session.RuntimeSnapshotID,
-		StateContractVersion: stateContractVersion,
-		CapturedAt:           now,
-		CurrentCueID:         session.CurrentCueID,
-		LastCompletedCueID:   session.LastCompletedCueID,
-		NextCueID:            session.NextCueID,
-		TwinState:            json.RawMessage(stateJSON),
-		ContentHash:          contentHash,
-	}, nil
+	return checkpoint, nil
 }
 
 func (s *Store) GetSimulationCheckpoint(ctx context.Context, checkpointID string) (domain.SimulationCheckpoint, error) {
@@ -134,6 +114,14 @@ func (s *Store) GetSimulationCheckpoint(ctx context.Context, checkpointID string
 	assignCheckpointOptional(currentCue, &checkpoint.CurrentCueID)
 	assignCheckpointOptional(lastCompleted, &checkpoint.LastCompletedCueID)
 	assignCheckpointOptional(nextCue, &checkpoint.NextCueID)
+
+	expectedHash, err := simulationCheckpointContentHash(checkpoint)
+	if err != nil {
+		return domain.SimulationCheckpoint{}, fmt.Errorf("%w: invalid simulation checkpoint state: %v", domain.ErrConflict, err)
+	}
+	if expectedHash != checkpoint.ContentHash {
+		return domain.SimulationCheckpoint{}, fmt.Errorf("%w: simulation checkpoint content hash mismatch", domain.ErrConflict)
+	}
 	return checkpoint, nil
 }
 
@@ -187,6 +175,34 @@ func (s *Store) MarkSimulationCheckpointRestored(ctx context.Context, sessionID,
 		return fmt.Errorf("commit checkpoint restore state: %w", err)
 	}
 	return nil
+}
+
+func simulationCheckpointContentHash(checkpoint domain.SimulationCheckpoint) (string, error) {
+	hashInput := struct {
+		SessionID            string          `json:"session_id"`
+		ProjectID            string          `json:"project_id"`
+		RuntimeSnapshotID    string          `json:"runtime_snapshot_id"`
+		StateContractVersion int             `json:"state_contract_version"`
+		CurrentCueID         *string         `json:"current_cue_id,omitempty"`
+		LastCompletedCueID   *string         `json:"last_completed_cue_id,omitempty"`
+		NextCueID            *string         `json:"next_cue_id,omitempty"`
+		TwinState            json.RawMessage `json:"twin_state"`
+	}{
+		SessionID:            checkpoint.SourceSessionID,
+		ProjectID:            checkpoint.ProjectID,
+		RuntimeSnapshotID:    checkpoint.RuntimeSnapshotID,
+		StateContractVersion: checkpoint.StateContractVersion,
+		CurrentCueID:         checkpoint.CurrentCueID,
+		LastCompletedCueID:   checkpoint.LastCompletedCueID,
+		NextCueID:            checkpoint.NextCueID,
+		TwinState:            checkpoint.TwinState,
+	}
+	canonical, err := json.Marshal(hashInput)
+	if err != nil {
+		return "", fmt.Errorf("marshal checkpoint hash input: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (s *Store) appendSimulationCheckpointEventTx(ctx context.Context, tx *sql.Tx, session domain.Session, eventType string, payload any) error {
