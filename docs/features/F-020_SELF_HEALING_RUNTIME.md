@@ -1,6 +1,6 @@
 # F-020 — Self-Healing Runtime & Optional High Availability
 
-Status: implementation in progress — software qualification only.
+Status: single-Hub implementation complete through checkpoint-aware reconstruction; B6 fault qualification in progress. Software qualification only.
 
 Physical/product qualification remains deferred under GitHub Issue #148. This feature must not be described as physically qualified until the cumulative hardware campaign passes.
 
@@ -22,37 +22,37 @@ Recovery may use only canonical persisted truth:
 
 Recovery must not infer that a device executed a command merely because it reconnects. It must not promote observed connectivity into command acknowledgement. It must not bypass SHOW safety, pairing/trust, Runtime Snapshot immutability, RBAC, or Flight Recorder evidence.
 
-## Slice A — Restart policy vocabulary and evidence
-
-The first slice formalizes the existing Hub restart behavior without expanding automatic recovery.
+## Restart policy vocabulary
 
 ### Dispositions
 
 - `PRESERVE` — leave the active Session intact because continuity is proven safe by the current narrow policy.
 - `ABORT` — fail closed and terminate interrupted runtime work.
-- `MANUAL_CONFIRMATION_REQUIRED` — reserved vocabulary for later slices where persisted state is sufficient to offer recovery but not sufficient to act automatically.
+- `MANUAL_CONFIRMATION_REQUIRED` — terminate the interrupted Session but expose a trusted reconstruction reference that an operator may explicitly use to create a new Session.
 
 ### Replay rule
 
-`replay_allowed=false` for all Slice A restart decisions.
+`replay_allowed=false` for all restart decisions.
 
-A Hub restart or component reconnect never authorizes replay of a prior command. Later bounded retry/reconnect work must separately prove command freshness, idempotency and target-specific safety before any retry is allowed.
+A Hub restart, component restart, reconnect, timeout, or checkpoint discovery never authorizes replay of a prior live command. Bounded retry is restricted to explicitly classified component-liveness work and is not a generic Cue/Action retry wrapper.
 
 ### Current automatic preservation rule
 
-Only an `ACTIVE` `REHEARSAL` Session with exactly one valid `TIMECODE_SOURCE` configured as `INTERNAL` and with no RUNNING Cue/Action execution is preserved across Hub restart.
+Only an `ACTIVE` `REHEARSAL` Session with exactly one valid `TIMECODE_SOURCE` configured as `INTERNAL` and with no RUNNING Cue/Action execution may remain active across Hub restart.
 
-The following remain fail-closed and are aborted exactly as before F-020:
+The following remain fail-closed:
 
-- `SHOW` Sessions;
-- `SIMULATION` Sessions;
+- every `SHOW` Session;
+- every interrupted SIMULATION Session as an old runtime authority;
 - external, missing, invalid or ambiguous timecode authority;
 - any otherwise-preservable rehearsal with in-flight Cue/Action work;
 - unsupported or non-active runtime shapes.
 
-Interrupted RUNNING Action executions remain `CANCELLED` with `HUB_RESTART_INTERRUPTED`; RUNNING Cue executions remain `CANCELLED`; the Session becomes `ABORTED`.
+An interrupted SIMULATION may expose a trusted F-024 checkpoint as `MANUAL_CONFIRMATION_REQUIRED`, but the old Session is still `ABORTED`. Reconstruction requires an explicit new `CHECKPOINT` SIMULATION Session. Without a valid checkpoint, restoration is `UNAVAILABLE`.
 
-### Canonical evidence
+Interrupted RUNNING Action executions remain `CANCELLED` with `HUB_RESTART_INTERRUPTED`; RUNNING Cue executions remain `CANCELLED`; their interrupted Session does not gain replay authority.
+
+## Canonical evidence
 
 Every active Session inspected during Hub restart emits a `runtime.recovery.decision` Flight Recorder event in the same database transaction as reconciliation.
 
@@ -60,33 +60,47 @@ The event records:
 
 - decision version and `SESSION_RESTART` scope;
 - Session type and lifecycle state;
-- `PRESERVE` / `ABORT` disposition;
+- `PRESERVE` / `ABORT` / `MANUAL_CONFIRMATION_REQUIRED` disposition;
 - stable reason code;
 - whether the decision is automatic;
 - `replay_allowed`;
 - whether manual confirmation is required;
 - immutable-snapshot timecode authority classification;
-- whether in-flight runtime work was present.
+- whether in-flight runtime work was present;
+- trusted checkpoint identity/version/hash and new-Session reconstruction requirement when applicable.
 
 If decision evidence cannot be persisted, the reconciliation transaction fails instead of silently changing runtime state without an audit trail.
 
-## Planned later slices
+## Delivered single-Hub slices
 
-1. Safe reconnect recovery for bounded non-safety-critical components and targets.
-2. Bounded retry/backoff honoring command deadlines, idempotency and expiry.
-3. Checkpoint-aware reconstruction with explicit manual-confirmation cases.
-4. F-024 fault-driven validation for disconnect, timeout, reconnect and partial-failure cases.
-5. Recovery health/preflight/diagnostics/post-show surfaces.
-6. Optional standby Hub / HA with explicit leader ownership and fencing only after single-Hub semantics are proven.
+1. Restart recovery policy vocabulary, immutable-Snapshot authority classification, and atomic Flight Recorder evidence.
+2. Bounded extension startup recovery with explicit transient/permanent classification.
+3. Bounded extension crash recovery with attempt budget, generation fencing, desired-state authority, and cancellation.
+4. Companion disconnect/reconnect presence recovery without treating connectivity as command acknowledgement.
+5. Stage Device stale-command terminalization without reconnect replay.
+6. Checkpoint-aware SIMULATION reconstruction with SHA-256 integrity, state-contract/version checks, immutable Runtime Snapshot binding, newest-valid fallback, and explicit manual confirmation/new-Session semantics.
+7. B6 F-024 fault-driven cross-layer qualification for disconnect, timeout, reconnect and fail-closed fault outcomes — in progress on `phase5/f020-fault-policy-qualification`.
 
-## Non-goals for Slice A
+## Next gate
 
-Slice A does not:
+B6 must prove the single-Hub semantics through deterministic F-024 fault scenarios with:
 
-- replay or retry any command;
-- reconnect or restart plugins/devices automatically;
+- no physical dispatch from SIMULATION;
+- no historical Cue/Action replay;
+- explicit `UNAVAILABLE` vs `MANUAL_CONFIRMATION_REQUIRED` restoration truth;
+- fresh-session-only checkpoint reconstruction;
+- exact-head and exact-main Core CI PASS.
+
+After B6 passes, Optional standby Hub / HA may begin with explicit leader ownership and fencing. HA must not weaken any single-Hub authority, idempotency, Session, SHOW, pairing/trust, or Flight Recorder invariant.
+
+## Non-goals before HA
+
+The single-Hub slices do not:
+
+- replay or generically retry Cue/Action commands;
+- infer physical device acknowledgement from reconnect;
 - preserve SHOW across Hub restart;
-- recover in-flight Cue or Action executions;
+- recover interrupted in-flight Cue or Action executions as completed work;
 - introduce a second runtime state model;
-- implement HA, elections or leader fencing;
+- implement elections, quorum, leases, or leader fencing;
 - deploy to the Raspberry Pi while #148 is active.
