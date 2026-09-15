@@ -168,6 +168,54 @@ func TestWitnessTransportRejectsUnauthorizedHubAndWrongWitnessPin(t *testing.T) 
 	}
 }
 
+func TestConservativeDeadlineDoesNotRequireSynchronizedWallClocks(t *testing.T) {
+	ctx := context.Background()
+	witnessNow := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	hubNow := witnessNow.Add(11*time.Hour + 37*time.Minute)
+	authority, err := halease.Open(ctx, halease.Config{
+		Path: filepath.Join(t.TempDir(), "witness.sqlite3"),
+		LeaseDuration: 5 * time.Second,
+	}, clock.Fixed{Time: witnessNow})
+	if err != nil {
+		t.Fatalf("open lease authority: %v", err)
+	}
+	defer authority.Close()
+
+	witness := testIdentity(t, "witness-skew", RoleWitness, witnessNow)
+	hub := testIdentity(t, "hub-skew", RoleHub, witnessNow)
+	server, err := NewServer(authority, ServerConfig{
+		AuthorizedHubs: map[string]string{hub.ID: hub.Fingerprint},
+		Now: func() time.Time { return witnessNow },
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	tlsConfig, err := server.TLSConfig(witness)
+	if err != nil {
+		t.Fatalf("TLSConfig: %v", err)
+	}
+	httpServer := httptest.NewUnstartedServer(server.Handler())
+	httpServer.TLS = tlsConfig
+	httpServer.StartTLS()
+	defer httpServer.Close()
+
+	client := testClient(t, httpServer.URL, hub, witness, hubNow)
+	observation, err := client.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire with clock skew: %v", err)
+	}
+	if !observation.WitnessTime.Equal(witnessNow) || !observation.ExpiresAt.Equal(witnessNow.Add(5*time.Second)) {
+		t.Fatalf("unexpected witness timing: witness=%s expires=%s", observation.WitnessTime, observation.ExpiresAt)
+	}
+	deadline, err := observation.ConservativeDeadline()
+	if err != nil {
+		t.Fatalf("ConservativeDeadline: %v", err)
+	}
+	if want := hubNow.Add(5 * time.Second); !deadline.Equal(want) {
+		t.Fatalf("local deadline = %s, want %s despite wall-clock skew", deadline, want)
+	}
+}
+
 func testIdentity(t *testing.T, id, role string, now time.Time) TransportIdentity {
 	t.Helper()
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
