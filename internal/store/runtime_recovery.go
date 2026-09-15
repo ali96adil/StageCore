@@ -261,7 +261,7 @@ func latestSimulationRecoveryCheckpointTx(ctx context.Context, tx *sql.Tx, sessi
 		assignCheckpointOptional(lastCompleted, &checkpoint.LastCompletedCueID)
 		assignCheckpointOptional(nextCue, &checkpoint.NextCueID)
 		expectedHash, hashErr := simulationCheckpointContentHash(checkpoint)
-		if hashErr != nil || expectedHash != checkpoint.ContentHash {
+		if hashErr != nil || expectedHash != checkpoint.ContentHash || !simulationCheckpointRecoverableForSnapshot(checkpoint, session.snapshotID) {
 			continue
 		}
 		return &restartCheckpointEvidence{
