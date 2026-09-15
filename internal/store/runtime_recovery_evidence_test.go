@@ -78,7 +78,7 @@ func TestHubRestartRecordsCheckpointManualRecoveryWithoutReplayAuthority(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{}}`))
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, runtimeSnapshot.ID, "event-evidence"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func assertCheckpointRecoveryDecisionEvent(t *testing.T, s interface {
 		if payload.Automatic || payload.ReplayAllowed || !payload.ManualConfirmationRequired {
 			t.Fatalf("checkpoint recovery authority=%+v", payload)
 		}
-		if payload.CheckpointID != checkpointID || payload.CheckpointStateContractVersion != 1 || payload.CheckpointContentHash != contentHash {
+		if payload.CheckpointID != checkpointID || payload.CheckpointStateContractVersion != domain.SimulationCheckpointStateContractVersion1 || payload.CheckpointContentHash != contentHash {
 			t.Fatalf("checkpoint evidence=%+v", payload)
 		}
 		if payload.ReconstructionStartKind != string(domain.SessionStartCheckpoint) || !payload.ReconstructionRequiresNewSession {
