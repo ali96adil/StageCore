@@ -14,7 +14,10 @@ import (
 
 const wallRollbackTolerance = 100 * time.Millisecond
 
-var ErrNoActiveLease = errors.New("HA Hub has no active local lease authority")
+var (
+	ErrNoActiveLease       = errors.New("HA Hub has no active local lease authority")
+	ErrAuthoritySuperseded = errors.New("HA authority operation was superseded by local demotion")
+)
 
 // WitnessClient is the authenticated HA-A3 lease client surface required by the
 // Hub-side authority controller. The controller never acquires a lease unless a
@@ -32,14 +35,20 @@ type WitnessClient interface {
 // Current performs no network I/O. Network operations are explicit and
 // serialized, while every dispatch decision is bounded by the last proven lease
 // observation. A process restart therefore starts with STANDBY authority.
+//
+// generation is a local fencing generation. Demote and Release advance it
+// immediately without waiting for network operations. A delayed Acquire/Renew
+// response captured under an older generation can therefore never reinstall
+// LEADER authority after a local fail-closed decision.
 type Controller struct {
-	client WitnessClient
-	now    func() time.Time
+	client  WitnessClient
+	now     func() time.Time
 	elapsed func(time.Time) time.Duration
 
 	opMu sync.Mutex
 	mu   sync.RWMutex
 	grant localGrant
+	generation uint64
 }
 
 type localGrant struct {
@@ -74,8 +83,8 @@ func New(client WitnessClient, options ...Option) (*Controller, error) {
 		return nil, errors.New("HA witness client Hub identity is required")
 	}
 	controller := &Controller{
-		client: client,
-		now: time.Now,
+		client:  client,
+		now:     time.Now,
 		elapsed: time.Since,
 	}
 	for _, option := range options {
@@ -107,9 +116,9 @@ func (c *Controller) Current(context.Context) (dispatchauthority.Snapshot, error
 		return dispatchauthority.Snapshot{Mode: dispatchauthority.ModeStandby}, nil
 	}
 	return dispatchauthority.Snapshot{
-		Mode: dispatchauthority.ModeLeader,
+		Mode:     dispatchauthority.ModeLeader,
 		HolderID: grant.holderID,
-		Epoch: grant.epoch,
+		Epoch:    grant.epoch,
 	}, nil
 }
 
@@ -119,16 +128,20 @@ func (c *Controller) Acquire(ctx context.Context) error {
 	if c == nil || c.client == nil {
 		return errors.New("HA dispatch authority controller is unavailable")
 	}
+	expectedGeneration := c.currentGeneration()
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
+	if !c.generationMatches(expectedGeneration) {
+		return ErrAuthoritySuperseded
+	}
 
 	observation, err := c.client.Acquire(ctx)
 	if err != nil {
-		c.clear()
+		c.invalidateIfGeneration(expectedGeneration)
 		return fmt.Errorf("acquire HA witness lease: %w", err)
 	}
-	if err := c.install(observation); err != nil {
-		c.clear()
+	if err := c.install(observation, expectedGeneration); err != nil {
+		c.invalidateIfGeneration(expectedGeneration)
 		return err
 	}
 	return nil
@@ -141,69 +154,65 @@ func (c *Controller) Renew(ctx context.Context) error {
 	if c == nil || c.client == nil {
 		return errors.New("HA dispatch authority controller is unavailable")
 	}
+	expectedGeneration := c.currentGeneration()
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
-
-	snapshot, err := c.Current(ctx)
-	if err != nil {
-		c.clear()
-		return err
+	if !c.generationMatches(expectedGeneration) {
+		return ErrAuthoritySuperseded
 	}
-	if snapshot.Mode != dispatchauthority.ModeLeader || snapshot.Epoch == 0 {
+
+	snapshot, ok := c.leaderSnapshot(expectedGeneration)
+	if !ok {
 		return ErrNoActiveLease
 	}
 	observation, err := c.client.Renew(ctx, snapshot.Epoch)
 	if err != nil {
-		c.clear()
+		c.invalidateIfGeneration(expectedGeneration)
 		return fmt.Errorf("renew HA witness lease: %w", err)
 	}
 	if observation.Epoch != snapshot.Epoch {
-		c.clear()
+		c.invalidateIfGeneration(expectedGeneration)
 		return errors.New("HA witness renewal changed the fencing epoch")
 	}
-	if err := c.install(observation); err != nil {
-		c.clear()
+	if err := c.install(observation, expectedGeneration); err != nil {
+		c.invalidateIfGeneration(expectedGeneration)
 		return err
 	}
 	return nil
 }
 
-// Release revokes local dispatch authority before any network request. Even if
-// the witness is unreachable, this Hub remains STANDBY and cannot keep emitting
-// physical output from a stale local grant.
+// Release removes local dispatch authority before it waits for any in-flight
+// network operation. Even if the witness is unreachable, this Hub stays
+// STANDBY. The generation bump also prevents an older Acquire/Renew response
+// from restoring authority after release began.
 func (c *Controller) Release(ctx context.Context) error {
 	if c == nil || c.client == nil {
 		return errors.New("HA dispatch authority controller is unavailable")
 	}
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-
-	c.mu.RLock()
-	epoch := c.grant.epoch
-	c.mu.RUnlock()
+	epoch := c.demoteAndEpoch()
 	if epoch == 0 {
 		return ErrNoActiveLease
 	}
-	c.clear()
+
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
 	if err := c.client.Release(ctx, epoch); err != nil {
 		return fmt.Errorf("release HA witness lease: %w", err)
 	}
 	return nil
 }
 
-// Demote is an immediate local fail-closed operation. It never releases or
-// reacquires remote authority; the witness lease naturally remains fenced until
-// explicit Release or expiry.
+// Demote is an immediate local fail-closed operation. It never waits for an
+// in-flight witness call. Delayed responses from older generations are fenced
+// and cannot reinstall local authority.
 func (c *Controller) Demote() {
 	if c == nil {
 		return
 	}
-	c.opMu.Lock()
-	defer c.opMu.Unlock()
-	c.clear()
+	c.demoteAndEpoch()
 }
 
-func (c *Controller) install(observation hawitness.LeaseObservation) error {
+func (c *Controller) install(observation hawitness.LeaseObservation, expectedGeneration uint64) error {
 	if strings.TrimSpace(observation.HolderID) != strings.TrimSpace(c.client.HubID()) {
 		return errors.New("HA witness lease belongs to a different Hub")
 	}
@@ -221,19 +230,44 @@ func (c *Controller) install(observation hawitness.LeaseObservation) error {
 		return err
 	}
 	grant := localGrant{
-		holderID: strings.TrimSpace(observation.HolderID),
-		epoch: observation.Epoch,
+		holderID:       strings.TrimSpace(observation.HolderID),
+		epoch:          observation.Epoch,
 		requestStarted: observation.RequestStartedAt,
-		wallStarted: wallTime(observation.RequestStartedAt),
-		remaining: remaining,
+		wallStarted:    wallTime(observation.RequestStartedAt),
+		remaining:      remaining,
 	}
 	if !c.grantStillSafe(grant) {
 		return errors.New("HA witness lease is no longer locally safe")
 	}
+
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.generation != expectedGeneration {
+		return ErrAuthoritySuperseded
+	}
+	if !c.grantStillSafe(grant) {
+		return errors.New("HA witness lease expired before local installation")
+	}
 	c.grant = grant
-	c.mu.Unlock()
 	return nil
+}
+
+func (c *Controller) leaderSnapshot(expectedGeneration uint64) (dispatchauthority.Snapshot, bool) {
+	c.mu.RLock()
+	if c.generation != expectedGeneration {
+		c.mu.RUnlock()
+		return dispatchauthority.Snapshot{}, false
+	}
+	grant := c.grant
+	c.mu.RUnlock()
+	if grant.epoch == 0 || strings.TrimSpace(grant.holderID) == "" || !c.grantStillSafe(grant) {
+		return dispatchauthority.Snapshot{}, false
+	}
+	return dispatchauthority.Snapshot{
+		Mode:     dispatchauthority.ModeLeader,
+		HolderID: grant.holderID,
+		Epoch:    grant.epoch,
+	}, true
 }
 
 func (c *Controller) grantStillSafe(grant localGrant) bool {
@@ -254,10 +288,35 @@ func (c *Controller) grantStillSafe(grant localGrant) bool {
 	return true
 }
 
-func (c *Controller) clear() {
+func (c *Controller) currentGeneration() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.generation
+}
+
+func (c *Controller) generationMatches(expected uint64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.generation == expected
+}
+
+func (c *Controller) invalidateIfGeneration(expected uint64) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.generation != expected {
+		return
+	}
+	c.generation++
 	c.grant = localGrant{}
-	c.mu.Unlock()
+}
+
+func (c *Controller) demoteAndEpoch() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	epoch := c.grant.epoch
+	c.generation++
+	c.grant = localGrant{}
+	return epoch
 }
 
 func wallTime(value time.Time) time.Time {
