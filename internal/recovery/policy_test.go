@@ -92,5 +92,6 @@ func TestClassifyTimecodeAuthorityIsConservative(t *testing.T) {
 			if got := ClassifyTimecodeAuthority([]byte(tt.raw)); got != tt.want {
 				t.Fatalf("authority=%s want %s", got, tt.want)
 			}
+		})
 	}
 }
