@@ -17,7 +17,7 @@ func TestHubRestartIgnoresCorruptSimulationCheckpointAndFailsClosed(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{},"faults":[]}`))
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, runtimeSnapshot.ID, "corrupt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,29 +45,7 @@ func TestHubRestartIgnoresCorruptSimulationCheckpointAndFailsClosed(t *testing.T
 	if loaded.StateTruth.DesiredStateRef != nil || loaded.StateTruth.VerifiedStateRef != nil {
 		t.Fatalf("corrupt checkpoint must not become state authority: %+v", loaded.StateTruth)
 	}
-
-	events, err := s.ListEvents(ctx, session.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, event := range events {
-		if event.EventType != "runtime.recovery.decision" {
-			continue
-		}
-		var payload struct {
-			Disposition  recovery.Disposition `json:"disposition"`
-			ReasonCode   string               `json:"reason_code"`
-			CheckpointID string               `json:"checkpoint_id"`
-		}
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			t.Fatal(err)
-		}
-		if payload.Disposition != recovery.DispositionAbort || payload.ReasonCode != recovery.ReasonSimulationRestartFailClosed || payload.CheckpointID != "" {
-			t.Fatalf("corrupt checkpoint recovery event=%+v", payload)
-		}
-		return
-	}
-	t.Fatal("runtime.recovery.decision event not found")
+	assertFailClosedSimulationRecoveryEvent(t, s, session.ID, "")
 }
 
 func TestHubRestartFallsBackToLatestValidSimulationCheckpoint(t *testing.T) {
@@ -78,11 +56,11 @@ func TestHubRestartFallsBackToLatestValidSimulationCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	valid, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{"state":"valid"},"faults":[]}`))
+	valid, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, runtimeSnapshot.ID, "valid"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	corrupt, err := s.CreateSimulationCheckpoint(ctx, session.ID, 1, json.RawMessage(`{"version":1,"targets":{"state":"newer"},"faults":[]}`))
+	corrupt, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, runtimeSnapshot.ID, "newer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +120,7 @@ func TestHubRestartUnsupportedSimulationCheckpointVersionFailsClosed(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1+1, json.RawMessage(`{"version":2,"targets":{},"faults":[]}`))
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1+1, json.RawMessage(`{"version":2,"runtime_snapshot_id":"`+runtimeSnapshot.ID+`","targets":[],"faults":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +142,44 @@ func TestHubRestartUnsupportedSimulationCheckpointVersionFailsClosed(t *testing.
 	if loaded.StateTruth.DesiredStateRef != nil || loaded.StateTruth.VerifiedStateRef != nil {
 		t.Fatalf("unsupported checkpoint version must not become recovery authority: %+v", loaded.StateTruth)
 	}
+	assertFailClosedSimulationRecoveryEvent(t, s, session.ID, checkpoint.ID)
+}
 
-	events, err := s.ListEvents(ctx, session.ID)
+func TestHubRestartCheckpointWithWrongEmbeddedSnapshotFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	runtimeSnapshot, _ := createInternalRestartFixture(t, s, "INTERNAL")
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionSimulation, "wrong-embedded-snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := s.CreateSimulationCheckpoint(ctx, session.ID, domain.SimulationCheckpointStateContractVersion1, recoveryCheckpointTwinState(t, "different-runtime-snapshot", "wrong-snapshot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := s.ReconcileInterruptedRuntimeForHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("reconciled Sessions=%d want 1", count)
+	}
+	loaded, err := s.GetSessionFoundation(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateTruth.RestorationStatus != domain.SessionRestorationUnavailable || loaded.StateTruth.DesiredStateRef != nil {
+		t.Fatalf("wrong embedded snapshot recovery truth=%+v", loaded.StateTruth)
+	}
+	assertFailClosedSimulationRecoveryEvent(t, s, session.ID, checkpoint.ID)
+}
+
+func assertFailClosedSimulationRecoveryEvent(t *testing.T, s interface {
+	ListEvents(context.Context, string) ([]contracts.EventEnvelope, error)
+}, sessionID, rejectedCheckpointID string) {
+	t.Helper()
+	events, err := s.ListEvents(context.Background(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +196,7 @@ func TestHubRestartUnsupportedSimulationCheckpointVersionFailsClosed(t *testing.
 			t.Fatal(err)
 		}
 		if payload.Disposition != recovery.DispositionAbort || payload.ReasonCode != recovery.ReasonSimulationRestartFailClosed || payload.CheckpointID != "" {
-			t.Fatalf("unsupported checkpoint recovery event=%+v checkpoint=%s", payload, checkpoint.ID)
+			t.Fatalf("fail-closed simulation recovery event=%+v rejected_checkpoint=%s", payload, rejectedCheckpointID)
 		}
 		return
 	}
