@@ -77,15 +77,19 @@ public struct LiveSourceEngineSnapshot: Sendable, Equatable {
     }
 }
 
-/// Deterministic F-007 control state for a render Companion. This actor carries
-/// descriptors and routing intent only; it never transports video frames.
-/// Native capture/render adapters are attached in a later Slice D runtime layer.
+/// Deterministic F-007 control state for a render Companion. Descriptors and
+/// routing intent remain the Hub-visible contract while the runtime adapter
+/// owns local capture/network frames. State is committed only after the native
+/// runtime operation succeeds.
 public actor LiveSourceEngine {
+    private let runtime: any LiveSourceRuntimeAdapter
     private var sources: [String: LiveSourceRuntimeState] = [:]
     private var selectedSourceID: String?
     private var routes: [String: LiveSourceRouteState] = [:]
 
-    public init() {}
+    public init(runtime: any LiveSourceRuntimeAdapter = StateOnlyLiveSourceRuntime()) {
+        self.runtime = runtime
+    }
 
     public func snapshot() -> LiveSourceEngineSnapshot {
         LiveSourceEngineSnapshot(
@@ -99,10 +103,17 @@ public actor LiveSourceEngine {
         )
     }
 
+    public func shutdown() async {
+        await runtime.shutdown()
+        sources.removeAll()
+        routes.removeAll()
+        selectedSourceID = nil
+    }
+
     public func execute(
         capability: String,
         parameters: [String: JSONValue]
-    ) -> CompanionCapabilityOutcome {
+    ) async -> CompanionCapabilityOutcome {
         guard LiveSourceCapability.all.contains(capability) else {
             return failure("LIVE_SOURCE_CAPABILITY_UNSUPPORTED", "unsupported live-source capability")
         }
@@ -139,6 +150,11 @@ public actor LiveSourceEngine {
                 endpointRef: endpointRef,
                 config: config
             )
+            do {
+                try await runtime.open(descriptor)
+            } catch {
+                return runtimeFailure(error)
+            }
             sources[sourceID] = LiveSourceRuntimeState(descriptor: descriptor, open: true)
             return success("live source opened", output: sourceOutput(sources[sourceID]!))
 
@@ -148,6 +164,11 @@ public actor LiveSourceEngine {
             }
             guard var state = sources[sourceID], state.open else {
                 return failure("LIVE_SOURCE_NOT_OPEN", "live source is not open")
+            }
+            do {
+                try await runtime.close(sourceID: sourceID)
+            } catch {
+                return runtimeFailure(error)
             }
             state.open = false
             sources[sourceID] = state
@@ -161,6 +182,11 @@ public actor LiveSourceEngine {
             }
             guard let state = sources[sourceID], state.open else {
                 return failure("LIVE_SOURCE_NOT_OPEN", "live source must be open before selection")
+            }
+            do {
+                try await runtime.select(sourceID: sourceID)
+            } catch {
+                return runtimeFailure(error)
             }
             selectedSourceID = sourceID
             return success("live source selected", output: sourceOutput(state))
@@ -180,6 +206,11 @@ public actor LiveSourceEngine {
                 return failure("LIVE_SOURCE_INVALID", "output_id cannot be empty")
             }
             let route = LiveSourceRouteState(sourceID: sourceID, layerID: layerID, outputID: outputID)
+            do {
+                try await runtime.route(route)
+            } catch {
+                return runtimeFailure(error)
+            }
             routes[outputID + "\u{0}" + layerID] = route
             return success("live source routed", output: [
                 "source_id": .string(sourceID),
@@ -220,6 +251,13 @@ public actor LiveSourceEngine {
             "source_class": .string(state.descriptor.sourceClass.rawValue),
             "open": .bool(state.open),
         ]
+    }
+
+    private func runtimeFailure(_ error: Error) -> CompanionCapabilityOutcome {
+        if let runtime = error as? LiveSourceRuntimeFailure {
+            return failure(runtime.code, runtime.summary)
+        }
+        return failure("LIVE_SOURCE_RUNTIME_FAILED", "live source runtime operation failed")
     }
 
     private func success(
