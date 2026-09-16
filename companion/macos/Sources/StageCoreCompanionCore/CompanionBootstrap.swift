@@ -94,6 +94,7 @@ public actor CompanionBootstrap {
     private let runtimeAgent: WebSocketCompanionAgent
     private let report: CompanionReportIdentity
     private let visualEngine: VisualEngine?
+    private let liveSourceEngine: LiveSourceEngine?
     private var phase: CompanionBootstrapPhase = .starting
 
     public init(
@@ -110,6 +111,7 @@ public actor CompanionBootstrap {
 
         let mediaSynchronizer: (any CompanionMediaSynchronizer)?
         let visualEngine: VisualEngine?
+        let liveSourceEngine: LiveSourceEngine?
         #if os(macOS)
         let cacheRoot = configuration.mediaCacheRoot ?? FileManager.default.urls(
             for: .cachesDirectory,
@@ -127,14 +129,18 @@ public actor CompanionBootstrap {
                 mediaResolver: mediaCache,
                 renderer: try NativeVisualRenderer()
             )
+            liveSourceEngine = LiveSourceEngine(runtime: NativeLiveSourceRuntime())
         } else {
             visualEngine = nil
+            liveSourceEngine = nil
         }
         #else
         mediaSynchronizer = nil
         visualEngine = nil
+        liveSourceEngine = nil
         #endif
         self.visualEngine = visualEngine
+        self.liveSourceEngine = liveSourceEngine
 
         var executors: [any CompanionCapabilityExecutor] = [LocalEchoExecutor()]
         if let endpoint = configuration.oscEndpoint {
@@ -145,6 +151,9 @@ public actor CompanionBootstrap {
         let operationProviders: [any ExecutionEnvironmentOperationProvider] = [VDMXOperationProvider()]
         if let visualEngine {
             executors.append(contentsOf: try makeVisualCapabilityExecutors(engine: visualEngine))
+        }
+        if let liveSourceEngine {
+            executors.append(contentsOf: try makeLiveSourceCapabilityExecutors(engine: liveSourceEngine))
         }
         #else
         let operationProviders: [any ExecutionEnvironmentOperationProvider] = []
@@ -225,10 +234,12 @@ public actor CompanionBootstrap {
             phase = .running
             event(.phaseChanged(phase))
             try await runtimeAgent.run()
+            await liveSourceEngine?.shutdown()
             await visualEngine?.shutdown()
             phase = .stopped
             event(.phaseChanged(phase))
         } catch {
+            await liveSourceEngine?.shutdown()
             await visualEngine?.shutdown()
             phase = .failed
             event(.phaseChanged(phase))
