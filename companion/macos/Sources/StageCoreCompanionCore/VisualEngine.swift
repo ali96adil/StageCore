@@ -11,11 +11,17 @@ public enum VisualCapability {
     public static let blackout = "visual.blackout"
     public static let layerOpacity = "visual.layer.opacity"
     public static let layerTransform = "visual.layer.transform"
+    public static let layerOrder = "visual.layer.order"
+    public static let layerOutput = "visual.layer.output"
+    public static let outputConfigure = "visual.output.configure"
+    public static let outputMapping = "visual.output.mapping"
     public static let stateInspect = "visual.state.inspect"
 
     public static let all: [String] = [
         preload, play, pause, stop, seek, loop,
-        blackout, layerOpacity, layerTransform, stateInspect,
+        blackout, layerOpacity, layerTransform,
+        layerOrder, layerOutput, outputConfigure, outputMapping,
+        stateInspect,
     ]
 }
 
@@ -64,19 +70,25 @@ public struct VisualRenderLayer: Sendable, Equatable {
     public var contentMode: VisualContentMode
     public var opacity: Double
     public var transform: VisualTransformState
+    public var outputID: String
+    public var zIndex: Int
 
     public init(
         layerID: String,
         mediaURL: URL,
         contentMode: VisualContentMode,
         opacity: Double,
-        transform: VisualTransformState
+        transform: VisualTransformState,
+        outputID: String = "main",
+        zIndex: Int = 0
     ) {
         self.layerID = layerID
         self.mediaURL = mediaURL
         self.contentMode = contentMode
         self.opacity = opacity
         self.transform = transform
+        self.outputID = outputID
+        self.zIndex = zIndex
     }
 }
 
@@ -100,7 +112,41 @@ public protocol VisualRenderer: Sendable {
     func setBlackout(_ enabled: Bool) async throws
     func setOpacity(layerID: String, opacity: Double) async throws
     func setTransform(layerID: String, transform: VisualTransformState) async throws
+    func configureOutput(_ output: VisualOutputState) async throws
+    func setLayerOutput(layerID: String, outputID: String) async throws
+    func setLayerOrder(layerID: String, zIndex: Int) async throws
+    func setOutputMapping(outputID: String, mapping: VisualQuadState) async throws
     func shutdown() async
+}
+
+public extension VisualRenderer {
+    func configureOutput(_ output: VisualOutputState) async throws {
+        throw VisualRendererFailure(
+            code: "VISUAL_RENDERER_OPERATION_UNSUPPORTED",
+            summary: "renderer does not support named outputs"
+        )
+    }
+
+    func setLayerOutput(layerID: String, outputID: String) async throws {
+        throw VisualRendererFailure(
+            code: "VISUAL_RENDERER_OPERATION_UNSUPPORTED",
+            summary: "renderer does not support output assignment"
+        )
+    }
+
+    func setLayerOrder(layerID: String, zIndex: Int) async throws {
+        throw VisualRendererFailure(
+            code: "VISUAL_RENDERER_OPERATION_UNSUPPORTED",
+            summary: "renderer does not support layer ordering"
+        )
+    }
+
+    func setOutputMapping(outputID: String, mapping: VisualQuadState) async throws {
+        throw VisualRendererFailure(
+            code: "VISUAL_RENDERER_OPERATION_UNSUPPORTED",
+            summary: "renderer does not support projector mapping"
+        )
+    }
 }
 
 /// State-only renderer used by contract/unit tests. Production bootstrap must
@@ -116,6 +162,10 @@ public struct StateOnlyVisualRenderer: VisualRenderer {
     public func setBlackout(_ enabled: Bool) async throws {}
     public func setOpacity(layerID: String, opacity: Double) async throws {}
     public func setTransform(layerID: String, transform: VisualTransformState) async throws {}
+    public func configureOutput(_ output: VisualOutputState) async throws {}
+    public func setLayerOutput(layerID: String, outputID: String) async throws {}
+    public func setLayerOrder(layerID: String, zIndex: Int) async throws {}
+    public func setOutputMapping(outputID: String, mapping: VisualQuadState) async throws {}
     public func shutdown() async {}
 }
 
@@ -130,39 +180,83 @@ public struct VisualLayerState: Sendable, Equatable {
     public var loopEnabled: Bool
     public var opacity: Double
     public var transform: VisualTransformState
+    public var outputID: String
+    public var zIndex: Int
+
+    public init(
+        layerID: String,
+        contentVersionID: String,
+        contentHash: String,
+        mediaURL: URL,
+        contentMode: VisualContentMode,
+        playback: VisualPlaybackState,
+        positionMS: Int64,
+        loopEnabled: Bool,
+        opacity: Double,
+        transform: VisualTransformState,
+        outputID: String = "main",
+        zIndex: Int = 0
+    ) {
+        self.layerID = layerID
+        self.contentVersionID = contentVersionID
+        self.contentHash = contentHash
+        self.mediaURL = mediaURL
+        self.contentMode = contentMode
+        self.playback = playback
+        self.positionMS = positionMS
+        self.loopEnabled = loopEnabled
+        self.opacity = opacity
+        self.transform = transform
+        self.outputID = outputID
+        self.zIndex = zIndex
+    }
 }
 
 public struct VisualEngineSnapshot: Sendable, Equatable {
     public var contractVersion: Int
     public var blackout: Bool
+    public var outputs: [VisualOutputState]
     public var layers: [VisualLayerState]
 }
 
 public actor VisualEngine {
     private let mediaResolver: any VisualMediaResolver
     private let renderer: any VisualRenderer
+    private let defaultOutput: VisualOutputState
     private var blackout = false
+    private var outputs: [String: VisualOutputState]
     private var layers: [String: VisualLayerState] = [:]
 
     public init(
         mediaResolver: any VisualMediaResolver,
-        renderer: any VisualRenderer = StateOnlyVisualRenderer()
+        renderer: any VisualRenderer = StateOnlyVisualRenderer(),
+        defaultOutputWidth: Double = 1920,
+        defaultOutputHeight: Double = 1080
     ) {
         self.mediaResolver = mediaResolver
         self.renderer = renderer
+        let initial = VisualOutputState(
+            outputID: "main",
+            width: defaultOutputWidth,
+            height: defaultOutputHeight
+        )
+        self.defaultOutput = initial
+        self.outputs = [initial.outputID: initial]
     }
 
     public func snapshot() -> VisualEngineSnapshot {
         VisualEngineSnapshot(
             contractVersion: VisualCapability.contractVersion,
             blackout: blackout,
-            layers: layers.values.sorted { $0.layerID < $1.layerID }
+            outputs: outputs.values.sorted { $0.outputID < $1.outputID },
+            layers: sortedLayers()
         )
     }
 
     public func shutdown() async {
         await renderer.shutdown()
         layers.removeAll()
+        outputs = [defaultOutput.outputID: defaultOutput]
         blackout = false
     }
 
@@ -188,6 +282,10 @@ public actor VisualEngine {
         case VisualCapability.blackout: return await setBlackout(parameters)
         case VisualCapability.layerOpacity: return await setOpacity(parameters)
         case VisualCapability.layerTransform: return await setTransform(parameters)
+        case VisualCapability.layerOrder: return await setLayerOrder(parameters)
+        case VisualCapability.layerOutput: return await setLayerOutput(parameters)
+        case VisualCapability.outputConfigure: return await configureOutput(parameters)
+        case VisualCapability.outputMapping: return await setOutputMapping(parameters)
         case VisualCapability.stateInspect:
             guard hasOnly(parameters, allowed: ["contract_version"]) else {
                 return failure("VISUAL_PARAMETERS_INVALID", "state inspection contains unsupported parameters")
@@ -201,7 +299,7 @@ public actor VisualEngine {
     private func preload(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         let allowed = Set([
             "contract_version", "layer_id", "content_version_id", "content_hash",
-            "content_mode", "opacity", "transform",
+            "content_mode", "opacity", "transform", "output_id", "z_index",
         ])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
@@ -238,6 +336,29 @@ public actor VisualEngine {
             transform = parsed
         }
 
+        let outputID: String
+        if parameters["output_id"] != nil {
+            guard let parsed = trimmedString(parameters["output_id"], maxLength: 64) else {
+                return failure("VISUAL_PARAMETERS_INVALID", "output_id is invalid")
+            }
+            outputID = parsed
+        } else {
+            outputID = "main"
+        }
+        guard outputs[outputID] != nil else {
+            return failure("VISUAL_OUTPUT_NOT_CONFIGURED", "output must be configured before layer preload")
+        }
+
+        let zIndex: Int
+        if let raw = parameters["z_index"] {
+            guard case .int(let parsed) = raw, (-4096...4096).contains(parsed) else {
+                return failure("VISUAL_PARAMETERS_INVALID", "z_index must be between -4096 and 4096")
+            }
+            zIndex = parsed
+        } else {
+            zIndex = 0
+        }
+
         guard let mediaURL = await mediaResolver.verifiedMediaURL(contentHash: contentHash) else {
             return failure("VISUAL_MEDIA_UNAVAILABLE", "managed media is not verified in the render-node cache")
         }
@@ -247,7 +368,9 @@ public actor VisualEngine {
             mediaURL: mediaURL,
             contentMode: contentMode,
             opacity: opacity,
-            transform: transform
+            transform: transform,
+            outputID: outputID,
+            zIndex: zIndex
         )
         if let rendererFailure = await rendererFailure({ try await renderer.preload(renderLayer) }) {
             return rendererFailure
@@ -263,7 +386,9 @@ public actor VisualEngine {
             positionMS: 0,
             loopEnabled: false,
             opacity: opacity,
-            transform: transform
+            transform: transform,
+            outputID: outputID,
+            zIndex: zIndex
         )
         return success("visual layer preloaded", output: ["state": snapshotJSON()])
     }
@@ -412,6 +537,90 @@ public actor VisualEngine {
         return success("visual transform updated", output: ["state": snapshotJSON()])
     }
 
+    private func setLayerOrder(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard hasOnly(parameters, allowed: ["contract_version", "layer_id", "z_index"]),
+              let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
+              case .int(let zIndex)? = parameters["z_index"],
+              (-4096...4096).contains(zIndex) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "layer order requires layer_id and z_index in -4096...4096")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before ordering")
+        }
+        if layer.zIndex == zIndex {
+            return success("visual layer order unchanged", output: ["state": snapshotJSON()])
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.setLayerOrder(layerID: layerID, zIndex: zIndex) }) {
+            return rendererFailure
+        }
+        layer.zIndex = zIndex
+        layers[layerID] = layer
+        return success("visual layer order updated", output: ["state": snapshotJSON()])
+    }
+
+    private func setLayerOutput(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard hasOnly(parameters, allowed: ["contract_version", "layer_id", "output_id"]),
+              let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
+              let outputID = trimmedString(parameters["output_id"], maxLength: 64) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "layer output assignment requires layer_id and output_id")
+        }
+        guard outputs[outputID] != nil else {
+            return failure("VISUAL_OUTPUT_NOT_CONFIGURED", "target output is not configured")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before output assignment")
+        }
+        if layer.outputID == outputID {
+            return success("visual layer output unchanged", output: ["state": snapshotJSON()])
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.setLayerOutput(layerID: layerID, outputID: outputID) }) {
+            return rendererFailure
+        }
+        layer.outputID = outputID
+        layers[layerID] = layer
+        return success("visual layer output updated", output: ["state": snapshotJSON()])
+    }
+
+    private func configureOutput(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard hasOnly(parameters, allowed: ["contract_version", "output_id", "width", "height"]),
+              let outputID = trimmedString(parameters["output_id"], maxLength: 64),
+              let width = finiteDouble(parameters["width"]),
+              let height = finiteDouble(parameters["height"]),
+              width >= 1, width <= 16_384,
+              height >= 1, height <= 16_384 else {
+            return failure("VISUAL_PARAMETERS_INVALID", "output requires output_id and dimensions in 1...16384")
+        }
+        let mapping = outputs[outputID]?.mapping ?? .identity
+        let output = VisualOutputState(outputID: outputID, width: width, height: height, mapping: mapping)
+        if let rendererFailure = await rendererFailure({ try await renderer.configureOutput(output) }) {
+            return rendererFailure
+        }
+        outputs[outputID] = output
+        return success("visual output configured", output: ["state": snapshotJSON()])
+    }
+
+    private func setOutputMapping(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard hasOnly(parameters, allowed: ["contract_version", "output_id", "mapping"]),
+              let outputID = trimmedString(parameters["output_id"], maxLength: 64),
+              case .object(let rawMapping)? = parameters["mapping"],
+              let mapping = parseQuad(rawMapping),
+              mapping.isValidProjection else {
+            return failure("VISUAL_PARAMETERS_INVALID", "output mapping requires a non-degenerate four-corner projection")
+        }
+        guard var output = outputs[outputID] else {
+            return failure("VISUAL_OUTPUT_NOT_CONFIGURED", "output must be configured before mapping")
+        }
+        if output.mapping == mapping {
+            return success("visual output mapping unchanged", output: ["state": snapshotJSON()])
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.setOutputMapping(outputID: outputID, mapping: mapping) }) {
+            return rendererFailure
+        }
+        output.mapping = mapping
+        outputs[outputID] = output
+        return success("visual output mapping updated", output: ["state": snapshotJSON()])
+    }
+
     private func validatedLayerID(_ parameters: [String: JSONValue]) -> String? {
         guard hasOnly(parameters, allowed: ["contract_version", "layer_id"]) else { return nil }
         return trimmedString(parameters["layer_id"], maxLength: 64)
@@ -460,13 +669,70 @@ public actor VisualEngine {
         return result
     }
 
+    private func parseQuad(_ object: [String: JSONValue]) -> VisualQuadState? {
+        let allowed = Set(["top_left", "top_right", "bottom_right", "bottom_left"])
+        guard Set(object.keys) == allowed,
+              let topLeft = parsePoint(object["top_left"]),
+              let topRight = parsePoint(object["top_right"]),
+              let bottomRight = parsePoint(object["bottom_right"]),
+              let bottomLeft = parsePoint(object["bottom_left"]) else {
+            return nil
+        }
+        return VisualQuadState(
+            topLeft: topLeft,
+            topRight: topRight,
+            bottomRight: bottomRight,
+            bottomLeft: bottomLeft
+        )
+    }
+
+    private func parsePoint(_ value: JSONValue?) -> VisualPointState? {
+        guard case .object(let object)? = value,
+              Set(object.keys) == Set(["x", "y"]),
+              let x = finiteDouble(object["x"]),
+              let y = finiteDouble(object["y"]) else {
+            return nil
+        }
+        return VisualPointState(x: x, y: y)
+    }
+
+    private func sortedLayers() -> [VisualLayerState] {
+        layers.values.sorted {
+            if $0.outputID != $1.outputID { return $0.outputID < $1.outputID }
+            if $0.zIndex != $1.zIndex { return $0.zIndex < $1.zIndex }
+            return $0.layerID < $1.layerID
+        }
+    }
+
     private func snapshotJSON() -> JSONValue {
-        let sorted = layers.values.sorted { $0.layerID < $1.layerID }
-        return .object([
+        .object([
             "contract_version": .int(VisualCapability.contractVersion),
             "blackout": .bool(blackout),
-            "layers": .array(sorted.map(layerJSON)),
+            "outputs": .array(outputs.values.sorted { $0.outputID < $1.outputID }.map(outputJSON)),
+            "layers": .array(sortedLayers().map(layerJSON)),
         ])
+    }
+
+    private func outputJSON(_ output: VisualOutputState) -> JSONValue {
+        .object([
+            "output_id": .string(output.outputID),
+            "width": .double(output.width),
+            "height": .double(output.height),
+            "mapping": quadJSON(output.mapping),
+        ])
+    }
+
+    private func quadJSON(_ mapping: VisualQuadState) -> JSONValue {
+        .object([
+            "top_left": pointJSON(mapping.topLeft),
+            "top_right": pointJSON(mapping.topRight),
+            "bottom_right": pointJSON(mapping.bottomRight),
+            "bottom_left": pointJSON(mapping.bottomLeft),
+        ])
+    }
+
+    private func pointJSON(_ point: VisualPointState) -> JSONValue {
+        .object(["x": .double(point.x), "y": .double(point.y)])
     }
 
     private func layerJSON(_ layer: VisualLayerState) -> JSONValue {
@@ -479,6 +745,8 @@ public actor VisualEngine {
             "position_ms": .int(Int(layer.positionMS)),
             "loop": .bool(layer.loopEnabled),
             "opacity": .double(layer.opacity),
+            "output_id": .string(layer.outputID),
+            "z_index": .int(layer.zIndex),
             "transform": .object([
                 "x": .double(layer.transform.x),
                 "y": .double(layer.transform.y),
