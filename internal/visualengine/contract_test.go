@@ -50,6 +50,8 @@ func TestValidateCommandRejectsAmbiguousOrUnsafeParameters(t *testing.T) {
 		{"zero scale", CapabilityLayerTransform, `{"contract_version":1,"layer_id":"main","transform":{"scale_x":0}}`},
 		{"whitespace layer", CapabilityPlay, `{"contract_version":1,"layer_id":" main "}`},
 		{"inspect unknown field", CapabilityStateInspect, `{"contract_version":1,"command":"go"}`},
+		{"trailing garbage", CapabilityStateInspect, `{"contract_version":1} trailing`},
+		{"second json value", CapabilityStateInspect, `{"contract_version":1} {"contract_version":1}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
