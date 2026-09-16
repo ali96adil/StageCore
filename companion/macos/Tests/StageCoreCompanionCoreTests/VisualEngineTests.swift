@@ -178,12 +178,14 @@ final class VisualEngineTests: XCTestCase {
             ],
             timeoutMS: 500
         )
-        let firstData = try XCTUnwrap(try await session.handle(JSONEncoder().encode(request)))
+        let firstResponse = try await session.handle(JSONEncoder().encode(request))
+        let firstData = try XCTUnwrap(firstResponse)
         let first = try JSONDecoder().decode(CompanionExecutionResult.self, from: firstData)
         XCTAssertEqual(first.status, .completed)
         XCTAssertEqual(first.ackLevel, .accepted)
 
-        let duplicateData = try XCTUnwrap(try await session.handle(JSONEncoder().encode(request)))
+        let duplicateResponse = try await session.handle(JSONEncoder().encode(request))
+        let duplicateData = try XCTUnwrap(duplicateResponse)
         let duplicate = try JSONDecoder().decode(CompanionExecutionResult.self, from: duplicateData)
         XCTAssertEqual(duplicate.status, .rejected)
         XCTAssertEqual(duplicate.errorCode, "DUPLICATE_EXECUTION")
@@ -197,7 +199,8 @@ final class VisualEngineTests: XCTestCase {
             parameters: ["contract_version": .int(1), "layer_id": .string("main")],
             timeoutMS: 500
         )
-        let mismatchData = try XCTUnwrap(try await session.handle(JSONEncoder().encode(mismatch)))
+        let mismatchResponse = try await session.handle(JSONEncoder().encode(mismatch))
+        let mismatchData = try XCTUnwrap(mismatchResponse)
         let mismatchResult = try JSONDecoder().decode(CompanionExecutionResult.self, from: mismatchData)
         XCTAssertEqual(mismatchResult.status, .rejected)
         XCTAssertEqual(mismatchResult.errorCode, "SNAPSHOT_MISMATCH")
