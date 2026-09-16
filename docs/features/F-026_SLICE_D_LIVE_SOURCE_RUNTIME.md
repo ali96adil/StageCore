@@ -1,6 +1,6 @@
 # F-026 Slice D2a — Native LiveSource Runtime
 
-Status: implementation/CI qualification in progress. Software only.
+Status: SOFTWARE COMPLETE on exact `main` SHA `1f4ddf51db1c3b53cd93aa8310afc589587d0c3c`. Core CI #952 and Companion Core CI #249 PASS. Software only.
 
 Physical capture/GPU/display qualification remains deferred under GitHub Issue #148.
 
@@ -32,9 +32,9 @@ D2a makes the Companion control contract truthful in production when the native 
 
 ## Deliberate D2a boundary
 
-D2a opens and owns real native capture/network resources and retains deterministic route intent locally, but does not yet attach the capture/player layers to the existing named-output/layer renderer surface.
+D2a opens and owns real native capture/network resources and retains deterministic route intent locally, but does not attach the capture/player layers to the existing named-output/layer renderer surface.
 
-D2b must complete:
+D2b completes that boundary in `docs/features/F-026_SLICE_D2B_LIVE_SOURCE_RENDER_INTEGRATION.md` by adding:
 
 - native frame-layer attachment into the Visual Engine named-output/layer renderer;
 - production wiring of the D1 Machine Role LiveSource Preflight authority in the Hub product;
@@ -42,7 +42,14 @@ D2b must complete:
 
 Do not mark Slice D complete from D2a alone.
 
-## Acceptance
+## Acceptance evidence
+
+Exact-main `1f4ddf51db1c3b53cd93aa8310afc589587d0c3c` passed:
+
+- Core CI #952: Go 1.26 module lock/tests/vet/race/Linux ARM64 builds; Go 1.27 module lock/tests/vet;
+- Companion Core CI #249: CompanionCore build/tests, real macOS Companion executable build, native Visual Engine renderer acceptance, >=2 GiB interrupted media resume acceptance, and real Companion replacement acceptance.
+
+Qualified behavior includes:
 
 - existing F-007 LiveSource contract tests remain green;
 - native runtime failures do not commit false state;
@@ -50,6 +57,4 @@ Do not mark Slice D complete from D2a alone.
 - unsupported/local-file network schemes fail closed without source state;
 - fresh runtime after reconnect/restart has no implicit source or route state;
 - Companion bootstrap advertises LiveSource capabilities only with native Visual Engine enabled;
-- Companion Core CI passes on exact head;
-- Core CI remains green;
 - no physical qualification is claimed.
