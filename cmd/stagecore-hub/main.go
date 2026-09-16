@@ -206,6 +206,7 @@ func main() {
 		httpapi.WithOperatorTimingIntelligence(userAuth, timing),
 		httpapi.WithOperatorShowCapsules(userAuth, showCapsules, filepath.Join(application.Config.DataRoot, "show-capsules")),
 		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
+		httpapi.WithOperatorHAAuthority(userAuth, application.HAAuthority, application.SecurityAudit),
 		httpapi.WithOperatorSimulation(userAuth, simulation),
 		httpapi.WithOperatorSimulationInputs(userAuth, simulationInputs),
 		httpapi.WithOperatorSimulationReport(userAuth, simulationReports),

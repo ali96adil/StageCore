@@ -201,7 +201,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	digitalTwin := simulator.NewDigitalTwin()
-	physicalDispatch, haAuthority, err := physicalDispatchForHA(ctx, cfg, registry, hubSecurity)
+	physicalDispatch, haAuthority, err := physicalDispatchForHA(ctx, cfg, registry, hubSecurity, s)
 	if err != nil {
 		deviceRuntime.Close()
 		companionRuntime.Close()
@@ -304,6 +304,11 @@ func (a *App) ServeOSCInput(ctx context.Context) error {
 func (a *App) Close() error {
 	if a == nil {
 		return nil
+	}
+	// Fence physical authority before tearing down transports or persistence.
+	// HA shutdown is local-only and therefore cannot block on a witness.
+	if a.HAAuthority != nil {
+		_ = a.HAAuthority.Close()
 	}
 	if a.OSCInput != nil {
 		a.OSCInput.Close()

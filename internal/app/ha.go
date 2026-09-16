@@ -13,18 +13,51 @@ import (
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
 )
 
-// HAAuthority is the product-facing optional HA control surface. Merely
-// constructing it never acquires a witness lease. Explicit Acquire/Renew/
-// Release control remains a later operator/supervisor slice.
+// HAAuthority is the product-facing optional HA surface. Fresh authority can be
+// obtained only through Activate, which applies the Session guard and starts
+// same-epoch renewal. Current is read-only compatibility/inspection; there is
+// deliberately no generic Renew or auto-acquire method on this surface.
 type HAAuthority interface {
-	dispatchauthority.Source
-	Acquire(context.Context) error
-	Renew(context.Context) error
+	Current(context.Context) (dispatchauthority.Snapshot, error)
+	Status(context.Context) (haauthority.SupervisorStatus, error)
+	Activate(context.Context) error
 	Release(context.Context) error
 	Demote()
+	Close() error
 }
 
-func physicalDispatchForHA(ctx context.Context, cfg config.Config, registry *capability.Registry, hubSecurity *hubsecurity.Service) (capability.Executor, HAAuthority, error) {
+type supervisedHAAuthority struct {
+	controller *haauthority.Controller
+	supervisor *haauthority.Supervisor
+}
+
+func (a *supervisedHAAuthority) Current(ctx context.Context) (dispatchauthority.Snapshot, error) {
+	return a.controller.Current(ctx)
+}
+
+func (a *supervisedHAAuthority) Status(ctx context.Context) (haauthority.SupervisorStatus, error) {
+	return a.supervisor.Status(ctx)
+}
+
+func (a *supervisedHAAuthority) Activate(ctx context.Context) error {
+	return a.supervisor.Activate(ctx)
+}
+
+func (a *supervisedHAAuthority) Release(ctx context.Context) error {
+	return a.supervisor.Release(ctx)
+}
+
+func (a *supervisedHAAuthority) Demote() { a.supervisor.Demote() }
+
+func (a *supervisedHAAuthority) Close() error { return a.supervisor.Close() }
+
+func physicalDispatchForHA(
+	ctx context.Context,
+	cfg config.Config,
+	registry *capability.Registry,
+	hubSecurity *hubsecurity.Service,
+	sessions haauthority.SessionReader,
+) (capability.Executor, HAAuthority, error) {
 	if registry == nil {
 		return nil, nil, fmt.Errorf("physical capability registry is required")
 	}
@@ -44,6 +77,9 @@ func physicalDispatchForHA(ctx context.Context, cfg config.Config, registry *cap
 	if hubSecurity == nil {
 		return nil, nil, fmt.Errorf("Hub security identity is required for HA witness mode")
 	}
+	if sessions == nil {
+		return nil, nil, fmt.Errorf("HA Session authority is required for witness mode")
+	}
 	certificate, err := hubSecurity.HATransportCertificate(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive Hub HA transport identity: %w", err)
@@ -61,5 +97,10 @@ func physicalDispatchForHA(ctx context.Context, cfg config.Config, registry *cap
 	if err != nil {
 		return nil, nil, fmt.Errorf("configure HA dispatch authority: %w", err)
 	}
-	return dispatchauthority.New(registry, controller), controller, nil
+	supervisor, err := haauthority.NewSupervisor(controller, sessions)
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure HA authority supervisor: %w", err)
+	}
+	productAuthority := &supervisedHAAuthority{controller: controller, supervisor: supervisor}
+	return dispatchauthority.New(registry, controller), productAuthority, nil
 }
