@@ -13,16 +13,38 @@ import (
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
 )
 
-// HAAuthority is the low-level optional HA control surface kept for product
-// inspection. Operator actions use HASupervisor so fresh authority acquisition
-// always passes the Session guard and renewal lifecycle.
+// HAAuthority is the product-facing optional HA surface. Fresh authority can be
+// obtained only through Activate, which applies the Session guard and starts
+// same-epoch renewal. There is deliberately no generic Renew or auto-acquire
+// method on this surface.
 type HAAuthority interface {
-	dispatchauthority.Source
-	Acquire(context.Context) error
-	Renew(context.Context) error
+	Status(context.Context) (haauthority.SupervisorStatus, error)
+	Activate(context.Context) error
 	Release(context.Context) error
 	Demote()
+	Close() error
 }
+
+type supervisedHAAuthority struct {
+	controller *haauthority.Controller
+	supervisor *haauthority.Supervisor
+}
+
+func (a *supervisedHAAuthority) Status(ctx context.Context) (haauthority.SupervisorStatus, error) {
+	return a.supervisor.Status(ctx)
+}
+
+func (a *supervisedHAAuthority) Activate(ctx context.Context) error {
+	return a.supervisor.Activate(ctx)
+}
+
+func (a *supervisedHAAuthority) Release(ctx context.Context) error {
+	return a.supervisor.Release(ctx)
+}
+
+func (a *supervisedHAAuthority) Demote() { a.supervisor.Demote() }
+
+func (a *supervisedHAAuthority) Close() error { return a.supervisor.Close() }
 
 func physicalDispatchForHA(
 	ctx context.Context,
@@ -30,32 +52,32 @@ func physicalDispatchForHA(
 	registry *capability.Registry,
 	hubSecurity *hubsecurity.Service,
 	sessions haauthority.SessionReader,
-) (capability.Executor, HAAuthority, *haauthority.Supervisor, error) {
+) (capability.Executor, HAAuthority, error) {
 	if registry == nil {
-		return nil, nil, nil, fmt.Errorf("physical capability registry is required")
+		return nil, nil, fmt.Errorf("physical capability registry is required")
 	}
 	mode := strings.ToUpper(strings.TrimSpace(cfg.HAMode))
 	if mode == "" || mode == config.HAModeStandalone {
 		if strings.TrimSpace(cfg.HAWitnessURL) != "" || strings.TrimSpace(cfg.HAWitnessID) != "" || strings.TrimSpace(cfg.HAWitnessFingerprint) != "" {
-			return nil, nil, nil, fmt.Errorf("HA witness settings require HA mode %s", config.HAModeWitness)
+			return nil, nil, fmt.Errorf("HA witness settings require HA mode %s", config.HAModeWitness)
 		}
-		return dispatchauthority.NewStandalone(registry), nil, nil, nil
+		return dispatchauthority.NewStandalone(registry), nil, nil
 	}
 	if mode != config.HAModeWitness {
-		return nil, nil, nil, fmt.Errorf("unsupported Hub HA mode %q", cfg.HAMode)
+		return nil, nil, fmt.Errorf("unsupported Hub HA mode %q", cfg.HAMode)
 	}
 	if strings.TrimSpace(cfg.HAWitnessURL) == "" || strings.TrimSpace(cfg.HAWitnessID) == "" || strings.TrimSpace(cfg.HAWitnessFingerprint) == "" {
-		return nil, nil, nil, fmt.Errorf("HA witness URL, ID, and fingerprint are required in %s mode", config.HAModeWitness)
+		return nil, nil, fmt.Errorf("HA witness URL, ID, and fingerprint are required in %s mode", config.HAModeWitness)
 	}
 	if hubSecurity == nil {
-		return nil, nil, nil, fmt.Errorf("Hub security identity is required for HA witness mode")
+		return nil, nil, fmt.Errorf("Hub security identity is required for HA witness mode")
 	}
 	if sessions == nil {
-		return nil, nil, nil, fmt.Errorf("HA Session authority is required for witness mode")
+		return nil, nil, fmt.Errorf("HA Session authority is required for witness mode")
 	}
 	certificate, err := hubSecurity.HATransportCertificate(ctx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("derive Hub HA transport identity: %w", err)
+		return nil, nil, fmt.Errorf("derive Hub HA transport identity: %w", err)
 	}
 	client, err := hawitness.NewClient(hawitness.ClientConfig{
 		BaseURL:            cfg.HAWitnessURL,
@@ -64,15 +86,16 @@ func physicalDispatchForHA(
 		WitnessFingerprint: cfg.HAWitnessFingerprint,
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("configure HA witness client: %w", err)
+		return nil, nil, fmt.Errorf("configure HA witness client: %w", err)
 	}
 	controller, err := haauthority.New(client)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("configure HA dispatch authority: %w", err)
+		return nil, nil, fmt.Errorf("configure HA dispatch authority: %w", err)
 	}
 	supervisor, err := haauthority.NewSupervisor(controller, sessions)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("configure HA authority supervisor: %w", err)
+		return nil, nil, fmt.Errorf("configure HA authority supervisor: %w", err)
 	}
-	return dispatchauthority.New(registry, controller), controller, supervisor, nil
+	productAuthority := &supervisedHAAuthority{controller: controller, supervisor: supervisor}
+	return dispatchauthority.New(registry, controller), productAuthority, nil
 }
