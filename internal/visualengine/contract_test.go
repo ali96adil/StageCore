@@ -70,8 +70,8 @@ func TestValidateCommandRejectsAmbiguousOrUnsafeParameters(t *testing.T) {
 
 func TestCapabilityKeysReturnsCopy(t *testing.T) {
 	keys := CapabilityKeys()
-	if len(keys) != 10 {
-		t.Fatalf("len(CapabilityKeys()) = %d, want 10", len(keys))
+	if len(keys) != len(capabilityKeys) {
+		t.Fatalf("len(CapabilityKeys()) = %d, want %d", len(keys), len(capabilityKeys))
 	}
 	keys[0] = "mutated"
 	if CapabilityKeys()[0] == "mutated" {
