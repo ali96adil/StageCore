@@ -22,6 +22,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Security", .when(platforms: [.macOS])),
                 .linkedFramework("CoreMIDI", .when(platforms: [.macOS])),
+                .linkedFramework("AppKit", .when(platforms: [.macOS])),
+                .linkedFramework("QuartzCore", .when(platforms: [.macOS])),
+                .linkedFramework("AVFoundation", .when(platforms: [.macOS])),
             ]
         ),
         .executableTarget(

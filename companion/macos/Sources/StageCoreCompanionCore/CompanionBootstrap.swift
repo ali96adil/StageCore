@@ -9,6 +9,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
     public var oscEndpoint: OSCEndpoint?
     public var mediaCacheRoot: URL?
     public var hubBinding: CompanionHubBinding?
+    public var nativeVisualEngineEnabled: Bool?
 
     public init(
         hubAPIBaseURL: URL,
@@ -18,7 +19,8 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         configHash: String = "",
         oscEndpoint: OSCEndpoint? = nil,
         mediaCacheRoot: URL? = nil,
-        hubBinding: CompanionHubBinding? = nil
+        hubBinding: CompanionHubBinding? = nil,
+        nativeVisualEngineEnabled: Bool? = nil
     ) {
         self.hubAPIBaseURL = hubAPIBaseURL
         self.hubRuntimeURL = hubRuntimeURL
@@ -28,6 +30,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         self.oscEndpoint = oscEndpoint
         self.mediaCacheRoot = mediaCacheRoot
         self.hubBinding = hubBinding
+        self.nativeVisualEngineEnabled = nativeVisualEngineEnabled
     }
 }
 
@@ -90,6 +93,7 @@ public actor CompanionBootstrap {
     private let companionSession: CompanionSession
     private let runtimeAgent: WebSocketCompanionAgent
     private let report: CompanionReportIdentity
+    private let visualEngine: VisualEngine?
     private var phase: CompanionBootstrapPhase = .starting
 
     public init(
@@ -102,6 +106,35 @@ public actor CompanionBootstrap {
     ) throws {
         self.configuration = configuration
         self.identity = try identityStore.loadOrCreateIdentity()
+        let certificatePin = configuration.hubBinding?.tlsCertificateSHA256
+
+        let mediaSynchronizer: (any CompanionMediaSynchronizer)?
+        let visualEngine: VisualEngine?
+        #if os(macOS)
+        let cacheRoot = configuration.mediaCacheRoot ?? FileManager.default.urls(
+            for: .cachesDirectory,
+            in: .userDomainMask
+        ).first!.appendingPathComponent("StageCore/media", isDirectory: true)
+        let mediaCache = try MediaCacheSynchronizer(
+            apiBaseURL: configuration.hubAPIBaseURL,
+            cacheRoot: cacheRoot,
+            securityPolicy: securityPolicy,
+            session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
+        )
+        mediaSynchronizer = mediaCache
+        if configuration.nativeVisualEngineEnabled == true {
+            visualEngine = VisualEngine(
+                mediaResolver: mediaCache,
+                renderer: try NativeVisualRenderer()
+            )
+        } else {
+            visualEngine = nil
+        }
+        #else
+        mediaSynchronizer = nil
+        visualEngine = nil
+        #endif
+        self.visualEngine = visualEngine
 
         var executors: [any CompanionCapabilityExecutor] = [LocalEchoExecutor()]
         if let endpoint = configuration.oscEndpoint {
@@ -110,6 +143,9 @@ public actor CompanionBootstrap {
         #if os(macOS)
         executors.append(try MIDISendExecutor())
         let operationProviders: [any ExecutionEnvironmentOperationProvider] = [VDMXOperationProvider()]
+        if let visualEngine {
+            executors.append(contentsOf: try makeVisualCapabilityExecutors(engine: visualEngine))
+        }
         #else
         let operationProviders: [any ExecutionEnvironmentOperationProvider] = []
         #endif
@@ -128,7 +164,6 @@ public actor CompanionBootstrap {
             capabilities: capabilities
         )
         self.report = report
-        let certificatePin = configuration.hubBinding?.tlsCertificateSHA256
         let securityClient = try HubSecurityClient(
             apiBaseURL: configuration.hubAPIBaseURL,
             securityPolicy: securityPolicy,
@@ -137,22 +172,6 @@ public actor CompanionBootstrap {
             session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
         )
         self.securityClient = securityClient
-
-        let mediaSynchronizer: (any CompanionMediaSynchronizer)?
-        #if os(macOS)
-        let cacheRoot = configuration.mediaCacheRoot ?? FileManager.default.urls(
-            for: .cachesDirectory,
-            in: .userDomainMask
-        ).first!.appendingPathComponent("StageCore/media", isDirectory: true)
-        mediaSynchronizer = try MediaCacheSynchronizer(
-            apiBaseURL: configuration.hubAPIBaseURL,
-            cacheRoot: cacheRoot,
-            securityPolicy: securityPolicy,
-            session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
-        )
-        #else
-        mediaSynchronizer = nil
-        #endif
 
         let companionSession = CompanionSession(
             configuration: CompanionSessionConfiguration(
@@ -206,9 +225,11 @@ public actor CompanionBootstrap {
             phase = .running
             event(.phaseChanged(phase))
             try await runtimeAgent.run()
+            await visualEngine?.shutdown()
             phase = .stopped
             event(.phaseChanged(phase))
         } catch {
+            await visualEngine?.shutdown()
             phase = .failed
             event(.phaseChanged(phase))
             throw error

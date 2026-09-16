@@ -25,6 +25,12 @@ const (
 	CapabilityStateInspect   = "visual.state.inspect"
 )
 
+const (
+	ContentModeFit  = "FIT"
+	ContentModeFill = "FILL"
+	ContentModeCrop = "CROP"
+)
+
 var capabilityKeys = []string{
 	CapabilityPreload,
 	CapabilityPlay,
@@ -57,6 +63,7 @@ type preloadParams struct {
 	LayerID          string     `json:"layer_id"`
 	ContentVersionID string     `json:"content_version_id"`
 	ContentHash      string     `json:"content_hash"`
+	ContentMode      *string    `json:"content_mode,omitempty"`
 	Opacity          *float64   `json:"opacity,omitempty"`
 	Transform        *Transform `json:"transform,omitempty"`
 }
@@ -127,7 +134,7 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if err := rejectExplicitNulls(raw, "opacity", "transform"); err != nil {
+		if err := rejectExplicitNulls(raw, "content_mode", "opacity", "transform"); err != nil {
 			return err
 		}
 		if err := rejectNestedExplicitNulls(raw, "transform"); err != nil {
@@ -144,6 +151,11 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		}
 		if err := validateSHA256(p.ContentHash); err != nil {
 			return err
+		}
+		if p.ContentMode != nil {
+			if err := validateContentMode(*p.ContentMode); err != nil {
+				return err
+			}
 		}
 		if p.Opacity != nil {
 			if err := validateOpacity(*p.Opacity); err != nil {
@@ -336,6 +348,15 @@ func validateSHA256(value string) error {
 		}
 	}
 	return nil
+}
+
+func validateContentMode(value string) error {
+	switch value {
+	case ContentModeFit, ContentModeFill, ContentModeCrop:
+		return nil
+	default:
+		return invalid("content_mode must be FIT, FILL or CROP")
+	}
 }
 
 func validateOpacity(value float64) error {
