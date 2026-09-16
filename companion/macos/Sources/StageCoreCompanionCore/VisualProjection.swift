@@ -53,7 +53,23 @@ public struct VisualQuadState: Sendable, Equatable {
         }) else {
             return false
         }
-        return abs(signedArea) > 0.000_001
+
+        var orientation = 0.0
+        for index in points.indices {
+            let a = points[index]
+            let b = points[(index + 1) % points.count]
+            let c = points[(index + 2) % points.count]
+            let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
+            guard abs(cross) > 1e-9 else {
+                return false
+            }
+            if orientation == 0 {
+                orientation = cross
+            } else if (orientation > 0) != (cross > 0) {
+                return false
+            }
+        }
+        return true
     }
 }
 
