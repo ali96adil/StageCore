@@ -396,18 +396,20 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
             )
         }
         switch state.kind {
-        case .cut where state.durationMS != 0:
-            throw VisualRendererFailure(
-                code: "VISUAL_RENDERER_TRANSITION_INVALID",
-                summary: "CUT transition requires zero duration"
-            )
-        case .fade, .crossfade where !(1...30_000).contains(state.durationMS):
-            throw VisualRendererFailure(
-                code: "VISUAL_RENDERER_TRANSITION_INVALID",
-                summary: "animated transition duration is outside supported bounds"
-            )
-        default:
-            break
+        case .cut:
+            guard state.durationMS == 0 else {
+                throw VisualRendererFailure(
+                    code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                    summary: "CUT transition requires zero duration"
+                )
+            }
+        case .fade, .crossfade:
+            guard (1...30_000).contains(state.durationMS) else {
+                throw VisualRendererFailure(
+                    code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                    summary: "animated transition duration is outside supported bounds"
+                )
+            }
         }
         guard let from = layers[state.fromLayerID], let to = layers[state.toLayerID] else {
             throw missingLayer()
@@ -537,12 +539,11 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
         guard let output = outputs[outputID] else { return }
         let affected = layers.keys.filter { layers[$0]?.outputID == outputID }
         for layerID in affected {
-            guard var layer = layers[layerID] else { continue }
+            guard let layer = layers[layerID] else { continue }
             layer.renderLayer.bounds = output.renderLayer.bounds
             applyTransform(layer.transformState, to: layer.renderLayer, output: output)
             layer.renderLayer.zPosition = CGFloat(layer.zIndex)
             try applyCompositionAppearance(layer.compositionState, to: layer.renderLayer)
-            layers[layerID] = layer
         }
     }
 
