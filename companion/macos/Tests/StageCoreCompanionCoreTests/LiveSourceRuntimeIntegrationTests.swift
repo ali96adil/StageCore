@@ -121,13 +121,16 @@ final class LiveSourceRuntimeIntegrationTests: XCTestCase {
         let freshRuntime = RecordingLiveSourceRuntime()
         let freshEngine = LiveSourceEngine(runtime: freshRuntime)
         let fresh = await freshEngine.snapshot()
+        let freshOpened = await freshRuntime.opened
+        let freshSelected = await freshRuntime.selected
+        let freshRouted = await freshRuntime.routed
 
         XCTAssertTrue(fresh.sources.isEmpty)
         XCTAssertNil(fresh.selectedSourceID)
         XCTAssertTrue(fresh.routes.isEmpty)
-        XCTAssertTrue(await freshRuntime.opened.isEmpty)
-        XCTAssertTrue(await freshRuntime.selected.isEmpty)
-        XCTAssertTrue(await freshRuntime.routed.isEmpty)
+        XCTAssertTrue(freshOpened.isEmpty)
+        XCTAssertTrue(freshSelected.isEmpty)
+        XCTAssertTrue(freshRouted.isEmpty)
 
         let routeWithoutExplicitReopen = await freshEngine.execute(
             capability: LiveSourceCapability.route,
