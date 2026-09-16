@@ -74,8 +74,10 @@ final class NativeVisualCompositionTests: XCTestCase {
             )
         )
         var snapshot = await renderer.snapshot()
-        XCTAssertEqual(snapshot.layers.first { $0.layerID == "a" }?.opacity, 0)
-        XCTAssertEqual(snapshot.layers.first { $0.layerID == "b" }?.opacity, 0.9, accuracy: 0.001)
+        let afterCrossfadeA = try XCTUnwrap(snapshot.layers.first { $0.layerID == "a" })
+        let afterCrossfadeB = try XCTUnwrap(snapshot.layers.first { $0.layerID == "b" })
+        XCTAssertEqual(afterCrossfadeA.opacity, 0)
+        XCTAssertEqual(afterCrossfadeB.opacity, 0.9, accuracy: 0.001)
 
         try await renderer.transition(
             VisualTransitionRenderState(
@@ -88,8 +90,10 @@ final class NativeVisualCompositionTests: XCTestCase {
             )
         )
         snapshot = await renderer.snapshot()
-        XCTAssertEqual(snapshot.layers.first { $0.layerID == "b" }?.opacity, 0)
-        XCTAssertEqual(snapshot.layers.first { $0.layerID == "a" }?.opacity, 0.6, accuracy: 0.001)
+        let afterCutA = try XCTUnwrap(snapshot.layers.first { $0.layerID == "a" })
+        let afterCutB = try XCTUnwrap(snapshot.layers.first { $0.layerID == "b" })
+        XCTAssertEqual(afterCutB.opacity, 0)
+        XCTAssertEqual(afterCutA.opacity, 0.6, accuracy: 0.001)
     }
 
     private func temporaryDirectory() throws -> URL {
