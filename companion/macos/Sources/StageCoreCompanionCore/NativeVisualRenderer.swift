@@ -56,7 +56,7 @@ private final class NativeVisualLoopFlag: @unchecked Sendable {
     }
 }
 
-public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
+public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer, NativeLiveSourceRenderSurface {
     private struct LayerBacking {
         var renderLayer: CALayer
         var mediaKind: NativeVisualMediaKind
@@ -68,6 +68,12 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
         var zIndex: Int
         var transformState: VisualTransformState
         var compositionState: VisualLayerCompositionState
+    }
+
+    private struct LiveLayerBacking {
+        var sourceID: String
+        var renderLayer: CALayer
+        var outputID: String
     }
 
     private struct OutputBacking {
@@ -82,6 +88,7 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
     private let rootLayer: CALayer
     private var blackout = false
     private var layers: [String: LayerBacking] = [:]
+    private var liveLayers: [String: LiveLayerBacking] = [:]
     private var outputs: [String: OutputBacking] = [:]
 
     public init(surfaceWidth: Double = 1920, surfaceHeight: Double = 1080) throws {
@@ -132,6 +139,12 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
         }
         guard let output = outputs[layer.outputID] else {
             throw missingOutput()
+        }
+        guard liveLayers[layer.layerID] == nil else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_LAYER_CONFLICT",
+                summary: "layer ID is already owned by a live source"
+            )
         }
 
         if let previous = layers.removeValue(forKey: layer.layerID) {
@@ -466,6 +479,71 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
         }
     }
 
+    public func attachLiveSourceLayer(
+        sourceID: String,
+        layerID: String,
+        outputID: String,
+        presentation: NativeLiveSourcePresentationLayer
+    ) async throws {
+        guard !sourceID.isEmpty, !layerID.isEmpty, !outputID.isEmpty else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_LIVE_SOURCE_INVALID",
+                summary: "live-source renderer attachment requires source, layer and output identity"
+            )
+        }
+        guard let output = outputs[outputID] else { throw missingOutput() }
+        guard layers[layerID] == nil else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_LAYER_CONFLICT",
+                summary: "layer ID is already owned by managed media"
+            )
+        }
+        if let existing = liveLayers[layerID], existing.sourceID != sourceID {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_LAYER_CONFLICT",
+                summary: "layer ID is already owned by another live source"
+            )
+        }
+        liveLayers[layerID]?.renderLayer.removeFromSuperlayer()
+        presentation.layer.removeFromSuperlayer()
+        presentation.layer.frame = output.renderLayer.bounds
+        presentation.layer.zPosition = 0
+        output.renderLayer.addSublayer(presentation.layer)
+        liveLayers[layerID] = LiveLayerBacking(
+            sourceID: sourceID,
+            renderLayer: presentation.layer,
+            outputID: outputID
+        )
+    }
+
+    public func detachLiveSourceLayer(sourceID: String, layerID: String) async {
+        guard let existing = liveLayers[layerID], existing.sourceID == sourceID else { return }
+        existing.renderLayer.removeFromSuperlayer()
+        liveLayers.removeValue(forKey: layerID)
+    }
+
+    public func detachLiveSourceLayers(sourceID: String) async {
+        let layerIDs = liveLayers.compactMap { layerID, layer in
+            layer.sourceID == sourceID ? layerID : nil
+        }
+        for layerID in layerIDs {
+            liveLayers[layerID]?.renderLayer.removeFromSuperlayer()
+            liveLayers.removeValue(forKey: layerID)
+        }
+    }
+
+    public func inspectLiveSourceLayer(
+        sourceID: String,
+        layerID: String
+    ) async -> NativeLiveSourceLayerAttachment? {
+        guard let layer = liveLayers[layerID], layer.sourceID == sourceID else { return nil }
+        return NativeLiveSourceLayerAttachment(
+            sourceID: sourceID,
+            layerID: layerID,
+            outputID: layer.outputID
+        )
+    }
+
     public func snapshot() -> NativeVisualRendererSnapshot {
         let layerSnapshots = layers.map { layerID, layer in
             NativeVisualLayerSnapshot(
@@ -508,6 +586,10 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
             cleanup(layer)
         }
         layers.removeAll()
+        for liveLayer in liveLayers.values {
+            liveLayer.renderLayer.removeFromSuperlayer()
+        }
+        liveLayers.removeAll()
         for output in outputs.values {
             output.renderLayer.removeFromSuperlayer()
         }
@@ -544,6 +626,10 @@ public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
             applyTransform(layer.transformState, to: layer.renderLayer, output: output)
             layer.renderLayer.zPosition = CGFloat(layer.zIndex)
             try applyCompositionAppearance(layer.compositionState, to: layer.renderLayer)
+        }
+        let liveAffected = liveLayers.keys.filter { liveLayers[$0]?.outputID == outputID }
+        for layerID in liveAffected {
+            liveLayers[layerID]?.renderLayer.frame = output.renderLayer.bounds
         }
     }
 
