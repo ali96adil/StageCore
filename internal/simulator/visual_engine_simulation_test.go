@@ -163,7 +163,7 @@ func TestVisualDigitalTwinFaultScenarios(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx := context.Background()
+			var ctx context.Context = context.Background()
 			cancel := func() {}
 			if test.timeout {
 				ctx, cancel = context.WithTimeout(ctx, 5*time.Millisecond)
