@@ -198,6 +198,7 @@ func main() {
 		httpapi.WithOperatorExtensionRuntimeProbe(userAuth, extensionRuntimeProbe, application.SecurityAudit),
 		httpapi.WithOperatorExtensionRuntimeLifecycle(userAuth, extensionRuntimeSupervisor, application.SecurityAudit),
 		httpapi.WithOperatorMachineRoles(userAuth, application.Store),
+		httpapi.WithOperatorVisualEngine(userAuth, application.Store, application.DeviceExperience),
 		httpapi.WithOperatorExecutionEnvironments(userAuth, application.Store),
 		httpapi.WithOperatorExecutionEnvironmentCapture(userAuth, application.Store, application.Vault),
 		httpapi.WithOperatorExecutionEnvironmentOperations(userAuth, application.Store, application.CompanionRuntime),
