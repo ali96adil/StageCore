@@ -9,6 +9,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/visualengine"
 )
 
 type config struct {
@@ -23,6 +24,29 @@ type config struct {
 type Adapter struct{}
 
 func (Adapter) Execute(ctx context.Context, req capability.Request) capability.Result {
+	// Visual Engine commands in SIMULATION must obey the same deterministic
+	// wire contract as the real Companion renderer. The Digital Twin consumes
+	// the command locally; validation does not grant any physical render or
+	// transport authority.
+	if visualengine.IsCapability(req.Capability) {
+		if err := visualengine.ValidateCommand(req.Capability, req.Parameters); err != nil {
+			return capability.Result{
+				Result:          domain.ExecutionFailed,
+				AckLevel:        contracts.AckNone,
+				ErrorCode:       "SIM_VISUAL_COMMAND_INVALID",
+				ResponseSummary: "simulated visual command rejected: " + err.Error(),
+			}
+		}
+		if interrupted := waitDelay(ctx, 0); interrupted != nil {
+			return fromContext(interrupted)
+		}
+		return capability.Result{
+			Result:          domain.ExecutionCompleted,
+			AckLevel:        contracts.AckNone,
+			ResponseSummary: "simulated visual command",
+		}
+	}
+
 	var cfg config
 	if len(req.Parameters) > 0 {
 		if err := json.Unmarshal(req.Parameters, &cfg); err != nil {
