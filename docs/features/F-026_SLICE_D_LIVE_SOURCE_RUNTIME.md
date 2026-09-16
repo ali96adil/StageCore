@@ -12,7 +12,8 @@ D2a makes the Companion control contract truthful in production when the native 
 
 - `LOCAL_CAMERA` opens a local AVFoundation video capture device;
 - `USB_CAPTURE` opens the explicitly selected AVFoundation video device;
-- `NETWORK_STREAM` opens an AVPlayer-backed network stream;
+- native `NETWORK_STREAM` opens HTTP/HTTPS media supported by AVPlayer, including HLS-style streams;
+- unsupported/local-file schemes such as `rtsp://` and `file://` fail closed rather than advertising unsupported native playback;
 - frames remain local to the Companion and never traverse the Hub;
 - `video.source.open/close/select/route/inspect` are registered only when native Visual Engine support is explicitly enabled;
 - LiveSource state is committed only after the native runtime operation succeeds;
@@ -24,6 +25,7 @@ D2a makes the Companion control contract truthful in production when the native 
 - Reconnect is connectivity, not command acknowledgement or replay authority.
 - A source must be explicitly opened in the current runtime before select/route can succeed.
 - Runtime open/route failures fail closed and do not create false source/route state.
+- Unsupported network protocols fail before creating source authority.
 - The Hub carries descriptors and routing intent only, never frame payloads.
 - Native Visual Engine disabled means native LiveSource capabilities are not advertised.
 
@@ -43,6 +45,7 @@ Do not mark Slice D complete from D2a alone.
 
 - existing F-007 LiveSource contract tests remain green;
 - native runtime failures do not commit false state;
+- unsupported/local-file network schemes fail closed without source state;
 - fresh runtime after reconnect/restart has no implicit source or route state;
 - Companion bootstrap advertises LiveSource capabilities only with native Visual Engine enabled;
 - Companion Core CI passes on exact head;
