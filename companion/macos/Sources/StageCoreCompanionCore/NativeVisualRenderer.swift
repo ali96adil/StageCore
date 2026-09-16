@@ -16,12 +16,22 @@ public struct NativeVisualLayerSnapshot: Sendable, Equatable {
     public var loopEnabled: Bool
     public var opacity: Double
     public var isPlaying: Bool
+    public var outputID: String
+    public var zIndex: Int
+}
+
+public struct NativeVisualOutputSnapshot: Sendable, Equatable {
+    public var outputID: String
+    public var width: Double
+    public var height: Double
+    public var mapping: VisualQuadState
 }
 
 public struct NativeVisualRendererSnapshot: Sendable, Equatable {
     public var blackout: Bool
     public var surfaceWidth: Double
     public var surfaceHeight: Double
+    public var outputs: [NativeVisualOutputSnapshot]
     public var layers: [NativeVisualLayerSnapshot]
 }
 
@@ -50,14 +60,24 @@ public actor NativeVisualRenderer: VisualRenderer {
         var player: AVPlayer?
         var loopFlag: NativeVisualLoopFlag?
         var endObserver: NSObjectProtocol?
+        var outputID: String
+        var zIndex: Int
+        var transformState: VisualTransformState
+    }
+
+    private struct OutputBacking {
+        var renderLayer: CALayer
+        var width: Double
+        var height: Double
+        var mapping: VisualQuadState
     }
 
     private let surfaceWidth: Double
     private let surfaceHeight: Double
     private let rootLayer: CALayer
-    private let contentRoot: CALayer
     private var blackout = false
     private var layers: [String: LayerBacking] = [:]
+    private var outputs: [String: OutputBacking] = [:]
 
     public init(surfaceWidth: Double = 1920, surfaceHeight: Double = 1080) throws {
         guard surfaceWidth.isFinite, surfaceHeight.isFinite,
@@ -75,12 +95,26 @@ public actor NativeVisualRenderer: VisualRenderer {
         root.position = CGPoint(x: bounds.midX, y: bounds.midY)
         root.backgroundColor = NSColor.black.cgColor
         root.masksToBounds = true
-        let content = CALayer()
-        content.frame = bounds
-        content.masksToBounds = true
-        root.addSublayer(content)
         self.rootLayer = root
-        self.contentRoot = content
+
+        let main = CALayer()
+        main.bounds = bounds
+        main.anchorPoint = CGPoint(x: 0, y: 0)
+        main.position = .zero
+        main.masksToBounds = true
+        main.isHidden = false
+        main.transform = try makeNativeVisualPerspectiveTransform(
+            width: surfaceWidth,
+            height: surfaceHeight,
+            mapping: .identity
+        )
+        root.addSublayer(main)
+        self.outputs["main"] = OutputBacking(
+            renderLayer: main,
+            width: surfaceWidth,
+            height: surfaceHeight,
+            mapping: .identity
+        )
     }
 
     public func preload(_ layer: VisualRenderLayer) async throws {
@@ -90,6 +124,9 @@ public actor NativeVisualRenderer: VisualRenderer {
                 code: "VISUAL_RENDERER_MEDIA_UNAVAILABLE",
                 summary: "verified media object is unavailable to the native renderer"
             )
+        }
+        guard let output = outputs[layer.outputID] else {
+            throw missingOutput()
         }
 
         if let previous = layers.removeValue(forKey: layer.layerID) {
@@ -102,15 +139,18 @@ public actor NativeVisualRenderer: VisualRenderer {
             renderLayer.contents = cgImage
             renderLayer.contentsScale = 1
             applyContentMode(layer.contentMode, to: renderLayer)
-            applyAppearance(layer, to: renderLayer)
-            contentRoot.addSublayer(renderLayer)
+            applyAppearance(layer, to: renderLayer, output: output)
+            output.renderLayer.addSublayer(renderLayer)
             layers[layer.layerID] = LayerBacking(
                 renderLayer: renderLayer,
                 mediaKind: .image,
                 contentMode: layer.contentMode,
                 player: nil,
                 loopFlag: nil,
-                endObserver: nil
+                endObserver: nil,
+                outputID: layer.outputID,
+                zIndex: layer.zIndex,
+                transformState: layer.transform
             )
             return
         }
@@ -137,8 +177,8 @@ public actor NativeVisualRenderer: VisualRenderer {
         player.actionAtItemEnd = .pause
         let playerLayer = AVPlayerLayer(player: player)
         applyContentMode(layer.contentMode, to: playerLayer)
-        applyAppearance(layer, to: playerLayer)
-        contentRoot.addSublayer(playerLayer)
+        applyAppearance(layer, to: playerLayer, output: output)
+        output.renderLayer.addSublayer(playerLayer)
 
         let loopFlag = NativeVisualLoopFlag()
         let observer = NotificationCenter.default.addObserver(
@@ -156,7 +196,10 @@ public actor NativeVisualRenderer: VisualRenderer {
             contentMode: layer.contentMode,
             player: player,
             loopFlag: loopFlag,
-            endObserver: observer
+            endObserver: observer,
+            outputID: layer.outputID,
+            zIndex: layer.zIndex,
+            transformState: layer.transform
         )
     }
 
@@ -211,7 +254,9 @@ public actor NativeVisualRenderer: VisualRenderer {
 
     public func setBlackout(_ enabled: Bool) async throws {
         blackout = enabled
-        contentRoot.isHidden = enabled
+        for output in outputs.values {
+            output.renderLayer.isHidden = enabled
+        }
     }
 
     public func setOpacity(layerID: String, opacity: Double) async throws {
@@ -226,26 +271,126 @@ public actor NativeVisualRenderer: VisualRenderer {
     }
 
     public func setTransform(layerID: String, transform: VisualTransformState) async throws {
-        guard let layer = layers[layerID] else { throw missingLayer() }
-        applyTransform(transform, to: layer.renderLayer)
+        guard var layer = layers[layerID] else { throw missingLayer() }
+        guard let output = outputs[layer.outputID] else { throw missingOutput() }
+        applyTransform(transform, to: layer.renderLayer, output: output)
+        layer.transformState = transform
+        layers[layerID] = layer
+    }
+
+    public func configureOutput(_ output: VisualOutputState) async throws {
+        guard output.width.isFinite, output.height.isFinite,
+              output.width >= 1, output.width <= 16_384,
+              output.height >= 1, output.height <= 16_384,
+              output.mapping.isValidProjection else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_OUTPUT_INVALID",
+                summary: "native output configuration is invalid"
+            )
+        }
+        let transform = try makeNativeVisualPerspectiveTransform(
+            width: output.width,
+            height: output.height,
+            mapping: output.mapping
+        )
+        let bounds = CGRect(x: 0, y: 0, width: output.width, height: output.height)
+
+        if var existing = outputs[output.outputID] {
+            existing.width = output.width
+            existing.height = output.height
+            existing.mapping = output.mapping
+            existing.renderLayer.bounds = bounds
+            existing.renderLayer.anchorPoint = CGPoint(x: 0, y: 0)
+            existing.renderLayer.position = .zero
+            existing.renderLayer.transform = transform
+            existing.renderLayer.isHidden = blackout
+            outputs[output.outputID] = existing
+            refreshLayers(on: output.outputID)
+            return
+        }
+
+        let renderLayer = CALayer()
+        renderLayer.bounds = bounds
+        renderLayer.anchorPoint = CGPoint(x: 0, y: 0)
+        renderLayer.position = .zero
+        renderLayer.masksToBounds = true
+        renderLayer.isHidden = blackout
+        renderLayer.transform = transform
+        rootLayer.addSublayer(renderLayer)
+        outputs[output.outputID] = OutputBacking(
+            renderLayer: renderLayer,
+            width: output.width,
+            height: output.height,
+            mapping: output.mapping
+        )
+    }
+
+    public func setLayerOutput(layerID: String, outputID: String) async throws {
+        guard var layer = layers[layerID] else { throw missingLayer() }
+        guard let output = outputs[outputID] else { throw missingOutput() }
+        if layer.outputID == outputID { return }
+        output.renderLayer.addSublayer(layer.renderLayer)
+        layer.outputID = outputID
+        layer.renderLayer.bounds = output.renderLayer.bounds
+        applyTransform(layer.transformState, to: layer.renderLayer, output: output)
+        layers[layerID] = layer
+    }
+
+    public func setLayerOrder(layerID: String, zIndex: Int) async throws {
+        guard var layer = layers[layerID] else { throw missingLayer() }
+        guard (-4096...4096).contains(zIndex) else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_ORDER_INVALID",
+                summary: "native layer order is outside supported range"
+            )
+        }
+        layer.zIndex = zIndex
+        layer.renderLayer.zPosition = CGFloat(zIndex)
+        layers[layerID] = layer
+    }
+
+    public func setOutputMapping(outputID: String, mapping: VisualQuadState) async throws {
+        guard var output = outputs[outputID] else { throw missingOutput() }
+        output.renderLayer.transform = try makeNativeVisualPerspectiveTransform(
+            width: output.width,
+            height: output.height,
+            mapping: mapping
+        )
+        output.mapping = mapping
+        outputs[outputID] = output
     }
 
     public func snapshot() -> NativeVisualRendererSnapshot {
-        let result = layers.map { layerID, layer in
+        let layerSnapshots = layers.map { layerID, layer in
             NativeVisualLayerSnapshot(
                 layerID: layerID,
                 mediaKind: layer.mediaKind,
                 contentMode: layer.contentMode,
                 loopEnabled: layer.loopFlag?.value() ?? false,
                 opacity: Double(layer.renderLayer.opacity),
-                isPlaying: (layer.player?.rate ?? 0) != 0
+                isPlaying: (layer.player?.rate ?? 0) != 0,
+                outputID: layer.outputID,
+                zIndex: layer.zIndex
             )
-        }.sorted { $0.layerID < $1.layerID }
+        }.sorted {
+            if $0.outputID != $1.outputID { return $0.outputID < $1.outputID }
+            if $0.zIndex != $1.zIndex { return $0.zIndex < $1.zIndex }
+            return $0.layerID < $1.layerID
+        }
+        let outputSnapshots = outputs.map { outputID, output in
+            NativeVisualOutputSnapshot(
+                outputID: outputID,
+                width: output.width,
+                height: output.height,
+                mapping: output.mapping
+            )
+        }.sorted { $0.outputID < $1.outputID }
         return NativeVisualRendererSnapshot(
             blackout: blackout,
             surfaceWidth: surfaceWidth,
             surfaceHeight: surfaceHeight,
-            layers: result
+            outputs: outputSnapshots,
+            layers: layerSnapshots
         )
     }
 
@@ -254,22 +399,60 @@ public actor NativeVisualRenderer: VisualRenderer {
             cleanup(layer)
         }
         layers.removeAll()
-        contentRoot.sublayers?.forEach { $0.removeFromSuperlayer() }
-        contentRoot.isHidden = false
+        for output in outputs.values {
+            output.renderLayer.removeFromSuperlayer()
+        }
+        outputs.removeAll()
+
+        let bounds = CGRect(x: 0, y: 0, width: surfaceWidth, height: surfaceHeight)
+        let main = CALayer()
+        main.bounds = bounds
+        main.anchorPoint = CGPoint(x: 0, y: 0)
+        main.position = .zero
+        main.masksToBounds = true
+        main.isHidden = false
+        main.transform = (try? makeNativeVisualPerspectiveTransform(
+            width: surfaceWidth,
+            height: surfaceHeight,
+            mapping: .identity
+        )) ?? CATransform3DIdentity
+        rootLayer.addSublayer(main)
+        outputs["main"] = OutputBacking(
+            renderLayer: main,
+            width: surfaceWidth,
+            height: surfaceHeight,
+            mapping: .identity
+        )
         blackout = false
     }
 
-    private func applyAppearance(_ source: VisualRenderLayer, to layer: CALayer) {
-        layer.bounds = contentRoot.bounds
-        layer.position = CGPoint(x: contentRoot.bounds.midX, y: contentRoot.bounds.midY)
-        layer.opacity = Float(source.opacity)
-        applyTransform(source.transform, to: layer)
+    private func refreshLayers(on outputID: String) {
+        guard let output = outputs[outputID] else { return }
+        let affected = layers.keys.filter { layers[$0]?.outputID == outputID }
+        for layerID in affected {
+            guard var layer = layers[layerID] else { continue }
+            layer.renderLayer.bounds = output.renderLayer.bounds
+            applyTransform(layer.transformState, to: layer.renderLayer, output: output)
+            layer.renderLayer.zPosition = CGFloat(layer.zIndex)
+            layers[layerID] = layer
+        }
     }
 
-    private func applyTransform(_ transform: VisualTransformState, to layer: CALayer) {
+    private func applyAppearance(_ source: VisualRenderLayer, to layer: CALayer, output: OutputBacking) {
+        layer.bounds = output.renderLayer.bounds
+        layer.opacity = Float(source.opacity)
+        layer.zPosition = CGFloat(source.zIndex)
+        applyTransform(source.transform, to: layer, output: output)
+    }
+
+    private func applyTransform(
+        _ transform: VisualTransformState,
+        to layer: CALayer,
+        output: OutputBacking
+    ) {
         layer.position = CGPoint(
-            x: contentRoot.bounds.midX + transform.x,
-            y: contentRoot.bounds.midY + transform.y
+            x: output.renderLayer.bounds.midX + transform.x,
+            y: output.renderLayer.bounds.midY + transform.y
         )
         var affine = CGAffineTransform.identity
         affine = affine.scaledBy(x: transform.scaleX, y: transform.scaleY)
@@ -305,6 +488,13 @@ public actor NativeVisualRenderer: VisualRenderer {
         VisualRendererFailure(
             code: "VISUAL_RENDERER_LAYER_NOT_PRELOADED",
             summary: "native renderer layer is not preloaded"
+        )
+    }
+
+    private func missingOutput() -> VisualRendererFailure {
+        VisualRendererFailure(
+            code: "VISUAL_RENDERER_OUTPUT_NOT_CONFIGURED",
+            summary: "native renderer output is not configured"
         )
     }
 }
