@@ -181,7 +181,8 @@ final class NativeVisualRendererTests: XCTestCase {
             }
             CVPixelBufferLockBaseAddress(buffer, [])
             if let base = CVPixelBufferGetBaseAddress(buffer) {
-                memset(base, frame * 60, CVPixelBufferGetDataSize(buffer))
+                let fillByte = Int32(frame * 60)
+                memset(base, fillByte, CVPixelBufferGetDataSize(buffer))
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10)) else {
