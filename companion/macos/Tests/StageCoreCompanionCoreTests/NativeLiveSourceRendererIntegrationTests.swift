@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import QuartzCore
 import XCTest
 @testable import StageCoreCompanionCore
@@ -52,6 +53,59 @@ final class NativeLiveSourceRendererIntegrationTests: XCTestCase {
             layerID: "live-hero"
         )
         XCTAssertNil(attachment)
+    }
+
+    func testManagedAndLiveLayersCannotClaimTheSameLayerID() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stagecore-live-layer-conflict-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = directory.appendingPathComponent("managed.png")
+        try writePNG(to: imageURL)
+
+        let managedFirst = try NativeVisualRenderer(surfaceWidth: 320, surfaceHeight: 180)
+        try await managedFirst.preload(
+            VisualRenderLayer(
+                layerID: "shared-layer",
+                mediaURL: imageURL,
+                contentMode: .fit,
+                opacity: 1,
+                transform: VisualTransformState()
+            )
+        )
+        do {
+            try await managedFirst.attachLiveSourceLayer(
+                sourceID: "camera-a",
+                layerID: "shared-layer",
+                outputID: "main",
+                presentation: NativeLiveSourcePresentationLayer(layer: CALayer())
+            )
+            XCTFail("live source must not claim a managed-media layer ID")
+        } catch let failure as VisualRendererFailure {
+            XCTAssertEqual(failure.code, "VISUAL_RENDERER_LAYER_CONFLICT")
+        }
+
+        let liveFirst = try NativeVisualRenderer(surfaceWidth: 320, surfaceHeight: 180)
+        try await liveFirst.attachLiveSourceLayer(
+            sourceID: "camera-a",
+            layerID: "shared-layer",
+            outputID: "main",
+            presentation: NativeLiveSourcePresentationLayer(layer: CALayer())
+        )
+        do {
+            try await liveFirst.preload(
+                VisualRenderLayer(
+                    layerID: "shared-layer",
+                    mediaURL: imageURL,
+                    contentMode: .fit,
+                    opacity: 1,
+                    transform: VisualTransformState()
+                )
+            )
+            XCTFail("managed media must not claim a live-source layer ID")
+        } catch let failure as VisualRendererFailure {
+            XCTAssertEqual(failure.code, "VISUAL_RENDERER_LAYER_CONFLICT")
+        }
     }
 
     func testNativeNetworkSourceRouteAttachesAndInspectReportsRendererTruth() async throws {
@@ -149,6 +203,34 @@ final class NativeLiveSourceRendererIntegrationTests: XCTestCase {
         )
         XCTAssertNil(attachmentAfterClose)
         await renderer.shutdown()
+    }
+
+    private func writePNG(to url: URL) throws {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 8,
+            pixelsHigh: 8,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let bytes = bitmap.bitmapData else {
+            throw NSError(domain: "NativeLiveSourceRendererIntegrationTests", code: 1)
+        }
+        let byteCount = bitmap.bytesPerRow * bitmap.pixelsHigh
+        for index in stride(from: 0, to: byteCount, by: 4) {
+            bytes[index] = 0x20
+            bytes[index + 1] = 0x80
+            bytes[index + 2] = 0xE0
+            bytes[index + 3] = 0xFF
+        }
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "NativeLiveSourceRendererIntegrationTests", code: 2)
+        }
+        try data.write(to: url, options: .atomic)
     }
 }
 #endif
