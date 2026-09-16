@@ -69,30 +69,30 @@ type layerParams struct {
 type seekParams struct {
 	ContractVersion int    `json:"contract_version"`
 	LayerID         string `json:"layer_id"`
-	PositionMS      int64  `json:"position_ms"`
+	PositionMS      *int64 `json:"position_ms"`
 }
 
 type loopParams struct {
 	ContractVersion int    `json:"contract_version"`
 	LayerID         string `json:"layer_id"`
-	Enabled         bool   `json:"enabled"`
+	Enabled         *bool  `json:"enabled"`
 }
 
 type blackoutParams struct {
-	ContractVersion int  `json:"contract_version"`
-	Enabled         bool `json:"enabled"`
+	ContractVersion int   `json:"contract_version"`
+	Enabled         *bool `json:"enabled"`
 }
 
 type opacityParams struct {
-	ContractVersion int     `json:"contract_version"`
-	LayerID         string  `json:"layer_id"`
-	Opacity         float64 `json:"opacity"`
+	ContractVersion int      `json:"contract_version"`
+	LayerID         string   `json:"layer_id"`
+	Opacity         *float64 `json:"opacity"`
 }
 
 type transformParams struct {
-	ContractVersion int       `json:"contract_version"`
-	LayerID         string    `json:"layer_id"`
-	Transform       Transform `json:"transform"`
+	ContractVersion int        `json:"contract_version"`
+	LayerID         string     `json:"layer_id"`
+	Transform       *Transform `json:"transform"`
 }
 
 func CapabilityKeys() []string {
@@ -127,14 +127,20 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
+		if err := rejectExplicitNulls(raw, "opacity", "transform"); err != nil {
+			return err
+		}
+		if err := rejectNestedExplicitNulls(raw, "transform"); err != nil {
+			return err
+		}
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		if err := validateLayerID(p.LayerID); err != nil {
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
 			return err
 		}
-		if strings.TrimSpace(p.ContentVersionID) == "" {
-			return invalid("content_version_id is required")
+		if err := validateIdentifier(p.ContentVersionID, "content_version_id", 256); err != nil {
+			return err
 		}
 		if err := validateSHA256(p.ContentHash); err != nil {
 			return err
@@ -159,7 +165,7 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		return validateLayerID(p.LayerID)
+		return validateIdentifier(p.LayerID, "layer_id", 64)
 
 	case CapabilitySeek:
 		var p seekParams
@@ -169,10 +175,13 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		if err := validateLayerID(p.LayerID); err != nil {
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
 			return err
 		}
-		if p.PositionMS < 0 {
+		if p.PositionMS == nil {
+			return invalid("position_ms is required")
+		}
+		if *p.PositionMS < 0 {
 			return invalid("position_ms cannot be negative")
 		}
 		return nil
@@ -185,14 +194,26 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		return validateLayerID(p.LayerID)
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
+			return err
+		}
+		if p.Enabled == nil {
+			return invalid("enabled is required")
+		}
+		return nil
 
 	case CapabilityBlackout:
 		var p blackoutParams
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		return validateVersion(p.ContractVersion)
+		if err := validateVersion(p.ContractVersion); err != nil {
+			return err
+		}
+		if p.Enabled == nil {
+			return invalid("enabled is required")
+		}
+		return nil
 
 	case CapabilityLayerOpacity:
 		var p opacityParams
@@ -202,23 +223,32 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		if err := validateLayerID(p.LayerID); err != nil {
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
 			return err
 		}
-		return validateOpacity(p.Opacity)
+		if p.Opacity == nil {
+			return invalid("opacity is required")
+		}
+		return validateOpacity(*p.Opacity)
 
 	case CapabilityLayerTransform:
 		var p transformParams
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
+		if err := rejectNestedExplicitNulls(raw, "transform"); err != nil {
+			return err
+		}
 		if err := validateVersion(p.ContractVersion); err != nil {
 			return err
 		}
-		if err := validateLayerID(p.LayerID); err != nil {
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
 			return err
 		}
-		return validateTransform(p.Transform)
+		if p.Transform == nil {
+			return invalid("transform is required")
+		}
+		return validateTransform(*p.Transform)
 
 	case CapabilityStateInspect:
 		var p commandBase
@@ -246,6 +276,41 @@ func decodeStrict(raw json.RawMessage, dst any) error {
 	return nil
 }
 
+func rejectExplicitNulls(raw json.RawMessage, fields ...string) error {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil
+	}
+	for _, field := range fields {
+		value, ok := object[field]
+		if ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return invalid("%s cannot be null", field)
+		}
+	}
+	return nil
+}
+
+func rejectNestedExplicitNulls(raw json.RawMessage, field string) error {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil
+	}
+	rawNested, ok := object[field]
+	if !ok || bytes.Equal(bytes.TrimSpace(rawNested), []byte("null")) {
+		return nil
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(rawNested, &nested); err != nil {
+		return nil
+	}
+	for key, value := range nested {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return invalid("%s.%s cannot be null", field, key)
+		}
+	}
+	return nil
+}
+
 func validateVersion(version int) error {
 	if version != ContractVersion1 {
 		return invalid("unsupported contract_version %d", version)
@@ -253,10 +318,10 @@ func validateVersion(version int) error {
 	return nil
 }
 
-func validateLayerID(value string) error {
+func validateIdentifier(value, name string, maxBytes int) error {
 	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed != value || len(trimmed) > 64 {
-		return invalid("layer_id must be 1-64 trimmed characters")
+	if trimmed == "" || trimmed != value || len([]byte(trimmed)) > maxBytes {
+		return invalid("%s must be 1-%d trimmed UTF-8 bytes", name, maxBytes)
 	}
 	return nil
 }
