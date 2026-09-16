@@ -62,11 +62,24 @@ func TestOperatorDeviceProfileCatalogIsAuthenticatedAndMaterializesTypedTarget(t
 	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if listed.SchemaVersion != deviceprofile.CatalogSchemaVersion || len(listed.Profiles) != 1 {
+	if listed.SchemaVersion != deviceprofile.CatalogSchemaVersion || len(listed.Profiles) < 2 {
 		t.Fatalf("catalog=%#v", listed)
 	}
-	if listed.Profiles[0].Name.EN == "" || listed.Profiles[0].Name.ArIQ == "" {
-		t.Fatalf("profile localization missing: %#v", listed.Profiles[0].Name)
+	var generic *deviceprofile.Profile
+	var tablet *deviceprofile.Profile
+	for i := range listed.Profiles {
+		switch listed.Profiles[i].ID {
+		case "stagecore.generic.osc-udp":
+			generic = &listed.Profiles[i]
+		case "stagecore.tablet-player":
+			tablet = &listed.Profiles[i]
+		}
+	}
+	if generic == nil || tablet == nil {
+		t.Fatalf("required official profiles missing: %#v", listed.Profiles)
+	}
+	if generic.Name.EN == "" || generic.Name.ArIQ == "" || tablet.Name.EN == "" || tablet.Name.ArIQ == "" {
+		t.Fatalf("profile localization missing: generic=%#v tablet=%#v", generic.Name, tablet.Name)
 	}
 
 	materialized := ownerRequest(http.MethodPost, "/api/v1/device-profiles/stagecore.generic.osc-udp/materialize", map[string]any{
