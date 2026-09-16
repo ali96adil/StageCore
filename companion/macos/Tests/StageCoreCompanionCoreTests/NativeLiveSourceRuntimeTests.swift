@@ -30,5 +30,46 @@ final class NativeLiveSourceRuntimeTests: XCTestCase {
             XCTAssertNil(snapshot.selectedSourceID)
         }
     }
+
+    func testUSBCaptureRequiresExplicitDeviceEndpoint() async {
+        let runtime = NativeLiveSourceRuntime()
+        let descriptor = LiveSourceRuntimeDescriptor(
+            sourceID: "usb-missing-endpoint",
+            sourceClass: .usbCapture
+        )
+
+        do {
+            try await runtime.open(descriptor)
+            XCTFail("expected USB capture without a device endpoint to fail")
+        } catch let failure as LiveSourceRuntimeFailure {
+            XCTAssertEqual(failure.code, "LIVE_SOURCE_ENDPOINT_INVALID")
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        let snapshot = await runtime.snapshot()
+        XCTAssertTrue(snapshot.openSourceIDs.isEmpty)
+    }
+
+    func testExplicitMissingCameraEndpointDoesNotFallbackToAnotherDevice() async {
+        let runtime = NativeLiveSourceRuntime()
+        let descriptor = LiveSourceRuntimeDescriptor(
+            sourceID: "camera-explicit-missing",
+            sourceClass: .localCamera,
+            endpointRef: "stagecore-test-device-that-must-not-exist"
+        )
+
+        do {
+            try await runtime.open(descriptor)
+            XCTFail("expected an unavailable explicit camera endpoint to fail")
+        } catch let failure as LiveSourceRuntimeFailure {
+            XCTAssertEqual(failure.code, "LIVE_SOURCE_DEVICE_UNAVAILABLE")
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        let snapshot = await runtime.snapshot()
+        XCTAssertTrue(snapshot.openSourceIDs.isEmpty)
+    }
 }
 #endif
