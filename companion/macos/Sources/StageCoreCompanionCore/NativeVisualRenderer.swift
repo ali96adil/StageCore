@@ -174,7 +174,7 @@ public actor NativeVisualRenderer: VisualRenderer {
         guard let layer = layers[layerID] else { throw missingLayer() }
         if let player = layer.player {
             player.pause()
-            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
@@ -194,7 +194,7 @@ public actor NativeVisualRenderer: VisualRenderer {
             )
         }
         let time = CMTime(value: positionMS, timescale: 1000)
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        await player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     public func setLoop(layerID: String, enabled: Bool) async throws {
@@ -215,7 +215,7 @@ public actor NativeVisualRenderer: VisualRenderer {
     }
 
     public func setOpacity(layerID: String, opacity: Double) async throws {
-        guard var layer = layers[layerID] else { throw missingLayer() }
+        guard let layer = layers[layerID] else { throw missingLayer() }
         guard opacity.isFinite, opacity >= 0, opacity <= 1 else {
             throw VisualRendererFailure(
                 code: "VISUAL_RENDERER_OPACITY_INVALID",
@@ -223,13 +223,11 @@ public actor NativeVisualRenderer: VisualRenderer {
             )
         }
         layer.renderLayer.opacity = Float(opacity)
-        layers[layerID] = layer
     }
 
     public func setTransform(layerID: String, transform: VisualTransformState) async throws {
-        guard var layer = layers[layerID] else { throw missingLayer() }
+        guard let layer = layers[layerID] else { throw missingLayer() }
         applyTransform(transform, to: layer.renderLayer)
-        layers[layerID] = layer
     }
 
     public func snapshot() -> NativeVisualRendererSnapshot {
