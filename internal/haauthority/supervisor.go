@@ -45,11 +45,12 @@ type Supervisor struct {
 	opMu sync.Mutex
 	mu   sync.RWMutex
 
-	closed        bool
-	renewCancel   context.CancelFunc
-	renewRunning  bool
-	lastError     string
-	wg            sync.WaitGroup
+	closed          bool
+	renewCancel     context.CancelFunc
+	renewRunning    bool
+	renewGeneration uint64
+	lastError       string
+	wg              sync.WaitGroup
 }
 
 type SupervisorStatus struct {
@@ -194,6 +195,7 @@ func (s *Supervisor) Close() error {
 	}
 	s.mu.Lock()
 	s.closed = true
+	s.renewGeneration++
 	cancel := s.renewCancel
 	s.renewCancel = nil
 	s.renewRunning = false
@@ -211,16 +213,19 @@ func (s *Supervisor) startRenewalLocked() {
 	s.stopRenewalLocked()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
+	s.renewGeneration++
+	generation := s.renewGeneration
 	s.renewCancel = cancel
 	s.renewRunning = true
 	s.lastError = ""
 	s.mu.Unlock()
 	s.wg.Add(1)
-	go s.renewLoop(ctx)
+	go s.renewLoop(ctx, generation)
 }
 
 func (s *Supervisor) stopRenewalLocked() {
 	s.mu.Lock()
+	s.renewGeneration++
 	cancel := s.renewCancel
 	s.renewCancel = nil
 	s.renewRunning = false
@@ -230,20 +235,17 @@ func (s *Supervisor) stopRenewalLocked() {
 	}
 }
 
-func (s *Supervisor) renewLoop(ctx context.Context) {
+func (s *Supervisor) renewLoop(ctx context.Context, generation uint64) {
 	defer s.wg.Done()
-	defer func() {
-		s.mu.Lock()
-		s.renewRunning = false
-		s.renewCancel = nil
-		s.mu.Unlock()
-	}()
+	defer s.finishRenewalGeneration(generation)
 
 	for {
+		if !s.renewGenerationMatches(generation) {
+			return
+		}
 		remaining := s.controller.safeRemaining()
 		if remaining <= 0 {
-			s.controller.Demote()
-			s.setLastError(errors.New("HA lease expired before renewal"))
+			s.failClosedGeneration(generation, errors.New("HA lease expired before renewal"))
 			return
 		}
 		delay := remaining / 3
@@ -253,11 +255,13 @@ func (s *Supervisor) renewLoop(ctx context.Context) {
 		if err := s.wait(ctx, delay); err != nil {
 			return
 		}
+		if !s.renewGenerationMatches(generation) {
+			return
+		}
 
 		remaining = s.controller.safeRemaining()
 		if remaining <= 0 {
-			s.controller.Demote()
-			s.setLastError(errors.New("HA lease expired before renewal"))
+			s.failClosedGeneration(generation, errors.New("HA lease expired before renewal"))
 			return
 		}
 		timeout := remaining / 3
@@ -268,14 +272,55 @@ func (s *Supervisor) renewLoop(ctx context.Context) {
 		err := s.controller.Renew(renewCtx)
 		cancel()
 		if err != nil {
-			// Controller.Renew already invalidates the local grant on any witness
-			// error; Demote also fences an authority operation racing this loop.
-			s.controller.Demote()
-			s.setLastError(err)
+			// Controller.Renew invalidates its own grant for current-generation
+			// failures. The supervisor generation check prevents a delayed older
+			// renewal from demoting a later explicit activation.
+			s.failClosedGeneration(generation, err)
 			return
 		}
-		s.setLastError(nil)
+		s.setLastErrorForGeneration(generation, nil)
 	}
+}
+
+func (s *Supervisor) failClosedGeneration(generation uint64, err error) {
+	// Serialize with Activate/Release/Demote so a stale renewal loop can never
+	// pass a generation check and then demote a freshly activated generation.
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if !s.renewGenerationMatches(generation) {
+		return
+	}
+	s.controller.Demote()
+	s.setLastErrorForGeneration(generation, err)
+}
+
+func (s *Supervisor) finishRenewalGeneration(generation uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.renewGeneration != generation {
+		return
+	}
+	s.renewRunning = false
+	s.renewCancel = nil
+}
+
+func (s *Supervisor) renewGenerationMatches(generation uint64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.renewGeneration == generation && !s.closed
+}
+
+func (s *Supervisor) setLastErrorForGeneration(generation uint64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.renewGeneration != generation || s.closed {
+		return
+	}
+	if err == nil {
+		s.lastError = ""
+		return
+	}
+	s.lastError = err.Error()
 }
 
 func (s *Supervisor) controllerStatus(ctx context.Context) (SupervisorStatus, error) {
