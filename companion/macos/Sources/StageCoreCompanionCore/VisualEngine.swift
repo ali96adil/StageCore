@@ -23,6 +23,12 @@ public protocol VisualMediaResolver: Sendable {
     func verifiedMediaURL(contentHash: String) async -> URL?
 }
 
+public enum VisualContentMode: String, Sendable, Equatable, CaseIterable {
+    case fit = "FIT"
+    case fill = "FILL"
+    case crop = "CROP"
+}
+
 public enum VisualPlaybackState: String, Sendable, Equatable {
     case preloaded = "PRELOADED"
     case playing = "PLAYING"
@@ -52,11 +58,73 @@ public struct VisualTransformState: Sendable, Equatable {
     }
 }
 
+public struct VisualRenderLayer: Sendable, Equatable {
+    public var layerID: String
+    public var mediaURL: URL
+    public var contentMode: VisualContentMode
+    public var opacity: Double
+    public var transform: VisualTransformState
+
+    public init(
+        layerID: String,
+        mediaURL: URL,
+        contentMode: VisualContentMode,
+        opacity: Double,
+        transform: VisualTransformState
+    ) {
+        self.layerID = layerID
+        self.mediaURL = mediaURL
+        self.contentMode = contentMode
+        self.opacity = opacity
+        self.transform = transform
+    }
+}
+
+public struct VisualRendererFailure: Error, Sendable, Equatable {
+    public var code: String
+    public var summary: String
+
+    public init(code: String, summary: String) {
+        self.code = code
+        self.summary = summary
+    }
+}
+
+public protocol VisualRenderer: Sendable {
+    func preload(_ layer: VisualRenderLayer) async throws
+    func play(layerID: String) async throws
+    func pause(layerID: String) async throws
+    func stop(layerID: String) async throws
+    func seek(layerID: String, positionMS: Int64) async throws
+    func setLoop(layerID: String, enabled: Bool) async throws
+    func setBlackout(_ enabled: Bool) async throws
+    func setOpacity(layerID: String, opacity: Double) async throws
+    func setTransform(layerID: String, transform: VisualTransformState) async throws
+    func shutdown() async
+}
+
+/// State-only renderer used by contract/unit tests. Production bootstrap must
+/// only advertise native visual capabilities when a real renderer is wired.
+public struct StateOnlyVisualRenderer: VisualRenderer {
+    public init() {}
+    public func preload(_ layer: VisualRenderLayer) async throws {}
+    public func play(layerID: String) async throws {}
+    public func pause(layerID: String) async throws {}
+    public func stop(layerID: String) async throws {}
+    public func seek(layerID: String, positionMS: Int64) async throws {}
+    public func setLoop(layerID: String, enabled: Bool) async throws {}
+    public func setBlackout(_ enabled: Bool) async throws {}
+    public func setOpacity(layerID: String, opacity: Double) async throws {}
+    public func setTransform(layerID: String, transform: VisualTransformState) async throws {}
+    public func shutdown() async {}
+}
+
 public struct VisualLayerState: Sendable, Equatable {
     public var layerID: String
     public var contentVersionID: String
     public var contentHash: String
     public var mediaURL: URL
+    public var contentMode: VisualContentMode
     public var playback: VisualPlaybackState
     public var positionMS: Int64
     public var loopEnabled: Bool
@@ -72,11 +140,16 @@ public struct VisualEngineSnapshot: Sendable, Equatable {
 
 public actor VisualEngine {
     private let mediaResolver: any VisualMediaResolver
+    private let renderer: any VisualRenderer
     private var blackout = false
     private var layers: [String: VisualLayerState] = [:]
 
-    public init(mediaResolver: any VisualMediaResolver) {
+    public init(
+        mediaResolver: any VisualMediaResolver,
+        renderer: any VisualRenderer = StateOnlyVisualRenderer()
+    ) {
         self.mediaResolver = mediaResolver
+        self.renderer = renderer
     }
 
     public func snapshot() -> VisualEngineSnapshot {
@@ -85,6 +158,12 @@ public actor VisualEngine {
             blackout: blackout,
             layers: layers.values.sorted { $0.layerID < $1.layerID }
         )
+    }
+
+    public func shutdown() async {
+        await renderer.shutdown()
+        layers.removeAll()
+        blackout = false
     }
 
     public func execute(
@@ -100,38 +179,15 @@ public actor VisualEngine {
         }
 
         switch capability {
-        case VisualCapability.preload:
-            return await preload(parameters)
-        case VisualCapability.play:
-            return mutateLayer(parameters, allowed: ["contract_version", "layer_id"]) { layer in
-                guard layer.playback != .playing else { return nil }
-                layer.playback = .playing
-                return nil
-            }
-        case VisualCapability.pause:
-            return mutateLayer(parameters, allowed: ["contract_version", "layer_id"]) { layer in
-                guard layer.playback == .playing else {
-                    return ("VISUAL_STATE_CONFLICT", "pause requires a playing layer")
-                }
-                layer.playback = .paused
-                return nil
-            }
-        case VisualCapability.stop:
-            return mutateLayer(parameters, allowed: ["contract_version", "layer_id"]) { layer in
-                layer.playback = .stopped
-                layer.positionMS = 0
-                return nil
-            }
-        case VisualCapability.seek:
-            return seek(parameters)
-        case VisualCapability.loop:
-            return setLoop(parameters)
-        case VisualCapability.blackout:
-            return setBlackout(parameters)
-        case VisualCapability.layerOpacity:
-            return setOpacity(parameters)
-        case VisualCapability.layerTransform:
-            return setTransform(parameters)
+        case VisualCapability.preload: return await preload(parameters)
+        case VisualCapability.play: return await play(parameters)
+        case VisualCapability.pause: return await pause(parameters)
+        case VisualCapability.stop: return await stop(parameters)
+        case VisualCapability.seek: return await seek(parameters)
+        case VisualCapability.loop: return await setLoop(parameters)
+        case VisualCapability.blackout: return await setBlackout(parameters)
+        case VisualCapability.layerOpacity: return await setOpacity(parameters)
+        case VisualCapability.layerTransform: return await setTransform(parameters)
         case VisualCapability.stateInspect:
             guard hasOnly(parameters, allowed: ["contract_version"]) else {
                 return failure("VISUAL_PARAMETERS_INVALID", "state inspection contains unsupported parameters")
@@ -143,12 +199,26 @@ public actor VisualEngine {
     }
 
     private func preload(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
-        let allowed = Set(["contract_version", "layer_id", "content_version_id", "content_hash", "opacity", "transform"])
+        let allowed = Set([
+            "contract_version", "layer_id", "content_version_id", "content_hash",
+            "content_mode", "opacity", "transform",
+        ])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
               let contentVersionID = trimmedString(parameters["content_version_id"], maxLength: 256),
               let contentHash = canonicalSHA256(parameters["content_hash"]) else {
             return failure("VISUAL_PARAMETERS_INVALID", "preload requires canonical layer and managed media identity")
+        }
+
+        let contentMode: VisualContentMode
+        if let raw = parameters["content_mode"] {
+            guard case .string(let value) = raw,
+                  let parsed = VisualContentMode(rawValue: value) else {
+                return failure("VISUAL_PARAMETERS_INVALID", "content_mode must be FIT, FILL or CROP")
+            }
+            contentMode = parsed
+        } else {
+            contentMode = .fit
         }
 
         var opacity = 1.0
@@ -172,21 +242,85 @@ public actor VisualEngine {
             return failure("VISUAL_MEDIA_UNAVAILABLE", "managed media is not verified in the render-node cache")
         }
 
+        let renderLayer = VisualRenderLayer(
+            layerID: layerID,
+            mediaURL: mediaURL,
+            contentMode: contentMode,
+            opacity: opacity,
+            transform: transform
+        )
+        if let rendererFailure = await rendererFailure({ try await renderer.preload(renderLayer) }) {
+            return rendererFailure
+        }
+
         layers[layerID] = VisualLayerState(
             layerID: layerID,
             contentVersionID: contentVersionID,
             contentHash: contentHash,
             mediaURL: mediaURL,
+            contentMode: contentMode,
             playback: .preloaded,
             positionMS: 0,
             loopEnabled: false,
             opacity: opacity,
             transform: transform
         )
-        return success("visual layer preloaded into deterministic state", output: ["state": snapshotJSON()])
+        return success("visual layer preloaded", output: ["state": snapshotJSON()])
     }
 
-    private func seek(_ parameters: [String: JSONValue]) -> CompanionCapabilityOutcome {
+    private func play(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard let layerID = validatedLayerID(parameters) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "layer_id is required")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded first")
+        }
+        if layer.playback == .playing {
+            return success("visual layer already playing", output: ["state": snapshotJSON()])
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.play(layerID: layerID) }) {
+            return rendererFailure
+        }
+        layer.playback = .playing
+        layers[layerID] = layer
+        return success("visual layer playing", output: ["state": snapshotJSON()])
+    }
+
+    private func pause(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard let layerID = validatedLayerID(parameters) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "layer_id is required")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded first")
+        }
+        guard layer.playback == .playing else {
+            return failure("VISUAL_STATE_CONFLICT", "pause requires a playing layer")
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.pause(layerID: layerID) }) {
+            return rendererFailure
+        }
+        layer.playback = .paused
+        layers[layerID] = layer
+        return success("visual layer paused", output: ["state": snapshotJSON()])
+    }
+
+    private func stop(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
+        guard let layerID = validatedLayerID(parameters) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "layer_id is required")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded first")
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.stop(layerID: layerID) }) {
+            return rendererFailure
+        }
+        layer.playback = .stopped
+        layer.positionMS = 0
+        layers[layerID] = layer
+        return success("visual layer stopped", output: ["state": snapshotJSON()])
+    }
+
+    private func seek(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         let allowed = Set(["contract_version", "layer_id", "position_ms"])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
@@ -197,12 +331,15 @@ public actor VisualEngine {
         guard var layer = layers[layerID] else {
             return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before seek")
         }
+        if let rendererFailure = await rendererFailure({ try await renderer.seek(layerID: layerID, positionMS: Int64(position)) }) {
+            return rendererFailure
+        }
         layer.positionMS = Int64(position)
         layers[layerID] = layer
-        return success("visual seek state updated", output: ["state": snapshotJSON()])
+        return success("visual seek applied", output: ["state": snapshotJSON()])
     }
 
-    private func setLoop(_ parameters: [String: JSONValue]) -> CompanionCapabilityOutcome {
+    private func setLoop(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         let allowed = Set(["contract_version", "layer_id", "enabled"])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
@@ -212,21 +349,30 @@ public actor VisualEngine {
         guard var layer = layers[layerID] else {
             return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before loop changes")
         }
+        if let rendererFailure = await rendererFailure({ try await renderer.setLoop(layerID: layerID, enabled: enabled) }) {
+            return rendererFailure
+        }
         layer.loopEnabled = enabled
         layers[layerID] = layer
-        return success("visual loop state updated", output: ["state": snapshotJSON()])
+        return success("visual loop updated", output: ["state": snapshotJSON()])
     }
 
-    private func setBlackout(_ parameters: [String: JSONValue]) -> CompanionCapabilityOutcome {
+    private func setBlackout(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         guard hasOnly(parameters, allowed: ["contract_version", "enabled"]),
               case .bool(let enabled)? = parameters["enabled"] else {
             return failure("VISUAL_PARAMETERS_INVALID", "blackout requires enabled")
         }
+        if blackout == enabled {
+            return success("visual blackout unchanged", output: ["state": snapshotJSON()])
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.setBlackout(enabled) }) {
+            return rendererFailure
+        }
         blackout = enabled
-        return success("visual blackout state updated", output: ["state": snapshotJSON()])
+        return success("visual blackout updated", output: ["state": snapshotJSON()])
     }
 
-    private func setOpacity(_ parameters: [String: JSONValue]) -> CompanionCapabilityOutcome {
+    private func setOpacity(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         let allowed = Set(["contract_version", "layer_id", "opacity"])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
@@ -237,45 +383,51 @@ public actor VisualEngine {
         guard var layer = layers[layerID] else {
             return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before opacity changes")
         }
+        if let rendererFailure = await rendererFailure({ try await renderer.setOpacity(layerID: layerID, opacity: opacity) }) {
+            return rendererFailure
+        }
         layer.opacity = opacity
         layers[layerID] = layer
-        return success("visual layer opacity updated", output: ["state": snapshotJSON()])
+        return success("visual opacity updated", output: ["state": snapshotJSON()])
     }
 
-    private func setTransform(_ parameters: [String: JSONValue]) -> CompanionCapabilityOutcome {
+    private func setTransform(_ parameters: [String: JSONValue]) async -> CompanionCapabilityOutcome {
         let allowed = Set(["contract_version", "layer_id", "transform"])
         guard hasOnly(parameters, allowed: allowed),
               let layerID = trimmedString(parameters["layer_id"], maxLength: 64),
-              case .object(let object)? = parameters["transform"],
-              var layer = layers[layerID],
-              let transform = parseTransform(object, base: layer.transform) else {
-            if let layerID = trimmedString(parameters["layer_id"], maxLength: 64), layers[layerID] == nil {
-                return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before transform changes")
-            }
+              case .object(let object)? = parameters["transform"] else {
             return failure("VISUAL_PARAMETERS_INVALID", "visual transform is invalid")
+        }
+        guard var layer = layers[layerID] else {
+            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded before transform changes")
+        }
+        guard let transform = parseTransform(object, base: layer.transform) else {
+            return failure("VISUAL_PARAMETERS_INVALID", "visual transform is invalid")
+        }
+        if let rendererFailure = await rendererFailure({ try await renderer.setTransform(layerID: layerID, transform: transform) }) {
+            return rendererFailure
         }
         layer.transform = transform
         layers[layerID] = layer
-        return success("visual layer transform updated", output: ["state": snapshotJSON()])
+        return success("visual transform updated", output: ["state": snapshotJSON()])
     }
 
-    private func mutateLayer(
-        _ parameters: [String: JSONValue],
-        allowed: Set<String>,
-        mutation: (inout VisualLayerState) -> (String, String)?
-    ) -> CompanionCapabilityOutcome {
-        guard hasOnly(parameters, allowed: allowed),
-              let layerID = trimmedString(parameters["layer_id"], maxLength: 64) else {
-            return failure("VISUAL_PARAMETERS_INVALID", "layer_id is required")
+    private func validatedLayerID(_ parameters: [String: JSONValue]) -> String? {
+        guard hasOnly(parameters, allowed: ["contract_version", "layer_id"]) else { return nil }
+        return trimmedString(parameters["layer_id"], maxLength: 64)
+    }
+
+    private func rendererFailure(
+        _ operation: () async throws -> Void
+    ) async -> CompanionCapabilityOutcome? {
+        do {
+            try await operation()
+            return nil
+        } catch let failure as VisualRendererFailure {
+            return self.failure(failure.code, failure.summary)
+        } catch {
+            return failure("VISUAL_RENDERER_FAILED", "visual renderer failed closed")
         }
-        guard var layer = layers[layerID] else {
-            return failure("VISUAL_LAYER_NOT_PRELOADED", "layer must be preloaded first")
-        }
-        if let problem = mutation(&layer) {
-            return failure(problem.0, problem.1)
-        }
-        layers[layerID] = layer
-        return success("visual layer state updated", output: ["state": snapshotJSON()])
     }
 
     private func parseTransform(
@@ -322,6 +474,7 @@ public actor VisualEngine {
             "layer_id": .string(layer.layerID),
             "content_version_id": .string(layer.contentVersionID),
             "content_hash": .string(layer.contentHash),
+            "content_mode": .string(layer.contentMode.rawValue),
             "playback": .string(layer.playback.rawValue),
             "position_ms": .int(Int(layer.positionMS)),
             "loop": .bool(layer.loopEnabled),
