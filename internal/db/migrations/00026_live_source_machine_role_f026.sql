@@ -12,6 +12,4 @@ CREATE INDEX live_video_sources_machine_role_idx
 
 -- +goose Down
 DROP INDEX IF EXISTS live_video_sources_machine_role_idx;
--- SQLite cannot drop a column on every supported historical runtime. The
--- migration chain is forward-authoritative; down migration intentionally leaves
--- the nullable compatibility column in place.
+ALTER TABLE live_video_sources DROP COLUMN execution_machine_role_id;
