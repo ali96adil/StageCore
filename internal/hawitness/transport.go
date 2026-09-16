@@ -3,6 +3,7 @@ package hawitness
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,9 +46,6 @@ func (e *RemoteError) Error() string {
 	return fmt.Sprintf("HA witness request failed: status=%d code=%s", e.Status, e.Code)
 }
 
-// NewHandler exposes only the durable lease state machine. Holder identity is
-// derived from the authenticated mTLS certificate and is never accepted from a
-// request body.
 func NewHandler(leases *halease.Service) (http.Handler, error) {
 	if leases == nil {
 		return nil, errors.New("HA witness lease service is required")
@@ -58,7 +56,7 @@ func NewHandler(leases *halease.Service) (http.Handler, error) {
 		if !ok {
 			return
 		}
-		_ = holderID // Authentication is required even when observing current authority.
+		_ = holderID
 		lease, active, err := leases.Current(r.Context())
 		if err != nil {
 			writeLeaseError(w, err)
@@ -268,8 +266,7 @@ func (c *Client) Release(ctx context.Context, epoch uint64) error {
 	if err != nil {
 		return err
 	}
-	_, err = c.doNoContent(ctx, http.MethodPost, "/v1/lease/release", payload)
-	return err
+	return c.doNoContent(ctx, http.MethodPost, "/v1/lease/release", payload)
 }
 
 func (c *Client) Current(ctx context.Context) (halease.Lease, bool, error) {
@@ -302,16 +299,16 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (leas
 	return payload, nil
 }
 
-func (c *Client) doNoContent(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+func (c *Client) doNoContent(ctx context.Context, method, path string, body []byte) error {
 	response, err := c.request(ctx, method, path, body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
-		return nil, decodeRemoteError(response)
+		return decodeRemoteError(response)
 	}
-	return response, nil
+	return nil
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
