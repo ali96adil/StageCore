@@ -25,6 +25,7 @@ let package = Package(
                 .linkedFramework("AppKit", .when(platforms: [.macOS])),
                 .linkedFramework("QuartzCore", .when(platforms: [.macOS])),
                 .linkedFramework("AVFoundation", .when(platforms: [.macOS])),
+                .linkedFramework("CoreImage", .when(platforms: [.macOS])),
             ]
         ),
         .executableTarget(

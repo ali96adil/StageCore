@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 @preconcurrency import AVFoundation
+import CoreImage
 import Foundation
 import QuartzCore
 
@@ -18,6 +19,9 @@ public struct NativeVisualLayerSnapshot: Sendable, Equatable {
     public var isPlaying: Bool
     public var outputID: String
     public var zIndex: Int
+    public var crop: VisualNormalizedRect
+    public var mask: VisualMaskKind
+    public var effect: VisualEffectState
 }
 
 public struct NativeVisualOutputSnapshot: Sendable, Equatable {
@@ -52,7 +56,7 @@ private final class NativeVisualLoopFlag: @unchecked Sendable {
     }
 }
 
-public actor NativeVisualRenderer: VisualRenderer {
+public actor NativeVisualRenderer: VisualRenderer, VisualCompositionRenderer {
     private struct LayerBacking {
         var renderLayer: CALayer
         var mediaKind: NativeVisualMediaKind
@@ -63,6 +67,7 @@ public actor NativeVisualRenderer: VisualRenderer {
         var outputID: String
         var zIndex: Int
         var transformState: VisualTransformState
+        var compositionState: VisualLayerCompositionState
     }
 
     private struct OutputBacking {
@@ -132,6 +137,7 @@ public actor NativeVisualRenderer: VisualRenderer {
         if let previous = layers.removeValue(forKey: layer.layerID) {
             cleanup(previous)
         }
+        let composition = VisualLayerCompositionState(layerID: layer.layerID)
 
         if let image = NSImage(contentsOf: layer.mediaURL),
            let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
@@ -140,6 +146,7 @@ public actor NativeVisualRenderer: VisualRenderer {
             renderLayer.contentsScale = 1
             applyContentMode(layer.contentMode, to: renderLayer)
             applyAppearance(layer, to: renderLayer, output: output)
+            try applyCompositionAppearance(composition, to: renderLayer)
             output.renderLayer.addSublayer(renderLayer)
             layers[layer.layerID] = LayerBacking(
                 renderLayer: renderLayer,
@@ -150,7 +157,8 @@ public actor NativeVisualRenderer: VisualRenderer {
                 endObserver: nil,
                 outputID: layer.outputID,
                 zIndex: layer.zIndex,
-                transformState: layer.transform
+                transformState: layer.transform,
+                compositionState: composition
             )
             return
         }
@@ -178,6 +186,7 @@ public actor NativeVisualRenderer: VisualRenderer {
         let playerLayer = AVPlayerLayer(player: player)
         applyContentMode(layer.contentMode, to: playerLayer)
         applyAppearance(layer, to: playerLayer, output: output)
+        try applyCompositionAppearance(composition, to: playerLayer)
         output.renderLayer.addSublayer(playerLayer)
 
         let loopFlag = NativeVisualLoopFlag()
@@ -199,7 +208,8 @@ public actor NativeVisualRenderer: VisualRenderer {
             endObserver: observer,
             outputID: layer.outputID,
             zIndex: layer.zIndex,
-            transformState: layer.transform
+            transformState: layer.transform,
+            compositionState: composition
         )
     }
 
@@ -267,7 +277,9 @@ public actor NativeVisualRenderer: VisualRenderer {
                 summary: "native renderer opacity must be between zero and one"
             )
         }
-        layer.renderLayer.opacity = Float(opacity)
+        disableImplicitAnimations {
+            layer.renderLayer.opacity = Float(opacity)
+        }
     }
 
     public func setTransform(layerID: String, transform: VisualTransformState) async throws {
@@ -305,7 +317,7 @@ public actor NativeVisualRenderer: VisualRenderer {
             existing.renderLayer.transform = transform
             existing.renderLayer.isHidden = blackout
             outputs[output.outputID] = existing
-            refreshLayers(on: output.outputID)
+            try refreshLayers(on: output.outputID)
             return
         }
 
@@ -333,6 +345,7 @@ public actor NativeVisualRenderer: VisualRenderer {
         layer.outputID = outputID
         layer.renderLayer.bounds = output.renderLayer.bounds
         applyTransform(layer.transformState, to: layer.renderLayer, output: output)
+        try applyCompositionAppearance(layer.compositionState, to: layer.renderLayer)
         layers[layerID] = layer
     }
 
@@ -360,6 +373,99 @@ public actor NativeVisualRenderer: VisualRenderer {
         outputs[outputID] = output
     }
 
+    public func applyComposition(layerID: String, state: VisualLayerCompositionState) async throws {
+        guard state.layerID == layerID, state.crop.isValid, state.effect.isValid else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_COMPOSITION_INVALID",
+                summary: "native layer composition state is invalid"
+            )
+        }
+        guard var layer = layers[layerID] else { throw missingLayer() }
+        try applyCompositionAppearance(state, to: layer.renderLayer)
+        layer.compositionState = state
+        layers[layerID] = layer
+    }
+
+    public func transition(_ state: VisualTransitionRenderState) async throws {
+        guard state.fromLayerID != state.toLayerID,
+              state.fromOpacity.isFinite, state.fromOpacity >= 0, state.fromOpacity <= 1,
+              state.targetOpacity.isFinite, state.targetOpacity >= 0, state.targetOpacity <= 1 else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                summary: "native transition state is invalid"
+            )
+        }
+        switch state.kind {
+        case .cut:
+            guard state.durationMS == 0 else {
+                throw VisualRendererFailure(
+                    code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                    summary: "CUT transition requires zero duration"
+                )
+            }
+        case .fade, .crossfade:
+            guard (1...30_000).contains(state.durationMS) else {
+                throw VisualRendererFailure(
+                    code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                    summary: "animated transition duration is outside supported bounds"
+                )
+            }
+        }
+        guard let from = layers[state.fromLayerID], let to = layers[state.toLayerID] else {
+            throw missingLayer()
+        }
+        guard from.outputID == to.outputID else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_TRANSITION_INVALID",
+                summary: "transition layers must share an output"
+            )
+        }
+
+        from.renderLayer.removeAnimation(forKey: "stagecore.transition.opacity")
+        to.renderLayer.removeAnimation(forKey: "stagecore.transition.opacity")
+        disableImplicitAnimations {
+            from.renderLayer.opacity = 0
+            to.renderLayer.opacity = Float(state.targetOpacity)
+        }
+        guard state.kind != .cut else { return }
+
+        let duration = CFTimeInterval(state.durationMS) / 1000
+        switch state.kind {
+        case .crossfade:
+            let fromAnimation = CABasicAnimation(keyPath: "opacity")
+            fromAnimation.fromValue = state.fromOpacity
+            fromAnimation.toValue = 0
+            fromAnimation.duration = duration
+            from.renderLayer.add(fromAnimation, forKey: "stagecore.transition.opacity")
+
+            let toAnimation = CABasicAnimation(keyPath: "opacity")
+            toAnimation.fromValue = 0
+            toAnimation.toValue = state.targetOpacity
+            toAnimation.duration = duration
+            to.renderLayer.add(toAnimation, forKey: "stagecore.transition.opacity")
+
+        case .fade:
+            let fromAnimation = CAKeyframeAnimation(keyPath: "opacity")
+            fromAnimation.values = [
+                NSNumber(value: state.fromOpacity), NSNumber(value: 0), NSNumber(value: 0),
+            ]
+            fromAnimation.keyTimes = [0, 0.5, 1]
+            fromAnimation.duration = duration
+            from.renderLayer.add(fromAnimation, forKey: "stagecore.transition.opacity")
+
+            let toAnimation = CAKeyframeAnimation(keyPath: "opacity")
+            toAnimation.values = [
+                NSNumber(value: 0), NSNumber(value: 0), NSNumber(value: state.targetOpacity),
+            ]
+            toAnimation.keyTimes = [0, 0.5, 1]
+            toAnimation.duration = duration
+            to.renderLayer.add(toAnimation, forKey: "stagecore.transition.opacity")
+
+        case .cut:
+            break
+        }
+    }
+
     public func snapshot() -> NativeVisualRendererSnapshot {
         let layerSnapshots = layers.map { layerID, layer in
             NativeVisualLayerSnapshot(
@@ -370,7 +476,10 @@ public actor NativeVisualRenderer: VisualRenderer {
                 opacity: Double(layer.renderLayer.opacity),
                 isPlaying: (layer.player?.rate ?? 0) != 0,
                 outputID: layer.outputID,
-                zIndex: layer.zIndex
+                zIndex: layer.zIndex,
+                crop: layer.compositionState.crop,
+                mask: layer.compositionState.mask,
+                effect: layer.compositionState.effect
             )
         }.sorted {
             if $0.outputID != $1.outputID { return $0.outputID < $1.outputID }
@@ -426,15 +535,15 @@ public actor NativeVisualRenderer: VisualRenderer {
         blackout = false
     }
 
-    private func refreshLayers(on outputID: String) {
+    private func refreshLayers(on outputID: String) throws {
         guard let output = outputs[outputID] else { return }
         let affected = layers.keys.filter { layers[$0]?.outputID == outputID }
         for layerID in affected {
-            guard var layer = layers[layerID] else { continue }
+            guard let layer = layers[layerID] else { continue }
             layer.renderLayer.bounds = output.renderLayer.bounds
             applyTransform(layer.transformState, to: layer.renderLayer, output: output)
             layer.renderLayer.zPosition = CGFloat(layer.zIndex)
-            layers[layerID] = layer
+            try applyCompositionAppearance(layer.compositionState, to: layer.renderLayer)
         }
     }
 
@@ -458,6 +567,62 @@ public actor NativeVisualRenderer: VisualRenderer {
         affine = affine.scaledBy(x: transform.scaleX, y: transform.scaleY)
         affine = affine.rotated(by: transform.rotationDegrees * .pi / 180)
         layer.setAffineTransform(affine)
+    }
+
+    private func applyCompositionAppearance(
+        _ state: VisualLayerCompositionState,
+        to layer: CALayer
+    ) throws {
+        guard state.crop.isValid, state.effect.isValid else {
+            throw VisualRendererFailure(
+                code: "VISUAL_RENDERER_COMPOSITION_INVALID",
+                summary: "native composition values are outside supported bounds"
+            )
+        }
+
+        if state.crop == .full && state.mask == .none {
+            layer.mask = nil
+        } else {
+            let bounds = layer.bounds
+            let cropRect = CGRect(
+                x: bounds.minX + state.crop.x * bounds.width,
+                y: bounds.minY + (1 - state.crop.y - state.crop.height) * bounds.height,
+                width: state.crop.width * bounds.width,
+                height: state.crop.height * bounds.height
+            )
+            let maskLayer = CAShapeLayer()
+            maskLayer.frame = bounds
+            switch state.mask {
+            case .none, .rect:
+                maskLayer.path = CGPath(rect: cropRect, transform: nil)
+            case .ellipse:
+                maskLayer.path = CGPath(ellipseIn: cropRect, transform: nil)
+            }
+            maskLayer.fillColor = NSColor.white.cgColor
+            layer.mask = maskLayer
+        }
+
+        if state.effect == .neutral {
+            layer.filters = nil
+        } else {
+            guard let filter = CIFilter(name: "CIColorControls") else {
+                throw VisualRendererFailure(
+                    code: "VISUAL_RENDERER_EFFECT_UNAVAILABLE",
+                    summary: "native color-controls effect is unavailable"
+                )
+            }
+            filter.setValue(state.effect.brightness, forKey: kCIInputBrightnessKey)
+            filter.setValue(state.effect.contrast, forKey: kCIInputContrastKey)
+            filter.setValue(state.effect.saturation, forKey: kCIInputSaturationKey)
+            layer.filters = [filter]
+        }
+    }
+
+    private func disableImplicitAnimations(_ operation: () -> Void) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        operation()
+        CATransaction.commit()
     }
 
     private func applyContentMode(_ mode: VisualContentMode, to layer: CALayer) {

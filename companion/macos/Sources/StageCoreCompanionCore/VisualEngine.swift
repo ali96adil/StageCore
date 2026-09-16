@@ -11,6 +11,10 @@ public enum VisualCapability {
     public static let blackout = "visual.blackout"
     public static let layerOpacity = "visual.layer.opacity"
     public static let layerTransform = "visual.layer.transform"
+    public static let transition = "visual.transition"
+    public static let layerCrop = "visual.layer.crop"
+    public static let layerMask = "visual.layer.mask"
+    public static let layerEffect = "visual.layer.effect"
     public static let layerOrder = "visual.layer.order"
     public static let layerOutput = "visual.layer.output"
     public static let outputConfigure = "visual.output.configure"
@@ -20,6 +24,7 @@ public enum VisualCapability {
     public static let all: [String] = [
         preload, play, pause, stop, seek, loop,
         blackout, layerOpacity, layerTransform,
+        transition, layerCrop, layerMask, layerEffect,
         layerOrder, layerOutput, outputConfigure, outputMapping,
         stateInspect,
     ]
@@ -217,15 +222,17 @@ public struct VisualEngineSnapshot: Sendable, Equatable {
     public var blackout: Bool
     public var outputs: [VisualOutputState]
     public var layers: [VisualLayerState]
+    public var composition: [VisualLayerCompositionState]
 }
 
 public actor VisualEngine {
     private let mediaResolver: any VisualMediaResolver
-    private let renderer: any VisualRenderer
+    let renderer: any VisualRenderer
     private let defaultOutput: VisualOutputState
     private var blackout = false
     private var outputs: [String: VisualOutputState]
-    private var layers: [String: VisualLayerState] = [:]
+    var layers: [String: VisualLayerState] = [:]
+    var compositionStates: [String: VisualLayerCompositionState] = [:]
 
     public init(
         mediaResolver: any VisualMediaResolver,
@@ -249,13 +256,15 @@ public actor VisualEngine {
             contractVersion: VisualCapability.contractVersion,
             blackout: blackout,
             outputs: outputs.values.sorted { $0.outputID < $1.outputID },
-            layers: sortedLayers()
+            layers: sortedLayers(),
+            composition: compositionStates.values.sorted { $0.layerID < $1.layerID }
         )
     }
 
     public func shutdown() async {
         await renderer.shutdown()
         layers.removeAll()
+        compositionStates.removeAll()
         outputs = [defaultOutput.outputID: defaultOutput]
         blackout = false
     }
@@ -282,6 +291,10 @@ public actor VisualEngine {
         case VisualCapability.blackout: return await setBlackout(parameters)
         case VisualCapability.layerOpacity: return await setOpacity(parameters)
         case VisualCapability.layerTransform: return await setTransform(parameters)
+        case VisualCapability.transition: return await performTransition(parameters)
+        case VisualCapability.layerCrop: return await setCropComposition(parameters)
+        case VisualCapability.layerMask: return await setMaskComposition(parameters)
+        case VisualCapability.layerEffect: return await setEffectComposition(parameters)
         case VisualCapability.layerOrder: return await setLayerOrder(parameters)
         case VisualCapability.layerOutput: return await setLayerOutput(parameters)
         case VisualCapability.outputConfigure: return await configureOutput(parameters)
@@ -390,6 +403,7 @@ public actor VisualEngine {
             outputID: outputID,
             zIndex: zIndex
         )
+        compositionStates[layerID] = VisualLayerCompositionState(layerID: layerID)
         return success("visual layer preloaded", output: ["state": snapshotJSON()])
     }
 
@@ -704,12 +718,13 @@ public actor VisualEngine {
         }
     }
 
-    private func snapshotJSON() -> JSONValue {
+    func snapshotJSON() -> JSONValue {
         .object([
             "contract_version": .int(VisualCapability.contractVersion),
             "blackout": .bool(blackout),
             "outputs": .array(outputs.values.sorted { $0.outputID < $1.outputID }.map(outputJSON)),
             "layers": .array(sortedLayers().map(layerJSON)),
+            "composition": .array(compositionStates.values.sorted { $0.layerID < $1.layerID }.map(visualCompositionJSON)),
         ])
     }
 
@@ -757,7 +772,7 @@ public actor VisualEngine {
         ])
     }
 
-    private func success(
+    func success(
         _ summary: String,
         output: [String: JSONValue] = [:]
     ) -> CompanionCapabilityOutcome {
@@ -769,7 +784,7 @@ public actor VisualEngine {
         )
     }
 
-    private func failure(_ code: String, _ summary: String) -> CompanionCapabilityOutcome {
+    func failure(_ code: String, _ summary: String) -> CompanionCapabilityOutcome {
         CompanionCapabilityOutcome(
             status: .failed,
             ackLevel: .none,
