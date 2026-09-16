@@ -225,12 +225,14 @@ extension VisualEngine {
             return failure("VISUAL_PARAMETERS_INVALID", "transition parameters are invalid")
         }
         switch kind {
-        case .cut where durationMS != 0:
-            return failure("VISUAL_PARAMETERS_INVALID", "CUT transition requires duration_ms 0")
-        case .fade, .crossfade where !(1...30_000).contains(durationMS):
-            return failure("VISUAL_PARAMETERS_INVALID", "FADE and CROSSFADE duration_ms must be in 1...30000")
-        default:
-            break
+        case .cut:
+            guard durationMS == 0 else {
+                return failure("VISUAL_PARAMETERS_INVALID", "CUT transition requires duration_ms 0")
+            }
+        case .fade, .crossfade:
+            guard (1...30_000).contains(durationMS) else {
+                return failure("VISUAL_PARAMETERS_INVALID", "FADE and CROSSFADE duration_ms must be in 1...30000")
+            }
         }
         guard var fromLayer = layers[fromLayerID], var toLayer = layers[toLayerID] else {
             return failure("VISUAL_LAYER_NOT_PRELOADED", "both transition layers must be preloaded")
