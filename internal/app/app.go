@@ -18,7 +18,6 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
-	"github.com/ali96adil/StageCore/internal/dispatchauthority"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -44,6 +43,7 @@ type App struct {
 	DeviceExperience  *deviceexperience.Repository
 	DeviceRuntime     *devicechannel.Runtime
 	HubSecurity       *hubsecurity.Service
+	HAAuthority       HAAuthority
 	SecretStore       *secretstore.Service
 	SecurityAudit     *securityaudit.Service
 	PluginPermissions *pluginpermissions.Service
@@ -201,11 +201,18 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	digitalTwin := simulator.NewDigitalTwin()
-	physicalDispatch := dispatchauthority.NewStandalone(registry)
+	physicalDispatch, haAuthority, err := physicalDispatchForHA(ctx, cfg, registry, hubSecurity)
+	if err != nil {
+		deviceRuntime.Close()
+		companionRuntime.Close()
+		oscHost.Close()
+		_ = handle.Close()
+		return nil, fmt.Errorf("configure physical dispatch authority: %w", err)
+	}
 	cueExecutor := simulator.NewSessionExecutorWithDigitalTwin(s, physicalDispatch, digitalTwin)
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
-		HubSecurity: hubSecurity, SecretStore: secrets,
+		HubSecurity: hubSecurity, HAAuthority: haAuthority, SecretStore: secrets,
 		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
 		Bulk: bulkManager, StorageHealth: storageMonitor, Backup: backupService,
