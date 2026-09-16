@@ -50,7 +50,7 @@ private actor RecordingVisualRenderer: VisualRenderer {
 }
 
 final class VisualRendererContractTests: XCTestCase {
-    private let hash = String(repeating: "b", count: 64)
+    private let contentHash = String(repeating: "b", count: 64)
 
     func testRendererSuccessCommitsStateAfterNativeOperations() async throws {
         let renderer = RecordingVisualRenderer()
@@ -65,7 +65,7 @@ final class VisualRendererContractTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
                 "content_mode": .string("CROP"),
             ]
         )
@@ -115,7 +115,7 @@ final class VisualRendererContractTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
             ]
         )
         XCTAssertEqual(result.status, .failed)
@@ -136,7 +136,7 @@ final class VisualRendererContractTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
                 "content_mode": .string("STRETCHISH"),
             ]
         )
