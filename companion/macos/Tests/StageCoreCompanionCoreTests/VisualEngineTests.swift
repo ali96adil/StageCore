@@ -12,10 +12,10 @@ private struct FixedVisualMediaResolver: VisualMediaResolver {
 }
 
 final class VisualEngineTests: XCTestCase {
-    private let hash = String(repeating: "a", count: 64)
+    private let contentHash = String(repeating: "a", count: 64)
 
     func testDeterministicLayerLifecycleAndStateInspection() async throws {
-        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [hash]))
+        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [contentHash]))
 
         let preload = await engine.execute(
             capability: VisualCapability.preload,
@@ -23,7 +23,7 @@ final class VisualEngineTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
                 "opacity": .double(0.75),
                 "transform": .object(["scale_x": .double(1.25)]),
             ]
@@ -75,7 +75,7 @@ final class VisualEngineTests: XCTestCase {
         let layer = try XCTUnwrap(snapshot.layers.first)
         XCTAssertEqual(layer.layerID, "main")
         XCTAssertEqual(layer.contentVersionID, "version-1")
-        XCTAssertEqual(layer.contentHash, hash)
+        XCTAssertEqual(layer.contentHash, contentHash)
         XCTAssertEqual(layer.playback, .paused)
         XCTAssertEqual(layer.positionMS, 1250)
         XCTAssertTrue(layer.loopEnabled)
@@ -98,7 +98,7 @@ final class VisualEngineTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
             ]
         )
         XCTAssertEqual(result.status, .failed)
@@ -108,7 +108,7 @@ final class VisualEngineTests: XCTestCase {
     }
 
     func testStrictParametersAndStateConflictsFailClosed() async {
-        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [hash]))
+        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [contentHash]))
 
         let unknownField = await engine.execute(
             capability: VisualCapability.preload,
@@ -116,7 +116,7 @@ final class VisualEngineTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
                 "path": .string("/tmp/movie.mov"),
             ]
         )
@@ -138,7 +138,7 @@ final class VisualEngineTests: XCTestCase {
     }
 
     func testCompanionSessionProvidesSnapshotAndDuplicateGuardsForVisualCommands() async throws {
-        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [hash]))
+        let engine = VisualEngine(mediaResolver: FixedVisualMediaResolver(hashes: [contentHash]))
         let executors = try makeVisualCapabilityExecutors(engine: engine)
         let session = CompanionSession(
             configuration: CompanionSessionConfiguration(
@@ -174,7 +174,7 @@ final class VisualEngineTests: XCTestCase {
                 "contract_version": .int(1),
                 "layer_id": .string("main"),
                 "content_version_id": .string("version-1"),
-                "content_hash": .string(hash),
+                "content_hash": .string(contentHash),
             ],
             timeoutMS: 500
         )
