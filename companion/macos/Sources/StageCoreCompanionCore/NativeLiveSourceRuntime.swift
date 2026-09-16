@@ -177,14 +177,19 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
 
     private func resolveVideoDevice(_ descriptor: LiveSourceRuntimeDescriptor) throws -> AVCaptureDevice {
         let endpoint = descriptor.endpointRef.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !endpoint.isEmpty,
-           let exact = AVCaptureDevice.devices(for: .video).first(where: { $0.uniqueID == endpoint }) {
-            return exact
-        }
-        if descriptor.sourceClass == .usbCapture, !endpoint.isEmpty {
+        if !endpoint.isEmpty {
+            if let exact = AVCaptureDevice.devices(for: .video).first(where: { $0.uniqueID == endpoint }) {
+                return exact
+            }
             throw LiveSourceRuntimeFailure(
                 code: "LIVE_SOURCE_DEVICE_UNAVAILABLE",
-                summary: "requested USB capture device is unavailable"
+                summary: "requested video capture device is unavailable"
+            )
+        }
+        if descriptor.sourceClass == .usbCapture {
+            throw LiveSourceRuntimeFailure(
+                code: "LIVE_SOURCE_ENDPOINT_INVALID",
+                summary: "USB capture requires an explicit video device endpoint"
             )
         }
         guard let fallback = AVCaptureDevice.default(for: .video) else {
