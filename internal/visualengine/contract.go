@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 )
@@ -235,12 +236,12 @@ func decodeStrict(raw json.RawMessage, dst any) error {
 	if err := decoder.Decode(dst); err != nil {
 		return invalid("decode parameters: %v", err)
 	}
-	if decoder.More() {
-		return invalid("multiple JSON values are not allowed")
-	}
 	var extra any
-	if err := decoder.Decode(&extra); err == nil {
-		return invalid("multiple JSON values are not allowed")
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return invalid("multiple JSON values are not allowed")
+		}
+		return invalid("trailing JSON data: %v", err)
 	}
 	return nil
 }
