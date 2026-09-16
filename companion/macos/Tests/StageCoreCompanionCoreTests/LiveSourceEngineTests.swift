@@ -119,7 +119,8 @@ final class LiveSourceEngineTests: XCTestCase {
             ]
         )
         XCTAssertEqual(result.errorCode, "LIVE_SOURCE_INVALID")
-        XCTAssertTrue((await engine.snapshot()).sources.isEmpty)
+        let snapshot = await engine.snapshot()
+        XCTAssertTrue(snapshot.sources.isEmpty)
     }
 
     func testExecutorFactoryUsesExistingF007CapabilityVocabulary() throws {
