@@ -116,10 +116,10 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
         case .networkStream:
             guard let url = URL(string: descriptor.endpointRef),
                   let scheme = url.scheme?.lowercased(),
-                  ["http", "https", "rtsp"].contains(scheme) else {
+                  ["http", "https"].contains(scheme) else {
                 throw LiveSourceRuntimeFailure(
                     code: "LIVE_SOURCE_ENDPOINT_INVALID",
-                    summary: "network live source endpoint is invalid"
+                    summary: "native network live source requires an HTTP or HTTPS endpoint"
                 )
             }
             let player = AVPlayer(url: url)
