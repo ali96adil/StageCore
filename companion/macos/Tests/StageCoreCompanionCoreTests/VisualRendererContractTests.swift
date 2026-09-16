@@ -90,8 +90,9 @@ final class VisualRendererContractTests: XCTestCase {
         XCTAssertEqual(layer.contentMode, .crop)
         XCTAssertEqual(layer.playback, .playing)
         XCTAssertEqual(layer.opacity, 0.4)
+        let recorded = await renderer.recorded()
         XCTAssertEqual(
-            await renderer.recorded(),
+            recorded,
             [.preload("main", .crop), .play("main"), .opacity("main", 0.4)]
         )
     }
@@ -119,7 +120,8 @@ final class VisualRendererContractTests: XCTestCase {
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(result.errorCode, "VISUAL_RENDERER_MEDIA_UNSUPPORTED")
-        XCTAssertTrue(await engine.snapshot().layers.isEmpty)
+        let state = await engine.snapshot()
+        XCTAssertTrue(state.layers.isEmpty)
     }
 
     func testInvalidContentModeFailsBeforeRenderer() async {
@@ -140,6 +142,7 @@ final class VisualRendererContractTests: XCTestCase {
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(result.errorCode, "VISUAL_PARAMETERS_INVALID")
-        XCTAssertTrue(await renderer.recorded().isEmpty)
+        let recorded = await renderer.recorded()
+        XCTAssertTrue(recorded.isEmpty)
     }
 }
