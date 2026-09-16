@@ -10,6 +10,15 @@ import (
 )
 
 const ProtocolVersion1 = "stagecore.device/1"
+const LiveSourceContractVersion1 = 1
+
+const (
+	CapabilityVideoSourceOpen    = "video.source.open"
+	CapabilityVideoSourceClose   = "video.source.close"
+	CapabilityVideoSourceSelect  = "video.source.select"
+	CapabilityVideoSourceRoute   = "video.source.route"
+	CapabilityVideoSourceInspect = "video.source.inspect"
+)
 
 var (
 	ErrInvalidDevice     = errors.New("invalid stage device")
@@ -135,21 +144,22 @@ const (
 )
 
 type LiveSource struct {
-	ID                string          `json:"source_id"`
-	ProjectID         string          `json:"project_id"`
-	Name              string          `json:"name"`
-	Class             SourceClass     `json:"source_class"`
-	ExecutionDeviceID string          `json:"execution_device_id,omitempty"`
-	ProfileID         string          `json:"profile_id,omitempty"`
-	EndpointRef       string          `json:"endpoint_ref,omitempty"`
-	Capabilities      []string        `json:"capabilities"`
-	Config            json.RawMessage `json:"config"`
-	Required          bool            `json:"required"`
-	DesiredEnabled    bool            `json:"desired_enabled"`
-	Readiness         Readiness       `json:"readiness"`
-	LastObservedAt    *time.Time      `json:"last_observed_at,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	ID                     string          `json:"source_id"`
+	ProjectID              string          `json:"project_id"`
+	Name                   string          `json:"name"`
+	Class                  SourceClass     `json:"source_class"`
+	ExecutionDeviceID      string          `json:"execution_device_id,omitempty"`
+	ExecutionMachineRoleID string          `json:"execution_machine_role_id,omitempty"`
+	ProfileID              string          `json:"profile_id,omitempty"`
+	EndpointRef            string          `json:"endpoint_ref,omitempty"`
+	Capabilities           []string        `json:"capabilities"`
+	Config                 json.RawMessage `json:"config"`
+	Required               bool            `json:"required"`
+	DesiredEnabled         bool            `json:"desired_enabled"`
+	Readiness              Readiness       `json:"readiness"`
+	LastObservedAt         *time.Time      `json:"last_observed_at,omitempty"`
+	CreatedAt              time.Time       `json:"created_at"`
+	UpdatedAt              time.Time       `json:"updated_at"`
 }
 
 type Reachability string
@@ -196,11 +206,31 @@ var commandCapability = map[string]string{
 	"DISPLAY_CLEAR":        "display.clear",
 	"DISPLAY_BLACKOUT":     "display.blackout",
 	"DISPLAY_CHIME":        "display.chime.play",
-	"VIDEO_SOURCE_OPEN":    "video.source.open",
-	"VIDEO_SOURCE_CLOSE":   "video.source.close",
-	"VIDEO_SOURCE_SELECT":  "video.source.select",
-	"VIDEO_SOURCE_ROUTE":   "video.source.route",
-	"VIDEO_SOURCE_INSPECT": "video.source.inspect",
+	"VIDEO_SOURCE_OPEN":    CapabilityVideoSourceOpen,
+	"VIDEO_SOURCE_CLOSE":   CapabilityVideoSourceClose,
+	"VIDEO_SOURCE_SELECT":  CapabilityVideoSourceSelect,
+	"VIDEO_SOURCE_ROUTE":   CapabilityVideoSourceRoute,
+	"VIDEO_SOURCE_INSPECT": CapabilityVideoSourceInspect,
+}
+
+func LiveSourceCapabilityKeys() []string {
+	return []string{
+		CapabilityVideoSourceOpen,
+		CapabilityVideoSourceClose,
+		CapabilityVideoSourceSelect,
+		CapabilityVideoSourceRoute,
+		CapabilityVideoSourceInspect,
+	}
+}
+
+func IsLiveSourceCapability(capability string) bool {
+	capability = strings.TrimSpace(capability)
+	for _, candidate := range LiveSourceCapabilityKeys() {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func RequiredCapability(commandType string) string {

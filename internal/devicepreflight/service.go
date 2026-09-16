@@ -2,29 +2,78 @@ package devicepreflight
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/preflight"
 )
 
-const defaultNetworkStaleAfter = 15 * time.Second
+const (
+	defaultNetworkStaleAfter       = 15 * time.Second
+	defaultCompanionHeartbeatAfter = 5 * time.Second
+)
 
 type Base interface {
 	Evaluate(context.Context, string, string) (preflight.Report, error)
 }
 
-type Service struct {
-	base       Base
-	repository *deviceexperience.Repository
-	staleAfter time.Duration
+type CompanionAuthority interface {
+	GetMachineRole(context.Context, string) (domain.MachineRole, error)
+	GetActiveRoleAssignment(context.Context, string) (domain.RoleAssignment, error)
+	GetCompanion(context.Context, string) (domain.Companion, error)
 }
 
-func New(base Base, repository *deviceexperience.Repository) *Service {
-	return &Service{base: base, repository: repository, staleAfter: defaultNetworkStaleAfter}
+type Option func(*Service)
+
+func WithCompanionAuthority(authority CompanionAuthority) Option {
+	return func(s *Service) { s.companionAuthority = authority }
+}
+
+func WithClock(now func() time.Time) Option {
+	return func(s *Service) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
+func WithCompanionHeartbeatTimeout(timeout time.Duration) Option {
+	return func(s *Service) {
+		if timeout > 0 {
+			s.companionHeartbeatTimeout = timeout
+		}
+	}
+}
+
+type Service struct {
+	base                      Base
+	repository                *deviceexperience.Repository
+	companionAuthority        CompanionAuthority
+	staleAfter                time.Duration
+	companionHeartbeatTimeout time.Duration
+	now                       func() time.Time
+}
+
+func New(base Base, repository *deviceexperience.Repository, options ...Option) *Service {
+	s := &Service{
+		base: base,
+		repository: repository,
+		staleAfter: defaultNetworkStaleAfter,
+		companionHeartbeatTimeout: defaultCompanionHeartbeatAfter,
+		now: time.Now,
+	}
+	for _, option := range options {
+		if option != nil {
+			option(s)
+		}
+	}
+	return s
 }
 
 func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID string) (preflight.Report, error) {
@@ -64,7 +113,7 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		if strings.TrimSpace(source.EndpointRef) != "" {
 			endpointRefs[strings.TrimSpace(source.EndpointRef)] = source.Required
 		}
-		evaluateSource(&report, source, deviceByID)
+		s.evaluateSource(ctx, &report, source, deviceByID)
 	}
 
 	cockpit, err := s.repository.Cockpit(ctx, s.staleAfter)
@@ -124,7 +173,7 @@ func deviceStatus(device deviceexperience.Device) (preflight.Status, string, str
 	return preflight.Pass, "Stage Device is READY: " + name, "Authenticated runtime channel is online."
 }
 
-func evaluateSource(report *preflight.Report, source deviceexperience.LiveSource, deviceByID map[string]deviceexperience.Device) {
+func (s *Service) evaluateSource(reportCtx context.Context, report *preflight.Report, source deviceexperience.LiveSource, deviceByID map[string]deviceexperience.Device) {
 	name := strings.TrimSpace(source.Name)
 	if name == "" {
 		name = source.ID
@@ -154,6 +203,9 @@ func evaluateSource(report *preflight.Report, source deviceexperience.LiveSource
 			add(report, status, key+".capabilities", "live_video", "Live-video Render Node lacks required capabilities: "+name, strings.Join(missing, ", "), source.ID)
 		}
 	}
+	if source.ExecutionMachineRoleID != "" {
+		s.evaluateMachineRoleSource(reportCtx, report, source, name, key)
+	}
 	if source.Readiness == deviceexperience.ReadinessReady {
 		add(report, preflight.Pass, key, "live_video", "Live-video source is READY: "+name, string(source.Class), source.ID)
 		return
@@ -163,6 +215,43 @@ func evaluateSource(report *preflight.Report, source deviceexperience.LiveSource
 		status = preflight.Block
 	}
 	add(report, status, key, "live_video", "Live-video source is not READY: "+name, string(source.Readiness), source.ID)
+}
+
+func (s *Service) evaluateMachineRoleSource(ctx context.Context, report *preflight.Report, source deviceexperience.LiveSource, name, key string) {
+	status := preflight.Warn
+	if source.Required {
+		status = preflight.Block
+	}
+	if s.companionAuthority == nil {
+		add(report, status, key+".machine_role", "live_video", "Live-video Machine Role authority is unavailable: "+name, source.ExecutionMachineRoleID, source.ID)
+		return
+	}
+	role, err := s.companionAuthority.GetMachineRole(ctx, source.ExecutionMachineRoleID)
+	if err != nil || role.ProjectID != source.ProjectID {
+		add(report, status, key+".machine_role", "live_video", "Live-video Machine Role is unavailable: "+name, source.ExecutionMachineRoleID, source.ID)
+		return
+	}
+	assignment, err := s.companionAuthority.GetActiveRoleAssignment(ctx, role.ID)
+	if err != nil {
+		detail := "No active Companion assignment."
+		if !errors.Is(err, domain.ErrNotFound) {
+			detail = err.Error()
+		}
+		add(report, status, key+".machine_role", "live_video", "Live-video Machine Role is not assigned: "+name, detail, source.ID)
+		return
+	}
+	companionRuntime, err := s.companionAuthority.GetCompanion(ctx, assignment.CompanionID)
+	if err != nil {
+		add(report, status, key+".machine_role", "live_video", "Live-video Companion is unavailable: "+name, assignment.CompanionID, source.ID)
+		return
+	}
+	evaluation := companion.EvaluateRole(role, companionRuntime, s.now().UTC(), s.companionHeartbeatTimeout)
+	if evaluation.RoleState != domain.RoleReady {
+		add(report, status, key+".machine_role", "live_video", "Live-video Machine Role is not READY: "+name, string(evaluation.RoleState), source.ID)
+	}
+	if missing := missingCapabilities(source.Capabilities, companionRuntime.Capabilities); len(missing) > 0 {
+		add(report, status, key+".capabilities", "live_video", "Live-video Companion lacks required capabilities: "+name, strings.Join(missing, ", "), source.ID)
+	}
 }
 
 func missingCapabilities(required, advertised []string) []string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,11 +17,15 @@ func (r *Repository) UpsertLiveSource(ctx context.Context, source LiveSource) (L
 	source.ProjectID = strings.TrimSpace(source.ProjectID)
 	source.Name = strings.TrimSpace(source.Name)
 	source.ExecutionDeviceID = strings.TrimSpace(source.ExecutionDeviceID)
+	source.ExecutionMachineRoleID = strings.TrimSpace(source.ExecutionMachineRoleID)
 	source.ProfileID = strings.TrimSpace(source.ProfileID)
 	source.EndpointRef = strings.TrimSpace(source.EndpointRef)
 	source.Capabilities = normalizeCapabilities(source.Capabilities)
 	if source.ProjectID == "" || source.Name == "" || !validSourceClass(source.Class) {
 		return LiveSource{}, ErrInvalidState
+	}
+	if source.ExecutionDeviceID != "" && source.ExecutionMachineRoleID != "" {
+		return LiveSource{}, fmt.Errorf("%w: live source must use either Stage Device or Machine Role execution placement, not both", ErrInvalidState)
 	}
 	if source.ID == "" {
 		id, err := stageid.New()
@@ -36,8 +41,25 @@ func (r *Repository) UpsertLiveSource(ctx context.Context, source LiveSource) (L
 		return LiveSource{}, ErrInvalidState
 	}
 	if source.ExecutionDeviceID != "" {
-		if _, err := r.GetDevice(ctx, source.ExecutionDeviceID); err != nil {
+		device, err := r.GetDevice(ctx, source.ExecutionDeviceID)
+		if err != nil {
 			return LiveSource{}, err
+		}
+		if strings.TrimSpace(device.ProjectID) != "" && device.ProjectID != source.ProjectID {
+			return LiveSource{}, fmt.Errorf("%w: live source Stage Device belongs to another Project", ErrInvalidState)
+		}
+	}
+	if source.ExecutionMachineRoleID != "" {
+		var roleProjectID string
+		err := r.db.QueryRowContext(ctx, `SELECT project_id FROM machine_roles WHERE machine_role_id = ?`, source.ExecutionMachineRoleID).Scan(&roleProjectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return LiveSource{}, fmt.Errorf("%w: live source Machine Role was not found", ErrInvalidState)
+		}
+		if err != nil {
+			return LiveSource{}, fmt.Errorf("read live source Machine Role: %w", err)
+		}
+		if roleProjectID != source.ProjectID {
+			return LiveSource{}, fmt.Errorf("%w: live source Machine Role belongs to another Project", ErrInvalidState)
 		}
 	}
 	caps, err := json.Marshal(source.Capabilities)
@@ -46,9 +68,12 @@ func (r *Repository) UpsertLiveSource(ctx context.Context, source LiveSource) (L
 	}
 	source.Config = normalizeJSON(source.Config, `{}`)
 	now := r.now().UTC()
-	var executionDevice, profile, lastObserved any
+	var executionDevice, executionRole, profile, lastObserved any
 	if source.ExecutionDeviceID != "" {
 		executionDevice = source.ExecutionDeviceID
+	}
+	if source.ExecutionMachineRoleID != "" {
+		executionRole = source.ExecutionMachineRoleID
 	}
 	if source.ProfileID != "" {
 		profile = source.ProfileID
@@ -60,18 +85,18 @@ func (r *Repository) UpsertLiveSource(ctx context.Context, source LiveSource) (L
 	}
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO live_video_sources
-		(source_id, project_id, name, source_class, execution_device_id, profile_id, endpoint_ref,
+		(source_id, project_id, name, source_class, execution_device_id, execution_machine_role_id, profile_id, endpoint_ref,
 		 capabilities_json, config_json, required, desired_enabled, readiness, last_observed_at_us,
 		 created_at_us, updated_at_us)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id) DO UPDATE SET
 		project_id=excluded.project_id, name=excluded.name, source_class=excluded.source_class,
-		execution_device_id=excluded.execution_device_id, profile_id=excluded.profile_id,
-		endpoint_ref=excluded.endpoint_ref, capabilities_json=excluded.capabilities_json,
+		execution_device_id=excluded.execution_device_id, execution_machine_role_id=excluded.execution_machine_role_id,
+		profile_id=excluded.profile_id, endpoint_ref=excluded.endpoint_ref, capabilities_json=excluded.capabilities_json,
 		config_json=excluded.config_json, required=excluded.required,
 		desired_enabled=excluded.desired_enabled, readiness=excluded.readiness,
 		last_observed_at_us=excluded.last_observed_at_us, updated_at_us=excluded.updated_at_us
-	`, source.ID, source.ProjectID, source.Name, source.Class, executionDevice, profile, source.EndpointRef,
+	`, source.ID, source.ProjectID, source.Name, source.Class, executionDevice, executionRole, profile, source.EndpointRef,
 		string(caps), string(source.Config), boolInt(source.Required), boolInt(source.DesiredEnabled), source.Readiness,
 		lastObserved, now.UnixMicro(), now.UnixMicro())
 	if err != nil {
@@ -82,24 +107,27 @@ func (r *Repository) UpsertLiveSource(ctx context.Context, source LiveSource) (L
 
 func (r *Repository) GetLiveSource(ctx context.Context, sourceID string) (LiveSource, error) {
 	var source LiveSource
-	var executionDevice, profile sql.NullString
+	var executionDevice, executionRole, profile sql.NullString
 	var caps, config string
 	var required, desired int
 	var lastObserved sql.NullInt64
 	var createdUS, updatedUS int64
 	err := r.db.QueryRowContext(ctx, `
-		SELECT source_id, project_id, name, source_class, execution_device_id, profile_id, endpoint_ref,
+		SELECT source_id, project_id, name, source_class, execution_device_id, execution_machine_role_id, profile_id, endpoint_ref,
 		       capabilities_json, config_json, required, desired_enabled, readiness, last_observed_at_us,
 		       created_at_us, updated_at_us
 		FROM live_video_sources WHERE source_id = ?
 	`, strings.TrimSpace(sourceID)).Scan(&source.ID, &source.ProjectID, &source.Name, &source.Class,
-		&executionDevice, &profile, &source.EndpointRef, &caps, &config, &required, &desired,
+		&executionDevice, &executionRole, &profile, &source.EndpointRef, &caps, &config, &required, &desired,
 		&source.Readiness, &lastObserved, &createdUS, &updatedUS)
 	if err != nil {
 		return LiveSource{}, err
 	}
 	if executionDevice.Valid {
 		source.ExecutionDeviceID = executionDevice.String
+	}
+	if executionRole.Valid {
+		source.ExecutionMachineRoleID = executionRole.String
 	}
 	if profile.Valid {
 		source.ProfileID = profile.String
