@@ -9,6 +9,21 @@ CREATE TABLE visual_engine_configurations (
     FOREIGN KEY (revision_id) REFERENCES project_revisions(revision_id) ON DELETE RESTRICT
 );
 
+-- Keep explicit Visual Engine authoring truth when a VALIDATED revision is
+-- forked into a new DRAFT. Revisions with no explicit row continue to inherit
+-- the backwards-compatible effective NATIVE default without creating state.
+-- +goose StatementBegin
+CREATE TRIGGER f026_copy_visual_engine_configuration_on_revision_fork
+AFTER INSERT ON project_revisions
+WHEN NEW.status = 'DRAFT' AND NEW.parent_revision_id IS NOT NULL
+BEGIN
+    INSERT INTO visual_engine_configurations (revision_id, engine_mode, updated_by, updated_at_us)
+    SELECT NEW.revision_id, engine_mode, NEW.created_by, NEW.created_at_us
+    FROM visual_engine_configurations
+    WHERE revision_id = NEW.parent_revision_id;
+END;
+-- +goose StatementEnd
+
 -- The mode is Project configuration and must obey the same active-SHOW
 -- immutability boundary as other revision-scoped configuration.
 -- +goose StatementBegin
@@ -57,4 +72,5 @@ END;
 DROP TRIGGER IF EXISTS f012_lock_visual_engine_configurations_delete;
 DROP TRIGGER IF EXISTS f012_lock_visual_engine_configurations_update;
 DROP TRIGGER IF EXISTS f012_lock_visual_engine_configurations_insert;
+DROP TRIGGER IF EXISTS f026_copy_visual_engine_configuration_on_revision_fork;
 DROP TABLE IF EXISTS visual_engine_configurations;
