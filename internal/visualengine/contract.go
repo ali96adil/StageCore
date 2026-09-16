@@ -13,20 +13,20 @@ import (
 const ContractVersion1 = 1
 
 const (
-	CapabilityPreload        = "visual.preload"
-	CapabilityPlay           = "visual.play"
-	CapabilityPause          = "visual.pause"
-	CapabilityStop           = "visual.stop"
-	CapabilitySeek           = "visual.seek"
-	CapabilityLoop           = "visual.loop"
-	CapabilityBlackout       = "visual.blackout"
-	CapabilityLayerOpacity   = "visual.layer.opacity"
-	CapabilityLayerTransform = "visual.layer.transform"
-	CapabilityLayerOrder     = "visual.layer.order"
-	CapabilityLayerOutput    = "visual.layer.output"
+	CapabilityPreload         = "visual.preload"
+	CapabilityPlay            = "visual.play"
+	CapabilityPause           = "visual.pause"
+	CapabilityStop            = "visual.stop"
+	CapabilitySeek            = "visual.seek"
+	CapabilityLoop            = "visual.loop"
+	CapabilityBlackout        = "visual.blackout"
+	CapabilityLayerOpacity    = "visual.layer.opacity"
+	CapabilityLayerTransform  = "visual.layer.transform"
+	CapabilityLayerOrder      = "visual.layer.order"
+	CapabilityLayerOutput     = "visual.layer.output"
 	CapabilityOutputConfigure = "visual.output.configure"
-	CapabilityOutputMapping  = "visual.output.mapping"
-	CapabilityStateInspect   = "visual.state.inspect"
+	CapabilityOutputMapping   = "visual.output.mapping"
+	CapabilityStateInspect    = "visual.state.inspect"
 )
 
 const (
@@ -125,9 +125,9 @@ type transformParams struct {
 }
 
 type layerOrderParams struct {
-	ContractVersion int  `json:"contract_version"`
+	ContractVersion int    `json:"contract_version"`
 	LayerID         string `json:"layer_id"`
-	ZIndex          *int `json:"z_index"`
+	ZIndex          *int   `json:"z_index"`
 }
 
 type layerOutputParams struct {
@@ -173,6 +173,9 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return invalid("parameters are required")
+	}
+	if isCompositionCapability(capability) {
+		return validateCompositionCommand(capability, raw)
 	}
 
 	switch capability {
