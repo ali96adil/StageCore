@@ -63,7 +63,8 @@ final class NativeVisualProjectionTests: XCTestCase {
         XCTAssertEqual(moved.zIndex, -20)
 
         try await renderer.setBlackout(true)
-        XCTAssertTrue((await renderer.snapshot()).blackout)
+        let blackoutSnapshot = await renderer.snapshot()
+        XCTAssertTrue(blackoutSnapshot.blackout)
         await renderer.shutdown()
         let reset = await renderer.snapshot()
         XCTAssertEqual(reset.outputs.map(\.outputID), ["main"])
@@ -113,7 +114,8 @@ final class NativeVisualProjectionTests: XCTestCase {
         } catch let failure as VisualRendererFailure {
             XCTAssertEqual(failure.code, "VISUAL_RENDERER_OUTPUT_NOT_CONFIGURED")
         }
-        XCTAssertTrue((await renderer.snapshot()).layers.isEmpty)
+        let snapshot = await renderer.snapshot()
+        XCTAssertTrue(snapshot.layers.isEmpty)
     }
 
     private func writePNG(to url: URL) throws {
