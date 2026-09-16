@@ -116,7 +116,7 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
         case .networkStream:
             guard let url = URL(string: descriptor.endpointRef),
                   let scheme = url.scheme?.lowercased(),
-                  ["http", "https", "rtsp", "file"].contains(scheme) else {
+                  ["http", "https", "rtsp"].contains(scheme) else {
                 throw LiveSourceRuntimeFailure(
                     code: "LIVE_SOURCE_ENDPOINT_INVALID",
                     summary: "network live source endpoint is invalid"
