@@ -100,6 +100,9 @@ func TestOperatorVisualEngineWorkspaceRequiresAuthAndReturnsCanonicalProjectStat
 	if view.ProjectID != project.ID || view.RevisionID != revision.ID || view.RevisionStatus != domain.RevisionDraft {
 		t.Fatalf("unexpected project/revision: %+v", view)
 	}
+	if view.EngineMode != visualengine.EngineModeExternal {
+		t.Fatalf("default engine mode=%q want=%q", view.EngineMode, visualengine.EngineModeExternal)
+	}
 	if view.ContractVersion != visualengine.ContractVersion1 || !view.NativeConfigured || !view.ExternalEngineSupported {
 		t.Fatalf("unexpected workspace flags: %+v", view)
 	}
