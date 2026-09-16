@@ -211,6 +211,9 @@ public actor LiveSourceEngine {
             } catch {
                 return runtimeFailure(error)
             }
+            // The native renderer has one global layer namespace across named
+            // outputs. Keep control truth aligned with that same authority.
+            routes = routes.filter { $0.value.layerID != layerID }
             routes[outputID + "\u{0}" + layerID] = route
             return success("live source routed", output: [
                 "source_id": .string(sourceID),
@@ -238,6 +241,10 @@ public actor LiveSourceEngine {
                         ])
                     }
             )
+            let runtimeDiagnostics = await runtime.inspect(sourceID: sourceID)
+            for (key, value) in runtimeDiagnostics {
+                output[key] = value
+            }
             return success("live source state inspected", output: output)
 
         default:

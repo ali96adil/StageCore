@@ -125,11 +125,14 @@ public actor CompanionBootstrap {
         )
         mediaSynchronizer = mediaCache
         if configuration.nativeVisualEngineEnabled == true {
+            let renderer = try NativeVisualRenderer()
             visualEngine = VisualEngine(
                 mediaResolver: mediaCache,
-                renderer: try NativeVisualRenderer()
+                renderer: renderer
             )
-            liveSourceEngine = LiveSourceEngine(runtime: NativeLiveSourceRuntime())
+            liveSourceEngine = LiveSourceEngine(
+                runtime: NativeLiveSourceRuntime(renderSurface: renderer)
+            )
         } else {
             visualEngine = nil
             liveSourceEngine = nil

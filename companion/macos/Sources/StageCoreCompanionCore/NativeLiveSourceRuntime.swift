@@ -18,7 +18,12 @@ public protocol LiveSourceRuntimeAdapter: Sendable {
     func close(sourceID: String) async throws
     func select(sourceID: String) async throws
     func route(_ route: LiveSourceRouteState) async throws
+    func inspect(sourceID: String) async -> [String: JSONValue]
     func shutdown() async
+}
+
+public extension LiveSourceRuntimeAdapter {
+    func inspect(sourceID: String) async -> [String: JSONValue] { [:] }
 }
 
 /// State-only adapter retained for contract tests. Production bootstrap wires
@@ -63,11 +68,14 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
         }
     }
 
+    private let renderSurface: (any NativeLiveSourceRenderSurface)?
     private var backings: [String: Backing] = [:]
     private var selectedSourceID: String?
     private var routes: [String: LiveSourceRouteState] = [:]
 
-    public init() {}
+    public init(renderSurface: (any NativeLiveSourceRenderSurface)? = nil) {
+        self.renderSurface = renderSurface
+    }
 
     public func snapshot() -> Snapshot {
         Snapshot(
@@ -139,6 +147,9 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
                 summary: "live source is not open"
             )
         }
+        if let renderSurface {
+            await renderSurface.detachLiveSourceLayers(sourceID: sourceID)
+        }
         stop(backing)
         if selectedSourceID == sourceID { selectedSourceID = nil }
         routes = routes.filter { $0.value.sourceID != sourceID }
@@ -155,24 +166,110 @@ public actor NativeLiveSourceRuntime: LiveSourceRuntimeAdapter {
     }
 
     public func route(_ route: LiveSourceRouteState) async throws {
-        guard backings[route.sourceID] != nil else {
+        guard let backing = backings[route.sourceID] else {
             throw LiveSourceRuntimeFailure(
                 code: "LIVE_SOURCE_NOT_OPEN",
                 summary: "live source must be open before routing"
             )
         }
-        // D2a deliberately retains output/layer routing intent locally while
-        // native capture is live. D2b attaches these native layers to the
-        // Visual Engine named-output/layer renderer without moving frames
-        // through the Hub.
+
+        if let renderSurface {
+            let presentation = presentationLayer(for: backing)
+            do {
+                try await renderSurface.attachLiveSourceLayer(
+                    sourceID: route.sourceID,
+                    layerID: route.layerID,
+                    outputID: route.outputID,
+                    presentation: presentation
+                )
+            } catch let failure as VisualRendererFailure {
+                throw LiveSourceRuntimeFailure(code: failure.code, summary: failure.summary)
+            } catch {
+                throw LiveSourceRuntimeFailure(
+                    code: "LIVE_SOURCE_RENDERER_FAILED",
+                    summary: "live source could not be attached to the native renderer"
+                )
+            }
+        }
+
+        // Visual layer identity is global across named outputs. A successful
+        // re-route moves the same layer identity rather than manufacturing a
+        // second logical layer with the same ID.
+        routes = routes.filter { $0.value.layerID != route.layerID }
         routes[route.outputID + "\u{0}" + route.layerID] = route
     }
 
+    public func inspect(sourceID: String) async -> [String: JSONValue] {
+        guard let backing = backings[sourceID] else {
+            return [
+                "native_runtime": .bool(true),
+                "native_open": .bool(false),
+                "native_renderer_surface": .bool(renderSurface != nil),
+                "native_routes": .array([]),
+            ]
+        }
+
+        let kind: String
+        switch backing {
+        case .camera: kind = "CAPTURE"
+        case .stream: kind = "NETWORK_STREAM"
+        }
+        let sourceRoutes = routes.values
+            .filter { $0.sourceID == sourceID }
+            .sorted {
+                if $0.outputID != $1.outputID { return $0.outputID < $1.outputID }
+                return $0.layerID < $1.layerID
+            }
+        var routeDiagnostics: [JSONValue] = []
+        for route in sourceRoutes {
+            let attached: Bool
+            if let renderSurface {
+                attached = await renderSurface.inspectLiveSourceLayer(
+                    sourceID: sourceID,
+                    layerID: route.layerID
+                ) != nil
+            } else {
+                attached = false
+            }
+            routeDiagnostics.append(.object([
+                "layer_id": .string(route.layerID),
+                "output_id": .string(route.outputID),
+                "renderer_attached": .bool(attached),
+            ]))
+        }
+        return [
+            "native_runtime": .bool(true),
+            "native_open": .bool(true),
+            "native_kind": .string(kind),
+            "native_renderer_surface": .bool(renderSurface != nil),
+            "native_route_count": .int(sourceRoutes.count),
+            "native_routes": .array(routeDiagnostics),
+        ]
+    }
+
     public func shutdown() async {
+        if let renderSurface {
+            for sourceID in backings.keys {
+                await renderSurface.detachLiveSourceLayers(sourceID: sourceID)
+            }
+        }
         for backing in backings.values { stop(backing) }
         backings.removeAll()
         routes.removeAll()
         selectedSourceID = nil
+    }
+
+    private func presentationLayer(for backing: Backing) -> NativeLiveSourcePresentationLayer {
+        switch backing {
+        case .camera(let camera):
+            let layer = AVCaptureVideoPreviewLayer(session: camera.session)
+            layer.videoGravity = .resizeAspect
+            return NativeLiveSourcePresentationLayer(layer: layer)
+        case .stream(let stream):
+            let layer = AVPlayerLayer(player: stream.player)
+            layer.videoGravity = .resizeAspect
+            return NativeLiveSourcePresentationLayer(layer: layer)
+        }
     }
 
     private func resolveVideoDevice(_ descriptor: LiveSourceRuntimeDescriptor) throws -> AVCaptureDevice {
@@ -230,7 +327,12 @@ public protocol LiveSourceRuntimeAdapter: Sendable {
     func close(sourceID: String) async throws
     func select(sourceID: String) async throws
     func route(_ route: LiveSourceRouteState) async throws
+    func inspect(sourceID: String) async -> [String: JSONValue]
     func shutdown() async
+}
+
+public extension LiveSourceRuntimeAdapter {
+    func inspect(sourceID: String) async -> [String: JSONValue] { [:] }
 }
 
 public actor StateOnlyLiveSourceRuntime: LiveSourceRuntimeAdapter {

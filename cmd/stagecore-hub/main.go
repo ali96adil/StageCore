@@ -79,7 +79,11 @@ func main() {
 		application.SecretStore,
 		application.PluginPermissions,
 	)
-	devicePreflight := devicepreflight.New(securityPreflight, application.DeviceExperience)
+	devicePreflight := devicepreflight.New(
+		securityPreflight,
+		application.DeviceExperience,
+		devicepreflight.WithCompanionAuthority(application.Store),
+	)
 	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
 	preflightService := timecode.NewPreflightService(devicePreflight, timecodeRuntime)
 	runtime := runtimecontrol.New(
