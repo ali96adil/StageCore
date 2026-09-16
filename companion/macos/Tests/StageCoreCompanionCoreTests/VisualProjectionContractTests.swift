@@ -163,8 +163,10 @@ final class VisualProjectionContractTests: XCTestCase {
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(result.errorCode, "VISUAL_OUTPUT_NOT_CONFIGURED")
-        XCTAssertTrue((await engine.snapshot()).layers.isEmpty)
-        XCTAssertTrue((await renderer.recorded()).isEmpty)
+        let snapshot = await engine.snapshot()
+        let operations = await renderer.recorded()
+        XCTAssertTrue(snapshot.layers.isEmpty)
+        XCTAssertTrue(operations.isEmpty)
     }
 
     func testRendererFailureDoesNotCommitOutputConfiguration() async {
@@ -222,6 +224,7 @@ final class VisualProjectionContractTests: XCTestCase {
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(result.errorCode, "VISUAL_PARAMETERS_INVALID")
-        XCTAssertEqual(await renderer.recorded(), before)
+        let after = await renderer.recorded()
+        XCTAssertEqual(after, before)
     }
 }
