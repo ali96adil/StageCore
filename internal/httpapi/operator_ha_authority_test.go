@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,14 +13,14 @@ import (
 )
 
 type fakeHAAuthorityControl struct {
-	status       haauthority.SupervisorStatus
-	statusErr    error
-	activateErr  error
-	releaseErr   error
-	statusCalls  int
+	status        haauthority.SupervisorStatus
+	statusErr     error
+	activateErr   error
+	releaseErr    error
+	statusCalls   int
 	activateCalls int
-	releaseCalls int
-	demoteCalls  int
+	releaseCalls  int
+	demoteCalls   int
 }
 
 func (f *fakeHAAuthorityControl) Status(context.Context) (haauthority.SupervisorStatus, error) {
@@ -235,4 +234,3 @@ func serveHARequest(handler http.Handler, credential userauth.Credential, method
 }
 
 var _ haAuthorityControl = (*fakeHAAuthorityControl)(nil)
-var _ = errors.Is
