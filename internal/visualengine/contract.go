@@ -22,6 +22,10 @@ const (
 	CapabilityBlackout       = "visual.blackout"
 	CapabilityLayerOpacity   = "visual.layer.opacity"
 	CapabilityLayerTransform = "visual.layer.transform"
+	CapabilityLayerOrder     = "visual.layer.order"
+	CapabilityLayerOutput    = "visual.layer.output"
+	CapabilityOutputConfigure = "visual.output.configure"
+	CapabilityOutputMapping  = "visual.output.mapping"
 	CapabilityStateInspect   = "visual.state.inspect"
 )
 
@@ -41,6 +45,10 @@ var capabilityKeys = []string{
 	CapabilityBlackout,
 	CapabilityLayerOpacity,
 	CapabilityLayerTransform,
+	CapabilityLayerOrder,
+	CapabilityLayerOutput,
+	CapabilityOutputConfigure,
+	CapabilityOutputMapping,
 	CapabilityStateInspect,
 }
 
@@ -52,6 +60,18 @@ type Transform struct {
 	ScaleX          *float64 `json:"scale_x,omitempty"`
 	ScaleY          *float64 `json:"scale_y,omitempty"`
 	RotationDegrees *float64 `json:"rotation_degrees,omitempty"`
+}
+
+type ProjectionPoint struct {
+	X *float64 `json:"x"`
+	Y *float64 `json:"y"`
+}
+
+type ProjectionQuad struct {
+	TopLeft     *ProjectionPoint `json:"top_left"`
+	TopRight    *ProjectionPoint `json:"top_right"`
+	BottomRight *ProjectionPoint `json:"bottom_right"`
+	BottomLeft  *ProjectionPoint `json:"bottom_left"`
 }
 
 type commandBase struct {
@@ -66,6 +86,8 @@ type preloadParams struct {
 	ContentMode      *string    `json:"content_mode,omitempty"`
 	Opacity          *float64   `json:"opacity,omitempty"`
 	Transform        *Transform `json:"transform,omitempty"`
+	OutputID         *string    `json:"output_id,omitempty"`
+	ZIndex           *int       `json:"z_index,omitempty"`
 }
 
 type layerParams struct {
@@ -102,6 +124,31 @@ type transformParams struct {
 	Transform       *Transform `json:"transform"`
 }
 
+type layerOrderParams struct {
+	ContractVersion int  `json:"contract_version"`
+	LayerID         string `json:"layer_id"`
+	ZIndex          *int `json:"z_index"`
+}
+
+type layerOutputParams struct {
+	ContractVersion int    `json:"contract_version"`
+	LayerID         string `json:"layer_id"`
+	OutputID        string `json:"output_id"`
+}
+
+type outputConfigureParams struct {
+	ContractVersion int      `json:"contract_version"`
+	OutputID        string   `json:"output_id"`
+	Width           *float64 `json:"width"`
+	Height          *float64 `json:"height"`
+}
+
+type outputMappingParams struct {
+	ContractVersion int             `json:"contract_version"`
+	OutputID        string          `json:"output_id"`
+	Mapping         *ProjectionQuad `json:"mapping"`
+}
+
 func CapabilityKeys() []string {
 	return append([]string(nil), capabilityKeys...)
 }
@@ -134,7 +181,7 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if err := rejectExplicitNulls(raw, "content_mode", "opacity", "transform"); err != nil {
+		if err := rejectExplicitNulls(raw, "content_mode", "opacity", "transform", "output_id", "z_index"); err != nil {
 			return err
 		}
 		if err := rejectNestedExplicitNulls(raw, "transform"); err != nil {
@@ -164,6 +211,16 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 		}
 		if p.Transform != nil {
 			if err := validateTransform(*p.Transform); err != nil {
+				return err
+			}
+		}
+		if p.OutputID != nil {
+			if err := validateIdentifier(*p.OutputID, "output_id", 64); err != nil {
+				return err
+			}
+		}
+		if p.ZIndex != nil {
+			if err := validateZIndex(*p.ZIndex); err != nil {
 				return err
 			}
 		}
@@ -261,6 +318,70 @@ func ValidateCommand(capability string, raw json.RawMessage) error {
 			return invalid("transform is required")
 		}
 		return validateTransform(*p.Transform)
+
+	case CapabilityLayerOrder:
+		var p layerOrderParams
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if err := validateVersion(p.ContractVersion); err != nil {
+			return err
+		}
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
+			return err
+		}
+		if p.ZIndex == nil {
+			return invalid("z_index is required")
+		}
+		return validateZIndex(*p.ZIndex)
+
+	case CapabilityLayerOutput:
+		var p layerOutputParams
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if err := validateVersion(p.ContractVersion); err != nil {
+			return err
+		}
+		if err := validateIdentifier(p.LayerID, "layer_id", 64); err != nil {
+			return err
+		}
+		return validateIdentifier(p.OutputID, "output_id", 64)
+
+	case CapabilityOutputConfigure:
+		var p outputConfigureParams
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if err := validateVersion(p.ContractVersion); err != nil {
+			return err
+		}
+		if err := validateIdentifier(p.OutputID, "output_id", 64); err != nil {
+			return err
+		}
+		if p.Width == nil || p.Height == nil {
+			return invalid("width and height are required")
+		}
+		if err := validateOutputDimension(*p.Width, "width"); err != nil {
+			return err
+		}
+		return validateOutputDimension(*p.Height, "height")
+
+	case CapabilityOutputMapping:
+		var p outputMappingParams
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if err := validateVersion(p.ContractVersion); err != nil {
+			return err
+		}
+		if err := validateIdentifier(p.OutputID, "output_id", 64); err != nil {
+			return err
+		}
+		if p.Mapping == nil {
+			return invalid("mapping is required")
+		}
+		return validateProjectionQuad(*p.Mapping)
 
 	case CapabilityStateInspect:
 		var p commandBase
@@ -366,6 +487,20 @@ func validateOpacity(value float64) error {
 	return nil
 }
 
+func validateZIndex(value int) error {
+	if value < -4096 || value > 4096 {
+		return invalid("z_index must be between -4096 and 4096")
+	}
+	return nil
+}
+
+func validateOutputDimension(value float64, name string) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 1 || value > 16384 {
+		return invalid("%s must be between 1 and 16384", name)
+	}
+	return nil
+}
+
 func validateTransform(t Transform) error {
 	if t.X == nil && t.Y == nil && t.ScaleX == nil && t.ScaleY == nil && t.RotationDegrees == nil {
 		return invalid("transform requires at least one field")
@@ -382,6 +517,41 @@ func validateTransform(t Transform) error {
 	}
 	if t.ScaleY != nil && *t.ScaleY <= 0 {
 		return invalid("scale_y must be greater than zero")
+	}
+	return nil
+}
+
+func validateProjectionQuad(q ProjectionQuad) error {
+	if q.TopLeft == nil || q.TopRight == nil || q.BottomRight == nil || q.BottomLeft == nil {
+		return invalid("mapping requires top_left, top_right, bottom_right and bottom_left")
+	}
+	points := []*ProjectionPoint{q.TopLeft, q.TopRight, q.BottomRight, q.BottomLeft}
+	coords := make([][2]float64, 0, 4)
+	for _, point := range points {
+		if point.X == nil || point.Y == nil {
+			return invalid("each mapping corner requires x and y")
+		}
+		x, y := *point.X, *point.Y
+		if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) || x < -4 || x > 4 || y < -4 || y > 4 {
+			return invalid("mapping coordinates must be finite and between -4 and 4")
+		}
+		coords = append(coords, [2]float64{x, y})
+	}
+
+	var orientation float64
+	for i := 0; i < 4; i++ {
+		a := coords[i]
+		b := coords[(i+1)%4]
+		c := coords[(i+2)%4]
+		cross := (b[0]-a[0])*(c[1]-b[1]) - (b[1]-a[1])*(c[0]-b[0])
+		if math.Abs(cross) <= 1e-9 {
+			return invalid("mapping corners must form a non-degenerate convex quad")
+		}
+		if orientation == 0 {
+			orientation = math.Copysign(1, cross)
+		} else if math.Copysign(1, cross) != orientation {
+			return invalid("mapping corners must form a convex quad in perimeter order")
+		}
 	}
 	return nil
 }
