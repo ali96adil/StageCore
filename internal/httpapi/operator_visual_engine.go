@@ -13,23 +13,23 @@ import (
 )
 
 type visualEngineActionView struct {
-	CueID         string          `json:"cue_id"`
-	CueName       string          `json:"cue_name"`
-	Action        domain.Action   `json:"action"`
+	CueID   string        `json:"cue_id"`
+	CueName string        `json:"cue_name"`
+	Action  domain.Action `json:"action"`
 }
 
 type visualEngineWorkspaceView struct {
-	ProjectID               string                    `json:"project_id"`
-	RevisionID              string                    `json:"revision_id"`
-	RevisionStatus          domain.RevisionStatus     `json:"revision_status"`
-	ContractVersion         int                       `json:"contract_version"`
-	Capabilities            []string                  `json:"capabilities"`
-	NativeConfigured        bool                      `json:"native_configured"`
-	ExternalEngineSupported bool                      `json:"external_engine_supported"`
-	MachineRoles            []machineRoleView         `json:"machine_roles"`
+	ProjectID               string                        `json:"project_id"`
+	RevisionID              string                        `json:"revision_id"`
+	RevisionStatus          domain.RevisionStatus         `json:"revision_status"`
+	ContractVersion         int                           `json:"contract_version"`
+	Capabilities            []string                      `json:"capabilities"`
+	NativeConfigured        bool                          `json:"native_configured"`
+	ExternalEngineSupported bool                          `json:"external_engine_supported"`
+	MachineRoles            []machineRoleView             `json:"machine_roles"`
 	LiveSources             []deviceexperience.LiveSource `json:"live_sources"`
-	Outputs                 []domain.OutputDefinition `json:"outputs"`
-	Actions                 []visualEngineActionView  `json:"actions"`
+	Outputs                 []domain.OutputDefinition     `json:"outputs"`
+	Actions                 []visualEngineActionView      `json:"actions"`
 }
 
 func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) Option {
@@ -42,7 +42,7 @@ func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, d
 }
 
 func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectView, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -101,17 +101,17 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 		}
 
 		writeJSON(w, http.StatusOK, visualEngineWorkspaceView{
-			ProjectID: projectID,
-			RevisionID: revision.ID,
-			RevisionStatus: revision.Status,
-			ContractVersion: visualengine.ContractVersion1,
-			Capabilities: visualengine.CapabilityKeys(),
-			NativeConfigured: len(visualOutputs) > 0 || len(visualActions) > 0 || len(visualRoles) > 0,
+			ProjectID:               projectID,
+			RevisionID:              revision.ID,
+			RevisionStatus:          revision.Status,
+			ContractVersion:         visualengine.ContractVersion1,
+			Capabilities:            visualengine.CapabilityKeys(),
+			NativeConfigured:        len(visualOutputs) > 0 || len(visualActions) > 0 || len(visualRoles) > 0,
 			ExternalEngineSupported: true,
-			MachineRoles: visualRoles,
-			LiveSources: liveSources,
-			Outputs: visualOutputs,
-			Actions: visualActions,
+			MachineRoles:            visualRoles,
+			LiveSources:             liveSources,
+			Outputs:                 visualOutputs,
+			Actions:                 visualActions,
 		})
 	}))
 }
