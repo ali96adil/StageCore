@@ -118,7 +118,8 @@ final class NativeLiveSourceRendererIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(result.status, .failed)
         XCTAssertEqual(result.errorCode, "VISUAL_RENDERER_OUTPUT_NOT_CONFIGURED")
-        XCTAssertEqual(await engine.snapshot().routes, routeBeforeFailure)
+        let routeAfterFailure = await engine.snapshot().routes
+        XCTAssertEqual(routeAfterFailure, routeBeforeFailure)
 
         result = await engine.execute(
             capability: LiveSourceCapability.route,
@@ -130,8 +131,9 @@ final class NativeLiveSourceRendererIntegrationTests: XCTestCase {
             ]
         )
         XCTAssertEqual(result.status, .completed)
-        XCTAssertEqual(await engine.snapshot().routes.count, 1)
-        XCTAssertEqual(await engine.snapshot().routes.first?.outputID, "main")
+        let rerouted = await engine.snapshot()
+        XCTAssertEqual(rerouted.routes.count, 1)
+        XCTAssertEqual(rerouted.routes.first?.outputID, "main")
 
         result = await engine.execute(
             capability: LiveSourceCapability.close,
@@ -141,12 +143,11 @@ final class NativeLiveSourceRendererIntegrationTests: XCTestCase {
             ]
         )
         XCTAssertEqual(result.status, .completed)
-        XCTAssertNil(
-            await renderer.inspectLiveSourceLayer(
-                sourceID: "stream-a",
-                layerID: "live-hero"
-            )
+        let attachmentAfterClose = await renderer.inspectLiveSourceLayer(
+            sourceID: "stream-a",
+            layerID: "live-hero"
         )
+        XCTAssertNil(attachmentAfterClose)
         await renderer.shutdown()
     }
 }
