@@ -15,9 +15,10 @@ import (
 
 // HAAuthority is the product-facing optional HA surface. Fresh authority can be
 // obtained only through Activate, which applies the Session guard and starts
-// same-epoch renewal. There is deliberately no generic Renew or auto-acquire
-// method on this surface.
+// same-epoch renewal. Current is read-only compatibility/inspection; there is
+// deliberately no generic Renew or auto-acquire method on this surface.
 type HAAuthority interface {
+	Current(context.Context) (dispatchauthority.Snapshot, error)
 	Status(context.Context) (haauthority.SupervisorStatus, error)
 	Activate(context.Context) error
 	Release(context.Context) error
@@ -28,6 +29,10 @@ type HAAuthority interface {
 type supervisedHAAuthority struct {
 	controller *haauthority.Controller
 	supervisor *haauthority.Supervisor
+}
+
+func (a *supervisedHAAuthority) Current(ctx context.Context) (dispatchauthority.Snapshot, error) {
+	return a.controller.Current(ctx)
 }
 
 func (a *supervisedHAAuthority) Status(ctx context.Context) (haauthority.SupervisorStatus, error) {
