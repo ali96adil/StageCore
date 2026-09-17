@@ -13,6 +13,7 @@ const (
 	EvidenceExecution EvidenceScope = "EXECUTION"
 	EvidenceReadiness EvidenceScope = "READINESS"
 	EvidenceTiming    EvidenceScope = "TIMING"
+	EvidenceRehearsal EvidenceScope = "REHEARSAL"
 )
 
 var (
@@ -125,7 +126,7 @@ func (s DiagnosticService) Respond(ctx context.Context, input DiagnosticInput) (
 }
 
 func (s EvidenceScope) Valid() bool {
-	return s == EvidenceExecution || s == EvidenceReadiness || s == EvidenceTiming
+	return s == EvidenceExecution || s == EvidenceReadiness || s == EvidenceTiming || s == EvidenceRehearsal
 }
 
 func validateResponseGrounding(response Response, bundle ContextBundle) error {
