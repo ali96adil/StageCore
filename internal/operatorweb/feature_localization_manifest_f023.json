@@ -1,0 +1,31 @@
+{
+  "contract_version": 1,
+  "required_locales": ["en", "ar-IQ"],
+  "features": [
+    {
+      "feature_id": "F-023",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/assistant-workspace.js", "static/assistant-workspace.css"],
+      "name": {"en": "StageCore Assistant", "ar-IQ": "مساعد StageCore"},
+      "summary": {"en": "Authenticated bilingual workspace for evidence-grounded explanations, diagnostics, and explicit Draft proposals without runtime command authority.", "ar-IQ": "مساحة عمل موثقة وثنائية اللغة للشرح والتشخيص المبنيين على الأدلة ومقترحات Draft الصريحة من دون صلاحية أوامر التشغيل."},
+      "actions": [
+        {"action_id": "explain", "label": {"en": "Explain from StageCore Evidence", "ar-IQ": "الشرح من أدلة StageCore"}},
+        {"action_id": "diagnose", "label": {"en": "Diagnose a StageCore Problem", "ar-IQ": "تشخيص مشكلة في StageCore"}},
+        {"action_id": "draft", "label": {"en": "Prepare Draft Proposal", "ar-IQ": "إعداد مقترح Draft"}},
+        {"action_id": "preview", "label": {"en": "Preview Proposal", "ar-IQ": "مراجعة المقترح"}},
+        {"action_id": "apply", "label": {"en": "Apply Proposal Explicitly", "ar-IQ": "تطبيق المقترح صراحةً"}},
+        {"action_id": "discard", "label": {"en": "Discard Proposal", "ar-IQ": "تجاهل المقترح"}}
+      ],
+      "ui_keys": [
+        "assistant.nav", "assistant.eyebrow", "assistant.title", "assistant.summary", "assistant.refresh",
+        "assistant.available", "assistant.unavailable", "assistant.offline_title", "assistant.offline_detail", "assistant.normal_operator",
+        "assistant.task", "assistant.explain", "assistant.diagnose", "assistant.draft", "assistant.explain_detail", "assistant.diagnose_detail", "assistant.draft_detail",
+        "assistant.scope", "assistant.readiness", "assistant.execution", "assistant.timing", "assistant.session", "assistant.select_session", "assistant.all_sessions", "assistant.no_sessions",
+        "assistant.prompt", "assistant.prompt_placeholder", "assistant.run", "assistant.working", "assistant.answer", "assistant.evidence", "assistant.assumptions", "assistant.missing", "assistant.proposed_changes",
+        "assistant.no_evidence", "assistant.no_assumptions", "assistant.no_missing", "assistant.kind", "assistant.target", "assistant.reference", "assistant.details",
+        "assistant.preview", "assistant.apply", "assistant.discard", "assistant.previewed", "assistant.applied", "assistant.discarded", "assistant.expiry", "assistant.no_auto_apply", "assistant.current_revision",
+        "assistant.request_failed", "assistant.execution_needs_session", "assistant.empty_prompt", "assistant.provider_unavailable", "assistant.evidence_unavailable", "assistant.ungrounded", "assistant.stale", "assistant.show_locked", "assistant.forbidden"
+      ]
+    }
+  ]
+}
