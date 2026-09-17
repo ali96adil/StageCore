@@ -53,7 +53,7 @@ func newAssistantWorkspaceHTTPHarness(t *testing.T) *assistantWorkspaceHTTPHarne
 func (h *assistantWorkspaceHTTPHarness) handler(service *assistant.WorkspaceService) http.Handler {
 	return New(
 		WithAssistantWorkspace(service),
-		WithOperatorConfigurationDraft(h.auth, h.stageStore),
+		WithOperatorConfigurationDraft(h.auth.auth, h.stageStore),
 	).Handler()
 }
 
