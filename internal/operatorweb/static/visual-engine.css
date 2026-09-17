@@ -1,0 +1,38 @@
+.visual-engine-head { align-items: center; }
+.visual-mode-section { margin-bottom: 14px; }
+.visual-meta { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.visual-mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.visual-mode-card { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: #0f151d; display: grid; gap: 12px; }
+.visual-mode-card.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(102, 179, 255, .18); }
+.visual-mode-head, .visual-inventory-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.visual-mode-head h2 { margin: 0; }
+.visual-mode-card .button { justify-self: start; }
+.visual-authority-handoff { margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.visual-authority-handoff p { margin: 0; max-width: 74ch; color: var(--muted); }
+.visual-inventory-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.visual-inventory-section { display: grid; align-content: start; gap: 14px; }
+.visual-inventory-section h2 { margin-bottom: 4px; }
+.visual-inventory-list { display: grid; gap: 10px; }
+.visual-inventory-item { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #0f151d; }
+.visual-inventory-item > strong { display: block; margin-bottom: 8px; }
+.visual-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.visual-kv { margin: 10px 0 0; display: grid; gap: 7px; }
+.visual-kv div { display: grid; grid-template-columns: minmax(90px, .42fr) minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.visual-kv dt { color: var(--muted); font-size: .72rem; }
+.visual-kv dd { margin: 0; overflow-wrap: anywhere; font-size: .8rem; text-align: start; }
+
+html[dir="rtl"] .visual-mode-card,
+html[dir="rtl"] .visual-inventory-item,
+html[dir="rtl"] .visual-authority-handoff { text-align: right; }
+
+@media (max-width: 900px) {
+  .visual-inventory-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .visual-mode-grid { grid-template-columns: 1fr; }
+  .visual-authority-handoff { align-items: stretch; flex-direction: column; }
+  .visual-authority-handoff .toolbar { justify-content: stretch; }
+  .visual-authority-handoff .button { flex: 1; }
+  .visual-kv div { grid-template-columns: 1fr; gap: 2px; }
+}
