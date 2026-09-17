@@ -9,7 +9,7 @@
       back: "Back", save: "Save scene", name: "Scene name", label: "Label", addAction: "Add tablet action", tablet: "Tablet", operation: "Layer / action",
       mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainSelect: "Main · Select media", mainPause: "Main · Pause", mainStop: "Main · Stop",
       overlayPlay: "Overlay · Play", overlayClear: "Overlay · Clear", liveShow: "Live · Show", liveHide: "Live · Hide",
-      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
+      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
     },
     ar: {
       nav: "مشاهد التابلت", title: "مشاهد التابلت / Playlist", sub: "ابنِ كيوهات التابلت المرتبة بصورة رسومية. تبقى مخزنة كـ Draft Cues عادية وتتنفذ من Cue Engine.",
@@ -18,7 +18,7 @@
       back: "رجوع", save: "حفظ المشهد", name: "اسم المشهد", label: "الرمز", addAction: "إضافة أمر تابلت", tablet: "التابلت", operation: "الطبقة / الأمر",
       mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainSelect: "Main · اختيار ميديا", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
       overlayPlay: "Overlay · تشغيل", overlayClear: "Overlay · مسح", liveShow: "Live · إظهار", liveHide: "Live · إخفاء",
-      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
+      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
     },
   };
 
@@ -62,7 +62,7 @@
     return `<article class="card tablet-scene-card" data-scene-id="${esc(scene.cue_id)}">
       <div class="tablet-scene-head">
         <div><p class="eyebrow">${esc(scene.display_label || `${tx("scene")} ${index + 1}`)}</p><h2>${esc(scene.name)}</h2><p class="muted">${actions.length} ${esc(tx("actions"))}</p></div>
-        <div class="tablet-scene-order"><button class="button ghost tablet-scene-move" data-direction="up" type="button" ${index === 0 ? "disabled" : ""}>↑ ${esc(tx("moveUp"))}</button><button class="button ghost tablet-scene-move" data-direction="down" type="button" ${index === total - 1 ? "disabled" : ""}>↓ ${esc(tx("moveDown"))}</button></div>
+        ${canEdit() ? `<div class="tablet-scene-order"><button class="button ghost tablet-scene-move" data-direction="up" type="button" ${index === 0 ? "disabled" : ""}>↑ ${esc(tx("moveUp"))}</button><button class="button ghost tablet-scene-move" data-direction="down" type="button" ${index === total - 1 ? "disabled" : ""}>↓ ${esc(tx("moveDown"))}</button></div>` : ""}
       </div>
       <div class="tablet-scene-action-list">${actions.map((action) => `<div class="tablet-scene-action-summary"><strong>${esc(action.display_name || deviceName(action.device_id))}</strong><span>${esc(commandLabel(action.command_type))}</span><small>${esc(parameterSummary(action))}</small></div>`).join("")}</div>
       ${canEdit() ? `<div class="tablet-scene-card-actions"><button class="button tablet-scene-edit" type="button">${esc(tx("edit"))}</button><button class="button ghost tablet-scene-duplicate" type="button">${esc(tx("duplicate"))}</button><button class="button danger tablet-scene-delete" type="button">${esc(tx("remove"))}</button></div>` : ""}
@@ -174,12 +174,20 @@
   function actionPayload(row, command) {
     const params = row.querySelector(".tablet-scene-params");
     if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
-      if (params.querySelector(".tablet-param-mode")?.value === "cue") return { tablet_cue_id: params.querySelector(".tablet-param-cue input")?.value.trim() || "" };
+      if (params.querySelector(".tablet-param-mode")?.value === "cue") {
+        const cueID = params.querySelector(".tablet-param-cue input")?.value.trim() || "";
+        if (!cueID) throw new Error(tx("needCueID"));
+        return { tablet_cue_id: cueID };
+      }
       return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-media input")?.value || 1)) };
     }
     if (["TABLET_SELECT_MEDIA", "TABLET_OVERLAY_PLAY"].includes(command)) return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-single")?.value || 1)) };
     if (command === "TABLET_OVERLAY_CLEAR") return { dissolve_ms: Math.max(0, Number(params.querySelector(".tablet-param-single")?.value || 0)) };
-    if (command === "TABLET_LIVE_SHOW") return { media_key: params.querySelector(".tablet-param-single")?.value.trim() || "" };
+    if (command === "TABLET_LIVE_SHOW") {
+      const mediaKey = params.querySelector(".tablet-param-single")?.value.trim() || "";
+      if (!mediaKey) throw new Error(tx("needLiveKey"));
+      return { media_key: mediaKey };
+    }
     return {};
   }
 
@@ -231,7 +239,7 @@
     try {
       const payload = await api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`);
       const all = payload.cues || [];
-      const orderedScenes = (sceneModel.scenes || []).slice().sort((a, b) => a.order_index - b.order_index);
+      const orderedScenes = visibleScenes().slice().sort((a, b) => a.order_index - b.order_index);
       const sceneIndex = orderedScenes.findIndex((item) => item.cue_id === scene.cue_id);
       const other = orderedScenes[sceneIndex + (direction === "up" ? -1 : 1)];
       if (!other) return;
