@@ -21,6 +21,13 @@ func TestF023AssistantWorkspaceHasNoRuntimeCommandSurface(t *testing.T) {
 		`assistant.preview`,
 		`assistant.apply`,
 		`assistant.discard`,
+		`assistant.rehearsal`,
+		`assistant.rehearsal_hint`,
+		`assistant.select_simulation`,
+		`assistant.rehearsal_needs_simulation`,
+		`assistantScopeSessions`,
+		`"REHEARSAL"`,
+		`"SIMULATION"`,
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("Assistant workspace missing %q", required)
