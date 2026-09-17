@@ -23,10 +23,12 @@
     "assistant.readiness": { en: "Readiness", "ar-IQ": "الجاهزية" },
     "assistant.execution": { en: "Execution", "ar-IQ": "التنفيذ" },
     "assistant.timing": { en: "Timing", "ar-IQ": "التوقيت" },
+    "assistant.rehearsal": { en: "Rehearsal & Simulation", "ar-IQ": "البروفة والمحاكاة" },
     "assistant.session": { en: "Session", "ar-IQ": "الجلسة" },
     "assistant.select_session": { en: "Select a Session", "ar-IQ": "اختر جلسة" },
     "assistant.all_sessions": { en: "Use available timing history", "ar-IQ": "استخدم سجل التوقيت المتاح" },
     "assistant.no_sessions": { en: "No rehearsal or show Sessions are available yet.", "ar-IQ": "لا توجد جلسات بروفة أو عرض متاحة بعد." },
+    "assistant.no_simulations": { en: "No SIMULATION Sessions are available yet.", "ar-IQ": "لا توجد جلسات محاكاة SIMULATION متاحة بعد." },
     "assistant.prompt": { en: "What do you want StageCore to help with?", "ar-IQ": "بماذا تريد من StageCore أن يساعدك؟" },
     "assistant.prompt_placeholder": { en: "Example: Why did the last video cue fail?", "ar-IQ": "مثال: لماذا فشل آخر Cue للفيديو؟" },
     "assistant.run": { en: "Run Assistant task", "ar-IQ": "نفّذ مهمة المساعد" },
@@ -54,6 +56,7 @@
     "assistant.current_revision": { en: "Current revision", "ar-IQ": "الإصدار الحالي" },
     "assistant.request_failed": { en: "Assistant request failed.", "ar-IQ": "فشل طلب المساعد." },
     "assistant.execution_needs_session": { en: "Execution evidence requires a Session.", "ar-IQ": "أدلة التنفيذ تتطلب اختيار جلسة." },
+    "assistant.rehearsal_needs_simulation": { en: "Rehearsal analysis requires a SIMULATION Session.", "ar-IQ": "تحليل البروفة يتطلب اختيار جلسة SIMULATION." },
     "assistant.empty_prompt": { en: "Enter a question or drafting instruction first.", "ar-IQ": "اكتب السؤال أو تعليمات الاقتراح أولاً." },
     "assistant.provider_unavailable": { en: "Assistant provider is unavailable. Normal StageCore operation is unaffected.", "ar-IQ": "مزوّد المساعد غير متاح. تشغيل StageCore الاعتيادي غير متأثر." },
     "assistant.evidence_unavailable": { en: "The requested canonical evidence is not available yet.", "ar-IQ": "الأدلة الرسمية المطلوبة غير متاحة حالياً." },
@@ -117,9 +120,16 @@
     }
   }
 
+  function assistantScopedSessions() {
+    if (assistantModel.scope === "REHEARSAL") {
+      return assistantModel.sessions.filter((session) => session.session_type === "SIMULATION");
+    }
+    return assistantModel.sessions;
+  }
+
   function assistantSessionOptions() {
     const emptyLabel = assistantModel.scope === "TIMING" ? assistantText("assistant.all_sessions") : assistantText("assistant.select_session");
-    return `<option value="">${esc(emptyLabel)}</option>` + assistantModel.sessions.map((session) => {
+    return `<option value="">${esc(emptyLabel)}</option>` + assistantScopedSessions().map((session) => {
       const label = `${session.session_type || "SESSION"} · ${session.name || fmtDate(session.started_at)}`;
       return `<option value="${esc(session.session_id)}" ${assistantModel.selectedSessionID === session.session_id ? "selected" : ""}>${esc(label)}</option>`;
     }).join("");
@@ -242,18 +252,19 @@
 
   function assistantScopeControls() {
     if (assistantModel.taskKind === "DRAFT") return "";
-    const needsSession = ["EXECUTION", "TIMING"].includes(assistantModel.scope);
+    const needsSession = ["EXECUTION", "TIMING", "REHEARSAL"].includes(assistantModel.scope);
     return `<div class="form-grid two assistant-scope-grid">
       <label>${esc(assistantText("assistant.scope"))}
         <select id="assistantScope">
           <option value="READINESS" ${assistantModel.scope === "READINESS" ? "selected" : ""}>${esc(assistantText("assistant.readiness"))}</option>
           <option value="EXECUTION" ${assistantModel.scope === "EXECUTION" ? "selected" : ""}>${esc(assistantText("assistant.execution"))}</option>
           <option value="TIMING" ${assistantModel.scope === "TIMING" ? "selected" : ""}>${esc(assistantText("assistant.timing"))}</option>
+          <option value="REHEARSAL" ${assistantModel.scope === "REHEARSAL" ? "selected" : ""}>${esc(assistantText("assistant.rehearsal"))}</option>
         </select>
       </label>
       ${needsSession ? `<label>${esc(assistantText("assistant.session"))}<select id="assistantSession">${assistantSessionOptions()}</select></label>` : ""}
     </div>
-    ${needsSession && !assistantModel.sessions.length ? `<p class="muted">${esc(assistantText("assistant.no_sessions"))}</p>` : ""}`;
+    ${needsSession && !assistantScopedSessions().length ? `<p class="muted">${esc(assistantText(assistantModel.scope === "REHEARSAL" ? "assistant.no_simulations" : "assistant.no_sessions"))}</p>` : ""}`;
   }
 
   function assistantEnsureAvailableTask() {
@@ -336,6 +347,12 @@
     }
     if (assistantModel.taskKind !== "DRAFT" && assistantModel.scope === "EXECUTION" && !assistantModel.selectedSessionID) {
       assistantModel.message = assistantText("assistant.execution_needs_session");
+      assistantModel.messageKind = "warn";
+      await renderAssistantWorkspace(false);
+      return;
+    }
+    if (assistantModel.taskKind !== "DRAFT" && assistantModel.scope === "REHEARSAL" && !assistantModel.selectedSessionID) {
+      assistantModel.message = assistantText("assistant.rehearsal_needs_simulation");
       assistantModel.messageKind = "warn";
       await renderAssistantWorkspace(false);
       return;

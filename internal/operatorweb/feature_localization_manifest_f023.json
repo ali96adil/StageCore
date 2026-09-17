@@ -11,6 +11,7 @@
       "actions": [
         {"action_id": "explain", "label": {"en": "Explain from StageCore Evidence", "ar-IQ": "الشرح من أدلة StageCore"}},
         {"action_id": "diagnose", "label": {"en": "Diagnose a StageCore Problem", "ar-IQ": "تشخيص مشكلة في StageCore"}},
+        {"action_id": "rehearsal", "label": {"en": "Analyze Rehearsal Simulation", "ar-IQ": "تحليل محاكاة البروفة"}},
         {"action_id": "draft", "label": {"en": "Prepare Draft Proposal", "ar-IQ": "إعداد مقترح Draft"}},
         {"action_id": "preview", "label": {"en": "Preview Proposal", "ar-IQ": "مراجعة المقترح"}},
         {"action_id": "apply", "label": {"en": "Apply Proposal Explicitly", "ar-IQ": "تطبيق المقترح صراحةً"}},
@@ -20,11 +21,11 @@
         "assistant.nav", "assistant.eyebrow", "assistant.title", "assistant.summary", "assistant.refresh",
         "assistant.available", "assistant.unavailable", "assistant.offline_title", "assistant.offline_detail", "assistant.normal_operator",
         "assistant.task", "assistant.explain", "assistant.diagnose", "assistant.draft", "assistant.explain_detail", "assistant.diagnose_detail", "assistant.draft_detail",
-        "assistant.scope", "assistant.readiness", "assistant.execution", "assistant.timing", "assistant.session", "assistant.select_session", "assistant.all_sessions", "assistant.no_sessions",
+        "assistant.scope", "assistant.readiness", "assistant.execution", "assistant.timing", "assistant.rehearsal", "assistant.session", "assistant.select_session", "assistant.all_sessions", "assistant.no_sessions", "assistant.no_simulations",
         "assistant.prompt", "assistant.prompt_placeholder", "assistant.run", "assistant.working", "assistant.answer", "assistant.evidence", "assistant.assumptions", "assistant.missing", "assistant.proposed_changes",
         "assistant.no_evidence", "assistant.no_assumptions", "assistant.no_missing", "assistant.kind", "assistant.target", "assistant.reference", "assistant.details",
         "assistant.preview", "assistant.apply", "assistant.discard", "assistant.previewed", "assistant.applied", "assistant.discarded", "assistant.expiry", "assistant.no_auto_apply", "assistant.current_revision",
-        "assistant.request_failed", "assistant.execution_needs_session", "assistant.empty_prompt", "assistant.provider_unavailable", "assistant.evidence_unavailable", "assistant.ungrounded", "assistant.stale", "assistant.show_locked", "assistant.forbidden"
+        "assistant.request_failed", "assistant.execution_needs_session", "assistant.rehearsal_needs_simulation", "assistant.empty_prompt", "assistant.provider_unavailable", "assistant.evidence_unavailable", "assistant.ungrounded", "assistant.stale", "assistant.show_locked", "assistant.forbidden"
       ]
     }
   ]
