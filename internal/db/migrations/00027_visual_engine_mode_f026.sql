@@ -14,6 +14,7 @@ CREATE TABLE visual_engine_revision_settings (
 -- Revision forks must preserve an explicit Visual Engine choice regardless of
 -- which configuration surface creates the successor Draft. A parent without an
 -- explicit row continues to inherit the compatibility default EXTERNAL.
+-- +goose StatementBegin
 CREATE TRIGGER visual_engine_revision_settings_inherit
 AFTER INSERT ON project_revisions
 WHEN NEW.parent_revision_id IS NOT NULL
@@ -25,6 +26,7 @@ BEGIN
     FROM visual_engine_revision_settings parent
     WHERE parent.revision_id = NEW.parent_revision_id;
 END;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER IF EXISTS visual_engine_revision_settings_inherit;
