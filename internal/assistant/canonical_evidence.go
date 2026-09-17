@@ -46,6 +46,7 @@ type CanonicalEvidenceSource struct {
 	Doctor        DoctorReader
 	DoctorOptions doctor.Options
 	Timing        TimingReader
+	Simulation    SimulationReportReader
 }
 
 func (s CanonicalEvidenceSource) Collect(ctx context.Context, query EvidenceQuery) (EvidenceCollection, error) {
@@ -68,6 +69,8 @@ func (s CanonicalEvidenceSource) Collect(ctx context.Context, query EvidenceQuer
 		return s.collectReadiness(ctx, query)
 	case EvidenceTiming:
 		return s.collectTiming(ctx, query)
+	case EvidenceRehearsal:
+		return s.collectRehearsal(ctx, query)
 	default:
 		return EvidenceCollection{}, invalid("unsupported evidence scope %q", query.Scope)
 	}
