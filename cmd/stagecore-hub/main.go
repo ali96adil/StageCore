@@ -205,6 +205,7 @@ func main() {
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorStageDevices(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
+		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),
