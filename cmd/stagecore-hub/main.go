@@ -8,14 +8,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
+	tabletcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.tablet-controller"
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/devicepreflight"
 	"github.com/ali96adil/StageCore/internal/deviceprofile"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/preflight"
@@ -86,7 +89,7 @@ func main() {
 	)
 	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
 	preflightService := timecode.NewPreflightService(devicePreflight, timecodeRuntime)
-	runtime := runtimecontrol.New(
+	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
@@ -123,6 +126,21 @@ func main() {
 	if err != nil {
 		logger.Error("extension library startup failed", "error", err)
 		os.Exit(1)
+	}
+	if _, err := extensionLibrary.BootstrapOfficial(ctx, extension.BundledOfficialPackage{
+		Manifest:         tabletcontrollerbundle.ManifestBytes(),
+		Payload:          tabletcontrollerbundle.PayloadBytes(),
+		Platform:         "linux",
+		Architecture:     runtime.GOARCH,
+		OriginalFilename: tabletcontrollerbundle.ProductID + "-" + tabletcontrollerbundle.Version + ".addon",
+		ReleaseNotes:     "Bundled StageCore Tablet Controller ADDON.",
+	}, "stagecore:bootstrap"); err != nil {
+		if errors.Is(err, domain.ErrShowConfigurationLocked) {
+			logger.Warn("official extension bootstrap deferred by SHOW configuration lock", "extension_id", tabletcontrollerbundle.ProductID)
+		} else {
+			logger.Error("official extension bootstrap failed", "extension_id", tabletcontrollerbundle.ProductID, "error", err)
+			os.Exit(1)
+		}
 	}
 	extensionInstaller, err := extension.NewInstaller(
 		extensionLibrary,
@@ -206,12 +224,14 @@ func main() {
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorStageDevices(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
+		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
+		httpapi.WithOperatorCueReorder(userAuth, application.Store),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
 		httpapi.WithOperatorTimecode(userAuth, timecodeRuntime),
 		httpapi.WithOperatorTimingIntelligence(userAuth, timing),
 		httpapi.WithOperatorShowCapsules(userAuth, showCapsules, filepath.Join(application.Config.DataRoot, "show-capsules")),
-		httpapi.WithOperatorRuntime(userAuth, application.Store, runtime),
+		httpapi.WithOperatorRuntime(userAuth, application.Store, runtimeControl),
 		httpapi.WithOperatorHAAuthority(userAuth, application.HAAuthority, application.SecurityAudit),
 		httpapi.WithOperatorSimulation(userAuth, simulation),
 		httpapi.WithOperatorSimulationInputs(userAuth, simulationInputs),

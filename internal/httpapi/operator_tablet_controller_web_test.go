@@ -13,8 +13,8 @@ func TestOperatorWebBundlesTabletControllerWorkspace(t *testing.T) {
 		path     string
 		required []string
 	}{
-		{path: "/phase4.js", required: []string{"renderTabletController", "tablet-controller/cue-actions", "TABLET_OVERLAY_PLAY", "TABLET_LIVE_SHOW", "TABLET_BLACKOUT_CLEAR"}},
-		{path: "/phase4.css", required: []string{"tablet-device-grid", "tablet-control-grid", "tablet-cue-builder"}},
+		{path: "/phase4.js", required: []string{"renderTabletController", "tablet-controller/cue-actions", "TABLET_OVERLAY_PLAY", "TABLET_LIVE_SHOW", "TABLET_BLACKOUT_CLEAR", "renderTabletScenes", "tablet-controller/scenes", "TABLET_SCENE", "cues/reorder"}},
+		{path: "/phase4.css", required: []string{"tablet-device-grid", "tablet-control-grid", "tablet-cue-builder", "tablet-scene-list", "tablet-scene-action-editor"}},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		req.RemoteAddr = "127.0.0.1:19203"
