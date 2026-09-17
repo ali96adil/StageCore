@@ -96,6 +96,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			})
 		}))
 		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit)
+		registerOperatorAssistantProposalBatchRoutes(s.mux, auth, stageStore, audit)
 	}
 }
 

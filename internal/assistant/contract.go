@@ -55,6 +55,7 @@ type EvidenceRef struct {
 
 type ProposalOperation struct {
 	Kind     ProposalOperationKind `json:"kind"`
+	Ref      string                `json:"ref,omitempty"`
 	TargetID string                `json:"target_id,omitempty"`
 	Summary  string                `json:"summary"`
 	Payload  json.RawMessage       `json:"payload,omitempty"`
@@ -194,9 +195,19 @@ func (p DraftProposal) Validate() error {
 	if len(p.Operations) > MaxProposalOperations {
 		return invalid("proposal supports at most %d operations", MaxProposalOperations)
 	}
+	refs := make(map[string]struct{})
 	for i, operation := range p.Operations {
 		if !operation.Kind.Valid() {
 			return invalid("proposal operation %d has unsupported kind %q", i, operation.Kind)
+		}
+		if operation.Ref != "" {
+			if err := validateID("proposal ref", operation.Ref, false); err != nil {
+				return err
+			}
+			if _, duplicate := refs[operation.Ref]; duplicate {
+				return invalid("proposal operation %d has duplicate ref %q", i, operation.Ref)
+			}
+			refs[operation.Ref] = struct{}{}
 		}
 		if operation.TargetID != "" {
 			if err := validateID("proposal target_id", operation.TargetID, false); err != nil {
@@ -242,9 +253,28 @@ func SealProposal(p DraftProposal, expiresAt time.Time) (DraftProposal, error) {
 	return p, nil
 }
 
-// ValidateForApply is intentionally single-operation in Slice C1. Atomic batch
-// application is delivered separately rather than risking partial configuration.
+// ValidateForApply preserves the Slice C1 single-operation Apply contract.
+// Multi-operation callers must explicitly opt into ValidateForBatchApply so an
+// older client can never silently turn a single-change confirmation into a
+// batch configuration mutation.
 func (p DraftProposal) ValidateForApply(now time.Time) error {
+	if err := p.validateSealedForApply(now); err != nil {
+		return err
+	}
+	if len(p.Operations) != 1 {
+		return ErrProposalAtomicBatchRequired
+	}
+	return nil
+}
+
+// ValidateForBatchApply validates the same StageCore-owned seal/expiry as
+// single Apply while allowing a bounded atomic batch. Authorization and the
+// database transaction remain server-owned concerns, not provider authority.
+func (p DraftProposal) ValidateForBatchApply(now time.Time) error {
+	return p.validateSealedForApply(now)
+}
+
+func (p DraftProposal) validateSealedForApply(now time.Time) error {
 	if err := p.ValidateForPreview(); err != nil {
 		return err
 	}
@@ -253,9 +283,6 @@ func (p DraftProposal) ValidateForApply(now time.Time) error {
 	}
 	if !p.ExpiresAt.After(now.UTC()) {
 		return ErrProposalExpired
-	}
-	if len(p.Operations) != 1 {
-		return ErrProposalAtomicBatchRequired
 	}
 	return nil
 }
