@@ -1,0 +1,9 @@
+{
+  "format": "stagecore.tablet-controller-addon-v1",
+  "extension_id": "stagecore.tablet-controller",
+  "version": "0.1.0",
+  "transport_authority": "core",
+  "transport_protocol": "stagecore.device/1",
+  "operator_workspace": "/tablet-controller",
+  "runtime_process_required": false
+}
