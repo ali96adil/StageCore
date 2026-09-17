@@ -95,6 +95,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				"current_revision": makeRevisionView(restored),
 			})
 		}))
+		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit)
 	}
 }
 

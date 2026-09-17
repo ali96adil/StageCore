@@ -1,16 +1,19 @@
 package assistant
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const ContractVersion1 = 1
 
 const (
-	MaxPromptBytes = 16 * 1024
-	MaxAnswerBytes = 64 * 1024
+	MaxPromptBytes        = 16 * 1024
+	MaxAnswerBytes        = 64 * 1024
+	MaxProposalOperations = 32
 )
 
 type AuthorityClass string
@@ -39,7 +42,11 @@ const (
 	ProposalTemplateDraft      ProposalOperationKind = "TEMPLATE_DRAFT"
 )
 
-var ErrInvalidContract = errors.New("invalid assistant contract")
+var (
+	ErrInvalidContract             = errors.New("invalid assistant contract")
+	ErrProposalExpired             = errors.New("assistant proposal expired")
+	ErrProposalAtomicBatchRequired = errors.New("assistant proposal atomic batch required")
+)
 
 type EvidenceRef struct {
 	Kind string `json:"kind"`
@@ -50,11 +57,13 @@ type ProposalOperation struct {
 	Kind     ProposalOperationKind `json:"kind"`
 	TargetID string                `json:"target_id,omitempty"`
 	Summary  string                `json:"summary"`
+	Payload  json.RawMessage       `json:"payload,omitempty"`
 }
 
 type DraftProposal struct {
 	BaseRevisionID string              `json:"base_revision_id"`
 	Operations     []ProposalOperation `json:"operations"`
+	ExpiresAt      *time.Time          `json:"expires_at,omitempty"`
 }
 
 type Request struct {
@@ -182,6 +191,9 @@ func (p DraftProposal) Validate() error {
 	if len(p.Operations) == 0 {
 		return invalid("proposal requires at least one operation")
 	}
+	if len(p.Operations) > MaxProposalOperations {
+		return invalid("proposal supports at most %d operations", MaxProposalOperations)
+	}
 	for i, operation := range p.Operations {
 		if !operation.Kind.Valid() {
 			return invalid("proposal operation %d has unsupported kind %q", i, operation.Kind)
@@ -194,6 +206,56 @@ func (p DraftProposal) Validate() error {
 		if strings.TrimSpace(operation.Summary) == "" || strings.TrimSpace(operation.Summary) != operation.Summary {
 			return invalid("proposal operation %d summary must be non-empty and trimmed", i)
 		}
+		if len(operation.Payload) > 0 && !json.Valid(operation.Payload) {
+			return invalid("proposal operation %d payload must be valid JSON", i)
+		}
+	}
+	return nil
+}
+
+// ValidateForPreview tightens the provider-facing v1 contract into an exact,
+// editable proposal. Provider responses remain backwards-compatible with Slice A,
+// but an operator preview requires concrete structured payloads for every change.
+func (p DraftProposal) ValidateForPreview() error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	for i, operation := range p.Operations {
+		if len(operation.Payload) == 0 {
+			return invalid("proposal operation %d payload is required for preview", i)
+		}
+	}
+	return nil
+}
+
+// SealProposal adds a StageCore-owned expiry to an exact proposal. The provider
+// does not control Apply authority or expiry semantics.
+func SealProposal(p DraftProposal, expiresAt time.Time) (DraftProposal, error) {
+	if err := p.ValidateForPreview(); err != nil {
+		return DraftProposal{}, err
+	}
+	if expiresAt.IsZero() {
+		return DraftProposal{}, invalid("proposal expiry is required")
+	}
+	expiresAt = expiresAt.UTC()
+	p.ExpiresAt = &expiresAt
+	return p, nil
+}
+
+// ValidateForApply is intentionally single-operation in Slice C1. Atomic batch
+// application is delivered separately rather than risking partial configuration.
+func (p DraftProposal) ValidateForApply(now time.Time) error {
+	if err := p.ValidateForPreview(); err != nil {
+		return err
+	}
+	if p.ExpiresAt == nil || p.ExpiresAt.IsZero() {
+		return invalid("proposal must be sealed before apply")
+	}
+	if !p.ExpiresAt.After(now.UTC()) {
+		return ErrProposalExpired
+	}
+	if len(p.Operations) != 1 {
+		return ErrProposalAtomicBatchRequired
 	}
 	return nil
 }
