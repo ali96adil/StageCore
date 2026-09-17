@@ -17,16 +17,20 @@
     "assistant.diagnose": { en: "Diagnose", "ar-IQ": "شخّص" },
     "assistant.draft": { en: "Draft", "ar-IQ": "اقترح تعديلاً" },
     "assistant.explain_detail": { en: "Explain current StageCore evidence without changing the Project.", "ar-IQ": "اشرح أدلة StageCore الحالية بدون تغيير المشروع." },
-    "assistant.diagnose_detail": { en: "Investigate readiness, execution, or timing evidence without issuing runtime commands.", "ar-IQ": "حلّل أدلة الجاهزية أو التنفيذ أو التوقيت بدون إرسال أوامر تشغيل." },
+    "assistant.diagnose_detail": { en: "Investigate readiness, execution, timing, or rehearsal/simulation evidence without issuing runtime commands.", "ar-IQ": "حلّل أدلة الجاهزية أو التنفيذ أو التوقيت أو البروفة والمحاكاة بدون إرسال أوامر تشغيل." },
     "assistant.draft_detail": { en: "Prepare structured proposed changes for explicit Preview and Apply.", "ar-IQ": "جهّز تغييرات مقترحة ومنظمة للمراجعة ثم التطبيق الصريح." },
     "assistant.scope": { en: "Evidence scope", "ar-IQ": "نطاق الأدلة" },
     "assistant.readiness": { en: "Readiness", "ar-IQ": "الجاهزية" },
     "assistant.execution": { en: "Execution", "ar-IQ": "التنفيذ" },
     "assistant.timing": { en: "Timing", "ar-IQ": "التوقيت" },
+    "assistant.rehearsal": { en: "Rehearsal / Simulation", "ar-IQ": "البروفة / المحاكاة" },
+    "assistant.rehearsal_hint": { en: "Uses the selected SIMULATION session with the F-024 Simulation Report, Flight Recorder, and advisory F-028 timing evidence. This analysis cannot issue live show commands.", "ar-IQ": "يستخدم جلسة SIMULATION المختارة مع تقرير F-024 للمحاكاة وFlight Recorder وأدلة التوقيت الاستشارية F-028. هذا التحليل لا يستطيع إرسال أوامر للعرض الحي." },
     "assistant.session": { en: "Session", "ar-IQ": "الجلسة" },
     "assistant.select_session": { en: "Select a Session", "ar-IQ": "اختر جلسة" },
+    "assistant.select_simulation": { en: "Select a Simulation Session", "ar-IQ": "اختر جلسة محاكاة" },
     "assistant.all_sessions": { en: "Use available timing history", "ar-IQ": "استخدم سجل التوقيت المتاح" },
     "assistant.no_sessions": { en: "No rehearsal or show Sessions are available yet.", "ar-IQ": "لا توجد جلسات بروفة أو عرض متاحة بعد." },
+    "assistant.no_simulations": { en: "No Simulation Sessions are available yet. Run or open a simulation first.", "ar-IQ": "لا توجد جلسات محاكاة متاحة حالياً. شغّل أو افتح محاكاة أولاً." },
     "assistant.prompt": { en: "What do you want StageCore to help with?", "ar-IQ": "بماذا تريد من StageCore أن يساعدك؟" },
     "assistant.prompt_placeholder": { en: "Example: Why did the last video cue fail?", "ar-IQ": "مثال: لماذا فشل آخر Cue للفيديو؟" },
     "assistant.run": { en: "Run Assistant task", "ar-IQ": "نفّذ مهمة المساعد" },
@@ -54,6 +58,7 @@
     "assistant.current_revision": { en: "Current revision", "ar-IQ": "الإصدار الحالي" },
     "assistant.request_failed": { en: "Assistant request failed.", "ar-IQ": "فشل طلب المساعد." },
     "assistant.execution_needs_session": { en: "Execution evidence requires a Session.", "ar-IQ": "أدلة التنفيذ تتطلب اختيار جلسة." },
+    "assistant.rehearsal_needs_simulation": { en: "Rehearsal analysis requires a selected Simulation Session.", "ar-IQ": "تحليل البروفة يتطلب اختيار جلسة محاكاة." },
     "assistant.empty_prompt": { en: "Enter a question or drafting instruction first.", "ar-IQ": "اكتب السؤال أو تعليمات الاقتراح أولاً." },
     "assistant.provider_unavailable": { en: "Assistant provider is unavailable. Normal StageCore operation is unaffected.", "ar-IQ": "مزوّد المساعد غير متاح. تشغيل StageCore الاعتيادي غير متأثر." },
     "assistant.evidence_unavailable": { en: "The requested canonical evidence is not available yet.", "ar-IQ": "الأدلة الرسمية المطلوبة غير متاحة حالياً." },
@@ -117,10 +122,21 @@
     }
   }
 
+  function assistantScopeSessions() {
+    if (assistantModel.scope !== "REHEARSAL") return assistantModel.sessions;
+    return assistantModel.sessions.filter((session) => String(session.session_type || session.type || "").toUpperCase() === "SIMULATION");
+  }
+
   function assistantSessionOptions() {
-    const emptyLabel = assistantModel.scope === "TIMING" ? assistantText("assistant.all_sessions") : assistantText("assistant.select_session");
-    return `<option value="">${esc(emptyLabel)}</option>` + assistantModel.sessions.map((session) => {
-      const label = `${session.session_type || "SESSION"} · ${session.name || fmtDate(session.started_at)}`;
+    const scopedSessions = assistantScopeSessions();
+    const emptyLabel = assistantModel.scope === "TIMING"
+      ? assistantText("assistant.all_sessions")
+      : assistantModel.scope === "REHEARSAL"
+        ? assistantText("assistant.select_simulation")
+        : assistantText("assistant.select_session");
+    return `<option value="">${esc(emptyLabel)}</option>` + scopedSessions.map((session) => {
+      const sessionType = session.session_type || session.type || "SESSION";
+      const label = `${sessionType} · ${session.name || fmtDate(session.started_at)}`;
       return `<option value="${esc(session.session_id)}" ${assistantModel.selectedSessionID === session.session_id ? "selected" : ""}>${esc(label)}</option>`;
     }).join("");
   }
@@ -242,18 +258,22 @@
 
   function assistantScopeControls() {
     if (assistantModel.taskKind === "DRAFT") return "";
-    const needsSession = ["EXECUTION", "TIMING"].includes(assistantModel.scope);
+    const needsSession = ["EXECUTION", "TIMING", "REHEARSAL"].includes(assistantModel.scope);
+    const scopedSessions = assistantScopeSessions();
+    const emptySessionKey = assistantModel.scope === "REHEARSAL" ? "assistant.no_simulations" : "assistant.no_sessions";
     return `<div class="form-grid two assistant-scope-grid">
       <label>${esc(assistantText("assistant.scope"))}
         <select id="assistantScope">
           <option value="READINESS" ${assistantModel.scope === "READINESS" ? "selected" : ""}>${esc(assistantText("assistant.readiness"))}</option>
           <option value="EXECUTION" ${assistantModel.scope === "EXECUTION" ? "selected" : ""}>${esc(assistantText("assistant.execution"))}</option>
           <option value="TIMING" ${assistantModel.scope === "TIMING" ? "selected" : ""}>${esc(assistantText("assistant.timing"))}</option>
+          <option value="REHEARSAL" ${assistantModel.scope === "REHEARSAL" ? "selected" : ""}>${esc(assistantText("assistant.rehearsal"))}</option>
         </select>
       </label>
       ${needsSession ? `<label>${esc(assistantText("assistant.session"))}<select id="assistantSession">${assistantSessionOptions()}</select></label>` : ""}
     </div>
-    ${needsSession && !assistantModel.sessions.length ? `<p class="muted">${esc(assistantText("assistant.no_sessions"))}</p>` : ""}`;
+    ${assistantModel.scope === "REHEARSAL" ? `<p class="muted">${esc(assistantText("assistant.rehearsal_hint"))}</p>` : ""}
+    ${needsSession && !scopedSessions.length ? `<p class="muted">${esc(assistantText(emptySessionKey))}</p>` : ""}`;
   }
 
   function assistantEnsureAvailableTask() {
@@ -340,7 +360,20 @@
       await renderAssistantWorkspace(false);
       return;
     }
+    if (assistantModel.taskKind !== "DRAFT" && assistantModel.scope === "REHEARSAL" && !assistantModel.selectedSessionID) {
+      assistantModel.message = assistantText("assistant.rehearsal_needs_simulation");
+      assistantModel.messageKind = "warn";
+      await renderAssistantWorkspace(false);
+      return;
+    }
     const session = assistantSelectedSession();
+    const selectedSessionType = String(session?.session_type || session?.type || "").toUpperCase();
+    if (assistantModel.taskKind !== "DRAFT" && assistantModel.scope === "REHEARSAL" && selectedSessionType !== "SIMULATION") {
+      assistantModel.message = assistantText("assistant.rehearsal_needs_simulation");
+      assistantModel.messageKind = "warn";
+      await renderAssistantWorkspace(false);
+      return;
+    }
     assistantModel.message = assistantText("assistant.working");
     assistantModel.messageKind = "";
     assistantModel.response = null;
