@@ -1,0 +1,5 @@
+StageCore Official ADDON Payload
+extension_id=stagecore.tablet-controller
+version=0.1.0
+delivery=compiled-in
+runtime=none
