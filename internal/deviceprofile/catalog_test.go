@@ -14,7 +14,7 @@ func TestBuiltinCatalogMaterializesGenericOSCWithoutRawJSONInput(t *testing.T) {
 		t.Fatalf("catalog schema=%d want=%d", catalog.SchemaVersion(), CatalogSchemaVersion)
 	}
 	profiles := catalog.List()
-	if len(profiles) != 1 || profiles[0].ID != "stagecore.generic.osc-udp" {
+	if len(profiles) < 2 {
 		t.Fatalf("profiles=%#v", profiles)
 	}
 	profile, err := catalog.Get("stagecore.generic.osc-udp")
@@ -23,6 +23,9 @@ func TestBuiltinCatalogMaterializesGenericOSCWithoutRawJSONInput(t *testing.T) {
 	}
 	if profile.Source != SourceOfficial || !strings.Contains(profile.Name.ArIQ, "OSC") {
 		t.Fatalf("unexpected built-in profile=%#v", profile)
+	}
+	if _, err := catalog.Get("stagecore.tablet-player"); err != nil {
+		t.Fatalf("official tablet profile missing from built-in catalog: %v", err)
 	}
 
 	materialized, err := catalog.Materialize(profile.ID, map[string]any{
@@ -60,10 +63,10 @@ func TestMaterializeAppliesTypedDefaultAndRejectsUnknownOrInvalidFields(t *testi
 	}
 
 	for name, values := range map[string]map[string]any{
-		"unknown": {"host": "10.0.0.2", "surprise": true},
-		"bad host": {"host": "https://not-a-host/path"},
-		"low port": {"host": "10.0.0.2", "port": 0},
-		"high port": {"host": "10.0.0.2", "port": 70000},
+		"unknown":         {"host": "10.0.0.2", "surprise": true},
+		"bad host":        {"host": "https://not-a-host/path"},
+		"low port":        {"host": "10.0.0.2", "port": 0},
+		"high port":       {"host": "10.0.0.2", "port": 70000},
 		"fractional port": {"host": "10.0.0.2", "port": 9000.5},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -149,7 +152,7 @@ func TestNewCatalogRejectsUnsafeOrIncompleteProfiles(t *testing.T) {
 	secretDefault.ConnectionFields = []ConnectionField{{
 		Key: "password", Type: FieldSecret, Required: true,
 		Label: LocalizedText{EN: "Password", ArIQ: "كلمة المرور"},
-		Help: LocalizedText{EN: "Device password", ArIQ: "كلمة مرور الجهاز"},
+		Help:  LocalizedText{EN: "Device password", ArIQ: "كلمة مرور الجهاز"},
 		DefaultValue: json.RawMessage(`"secret"`),
 	}}
 	cases["secret default"] = secretDefault
@@ -193,12 +196,12 @@ func TestCatalogReturnsDefensiveCopies(t *testing.T) {
 
 func testProfile(id string, hints []DiscoveryHint) Profile {
 	return Profile{
-		ID:      id,
-		Version: "1.0.0",
-		Source:  SourceOfficial,
-		Kind:    KindDevice,
-		Name:    LocalizedText{EN: "Test device", ArIQ: "جهاز اختبار"},
-		Summary: LocalizedText{EN: "Test profile", ArIQ: "ملف تعريف للاختبار"},
+		ID:             id,
+		Version:        "1.0.0",
+		Source:         SourceOfficial,
+		Kind:           KindDevice,
+		Name:           LocalizedText{EN: "Test device", ArIQ: "جهاز اختبار"},
+		Summary:        LocalizedText{EN: "Test profile", ArIQ: "ملف تعريف للاختبار"},
 		DiscoveryHints: hints,
 	}
 }

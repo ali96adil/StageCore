@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.tablet-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "integration": "HUB",
+  "workspace": "tablet-controller",
+  "transport": "STAGE_DEVICE_V1",
+  "playback_authority": "CUE_ENGINE",
+  "runtime_process": false
+}

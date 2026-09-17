@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.tablet-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "source": "OFFICIAL",
+  "name": {
+    "en": "Tablet Controller",
+    "ar-IQ": "التحكم بالتابلتات"
+  },
+  "summary": {
+    "en": "Graphical StageCore experience for authenticated Android tablet players, media cues, readiness and groups.",
+    "ar-IQ": "واجهة رسومية لإدارة تابلتات العرض الموثقة والكيوات والجاهزية والمجاميع من StageCore."
+  },
+  "compatibility": {
+    "api_min": 1,
+    "api_max": 1,
+    "platforms": ["linux"],
+    "architectures": ["arm64", "amd64"]
+  },
+  "capabilities": [
+    "tablet.controller.workspace",
+    "tablet.controller.device-profile",
+    "tablet.controller.cue-actions",
+    "tablet.controller.health"
+  ]
+}
