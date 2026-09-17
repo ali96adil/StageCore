@@ -1,0 +1,44 @@
+.assistant-head { align-items: center; }
+.assistant-provider-state { margin-bottom: 14px; }
+.assistant-task-card { margin-bottom: 14px; }
+.assistant-task-form { display: grid; gap: 14px; margin-top: 14px; }
+.assistant-task-authority { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 4px; align-content: center; }
+.assistant-task-authority .label { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; }
+.assistant-scope-grid { margin-top: 2px; }
+.assistant-results { display: grid; gap: 14px; }
+.assistant-answer-card { border-inline-start: 3px solid var(--accent); }
+.assistant-answer { margin: 8px 0 0; white-space: pre-wrap; line-height: 1.6; }
+.assistant-context-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.assistant-result-card { min-width: 0; }
+.assistant-result-card h2 { margin-bottom: 12px; }
+.assistant-text-list { margin: 0; padding-inline-start: 20px; display: grid; gap: 8px; }
+.assistant-evidence-grid { display: grid; gap: 8px; }
+.assistant-evidence-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; overflow-wrap: anywhere; }
+.assistant-proposal-card { display: grid; gap: 14px; }
+.assistant-operation-list { display: grid; gap: 12px; }
+.assistant-operation-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 12px; background: #0f151d; }
+.assistant-operation-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.assistant-operation-head h3 { margin: 0; }
+.assistant-operation-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--muted); font-size: .82rem; }
+.assistant-operation-details { display: grid; gap: 10px; }
+.assistant-structured { margin: 0; display: grid; gap: 7px; }
+.assistant-structured > div { display: grid; grid-template-columns: minmax(110px, .34fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.assistant-structured dt { color: var(--muted); font-size: .74rem; }
+.assistant-structured dd { margin: 0; overflow-wrap: anywhere; }
+.assistant-structured-list { margin: 0; padding-inline-start: 20px; display: grid; gap: 6px; }
+.assistant-proposal-actions { margin-top: 2px; }
+
+html[dir="rtl"] .assistant-operation-card,
+html[dir="rtl"] .assistant-result-card,
+html[dir="rtl"] .assistant-task-card { text-align: right; }
+
+@media (max-width: 980px) {
+  .assistant-context-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .assistant-operation-head { flex-direction: column; }
+  .assistant-structured > div { grid-template-columns: 1fr; gap: 3px; }
+  .assistant-proposal-actions { align-items: stretch; flex-direction: column; }
+  .assistant-proposal-actions .button { width: 100%; }
+}

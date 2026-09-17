@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/assistant"
 	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
@@ -16,13 +17,14 @@ import (
 )
 
 type Server struct {
-	mux              *http.ServeMux
-	companionAuth    *companionauth.Service
-	companionRuntime *companionchannel.RuntimeChannel
-	vault            *stagevault.Vault
-	software         *software.Repository
-	bulk             *bulk.Manager
-	storageHealth    *storagehealth.Monitor
+	mux                *http.ServeMux
+	companionAuth      *companionauth.Service
+	companionRuntime   *companionchannel.RuntimeChannel
+	vault              *stagevault.Vault
+	software           *software.Repository
+	bulk               *bulk.Manager
+	storageHealth      *storagehealth.Monitor
+	assistantWorkspace *assistant.WorkspaceService
 }
 
 type Option func(*Server)
@@ -49,6 +51,13 @@ func WithBulkManager(manager *bulk.Manager) Option {
 
 func WithStorageHealth(monitor *storagehealth.Monitor) Option {
 	return func(s *Server) { s.storageHealth = monitor }
+}
+
+// WithAssistantWorkspace installs an optional advisory Assistant service. A nil
+// service is the normal offline state: the Operator and all non-Assistant paths
+// remain fully functional, while Assistant task endpoints fail closed.
+func WithAssistantWorkspace(service *assistant.WorkspaceService) Option {
+	return func(s *Server) { s.assistantWorkspace = service }
 }
 
 func New(options ...Option) *Server {
@@ -106,16 +115,16 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 type pairingRequestBody struct {
-	CompanionID         string   `json:"companion_id"`
-	DisplayName         string   `json:"display_name"`
-	Hostname            string   `json:"hostname"`
-	Platform            string   `json:"platform"`
-	Architecture        string   `json:"architecture"`
-	Version             string   `json:"version"`
-	Capabilities        []string `json:"capabilities"`
-	PublicKeyAlgorithm  string   `json:"public_key_algorithm"`
-	PublicKeyBase64     string   `json:"public_key_base64"`
-	ClientNonceBase64   string   `json:"client_nonce_base64"`
+	CompanionID        string   `json:"companion_id"`
+	DisplayName        string   `json:"display_name"`
+	Hostname           string   `json:"hostname"`
+	Platform           string   `json:"platform"`
+	Architecture       string   `json:"architecture"`
+	Version            string   `json:"version"`
+	Capabilities       []string `json:"capabilities"`
+	PublicKeyAlgorithm string   `json:"public_key_algorithm"`
+	PublicKeyBase64    string   `json:"public_key_base64"`
+	ClientNonceBase64  string   `json:"client_nonce_base64"`
 }
 
 type pairingStatusBody struct {
