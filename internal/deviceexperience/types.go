@@ -254,3 +254,13 @@ func CommandTypeForCapability(capability string) string {
 	}
 	return ""
 }
+
+func CommandTypeForCueCapability(capability string) string {
+	capability = strings.TrimSpace(capability)
+	switch capability {
+	case lightingnode.CapabilityStateRead, lightingnode.CapabilityIdentify, lightingnode.CapabilityConfigRead, lightingnode.CapabilityConfigApply:
+		return ""
+	default:
+		return CommandTypeForCapability(capability)
+	}
+}
