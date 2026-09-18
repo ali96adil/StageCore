@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
 
 func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.Time) (json.RawMessage, error) {
@@ -15,6 +17,13 @@ func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.T
 	}
 
 	switch strings.TrimSpace(commandType) {
+	case lightingnode.CommandChannelsSet, lightingnode.CommandChannelsFade, lightingnode.CommandBlackout, lightingnode.CommandStateRead, lightingnode.CommandIdentify, lightingnode.CommandConfigRead, lightingnode.CommandConfigApply:
+		canonical, err := lightingnode.CanonicalCommandPayload(commandType, payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidState, err)
+		}
+		return canonical, nil
+
 	case "DISPLAY_MESSAGE":
 		message, _ := object["message"].(string)
 		message = strings.TrimSpace(message)
