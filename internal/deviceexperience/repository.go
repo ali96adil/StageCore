@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/contracts"
@@ -14,9 +15,10 @@ type EventRecorder interface {
 }
 
 type Repository struct {
-	db     *sql.DB
-	now    func() time.Time
-	events EventRecorder
+	db              *sql.DB
+	now             func() time.Time
+	events          EventRecorder
+	commandResultMu sync.RWMutex
 }
 
 type Option func(*Repository)

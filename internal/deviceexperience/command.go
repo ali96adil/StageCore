@@ -125,6 +125,13 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 	if commandID == "" || !terminalCommandStatus(status) {
 		return DeviceCommand{}, ErrInvalidState
 	}
+
+	// A terminal command must not become observable to the cue forwarder before
+	// its canonical flight-recorder event is durable. Otherwise the cue engine
+	// can emit action.completed first and produce a causally inverted event log.
+	r.commandResultMu.Lock()
+	defer r.commandResultMu.Unlock()
+
 	now := r.now().UTC()
 	result = normalizeJSON(result, `{}`)
 	res, err := r.db.ExecContext(ctx, `
@@ -140,7 +147,7 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 		return DeviceCommand{}, err
 	}
 	if rows == 0 {
-		existing, getErr := r.GetCommand(ctx, commandID)
+		existing, getErr := r.getCommandUnlocked(ctx, commandID)
 		if getErr != nil {
 			return DeviceCommand{}, getErr
 		}
@@ -149,12 +156,20 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 		}
 		return DeviceCommand{}, ErrInvalidState
 	}
-	completed, err := r.GetCommand(ctx, commandID)
+	completed, err := r.getCommandUnlocked(ctx, commandID)
 	if err != nil {
 		return DeviceCommand{}, err
 	}
 	if err := r.recordCommandEvent(ctx, completed, commandResultEventType(status)); err != nil {
-		return completed, fmt.Errorf("record stage device command result event: %w", err)
+		rollbackCtx := context.WithoutCancel(ctx)
+		if _, rollbackErr := r.db.ExecContext(rollbackCtx, `
+			UPDATE stage_device_commands
+			SET status = 'ACCEPTED', result_json = NULL, completed_at_us = NULL
+			WHERE command_id = ? AND status = ? AND completed_at_us = ?
+		`, commandID, status, now.UnixMicro()); rollbackErr != nil {
+			return completed, fmt.Errorf("record stage device command result event: %w; rollback terminal command: %v", err, rollbackErr)
+		}
+		return DeviceCommand{}, fmt.Errorf("record stage device command result event: %w", err)
 	}
 	if status == contracts.CommandCompleted {
 		if err := r.applyCompletedDisplayCommand(ctx, completed); err != nil {
@@ -165,6 +180,12 @@ func (r *Repository) CompleteCommand(ctx context.Context, commandID string, stat
 }
 
 func (r *Repository) GetCommand(ctx context.Context, commandID string) (DeviceCommand, error) {
+	r.commandResultMu.RLock()
+	defer r.commandResultMu.RUnlock()
+	return r.getCommandUnlocked(ctx, commandID)
+}
+
+func (r *Repository) getCommandUnlocked(ctx context.Context, commandID string) (DeviceCommand, error) {
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
@@ -174,6 +195,8 @@ func (r *Repository) GetCommand(ctx context.Context, commandID string) (DeviceCo
 }
 
 func (r *Repository) getCommandByIdempotency(ctx context.Context, deviceID, key string) (DeviceCommand, error) {
+	r.commandResultMu.RLock()
+	defer r.commandResultMu.RUnlock()
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
