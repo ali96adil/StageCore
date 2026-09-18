@@ -1,6 +1,6 @@
 # ESP32 DMX Lighting Node Integration
 
-Status: Slice 2 profile + revision configuration + Runtime Snapshot binding
+Status: Slice 3 production Stage Device command/result path
 
 Tracker: #147
 
