@@ -62,6 +62,9 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if err != nil {
 		return DeviceCommand{}, false, err
 	}
+	if err := r.validateLightingCommandAuthority(ctx, input, device, payload); err != nil {
+		return DeviceCommand{}, false, err
+	}
 	commandID, err := stageid.New()
 	if err != nil {
 		return DeviceCommand{}, false, err
