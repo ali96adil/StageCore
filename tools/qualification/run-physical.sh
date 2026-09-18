@@ -16,12 +16,9 @@ for arg in "$@"; do
 Usage: tools/qualification/run-physical.sh [--full|--resume] [--non-interactive]
 
 Environment:
-  STAGECORE_QUALIFICATION_ENV       Optional local qualification config.
-                                    Default: ~/.config/stagecore/qualification.env
-  STAGECORE_QUALIFICATION_RUN_ROOT  Optional evidence root.
-                                    Default: qualification/runs
-  STAGECORE_QUALIFICATION_STATE     Optional durable campaign state path.
-                                    Default: ~/.local/state/stagecore/qualification-campaign.json
+  STAGECORE_QUALIFICATION_ENV       Local qualification config.
+  STAGECORE_QUALIFICATION_RUN_ROOT  Evidence root (default qualification/runs).
+  STAGECORE_QUALIFICATION_STATE     Durable campaign state path.
 EOF
       exit 0
       ;;
@@ -41,6 +38,7 @@ RUN_ROOT="${STAGECORE_QUALIFICATION_RUN_ROOT:-qualification/runs}"
 STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/stagecore"
 STATE_FILE="${STAGECORE_QUALIFICATION_STATE:-$STATE_ROOT/qualification-campaign.json}"
 MANIFEST="tools/qualification/manifest.json"
+CREDENTIAL_FILE="${STAGECORE_QUALIFICATION_OPERATOR_CREDENTIAL:-$HOME/.config/stagecore/qualification-operator.json}"
 CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 
 mkdir -p "$(dirname "$STATE_FILE")"
@@ -49,7 +47,6 @@ python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE" 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$RUN_ROOT/$STAMP"
 mkdir -p "$RUN_DIR/evidence"
-
 RESULTS="$RUN_DIR/results.tsv"
 REPORT="$RUN_DIR/report.md"
 : >"$RESULTS"
@@ -67,36 +64,30 @@ milestone_status() {
   python3 tools/qualification/qualification-milestone.py get --state "$STATE_FILE" --gate "$1" --key "$2"
 }
 
-record_milestone() {
-  local gate="$1" key="$2" status="$3" evidence="$4" note="$5"
-  python3 tools/qualification/qualification-milestone.py record \
-    --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --key "$key" --status "$status" \
-    --actor runner --evidence "$evidence" --note "$note" >/dev/null
-  record "$gate::$key" "$status" "$note; evidence=$evidence"
-}
-
-should_run_milestone() {
-  local gate="$1" key="$2"
-  if [[ "$MODE" != "resume" ]]; then
-    return 0
-  fi
-  [[ "$(milestone_status "$gate" "$key")" != "PASS" ]]
-}
-
 record_gate() {
   local gate="$1" status="$2" evidence="$3" note="$4"
   python3 tools/qualification/qualification-state.py record     --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --status "$status"     --actor runner --evidence "$evidence" --note "$note" >/dev/null
   record "$gate" "$status" "$note; evidence=$evidence"
 }
 
+record_milestone() {
+  local gate="$1" key="$2" status="$3" evidence="$4" note="$5"
+  python3 tools/qualification/qualification-milestone.py record     --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --key "$key" --status "$status"     --actor runner --evidence "$evidence" --note "$note" >/dev/null
+  record "$gate::$key" "$status" "$note; evidence=$evidence"
+}
+
 should_run_gate() {
   local gate="$1"
-  if [[ "$MODE" != "resume" ]]; then
-    return 0
-  fi
+  if [[ "$MODE" != "resume" ]]; then return 0; fi
   local status
   status="$(gate_status "$gate")"
   [[ "$status" != "PASS" && "$status" != "N/A" ]]
+}
+
+should_run_milestone() {
+  local gate="$1" key="$2"
+  if [[ "$MODE" != "resume" ]]; then return 0; fi
+  [[ "$(milestone_status "$gate" "$key")" != "PASS" ]]
 }
 
 check_cmd() {
@@ -116,18 +107,11 @@ run_gate_probe() {
     record "$gate" "$(gate_status "$gate")" "resume preserved prior terminal result"
     return
   fi
-
   local evidence="$RUN_DIR/evidence/$gate.log"
   local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --check "$check" --max-age-seconds 20)
-  if [[ -n "${STAGECORE_PROJECT_ID:-}" ]]; then
-    args+=(--project-id "$STAGECORE_PROJECT_ID")
-  fi
-  if [[ -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
-    args+=(--runtime-snapshot-id "$STAGECORE_RUNTIME_SNAPSHOT_ID")
-  fi
-  if [[ -n "$device_id" ]]; then
-    args+=(--device-id "$device_id")
-  fi
+  [[ -n "${STAGECORE_PROJECT_ID:-}" ]] && args+=(--project-id "$STAGECORE_PROJECT_ID")
+  [[ -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]] && args+=(--runtime-snapshot-id "$STAGECORE_RUNTIME_SNAPSHOT_ID")
+  [[ -n "$device_id" ]] && args+=(--device-id "$device_id")
 
   set +e
   python3 tools/qualification/assert-device-probe.py "${args[@]}" >"$evidence" 2>&1
@@ -140,13 +124,73 @@ run_gate_probe() {
   esac
 }
 
+resolve_target() {
+  local kind="$1" configured_device="$2"
+  local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind")
+  [[ -n "${STAGECORE_PROJECT_ID:-}" ]] && args+=(--project-id "$STAGECORE_PROJECT_ID")
+  [[ -n "$configured_device" ]] && args+=(--device-id "$configured_device")
+  python3 tools/qualification/resolve-device-target.py "${args[@]}"
+}
+
+validate_evidence() {
+  local evidence="$1" command_type="$2" device_id="$3"
+  python3 tools/qualification/validate-command-evidence.py     --input "$evidence" --command "$command_type" --device-id "$device_id"     >"$evidence.validation" 2>&1
+}
+
+emit_request() {
+  local credential_file="$1" project_id="$2" device_id="$3" command_type="$4" payload_json="$5"
+  python3 - "$credential_file" "$project_id" "$device_id" "$command_type" "$payload_json" <<'PY'
+import json, sys
+credential=json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({
+    "username": credential.get("username", ""),
+    "password": credential.get("password", ""),
+    "project_id": sys.argv[2],
+    "device_id": sys.argv[3],
+    "command_type": sys.argv[4],
+    "payload": json.loads(sys.argv[5]),
+}, separators=(",", ":")))
+PY
+}
+
+invoke_command() {
+  local helper_op="$1" gate="$2" key="$3" command_type="$4" device_id="$5" project_id="$6" payload_json="$7"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior milestone"
+    return
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
+    return
+  fi
+
+  set +e
+  emit_request "$CREDENTIAL_FILE" "$project_id" "$device_id" "$command_type" "$payload_json" |     ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper "$helper_op"       >"$evidence" 2>"$evidence.stderr"
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 ]] && ! validate_evidence "$evidence" "$command_type" "$device_id"; then
+    rc=1
+  fi
+  case "$rc" in
+    0)
+      if [[ "$helper_op" == "physical-command" ]]; then
+        record_milestone "$gate" "$key" PASS "$evidence" "$command_type completed; physical observation still required"
+      else
+        record_milestone "$gate" "$key" PASS "$evidence" "$command_type completed with validated canonical result evidence"
+      fi
+      ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "$command_type did not reach a terminal result within the bounded wait" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "$command_type command or evidence validation failed" ;;
+  esac
+}
+
 check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
 check_cmd "manifest.validation" python3 tools/qualification/validate-manifest.py --summary || true
 cp "$MANIFEST" "$RUN_DIR/evidence/qualification-manifest.json"
-
-CREDENTIAL_FILE="${STAGECORE_QUALIFICATION_OPERATOR_CREDENTIAL:-$HOME/.config/stagecore/qualification-operator.json}"
 
 PI_HOST="${STAGECORE_PI_HOST:-}"
 PI_USER="${STAGECORE_PI_USER:-}"
@@ -167,7 +211,7 @@ else
   check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
   check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
   check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
-  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe     >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe       >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
     PROBE_AVAILABLE=1
     record "devices.probe" PASS "see evidence/devices.json"
   else
@@ -176,9 +220,9 @@ else
 fi
 
 if [[ "$PROBE_AVAILABLE" -eq 1 ]]; then
-  run_gate_probe "Q-TAB-04" tablet "${STAGECORE_TABLET_DEVICE_ID:-}" readiness
-  run_gate_probe "Q-TAB-05" tablet "${STAGECORE_TABLET_DEVICE_ID:-}" scope
-  run_gate_probe "Q-DMX-20" lighting "${STAGECORE_LIGHTING_NODE_ID:-}" observation
+  run_gate_probe Q-TAB-04 tablet "${STAGECORE_TABLET_DEVICE_ID:-}" readiness
+  run_gate_probe Q-TAB-05 tablet "${STAGECORE_TABLET_DEVICE_ID:-}" scope
+  run_gate_probe Q-DMX-20 lighting "${STAGECORE_LIGHTING_NODE_ID:-}" observation
 else
   for gate in Q-TAB-04 Q-TAB-05 Q-DMX-20; do
     if should_run_gate "$gate"; then
@@ -189,225 +233,96 @@ else
   done
 fi
 
-
-resolve_target() {
-  local kind="$1" configured_device="$2"
-  local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind")
-  if [[ -n "${STAGECORE_PROJECT_ID:-}" ]]; then
-    args+=(--project-id "$STAGECORE_PROJECT_ID")
-  fi
-  if [[ -n "$configured_device" ]]; then
-    args+=(--device-id "$configured_device")
-  fi
-  python3 tools/qualification/resolve-device-target.py "${args[@]}"
-}
-
-invoke_safe_command() {
-  local gate="$1" key="$2" command_type="$3" device_id="$4" project_id="$5" media_number="$6"
-  if ! should_run_milestone "$gate" "$key"; then
-    record "$gate::$key" PASS "resume preserved prior milestone"
-    return
-  fi
-  local evidence="$RUN_DIR/evidence/$gate.$key.json"
-  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
-    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
-    return
-  fi
-  set +e
-  python3 - "$CREDENTIAL_FILE" "$project_id" "$device_id" "$command_type" "$media_number" <<'PY' | \
-    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper safe-command >"$evidence" 2>"$evidence.stderr"
-import json, sys
-credential=json.load(open(sys.argv[1], encoding="utf-8"))
-project_id, device_id, command_type, media_number = sys.argv[2:6]
-payload={}
-if command_type == "TABLET_PREPARE":
-    payload={"media_number": int(media_number)}
-print(json.dumps({
-    "username": credential.get("username", ""),
-    "password": credential.get("password", ""),
-    "project_id": project_id,
-    "device_id": device_id,
-    "command_type": command_type,
-    "payload": payload,
-}, separators=(",", ":")))
-PY
-  local rc=$?
-  set -e
-  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-command-evidence.py --input "$evidence" --command "$command_type" --device-id "$device_id" >"$evidence.validation" 2>&1; then
-    rc=1
-  fi
-  case "$rc" in
-    0) record_milestone "$gate" "$key" PASS "$evidence" "$command_type completed through canonical Stage Device result path and validated evidence" ;;
-    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "$command_type did not reach a terminal result within the bounded wait" ;;
-    *) record_milestone "$gate" "$key" FAIL "$evidence" "$command_type qualification command failed" ;;
-  esac
-}
-
-if [[ "$PROBE_AVAILABLE" -eq 1 && -n "${SSH_TARGET:-}" ]]; then
+tablet_target=""
+lighting_target=""
+tablet_target_rc=3
+lighting_target_rc=3
+if [[ "$PROBE_AVAILABLE" -eq 1 ]]; then
   set +e
   tablet_target="$(resolve_target tablet "${STAGECORE_TABLET_DEVICE_ID:-}")"
   tablet_target_rc=$?
   lighting_target="$(resolve_target lighting "${STAGECORE_LIGHTING_NODE_ID:-}")"
   lighting_target_rc=$?
   set -e
+fi
 
-  if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" ]]; then
-    IFS=$'\t' read -r tablet_device tablet_project <<<"$tablet_target"
-    if [[ "${STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER:-}" =~ ^[1-9][0-9]*$ ]]; then
-      invoke_safe_command Q-TAB-06 prepare.command TABLET_PREPARE "$tablet_device" "$tablet_project" "$STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER"
-    else
-      if should_run_milestone Q-TAB-06 prepare.command; then
-        record_milestone Q-TAB-06 prepare.command BLOCKED "$RUN_DIR/evidence/Q-TAB-06.prepare.command.json" "qualification media number is not configured"
-      else
-        record "Q-TAB-06::prepare.command" PASS "resume preserved prior milestone"
-      fi
-    fi
+if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" ]]; then
+  IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
+  media="${STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER:-}"
+  if [[ "$media" =~ ^[1-9][0-9]*$ ]]; then
+    invoke_command safe-command Q-TAB-06 prepare.command TABLET_PREPARE "$tablet_device" "$tablet_project" "{\"media_number\":$media}"
   else
     if should_run_milestone Q-TAB-06 prepare.command; then
-      record_milestone Q-TAB-06 prepare.command BLOCKED "$RUN_DIR/evidence/Q-TAB-06.prepare.command.json" "Tablet readiness/scope target is not ready for PREPARE"
+      record_milestone Q-TAB-06 prepare.command BLOCKED "$RUN_DIR/evidence/Q-TAB-06.prepare.command.json" "qualification media number is not configured"
     else
       record "Q-TAB-06::prepare.command" PASS "resume preserved prior milestone"
     fi
   fi
-
-  if [[ "$lighting_target_rc" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
-    IFS=$'\t' read -r lighting_device lighting_project <<<"$lighting_target"
-    invoke_safe_command Q-DMX-20 state_read.command LIGHTING_STATE_READ "$lighting_device" "$lighting_project" ""
-    invoke_safe_command Q-DMX-20 config_read.command LIGHTING_CONFIG_READ "$lighting_device" "$lighting_project" ""
-  else
-    for key in state_read.command config_read.command; do
-      if should_run_milestone Q-DMX-20 "$key"; then
-        record_milestone Q-DMX-20 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-20.$key.json" "Lighting target is not ready for bounded read command"
-      else
-        record "Q-DMX-20::$key" PASS "resume preserved prior milestone"
-      fi
-    done
-  fi
+elif should_run_milestone Q-TAB-06 prepare.command; then
+  record_milestone Q-TAB-06 prepare.command BLOCKED "$RUN_DIR/evidence/Q-TAB-06.prepare.command.json" "Tablet readiness/scope target is not ready for PREPARE"
+else
+  record "Q-TAB-06::prepare.command" PASS "resume preserved prior milestone"
 fi
 
-
-invoke_physical_command() {
-  local gate="$1" key="$2" command_type="$3" device_id="$4" project_id="$5" payload_json="$6"
-  if ! should_run_milestone "$gate" "$key"; then
-    record "$gate::$key" PASS "resume preserved prior milestone"
-    return
-  fi
-  local evidence="$RUN_DIR/evidence/$gate.$key.json"
-  if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" != "1" ]]; then
-    record_milestone "$gate" "$key" BLOCKED "$evidence" "physical actions are not armed"
-    return
-  fi
-  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
-    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
-    return
-  fi
-  set +e
-  python3 - "$CREDENTIAL_FILE" "$project_id" "$device_id" "$command_type" "$payload_json" <<'PY' | \
-    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper physical-command >"$evidence" 2>"$evidence.stderr"
-import json, sys
-credential=json.load(open(sys.argv[1], encoding="utf-8"))
-print(json.dumps({
-    "username": credential.get("username", ""),
-    "password": credential.get("password", ""),
-    "project_id": sys.argv[2],
-    "device_id": sys.argv[3],
-    "command_type": sys.argv[4],
-    "payload": json.loads(sys.argv[5]),
-}, separators=(",", ":")))
-PY
-  local rc=$?
-  set -e
-  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-command-evidence.py --input "$evidence" --command "$command_type" --device-id "$device_id" >"$evidence.validation" 2>&1; then
-    rc=1
-  fi
-  case "$rc" in
-    0) record_milestone "$gate" "$key" PASS "$evidence" "$command_type completed; physical observation still required" ;;
-    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "$command_type did not reach a terminal result within the bounded wait" ;;
-    *) record_milestone "$gate" "$key" FAIL "$evidence" "$command_type qualification command/evidence failed" ;;
-  esac
-}
-
-if [[ "$PROBE_AVAILABLE" -eq 1 && -n "${SSH_TARGET:-}" && "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
-  if [[ "${tablet_target_rc:-3}" -eq 0 && "$(milestone_status Q-TAB-06 prepare.command)" == "PASS" ]]; then
-    IFS=
-{
-  echo "# StageCore Physical Qualification Report"
-  echo
-  printf -- '- Run: `%s`\n' "$STAMP"
-  printf -- '- Mode: `%s`\n' "$MODE"
-  printf -- '- Non-interactive: `%s`\n' "$NON_INTERACTIVE"
-  printf -- '- Repository HEAD: `%s`\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  printf -- '- Campaign state: `%s`\n' "$STATE_FILE"
-  echo
-  echo "| Check | Result | Evidence |"
-  echo "| --- | --- | --- |"
-  while IFS=$'\t' read -r id status detail; do
-    printf '| %s | **%s** | %s |\n' "$id" "$status" "$detail"
-  done <"$RESULTS"
-} >"$REPORT"
-
-cat "$REPORT"
-
-if grep -q $'\tFAIL\t' "$RESULTS"; then
-  exit 1
+if [[ "$lighting_target_rc" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
+  IFS="$(printf '\t')" read -r lighting_device lighting_project <<<"$lighting_target"
+  invoke_command safe-command Q-DMX-20 state_read.command LIGHTING_STATE_READ "$lighting_device" "$lighting_project" '{}'
+  invoke_command safe-command Q-DMX-20 config_read.command LIGHTING_CONFIG_READ "$lighting_device" "$lighting_project" '{}'
+else
+  for key in state_read.command config_read.command; do
+    if should_run_milestone Q-DMX-20 "$key"; then
+      record_milestone Q-DMX-20 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-20.$key.json" "Lighting target is not ready for bounded read command"
+    else
+      record "Q-DMX-20::$key" PASS "resume preserved prior milestone"
+    fi
+  done
 fi
-if grep -q $'\tBLOCKED\t' "$RESULTS"; then
-  exit 3
-fi
-\t' read -r tablet_device tablet_project <<<"$tablet_target"
+
+if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
+  hold="${STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS:-2}"
+  [[ "$hold" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "invalid STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS" >&2; exit 2; }
+
+  if [[ "$tablet_target_rc" -eq 0 && "$(milestone_status Q-TAB-06 prepare.command)" == "PASS" ]]; then
+    IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
     media="${STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER:-}"
     if [[ "$media" =~ ^[1-9][0-9]*$ ]]; then
-      invoke_physical_command Q-TAB-06 play.command TABLET_PLAY "$tablet_device" "$tablet_project" "{\"media_number\":$media}"
+      invoke_command physical-command Q-TAB-06 play.command TABLET_PLAY "$tablet_device" "$tablet_project" "{\"media_number\":$media}"
       if [[ "$(milestone_status Q-TAB-06 play.command)" == "PASS" ]]; then
-        invoke_physical_command Q-TAB-07 pause.command TABLET_PAUSE "$tablet_device" "$tablet_project" '{}'
-        invoke_physical_command Q-TAB-07 stop.command TABLET_STOP "$tablet_device" "$tablet_project" '{}'
+        sleep "$hold"
+        invoke_command physical-command Q-TAB-07 pause.command TABLET_PAUSE "$tablet_device" "$tablet_project" '{}'
+        sleep "$hold"
+        invoke_command physical-command Q-TAB-07 stop.command TABLET_STOP "$tablet_device" "$tablet_project" '{}'
       fi
     fi
   fi
 
-  if [[ "${lighting_target_rc:-3}" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
-    IFS=
-{
-  echo "# StageCore Physical Qualification Report"
-  echo
-  printf -- '- Run: `%s`\n' "$STAMP"
-  printf -- '- Mode: `%s`\n' "$MODE"
-  printf -- '- Non-interactive: `%s`\n' "$NON_INTERACTIVE"
-  printf -- '- Repository HEAD: `%s`\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  printf -- '- Campaign state: `%s`\n' "$STATE_FILE"
-  echo
-  echo "| Check | Result | Evidence |"
-  echo "| --- | --- | --- |"
-  while IFS=$'\t' read -r id status detail; do
-    printf '| %s | **%s** | %s |\n' "$id" "$status" "$detail"
-  done <"$RESULTS"
-} >"$REPORT"
-
-cat "$REPORT"
-
-if grep -q $'\tFAIL\t' "$RESULTS"; then
-  exit 1
-fi
-if grep -q $'\tBLOCKED\t' "$RESULTS"; then
-  exit 3
-fi
-\t' read -r lighting_device lighting_project <<<"$lighting_target"
+  if [[ "$lighting_target_rc" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
+    IFS="$(printf '\t')" read -r lighting_device lighting_project <<<"$lighting_target"
     channel="${STAGECORE_LIGHTING_QUALIFICATION_CHANNEL_KEY:-}"
     set_level="${STAGECORE_LIGHTING_QUALIFICATION_SET_LEVEL:-}"
     fade_level="${STAGECORE_LIGHTING_QUALIFICATION_FADE_LEVEL:-}"
     fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_FADE_MS:-}"
-    if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)(\.[0-9]+)?$ ]]; then
-      invoke_physical_command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
+    if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
+      invoke_command physical-command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
+      sleep "$hold"
+      invoke_command physical-command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"
+      python3 - "$fade_ms" "$hold" <<'PY'
+import sys, time
+time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
+PY
+      invoke_command physical-command Q-DMX-10 blackout.command LIGHTING_BLACKOUT "$lighting_device" "$lighting_project" '{}'
+    else
+      for spec in "Q-DMX-03 set.command" "Q-DMX-05 fade.command" "Q-DMX-10 blackout.command"; do
+        set -- $spec
+        if should_run_milestone "$1" "$2"; then
+          record_milestone "$1" "$2" BLOCKED "$RUN_DIR/evidence/$1.$2.json" "complete lighting physical-action test values are not configured"
+        fi
+      done
     fi
-    if [[ -n "$channel" && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)(\.[0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
-      invoke_physical_command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"
-    fi
-    invoke_physical_command Q-DMX-10 blackout.command LIGHTING_BLACKOUT "$lighting_device" "$lighting_project" '{}'
   fi
 fi
 
 python3 tools/qualification/physical-confirmations.py pending --state "$STATE_FILE" >"$RUN_DIR/evidence/pending-physical.txt"
-
 cp "$STATE_FILE" "$RUN_DIR/evidence/campaign-state.json"
 
 {
@@ -416,21 +331,19 @@ cp "$STATE_FILE" "$RUN_DIR/evidence/campaign-state.json"
   printf -- '- Run: `%s`\n' "$STAMP"
   printf -- '- Mode: `%s`\n' "$MODE"
   printf -- '- Non-interactive: `%s`\n' "$NON_INTERACTIVE"
-  printf -- '- Repository HEAD: `%s`\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  printf -- '- Repository HEAD: `%s`\n' "$CURRENT_STAGECORE_SHA"
   printf -- '- Campaign state: `%s`\n' "$STATE_FILE"
   echo
   echo "| Check | Result | Evidence |"
   echo "| --- | --- | --- |"
-  while IFS=$'\t' read -r id status detail; do
+  while IFS="$(printf '\t')" read -r id status detail; do
     printf '| %s | **%s** | %s |\n' "$id" "$status" "$detail"
   done <"$RESULTS"
+  echo
+  cat "$RUN_DIR/evidence/pending-physical.txt"
 } >"$REPORT"
 
 cat "$REPORT"
 
-if grep -q $'\tFAIL\t' "$RESULTS"; then
-  exit 1
-fi
-if grep -q $'\tBLOCKED\t' "$RESULTS"; then
-  exit 3
-fi
+if grep -q "$(printf '\tFAIL\t')" "$RESULTS"; then exit 1; fi
+if grep -q "$(printf '\tBLOCKED\t')" "$RESULTS"; then exit 3; fi

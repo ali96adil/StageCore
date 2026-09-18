@@ -178,4 +178,4 @@ When all listed observations were physically correct, record them in one operati
 tools/qualification/campaign.sh confirm-pending PASS "all listed tablet and lighting outputs were observed correctly"
 ```
 
-If one or more listed observations were wrong, use `FAIL` and describe what was wrong; affected gates become FAIL while command evidence/history remains preserved.
+If every listed observation is correct, `confirm-pending PASS` records the group in one operation. If one item is wrong, record that gate first with `campaign.sh confirm-one <GATE_ID> FAIL "<what was wrong>"`, then confirm the remaining pending observations. Command evidence/history remains preserved.

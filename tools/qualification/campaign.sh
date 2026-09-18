@@ -14,6 +14,7 @@ Usage:
   tools/qualification/campaign.sh repin <pin> <new-value> <reason> <GATE_ID> [GATE_ID...]
   tools/qualification/campaign.sh pending-physical
   tools/qualification/campaign.sh confirm-pending <PASS|FAIL> <note>
+  tools/qualification/campaign.sh confirm-one <GATE_ID> <PASS|FAIL> <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -41,6 +42,10 @@ case "$cmd" in
   confirm-pending)
     [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
     exec python3 "$ROOT/tools/qualification/physical-confirmations.py" confirm-all --state "$STATE" --status "$2" --note "$3"
+    ;;
+  confirm-one)
+    [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/physical-confirmations.py" confirm-one --state "$STATE" --gate "$2" --status "$3" --note "$4"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }

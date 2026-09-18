@@ -53,7 +53,7 @@ def eligible(state):
         if not gate:
             continue
         if all(milestone_status(gate, key) == "PASS" for key in prereqs):
-            if milestone_status(gate, obs_key) != "PASS":
+            if milestone_status(gate, obs_key) not in {"PASS", "FAIL"}:
                 rows.append((gate_id, obs_key, description))
     return rows
 
@@ -75,6 +75,44 @@ def cmd_pending(args):
         print(f"- {gate}: {desc}")
 
 
+def apply_result(state, rows, status, note):
+    timestamp = now()
+    for gate_id, obs_key, _ in rows:
+        gate = state["gates"][gate_id]
+        milestones = gate.setdefault("milestones", {})
+        previous = milestones.get(obs_key)
+        history = list((previous or {}).get("history", []))
+        if previous:
+            history.append({
+                "status": previous.get("status"),
+                "updated_at": previous.get("updated_at"),
+                "actor": previous.get("actor"),
+                "evidence": previous.get("evidence", []),
+                "note": previous.get("note", ""),
+            })
+        milestones[obs_key] = {
+            "status": status,
+            "updated_at": timestamp,
+            "actor": "manual-physical-confirmation",
+            "evidence": ["physical-observation"],
+            "note": note,
+            "history": history,
+        }
+        gate.setdefault("history", []).append({
+            "status": gate.get("status"),
+            "updated_at": gate.get("updated_at"),
+            "actor": gate.get("actor"),
+            "evidence": gate.get("evidence", []),
+            "note": gate.get("note", ""),
+        })
+        gate["status"] = status
+        gate["updated_at"] = timestamp
+        gate["actor"] = "manual-physical-confirmation"
+        gate["evidence"] = ["physical-observation"]
+        gate["note"] = note
+    state["updated_at"] = timestamp
+
+
 def cmd_confirm(args):
     if not args.note.strip():
         raise SystemExit("--note is required")
@@ -86,57 +124,23 @@ def cmd_confirm(args):
         if not rows:
             print("No eligible pending physical confirmations.")
             return
-        timestamp = now()
-        for gate_id, obs_key, _ in rows:
-            gate = state["gates"][gate_id]
-            milestones = gate.setdefault("milestones", {})
-            previous = milestones.get(obs_key)
-            history = list((previous or {}).get("history", []))
-            if previous:
-                history.append({
-                    "status": previous.get("status"),
-                    "updated_at": previous.get("updated_at"),
-                    "actor": previous.get("actor"),
-                    "evidence": previous.get("evidence", []),
-                    "note": previous.get("note", ""),
-                })
-            milestones[obs_key] = {
-                "status": args.status,
-                "updated_at": timestamp,
-                "actor": "manual-physical-confirmation",
-                "evidence": ["physical-observation"],
-                "note": args.note.strip(),
-                "history": history,
-            }
-            if args.status == "PASS":
-                gate["history"].append({
-                    "status": gate.get("status"),
-                    "updated_at": gate.get("updated_at"),
-                    "actor": gate.get("actor"),
-                    "evidence": gate.get("evidence", []),
-                    "note": gate.get("note", ""),
-                })
-                gate["status"] = "PASS"
-                gate["updated_at"] = timestamp
-                gate["actor"] = "manual-physical-confirmation"
-                gate["evidence"] = ["physical-observation"]
-                gate["note"] = args.note.strip()
-            else:
-                gate["history"].append({
-                    "status": gate.get("status"),
-                    "updated_at": gate.get("updated_at"),
-                    "actor": gate.get("actor"),
-                    "evidence": gate.get("evidence", []),
-                    "note": gate.get("note", ""),
-                })
-                gate["status"] = "FAIL"
-                gate["updated_at"] = timestamp
-                gate["actor"] = "manual-physical-confirmation"
-                gate["evidence"] = ["physical-observation"]
-                gate["note"] = args.note.strip()
-        state["updated_at"] = timestamp
+        apply_result(state, rows, args.status, args.note.strip())
         atomic_write(state_path, state)
     print(f"Recorded {args.status} for {len(rows)} physical confirmation(s).")
+
+
+def cmd_confirm_one(args):
+    if not args.note.strip():
+        raise SystemExit("--note is required")
+    state_path = Path(args.state)
+    with lock_state(state_path):
+        state = json.load(open(state_path, encoding="utf-8"))
+        rows = [row for row in eligible(state) if row[0] == args.gate]
+        if len(rows) != 1:
+            raise SystemExit(f"{args.gate} is not an eligible pending physical confirmation")
+        apply_result(state, rows, args.status, args.note.strip())
+        atomic_write(state_path, state)
+    print(f"Recorded {args.status} for {args.gate}.")
 
 
 def main():
@@ -151,6 +155,12 @@ def main():
     confirm.add_argument("--status", choices=("PASS", "FAIL"), required=True)
     confirm.add_argument("--note", required=True)
     confirm.set_defaults(func=cmd_confirm)
+    one = sub.add_parser("confirm-one")
+    one.add_argument("--state", required=True)
+    one.add_argument("--gate", required=True)
+    one.add_argument("--status", choices=("PASS", "FAIL"), required=True)
+    one.add_argument("--note", required=True)
+    one.set_defaults(func=cmd_confirm_one)
     args = parser.parse_args()
     args.func(args)
 
