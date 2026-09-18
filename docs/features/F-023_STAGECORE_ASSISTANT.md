@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 7 software implementation through Slice E is merged on `main`. Slices A–E provide the bounded Assistant contract, evidence-grounded diagnostics, editable Draft proposals, bilingual/RTL Operator workspace, and rehearsal/simulation assistance with explicit no-live-output authority. Slice F software qualification/freeze is in progress. Physical/product qualification remains deferred under Issue #148.
+Phase 7 software implementation through Slice F2 is merged on `main`. Slices A–E provide the bounded Assistant contract, evidence-grounded diagnostics, editable Draft proposals, bilingual/RTL Operator workspace, and rehearsal/simulation assistance with explicit no-live-output authority. Slice F2 adds deterministic provider-absent fail-closed regression coverage. Software freeze closeout is pending only the tracker-required exact-main CI PASS evidence; GitHub connector visibility has not exposed a run/status for the current candidate SHA. Physical/product qualification remains deferred under Issue #148.
 
 ## Product goal
 
@@ -165,7 +165,9 @@ Slice F is closeout work, not a new Assistant execution feature. The freeze may 
 - required exact-main CI is verified PASS on the final freeze SHA;
 - this document and the Phase 7 tracker identify the exact frozen software SHA truthfully.
 
-Until those gates are satisfied, Phase 7 is not described as software-frozen. Issue #148 remains the separate cumulative physical/product qualification gate.
+Current software candidate: `98592c3be71f586346951c3be933676c2f2e37c6`. Its merged F2 change has exact-head Core CI #1015 PASS, and the provider-absent regression proves Assistant diagnostics fail closed before evidence/runtime collection. The required post-merge exact-main CI result for this candidate is not currently visible through the connected GitHub evidence surface, so that gate remains explicitly pending rather than inferred.
+
+Until the exact-main CI gate is evidenced PASS, Phase 7 is not described as software-frozen. Issue #148 remains the separate cumulative physical/product qualification gate.
 
 ## Qualification boundary
 
