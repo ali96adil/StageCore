@@ -52,7 +52,7 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 		return stageDeviceFailure("STAGE_DEVICE_REQUEST_INVALID", "execution id, Runtime Snapshot id and capability are required")
 	}
 
-	commandType := deviceexperience.CommandTypeForCapability(req.Capability)
+	commandType := deviceexperience.CommandTypeForCueCapability(req.Capability)
 	if commandType == "" {
 		return stageDeviceFailure("STAGE_DEVICE_CAPABILITY_UNAVAILABLE", "capability is not a typed Stage Device command")
 	}
