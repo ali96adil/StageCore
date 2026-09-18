@@ -31,7 +31,16 @@ def load_state(path):
 
 def milestone_status(state, key):
     gate = state.get("gates", {}).get(GATE_ID) or {}
-    return ((gate.get("milestones", {}).get(key) or {}).get("status") or "PENDING")
+    item = (gate.get("milestones", {}).get(key) or {})
+    status = item.get("status") or "PENDING"
+    # Repinning an affected physical/hardware baseline invalidates the parent
+    # gate. Q-DMX-21 must not silently reuse pre-repin electrical milestones.
+    if gate.get("actor") == "repin":
+        gate_updated = str(gate.get("updated_at") or "")
+        milestone_updated = str(item.get("updated_at") or "")
+        if gate_updated and (not milestone_updated or milestone_updated < gate_updated):
+            return "PENDING"
+    return status
 
 
 def gate_status(state):
@@ -55,7 +64,7 @@ def cmd_status(args):
         rows.append({
             "check": alias,
             "milestone": key,
-            "status": item.get("status", "PENDING"),
+            "status": milestone_status(state, key),
             "note": item.get("note", ""),
             "description": description,
         })

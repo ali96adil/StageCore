@@ -60,4 +60,17 @@ locked_rc=$?
 set -e
 [[ "$locked_rc" -eq 3 ]]
 
+python3 "$STATE_TOOL" repin --state "$state" --manifest "$MANIFEST" \
+  --pin hardware_baseline_id --value bench-b --reason "rewired DMX electrical path" \
+  --invalidate Q-DMX-21 >/dev/null
+python3 "$ELECTRICAL_TOOL" status --state "$state" --json >"$tmp/repinned.json"
+python3 - "$tmp/repinned.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "PENDING"
+assert all(row["status"] == "PENDING" for row in data["checks"])
+PY
+ack documented PASS "Re-documented the rewired physical path after hardware baseline change."
+[[ "$(python3 "$STATE_TOOL" get --state "$state" --gate Q-DMX-21)" == "BLOCKED" ]]
+
 echo "qualification Q-DMX-21 electrical-path self-test PASS"

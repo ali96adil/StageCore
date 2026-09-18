@@ -176,7 +176,7 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/electrical-path.py" status --state "$STATE"
     ;;
   q21-ack)
-    [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
+    [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
     exec python3 "$ROOT/tools/qualification/electrical-path.py" ack \
       --state "$STATE" --manifest "$MANIFEST" --check "$2" --status "$3" --note "$4"
     ;;
