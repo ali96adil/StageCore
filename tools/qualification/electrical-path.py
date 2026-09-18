@@ -29,17 +29,28 @@ def load_state(path):
         fail(f"qualification campaign state does not exist: {path}", 66)
 
 
+def latest_invalidation_at(gate):
+    values = [
+        str(item.get("invalidated_at") or "")
+        for item in gate.get("history", [])
+        if item.get("invalidated_at")
+    ]
+    if gate.get("actor") == "repin" and gate.get("updated_at"):
+        values.append(str(gate.get("updated_at")))
+    return max(values) if values else ""
+
+
 def milestone_status(state, key):
     gate = state.get("gates", {}).get(GATE_ID) or {}
     item = (gate.get("milestones", {}).get(key) or {})
     status = item.get("status") or "PENDING"
-    # Repinning an affected physical/hardware baseline invalidates the parent
-    # gate. Q-DMX-21 must not silently reuse pre-repin electrical milestones.
-    if gate.get("actor") == "repin":
-        gate_updated = str(gate.get("updated_at") or "")
-        milestone_updated = str(item.get("updated_at") or "")
-        if gate_updated and (not milestone_updated or milestone_updated < gate_updated):
-            return "PENDING"
+    # A deliberate repin/invalidation is a durable epoch. Parent status may
+    # later move from PENDING to BLOCKED as fresh checks arrive, so the epoch
+    # must come from gate history rather than only the current actor.
+    invalidated_at = latest_invalidation_at(gate)
+    milestone_updated = str(item.get("updated_at") or "")
+    if invalidated_at and (not milestone_updated or milestone_updated <= invalidated_at):
+        return "PENDING"
     return status
 
 

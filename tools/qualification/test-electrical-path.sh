@@ -72,5 +72,13 @@ assert all(row["status"] == "PENDING" for row in data["checks"])
 PY
 ack documented PASS "Re-documented the rewired physical path after hardware baseline change."
 [[ "$(python3 "$STATE_TOOL" get --state "$state" --gate Q-DMX-21)" == "BLOCKED" ]]
+python3 "$ELECTRICAL_TOOL" status --state "$state" --json >"$tmp/repinned-partial.json"
+python3 - "$tmp/repinned-partial.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1], encoding="utf-8"))
+statuses={row["check"]:row["status"] for row in data["checks"]}
+assert statuses["documented"] == "PASS"
+assert all(statuses[name] == "PENDING" for name in ("logic-voltage","de-re","polarity","common","termination"))
+PY
 
 echo "qualification Q-DMX-21 electrical-path self-test PASS"
