@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -87,6 +89,10 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 	if _, err := s.store.ListProjectMediaRequirements(ctx, projectID); err != nil {
 		return Report{}, err
 	}
+	lightingBindings, err := s.store.ListLightingNodeBindings(ctx, revisionID)
+	if err != nil {
+		return Report{}, err
+	}
 
 	report := Report{Valid: true, Findings: make([]Finding, 0)}
 	block := func(code, message, ref string) {
@@ -123,6 +129,7 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 			if !json.Valid(action.Parameters) || !json.Valid(action.TimeoutPolicy) || !json.Valid(action.ErrorPolicy) {
 				block("ACTION_POLICY_INVALID", "Action parameters/timeout/error policy must be valid JSON", action.ID)
 			}
+			validateLightingCueAction(block, aliasByName, lightingBindings, action)
 		}
 	}
 	for _, output := range outputs {
@@ -135,6 +142,37 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 		}
 	}
 	return report, nil
+}
+
+func validateLightingCueAction(
+	block func(string, string, string),
+	aliases map[string]domain.ProjectDeviceAlias,
+	bindings []lightingnode.ProjectBinding,
+	action domain.Action,
+) {
+	capabilityKey := strings.TrimSpace(action.CapabilityKey)
+	if !strings.HasPrefix(capabilityKey, "lighting.") {
+		return
+	}
+	commandType := deviceexperience.CommandTypeForCueCapability(capabilityKey)
+	if commandType == "" || lightingnode.CommandCapability(commandType) == "" {
+		block("LIGHTING_CUE_CAPABILITY_FORBIDDEN", "lighting commissioning capability is not executable from a Cue", action.ID)
+		return
+	}
+	alias, ok := aliases[strings.TrimSpace(action.TargetRef)]
+	if !ok {
+		return
+	}
+	var target struct {
+		DeviceID string `json:"device_id"`
+	}
+	if json.Unmarshal(alias.ProjectConfig, &target) != nil || strings.TrimSpace(target.DeviceID) == "" {
+		block("LIGHTING_TARGET_CONFIG_INVALID", "lighting Cue target requires device_id", action.ID)
+		return
+	}
+	if _, err := lightingnode.ResolveCueCommandPayload(bindings, strings.TrimSpace(target.DeviceID), commandType, action.Parameters); err != nil {
+		block("LIGHTING_CUE_INVALID", err.Error(), action.ID)
+	}
 }
 
 func validateTargetCapability(report *Report, block func(string, string, string), aliases map[string]domain.ProjectDeviceAlias, registry *capability.Registry, targetRef, capabilityKey, ref string) {
