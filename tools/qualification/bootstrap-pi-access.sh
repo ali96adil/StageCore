@@ -34,11 +34,14 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-helper" "$TARGET:/t
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-probe.py" "$TARGET:/tmp/stagecore-qualification-probe"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-command.py" "$TARGET:/tmp/stagecore-qualification-command"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-supersession.py" "$TARGET:/tmp/stagecore-qualification-supersession"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-envelope-gates.py" "$TARGET:/tmp/stagecore-qualification-envelope-gates"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/install-stagecore-qualification-helper.sh" "$TARGET:/tmp/install-stagecore-qualification-helper.sh"
 ssh -t -i "$KEY" -o IdentitiesOnly=yes "$TARGET"   "chmod 700 /tmp/install-stagecore-qualification-helper.sh && sudo /tmp/install-stagecore-qualification-helper.sh '$STAGECORE_PI_USER'"
 
-echo "Step 3/3: verify future qualification access is non-interactive."
+echo "Step 3/3: restart once with the root-only qualification socket and verify non-interactive access."
+ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-restart
 ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status
+ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper qualification-socket-status
 ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe >/dev/null
 
 echo "qualification access ready"

@@ -24,6 +24,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
+	"github.com/ali96adil/StageCore/internal/qualificationdevice"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
@@ -271,6 +272,19 @@ func main() {
 		httpapi.WithBulkManager(application.Bulk),
 		httpapi.WithStorageHealth(application.StorageHealth),
 	)
+	var qualificationServer *qualificationdevice.Server
+	var qualificationErrCh <-chan error
+	if socketPath := os.Getenv("STAGECORE_QUALIFICATION_SOCKET"); socketPath != "" {
+		qualificationServer, err = qualificationdevice.Start(ctx, application.DeviceRuntime, socketPath)
+		if err != nil {
+			logger.Error("qualification device-envelope socket startup failed", "error", err)
+			os.Exit(1)
+		}
+		qualificationErrCh = qualificationServer.Errors()
+		defer qualificationServer.Close()
+		logger.Warn("qualification device-envelope socket enabled", "socket", socketPath)
+	}
+
 	server := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           httpapi.AuditDeniedRequests(api.Handler(), userAuth, application.SecurityAudit),
@@ -318,6 +332,10 @@ func main() {
 	case err := <-deviceErrCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("secure device gateway failed", "error", err)
+		}
+	case err := <-qualificationErrCh:
+		if err != nil {
+			logger.Error("qualification device-envelope socket failed", "error", err)
 		}
 	case err := <-oscInputErrCh:
 		if err != nil {

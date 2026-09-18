@@ -187,6 +187,39 @@ invoke_command() {
 }
 
 
+invoke_envelope_gate() {
+  local gate="$1" mode="$2" device_id="$3" project_id="$4" channel="$5" start_level="$6" target_level="$7" fade_ms="$8"
+  if ! should_run_gate "$gate"; then
+    record "$gate" "$(gate_status "$gate")" "resume preserved prior terminal result"
+    return
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.envelope.json"
+  set +e
+  python3 - "$mode" "$device_id" "$project_id" "$channel" "$start_level" "$target_level" "$fade_ms" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper envelope-gate >"$evidence" 2>"$evidence.stderr"
+import json, sys
+print(json.dumps({
+    "mode": sys.argv[1],
+    "device_id": sys.argv[2],
+    "project_id": sys.argv[3],
+    "channel_key": sys.argv[4],
+    "start_level": float(sys.argv[5]),
+    "target_level": float(sys.argv[6]),
+    "fade_ms": int(sys.argv[7]),
+}, separators=(",", ":")))
+PY
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-envelope-gate-evidence.py       --input "$evidence" --mode "$mode" >"$evidence.validation" 2>&1; then
+    rc=1
+  fi
+  case "$rc" in
+    0) record_gate "$gate" PASS "$evidence" "real-node $mode envelope gate passed through the root-only qualification socket" ;;
+    3) record_gate "$gate" BLOCKED "$evidence" "qualification envelope path is not ready" ;;
+    *) record_gate "$gate" FAIL "$evidence" "real-node $mode envelope gate failed" ;;
+  esac
+}
+
 invoke_supersession() {
   local gate="$1" key="$2" device_id="$3" channel_key="$4" start_level="$5" target_level="$6" replacement_level="$7" fade_ms="$8" activation_timeout_ms="$9"
   if ! should_run_milestone "$gate" "$key"; then
@@ -438,6 +471,19 @@ PY
       for key in precondition_set.command long_fade.command; do
         if should_run_milestone Q-DMX-08 "$key"; then
           record_milestone Q-DMX-08 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-08.$key.json" "long-fade duration must be configured greater than the normal fade and <=120000 ms"
+        fi
+      done
+    fi
+
+    if [[ "$single_ok" -eq 1 && "$supersession_fade_ms" =~ ^[0-9]+$ && "$supersession_fade_ms" -ge 1000 ]]; then
+      invoke_envelope_gate Q-DMX-12 duplicate "$lighting_device" "$lighting_project" "$channel" "$set_level" "$fade_level" "$supersession_fade_ms"
+      sleep "$hold"
+      invoke_envelope_gate Q-DMX-13 expired "$lighting_device" "$lighting_project" "$channel" "$set_level" "$fade_level" "$supersession_fade_ms"
+      sleep "$hold"
+    else
+      for gate in Q-DMX-12 Q-DMX-13; do
+        if should_run_gate "$gate"; then
+          record_gate "$gate" BLOCKED "$RUN_DIR/evidence/$gate.envelope.json" "duplicate/expiry test values are not configured"
         fi
       done
     fi

@@ -207,3 +207,16 @@ Existing local qualification configs are upgraded idempotently by `setup-access.
 Q-DMX-09 uses a dedicated bounded helper rather than overlapping generic runner processes. It applies a known starting level, starts a long fade, waits until the node observation reports that exact command as the active fade, then issues a newer SET. Evidence passes only when the old fade terminalizes `CANCELLED`, the replacement SET terminalizes `COMPLETED`, and the final observation names the replacement as both last accepted and last applied with the old fade no longer active.
 
 Configure `STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_FADE_MS`, `STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_REPLACEMENT_LEVEL`, and optionally the bounded activation wait. The automation records only `Q-DMX-09::supersession.sequence`; the parent gate still needs explicit physical observation that the newer SET visibly took control and the old fade did not resume.
+
+## Duplicate-ID and expired-envelope qualification socket
+
+Q-DMX-12 and Q-DMX-13 need firmware behavior that the normal production Operator API intentionally prevents: production idempotency never resends the same command ID, and Core rejects an already-expired deadline before dispatch. Qualification therefore uses a dormant, root-only Unix-socket path inside the Hub.
+
+The path is disabled unless `STAGECORE_QUALIFICATION_SOCKET` is set. The one-time Pi qualification bootstrap installs a systemd drop-in pointing it at `/var/lib/stagecore/qualification-envelope.sock`, restarts Hub once, and creates the socket with mode 0600. It is not a TCP/LAN endpoint.
+
+The socket accepts only qualification-prefixed envelopes from issuer `qualification:physical-runner` and only the bounded command set needed here: SET, FADE, and STATE_READ. These test envelopes bypass production command persistence by design so exact duplicate IDs and already-expired deadlines can reach the real firmware parser/dedupe/expiry logic.
+
+- Q-DMX-12: establish a known level, run a real fade, resend the exact same terminal command ID, and require the second lifecycle to be cached-terminal-only (no second ACCEPTED/fade) with the same result payload.
+- Q-DMX-13: establish a known level, inject an already-expired SET to a different level, require TIMED_OUT / DEVICE_COMMAND_EXPIRED, then read state and prove the rejected level was not applied.
+
+Both gates are AUTO evidence on the real node, but the runner still requires `STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS=1` because the preconditions deliberately change lighting output.
