@@ -201,3 +201,9 @@ After the normal one-channel fade completes, `Q-DMX-07::timing.measurement` comp
 Configure `STAGECORE_LIGHTING_QUALIFICATION_LONG_FADE_MS` for Q-DMX-08. It must be greater than the normal qualification fade and no more than 120000 ms. The helper scales both command deadline and bounded result wait to the requested fade duration, so a valid long fade is not failed by the old short command timeout.
 
 Existing local qualification configs are upgraded idempotently by `setup-access.sh`; newly introduced keys are appended without overwriting existing values.
+
+## Active-fade supersession checkpoint
+
+Q-DMX-09 uses a dedicated bounded helper rather than overlapping generic runner processes. It applies a known starting level, starts a long fade, waits until the node observation reports that exact command as the active fade, then issues a newer SET. Evidence passes only when the old fade terminalizes `CANCELLED`, the replacement SET terminalizes `COMPLETED`, and the final observation names the replacement as both last accepted and last applied with the old fade no longer active.
+
+Configure `STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_FADE_MS`, `STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_REPLACEMENT_LEVEL`, and optionally the bounded activation wait. The automation records only `Q-DMX-09::supersession.sequence`; the parent gate still needs explicit physical observation that the newer SET visibly took control and the old fade did not resume.

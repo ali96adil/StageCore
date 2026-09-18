@@ -28,6 +28,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-command --allow-physical
     ;;
+  supersession-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-supersession
+    ;;
   *)
     echo "unsupported qualification helper operation" >&2
     exit 64

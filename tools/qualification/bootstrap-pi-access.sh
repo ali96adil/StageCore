@@ -33,6 +33,7 @@ echo "Step 2/3: install the root-owned bounded helper/probes (one sudo password 
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-helper" "$TARGET:/tmp/stagecore-qualification-helper"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-probe.py" "$TARGET:/tmp/stagecore-qualification-probe"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-command.py" "$TARGET:/tmp/stagecore-qualification-command"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-supersession.py" "$TARGET:/tmp/stagecore-qualification-supersession"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/install-stagecore-qualification-helper.sh" "$TARGET:/tmp/install-stagecore-qualification-helper.sh"
 ssh -t -i "$KEY" -o IdentitiesOnly=yes "$TARGET"   "chmod 700 /tmp/install-stagecore-qualification-helper.sh && sudo /tmp/install-stagecore-qualification-helper.sh '$STAGECORE_PI_USER'"
 

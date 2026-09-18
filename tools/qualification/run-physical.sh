@@ -187,6 +187,48 @@ invoke_command() {
 }
 
 
+invoke_supersession() {
+  local gate="$1" key="$2" device_id="$3" channel_key="$4" start_level="$5" target_level="$6" replacement_level="$7" fade_ms="$8" activation_timeout_ms="$9"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior supersession sequence"
+    return
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
+    return
+  fi
+
+  set +e
+  python3 - "$CREDENTIAL_FILE" "$device_id" "$channel_key" "$start_level" "$target_level" "$replacement_level" "$fade_ms" "$activation_timeout_ms" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper supersession-command >"$evidence" 2>"$evidence.stderr"
+import json, sys
+credential=json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({
+    "username": credential.get("username", ""),
+    "password": credential.get("password", ""),
+    "device_id": sys.argv[2],
+    "channel_key": sys.argv[3],
+    "start_level": float(sys.argv[4]),
+    "target_level": float(sys.argv[5]),
+    "replacement_level": float(sys.argv[6]),
+    "fade_ms": int(sys.argv[7]),
+    "activation_timeout_ms": int(sys.argv[8]),
+}, separators=(",", ":")))
+PY
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-supersession-evidence.py \
+      --input "$evidence" --device-id "$device_id" >"$evidence.validation" 2>&1; then
+    rc=1
+  fi
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$evidence" "active fade was observed, terminalized CANCELLED, and replacement SET became authoritative" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "fade supersession sequence or evidence validation failed" ;;
+  esac
+}
+
 measure_fade_timing() {
   local gate="$1" key="$2" evidence="$3" expected_ms="$4" tolerance_ms="$5"
   if ! should_run_milestone "$gate" "$key"; then
@@ -327,12 +369,16 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     timed_blackout_ms="${STAGECORE_LIGHTING_QUALIFICATION_TIMED_BLACKOUT_MS:-}"
     fade_tolerance_ms="${STAGECORE_LIGHTING_QUALIFICATION_FADE_TOLERANCE_MS:-}"
     long_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_LONG_FADE_MS:-}"
+    supersession_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_FADE_MS:-}"
+    supersession_replacement_level="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_REPLACEMENT_LEVEL:-}"
+    supersession_activation_timeout_ms="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_ACTIVATION_TIMEOUT_MS:-5000}"
 
     single_ok=0
     multi_ok=0
     timed_ok=0
     timing_ok=0
     long_ok=0
+    supersession_ok=0
     if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
       single_ok=1
     fi
@@ -347,6 +393,9 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     fi
     if [[ "$single_ok" -eq 1 && "$long_fade_ms" =~ ^[0-9]+$ && "$long_fade_ms" -gt "$fade_ms" && "$long_fade_ms" -le 120000 ]]; then
       long_ok=1
+    fi
+    if [[ "$single_ok" -eq 1 && "$supersession_fade_ms" =~ ^[0-9]+$ && "$supersession_fade_ms" -ge 1000 && "$supersession_fade_ms" -le 120000 && "$supersession_replacement_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$supersession_activation_timeout_ms" =~ ^[0-9]+$ && "$supersession_activation_timeout_ms" -ge 250 && "$supersession_activation_timeout_ms" -le 10000 ]]; then
+      supersession_ok=1
     fi
 
     if [[ "$single_ok" -eq 1 ]]; then
@@ -391,6 +440,13 @@ PY
           record_milestone Q-DMX-08 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-08.$key.json" "long-fade duration must be configured greater than the normal fade and <=120000 ms"
         fi
       done
+    fi
+
+    if [[ "$supersession_ok" -eq 1 ]]; then
+      invoke_supersession Q-DMX-09 supersession.sequence "$lighting_device" "$channel" "$set_level" "$fade_level" "$supersession_replacement_level" "$supersession_fade_ms" "$supersession_activation_timeout_ms"
+      sleep "$hold"
+    elif should_run_milestone Q-DMX-09 supersession.sequence; then
+      record_milestone Q-DMX-09 supersession.sequence BLOCKED "$RUN_DIR/evidence/Q-DMX-09.supersession.sequence.json" "supersession fade/replacement/activation values are not configured"
     fi
 
     if [[ "$multi_ok" -eq 1 ]]; then
