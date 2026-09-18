@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -358,8 +359,12 @@ func decodeStrict(raw json.RawMessage, out any) error {
 	if err := decoder.Decode(out); err != nil {
 		return err
 	}
-	if decoder.More() {
-		return fmt.Errorf("multiple JSON values are not allowed")
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return fmt.Errorf("multiple JSON values are not allowed: %w", err)
 	}
 	return nil
 }
