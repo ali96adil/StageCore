@@ -319,6 +319,9 @@ func lightingCueGroups(bindings []lightingnode.ProjectBinding, input lightingCue
 			if groups[resolved.DeviceID] == nil {
 				groups[resolved.DeviceID] = make(map[string]float64)
 			}
+			if _, exists := groups[resolved.DeviceID][alias]; exists {
+				return nil, fmt.Errorf("duplicate logical lighting alias %q", alias)
+			}
 			groups[resolved.DeviceID][alias] = level
 		}
 	case lightingnode.CommandBlackout:
@@ -456,6 +459,7 @@ func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBind
 		Levels: map[string]float64{},
 	}
 	commandType := ""
+	fadeDefined := false
 	devices := make(map[string]bool)
 	for _, action := range cue.Actions {
 		currentCommand := deviceexperience.CommandTypeForCueCapability(action.CapabilityKey)
@@ -492,10 +496,11 @@ func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBind
 			if json.Unmarshal(action.Parameters, &payload) != nil || payload.FadeMS <= 0 {
 				return lightingSceneView{}, false
 			}
-			if view.FadeMS != 0 && view.FadeMS != payload.FadeMS {
+			if fadeDefined && view.FadeMS != payload.FadeMS {
 				return lightingSceneView{}, false
 			}
 			view.FadeMS = payload.FadeMS
+			fadeDefined = true
 			for alias, level := range payload.Aliases {
 				if _, exists := view.Levels[alias]; exists {
 					return lightingSceneView{}, false
@@ -507,17 +512,16 @@ func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBind
 			if json.Unmarshal(action.Parameters, &payload) != nil || payload.FadeMS < 0 {
 				return lightingSceneView{}, false
 			}
-			if view.FadeMS != 0 && payload.FadeMS != 0 && view.FadeMS != payload.FadeMS {
+			if fadeDefined && view.FadeMS != payload.FadeMS {
 				return lightingSceneView{}, false
 			}
-			if payload.FadeMS > 0 {
-				view.FadeMS = payload.FadeMS
-			}
+			view.FadeMS = payload.FadeMS
+			fadeDefined = true
 		default:
 			return lightingSceneView{}, false
 		}
 	}
-	if cue.CueType != lightingSceneCueType && commandType == "" {
+	if commandType == "" {
 		return lightingSceneView{}, false
 	}
 	view.CommandType = commandType
