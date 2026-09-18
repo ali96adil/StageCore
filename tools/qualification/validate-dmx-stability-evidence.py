@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description="Validate Q-DMX-18 DMX stability evidence")
     parser.add_argument("--input", required=True)
     parser.add_argument("--device-id", required=True)
-    parser.add_argument("--expected-level", required=True, type=float)
+    parser.add_argument("--requested-level", required=True, type=float)
     parser.add_argument("--min-duration-seconds", required=True, type=float)
     args = parser.parse_args()
 
@@ -55,8 +55,11 @@ def main():
     duration = finite(data.get("duration_seconds_observed"), "duration_seconds_observed")
     if duration + 0.05 < args.min_duration_seconds:
         fail("network stress window shorter than configured duration")
-    if abs(finite(data.get("expected_level"), "expected_level") - args.expected_level) > 0.01:
-        fail("expected level mismatch")
+    if abs(finite(data.get("requested_level"), "requested_level") - args.requested_level) > 0.01:
+        fail("requested level mismatch")
+    baseline_level = finite(data.get("baseline_level"), "baseline_level")
+    if abs(baseline_level) <= 0.01:
+        fail("baseline level is not visibly nonzero")
 
     before = data.get("before") or {}
     after = data.get("after") or {}
@@ -76,7 +79,7 @@ def main():
         levels = state.get("levels")
         if not isinstance(levels, dict) or data.get("channel_key") not in levels:
             fail(f"{label} qualification level missing")
-        if abs(finite(levels[data["channel_key"]], f"{label}.level") - args.expected_level) > 0.01:
+        if abs(finite(levels[data["channel_key"]], f"{label}.level") - baseline_level) > 0.01:
             fail(f"{label} qualification level changed")
     print(json.dumps({
         "status": "PASS",

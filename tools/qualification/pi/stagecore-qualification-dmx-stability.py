@@ -239,7 +239,18 @@ def main():
         fail("interval_ms must be within 100..5000")
 
     before_raw = snapshot(device_id)
-    before = validate_snapshot(before_raw, project_id=project_id, channel_key=channel_key, expected_level=expected_level)
+    before_levels = normalized_levels(before_raw.get("observed") or {})
+    if channel_key not in before_levels:
+        fail("qualification channel missing from baseline current_levels")
+    baseline_level = before_levels[channel_key]
+    if abs(baseline_level) <= 0.01:
+        fail("DMX-stability baseline must be visibly nonzero", 3)
+    before = validate_snapshot(
+        before_raw,
+        project_id=project_id,
+        channel_key=channel_key,
+        expected_level=baseline_level,
+    )
 
     started_wall = dt.datetime.now(dt.timezone.utc)
     started = time.monotonic()
@@ -260,7 +271,7 @@ def main():
             current = levels.get(channel_key) if isinstance(levels, dict) else None
             if isinstance(current, bool) or not isinstance(current, (int, float)):
                 fail("state-read payload missing qualification channel")
-            if abs(float(current) - expected_level) > 0.01:
+            if abs(float(current) - baseline_level) > 0.01:
                 fail("state-read payload reports changed qualification level")
         else:
             config_reads += 1
@@ -269,7 +280,7 @@ def main():
             snapshot(device_id),
             project_id=project_id,
             channel_key=channel_key,
-            expected_level=expected_level,
+            expected_level=baseline_level,
             baseline=before_raw,
         )
         samples.append({
@@ -284,7 +295,7 @@ def main():
             time.sleep(min(interval_ms / 1000.0, remaining))
 
     after_raw = snapshot(device_id)
-    after = validate_snapshot(after_raw, project_id=project_id, channel_key=channel_key, expected_level=expected_level, baseline=before_raw)
+    after = validate_snapshot(after_raw, project_id=project_id, channel_key=channel_key, expected_level=baseline_level, baseline=before_raw)
     if not samples:
         fail("stability window produced no samples")
     latencies = [item["latency_ms"] for item in samples]
@@ -294,7 +305,8 @@ def main():
         "device_id": device_id,
         "project_id": project_id,
         "channel_key": channel_key,
-        "expected_level": expected_level,
+        "requested_level": expected_level,
+        "baseline_level": baseline_level,
         "duration_seconds_requested": duration_seconds,
         "duration_seconds_observed": round(time.monotonic() - started, 3),
         "interval_ms": interval_ms,

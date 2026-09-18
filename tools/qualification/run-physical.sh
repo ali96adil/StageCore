@@ -522,7 +522,7 @@ PY
   set -e
 
   if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-dmx-stability-evidence.py \
-      --input "$evidence" --device-id "$device_id" --expected-level "$test_level" \
+      --input "$evidence" --device-id "$device_id" --requested-level "$test_level" \
       --min-duration-seconds "$duration_seconds" >"$evidence.validation" 2>&1; then
     rc=1
   fi

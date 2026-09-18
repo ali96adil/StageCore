@@ -65,9 +65,15 @@ PY
 server_pid=$!
 for _ in $(seq 1 50); do [[ -S "$sock" ]] && break; sleep 0.05; done
 
-printf '%s\n' '{"device_id":"lighting-01","project_id":"project-1","channel_key":"warm","expected_level":35,"duration_seconds":1,"interval_ms":150}' |   STAGECORE_QUALIFICATION_SOCKET="$sock" STAGECORE_DB="$db" python3 "$HELPER" --db "$db" >"$tmp/pass.json"
+printf '%s\n' '{"device_id":"lighting-01","project_id":"project-1","channel_key":"warm","expected_level":80,"duration_seconds":1,"interval_ms":150}' |   STAGECORE_QUALIFICATION_SOCKET="$sock" STAGECORE_DB="$db" python3 "$HELPER" --db "$db" >"$tmp/pass.json"
 
-python3 "$VALIDATOR" --input "$tmp/pass.json" --device-id lighting-01 --expected-level 35 --min-duration-seconds 1 >/dev/null
+python3 "$VALIDATOR" --input "$tmp/pass.json" --device-id lighting-01 --requested-level 80 --min-duration-seconds 1 >/dev/null
+python3 - "$tmp/pass.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+assert data["requested_level"] == 80
+assert data["baseline_level"] == 35
+PY
 
 python3 - "$tmp/pass.json" "$tmp/bad.json" <<'PY'
 import json, sys
@@ -76,7 +82,7 @@ data["after"]["levels"]["warm"]=22
 json.dump(data,open(sys.argv[2],"w",encoding="utf-8"))
 PY
 set +e
-python3 "$VALIDATOR" --input "$tmp/bad.json" --device-id lighting-01 --expected-level 35 --min-duration-seconds 1 >/dev/null 2>&1
+python3 "$VALIDATOR" --input "$tmp/bad.json" --device-id lighting-01 --requested-level 80 --min-duration-seconds 1 >/dev/null 2>&1
 bad_rc=$?
 set -e
 [[ "$bad_rc" -ne 0 ]]
