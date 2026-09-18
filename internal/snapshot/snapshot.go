@@ -10,10 +10,11 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/canonicaljson"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-const ManifestSchemaVersion = 4
+const ManifestSchemaVersion = 5
 
 type Manifest struct {
 	SchemaVersion  int             `json:"schema_version"`
@@ -24,8 +25,9 @@ type Manifest struct {
 	Cues           []Cue           `json:"cues"`
 	Inputs         []Input         `json:"inputs,omitempty"`
 	Outputs        []Output        `json:"outputs,omitempty"`
-	Routes         []Route         `json:"routes,omitempty"`
-	RequiredMedia  []RequiredMedia `json:"required_media,omitempty"`
+	Routes         []Route                       `json:"routes,omitempty"`
+	LightingNodes  []lightingnode.ProjectBinding `json:"lighting_nodes,omitempty"`
+	RequiredMedia  []RequiredMedia               `json:"required_media,omitempty"`
 }
 
 type RequiredMedia struct {
@@ -147,6 +149,13 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 	if err != nil {
 		return domain.RuntimeSnapshot{}, Manifest{}, err
 	}
+	lightingBindings, err := b.store.ListLightingNodeBindings(ctx, revisionID)
+	if err != nil {
+		return domain.RuntimeSnapshot{}, Manifest{}, err
+	}
+	if err := lightingnode.ValidateProjectBindings(lightingBindings); err != nil {
+		return domain.RuntimeSnapshot{}, Manifest{}, fmt.Errorf("validate lighting bindings: %w", err)
+	}
 	mediaRequirements, err := b.store.ListProjectMediaRequirements(ctx, revision.ProjectID)
 	if err != nil {
 		return domain.RuntimeSnapshot{}, Manifest{}, err
@@ -162,6 +171,7 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 		Inputs:         make([]Input, 0, len(inputs)),
 		Outputs:        make([]Output, 0, len(outputs)),
 		Routes:         make([]Route, 0, len(routes)),
+		LightingNodes:  make([]lightingnode.ProjectBinding, 0, len(lightingBindings)),
 		RequiredMedia:  make([]RequiredMedia, 0, len(mediaRequirements)),
 	}
 	for _, alias := range aliases {
@@ -294,6 +304,21 @@ func (b *Builder) Create(ctx context.Context, revisionID, createdBy string) (dom
 		return manifest.Routes[i].Name < manifest.Routes[j].Name
 	})
 
+	for _, binding := range lightingBindings {
+		copy := binding
+		copy.RevisionID = ""
+		copy.UpdatedBy = ""
+		copy.Configuration.Channels = append([]lightingnode.ChannelConfig(nil), binding.Configuration.Channels...)
+		copy.Aliases = make(map[string]string, len(binding.Aliases))
+		for alias, channelKey := range binding.Aliases {
+			copy.Aliases[alias] = channelKey
+		}
+		manifest.LightingNodes = append(manifest.LightingNodes, copy)
+	}
+	sort.Slice(manifest.LightingNodes, func(i, j int) bool {
+		return manifest.LightingNodes[i].DeviceID < manifest.LightingNodes[j].DeviceID
+	})
+
 	for _, requirement := range mediaRequirements {
 		manifest.RequiredMedia = append(manifest.RequiredMedia, RequiredMedia{
 			MachineRoleID: requirement.MachineRoleID,
@@ -335,7 +360,7 @@ func Decode(raw json.RawMessage) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("decode snapshot manifest: %w", err)
 	}
 	switch manifest.SchemaVersion {
-	case 1, 2, 3, ManifestSchemaVersion:
+	case 1, 2, 3, 4, ManifestSchemaVersion:
 		return manifest, nil
 	default:
 		return Manifest{}, fmt.Errorf("unsupported snapshot manifest schema %d", manifest.SchemaVersion)
@@ -351,6 +376,14 @@ func (m Manifest) ResolveTarget(targetRef string) *Target {
 		}
 	}
 	return nil
+}
+
+func (m Manifest) ResolveLightingChannel(alias string) *lightingnode.ResolvedChannel {
+	resolved, err := lightingnode.ResolveAlias(m.LightingNodes, alias)
+	if err != nil {
+		return nil
+	}
+	return resolved
 }
 
 func (m Manifest) ResolveInput(inputID string) *Input {
