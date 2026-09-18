@@ -552,7 +552,8 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
 
     if [[ "$(gate_status Q-DMX-15)" == "FAIL" ]]; then
       record "Q-DMX-15.safety-stop" FAIL "power-event safe-output verification failed; remaining lighting physical actions suppressed"
-    elif [[ "$single_ok" -eq 1 ]]; then
+    else
+    if [[ "$single_ok" -eq 1 ]]; then
       invoke_command physical-command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
       sleep "$hold"
       invoke_command physical-command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"

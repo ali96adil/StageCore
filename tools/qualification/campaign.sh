@@ -65,8 +65,10 @@ case "$cmd" in
     esac
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
     pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$key.pre")"
+    action="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$key.action")"
     post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$key.post")"
     [[ "$pre" == "PASS" ]] || { echo "$event baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$action" != "PASS" ]] || { echo "$event hardware action is already acknowledged" >&2; exit 3; }
     [[ "$post" != "PASS" ]] || { echo "$event post evidence is already PASS" >&2; exit 3; }
     if [[ "$event" == "brownout" ]]; then
       power_post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key power_cycle.post)"
