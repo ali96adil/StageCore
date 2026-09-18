@@ -20,6 +20,8 @@ Environment:
                                     Default: ~/.config/stagecore/qualification.env
   STAGECORE_QUALIFICATION_RUN_ROOT  Optional evidence root.
                                     Default: qualification/runs
+  STAGECORE_QUALIFICATION_STATE     Optional durable campaign state path.
+                                    Default: ~/.local/state/stagecore/qualification-campaign.json
 EOF
       exit 0
       ;;
@@ -36,6 +38,14 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 RUN_ROOT="${STAGECORE_QUALIFICATION_RUN_ROOT:-qualification/runs}"
+STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/stagecore"
+STATE_FILE="${STAGECORE_QUALIFICATION_STATE:-$STATE_ROOT/qualification-campaign.json}"
+MANIFEST="tools/qualification/manifest.json"
+CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+
+mkdir -p "$(dirname "$STATE_FILE")"
+python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$RUN_ROOT/$STAMP"
 mkdir -p "$RUN_DIR/evidence"
@@ -55,9 +65,7 @@ gate_status() {
 
 record_gate() {
   local gate="$1" status="$2" evidence="$3" note="$4"
-  python3 tools/qualification/qualification-state.py record \
-    --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --status "$status" \
-    --actor runner --evidence "$evidence" --note "$note" >/dev/null
+  python3 tools/qualification/qualification-state.py record     --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --status "$status"     --actor runner --evidence "$evidence" --note "$note" >/dev/null
   record "$gate" "$status" "$note; evidence=$evidence"
 }
 
@@ -88,6 +96,7 @@ run_gate_probe() {
     record "$gate" "$(gate_status "$gate")" "resume preserved prior terminal result"
     return
   fi
+
   local evidence="$RUN_DIR/evidence/$gate.log"
   local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --check "$check" --max-age-seconds 20)
   if [[ -n "${STAGECORE_PROJECT_ID:-}" ]]; then
@@ -99,6 +108,7 @@ run_gate_probe() {
   if [[ -n "$device_id" ]]; then
     args+=(--device-id "$device_id")
   fi
+
   set +e
   python3 tools/qualification/assert-device-probe.py "${args[@]}" >"$evidence" 2>&1
   local rc=$?
@@ -114,7 +124,7 @@ check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
 check_cmd "manifest.validation" python3 tools/qualification/validate-manifest.py --summary || true
-cp tools/qualification/manifest.json "$RUN_DIR/evidence/qualification-manifest.json"
+cp "$MANIFEST" "$RUN_DIR/evidence/qualification-manifest.json"
 
 PI_HOST="${STAGECORE_PI_HOST:-}"
 PI_USER="${STAGECORE_PI_USER:-}"
@@ -135,7 +145,7 @@ else
   check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
   check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
   check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
-  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe     >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
     PROBE_AVAILABLE=1
     record "devices.probe" PASS "see evidence/devices.json"
   else
@@ -157,6 +167,8 @@ else
   done
 fi
 
+cp "$STATE_FILE" "$RUN_DIR/evidence/campaign-state.json"
+
 {
   echo "# StageCore Physical Qualification Report"
   echo
@@ -164,6 +176,7 @@ fi
   printf -- '- Mode: `%s`\n' "$MODE"
   printf -- '- Non-interactive: `%s`\n' "$NON_INTERACTIVE"
   printf -- '- Repository HEAD: `%s`\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  printf -- '- Campaign state: `%s`\n' "$STATE_FILE"
   echo
   echo "| Check | Result | Evidence |"
   echo "| --- | --- | --- |"

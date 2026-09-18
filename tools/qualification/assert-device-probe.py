@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import sys
 import time
 
 TABLET_PROFILE = "stagecore.tablet-player"
@@ -29,9 +28,11 @@ LIGHTING_CAPS = {
     "lighting.config.apply",
 }
 
+
 def fail(message, code=1):
     print(message)
     raise SystemExit(code)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Assert StageCore qualification probe readiness")
@@ -39,7 +40,9 @@ def main():
     parser.add_argument("--kind", choices=("tablet", "lighting"), required=True)
     parser.add_argument("--device-id", default="")
     parser.add_argument("--project-id", default="")
-    parser.add_argument("--max-age-seconds", type=int, default=20)\n    parser.add_argument("--check", choices=("readiness","scope","observation"), default="readiness")\n    parser.add_argument("--runtime-snapshot-id", default="")
+    parser.add_argument("--runtime-snapshot-id", default="")
+    parser.add_argument("--max-age-seconds", type=int, default=20)
+    parser.add_argument("--check", choices=("readiness", "scope", "observation"), default="readiness")
     args = parser.parse_args()
 
     with open(args.input, "r", encoding="utf-8") as fh:
@@ -61,19 +64,19 @@ def main():
         ids = ",".join(sorted(str(d.get("device_id", "")) for d in candidates))
         fail(f"{args.kind} target is ambiguous; configure device id: {ids}", 3)
 
-    d = candidates[0]
-    if not d.get("enabled"):
+    device = candidates[0]
+    if not device.get("enabled"):
         fail(f"{args.kind} device disabled")
-    if d.get("protocol_version") != "stagecore.device/1":
-        fail(f"{args.kind} protocol mismatch: {d.get('protocol_version')}")
-    if args.kind == "tablet" and d.get("device_kind") != "TABLET_PLAYER":
-        fail(f"tablet device kind mismatch: {d.get('device_kind')}")
+    if device.get("protocol_version") != "stagecore.device/1":
+        fail(f"{args.kind} protocol mismatch: {device.get('protocol_version')}")
+    if args.kind == "tablet" and device.get("device_kind") != "TABLET_PLAYER":
+        fail(f"tablet device kind mismatch: {device.get('device_kind')}")
 
-    missing = sorted(required - set(d.get("capabilities") or []))
+    missing = sorted(required - set(device.get("capabilities") or []))
     if missing:
         fail(f"{args.kind} missing capabilities: {','.join(missing)}")
 
-    runtime = d.get("runtime")
+    runtime = device.get("runtime")
     if not runtime:
         fail(f"{args.kind} has no runtime observation")
     if runtime.get("connection_state") != "ONLINE":
@@ -88,8 +91,17 @@ def main():
     if age < -5 or age > args.max_age_seconds:
         fail(f"{args.kind} observation stale age_seconds={age:.1f}")
 
-    if args.kind == "lighting":
-        observed = runtime.get("observed") or {}
+    observed = runtime.get("observed") or {}
+
+    if args.kind == "tablet" and args.check == "scope":
+        if not args.project_id or not args.runtime_snapshot_id:
+            fail("tablet scope check requires expected project and runtime snapshot", 3)
+        if observed.get("project_id") != args.project_id:
+            fail(f"tablet observed project mismatch: {observed.get('project_id')}")
+        if observed.get("runtime_snapshot_id") != args.runtime_snapshot_id:
+            fail(f"tablet observed snapshot mismatch: {observed.get('runtime_snapshot_id')}")
+
+    if args.kind == "lighting" and args.check in ("readiness", "observation"):
         if observed.get("schema_version") != 1:
             fail("lighting observation schema mismatch")
         if observed.get("dmx_healthy") is not True:
@@ -104,13 +116,14 @@ def main():
     print(json.dumps({
         "status": "PASS",
         "kind": args.kind,
-        "device_id": d.get("device_id"),
-        "project_id": d.get("project_id"),
-        "client_version": d.get("client_version"),
+        "device_id": device.get("device_id"),
+        "project_id": device.get("project_id"),
+        "client_version": device.get("client_version"),
         "connection": runtime.get("connection_state"),
         "readiness": runtime.get("readiness"),
-        "latest_command": d.get("latest_command"),
+        "latest_command": device.get("latest_command"),
     }, sort_keys=True))
+
 
 if __name__ == "__main__":
     main()

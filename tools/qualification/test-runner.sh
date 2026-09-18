@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNNER="$REPO_ROOT/tools/qualification/run-physical.sh"
+STATE_TOOL="$REPO_ROOT/tools/qualification/qualification-state.py"
+MANIFEST="$REPO_ROOT/tools/qualification/manifest.json"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -21,21 +23,24 @@ cat >"$tmp/qualification.env" <<'EOF'
 STAGECORE_PI_HOST=
 STAGECORE_PI_USER=
 STAGECORE_PROJECT_ID=
+STAGECORE_RUNTIME_SNAPSHOT_ID=
 STAGECORE_TABLET_DEVICE_ID=
+STAGECORE_TABLET_BUILD_SHA=tablet-self-test
+STAGECORE_TABLET_APK_SHA256=apk-self-test
 STAGECORE_LIGHTING_NODE_ID=
+STAGECORE_LIGHTING_FIRMWARE_SHA=firmware-self-test
+STAGECORE_HARDWARE_BASELINE_ID=hardware-self-test
 QUALIFICATION_SENTINEL_SECRET=do-not-print-this-value
 EOF
 chmod 600 "$tmp/qualification.env"
 
+state="$tmp/campaign.json"
 set +e
-PATH="$tmp/bin:$PATH" \
-STAGECORE_QUALIFICATION_ENV="$tmp/qualification.env" \
-STAGECORE_QUALIFICATION_RUN_ROOT="$tmp/runs" \
-"$RUNNER" --full --non-interactive >"$tmp/stdout" 2>"$tmp/stderr"
+PATH="$tmp/bin:$PATH" STAGECORE_QUALIFICATION_ENV="$tmp/qualification.env" STAGECORE_QUALIFICATION_RUN_ROOT="$tmp/runs" STAGECORE_QUALIFICATION_STATE="$state" "$RUNNER" --full --non-interactive >"$tmp/stdout" 2>"$tmp/stderr"
 rc=$?
 set -e
 
-[[ "$rc" -eq 3 ]] || { echo "expected BLOCKED exit 3, got $rc" >&2; exit 1; }
+[[ "$rc" -eq 3 ]] || { echo "expected BLOCKED exit 3, got $rc" >&2; cat "$tmp/stderr" >&2; exit 1; }
 
 report="$(find "$tmp/runs" -name report.md -type f -print -quit)"
 results="$(find "$tmp/runs" -name results.tsv -type f -print -quit)"
@@ -45,29 +50,27 @@ grep -F '| local.git | **PASS** |' "$report" >/dev/null
 grep -F '| local.go | **PASS** |' "$report" >/dev/null
 grep -F '| local.tests | **PASS** |' "$report" >/dev/null
 grep -F '| pi.ssh | **BLOCKED** |' "$report" >/dev/null
-grep -F '| tablet.readiness | **BLOCKED** |' "$report" >/dev/null
-grep -F '| lighting.readiness | **BLOCKED** |' "$report" >/dev/null
+grep -F '| Q-TAB-04 | **BLOCKED** |' "$report" >/dev/null
+grep -F '| Q-TAB-05 | **BLOCKED** |' "$report" >/dev/null
+grep -F '| Q-DMX-20 | **BLOCKED** |' "$report" >/dev/null
 
 if grep -R -F 'do-not-print-this-value' "$tmp/runs" "$tmp/stdout" "$tmp/stderr" >/dev/null 2>&1; then
   echo "qualification secret leaked into evidence/report output" >&2
   exit 1
 fi
 
-# Resume preserves already-PASS gates from the durable campaign state.
-python3 "$REPO_ROOT/tools/qualification/qualification-state.py" record \
-  --state "$tmp/campaign.json" --manifest "$REPO_ROOT/tools/qualification/manifest.json" \
-  --gate Q-TAB-04 --status PASS --actor self-test --evidence prior-run >/dev/null
+# Turn one gate into a prior PASS, then prove --resume preserves it.
+python3 "$STATE_TOOL" record --state "$state" --manifest "$MANIFEST"   --gate Q-TAB-04 --status PASS --actor self-test --evidence prior-run >/dev/null
+
 set +e
-PATH="$tmp/bin:$PATH" \
-STAGECORE_QUALIFICATION_ENV="$tmp/qualification.env" \
-STAGECORE_QUALIFICATION_RUN_ROOT="$tmp/resume-runs" \
-STAGECORE_QUALIFICATION_STATE="$tmp/campaign.json" \
-"$RUNNER" --resume --non-interactive >"$tmp/resume-stdout" 2>"$tmp/resume-stderr"
+PATH="$tmp/bin:$PATH" STAGECORE_QUALIFICATION_ENV="$tmp/qualification.env" STAGECORE_QUALIFICATION_RUN_ROOT="$tmp/resume-runs" STAGECORE_QUALIFICATION_STATE="$state" "$RUNNER" --resume --non-interactive >"$tmp/resume-stdout" 2>"$tmp/resume-stderr"
 resume_rc=$?
 set -e
 [[ "$resume_rc" -eq 3 ]]
+
 resume_report="$(find "$tmp/resume-runs" -name report.md -type f -print -quit)"
 grep -F '| Q-TAB-04 | **PASS** | resume preserved prior terminal result' "$resume_report" >/dev/null
+[[ "$(python3 "$STATE_TOOL" get --state "$state" --gate Q-TAB-04)" == "PASS" ]]
 
 "$RUNNER" --help >/dev/null
 echo "qualification runner self-test PASS"
