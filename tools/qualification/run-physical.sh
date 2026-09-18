@@ -381,6 +381,60 @@ stage_q16_wifi_loss() {
   return 1
 }
 
+invoke_hub_restart_gate() {
+  local device_id="$1" project_id="$2" channel_key="$3" start_level="$4" target_level="$5" fade_ms="$6" activation_timeout_ms="$7"
+  local gate="Q-DMX-17" key="restart.sequence"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior Hub-restart no-replay sequence"
+    return 0
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
+    return 3
+  fi
+
+  set +e
+  python3 - "$CREDENTIAL_FILE" "$device_id" "$project_id" "$channel_key" "$start_level" "$target_level" "$fade_ms" "$activation_timeout_ms" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper hub-restart-gate >"$evidence" 2>"$evidence.stderr"
+import json, sys
+credential=json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({
+    "username": credential.get("username", ""),
+    "password": credential.get("password", ""),
+    "device_id": sys.argv[2],
+    "project_id": sys.argv[3],
+    "channel_key": sys.argv[4],
+    "start_level": float(sys.argv[5]),
+    "target_level": float(sys.argv[6]),
+    "fade_ms": int(sys.argv[7]),
+    "activation_timeout_ms": int(sys.argv[8]),
+}, separators=(",", ":")))
+PY
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-hub-restart-evidence.py       --input "$evidence" --device-id "$device_id" >"$evidence.validation" 2>&1; then
+    rc=1
+  fi
+
+  case "$rc" in
+    0)
+      record_milestone "$gate" "$key" PASS "$evidence" "active real fade was interrupted by Hub restart; reconnect remained safe and the old command was not replayed"
+      return 0
+      ;;
+    3)
+      record_milestone "$gate" "$key" BLOCKED "$evidence" "Hub-restart qualification could not obtain complete reconnect evidence"
+      return 3
+      ;;
+    *)
+      record_milestone "$gate" "$key" FAIL "$evidence" "Hub-restart/no-replay qualification failed"
+      record_gate "$gate" FAIL "$evidence" "Hub restart exposed ambiguous/stale replay or unsafe reconnect behavior; suppress later lighting fault gates"
+      return 1
+      ;;
+  esac
+}
+
 invoke_envelope_gate() {
   local gate="$1" mode="$2" device_id="$3" project_id="$4" channel="$5" start_level="$6" target_level="$7" fade_ms="$8"
   if ! should_run_gate "$gate"; then
@@ -633,6 +687,8 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     supersession_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_FADE_MS:-}"
     supersession_replacement_level="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_REPLACEMENT_LEVEL:-}"
     supersession_activation_timeout_ms="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_ACTIVATION_TIMEOUT_MS:-5000}"
+    hub_restart_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_HUB_RESTART_FADE_MS:-}"
+    hub_restart_activation_timeout_ms="${STAGECORE_LIGHTING_QUALIFICATION_HUB_RESTART_ACTIVATION_TIMEOUT_MS:-15000}"
 
     single_ok=0
     multi_ok=0
@@ -640,6 +696,7 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     timing_ok=0
     long_ok=0
     supersession_ok=0
+    hub_restart_ok=0
     if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
       single_ok=1
     fi
@@ -657,6 +714,9 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     fi
     if [[ "$single_ok" -eq 1 && "$supersession_fade_ms" =~ ^[0-9]+$ && "$supersession_fade_ms" -ge 1000 && "$supersession_fade_ms" -le 120000 && "$supersession_replacement_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$supersession_activation_timeout_ms" =~ ^[0-9]+$ && "$supersession_activation_timeout_ms" -ge 250 && "$supersession_activation_timeout_ms" -le 10000 ]]; then
       supersession_ok=1
+    fi
+    if [[ "$single_ok" -eq 1 && "$set_level" != "$fade_level" && "$hub_restart_fade_ms" =~ ^[0-9]+$ && "$hub_restart_fade_ms" -ge 20000 && "$hub_restart_fade_ms" -le 120000 && "$hub_restart_activation_timeout_ms" =~ ^[0-9]+$ && "$hub_restart_activation_timeout_ms" -ge 1000 && "$hub_restart_activation_timeout_ms" -le 20000 ]]; then
+      hub_restart_ok=1
     fi
 
     if [[ "$(gate_status Q-DMX-15)" != "FAIL" && "$(gate_status Q-DMX-15)" != "PASS" ]]; then
@@ -777,6 +837,18 @@ PY
     fi
 
     if [[ "$(milestone_status Q-DMX-15 power_cycle.post)" == "PASS" && "$(milestone_status Q-DMX-15 brownout.post)" == "PASS" ]]; then
+      if [[ "${STAGECORE_QUALIFICATION_ENABLE_HUB_RESTART:-0}" == "1" && "$hub_restart_ok" -eq 1 ]]; then
+        invoke_hub_restart_gate "$lighting_device" "$lighting_project" "$channel" "$set_level" "$fade_level" "$hub_restart_fade_ms" "$hub_restart_activation_timeout_ms" || true
+      elif should_run_milestone Q-DMX-17 restart.sequence; then
+        record_milestone Q-DMX-17 restart.sequence BLOCKED "$RUN_DIR/evidence/Q-DMX-17.restart.sequence.json" "Hub-restart gate requires explicit restart arm plus distinct levels and fade_ms 20000..120000"
+      fi
+    elif should_run_milestone Q-DMX-17 restart.sequence; then
+      record_milestone Q-DMX-17 restart.sequence BLOCKED "$RUN_DIR/evidence/Q-DMX-17.restart.sequence.json" "complete Q-DMX-15 automated power-event evidence before Hub-restart qualification"
+    fi
+
+    if [[ "$(gate_status Q-DMX-17)" == "FAIL" ]]; then
+      record "Q-DMX-17.safety-stop" FAIL "Hub restart exposed replay/authority failure; Wi-Fi-loss fault gate suppressed"
+    elif [[ "$(milestone_status Q-DMX-15 power_cycle.post)" == "PASS" && "$(milestone_status Q-DMX-15 brownout.post)" == "PASS" ]]; then
       if [[ "$single_ok" -eq 1 && "$set_level" != "0" && "$set_level" != "0.0" ]]; then
         stage_q16_wifi_loss "$lighting_device" "$lighting_project" "$channel" "$set_level" "$hold" || true
       elif should_run_milestone Q-DMX-16 wifi_loss.pre; then
@@ -784,6 +856,7 @@ PY
       fi
     elif should_run_milestone Q-DMX-16 wifi_loss.pre; then
       record_milestone Q-DMX-16 wifi_loss.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "complete Q-DMX-15 automated power-event evidence before preparing Wi-Fi-loss qualification"
+    fi
     fi
     fi
   fi

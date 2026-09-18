@@ -280,3 +280,31 @@ Automated post evidence proves the same device/project/firmware/configuration re
 The frozen StageCore contract for this gate is **brief hold, then fade to blackout**. That behavior occurs while the node is offline, so StageCore cannot truthfully prove its visible timing from its own reconnect observation. Therefore Q-DMX-16 remains `AUTO_PHYSICAL`: `wifi_loss.post` is automation evidence only, and the final physical confirmation must explicitly confirm the visible hold/fade behavior and that stale brightness did not return after reconnect.
 
 Static firmware review of FLASH CANDIDATE `a393c74ea16176df362db5c5482f916328856a81` currently shows an immediate failsafe blackout request on runtime/network loss. Do not mark Q-DMX-16 PASS merely because reconnect returns black; the physical gate must expose this contract mismatch unless the firmware policy is reconciled first.
+
+## Q-DMX-17 Hub restart / no stale replay checkpoint
+
+Q-DMX-17 is an independent fault gate for the Hub rather than the ESP32 network. It runs after Q-DMX-15 automated power-event evidence and before Q-DMX-16 prepares its Wi-Fi-loss baseline.
+
+The restart is deliberately double-armed. Physical lighting actions must be enabled and the local config must also set:
+
+```text
+STAGECORE_QUALIFICATION_ENABLE_HUB_RESTART=1
+STAGECORE_LIGHTING_QUALIFICATION_HUB_RESTART_FADE_MS=<20000..120000>
+```
+
+The bounded Pi helper establishes a known level, starts a real long fade through the canonical Operator/Stage Device command path, waits until the real node observation names that exact command as the active fade, and then restarts only `stagecore-hub.service`.
+
+Automated PASS for `Q-DMX-17::restart.sequence` requires:
+
+- the interrupted fade was one persisted `ACCEPTED` command before restart;
+- Hub returned READY;
+- the same ESP32/project/firmware/configuration reconnected without an ESP reboot;
+- the interrupted command became a non-success terminal result rather than remaining ambiguous or becoming COMPLETED;
+- no reconnect observation names the interrupted command as active, last accepted, or last applied;
+- DMX is healthy and STAGECORE authority returns;
+- all logical levels are blackout;
+- the safe blackout remains stable for an additional bounded hold after reconnect.
+
+A replay/authority failure marks Q-DMX-17 FAIL and suppresses the later Wi-Fi-loss fault gate. A missing/reconnect-timeout evidence path is BLOCKED rather than fabricated.
+
+Q-DMX-17 remains `AUTO_PHYSICAL`: final PASS still requires the operator to confirm that the active fade was visibly interrupted by the Hub restart and did not resume or replay after reconnect. This gate is independent of the Q-DMX-16 hold/fade policy mismatch tracked in the firmware repository.

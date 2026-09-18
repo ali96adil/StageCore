@@ -44,6 +44,7 @@ jobs:
           tools/qualification/test-envelope-gates.sh
           tools/qualification/test-power-event.sh
           tools/qualification/test-wifi-loss.sh
+          tools/qualification/test-hub-restart-evidence.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

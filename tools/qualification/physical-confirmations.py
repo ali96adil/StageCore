@@ -22,6 +22,7 @@ MAPPINGS = [
     ("Q-DMX-14", "physical.observation", ["invalid_value.sequence"], "Invalid out-of-range/unknown-channel requests caused no visible unsafe change; any configured-bound clamp stayed within the channel limit and output restored."),
     ("Q-DMX-15", "physical.observation", ["power_cycle.post", "brownout.post"], "Power-cycle and controlled brownout both visibly returned the lighting output to the safe blackout state during reboot/recovery."),
     ("Q-DMX-16", "physical.observation", ["wifi_loss.post"], "During ESP-only Wi-Fi loss, output visibly followed the frozen policy: brief hold, then fade to blackout; after Wi-Fi restore no stale brightness returned."),
+    ("Q-DMX-17", "physical.observation", ["restart.sequence"], "A visible active fade was interrupted by the Hub restart and did not resume or replay after the ESP32 reconnected; output remained in the safe state."),
 ]
 
 

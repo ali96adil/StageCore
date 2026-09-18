@@ -36,6 +36,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-envelope-gates
     ;;
+  hub-restart-gate)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-hub-restart
+    ;;
   qualification-socket-status)
     [[ "$#" -eq 1 ]] || exit 64
     test -S /var/lib/stagecore/qualification-envelope.sock
