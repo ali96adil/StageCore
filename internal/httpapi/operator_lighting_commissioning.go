@@ -134,7 +134,7 @@ func WithOperatorLightingCommissioning(
 				Issuer:            session.User.ID,
 				CorrelationID:     correlationID,
 				RuntimeSnapshotID: published.ID,
-				IdempotencyKey:    "lighting-config-apply:" + published.ID + ":" + deviceID,
+				IdempotencyKey:    "lighting-config-apply:" + published.ID + ":" + deviceID + ":" + correlationID,
 				Priority:          "P1",
 				Payload:           payload,
 				DeadlineAt:        &deadline,
