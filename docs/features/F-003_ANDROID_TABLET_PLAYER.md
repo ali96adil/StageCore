@@ -16,7 +16,7 @@ The external theatre-player client used before F-003 has these known operational
 
 - local/offline video files on the tablet;
 - device identity suitable for per-tablet targeting;
-- scene/media selection;
+- scene/media preparation;
 - prepare/preload followed by explicit live playback;
 - play, pause, stop and blackout behavior;
 - per-device orientation where supported;
@@ -95,7 +95,6 @@ Initial F-003 capability vocabulary:
 - `tablet.media.pause`
 - `tablet.media.stop`
 - `tablet.media.blackout`
-- `tablet.media.select`
 - `tablet.orientation.set`
 - `tablet.brightness.set`
 - `tablet.touch_lock.set`
@@ -111,7 +110,6 @@ Minimum typed commands:
 - `TABLET_PAUSE`
 - `TABLET_STOP`
 - `TABLET_BLACKOUT`
-- `TABLET_SELECT_MEDIA`
 
 Optional commands are permitted only when capability negotiation confirms support.
 
@@ -172,7 +170,7 @@ Software acceptance requires deterministic coverage for:
 - capability truthfulness;
 - registration/reconnect/revocation;
 - command expiry and duplicate delivery;
-- prepare/play/pause/stop/blackout/select-media result mapping;
+- prepare/play/pause/stop/blackout result mapping;
 - authorization and SHOW policy;
 - grouping/per-device results;
 - bilingual/RTL operator contract.
