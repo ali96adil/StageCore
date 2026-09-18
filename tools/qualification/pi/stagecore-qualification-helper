@@ -40,6 +40,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-hub-restart
     ;;
+  dmx-stability-gate)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-dmx-stability
+    ;;
   qualification-socket-status)
     [[ "$#" -eq 1 ]] || exit 64
     test -S /var/lib/stagecore/qualification-envelope.sock

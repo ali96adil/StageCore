@@ -23,6 +23,7 @@ MAPPINGS = [
     ("Q-DMX-15", "physical.observation", ["power_cycle.post", "brownout.post"], "Power-cycle and controlled brownout both visibly returned the lighting output to the safe blackout state during reboot/recovery."),
     ("Q-DMX-16", "physical.observation", ["wifi_loss.post"], "During ESP-only Wi-Fi loss, output visibly followed the frozen policy: brief hold, then fade to blackout; after Wi-Fi restore no stale brightness returned."),
     ("Q-DMX-17", "physical.observation", ["restart.sequence"], "A visible active fade was interrupted by the Hub restart and did not resume or replay after the ESP32 reconnected; output remained in the safe state."),
+    ("Q-DMX-18", "physical.observation", ["local_web.action", "stress.auto"], "While bounded Stage Device state/config traffic and protected read-only local-web activity ran together, real DMX output showed no visible flicker/jitter/dropout and the fixed level stayed stable."),
 ]
 
 

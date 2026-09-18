@@ -308,3 +308,21 @@ Automated PASS for `Q-DMX-17::restart.sequence` requires:
 A replay/authority failure marks Q-DMX-17 FAIL and suppresses the later Wi-Fi-loss fault gate. A missing/reconnect-timeout evidence path is BLOCKED rather than fabricated.
 
 Q-DMX-17 remains `AUTO_PHYSICAL`: final PASS still requires the operator to confirm that the active fade was visibly interrupted by the Hub restart and did not resume or replay after reconnect. This gate is independent of the Q-DMX-16 hold/fade policy mismatch tracked in the firmware repository.
+
+## Q-DMX-18 DMX stability under network + local-web activity
+
+Q-DMX-18 separates what StageCore can prove automatically from what must be physically observed. Configure an explicit stress duration with `STAGECORE_LIGHTING_QUALIFICATION_STABILITY_SECONDS` (10..300); `STAGECORE_LIGHTING_QUALIFICATION_STABILITY_INTERVAL_MS` defaults to 500 ms.
+
+The runner prepares a fixed nonzero output and stops at `Q-DMX-18::local_web.action`. Open the **protected read-only diagnostics/local web UI** on the ESP32 and keep navigating/refreshing that UI; do not trigger rehearsal fallback, configuration mutation, or emergency blackout during this gate. Then acknowledge and immediately resume:
+
+```bash
+tools/qualification/campaign.sh q18-status
+tools/qualification/campaign.sh q18-ack "protected diagnostics UI is open and will stay active during the stress window"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+On resume the runner re-arms the same fixed level immediately before the stress window, then drives bounded alternating `LIGHTING_STATE_READ` / `LIGHTING_CONFIG_READ` traffic over the real authenticated Stage Device connection. Automation requires every network command to complete, DMX health to remain true, authority to remain STAGECORE, firmware/config/reset identity to stay unchanged, no reboot/fade to appear, and the selected logical level to remain fixed throughout.
+
+The parent Q-DMX-18 gate remains `AUTO_PHYSICAL`. Final PASS additionally requires observing the real decoder/24 V output for the whole window and confirming no visible flicker, jitter, dropout, or level jump while the protected local web UI is active.
+
+The current FLASH CANDIDATE does not expose the protected local web/diagnostic UI required by the frozen firmware handoff. Therefore Q-DMX-18 must remain BLOCKED at the local-web milestone until firmware support exists; network-only evidence is not sufficient.

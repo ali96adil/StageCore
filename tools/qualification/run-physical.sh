@@ -435,6 +435,116 @@ PY
   esac
 }
 
+stage_q18_stability() {
+  local device_id="$1" project_id="$2" channel_key="$3" test_level="$4" hold_seconds="$5" duration_seconds="$6" interval_ms="$7"
+  local precondition_key="stress.precondition_set"
+  local pre_key="stress.pre"
+  local action_key="local_web.action"
+  local rearm_key="stress.rearm_set"
+  local stress_key="stress.auto"
+
+  if [[ "$(milestone_status Q-DMX-18 "$stress_key")" == "PASS" ]]; then
+    record "Q-DMX-18::$stress_key" PASS "resume preserved prior DMX-stability stress evidence"
+    return 0
+  fi
+
+  if [[ "$(milestone_status Q-DMX-18 "$pre_key")" != "PASS" ]]; then
+    if [[ "$(milestone_status Q-DMX-18 "$precondition_key")" != "PASS" ]]; then
+      invoke_command physical-command Q-DMX-18 "$precondition_key" LIGHTING_CHANNELS_SET \
+        "$device_id" "$project_id" "{\"channels\":{\"$channel_key\":$test_level}}"
+    fi
+    if [[ "$(milestone_status Q-DMX-18 "$precondition_key")" != "PASS" ]]; then
+      return 3
+    fi
+    sleep "$hold_seconds"
+
+    local probe="$RUN_DIR/evidence/Q-DMX-18.pre.probe.json"
+    set +e
+    capture_live_device_probe "$probe" >"$RUN_DIR/evidence/Q-DMX-18.pre.probe.log" 2>&1
+    local probe_rc=$?
+    set -e
+    if [[ "$probe_rc" -ne 0 ]]; then
+      record_milestone Q-DMX-18 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.probe.log" "baseline probe unavailable; re-arm the fixed output on resume"
+      record_milestone Q-DMX-18 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.probe.log" "fresh fixed-output baseline unavailable"
+      return 3
+    fi
+
+    set +e
+    python3 tools/qualification/wifi-loss.py capture \
+      --probe "$probe" --device-id "$device_id" --project-id "$project_id" \
+      --require-nonzero-channel "$channel_key" --out "$RUN_DIR/evidence/Q-DMX-18.pre.json" \
+      >"$RUN_DIR/evidence/Q-DMX-18.pre.log" 2>&1
+    local pre_rc=$?
+    set -e
+    if [[ "$pre_rc" -eq 0 ]]; then
+      record_milestone Q-DMX-18 "$pre_key" PASS "$RUN_DIR/evidence/Q-DMX-18.pre.json" "fresh nonzero fixed-output baseline prepared before local-web/network stress"
+    else
+      record_milestone Q-DMX-18 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.log" "fixed-output baseline was not proven; re-arm on resume"
+      record_milestone Q-DMX-18 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.log" "DMX-stability baseline is not fresh/nonzero"
+      return 3
+    fi
+  fi
+
+  if [[ "$(milestone_status Q-DMX-18 "$action_key")" != "PASS" ]]; then
+    if [[ "$(milestone_status Q-DMX-18 "$action_key")" != "BLOCKED" ]]; then
+      record_milestone Q-DMX-18 "$action_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.json" "open the protected local diagnostics web UI and keep read-only web activity active during the next resumed stress window"
+    else
+      record "Q-DMX-18::$action_key" BLOCKED "awaiting protected local-web activity acknowledgement"
+    fi
+    return 3
+  fi
+
+  if [[ "$(milestone_status Q-DMX-18 "$rearm_key")" != "PASS" ]]; then
+    invoke_command physical-command Q-DMX-18 "$rearm_key" LIGHTING_CHANNELS_SET \
+      "$device_id" "$project_id" "{\"channels\":{\"$channel_key\":$test_level}}"
+  fi
+  if [[ "$(milestone_status Q-DMX-18 "$rearm_key")" != "PASS" ]]; then
+    record_milestone Q-DMX-18 "$action_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.json" "re-arm failed; restart local-web activity before retry"
+    return 3
+  fi
+  sleep "$hold_seconds"
+
+  local evidence="$RUN_DIR/evidence/Q-DMX-18.stress.json"
+  set +e
+  python3 - "$device_id" "$project_id" "$channel_key" "$test_level" "$duration_seconds" "$interval_ms" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper dmx-stability-gate >"$evidence" 2>"$evidence.stderr"
+import json, sys
+print(json.dumps({
+    "device_id": sys.argv[1],
+    "project_id": sys.argv[2],
+    "channel_key": sys.argv[3],
+    "expected_level": float(sys.argv[4]),
+    "duration_seconds": int(sys.argv[5]),
+    "interval_ms": int(sys.argv[6]),
+}, separators=(",", ":")))
+PY
+  local rc=$?
+  set -e
+
+  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-dmx-stability-evidence.py \
+      --input "$evidence" --device-id "$device_id" --expected-level "$test_level" \
+      --min-duration-seconds "$duration_seconds" >"$evidence.validation" 2>&1; then
+    rc=1
+  fi
+
+  case "$rc" in
+    0)
+      record_milestone Q-DMX-18 "$stress_key" PASS "$evidence" "bounded Stage Device state/config traffic completed while fixed DMX state and health remained stable"
+      return 0
+      ;;
+    3)
+      record_milestone Q-DMX-18 "$stress_key" BLOCKED "$evidence" "network stress evidence path unavailable"
+      record_milestone Q-DMX-18 "$action_key" BLOCKED "$evidence" "repeat protected local-web activity when retrying the stress window"
+      return 3
+      ;;
+    *)
+      record_milestone Q-DMX-18 "$stress_key" FAIL "$evidence" "DMX/network stability stress failed"
+      record_gate Q-DMX-18 FAIL "$evidence" "DMX health/output/authority was not stable under bounded network/local-web stress"
+      return 1
+      ;;
+  esac
+}
+
 invoke_envelope_gate() {
   local gate="$1" mode="$2" device_id="$3" project_id="$4" channel="$5" start_level="$6" target_level="$7" fade_ms="$8"
   if ! should_run_gate "$gate"; then
@@ -689,6 +799,8 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     supersession_activation_timeout_ms="${STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_ACTIVATION_TIMEOUT_MS:-5000}"
     hub_restart_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_HUB_RESTART_FADE_MS:-}"
     hub_restart_activation_timeout_ms="${STAGECORE_LIGHTING_QUALIFICATION_HUB_RESTART_ACTIVATION_TIMEOUT_MS:-15000}"
+    stability_seconds="${STAGECORE_LIGHTING_QUALIFICATION_STABILITY_SECONDS:-}"
+    stability_interval_ms="${STAGECORE_LIGHTING_QUALIFICATION_STABILITY_INTERVAL_MS:-500}"
 
     single_ok=0
     multi_ok=0
@@ -697,6 +809,7 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     long_ok=0
     supersession_ok=0
     hub_restart_ok=0
+    stability_ok=0
     if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
       single_ok=1
     fi
@@ -717,6 +830,9 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     fi
     if [[ "$single_ok" -eq 1 && "$set_level" != "$fade_level" && "$hub_restart_fade_ms" =~ ^[0-9]+$ && "$hub_restart_fade_ms" -ge 20000 && "$hub_restart_fade_ms" -le 120000 && "$hub_restart_activation_timeout_ms" =~ ^[0-9]+$ && "$hub_restart_activation_timeout_ms" -ge 1000 && "$hub_restart_activation_timeout_ms" -le 20000 ]]; then
       hub_restart_ok=1
+    fi
+    if [[ "$single_ok" -eq 1 && "$set_level" != "0" && "$set_level" != "0.0" && "$stability_seconds" =~ ^[0-9]+$ && "$stability_seconds" -ge 10 && "$stability_seconds" -le 300 && "$stability_interval_ms" =~ ^[0-9]+$ && "$stability_interval_ms" -ge 100 && "$stability_interval_ms" -le 5000 ]]; then
+      stability_ok=1
     fi
 
     if [[ "$(gate_status Q-DMX-15)" != "FAIL" && "$(gate_status Q-DMX-15)" != "PASS" ]]; then
@@ -856,6 +972,12 @@ PY
       fi
     elif should_run_milestone Q-DMX-16 wifi_loss.pre; then
       record_milestone Q-DMX-16 wifi_loss.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "complete Q-DMX-15 automated power-event evidence before preparing Wi-Fi-loss qualification"
+    fi
+
+    if [[ "$stability_ok" -eq 1 ]]; then
+      stage_q18_stability "$lighting_device" "$lighting_project" "$channel" "$set_level" "$hold" "$stability_seconds" "$stability_interval_ms" || true
+    elif should_run_milestone Q-DMX-18 stress.pre; then
+      record_milestone Q-DMX-18 stress.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.log" "configure a nonzero test level and explicit stability duration 10..300 seconds"
     fi
     fi
     fi

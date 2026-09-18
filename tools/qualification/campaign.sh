@@ -19,6 +19,8 @@ Usage:
   tools/qualification/campaign.sh q15-ack <power-cycle|brownout> <note>
   tools/qualification/campaign.sh q16-status
   tools/qualification/campaign.sh q16-ack <disconnect|reconnect> <note>
+  tools/qualification/campaign.sh q18-status
+  tools/qualification/campaign.sh q18-ack <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -111,6 +113,30 @@ case "$cmd" in
         ;;
     esac
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-16 --key "$key"       --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
+    ;;
+  q18-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'dmx_stability\tprecondition=%s\tpre=%s\tlocal_web=%s\trearm=%s\tstress=%s\n' \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.precondition_set)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.pre)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key local_web.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.rearm_set)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.auto)"
+    ;;
+  q18-ack)
+    [[ "$#" -ge 2 ]] || { usage >&2; exit 64; }
+    note="$2"
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.pre)"
+    action="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key local_web.action)"
+    stress="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-18 --key stress.auto)"
+    [[ "$pre" == "PASS" ]] || { echo "DMX-stability baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$action" != "PASS" ]] || { echo "local-web activity is already acknowledged" >&2; exit 3; }
+    [[ "$stress" != "PASS" ]] || { echo "DMX-stability stress evidence is already PASS" >&2; exit 3; }
+    [[ -n "$note" ]] || { echo "local-web activity note is required" >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-18 --key local_web.action \
+      --status PASS --actor manual-local-web-activity --evidence manual-local-web-activity --note "$note"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
