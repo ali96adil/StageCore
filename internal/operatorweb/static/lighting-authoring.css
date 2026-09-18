@@ -1,0 +1,91 @@
+.lighting-cues-head { align-items: flex-start; }
+
+.lighting-cue-list,
+.lighting-cue-editor,
+.lighting-level-rows {
+  display: grid;
+  gap: 14px;
+}
+
+.lighting-cue-card {
+  display: grid;
+  gap: 14px;
+}
+
+.lighting-cue-head,
+.lighting-cue-fields,
+.lighting-cue-card-actions,
+.lighting-cue-order,
+.lighting-level-row,
+.lighting-node-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.lighting-cue-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.lighting-cue-fields > label,
+.lighting-level-row > label,
+.lighting-fade-field > label {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.lighting-cue-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lighting-cue-card-actions {
+  justify-content: flex-end;
+}
+
+.lighting-level-row {
+  padding: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.24));
+  border-radius: 14px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.05));
+}
+
+.lighting-level-row > label:first-child {
+  flex: 2 1 280px;
+}
+
+.lighting-level-remove {
+  flex: 0 0 auto;
+}
+
+.lighting-node-select {
+  align-items: stretch;
+}
+
+.lighting-node-select .check-row {
+  min-width: 220px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.24));
+  border-radius: 12px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.05));
+}
+
+.lighting-fade-field {
+  max-width: 360px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 760px) {
+  .lighting-level-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .lighting-level-row > label,
+  .lighting-level-remove {
+    width: 100%;
+  }
+}

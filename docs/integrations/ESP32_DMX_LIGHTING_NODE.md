@@ -1,6 +1,6 @@
 # ESP32 DMX Lighting Node Integration
 
-Status: Slice 3 production Stage Device command/result path
+Status: Slice 4 logical aliases + graphical Lighting Cue Builder
 
 Tracker: #147
 
@@ -244,6 +244,22 @@ Slice 3 keeps all lighting execution inside the canonical Stage Device runtime.
 - an intermediate `ACCEPTED` result keeps the original in-flight connection binding and does not create a second accepted event or replay authority;
 - existing Stage Device disconnect/reconnect generation fencing still terminalizes ambiguous in-flight execution and never replays it automatically.
 
+## Cue authoring and synchronized fades
+
+Slice 4 keeps operator authoring logical and snapshot-safe.
+
+- the graphical Lighting Cue Builder never exposes raw DMX channel numbers, target refs or JSON;
+- operators select project logical aliases, normalized levels (0..100), an operation and optional fade duration;
+- canonical Cue parameters store logical aliases, not `channel_key` or DMX channel numbers;
+- at execution time the Stage Device forwarder resolves those aliases from the **Published Runtime Snapshot**, then sends node-local `channel_key` values to the ESP32;
+- aliases that resolve to another node fail closed rather than crossing target authority;
+- all selected aliases on the same ESP32 are grouped into one `LIGHTING_CHANNELS_SET` or `LIGHTING_CHANNELS_FADE` command;
+- one fade command carries one `fade_ms` and one channel map, so the node can use one local monotonic fade clock for all channels in that command;
+- selections spanning more than one node become independent Stage Device Actions using `PARALLEL_BARRIER`; they share the Cue/correlation boundary but cannot claim sample-accurate synchronization across independent ESP32 clocks;
+- generated fade/blackout Actions receive a timeout policy that extends beyond the requested fade duration, preventing the previous generic 5-second runtime timeout from cutting off valid long fades;
+- blackout authoring targets configured lighting nodes and defaults to P0 when no explicit priority is supplied;
+- the source of truth remains ordinary revision-backed Cues/Actions and the normal Cue endpoints, matching the Tablet Scene authoring architecture.
+
 ## Startup and failsafe
 
 Production firmware must:
@@ -317,7 +333,7 @@ The firmware boundary must include:
 1. **Slice 1 — implemented:** contract + deterministic fake node + safety tests.
 2. **Slice 2 — implemented:** official F-021 Lighting Node profile + revision-backed node/channel configuration + Runtime Snapshot v5 mapping.
 3. **Slice 3 — implemented:** production Stage Device command mapping/result path for set/fade/blackout/state/identify/config, strict payload validation, profile/snapshot authority, and intermediate ACCEPTED → terminal result support.
-4. **Slice 4:** Cue Engine and graphical Cue Builder logical-alias authoring.
+4. **Slice 4 — implemented:** Cue Engine logical-alias resolution from the Published Runtime Snapshot + graphical bilingual Lighting Cue Builder for set/fade/blackout. The builder groups aliases by lighting node so one node receives one multi-channel command, preserving one local fade clock per ESP32. Cross-node actions are emitted in parallel with the same Cue correlation.
 5. **Slice 5:** bilingual/RTL Operator device/configuration/readiness workspace and official ADDON packaging.
 6. **Slice 6:** software qualification/freeze, documentation reconciliation and handoff to real ESP32 firmware/physical qualification.
 
