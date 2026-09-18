@@ -236,11 +236,11 @@ PY
 
 invoke_tablet_evidence() {
   local gate="$1" key="$2" mode="$3" device_id="$4" project_id="$5" extra_json="$6"
+  local evidence="${7:-$RUN_DIR/evidence/$gate.$key.json}"
   if ! should_run_milestone "$gate" "$key"; then
     record "$gate::$key" PASS "resume preserved prior Tablet evidence"
     return 0
   fi
-  local evidence="$RUN_DIR/evidence/$gate.$key.json"
   set +e
   python3 - "$mode" "$device_id" "$project_id" "$extra_json" <<'PY' | \
     ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper tablet-evidence \
@@ -351,28 +351,60 @@ stage_q14_reconnect() {
 import json,sys
 print(json.dumps({"runtime_snapshot_id":sys.argv[1]}))
 PY
-)" || return $?
-    cp "$RUN_DIR/evidence/Q-TAB-14.$pre_key.json" "$pre"
+)" "$pre" || return $?
+  elif [[ ! -s "$pre" ]]; then
+    prior_pre="$(milestone_evidence Q-TAB-14 "$pre_key")"
+    if [[ -n "$prior_pre" && -s "$prior_pre" ]]; then
+      cp "$prior_pre" "$pre"
+    elif [[ "$(milestone_status Q-TAB-14 "$disconnect_key")" != "PASS" ]]; then
+      extra="$(python3 - "$snapshot_id" <<'PY'
+import json,sys
+print(json.dumps({"runtime_snapshot_id":sys.argv[1]}))
+PY
+)"
+      set +e
+      python3 - reconnect-pre "$device_id" "$project_id" "$extra" <<'PY' | \
+        ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper tablet-evidence \
+          >"$pre" 2>"$pre.stderr"
+import json,sys
+mode,device,project,extra=sys.argv[1:]
+value={"mode":mode,"device_id":device,"project_id":project}
+value.update(json.loads(extra))
+print(json.dumps(value,separators=(",",":")))
+PY
+      recover_rc=$?
+      set -e
+      if [[ "$recover_rc" -ne 0 ]]; then
+        record_milestone Q-TAB-14 "$pre_key" BLOCKED "$pre" "durable reconnect baseline was lost and could not be safely recaptured"
+        return 3
+      fi
+      record_milestone Q-TAB-14 "$pre_key" PASS "$pre" "fresh reconnect baseline recaptured before any acknowledged disconnect"
+    else
+      record_gate Q-TAB-14 BLOCKED "$pre" "reconnect baseline evidence is unavailable after disconnect acknowledgement; invalidate Q-TAB-14 before retrying"
+      return 3
+    fi
   fi
   if [[ "$(milestone_status Q-TAB-14 "$disconnect_key")" != "PASS" || "$(milestone_status Q-TAB-14 "$reconnect_key")" != "PASS" ]]; then
     record "Q-TAB-14.manual" BLOCKED "disconnect only the Tablet network, restore it, acknowledge q14 disconnect/reconnect, then resume"
     return 3
   fi
-  local baseline disconnect_at reconnect_at extra
-  baseline="$(python3 - "$pre" <<'PY'
+  local baseline baseline_captured_at disconnect_at reconnect_at extra
+  read -r baseline baseline_captured_at < <(python3 - "$pre" <<'PY'
 import json,sys
-print(int(json.load(open(sys.argv[1],encoding="utf-8"))["baseline_issued_at_us"]))
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+print(int(data["baseline_issued_at_us"]), data["captured_at"])
 PY
-)"
+)
   disconnect_at="$(milestone_updated_at Q-TAB-14 "$disconnect_key")"
   reconnect_at="$(milestone_updated_at Q-TAB-14 "$reconnect_key")"
-  extra="$(python3 - "$snapshot_id" "$baseline" "$disconnect_at" "$reconnect_at" <<'PY'
+  extra="$(python3 - "$snapshot_id" "$baseline" "$baseline_captured_at" "$disconnect_at" "$reconnect_at" <<'PY'
 import json,sys
 print(json.dumps({
  "runtime_snapshot_id":sys.argv[1],
  "baseline_issued_at_us":int(sys.argv[2]),
- "disconnect_at":sys.argv[3],
- "reconnect_at":sys.argv[4],
+ "baseline_captured_at":sys.argv[3],
+ "disconnect_at":sys.argv[4],
+ "reconnect_at":sys.argv[5],
 },separators=(",",":")))
 PY
 )"
@@ -1187,6 +1219,7 @@ fi
 
 if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" ]]; then
   IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
+  media="${STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER:-}"
   cue_name="${STAGECORE_TABLET_QUALIFICATION_CUE_NAME:-}"
   missing_media="${STAGECORE_TABLET_QUALIFICATION_MISSING_MEDIA_NUMBER:-}"
   snapshot_id="${STAGECORE_RUNTIME_SNAPSHOT_ID:-}"

@@ -469,3 +469,12 @@ Post evidence requires an actual Stage Device disconnect and reconnect observati
 ### Q-TAB-15 — mismatched scope rejection
 
 The root-only qualification Unix socket now permits exactly one additional non-playing Tablet command: `TABLET_PREPARE`. Q-TAB-15 uses it only with deliberately wrong project and Runtime Snapshot scope. The real tablet must reject with `PROJECT_MISMATCH` and `SNAPSHOT_MISMATCH`. These qualification envelopes are not inserted into production command persistence and cannot become a second Tablet authority.
+
+
+### Tablet batch resume hardening
+
+Q-TAB-14 stores its reconnect baseline directly under the durable campaign state directory before any manual disconnect acknowledgement. If a run is interrupted after the milestone is recorded, resume first recovers the exact milestone evidence path; it will only recapture a baseline while no disconnect has been acknowledged. Once disconnect is acknowledged, a lost baseline fails closed and requires deliberate gate invalidation instead of inventing no-replay evidence.
+
+Reconnect network evidence uses the durable pre-disconnect capture time as the start of the observation window, so a deliberate operator pause before acknowledging the disconnect cannot erase a real `WEBSOCKET_DISCONNECTED` observation.
+
+Q-TAB-12 additionally correlates every completed canonical Tablet action execution with the corresponding Stage Device command `causation_id`; a Cue-level correlation alone is not sufficient.

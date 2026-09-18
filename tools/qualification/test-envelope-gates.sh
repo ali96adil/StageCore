@@ -110,9 +110,9 @@ assert abs(e["restored_level"] - 20.0) <= 0.01
 assert e["configuration_hash_before"] == e["configuration_hash_after"] == "fake-config-hash"
 PY
 
-echo "qualification duplicate/expiry/invalid-value envelope self-test PASS"
-
 printf '%s\n' '{"mode":"tablet-scope","device_id":"tablet-01","project_id":"project-1","runtime_snapshot_id":"snapshot-1","tablet_manifest_id":"manifest-1","media_number":1}' | \
   STAGECORE_QUALIFICATION_SOCKET="$sock" python3 "$HELPER" >"$tmp/tablet-scope.json"
 grep -F '"project_mismatch_error_code": "PROJECT_MISMATCH"' "$tmp/tablet-scope.json" >/dev/null
 grep -F '"snapshot_mismatch_error_code": "SNAPSHOT_MISMATCH"' "$tmp/tablet-scope.json" >/dev/null
+
+echo "qualification duplicate/expiry/invalid-value/tablet-scope envelope self-test PASS"

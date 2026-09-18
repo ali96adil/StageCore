@@ -51,6 +51,7 @@ jobs:
           tools/qualification/test-electrical-path.sh
           tools/qualification/test-dmx-full-chain.sh
           tools/qualification/test-tablet-evidence.sh
+          tools/qualification/test-tablet-workflow.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

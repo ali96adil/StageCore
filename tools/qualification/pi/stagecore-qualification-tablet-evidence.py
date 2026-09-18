@@ -207,13 +207,14 @@ def mode_cue_execution(conn, data):
     expected_action_ids = {item["action_id"] for item in actions}
     action_rows = conn.execute(
         """
-        SELECT action_id,result,error_code FROM action_executions
+        SELECT action_execution_id,action_id,result,error_code FROM action_executions
         WHERE cue_execution_id=?
         """,
         (execution[0],),
     ).fetchall()
-    actual_action_ids = {row[0] for row in action_rows}
-    if actual_action_ids != expected_action_ids or any(row[1] != "COMPLETED" for row in action_rows):
+    actual_action_ids = {row[1] for row in action_rows}
+    action_execution_ids = {row[0] for row in action_rows}
+    if actual_action_ids != expected_action_ids or any(row[2] != "COMPLETED" for row in action_rows):
         fail("Cue Engine action execution did not complete the canonical Tablet Scene")
 
     commands = conn.execute(
@@ -231,6 +232,9 @@ def mode_cue_execution(conn, data):
     ]
     if not completed:
         fail("Cue Engine execution has no completed Tablet Stage Device command")
+    command_causation_ids = {row[5] for row in completed}
+    if command_causation_ids != action_execution_ids:
+        fail("Tablet Stage Device command causation does not match the completed Cue action executions")
     emit({
         "status": "PASS", "mode": "cue-execution", "project_id": project_id,
         "device_id": device_id, "runtime_snapshot_id": snapshot_id,
@@ -269,8 +273,11 @@ def mode_reconnect_post(conn, data):
     baseline = data.get("baseline_issued_at_us")
     if isinstance(baseline, bool) or not isinstance(baseline, int) or baseline < 0:
         fail("invalid baseline_issued_at_us")
+    baseline_captured_at = parse_time(data.get("baseline_captured_at"), "baseline_captured_at")
     disconnect_at = parse_time(data.get("disconnect_at"), "disconnect_at")
     reconnect_at = parse_time(data.get("reconnect_at"), "reconnect_at")
+    if disconnect_at < baseline_captured_at:
+        fail("disconnect acknowledgement predates reconnect baseline")
     if reconnect_at < disconnect_at:
         fail("reconnect acknowledgement predates disconnect")
     runtime = tablet_runtime(conn, device_id, project_id, snapshot_id)
@@ -278,18 +285,18 @@ def mode_reconnect_post(conn, data):
     offline = conn.execute(
         """
         SELECT COUNT(*) FROM network_observations
-        WHERE target_kind='STAGE_DEVICE' AND target_id=? AND observed_at_us>=?
+        WHERE target_kind='STAGE_DEVICE' AND target_id=? AND observed_at_us>=? AND observed_at_us<=?
           AND (reachability='UNREACHABLE' OR transport_state='WEBSOCKET_DISCONNECTED')
         """,
-        (device_id, micros(disconnect_at) - 5_000_000),
+        (device_id, micros(baseline_captured_at) - 1_000_000, micros(reconnect_at) + 5_000_000),
     ).fetchone()[0]
     online = conn.execute(
         """
         SELECT COUNT(*) FROM network_observations
-        WHERE target_kind='STAGE_DEVICE' AND target_id=? AND observed_at_us>=?
+        WHERE target_kind='STAGE_DEVICE' AND target_id=? AND observed_at_us>=? AND observed_at_us<=?
           AND reachability='REACHABLE' AND transport_state='WEBSOCKET_CONNECTED'
         """,
-        (device_id, micros(reconnect_at) - 5_000_000),
+        (device_id, micros(disconnect_at), micros(reconnect_at) + 5_000_000),
     ).fetchone()[0]
     if offline < 1:
         fail("no Stage Device disconnect observation found for Q-TAB-14", 3)

@@ -61,7 +61,12 @@ import datetime
 print(datetime.datetime.now(datetime.timezone.utc).isoformat())
 PY
 )"
-printf '{"mode":"reconnect-post","project_id":"project-1","device_id":"tablet-01","runtime_snapshot_id":"snapshot-1","baseline_issued_at_us":%s,"disconnect_at":"%s","reconnect_at":"%s"}\n' "$baseline" "$now_iso" "$now_iso" | \
+baseline_captured_at="$(python3 - "$tmp/pre.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1]))["captured_at"])
+PY
+)"
+printf '{"mode":"reconnect-post","project_id":"project-1","device_id":"tablet-01","runtime_snapshot_id":"snapshot-1","baseline_issued_at_us":%s,"baseline_captured_at":"%s","disconnect_at":"%s","reconnect_at":"%s"}\n' "$baseline" "$baseline_captured_at" "$now_iso" "$now_iso" | \
   python3 "$HELPER" --db "$db" >"$tmp/post.json"
 grep -F '"commands_after_baseline":0' "$tmp/post.json" >/dev/null
 
