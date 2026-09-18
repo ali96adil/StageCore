@@ -59,9 +59,6 @@ func WithOperatorLightingCommissioning(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ALIAS_INVALID"})
 				return
 			}
-			if input.Level == 0 {
-				input.Level = 50
-			}
 			if input.DurationMS == 0 {
 				input.DurationMS = 1200
 			}
