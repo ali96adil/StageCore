@@ -12,6 +12,8 @@ Usage:
   tools/qualification/campaign.sh status [--all]
   tools/qualification/campaign.sh manual <GATE_ID> <PASS|FAIL|BLOCKED|N/A> <evidence-or-note>
   tools/qualification/campaign.sh repin <pin> <new-value> <reason> <GATE_ID> [GATE_ID...]
+  tools/qualification/campaign.sh pending-physical
+  tools/qualification/campaign.sh confirm-pending <PASS|FAIL> <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -32,6 +34,13 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate "$gate" --status "$result" \
       --actor manual --evidence "manual-observation" --note "$note"
+    ;;
+  pending-physical)
+    exec python3 "$ROOT/tools/qualification/physical-confirmations.py" pending --state "$STATE"
+    ;;
+  confirm-pending)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/physical-confirmations.py" confirm-all --state "$STATE" --status "$2" --note "$3"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }

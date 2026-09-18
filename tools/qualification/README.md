@@ -153,3 +153,29 @@ The default local credential file is `~/.config/stagecore/qualification-operator
 For Tablet PREPARE, set `STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER` in the local qualification config to a known installed media number. The command is recorded as the `prepare.command` milestone under `Q-TAB-06`; it does **not** mark the full physical PREPARE+GO gate PASS by itself.
 
 Lighting state/config reads are recorded as `state_read.command` and `config_read.command` milestones under `Q-DMX-20`. Milestones survive interruption and are skipped on `--resume` after PASS.
+
+## Armed physical action sequence
+
+Visible/output-changing actions are separate from the read-only path. They run only when the local config explicitly sets:
+
+```text
+STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS=1
+```
+
+The bounded physical allowlist currently covers Tablet PLAY/PAUSE/STOP plus one-channel Lighting SET/FADE and immediate BLACKOUT. Lighting action values must also be explicitly configured locally. Command completion is only a command-evidence milestone; it never substitutes for real visual/physical observation.
+
+Each command evidence file is validated before PASS and rejects unredacted secret/token/cookie/password-like fields. The Pi helper also recursively redacts such result fields before emitting evidence.
+
+After an armed run, inspect the aggregated pending block:
+
+```bash
+tools/qualification/campaign.sh pending-physical
+```
+
+When all listed observations were physically correct, record them in one operation:
+
+```bash
+tools/qualification/campaign.sh confirm-pending PASS "all listed tablet and lighting outputs were observed correctly"
+```
+
+If one or more listed observations were wrong, use `FAIL` and describe what was wrong; affected gates become FAIL while command evidence/history remains preserved.

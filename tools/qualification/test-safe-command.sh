@@ -44,16 +44,14 @@ class H(BaseHTTPRequestHandler):
         command_type = body["command_type"]
         command_id=f"cmd-{H.counter}"
         if "/tablet-controller/commands" in self.path:
-            assert command_type == "TABLET_PREPARE"
-            assert body["payload"] == {"media_number":1}
+            assert command_type in {"TABLET_PREPARE","TABLET_PLAY","TABLET_PAUSE","TABLET_STOP"}
             response={"results":[{"device_id":"tablet-01","command":{"envelope":{"command_id":command_id}}}]}
         else:
-            assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ"}
-            assert body["payload"] == {}
+            assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ","LIGHTING_CHANNELS_SET","LIGHTING_CHANNELS_FADE","LIGHTING_BLACKOUT"}
             response={"envelope":{"command_id":command_id}}
         c=sqlite3.connect(db)
         c.execute("INSERT INTO stage_device_commands VALUES (?,?,?,?,?)",
-          (command_id,command_type,"COMPLETED",json.dumps({"status":"COMPLETED","payload":{"ok":True}}),123))
+          (command_id,command_type,"COMPLETED",json.dumps({"status":"COMPLETED","payload":{"ok":True},"session_token":"must-redact"}),123))
         c.commit(); c.close()
         return self.reply(200,response)
 
@@ -81,6 +79,12 @@ PY
 run_one TABLET_PREPARE tablet-01 project-1 '{"media_number":1}' "$tmp/tablet.json"
 run_one LIGHTING_STATE_READ lighting-01 project-1 '{}' "$tmp/state.json"
 run_one LIGHTING_CONFIG_READ lighting-01 project-1 '{}' "$tmp/config.json"
+grep -F '"session_token": "[REDACTED]"' "$tmp/config.json" >/dev/null
+
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"TABLET_PLAY","payload":{"media_number":1}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/play.json"
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20}}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/set.json"
 
 set +e
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{}}\n' |   python3 "$HELPER" --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null
