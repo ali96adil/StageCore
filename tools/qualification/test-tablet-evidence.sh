@@ -56,17 +56,32 @@ import json,sys
 print(json.load(open(sys.argv[1]))["baseline_issued_at_us"])
 PY
 )"
-now_iso="$(python3 - <<'PY'
-import datetime
-print(datetime.datetime.now(datetime.timezone.utc).isoformat())
-PY
-)"
 baseline_captured_at="$(python3 - "$tmp/pre.json" <<'PY'
 import json,sys
 print(json.load(open(sys.argv[1]))["captured_at"])
 PY
 )"
-printf '{"mode":"reconnect-post","project_id":"project-1","device_id":"tablet-01","runtime_snapshot_id":"snapshot-1","baseline_issued_at_us":%s,"baseline_captured_at":"%s","disconnect_at":"%s","reconnect_at":"%s"}\n' "$baseline" "$baseline_captured_at" "$now_iso" "$now_iso" | \
+read -r disconnect_iso reconnect_iso < <(python3 - "$db" <<'PY'
+import datetime, sqlite3, sys
+db=sys.argv[1]
+disconnect=datetime.datetime.now(datetime.timezone.utc)
+offline=disconnect + datetime.timedelta(milliseconds=10)
+reconnect=disconnect + datetime.timedelta(milliseconds=20)
+online=reconnect
+conn=sqlite3.connect(db)
+conn.execute("INSERT INTO network_observations VALUES (?,?,?,?,?)",(
+    "STAGE_DEVICE","tablet-01",int(offline.timestamp()*1_000_000),
+    "UNREACHABLE","WEBSOCKET_DISCONNECTED",
+))
+conn.execute("INSERT INTO network_observations VALUES (?,?,?,?,?)",(
+    "STAGE_DEVICE","tablet-01",int(online.timestamp()*1_000_000),
+    "REACHABLE","WEBSOCKET_CONNECTED",
+))
+conn.commit(); conn.close()
+print(disconnect.isoformat(), reconnect.isoformat())
+PY
+)
+printf '{"mode":"reconnect-post","project_id":"project-1","device_id":"tablet-01","runtime_snapshot_id":"snapshot-1","baseline_issued_at_us":%s,"baseline_captured_at":"%s","disconnect_at":"%s","reconnect_at":"%s"}\n' "$baseline" "$baseline_captured_at" "$disconnect_iso" "$reconnect_iso" | \
   python3 "$HELPER" --db "$db" >"$tmp/post.json"
 grep -F '"commands_after_baseline":0' "$tmp/post.json" >/dev/null
 
