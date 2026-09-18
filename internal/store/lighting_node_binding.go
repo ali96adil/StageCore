@@ -116,6 +116,18 @@ func (s *Store) ListLightingNodeBindings(ctx context.Context, revisionID string)
 	if _, err := s.GetRevision(ctx, revisionID); err != nil {
 		return nil, err
 	}
+	// Historical migration tests intentionally exercise snapshot creation on
+	// pre-Slice-2 schemas. A fully migrated production Hub always has this
+	// table, while older schema fixtures truthfully contain no lighting bindings.
+	var bindingTableCount int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lighting_node_revision_bindings'",
+	).Scan(&bindingTableCount); err != nil {
+		return nil, fmt.Errorf("detect lighting binding schema: %w", err)
+	}
+	if bindingTableCount == 0 {
+		return []lightingnode.ProjectBinding{}, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT device_id, profile_id, configuration_json, aliases_json, updated_by "+
 			"FROM lighting_node_revision_bindings WHERE revision_id = ? ORDER BY device_id",
