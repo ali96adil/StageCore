@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
@@ -43,6 +44,7 @@ type persistedResult struct {
 
 type probeEnvelope struct {
 	SchemaVersion int           `json:"schema_version"`
+	GeneratedAt   string        `json:"generated_at"`
 	Devices       []probeDevice `json:"devices"`
 }
 
@@ -56,6 +58,7 @@ type probeDevice struct {
 type probeRuntime struct {
 	ConnectionState string          `json:"connection_state"`
 	Readiness       string          `json:"readiness"`
+	LastSeenAtUS    int64           `json:"last_seen_at_us"`
 	Observed        json.RawMessage `json:"observed"`
 }
 
@@ -173,6 +176,18 @@ func main() {
 	}
 	if selected.Runtime.ConnectionState != "ONLINE" || selected.Runtime.Readiness != "READY" {
 		die("lighting runtime is not ONLINE/READY")
+	}
+	generatedAt, err := time.Parse(time.RFC3339Nano, probe.GeneratedAt)
+	if err != nil {
+		die("probe generated_at invalid: %v", err)
+	}
+	if selected.Runtime.LastSeenAtUS <= 0 {
+		die("lighting last_seen_at_us missing")
+	}
+	lastSeen := time.UnixMicro(selected.Runtime.LastSeenAtUS).UTC()
+	age := generatedAt.Sub(lastSeen)
+	if age < -5*time.Second || age > 20*time.Second {
+		die("lighting observation is stale: %s", age)
 	}
 	var probeObs lightingnode.Observation
 	if err := json.Unmarshal(selected.Runtime.Observed, &probeObs); err != nil {

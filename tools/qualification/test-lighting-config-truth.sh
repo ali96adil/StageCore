@@ -29,13 +29,15 @@ manifest={
  "revision_number":1,"cues":[],
  "lighting_nodes":[{"device_id":device,"profile_id":"stagecore.esp32-dmx-lighting-node","configuration":config,"aliases":{"front_warm":"warm"}}]
 }
+manifest_raw=json.dumps(manifest,separators=(",",":"))
+snapshot_hash=hashlib.sha256(manifest_raw.encode()).hexdigest()
 conn=sqlite3.connect(db)
 conn.execute("""CREATE TABLE runtime_snapshots (
  runtime_snapshot_id TEXT PRIMARY KEY, project_id TEXT, revision_id TEXT,
  snapshot_version INTEGER, content_hash TEXT, manifest_json TEXT, status TEXT
 )""")
 conn.execute("INSERT INTO runtime_snapshots VALUES (?,?,?,?,?,?,?)",
- (snapshot,project,manifest["revision_id"],1,"a"*64,json.dumps(manifest,separators=(",",":")),"PUBLISHED"))
+ (snapshot,project,manifest["revision_id"],1,snapshot_hash,manifest_raw,"PUBLISHED"))
 conn.commit(); conn.close()
 PY
 hash="$(cat "$tmp/hash")"
@@ -45,9 +47,10 @@ printf '{"device_id":"%s","project_id":"%s","runtime_snapshot_id":"%s"}\n' "$dev
 python3 - "$tmp/probe.json" "$device" "$project" "$hash" <<'PY'
 import json,sys,time
 path,device,project,h=sys.argv[1:]
-data={"schema_version":1,"devices":[{"device_id":device,"project_id":project,
+now=time.time()
+data={"schema_version":1,"generated_at":__import__("datetime").datetime.datetime.now(__import__("datetime").timezone.utc).isoformat(),"devices":[{"device_id":device,"project_id":project,
 "profile_id":"stagecore.esp32-dmx-lighting-node","runtime":{"connection_state":"ONLINE","readiness":"READY",
-"last_seen_at_us":int(time.time()*1_000_000),"observed":{"schema_version":1,"firmware_version":"test",
+"last_seen_at_us":int(now*1_000_000),"observed":{"schema_version":1,"firmware_version":"test",
 "current_levels":{"warm":0,"cold":0},"dmx_healthy":True,"configuration_hash":h,
 "brownout_warning":False,"authority":"STAGECORE"}}}]}
 json.dump(data,open(path,"w"))

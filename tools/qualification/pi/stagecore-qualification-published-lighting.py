@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -54,7 +55,10 @@ def main():
     if not os.path.isfile(db_path):
         fail("StageCore database unavailable", 3)
 
-    conn = sqlite3.connect("file:" + db_path + "?mode=ro", uri=True)
+    try:
+        conn = sqlite3.connect("file:" + db_path + "?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        fail("StageCore database open failed: " + str(exc), 3)
     try:
         row = conn.execute(
             """
@@ -80,8 +84,12 @@ def main():
     if len(content_hash) != 64 or any(ch not in "0123456789abcdef" for ch in content_hash):
         fail("runtime snapshot content hash is invalid")
 
+    manifest_raw = str(row[4] or "")
+    actual_content_hash = hashlib.sha256(manifest_raw.encode("utf-8")).hexdigest()
+    if actual_content_hash != content_hash:
+        fail("runtime snapshot manifest content hash mismatch")
     try:
-        manifest = json.loads(row[4])
+        manifest = json.loads(manifest_raw)
     except Exception:
         fail("runtime snapshot manifest is invalid JSON")
     if not isinstance(manifest, dict):

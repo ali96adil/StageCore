@@ -68,6 +68,16 @@ milestone_status() {
   python3 tools/qualification/qualification-milestone.py get --state "$STATE_FILE" --gate "$1" --key "$2"
 }
 
+milestone_evidence() {
+  python3 - "$STATE_FILE" "$1" "$2" <<'PY'
+import json, sys
+state=json.load(open(sys.argv[1], encoding="utf-8"))
+item=((state.get("gates",{}).get(sys.argv[2],{}).get("milestones",{}).get(sys.argv[3])) or {})
+evidence=item.get("evidence") or []
+print(evidence[0] if evidence else "")
+PY
+}
+
 record_gate() {
   local gate="$1" status="$2" evidence="$3" note="$4"
   python3 tools/qualification/qualification-state.py record     --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --status "$status"     --actor runner --evidence "$evidence" --note "$note" >/dev/null
@@ -280,21 +290,23 @@ PY
 
 finalize_q20() {
   local device_id="$1" project_id="$2"
-  local observation state_read config_read truth
+  local observation state_read config_read truth truth_evidence
   observation="$(milestone_status Q-DMX-20 observation.readiness)"
   state_read="$(milestone_status Q-DMX-20 state_read.command)"
   config_read="$(milestone_status Q-DMX-20 config_read.command)"
   truth="$(milestone_status Q-DMX-20 published_config.truth)"
+  truth_evidence="$(milestone_evidence Q-DMX-20 published_config.truth)"
+  [[ -n "$truth_evidence" ]] || truth_evidence="$RUN_DIR/evidence/Q-DMX-20.published_config.truth.json"
 
   if [[ "$observation" == "FAIL" || "$state_read" == "FAIL" || "$config_read" == "FAIL" || "$truth" == "FAIL" ]]; then
-    record_gate Q-DMX-20 FAIL "$RUN_DIR/evidence/Q-DMX-20.published_config.truth.json" "lighting observation/readiness/configuration truth failed; physical lighting actions are suppressed"
+    record_gate Q-DMX-20 FAIL "$truth_evidence" "lighting observation/readiness/configuration truth failed; physical lighting actions are suppressed"
     return 1
   fi
   if [[ "$observation" == "PASS" && "$state_read" == "PASS" && "$config_read" == "PASS" && "$truth" == "PASS" ]]; then
-    record_gate Q-DMX-20 PASS "$RUN_DIR/evidence/Q-DMX-20.published_config.truth.json" "lighting observation/readiness and installed configuration exactly match the pinned Published Runtime Snapshot"
+    record_gate Q-DMX-20 PASS "$truth_evidence" "lighting observation/readiness and installed configuration exactly match the pinned Published Runtime Snapshot"
     return 0
   fi
-  record_gate Q-DMX-20 BLOCKED "$RUN_DIR/evidence/Q-DMX-20.published_config.truth.json" "lighting observation/readiness/configuration truth is incomplete"
+  record_gate Q-DMX-20 BLOCKED "$truth_evidence" "lighting observation/readiness/configuration truth is incomplete"
   return 3
 }
 
@@ -987,7 +999,11 @@ else
   else
     record "Q-DMX-20::observation.readiness" PASS "resume preserved prior canonical lighting observation"
   fi
-  record_gate Q-DMX-20 BLOCKED "$RUN_DIR/evidence/device-probe.stderr" "canonical device probe unavailable"
+  if should_run_gate Q-DMX-20; then
+    record_gate Q-DMX-20 BLOCKED "$RUN_DIR/evidence/device-probe.stderr" "canonical device probe unavailable"
+  else
+    record "Q-DMX-20" "$(gate_status Q-DMX-20)" "resume preserved prior authoritative lighting configuration truth"
+  fi
 fi
 
 tablet_target=""
@@ -1039,7 +1055,11 @@ else
       record "Q-DMX-20::$key" PASS "resume preserved prior milestone"
     fi
   done
-  record_gate Q-DMX-20 BLOCKED "$RUN_DIR/evidence/Q-DMX-20.observation.readiness.log" "lighting observation/readiness target is not ready for authoritative configuration truth"
+  if [[ "$(milestone_status Q-DMX-20 observation.readiness)" == "FAIL" ]]; then
+    record_gate Q-DMX-20 FAIL "$RUN_DIR/evidence/Q-DMX-20.observation.readiness.log" "lighting observation/readiness failed; authoritative configuration truth cannot be trusted"
+  else
+    record_gate Q-DMX-20 BLOCKED "$RUN_DIR/evidence/Q-DMX-20.observation.readiness.log" "lighting observation/readiness target is not ready for authoritative configuration truth"
+  fi
 fi
 
 if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
