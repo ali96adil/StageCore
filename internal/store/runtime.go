@@ -96,36 +96,6 @@ func (s *Store) GetRuntimeSnapshot(ctx context.Context, snapshotID string) (doma
 	return snapshot, nil
 }
 
-func (s *Store) LatestPublishedRuntimeSnapshotForProject(ctx context.Context, projectID string) (*domain.RuntimeSnapshot, error) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		return nil, domain.ErrInvalidInput
-	}
-	var snapshot domain.RuntimeSnapshot
-	var createdUS int64
-	var manifest, status string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT runtime_snapshot_id, project_id, revision_id, snapshot_version, created_at_us, created_by, content_hash, manifest_json, status
-		FROM runtime_snapshots
-		WHERE project_id = ? AND status = 'PUBLISHED'
-		ORDER BY snapshot_version DESC, created_at_us DESC
-		LIMIT 1
-	`, projectID).Scan(
-		&snapshot.ID, &snapshot.ProjectID, &snapshot.RevisionID, &snapshot.SnapshotVersion, &createdUS,
-		&snapshot.CreatedBy, &snapshot.ContentHash, &manifest, &status,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get latest published runtime snapshot: %w", err)
-	}
-	snapshot.CreatedAt = clock.FromUnixMicros(createdUS)
-	snapshot.Manifest = json.RawMessage(manifest)
-	snapshot.Status = domain.RuntimeSnapshotStatus(status)
-	return &snapshot, nil
-}
-
 func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string) (domain.Session, error) {
 	if sessionType != domain.SessionSimulation && sessionType != domain.SessionRehearsal && sessionType != domain.SessionShow {
 		return domain.Session{}, fmt.Errorf("%w: unsupported session type", domain.ErrInvalidInput)
