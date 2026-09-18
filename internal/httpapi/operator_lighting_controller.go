@@ -21,12 +21,10 @@ const lightingSceneCueType = "LIGHTING_SCENE"
 var lightingAliasSlugRE = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 type lightingChannelView struct {
-	Alias         string                   `json:"alias"`
-	DeviceID      string                   `json:"device_id"`
-	DisplayName   string                   `json:"display_name"`
-	ChannelKey    string                   `json:"channel_key"`
-	ChannelNumber int                      `json:"channel_number"`
-	Kind          lightingnode.ChannelKind `json:"kind"`
+	Alias        string                   `json:"alias"`
+	DeviceID     string                   `json:"device_id"`
+	DisplayName  string                   `json:"display_name"`
+	Kind         lightingnode.ChannelKind `json:"kind"`
 	PhysicalZone  string                   `json:"physical_zone,omitempty"`
 	MinimumLevel  float64                  `json:"minimum_level"`
 	MaximumLevel  float64                  `json:"maximum_level"`
@@ -228,10 +226,15 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_TARGETS_UNAVAILABLE"})
 				return
 			}
+			bindings, err := stageStore.ListLightingNodeBindings(r.Context(), revision.ID)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_BINDINGS_UNAVAILABLE"})
+				return
+			}
 			targets := lightingTargetBindings(aliases)
 			scenes := make([]lightingSceneView, 0)
 			for _, cue := range cues {
-				scene, ok := makeLightingSceneView(cue, targets)
+				scene, ok := makeLightingSceneView(cue, targets, bindings)
 				if ok {
 					scenes = append(scenes, scene)
 				}
@@ -275,9 +278,8 @@ func lightingNodeViews(bindings []lightingnode.ProjectBinding, devices []devicee
 			}
 			view.Channels = append(view.Channels, lightingChannelView{
 				Alias: reverse[channel.ChannelKey], DeviceID: binding.DeviceID, DisplayName: channel.DisplayName,
-				ChannelKey: channel.ChannelKey, ChannelNumber: channel.ChannelNumber, Kind: channel.Kind,
-				PhysicalZone: channel.PhysicalZone, MinimumLevel: channel.MinimumLevel, MaximumLevel: channel.MaximumLevel,
-				Inverted: channel.Inverted,
+				Kind: channel.Kind, PhysicalZone: channel.PhysicalZone,
+				MinimumLevel: channel.MinimumLevel, MaximumLevel: channel.MaximumLevel, Inverted: channel.Inverted,
 			})
 		}
 		out = append(out, view)
@@ -452,7 +454,7 @@ func lightingTargetBindings(aliases []domain.ProjectDeviceAlias) map[string]ligh
 	return out
 }
 
-func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBinding) (lightingSceneView, bool) {
+func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBinding, bindings []lightingnode.ProjectBinding) (lightingSceneView, bool) {
 	view := lightingSceneView{
 		CueID: cue.ID, RevisionID: cue.RevisionID, DisplayLabel: cue.DisplayLabel,
 		Name: cue.Name, OrderIndex: cue.OrderIndex, Enabled: cue.Enabled,
@@ -471,6 +473,9 @@ func makeLightingSceneView(cue domain.Cue, targets map[string]lightingTargetBind
 		}
 		target, ok := targets[action.TargetRef]
 		if !ok || target.CapabilityKey != action.CapabilityKey {
+			return lightingSceneView{}, false
+		}
+		if _, err := lightingnode.ResolveCueCommandPayload(bindings, target.DeviceID, currentCommand, action.Parameters); err != nil {
 			return lightingSceneView{}, false
 		}
 		if commandType == "" {
