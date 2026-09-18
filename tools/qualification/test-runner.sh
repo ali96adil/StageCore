@@ -53,6 +53,7 @@ grep -F '| pi.ssh | **BLOCKED** |' "$report" >/dev/null
 grep -F '| Q-TAB-04 | **BLOCKED** |' "$report" >/dev/null
 grep -F '| Q-TAB-05 | **BLOCKED** |' "$report" >/dev/null
 grep -F '| Q-DMX-20 | **BLOCKED** |' "$report" >/dev/null
+grep -F '| Q-DMX-21 | **BLOCKED** |' "$report" >/dev/null
 
 if grep -R -F 'do-not-print-this-value' "$tmp/runs" "$tmp/stdout" "$tmp/stderr" >/dev/null 2>&1; then
   echo "qualification secret leaked into evidence/report output" >&2

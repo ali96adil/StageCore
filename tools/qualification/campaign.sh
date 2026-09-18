@@ -23,6 +23,8 @@ Usage:
   tools/qualification/campaign.sh q18-ack <note>
   tools/qualification/campaign.sh q19-status
   tools/qualification/campaign.sh q19-ack <note>
+  tools/qualification/campaign.sh q21-status
+  tools/qualification/campaign.sh q21-ack <documented|logic-voltage|de-re|polarity|common|termination> <PASS|FAIL> <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -168,6 +170,15 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-19 --key local_blackout.action \
       --status PASS --actor manual-local-emergency --evidence manual-local-emergency --note "$note"
+    ;;
+  q21-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    exec python3 "$ROOT/tools/qualification/electrical-path.py" status --state "$STATE"
+    ;;
+  q21-ack)
+    [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/electrical-path.py" ack \
+      --state "$STATE" --manifest "$MANIFEST" --check "$2" --status "$3" --note "$4"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }

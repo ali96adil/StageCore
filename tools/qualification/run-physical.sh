@@ -1062,6 +1062,13 @@ else
   fi
 fi
 
+q21_status="$(gate_status Q-DMX-21)"
+case "$q21_status" in
+  PASS) record "Q-DMX-21" PASS "manual MAX485/DMX pre-energization electrical path is fully documented and physically verified" ;;
+  FAIL) record "Q-DMX-21" FAIL "manual MAX485/DMX pre-energization electrical verification contains a failed check; do not energize" ;;
+  *) record "Q-DMX-21" BLOCKED "manual MAX485/DMX pre-energization verification is incomplete; use campaign.sh q21-status/q21-ack before physical lighting actions" ;;
+esac
+
 if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
   hold="${STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS:-2}"
   [[ "$hold" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "invalid STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS" >&2; exit 2; }
@@ -1080,7 +1087,13 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     fi
   fi
 
-  if [[ "$lighting_target_rc" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
+  if [[ "$(gate_status Q-DMX-21)" != "PASS" ]]; then
+    if [[ "$(gate_status Q-DMX-21)" == "FAIL" ]]; then
+      record "Q-DMX-21.safety-stop" FAIL "electrical path verification failed; all lighting physical actions suppressed"
+    else
+      record "Q-DMX-21.safety-stop" BLOCKED "complete Q-DMX-21 manual pre-energization electrical verification before any lighting physical action"
+    fi
+  elif [[ "$lighting_target_rc" -eq 0 && "$(gate_status Q-DMX-20)" == "PASS" ]]; then
     IFS="$(printf '\t')" read -r lighting_device lighting_project <<<"$lighting_target"
     channel="${STAGECORE_LIGHTING_QUALIFICATION_CHANNEL_KEY:-}"
     set_level="${STAGECORE_LIGHTING_QUALIFICATION_SET_LEVEL:-}"

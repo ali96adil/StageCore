@@ -381,3 +381,27 @@ The final validator intentionally uses StageCore's production `lightingnode.Cano
 It also requires ONLINE/READY, healthy DMX, no brownout warning, and STAGECORE authority. A missing/not-current Published Snapshot is BLOCKED; a configuration/hash/identity mismatch is FAIL and the runner suppresses downstream physical lighting actions because the qualification baseline is not trustworthy.
 
 No `LIGHTING_CONFIG_APPLY` is issued by this gate.
+
+
+## Q-DMX-21 MAX485 / DMX pre-energization interlock
+
+Q-DMX-21 is a MANUAL gate from Issue #221. The runner cannot prove electrical wiring from software, so it will never synthesize PASS from a probe, simulator, Stage Device observation, or command result.
+
+Before any qualification action that can drive real DMX/light output, record all six checks:
+
+```bash
+tools/qualification/campaign.sh q21-status
+
+tools/qualification/campaign.sh q21-ack documented PASS "document actual ESP32 -> MAX485 -> decoder pin/terminal path"
+tools/qualification/campaign.sh q21-ack logic-voltage PASS "record module supply/logic compatibility and confirm no unverified 5 V reaches an ESP32 input"
+tools/qualification/campaign.sh q21-ack de-re PASS "record DE and /RE direction-control wiring"
+tools/qualification/campaign.sh q21-ack polarity PASS "trace the differential pair using actual module and decoder D+/D- or terminal labels"
+tools/qualification/campaign.sh q21-ack common PASS "record/verify the intentional DMX signal-common/reference path"
+tools/qualification/campaign.sh q21-ack termination PASS "record/verify end-of-line termination for the actual topology"
+```
+
+Each acknowledgement requires an explicit PASS/FAIL plus a physical observation note and is stored as a durable milestone with history. A FAIL makes Q-DMX-21 FAIL and means **do not energize**. All six PASS acknowledgements make the parent MANUAL gate PASS. Once accepted, replacing Q-DMX-21 evidence requires deliberate gate invalidation/repin rather than silently overwriting a qualified baseline.
+
+Do not infer RS-485 polarity from the letters A/B alone: vendor labeling conventions vary. The evidence must trace the actual MAX485/module terminals to the decoder's documented D+/D-/COM (or equivalent) terminals.
+
+The physical runner now treats Q-DMX-21 as a hard pre-energization interlock. Read-only StageCore/device checks can still run, but all lighting physical actions—including set/fade/blackout and fault-injection qualification—are suppressed until Q-DMX-21 is PASS.
