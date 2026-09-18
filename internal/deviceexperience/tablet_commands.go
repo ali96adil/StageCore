@@ -9,7 +9,6 @@ const (
 	CommandTabletStop          = "TABLET_STOP"
 	CommandTabletBlackout      = "TABLET_BLACKOUT"
 	CommandTabletBlackoutClear = "TABLET_BLACKOUT_CLEAR"
-	CommandTabletSelectMedia   = "TABLET_SELECT_MEDIA"
 	CommandTabletOverlayPlay   = "TABLET_OVERLAY_PLAY"
 	CommandTabletOverlayClear  = "TABLET_OVERLAY_CLEAR"
 	CommandTabletLiveShow      = "TABLET_LIVE_SHOW"
@@ -23,7 +22,6 @@ const (
 	CapabilityTabletStop          = "tablet.media.stop"
 	CapabilityTabletBlackout      = "tablet.media.blackout"
 	CapabilityTabletBlackoutClear = "tablet.media.blackout.clear"
-	CapabilityTabletSelectMedia   = "tablet.media.select"
 	CapabilityTabletOverlayPlay   = "tablet.media.overlay.play"
 	CapabilityTabletOverlayClear  = "tablet.media.overlay.clear"
 	CapabilityTabletLiveShow      = "tablet.media.live.show"
@@ -37,7 +35,6 @@ func init() {
 	commandCapability[CommandTabletStop] = CapabilityTabletStop
 	commandCapability[CommandTabletBlackout] = CapabilityTabletBlackout
 	commandCapability[CommandTabletBlackoutClear] = CapabilityTabletBlackoutClear
-	commandCapability[CommandTabletSelectMedia] = CapabilityTabletSelectMedia
 	commandCapability[CommandTabletOverlayPlay] = CapabilityTabletOverlayPlay
 	commandCapability[CommandTabletOverlayClear] = CapabilityTabletOverlayClear
 	commandCapability[CommandTabletLiveShow] = CapabilityTabletLiveShow
