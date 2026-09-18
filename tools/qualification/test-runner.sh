@@ -20,6 +20,7 @@ chmod +x "$tmp/bin/go"
 cat >"$tmp/qualification.env" <<'EOF'
 STAGECORE_PI_HOST=
 STAGECORE_PI_USER=
+STAGECORE_PROJECT_ID=
 STAGECORE_TABLET_DEVICE_ID=
 STAGECORE_LIGHTING_NODE_ID=
 QUALIFICATION_SENTINEL_SECRET=do-not-print-this-value
@@ -44,8 +45,8 @@ grep -F '| local.git | **PASS** |' "$report" >/dev/null
 grep -F '| local.go | **PASS** |' "$report" >/dev/null
 grep -F '| local.tests | **PASS** |' "$report" >/dev/null
 grep -F '| pi.ssh | **BLOCKED** |' "$report" >/dev/null
-grep -F '| tablet.target | **BLOCKED** |' "$report" >/dev/null
-grep -F '| lighting.target | **BLOCKED** |' "$report" >/dev/null
+grep -F '| tablet.readiness | **BLOCKED** |' "$report" >/dev/null
+grep -F '| lighting.readiness | **BLOCKED** |' "$report" >/dev/null
 
 if grep -R -F 'do-not-print-this-value' "$tmp/runs" "$tmp/stdout" "$tmp/stderr" >/dev/null 2>&1; then
   echo "qualification secret leaked into evidence/report output" >&2

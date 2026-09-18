@@ -29,13 +29,15 @@ printf '%s\n' "$PUBKEY" | ssh "$TARGET" '
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$KEY")
 
-echo "Step 2/3: install the root-owned bounded helper (one sudo password prompt may occur)."
+echo "Step 2/3: install the root-owned bounded helper/probe (one sudo password prompt may occur)."
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-helper" "$TARGET:/tmp/stagecore-qualification-helper"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-probe.py" "$TARGET:/tmp/stagecore-qualification-probe"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/install-stagecore-qualification-helper.sh" "$TARGET:/tmp/install-stagecore-qualification-helper.sh"
 ssh -t -i "$KEY" -o IdentitiesOnly=yes "$TARGET" \
   "chmod 700 /tmp/install-stagecore-qualification-helper.sh && sudo /tmp/install-stagecore-qualification-helper.sh '$STAGECORE_PI_USER'"
 
 echo "Step 3/3: verify future qualification access is non-interactive."
 ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status
+ssh "${SSH_OPTS[@]}" "$TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe >/dev/null
 
 echo "qualification access ready"

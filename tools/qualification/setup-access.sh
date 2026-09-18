@@ -12,6 +12,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # Never commit this file.
 STAGECORE_PI_HOST=
 STAGECORE_PI_USER=
+STAGECORE_PROJECT_ID=
 STAGECORE_TABLET_DEVICE_ID=
 STAGECORE_LIGHTING_NODE_ID=
 EOF
@@ -27,4 +28,4 @@ chmod 644 "$KEY.pub"
 
 printf 'Qualification config: %s\n' "$ENV_FILE"
 printf 'SSH public key: %s.pub\n' "$KEY"
-printf '\nNext: fill STAGECORE_PI_HOST/STAGECORE_PI_USER, then run tools/qualification/bootstrap-pi-access.sh once.\n'
+printf '\nNext: fill STAGECORE_PI_HOST/STAGECORE_PI_USER. Device IDs may stay blank when exactly one matching device exists. Then run tools/qualification/bootstrap-pi-access.sh once.\n'

@@ -60,6 +60,26 @@ check_cmd() {
   return 1
 }
 
+check_probe() {
+  local id="$1" kind="$2" device_id="$3"
+  local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --max-age-seconds 20)
+  if [[ -n "${STAGECORE_PROJECT_ID:-}" ]]; then
+    args+=(--project-id "$STAGECORE_PROJECT_ID")
+  fi
+  if [[ -n "$device_id" ]]; then
+    args+=(--device-id "$device_id")
+  fi
+  set +e
+  python3 tools/qualification/assert-device-probe.py "${args[@]}" >"$RUN_DIR/evidence/$id.log" 2>&1
+  local rc=$?
+  set -e
+  case "$rc" in
+    0) record "$id" PASS "see evidence/$id.log" ;;
+    3) record "$id" BLOCKED "see evidence/$id.log" ;;
+    *) record "$id" FAIL "see evidence/$id.log" ;;
+  esac
+}
+
 check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
@@ -67,6 +87,7 @@ check_cmd "local.tests" go test ./... || true
 PI_HOST="${STAGECORE_PI_HOST:-}"
 PI_USER="${STAGECORE_PI_USER:-}"
 SSH_KEY="${STAGECORE_QUALIFICATION_SSH_KEY:-$HOME/.config/stagecore/qualification_ed25519}"
+PROBE_AVAILABLE=0
 
 if [[ -z "$PI_HOST" || -z "$PI_USER" ]]; then
   record "pi.ssh" BLOCKED "STAGECORE_PI_HOST/STAGECORE_PI_USER not configured"
@@ -82,12 +103,21 @@ else
   check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
   check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
   check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
+    PROBE_AVAILABLE=1
+    record "devices.probe" PASS "see evidence/devices.json"
+  else
+    record "devices.probe" FAIL "see evidence/device-probe.stderr"
+  fi
 fi
 
-# Device-specific probes intentionally enter only after trusted endpoints are configured.
-# Later slices bind these IDs to canonical Stage Device contracts and command results.
-[[ -n "${STAGECORE_TABLET_DEVICE_ID:-}" ]] && record "tablet.target" PASS "configured" || record "tablet.target" BLOCKED "STAGECORE_TABLET_DEVICE_ID not configured"
-[[ -n "${STAGECORE_LIGHTING_NODE_ID:-}" ]] && record "lighting.target" PASS "configured" || record "lighting.target" BLOCKED "STAGECORE_LIGHTING_NODE_ID not configured"
+if [[ "$PROBE_AVAILABLE" -eq 1 ]]; then
+  check_probe "tablet.readiness" tablet "${STAGECORE_TABLET_DEVICE_ID:-}"
+  check_probe "lighting.readiness" lighting "${STAGECORE_LIGHTING_NODE_ID:-}"
+else
+  record "tablet.readiness" BLOCKED "canonical device probe unavailable"
+  record "lighting.readiness" BLOCKED "canonical device probe unavailable"
+fi
 
 {
   echo "# StageCore Physical Qualification Report"

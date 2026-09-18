@@ -16,6 +16,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec journalctl -u stagecore-hub.service -n 300 --no-pager
     ;;
+  device-probe)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-probe
+    ;;
   *)
     echo "unsupported qualification helper operation" >&2
     exit 64
