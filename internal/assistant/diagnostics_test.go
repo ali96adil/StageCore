@@ -36,6 +36,26 @@ func (p *captureProvider) Complete(_ context.Context, request Request) (Response
 	return p.response, nil
 }
 
+type panicEvidenceSource struct{}
+
+func (panicEvidenceSource) Collect(context.Context, EvidenceQuery) (EvidenceCollection, error) {
+	panic("evidence source must not be called when Assistant provider is unavailable")
+}
+
+func TestDiagnosticServiceWithoutProviderFailsBeforeEvidenceCollection(t *testing.T) {
+	service := DiagnosticService{
+		Source:   panicEvidenceSource{},
+		Redactor: passRedactor{},
+	}
+	_, err := service.Respond(context.Background(), DiagnosticInput{
+		RequestID: "request-offline", ProjectID: "project-1", Kind: RequestDiagnose,
+		Scope: EvidenceExecution, SessionID: "session-1", Prompt: "Explain the failure",
+	})
+	if !errors.Is(err, ErrProviderUnavailable) {
+		t.Fatalf("Respond() error = %v, want ErrProviderUnavailable", err)
+	}
+}
+
 func TestDiagnosticServiceRedactsBeforeProviderAndRequiresGroundedEvidence(t *testing.T) {
 	provider := &captureProvider{response: Response{
 		ContractVersion: ContractVersion1,
