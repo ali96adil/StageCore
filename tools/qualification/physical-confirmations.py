@@ -14,6 +14,8 @@ MAPPINGS = [
     ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),
     ("Q-DMX-05", "physical.observation", ["fade.command"], "Selected DMX channel visibly completed the requested fade smoothly."),
     ("Q-DMX-06", "physical.observation", ["multi_fade.command"], "Two configured DMX channels visibly faded in synchronization."),
+    ("Q-DMX-07", "physical.observation", ["timing.measurement"], "Measured real-device fade lifecycle was within the configured tolerance and the fade visibly completed normally."),
+    ("Q-DMX-08", "physical.observation", ["precondition_set.command", "long_fade.command"], "Configured long fade visibly completed without premature timeout or interruption."),
     ("Q-DMX-10", "physical.observation", ["blackout.command"], "Lighting output visibly reached immediate blackout."),
     ("Q-DMX-11", "physical.observation", ["precondition_set.command", "timed_blackout.command"], "Lighting visibly faded to blackout over the configured timed-blackout duration."),
 ]

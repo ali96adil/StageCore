@@ -118,7 +118,7 @@ def wait_result(db_path, command_id, timeout_seconds):
         try:
             row = conn.execute(
                 """
-                SELECT command_type, status, result_json, completed_at_us
+                SELECT command_type, status, result_json, issued_at_us, completed_at_us
                 FROM stage_device_commands
                 WHERE command_id = ?
                 """,
@@ -137,7 +137,13 @@ def wait_result(db_path, command_id, timeout_seconds):
                 "command_id": command_id,
                 "command_type": row[0],
                 "status": row[1],
-                "completed_at_us": row[3],
+                "issued_at_us": row[3],
+                "completed_at_us": row[4],
+                "lifecycle_ms": (
+                    (row[4] - row[3]) / 1000.0
+                    if isinstance(row[3], int) and isinstance(row[4], int) and row[4] >= row[3]
+                    else None
+                ),
                 "result": result,
             }
         time.sleep(0.1)
@@ -230,6 +236,12 @@ def main():
     if command_type.startswith("TABLET_"):
         project_id = bounded_text(project_id, "project_id", 256)
     payload = validate_payload(command_type, data.get("payload"))
+    duration_ms = 0
+    if command_type in {"LIGHTING_CHANNELS_FADE", "LIGHTING_BLACKOUT"}:
+        duration_ms = int(payload.get("fade_ms", 0))
+    wait_timeout_seconds = max(args.timeout_seconds, (duration_ms / 1000.0) + 10.0)
+    wait_timeout_seconds = min(wait_timeout_seconds, 140.0)
+    command_deadline_seconds = max(15.0, (duration_ms / 1000.0) + 10.0)
 
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -257,7 +269,7 @@ def main():
                 "priority": "P0" if command_type == "LIGHTING_BLACKOUT" else "P2",
                 "payload": payload,
                 "deadline_at": (
-                    dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=15)
+                    dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=command_deadline_seconds)
                 ).isoformat(),
             }
 
@@ -266,7 +278,7 @@ def main():
             {"X-StageCore-CSRF": csrf},
         )
         command_id = extract_command(response, command_type)
-        result = wait_result(args.db, command_id, args.timeout_seconds)
+        result = wait_result(args.db, command_id, wait_timeout_seconds)
     finally:
         if csrf:
             try:

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 db, port_file = sys.argv[1], sys.argv[2]
 conn=sqlite3.connect(db)
 conn.execute("""CREATE TABLE stage_device_commands (
- command_id TEXT PRIMARY KEY, command_type TEXT, status TEXT, result_json TEXT, completed_at_us INTEGER
+ command_id TEXT PRIMARY KEY, command_type TEXT, status TEXT, result_json TEXT, issued_at_us INTEGER, completed_at_us INTEGER
 )""")
 conn.commit(); conn.close()
 
@@ -50,8 +50,11 @@ class H(BaseHTTPRequestHandler):
             assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ","LIGHTING_CHANNELS_SET","LIGHTING_CHANNELS_FADE","LIGHTING_BLACKOUT"}
             response={"envelope":{"command_id":command_id}}
         c=sqlite3.connect(db)
-        c.execute("INSERT INTO stage_device_commands VALUES (?,?,?,?,?)",
-          (command_id,command_type,"COMPLETED",json.dumps({"status":"COMPLETED","payload":{"ok":True},"session_token":"must-redact"}),123))
+        issued_at_us=1_000_000
+        duration_ms=int(body.get("payload",{}).get("fade_ms",0) or 0)
+        completed_at_us=issued_at_us + (duration_ms * 1000)
+        c.execute("INSERT INTO stage_device_commands VALUES (?,?,?,?,?,?)",
+          (command_id,command_type,"COMPLETED",json.dumps({"status":"COMPLETED","payload":{"ok":True},"session_token":"must-redact"}),issued_at_us,completed_at_us))
         c.commit(); c.close()
         return self.reply(200,response)
 
@@ -91,6 +94,8 @@ printf '{"username":"owner","password":"secret","project_id":"project-1","device
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/multi-fade.json"
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_BLACKOUT","payload":{"fade_ms":900}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/timed-blackout.json"
+python3 "$ROOT/tools/qualification/validate-fade-timing.py" --input "$tmp/multi-fade.json" --expected-ms 750 --tolerance-ms 1 >/dev/null
+python3 "$ROOT/tools/qualification/validate-fade-timing.py" --input "$tmp/timed-blackout.json" --expected-ms 900 --tolerance-ms 1 >/dev/null
 
 set +e
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{}}\n' |   python3 "$HELPER" --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null

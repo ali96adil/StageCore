@@ -39,6 +39,7 @@ jobs:
           tools/qualification/test-safe-command.sh
           tools/qualification/test-command-evidence.sh
           tools/qualification/test-physical-confirmations.sh
+          tools/qualification/test-fade-timing.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

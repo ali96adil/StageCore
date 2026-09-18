@@ -186,6 +186,25 @@ invoke_command() {
   esac
 }
 
+
+measure_fade_timing() {
+  local gate="$1" key="$2" evidence="$3" expected_ms="$4" tolerance_ms="$5"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior timing measurement"
+    return
+  fi
+  local measurement="$RUN_DIR/evidence/$gate.$key.json"
+  set +e
+  python3 tools/qualification/validate-fade-timing.py     --input "$evidence" --expected-ms "$expected_ms" --tolerance-ms "$tolerance_ms"     >"$measurement" 2>"$measurement.stderr"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    record_milestone "$gate" "$key" PASS "$measurement" "real-device fade lifecycle timing is within configured tolerance"
+  else
+    record_milestone "$gate" "$key" FAIL "$measurement" "real-device fade lifecycle timing is outside configured tolerance or unavailable"
+  fi
+}
+
 check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
@@ -306,10 +325,14 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     second_set_level="${STAGECORE_LIGHTING_QUALIFICATION_SECOND_SET_LEVEL:-}"
     second_fade_level="${STAGECORE_LIGHTING_QUALIFICATION_SECOND_FADE_LEVEL:-}"
     timed_blackout_ms="${STAGECORE_LIGHTING_QUALIFICATION_TIMED_BLACKOUT_MS:-}"
+    fade_tolerance_ms="${STAGECORE_LIGHTING_QUALIFICATION_FADE_TOLERANCE_MS:-}"
+    long_fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_LONG_FADE_MS:-}"
 
     single_ok=0
     multi_ok=0
     timed_ok=0
+    timing_ok=0
+    long_ok=0
     if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
       single_ok=1
     fi
@@ -319,11 +342,24 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     if [[ "$timed_blackout_ms" =~ ^[0-9]+$ && "$timed_blackout_ms" -ge 100 && "$timed_blackout_ms" -le 120000 ]]; then
       timed_ok=1
     fi
+    if [[ "$fade_tolerance_ms" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      timing_ok=1
+    fi
+    if [[ "$single_ok" -eq 1 && "$long_fade_ms" =~ ^[0-9]+$ && "$long_fade_ms" -gt "$fade_ms" && "$long_fade_ms" -le 120000 ]]; then
+      long_ok=1
+    fi
 
     if [[ "$single_ok" -eq 1 ]]; then
       invoke_command physical-command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
       sleep "$hold"
       invoke_command physical-command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"
+      if [[ "$(milestone_status Q-DMX-05 fade.command)" == "PASS" ]]; then
+        if [[ "$timing_ok" -eq 1 ]]; then
+          measure_fade_timing Q-DMX-07 timing.measurement "$RUN_DIR/evidence/Q-DMX-05.fade.command.json" "$fade_ms" "$fade_tolerance_ms"
+        elif should_run_milestone Q-DMX-07 timing.measurement; then
+          record_milestone Q-DMX-07 timing.measurement BLOCKED "$RUN_DIR/evidence/Q-DMX-07.timing.measurement.json" "fade timing tolerance is not configured"
+        fi
+      fi
       python3 - "$fade_ms" "$hold" <<'PY'
 import sys, time
 time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
@@ -333,6 +369,26 @@ PY
         set -- $spec
         if should_run_milestone "$1" "$2"; then
           record_milestone "$1" "$2" BLOCKED "$RUN_DIR/evidence/$1.$2.json" "single-channel physical-action values are not configured"
+        fi
+      done
+    fi
+
+    if [[ "$long_ok" -eq 1 ]]; then
+      invoke_command physical-command Q-DMX-08 precondition_set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
+      sleep "$hold"
+      if [[ "$(milestone_status Q-DMX-08 precondition_set.command)" == "PASS" ]]; then
+        invoke_command physical-command Q-DMX-08 long_fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$long_fade_ms}"
+      fi
+      if [[ "$(milestone_status Q-DMX-08 long_fade.command)" == "PASS" ]]; then
+        python3 - "$long_fade_ms" "$hold" <<'PY'
+import sys, time
+time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
+PY
+      fi
+    else
+      for key in precondition_set.command long_fade.command; do
+        if should_run_milestone Q-DMX-08 "$key"; then
+          record_milestone Q-DMX-08 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-08.$key.json" "long-fade duration must be configured greater than the normal fade and <=120000 ms"
         fi
       done
     fi

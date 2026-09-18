@@ -191,3 +191,13 @@ The armed lighting sequence now binds the next #221 gates without changing the p
 Configure the second logical channel and test levels locally with `STAGECORE_LIGHTING_QUALIFICATION_SECOND_CHANNEL_KEY`, `...SECOND_SET_LEVEL`, `...SECOND_FADE_LEVEL`, and `STAGECORE_LIGHTING_QUALIFICATION_TIMED_BLACKOUT_MS`. The two channel keys must be different.
 
 Command completion remains only a milestone. `Q-DMX-04`, `Q-DMX-06`, and `Q-DMX-11` become PASS only after the corresponding physical observation is explicitly confirmed.
+
+## Measured timing and long-fade checkpoints
+
+The #221 timing gates are prepared without inventing a product tolerance. Configure the intended acceptance tolerance locally with `STAGECORE_LIGHTING_QUALIFICATION_FADE_TOLERANCE_MS`.
+
+After the normal one-channel fade completes, `Q-DMX-07::timing.measurement` compares the canonical persisted command lifecycle (`completed_at_us - issued_at_us`) with the requested `fade_ms`. The parent gate still requires real-device physical confirmation.
+
+Configure `STAGECORE_LIGHTING_QUALIFICATION_LONG_FADE_MS` for Q-DMX-08. It must be greater than the normal qualification fade and no more than 120000 ms. The helper scales both command deadline and bounded result wait to the requested fade duration, so a valid long fade is not failed by the old short command timeout.
+
+Existing local qualification configs are upgraded idempotently by `setup-access.sh`; newly introduced keys are appended without overwriting existing values.
