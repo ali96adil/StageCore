@@ -32,7 +32,9 @@ class H(BaseHTTPRequestHandler):
         ctype=cmd["command_type"]
         payload=cmd["payload"]
         if cid in seen:
-            value=seen[cid]
+            prior=seen[cid]
+            value=dict(prior)
+            value["statuses"]=[prior["status"]]
         elif ctype == "LIGHTING_CHANNELS_SET":
             deadline=cmd.get("deadline_at","")
             issued=cmd.get("issued_at","")
