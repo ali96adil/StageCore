@@ -57,7 +57,8 @@ PY
 
 probe="$tmp/probe.json"
 python3 "$REPO_ROOT/tools/qualification/pi/stagecore-qualification-probe.py" --db "$db" >"$probe"
-python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$probe" --kind tablet --check readiness --project-id project-1 --device-id tablet-01\npython3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$probe" --kind tablet --check scope --project-id project-1 --runtime-snapshot-id snap-1 --device-id tablet-01
+python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$probe" --kind tablet --check readiness --project-id project-1 --device-id tablet-01
+python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$probe" --kind tablet --check scope --project-id project-1 --runtime-snapshot-id snap-1 --device-id tablet-01
 python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$probe" --kind lighting --check observation --project-id project-1 --device-id lighting-01
 
 python3 - "$probe" <<'PY'
