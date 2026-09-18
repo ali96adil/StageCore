@@ -19,7 +19,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /workspace-profile.css", serveOperatorAsset("workspace-profile.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /first-run.css", serveOperatorAsset("first-run.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /extensions.css", serveOperatorAsset("extensions.css", "text/css; charset=utf-8", false))
-		s.mux.HandleFunc("GET /phase4.css", serveOperatorAssetBundle([]string{"phase4.css", "tablet-controller.css", "tablet-authoring.css", "lighting-authoring.css", "visual-engine.css", "assistant-workspace.css"}, "text/css; charset=utf-8"))
+		s.mux.HandleFunc("GET /phase4.css", serveOperatorAssetBundle([]string{"phase4.css", "tablet-controller.css", "tablet-authoring.css", "lighting-authoring.css", "lighting-configuration.css", "visual-engine.css", "assistant-workspace.css"}, "text/css; charset=utf-8"))
 		s.mux.HandleFunc("GET /app.js", serveOperatorAsset("app.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /bootstrap.js", serveOperatorAsset("bootstrap.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /preflight.js", serveOperatorAsset("preflight.js", "application/javascript; charset=utf-8", false))
@@ -42,7 +42,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /extensions-maintenance.js", serveOperatorAsset("extensions-maintenance.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /extensions-set-manifest.js", serveOperatorAsset("extensions-set-manifest.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /execution-environments.js", serveOperatorAssetBundle([]string{"execution-environments.js", "execution-environment-capture.js", "execution-environment-operations.js", "execution-environments-workspace.js"}, "application/javascript; charset=utf-8"))
-		s.mux.HandleFunc("GET /phase4.js", serveOperatorAssetBundle([]string{"phase4.js", "tablet-controller.js", "tablet-authoring.js", "lighting-authoring.js", "visual-engine.js", "assistant-workspace.js"}, "application/javascript; charset=utf-8"))
+		s.mux.HandleFunc("GET /phase4.js", serveOperatorAssetBundle([]string{"phase4.js", "tablet-controller.js", "tablet-authoring.js", "lighting-authoring.js", "lighting-configuration.js", "visual-engine.js", "assistant-workspace.js"}, "application/javascript; charset=utf-8"))
 		s.mux.HandleFunc("GET /phase4-polish.js", serveOperatorAssetBundle([]string{"phase4-polish.js", "simulation.js", "simulation-report.js"}, "application/javascript; charset=utf-8"))
 	}
 }
