@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO_ROOT"
+
 MODE="full"
 NON_INTERACTIVE=0
 for arg in "$@"; do
@@ -13,8 +16,10 @@ for arg in "$@"; do
 Usage: tools/qualification/run-physical.sh [--full|--resume] [--non-interactive]
 
 Environment:
-  STAGECORE_QUALIFICATION_ENV  Optional path to local qualification secrets/config.
-                              Default: ~/.config/stagecore/qualification.env
+  STAGECORE_QUALIFICATION_ENV       Optional local qualification config.
+                                    Default: ~/.config/stagecore/qualification.env
+  STAGECORE_QUALIFICATION_RUN_ROOT  Optional evidence root.
+                                    Default: qualification/runs
 EOF
       exit 0
       ;;
@@ -31,7 +36,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 RUN_ROOT="${STAGECORE_QUALIFICATION_RUN_ROOT:-qualification/runs}"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$RUN_ROOT/$STAMP"
 mkdir -p "$RUN_DIR/evidence"
 
@@ -44,42 +49,53 @@ record() {
   printf '%s\t%s\t%s\n' "$id" "$status" "$detail" >>"$RESULTS"
 }
 
-check_local() {
-  local id="$1" cmd="$2"
-  if bash -lc "$cmd" >"$RUN_DIR/evidence/$id.log" 2>&1; then
+check_cmd() {
+  local id="$1"
+  shift
+  if "$@" >"$RUN_DIR/evidence/$id.log" 2>&1; then
     record "$id" PASS "see evidence/$id.log"
-  else
-    record "$id" FAIL "see evidence/$id.log"
+    return 0
   fi
+  record "$id" FAIL "see evidence/$id.log"
+  return 1
 }
 
-check_local "local.git" "git rev-parse HEAD && git status --short"
-check_local "local.go" "go version"
-check_local "local.tests" "go test ./..."
+check_cmd "local.git" git rev-parse HEAD || true
+check_cmd "local.go" go version || true
+check_cmd "local.tests" go test ./... || true
 
-if [[ -n "${STAGECORE_PI_HOST:-}" ]]; then
-  SSH_TARGET="${STAGECORE_PI_USER:-stagecore}@${STAGECORE_PI_HOST}"
-  SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8)
-  check_local "pi.ssh" "ssh ${SSH_OPTS[*]} '$SSH_TARGET' 'printf ready'"
-  check_local "pi.hub.service" "ssh ${SSH_OPTS[*]} '$SSH_TARGET' 'sudo -n systemctl is-active stagecore-hub.service'"
-  check_local "pi.hub.ready" "ssh ${SSH_OPTS[*]} '$SSH_TARGET' 'curl -fsS http://127.0.0.1:7840/health/ready'"
+PI_HOST="${STAGECORE_PI_HOST:-}"
+PI_USER="${STAGECORE_PI_USER:-}"
+SSH_KEY="${STAGECORE_QUALIFICATION_SSH_KEY:-$HOME/.config/stagecore/qualification_ed25519}"
+
+if [[ -z "$PI_HOST" || -z "$PI_USER" ]]; then
+  record "pi.ssh" BLOCKED "STAGECORE_PI_HOST/STAGECORE_PI_USER not configured"
+  record "pi.hub.service" BLOCKED "Pi access not configured"
+  record "pi.hub.ready" BLOCKED "Pi access not configured"
+elif [[ ! -f "$SSH_KEY" ]]; then
+  record "pi.ssh" BLOCKED "qualification SSH key missing: $SSH_KEY"
+  record "pi.hub.service" BLOCKED "qualification SSH key missing"
+  record "pi.hub.ready" BLOCKED "qualification SSH key missing"
 else
-  record "pi.ssh" BLOCKED "STAGECORE_PI_HOST not configured"
-  record "pi.hub.service" BLOCKED "STAGECORE_PI_HOST not configured"
-  record "pi.hub.ready" BLOCKED "STAGECORE_PI_HOST not configured"
+  SSH_TARGET="$PI_USER@$PI_HOST"
+  SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$SSH_KEY")
+  check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
+  check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
+  check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
 fi
 
 # Device-specific probes intentionally enter only after trusted endpoints are configured.
-# They will be expanded in later slices against the canonical Stage Device contracts.
+# Later slices bind these IDs to canonical Stage Device contracts and command results.
 [[ -n "${STAGECORE_TABLET_DEVICE_ID:-}" ]] && record "tablet.target" PASS "configured" || record "tablet.target" BLOCKED "STAGECORE_TABLET_DEVICE_ID not configured"
 [[ -n "${STAGECORE_LIGHTING_NODE_ID:-}" ]] && record "lighting.target" PASS "configured" || record "lighting.target" BLOCKED "STAGECORE_LIGHTING_NODE_ID not configured"
 
 {
   echo "# StageCore Physical Qualification Report"
   echo
-  echo "- Run: `$STAMP`"
-  echo "- Mode: `$MODE`"
-  echo "- Repository HEAD: `$(git rev-parse HEAD 2>/dev/null || echo unknown)`"
+  printf -- '- Run: `%s`\n' "$STAMP"
+  printf -- '- Mode: `%s`\n' "$MODE"
+  printf -- '- Non-interactive: `%s`\n' "$NON_INTERACTIVE"
+  printf -- '- Repository HEAD: `%s`\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   echo
   echo "| Check | Result | Evidence |"
   echo "| --- | --- | --- |"

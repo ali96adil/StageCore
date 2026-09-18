@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+case "${1:-}" in
+  service-status)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec systemctl is-active stagecore-hub.service
+    ;;
+  service-restart)
+    [[ "$#" -eq 1 ]] || exit 64
+    systemctl restart stagecore-hub.service
+    exec systemctl is-active stagecore-hub.service
+    ;;
+  service-journal)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec journalctl -u stagecore-hub.service -n 300 --no-pager
+    ;;
+  *)
+    echo "unsupported qualification helper operation" >&2
+    exit 64
+    ;;
+esac

@@ -11,7 +11,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # Local-only StageCore physical qualification configuration.
 # Never commit this file.
 STAGECORE_PI_HOST=
-STAGECORE_PI_USER=stagecore
+STAGECORE_PI_USER=
 STAGECORE_TABLET_DEVICE_ID=
 STAGECORE_LIGHTING_NODE_ID=
 EOF
@@ -22,7 +22,9 @@ KEY="$CONFIG_DIR/qualification_ed25519"
 if [[ ! -f "$KEY" ]]; then
   ssh-keygen -q -t ed25519 -N '' -f "$KEY" -C stagecore-qualification
 fi
+chmod 600 "$KEY"
+chmod 644 "$KEY.pub"
 
 printf 'Qualification config: %s\n' "$ENV_FILE"
 printf 'SSH public key: %s.pub\n' "$KEY"
-printf '\nNext: authorize this dedicated key on the StageCore Pi and configure only the bounded sudo commands required by qualification.\n'
+printf '\nNext: fill STAGECORE_PI_HOST/STAGECORE_PI_USER, then run tools/qualification/bootstrap-pi-access.sh once.\n'

@@ -28,6 +28,9 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Test
         run: go test ./...
+      - name: Qualification runner self-test
+        if: matrix.go == '1.26.x'
+        run: tools/qualification/test-runner.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests
