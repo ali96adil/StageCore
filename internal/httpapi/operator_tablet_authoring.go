@@ -176,8 +176,6 @@ func tabletCommandForCapability(capability string) string {
 		return deviceexperience.CommandTabletBlackout
 	case deviceexperience.CapabilityTabletBlackoutClear:
 		return deviceexperience.CommandTabletBlackoutClear
-	case deviceexperience.CapabilityTabletSelectMedia:
-		return deviceexperience.CommandTabletSelectMedia
 	case deviceexperience.CapabilityTabletOverlayPlay:
 		return deviceexperience.CommandTabletOverlayPlay
 	case deviceexperience.CapabilityTabletOverlayClear:
