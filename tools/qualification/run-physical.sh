@@ -1095,7 +1095,35 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
           done
         fi
 
-        if [[ -n "$live_media_key" && "$live_media_key" != *
+        if [[ -n "$live_media_key" && "${#live_media_key}" -le 256 ]]; then
+          live_payload="$(python3 - "$live_media_key" <<'PY'
+import json, sys
+print(json.dumps({"media_key": sys.argv[1]}, separators=(",", ":")))
+PY
+)"
+          invoke_command physical-command Q-TAB-09 live_show.command TABLET_LIVE_SHOW "$tablet_device" "$tablet_project" "$live_payload"
+          sleep "$hold"
+          invoke_command physical-command Q-TAB-09 live_hide.command TABLET_LIVE_HIDE "$tablet_device" "$tablet_project" '{}'
+        else
+          for key in live_show.command live_hide.command; do
+            if should_run_milestone Q-TAB-09 "$key"; then
+              record_milestone Q-TAB-09 "$key" BLOCKED "$RUN_DIR/evidence/Q-TAB-09.$key.json" "qualification live media key is not configured"
+            fi
+          done
+        fi
+
+        invoke_command physical-command Q-TAB-10 blackout.command TABLET_BLACKOUT "$tablet_device" "$tablet_project" '{}'
+        sleep "$hold"
+        invoke_command physical-command Q-TAB-10 blackout_clear.command TABLET_BLACKOUT_CLEAR "$tablet_device" "$tablet_project" '{}'
+        sleep "$hold"
+
+        invoke_command physical-command Q-TAB-07 pause.command TABLET_PAUSE "$tablet_device" "$tablet_project" '{}'
+        sleep "$hold"
+        invoke_command physical-command Q-TAB-07 stop.command TABLET_STOP "$tablet_device" "$tablet_project" '{}'
+      fi
+    fi
+  fi
+
   if [[ "$(gate_status Q-DMX-21)" != "PASS" ]]; then
     if [[ "$(gate_status Q-DMX-21)" == "FAIL" ]]; then
       record "Q-DMX-21.safety-stop" FAIL "electrical path verification failed; all lighting physical actions suppressed"
