@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.lighting-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "integration": "HUB",
+  "workspace": "lighting-controller",
+  "transport": "STAGE_DEVICE_V1",
+  "lighting_authority": "CUE_ENGINE",
+  "configuration_authority": "RUNTIME_SNAPSHOT",
+  "runtime_process": false
+}
