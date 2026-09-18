@@ -242,6 +242,7 @@ func main() {
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingController(userAuth, application.DeviceExperience, application.Store),
+		httpapi.WithOperatorLightingCommissioning(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorCueReorder(userAuth, application.Store),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
