@@ -13,9 +13,11 @@ func CanonicalCommandPayload(commandType string, raw json.RawMessage) (json.RawM
 		if err := decodeStrict(raw, &payload); err != nil {
 			return nil, err
 		}
-		if err := validateRequestedLevels(payload.Channels); err != nil {
+		channels, err := normalizeRequestedLevels(payload.Channels)
+		if err != nil {
 			return nil, err
 		}
+		payload.Channels = channels
 		return json.Marshal(payload)
 
 	case CommandChannelsFade:
@@ -26,9 +28,11 @@ func CanonicalCommandPayload(commandType string, raw json.RawMessage) (json.RawM
 		if payload.FadeMS <= 0 || payload.FadeMS > maxFadeMS {
 			return nil, fmt.Errorf("fade_ms must be within 1..%d", maxFadeMS)
 		}
-		if err := validateRequestedLevels(payload.Channels); err != nil {
+		channels, err := normalizeRequestedLevels(payload.Channels)
+		if err != nil {
 			return nil, err
 		}
+		payload.Channels = channels
 		return json.Marshal(payload)
 
 	case CommandBlackout:
@@ -87,18 +91,23 @@ func CanonicalCommandPayload(commandType string, raw json.RawMessage) (json.RawM
 	}
 }
 
-func validateRequestedLevels(channels map[string]float64) error {
+func normalizeRequestedLevels(channels map[string]float64) (map[string]float64, error) {
 	if len(channels) == 0 {
-		return fmt.Errorf("at least one lighting channel level is required")
+		return nil, fmt.Errorf("at least one lighting channel level is required")
 	}
-	for key, level := range channels {
-		key = strings.TrimSpace(key)
+	out := make(map[string]float64, len(channels))
+	for rawKey, level := range channels {
+		key := strings.TrimSpace(rawKey)
 		if !channelKeyPattern.MatchString(key) {
-			return fmt.Errorf("invalid channel_key %q", key)
+			return nil, fmt.Errorf("invalid channel_key %q", key)
 		}
 		if !validLevel(level) {
-			return fmt.Errorf("lighting channel %q level must be within 0..100", key)
+			return nil, fmt.Errorf("lighting channel %q level must be within 0..100", key)
 		}
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("duplicate channel_key %q after normalization", key)
+		}
+		out[key] = level
 	}
-	return nil
+	return out, nil
 }
