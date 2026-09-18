@@ -426,3 +426,46 @@ Q-DMX-22 is the final ESP32/DMX full-chain gate. The runner evaluates it only fr
 `Q-DMX-22::regression.prereqs` becomes PASS only when Q-DMX-01..Q-DMX-21 are all terminal PASS/N/A on a campaign that pins the exact StageCore SHA, exact lighting firmware SHA, and exact hardware baseline ID.
 
 Any failed prerequisite makes the aggregate FAIL. Missing pins or incomplete prerequisites make it BLOCKED. After the prerequisite aggregate passes, Q-DMX-22 still remains AUTO_PHYSICAL until the operator confirms the representative real Raspberry Pi + Stage LAN + ESP32 + MAX485/DMX decoder + 24 V lighting chain behaved correctly.
+
+
+## Remaining Tablet qualification batch — Q-TAB-11 through Q-TAB-15
+
+This batch deliberately separates UI/human truth from read-only/negative-command evidence.
+
+### Q-TAB-11 — graphical Cue Builder
+
+Configure `STAGECORE_TABLET_QUALIFICATION_CUE_NAME`, then create that uniquely named Tablet Scene through the graphical Tablet Scenes/Cue Builder UI. The runner reads the SQLite database read-only and requires an enabled `TABLET_SCENE` whose actions are canonical `tablet.media.*` actions bound through `stage_device` aliases to the selected real tablet.
+
+After the canonical milestone passes, confirm that the graphical editor itself exposed normal form controls and did **not** require raw JSON, capability keys, or target refs:
+
+```bash
+tools/qualification/campaign.sh q11-status
+tools/qualification/campaign.sh q11-ack "created the qualification Tablet Scene entirely through graphical controls; no raw JSON or target_ref was exposed"
+```
+
+That acknowledgement is the physical/UI evidence for Q-TAB-11.
+
+### Q-TAB-12 — Published Cue to real Tablet
+
+Publish the revision containing the qualification Tablet Scene, start/use the pinned REHEARSAL Runtime Snapshot, and execute that Cue through normal StageCore runtime controls. The runner then proves read-only that the exact Published Snapshot contains the Scene, the Cue and all canonical actions completed, and at least one matching `TABLET_*` Stage Device command completed for the same Cue correlation on the selected tablet. Final PASS still requires seeing the expected result on the real tablet.
+
+### Q-TAB-13 — missing media
+
+Configure `STAGECORE_TABLET_QUALIFICATION_MISSING_MEDIA_NUMBER` to a number intentionally absent from the tablet manifest. The bounded helper sends only `TABLET_PREPARE` and treats the test as successful automation evidence only when the real tablet terminalizes `FAILED` or `REJECTED` with `MEDIA_NOT_FOUND`. Final AUTO_PHYSICAL PASS still requires confirming that StageCore showed the failure clearly to the operator.
+
+### Q-TAB-14 — disconnect/reconnect no replay
+
+After Q-TAB-12, Q-TAB-13 and Q-TAB-15 evidence are ready, the runner records a durable no-replay baseline and stops before the network action:
+
+```bash
+tools/qualification/campaign.sh q14-status
+tools/qualification/campaign.sh q14-ack disconnect "tablet network was disconnected while the app remained powered"
+tools/qualification/campaign.sh q14-ack reconnect "tablet network was restored and the authenticated device channel returned"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+Post evidence requires an actual Stage Device disconnect and reconnect observation, the same project/snapshot scope, ONLINE/READY recovery, and **zero new production Tablet commands** after the prepared baseline. The physical confirmation separately verifies that old playback did not visibly replay/restart.
+
+### Q-TAB-15 — mismatched scope rejection
+
+The root-only qualification Unix socket now permits exactly one additional non-playing Tablet command: `TABLET_PREPARE`. Q-TAB-15 uses it only with deliberately wrong project and Runtime Snapshot scope. The real tablet must reject with `PROJECT_MISMATCH` and `SNAPSHOT_MISMATCH`. These qualification envelopes are not inserted into production command persistence and cannot become a second Tablet authority.

@@ -63,7 +63,7 @@ def rfc3339(value):
     return value.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def command(command_id, command_type, project_id, payload, issued_at, deadline_at):
+def command(command_id, command_type, project_id, payload, issued_at, deadline_at, runtime_snapshot_id=""):
     return {
         "command_id": command_id,
         "command_type": command_type,
@@ -71,7 +71,7 @@ def command(command_id, command_type, project_id, payload, issued_at, deadline_a
         "issued_at": rfc3339(issued_at),
         "deadline_at": rfc3339(deadline_at),
         "project_id": project_id,
-        "runtime_snapshot_id": "",
+        "runtime_snapshot_id": runtime_snapshot_id,
         "issuer": "qualification:physical-runner",
         "correlation_id": command_id,
         "causation_id": "",
@@ -376,11 +376,60 @@ def invalid_value_gate(device_id, project_id, channel_key, start_level):
     }
 
 
+def tablet_scope_gate(device_id, project_id, snapshot_id, manifest_id, media_number):
+    if not snapshot_id:
+        fail("tablet scope gate requires active Runtime Snapshot id", 3)
+    payload = {"media_number": media_number}
+    if manifest_id:
+        payload["tablet_manifest_id"] = manifest_id
+    prefix = "qualification-tablet-scope-" + uuid.uuid4().hex[:12]
+    now = dt.datetime.now(dt.timezone.utc)
+
+    wrong_project = project_id + "-qualification-mismatch"
+    project_result = exchange(device_id, command(
+        prefix + "-project", "TABLET_PREPARE", wrong_project, payload,
+        now, now + dt.timedelta(seconds=15), snapshot_id,
+    ))
+    project_error = expect_rejected(project_result, "tablet project mismatch", "PROJECT_MISMATCH")
+
+    now = dt.datetime.now(dt.timezone.utc)
+    wrong_snapshot = snapshot_id + "-qualification-mismatch"
+    snapshot_result = exchange(device_id, command(
+        prefix + "-snapshot", "TABLET_PREPARE", project_id, payload,
+        now, now + dt.timedelta(seconds=15), wrong_snapshot,
+    ))
+    snapshot_error = expect_rejected(snapshot_result, "tablet snapshot mismatch", "SNAPSHOT_MISMATCH")
+
+    return {
+        "status": "PASS",
+        "mode": "tablet-scope",
+        "project_mismatch_status": project_result.get("status"),
+        "project_mismatch_error_code": project_error.get("error_code"),
+        "snapshot_mismatch_status": snapshot_result.get("status"),
+        "snapshot_mismatch_error_code": snapshot_error.get("error_code"),
+        "device_id": device_id,
+        "project_id": project_id,
+        "runtime_snapshot_id": snapshot_id,
+    }
+
+
 def main():
     data = read_request()
     mode = text(data.get("mode"), "mode", 32)
     device_id = text(data.get("device_id"), "device_id")
     project_id = text(data.get("project_id"), "project_id")
+    if mode == "tablet-scope":
+        snapshot_id = text(data.get("runtime_snapshot_id"), "runtime_snapshot_id")
+        manifest_id = str(data.get("tablet_manifest_id") or "").strip()
+        if len(manifest_id) > 256 or any(ord(ch) < 32 for ch in manifest_id):
+            fail("invalid tablet_manifest_id")
+        media_number = data.get("media_number", 1)
+        if isinstance(media_number, bool) or not isinstance(media_number, int) or media_number < 1 or media_number > 9999:
+            fail("media_number must be 1..9999")
+        result = tablet_scope_gate(device_id, project_id, snapshot_id, manifest_id, media_number)
+        print(json.dumps(result, sort_keys=True))
+        return
+
     channel_key = text(data.get("channel_key"), "channel_key", 64)
     first = level(data.get("start_level"), "start_level")
     second = level(data.get("target_level"), "target_level")

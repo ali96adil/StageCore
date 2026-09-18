@@ -50,6 +50,7 @@ jobs:
           tools/qualification/test-lighting-config-truth.sh
           tools/qualification/test-electrical-path.sh
           tools/qualification/test-dmx-full-chain.sh
+          tools/qualification/test-tablet-evidence.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

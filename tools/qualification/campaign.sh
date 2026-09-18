@@ -23,6 +23,10 @@ Usage:
   tools/qualification/campaign.sh q18-ack <note>
   tools/qualification/campaign.sh q19-status
   tools/qualification/campaign.sh q19-ack <note>
+  tools/qualification/campaign.sh q11-status
+  tools/qualification/campaign.sh q11-ack <note>
+  tools/qualification/campaign.sh q14-status
+  tools/qualification/campaign.sh q14-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh q21-status
   tools/qualification/campaign.sh q21-ack <documented|logic-voltage|de-re|polarity|common|termination> <PASS|FAIL> <note>
 
@@ -170,6 +174,62 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-19 --key local_blackout.action \
       --status PASS --actor manual-local-emergency --evidence manual-local-emergency --note "$note"
+    ;;
+  q11-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'cue_builder\tcanonical=%s\tui=%s\tgate=%s\n' \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-11 --key cue_builder.canonical)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-11 --key ui.observation)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-TAB-11)"
+    ;;
+  q11-ack)
+    [[ "$#" -ge 2 ]] || { usage >&2; exit 64; }
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    canonical="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-11 --key cue_builder.canonical)"
+    [[ "$canonical" == "PASS" ]] || { echo "canonical Tablet Scene evidence must PASS first" >&2; exit 3; }
+    note="$2"
+    [[ -n "$note" ]] || { echo "graphical Cue Builder observation note is required" >&2; exit 64; }
+    python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-11 --key ui.observation \
+      --status PASS --actor manual-ui-observation --evidence physical-observation --note "$note" >/dev/null
+    exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-11 --status PASS \
+      --actor manual-ui-observation --evidence physical-observation --note "$note"
+    ;;
+  q14-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'tablet_reconnect\tpre=%s\tdisconnect=%s\treconnect=%s\tpost=%s\n' \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.pre)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key disconnect.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.post)"
+    ;;
+  q14-ack)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    phase="$2"; note="$3"
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.pre)"
+    disconnect="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key disconnect.action)"
+    reconnect="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.action)"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-14 --key reconnect.post)"
+    [[ "$pre" == "PASS" ]] || { echo "Tablet reconnect baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$post" != "PASS" ]] || { echo "Tablet reconnect post evidence is already PASS" >&2; exit 3; }
+    [[ -n "$note" ]] || { echo "Tablet network action note is required" >&2; exit 64; }
+    case "$phase" in
+      disconnect)
+        [[ "$disconnect" != "PASS" && "$reconnect" != "PASS" ]] || { echo "disconnect/reconnect already acknowledged" >&2; exit 3; }
+        key="disconnect.action"
+        ;;
+      reconnect)
+        [[ "$disconnect" == "PASS" ]] || { echo "acknowledge Tablet disconnect first" >&2; exit 3; }
+        [[ "$reconnect" != "PASS" ]] || { echo "Tablet reconnect already acknowledged" >&2; exit 3; }
+        key="reconnect.action"
+        ;;
+      *) echo "phase must be disconnect or reconnect" >&2; exit 64 ;;
+    esac
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-14 --key "$key" \
+      --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
     ;;
   q21-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }

@@ -58,8 +58,13 @@ class H(BaseHTTPRequestHandler):
         issued_at_us=1_000_000
         duration_ms=int(body.get("payload",{}).get("fade_ms",0) or 0)
         completed_at_us=issued_at_us + (duration_ms * 1000)
+        terminal_status="COMPLETED"
+        terminal_result={"status":"COMPLETED","payload":{"ok":True},"session_token":"must-redact"}
+        if command_type=="TABLET_PREPARE" and body.get("payload",{}).get("media_number")==9999:
+            terminal_status="FAILED"
+            terminal_result={"status":"FAILED","error":{"error_code":"MEDIA_NOT_FOUND","category":"MEDIA","message":"missing","retryable":False}}
         c.execute("INSERT INTO stage_device_commands VALUES (?,?,?,?,?,?)",
-          (command_id,command_type,"COMPLETED",json.dumps({"status":"COMPLETED","payload":{"ok":True},"session_token":"must-redact"}),issued_at_us,completed_at_us))
+          (command_id,command_type,terminal_status,json.dumps(terminal_result),issued_at_us,completed_at_us))
         c.commit(); c.close()
         return self.reply(200,response)
 
@@ -88,6 +93,10 @@ run_one TABLET_PREPARE tablet-01 project-1 '{"media_number":1}' "$tmp/tablet.jso
 run_one LIGHTING_STATE_READ lighting-01 project-1 '{}' "$tmp/state.json"
 run_one LIGHTING_CONFIG_READ lighting-01 project-1 '{}' "$tmp/config.json"
 grep -F '"session_token": "[REDACTED]"' "$tmp/config.json" >/dev/null
+
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"TABLET_PREPARE","payload":{"media_number":9999}}\n' | \
+  python3 "$HELPER" --expect-error-code MEDIA_NOT_FOUND --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/missing.json"
+grep -F '"error_code": "MEDIA_NOT_FOUND"' "$tmp/missing.json" >/dev/null
 
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"TABLET_PLAY","payload":{"media_number":1}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/play.json"

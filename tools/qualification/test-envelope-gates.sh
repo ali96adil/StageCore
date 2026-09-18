@@ -43,6 +43,13 @@ class H(BaseHTTPRequestHandler):
             prior=seen[cid]
             value=dict(prior)
             value["statuses"]=[prior["status"]]
+        elif ctype == "TABLET_PREPARE":
+            if cmd.get("project_id") != "project-1":
+                value={"command_id":cid,"statuses":["REJECTED"],"status":"REJECTED","error":{"error_code":"PROJECT_MISMATCH","category":"SCOPE","message":"project mismatch","retryable":False}}
+            elif cmd.get("runtime_snapshot_id") != "snapshot-1":
+                value={"command_id":cid,"statuses":["REJECTED"],"status":"REJECTED","error":{"error_code":"SNAPSHOT_MISMATCH","category":"SCOPE","message":"snapshot mismatch","retryable":False}}
+            else:
+                value={"command_id":cid,"statuses":["COMPLETED"],"status":"COMPLETED","payload":{"prepared":True}}
         elif ctype == "LIGHTING_CONFIG_READ":
             value={"command_id":cid,"statuses":["COMPLETED"],"status":"COMPLETED","payload":config}
         elif ctype == "LIGHTING_CHANNELS_SET":
@@ -104,3 +111,8 @@ assert e["configuration_hash_before"] == e["configuration_hash_after"] == "fake-
 PY
 
 echo "qualification duplicate/expiry/invalid-value envelope self-test PASS"
+
+printf '%s\n' '{"mode":"tablet-scope","device_id":"tablet-01","project_id":"project-1","runtime_snapshot_id":"snapshot-1","tablet_manifest_id":"manifest-1","media_number":1}' | \
+  STAGECORE_QUALIFICATION_SOCKET="$sock" python3 "$HELPER" >"$tmp/tablet-scope.json"
+grep -F '"project_mismatch_error_code": "PROJECT_MISMATCH"' "$tmp/tablet-scope.json" >/dev/null
+grep -F '"snapshot_mismatch_error_code": "SNAPSHOT_MISMATCH"' "$tmp/tablet-scope.json" >/dev/null

@@ -20,6 +20,7 @@ import (
 const MaxRequestBytes = 16 << 10
 
 var allowedCommands = map[string]bool{
+	"TABLET_PREPARE":         true,
 	"LIGHTING_CHANNELS_SET":  true,
 	"LIGHTING_CHANNELS_FADE": true,
 	"LIGHTING_STATE_READ":    true,

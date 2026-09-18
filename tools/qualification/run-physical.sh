@@ -43,7 +43,8 @@ CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 Q15_DIR="$(dirname "$STATE_FILE")/q-dmx-15"
 Q16_DIR="$(dirname "$STATE_FILE")/q-dmx-16"
 Q19_DIR="$(dirname "$STATE_FILE")/q-dmx-19"
-mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR"
+Q14_DIR="$(dirname "$STATE_FILE")/q-tab-14"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -232,6 +233,152 @@ item=((state.get("gates",{}).get(sys.argv[2],{}).get("milestones",{}).get(sys.ar
 print(item.get("updated_at",""))
 PY
 }
+
+invoke_tablet_evidence() {
+  local gate="$1" key="$2" mode="$3" device_id="$4" project_id="$5" extra_json="$6"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior Tablet evidence"
+    return 0
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  set +e
+  python3 - "$mode" "$device_id" "$project_id" "$extra_json" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper tablet-evidence \
+      >"$evidence" 2>"$evidence.stderr"
+import json, sys
+mode,device,project,extra=sys.argv[1:]
+value={"mode":mode,"device_id":device,"project_id":project}
+if extra:
+    value.update(json.loads(extra))
+print(json.dumps(value,separators=(",",":")))
+PY
+  local rc=$?
+  set -e
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$evidence" "$mode evidence validated against the live StageCore database" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "$mode evidence is not ready yet" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "$mode evidence validation failed" ;;
+  esac
+  return "$rc"
+}
+
+invoke_missing_media() {
+  local device_id="$1" project_id="$2" media_number="$3"
+  local gate="Q-TAB-13" key="missing_media.command"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior MEDIA_NOT_FOUND evidence"
+    return 0
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  if [[ ! -f "$CREDENTIAL_FILE" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "local Operator credential not configured"
+    return 3
+  fi
+  set +e
+  emit_request "$CREDENTIAL_FILE" "$project_id" "$device_id" TABLET_PREPARE "{\"media_number\":$media_number}" | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper tablet-negative-command \
+      >"$evidence" 2>"$evidence.stderr"
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    set +e
+    python3 - "$evidence" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+result=data.get("result") or {}
+error=result.get("error") or {}
+assert data.get("qualification_command")=="TABLET_PREPARE"
+assert data.get("status") in {"FAILED","REJECTED"}
+assert error.get("error_code")=="MEDIA_NOT_FOUND"
+PY
+    local evidence_rc=$?
+    set -e
+    [[ "$evidence_rc" -eq 0 ]] || rc=1
+  fi
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$evidence" "missing media produced terminal MEDIA_NOT_FOUND evidence; Operator visibility still requires physical confirmation" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "missing-media command did not terminalize within bounded wait" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "missing-media qualification did not produce MEDIA_NOT_FOUND" ;;
+  esac
+  return "$rc"
+}
+
+invoke_tablet_scope_gate() {
+  local device_id="$1" project_id="$2" snapshot_id="$3" manifest_id="$4" media_number="$5"
+  local gate="Q-TAB-15" key="scope_mismatch.sequence"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior project/snapshot mismatch rejection evidence"
+    return 0
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  set +e
+  python3 - "$device_id" "$project_id" "$snapshot_id" "$manifest_id" "$media_number" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper envelope-gate \
+      >"$evidence" 2>"$evidence.stderr"
+import json,sys
+print(json.dumps({
+ "mode":"tablet-scope","device_id":sys.argv[1],"project_id":sys.argv[2],
+ "runtime_snapshot_id":sys.argv[3],"tablet_manifest_id":sys.argv[4],
+ "media_number":int(sys.argv[5]),
+},separators=(",",":")))
+PY
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    record_milestone "$gate" "$key" PASS "$evidence" "real Tablet rejected mismatched project and Runtime Snapshot before PREPARE execution"
+    record_gate "$gate" PASS "$evidence" "project and Runtime Snapshot mismatch commands were rejected by the real Tablet scope boundary"
+  elif [[ "$rc" -eq 3 ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "qualification socket/Tablet scope target unavailable"
+    record_gate "$gate" BLOCKED "$evidence" "scope mismatch test target unavailable"
+  else
+    record_milestone "$gate" "$key" FAIL "$evidence" "Tablet project/snapshot mismatch rejection failed"
+    record_gate "$gate" FAIL "$evidence" "scope mismatch command was not rejected as required"
+  fi
+  return "$rc"
+}
+
+stage_q14_reconnect() {
+  local device_id="$1" project_id="$2" snapshot_id="$3"
+  local pre_key="reconnect.pre" disconnect_key="disconnect.action" reconnect_key="reconnect.action" post_key="reconnect.post"
+  local pre="$Q14_DIR/reconnect.pre.json"
+  if [[ "$(milestone_status Q-TAB-14 "$post_key")" == "PASS" ]]; then
+    record "Q-TAB-14::$post_key" PASS "resume preserved validated reconnect/no-replay evidence"
+    return 0
+  fi
+  if [[ "$(milestone_status Q-TAB-14 "$pre_key")" != "PASS" ]]; then
+    invoke_tablet_evidence Q-TAB-14 "$pre_key" reconnect-pre "$device_id" "$project_id" \
+      "$(python3 - "$snapshot_id" <<'PY'
+import json,sys
+print(json.dumps({"runtime_snapshot_id":sys.argv[1]}))
+PY
+)" || return $?
+    cp "$RUN_DIR/evidence/Q-TAB-14.$pre_key.json" "$pre"
+  fi
+  if [[ "$(milestone_status Q-TAB-14 "$disconnect_key")" != "PASS" || "$(milestone_status Q-TAB-14 "$reconnect_key")" != "PASS" ]]; then
+    record "Q-TAB-14.manual" BLOCKED "disconnect only the Tablet network, restore it, acknowledge q14 disconnect/reconnect, then resume"
+    return 3
+  fi
+  local baseline disconnect_at reconnect_at extra
+  baseline="$(python3 - "$pre" <<'PY'
+import json,sys
+print(int(json.load(open(sys.argv[1],encoding="utf-8"))["baseline_issued_at_us"]))
+PY
+)"
+  disconnect_at="$(milestone_updated_at Q-TAB-14 "$disconnect_key")"
+  reconnect_at="$(milestone_updated_at Q-TAB-14 "$reconnect_key")"
+  extra="$(python3 - "$snapshot_id" "$baseline" "$disconnect_at" "$reconnect_at" <<'PY'
+import json,sys
+print(json.dumps({
+ "runtime_snapshot_id":sys.argv[1],
+ "baseline_issued_at_us":int(sys.argv[2]),
+ "disconnect_at":sys.argv[3],
+ "reconnect_at":sys.argv[4],
+},separators=(",",":")))
+PY
+)"
+  invoke_tablet_evidence Q-TAB-14 "$post_key" reconnect-post "$device_id" "$project_id" "$extra"
+}
+
 
 invoke_q20_truth() {
   local device_id="$1" project_id="$2"
@@ -1037,6 +1184,63 @@ else
   record "Q-TAB-06::prepare.command" PASS "resume preserved prior milestone"
 fi
 
+
+if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" ]]; then
+  IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
+  cue_name="${STAGECORE_TABLET_QUALIFICATION_CUE_NAME:-}"
+  missing_media="${STAGECORE_TABLET_QUALIFICATION_MISSING_MEDIA_NUMBER:-}"
+  snapshot_id="${STAGECORE_RUNTIME_SNAPSHOT_ID:-}"
+  manifest_id="$(python3 - "$RUN_DIR/evidence/devices.json" "$tablet_device" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+for d in data.get("devices",[]):
+    if d.get("device_id")==sys.argv[2]:
+        print(((d.get("runtime") or {}).get("observed") or {}).get("tablet_manifest_id",""))
+        break
+PY
+)"
+
+  if [[ -n "$cue_name" ]]; then
+    cue_extra="$(python3 - "$cue_name" <<'PY'
+import json,sys
+print(json.dumps({"cue_name":sys.argv[1]},separators=(",",":")))
+PY
+)"
+    invoke_tablet_evidence Q-TAB-11 cue_builder.canonical cue-canonical "$tablet_device" "$tablet_project" "$cue_extra" || true
+
+    if [[ "$(gate_status Q-TAB-11)" == "PASS" && -n "$snapshot_id" ]]; then
+      execution_extra="$(python3 - "$cue_name" "$snapshot_id" <<'PY'
+import json,sys
+print(json.dumps({"cue_name":sys.argv[1],"runtime_snapshot_id":sys.argv[2]},separators=(",",":")))
+PY
+)"
+      invoke_tablet_evidence Q-TAB-12 published.execution cue-execution "$tablet_device" "$tablet_project" "$execution_extra" || true
+    elif should_run_milestone Q-TAB-12 published.execution; then
+      record_milestone Q-TAB-12 published.execution BLOCKED "$RUN_DIR/evidence/Q-TAB-12.published.execution.json" "first confirm Q-TAB-11 graphical builder, then Publish and execute the qualification Tablet Scene in the pinned Runtime Snapshot"
+    fi
+  else
+    if should_run_milestone Q-TAB-11 cue_builder.canonical; then
+      record_milestone Q-TAB-11 cue_builder.canonical BLOCKED "$RUN_DIR/evidence/Q-TAB-11.cue_builder.canonical.json" "STAGECORE_TABLET_QUALIFICATION_CUE_NAME is not configured"
+    fi
+    if should_run_milestone Q-TAB-12 published.execution; then
+      record_milestone Q-TAB-12 published.execution BLOCKED "$RUN_DIR/evidence/Q-TAB-12.published.execution.json" "qualification Tablet Scene name is not configured"
+    fi
+  fi
+
+  if [[ "$missing_media" =~ ^[1-9][0-9]*$ && "$missing_media" -le 9999 ]]; then
+    invoke_missing_media "$tablet_device" "$tablet_project" "$missing_media" || true
+  elif should_run_milestone Q-TAB-13 missing_media.command; then
+    record_milestone Q-TAB-13 missing_media.command BLOCKED "$RUN_DIR/evidence/Q-TAB-13.missing_media.command.json" "configure an intentionally absent media number 1..9999"
+  fi
+
+  if [[ -n "$snapshot_id" && "$media" =~ ^[1-9][0-9]*$ ]]; then
+    invoke_tablet_scope_gate "$tablet_device" "$tablet_project" "$snapshot_id" "$manifest_id" "$media" || true
+  elif should_run_milestone Q-TAB-15 scope_mismatch.sequence; then
+    record_milestone Q-TAB-15 scope_mismatch.sequence BLOCKED "$RUN_DIR/evidence/Q-TAB-15.scope_mismatch.sequence.json" "pinned Runtime Snapshot and qualification media are required"
+    record_gate Q-TAB-15 BLOCKED "$RUN_DIR/evidence/Q-TAB-15.scope_mismatch.sequence.json" "scope mismatch test prerequisites unavailable"
+  fi
+fi
+
 if [[ "$lighting_target_rc" -eq 0 && "$(milestone_status Q-DMX-20 observation.readiness)" == "PASS" ]]; then
   IFS="$(printf '\t')" read -r lighting_device lighting_project <<<"$lighting_target"
   invoke_command safe-command Q-DMX-20 state_read.command LIGHTING_STATE_READ "$lighting_device" "$lighting_project" '{}'
@@ -1122,6 +1326,13 @@ PY
         invoke_command physical-command Q-TAB-07 stop.command TABLET_STOP "$tablet_device" "$tablet_project" '{}'
       fi
     fi
+  fi
+
+  if [[ "$tablet_target_rc" -eq 0 && "$(milestone_status Q-TAB-12 published.execution)" == "PASS" && "$(milestone_status Q-TAB-13 missing_media.command)" == "PASS" && "$(gate_status Q-TAB-15)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
+    IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
+    stage_q14_reconnect "$tablet_device" "$tablet_project" "$STAGECORE_RUNTIME_SNAPSHOT_ID" || true
+  elif should_run_milestone Q-TAB-14 reconnect.pre; then
+    record_milestone Q-TAB-14 reconnect.pre BLOCKED "$RUN_DIR/evidence/Q-TAB-14.reconnect.pre.json" "finish Published Cue, missing-media and scope-rejection evidence before preparing the no-replay reconnect window"
   fi
 
   if [[ "$(gate_status Q-DMX-21)" != "PASS" ]]; then

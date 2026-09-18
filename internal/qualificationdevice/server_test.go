@@ -94,6 +94,23 @@ func TestUnixQualificationServerIsLocalBoundedAndMode0600(t *testing.T) {
 		t.Fatalf("config-read status=%d calls=%d", configResp.StatusCode, fake.calls)
 	}
 
+	var tabletPrepare requestBody
+	_ = json.Unmarshal(body, &tabletPrepare)
+	tabletPrepare.DeviceID = "tablet-01"
+	tabletPrepare.Command.CommandID = "qualification-test-tablet-prepare"
+	tabletPrepare.Command.CommandType = "TABLET_PREPARE"
+	tabletPrepare.Command.Payload = json.RawMessage(`{"media_number":1}`)
+	tabletRaw, _ := json.Marshal(tabletPrepare)
+	tabletReq, _ := http.NewRequest(http.MethodPost, "http://unix/v1/device-envelope", bytes.NewReader(tabletRaw))
+	tabletResp, err := client.Do(tabletReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tabletResp.Body.Close()
+	if tabletResp.StatusCode != http.StatusOK || fake.calls != 3 {
+		t.Fatalf("tablet-prepare status=%d calls=%d", tabletResp.StatusCode, fake.calls)
+	}
+
 	var invalid requestBody
 	_ = json.Unmarshal(body, &invalid)
 	invalid.Command.CommandType = "LIGHTING_CONFIG_APPLY"
@@ -104,7 +121,7 @@ func TestUnixQualificationServerIsLocalBoundedAndMode0600(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusBadRequest || fake.calls != 2 {
+	if resp2.StatusCode != http.StatusBadRequest || fake.calls != 3 {
 		t.Fatalf("invalid status=%d calls=%d", resp2.StatusCode, fake.calls)
 	}
 }

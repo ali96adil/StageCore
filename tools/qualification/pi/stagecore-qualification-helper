@@ -37,6 +37,14 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-command --allow-physical
     ;;
+  tablet-negative-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-command --expect-error-code MEDIA_NOT_FOUND
+    ;;
+  tablet-evidence)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-tablet-evidence
+    ;;
   supersession-command)
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-supersession

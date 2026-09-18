@@ -239,6 +239,7 @@ def main():
     parser.add_argument("--db", default="/var/lib/stagecore/data/db/stagecore.sqlite3")
     parser.add_argument("--timeout-seconds", type=float, default=12.0)
     parser.add_argument("--allow-physical", action="store_true")
+    parser.add_argument("--expect-error-code", default="")
     args = parser.parse_args()
 
     data = read_request()
@@ -257,6 +258,9 @@ def main():
     if command_type.startswith("TABLET_"):
         project_id = bounded_text(project_id, "project_id", 256)
     payload = validate_payload(command_type, data.get("payload"))
+    expected_error_code = str(args.expect_error_code or "").strip()
+    if expected_error_code and command_type != "TABLET_PREPARE":
+        die("expected-error qualification is limited to TABLET_PREPARE")
     duration_ms = 0
     if command_type in {"LIGHTING_CHANNELS_FADE", "LIGHTING_BLACKOUT"}:
         duration_ms = int(payload.get("fade_ms", 0))
@@ -313,6 +317,14 @@ def main():
     result["device_id"] = device_id
     result["qualification_command"] = command_type
     print(json.dumps(redact(result), sort_keys=True))
+    if expected_error_code:
+        nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+        error = nested.get("error") if isinstance(nested.get("error"), dict) else {}
+        if result.get("status") in {"FAILED", "REJECTED"} and error.get("error_code") == expected_error_code:
+            return 0
+        if result.get("status") == "WAIT_TIMEOUT":
+            return 3
+        return 1
     if result["status"] == "COMPLETED":
         return 0
     if result["status"] == "WAIT_TIMEOUT":
