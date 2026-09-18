@@ -41,7 +41,8 @@ MANIFEST="tools/qualification/manifest.json"
 CREDENTIAL_FILE="${STAGECORE_QUALIFICATION_OPERATOR_CREDENTIAL:-$HOME/.config/stagecore/qualification-operator.json}"
 CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 Q15_DIR="$(dirname "$STATE_FILE")/q-dmx-15"
-mkdir -p "$Q15_DIR"
+Q16_DIR="$(dirname "$STATE_FILE")/q-dmx-16"
+mkdir -p "$Q15_DIR" "$Q16_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -262,6 +263,119 @@ stage_q15_event() {
 
   record_milestone Q-DMX-15 "$post_key" FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.verify.log" "$event post evidence failed safe-output verification"
   record_gate Q-DMX-15 FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.verify.log" "$event did not return to the required safe output state; stop and investigate before continuing"
+  return 1
+}
+
+capture_live_device_probe() {
+  local output="$1"
+  ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe >"$output"
+}
+
+stage_q16_wifi_loss() {
+  local device_id="$1" project_id="$2" channel_key="$3" test_level="$4" hold_seconds="$5"
+  local precondition_key="wifi_loss.precondition_set"
+  local pre_key="wifi_loss.pre"
+  local disconnect_key="wifi_loss.disconnect_action"
+  local reconnect_key="wifi_loss.reconnect_action"
+  local post_key="wifi_loss.post"
+  local stable_pre="$Q16_DIR/wifi-loss.pre.json"
+  local stable_post="$Q16_DIR/wifi-loss.post.json"
+  local verify="$Q16_DIR/wifi-loss.verify.json"
+
+  if [[ "$(milestone_status Q-DMX-16 "$post_key")" == "PASS" ]]; then
+    record "Q-DMX-16::$post_key" PASS "resume preserved validated Wi-Fi-loss post evidence"
+    return 0
+  fi
+
+  if [[ "$(milestone_status Q-DMX-16 "$pre_key")" != "PASS" ]]; then
+    if [[ "$(milestone_status Q-DMX-16 "$precondition_key")" != "PASS" ]]; then
+      invoke_command physical-command Q-DMX-16 "$precondition_key" LIGHTING_CHANNELS_SET         "$device_id" "$project_id" "{\"channels\":{\"$channel_key\":$test_level}}"
+    fi
+    if [[ "$(milestone_status Q-DMX-16 "$precondition_key")" != "PASS" ]]; then
+      return 3
+    fi
+    sleep "$hold_seconds"
+
+    local probe="$RUN_DIR/evidence/Q-DMX-16.pre.probe.json"
+    set +e
+    capture_live_device_probe "$probe" >"$RUN_DIR/evidence/Q-DMX-16.pre.probe.log" 2>&1
+    local probe_rc=$?
+    set -e
+    if [[ "$probe_rc" -ne 0 ]]; then
+      record_milestone Q-DMX-16 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.probe.log" "fresh nonzero Wi-Fi-loss baseline probe is unavailable"
+      return 3
+    fi
+
+    set +e
+    python3 tools/qualification/wifi-loss.py capture       --probe "$probe" --device-id "$device_id" --project-id "$project_id"       --require-nonzero-channel "$channel_key" --out "$stable_pre"       >"$RUN_DIR/evidence/Q-DMX-16.pre.log" 2>&1
+    local pre_rc=$?
+    set -e
+    if [[ "$pre_rc" -eq 0 ]]; then
+      record_milestone Q-DMX-16 "$pre_key" PASS "$stable_pre" "fresh nonzero lighting baseline captured before ESP-only Wi-Fi isolation"
+    else
+      record_milestone Q-DMX-16 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "Wi-Fi-loss baseline is not a fresh nonzero lighting state"
+      return 3
+    fi
+  fi
+
+  local disconnect_status reconnect_status
+  disconnect_status="$(milestone_status Q-DMX-16 "$disconnect_key")"
+  reconnect_status="$(milestone_status Q-DMX-16 "$reconnect_key")"
+
+  if [[ "$disconnect_status" != "PASS" ]]; then
+    if [[ "$disconnect_status" != "BLOCKED" ]]; then
+      record_milestone Q-DMX-16 "$disconnect_key" BLOCKED "$stable_pre" "awaiting explicit ESP-only Wi-Fi disconnect; do not power-cycle the node"
+    else
+      record "Q-DMX-16::$disconnect_key" BLOCKED "awaiting explicit ESP-only Wi-Fi disconnect"
+    fi
+    return 3
+  fi
+
+  if [[ "$reconnect_status" != "PASS" ]]; then
+    if [[ "$reconnect_status" != "BLOCKED" ]]; then
+      record_milestone Q-DMX-16 "$reconnect_key" BLOCKED "$stable_pre" "observe the connection-loss policy, restore Wi-Fi, then acknowledge reconnect"
+    else
+      record "Q-DMX-16::$reconnect_key" BLOCKED "awaiting Wi-Fi restore/reconnect acknowledgement"
+    fi
+    return 3
+  fi
+
+  local post_probe="$RUN_DIR/evidence/Q-DMX-16.post.probe.json"
+  set +e
+  capture_live_device_probe "$post_probe" >"$RUN_DIR/evidence/Q-DMX-16.post.probe.log" 2>&1
+  local post_probe_rc=$?
+  set -e
+  if [[ "$post_probe_rc" -ne 0 ]]; then
+    record_milestone Q-DMX-16 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.post.probe.log" "lighting node has not returned to a fresh StageCore observation yet"
+    return 3
+  fi
+
+  local post="$RUN_DIR/evidence/Q-DMX-16.post.json"
+  set +e
+  python3 tools/qualification/wifi-loss.py capture     --probe "$post_probe" --device-id "$device_id" --project-id "$project_id" --out "$post"     >"$RUN_DIR/evidence/Q-DMX-16.post.log" 2>&1
+  local post_rc=$?
+  set -e
+  if [[ "$post_rc" -ne 0 ]]; then
+    record_milestone Q-DMX-16 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.post.log" "post-reconnect StageCore observation is not yet usable"
+    return 3
+  fi
+
+  local disconnect_at reconnect_at
+  disconnect_at="$(milestone_updated_at Q-DMX-16 "$disconnect_key")"
+  reconnect_at="$(milestone_updated_at Q-DMX-16 "$reconnect_key")"
+  set +e
+  python3 tools/qualification/wifi-loss.py verify     --pre "$stable_pre" --post "$post" --disconnect-at "$disconnect_at" --reconnect-at "$reconnect_at" --out "$verify"     >"$RUN_DIR/evidence/Q-DMX-16.verify.log" 2>&1
+  local verify_rc=$?
+  set -e
+
+  if [[ "$verify_rc" -eq 0 ]]; then
+    cp "$post" "$stable_post"
+    record_milestone Q-DMX-16 "$post_key" PASS "$verify" "Wi-Fi loss preserved identity/config, caused no reboot, and reconnect returned at safe blackout with healthy DMX"
+    return 0
+  fi
+
+  record_milestone Q-DMX-16 "$post_key" FAIL "$RUN_DIR/evidence/Q-DMX-16.verify.log" "Wi-Fi-loss/reconnect evidence failed safe-output verification"
+  record_gate Q-DMX-16 FAIL "$RUN_DIR/evidence/Q-DMX-16.verify.log" "Wi-Fi-loss failsafe/reconnect did not return to the required safe state"
   return 1
 }
 
@@ -658,6 +772,16 @@ PY
           record_milestone Q-DMX-11 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-11.$key.json" "timed-blackout precondition or duration is not configured"
         fi
       done
+    fi
+
+    if [[ "$(milestone_status Q-DMX-15 power_cycle.post)" == "PASS" && "$(milestone_status Q-DMX-15 brownout.post)" == "PASS" ]]; then
+      if [[ "$single_ok" -eq 1 && "$set_level" != "0" && "$set_level" != "0.0" ]]; then
+        stage_q16_wifi_loss "$lighting_device" "$lighting_project" "$channel" "$set_level" "$hold" || true
+      elif should_run_milestone Q-DMX-16 wifi_loss.pre; then
+        record_milestone Q-DMX-16 wifi_loss.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "Wi-Fi-loss qualification requires a configured nonzero single-channel test level"
+      fi
+    elif should_run_milestone Q-DMX-16 wifi_loss.pre; then
+      record_milestone Q-DMX-16 wifi_loss.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "complete Q-DMX-15 automated power-event evidence before preparing Wi-Fi-loss qualification"
     fi
     fi
   fi

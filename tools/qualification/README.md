@@ -258,3 +258,25 @@ tools/qualification/campaign.sh q15-status
 ```
 
 Even after both automated post-event checks pass, Q-DMX-15 remains `AUTO_PHYSICAL`: the final parent PASS is recorded only when the operator confirms that both reboot events visibly returned the real lighting output to the safe blackout state.
+
+## Q-DMX-16 Wi-Fi-loss / failsafe checkpoint
+
+Q-DMX-16 is a resumable real-network workflow. It runs only after the automated Q-DMX-15 power-cycle and brownout post checks have passed. The runner creates a deliberately nonzero one-channel baseline, captures a fresh observation, then stops before the network fault.
+
+The hardware/network operator performs two bounded actions against the ESP32 only:
+
+```bash
+tools/qualification/campaign.sh q16-status
+tools/qualification/campaign.sh q16-ack disconnect "ESP32 Wi-Fi was isolated without removing power"
+# observe the output while the ESP32 remains powered
+tools/qualification/campaign.sh q16-ack reconnect "ESP32 Wi-Fi was restored after the failsafe observation"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+Do not power-cycle the ESP32 for this gate and do not disconnect the Raspberry Pi/Hub from the Stage LAN. Use a network-control method that isolates only the lighting node.
+
+Automated post evidence proves the same device/project/firmware/configuration returned, no reboot occurred, the Stage Device runtime is fresh and ONLINE, DMX is healthy, authority returned to STAGECORE, no fade remains active, and all logical lighting levels are blackout zero.
+
+The frozen StageCore contract for this gate is **brief hold, then fade to blackout**. That behavior occurs while the node is offline, so StageCore cannot truthfully prove its visible timing from its own reconnect observation. Therefore Q-DMX-16 remains `AUTO_PHYSICAL`: `wifi_loss.post` is automation evidence only, and the final physical confirmation must explicitly confirm the visible hold/fade behavior and that stale brightness did not return after reconnect.
+
+Static firmware review of FLASH CANDIDATE `a393c74ea16176df362db5c5482f916328856a81` currently shows an immediate failsafe blackout request on runtime/network loss. Do not mark Q-DMX-16 PASS merely because reconnect returns black; the physical gate must expose this contract mismatch unless the firmware policy is reconciled first.

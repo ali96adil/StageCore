@@ -43,6 +43,7 @@ jobs:
           tools/qualification/test-supersession.sh
           tools/qualification/test-envelope-gates.sh
           tools/qualification/test-power-event.sh
+          tools/qualification/test-wifi-loss.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

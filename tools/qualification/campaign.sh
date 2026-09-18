@@ -17,6 +17,8 @@ Usage:
   tools/qualification/campaign.sh confirm-one <GATE_ID> <PASS|FAIL> <note>
   tools/qualification/campaign.sh q15-status
   tools/qualification/campaign.sh q15-ack <power-cycle|brownout> <note>
+  tools/qualification/campaign.sh q16-status
+  tools/qualification/campaign.sh q16-ack <disconnect|reconnect> <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -76,6 +78,39 @@ case "$cmd" in
     fi
     [[ -n "$note" ]] || { echo "hardware action note is required" >&2; exit 64; }
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-15 --key "$key.action"       --status PASS --actor manual-hardware-action --evidence manual-hardware-action --note "$note"
+    ;;
+  q16-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'wifi_loss\tprecondition=%s\tpre=%s\tdisconnect=%s\treconnect=%s\tpost=%s\n'       "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.precondition_set)"       "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.pre)"       "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.disconnect_action)"       "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.reconnect_action)"       "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.post)"
+    ;;
+  q16-ack)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    phase="$2"; note="$3"
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.pre)"
+    disconnect="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.disconnect_action)"
+    reconnect="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.reconnect_action)"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-16 --key wifi_loss.post)"
+    [[ "$pre" == "PASS" ]] || { echo "Wi-Fi-loss baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$post" != "PASS" ]] || { echo "Wi-Fi-loss post evidence is already PASS" >&2; exit 3; }
+    [[ -n "$note" ]] || { echo "network action note is required" >&2; exit 64; }
+    case "$phase" in
+      disconnect)
+        [[ "$disconnect" != "PASS" ]] || { echo "Wi-Fi disconnect is already acknowledged" >&2; exit 3; }
+        [[ "$reconnect" != "PASS" ]] || { echo "Wi-Fi reconnect is already acknowledged" >&2; exit 3; }
+        key="wifi_loss.disconnect_action"
+        ;;
+      reconnect)
+        [[ "$disconnect" == "PASS" ]] || { echo "acknowledge Wi-Fi disconnect before reconnect" >&2; exit 3; }
+        [[ "$reconnect" != "PASS" ]] || { echo "Wi-Fi reconnect is already acknowledged" >&2; exit 3; }
+        key="wifi_loss.reconnect_action"
+        ;;
+      *)
+        echo "phase must be disconnect or reconnect" >&2
+        exit 64
+        ;;
+    esac
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-16 --key "$key"       --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
