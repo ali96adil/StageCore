@@ -23,6 +23,7 @@ var allowedCommands = map[string]bool{
 	"LIGHTING_CHANNELS_SET":  true,
 	"LIGHTING_CHANNELS_FADE": true,
 	"LIGHTING_STATE_READ":    true,
+	"LIGHTING_CONFIG_READ":   true,
 }
 
 type exchangeRuntime interface {

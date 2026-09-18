@@ -214,9 +214,17 @@ Q-DMX-12 and Q-DMX-13 need firmware behavior that the normal production Operator
 
 The path is disabled unless `STAGECORE_QUALIFICATION_SOCKET` is set. The one-time Pi qualification bootstrap installs a systemd drop-in pointing it at `/var/lib/stagecore/qualification-envelope.sock`, restarts Hub once, and creates the socket with mode 0600. It is not a TCP/LAN endpoint.
 
-The socket accepts only qualification-prefixed envelopes from issuer `qualification:physical-runner` and only the bounded command set needed here: SET, FADE, and STATE_READ. These test envelopes bypass production command persistence by design so exact duplicate IDs and already-expired deadlines can reach the real firmware parser/dedupe/expiry logic.
+The socket accepts only qualification-prefixed envelopes from issuer `qualification:physical-runner` and only the bounded command set needed here: SET, FADE, STATE_READ, and read-only CONFIG_READ. CONFIG_APPLY remains forbidden. These test envelopes bypass production command persistence by design so exact duplicate IDs and already-expired deadlines can reach the real firmware parser/dedupe/expiry logic.
 
 - Q-DMX-12: establish a known level, run a real fade, resend the exact same terminal command ID, and require the second lifecycle to be cached-terminal-only (no second ACCEPTED/fade) with the same result payload.
 - Q-DMX-13: establish a known level, inject an already-expired SET to a different level, require TIMED_OUT / DEVICE_COMMAND_EXPIRED, then read state and prove the rejected level was not applied.
 
 Both gates are AUTO evidence on the real node, but the runner still requires `STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS=1` because the preconditions deliberately change lighting output.
+
+## Invalid-value / configured-bound checkpoint
+
+Q-DMX-14 deliberately avoids automatic configuration mutation. The real-node sequence first reads the installed configuration and records its hash, establishes a known level, then proves two fail-closed cases: an out-of-range logical value (>100) must return `REJECTED / DEVICE_COMMAND_INVALID`, and a syntactically valid but unknown channel must return `REJECTED / CHANNEL_LEVEL_INVALID`. A state read after each rejection must show the original level unchanged.
+
+When the selected channel has a configured bound narrower than 0..100, the same sequence also sends an in-schema value beyond that configured bound and requires the firmware to clamp to the exact configured minimum/maximum. It then restores the original level and requires the configuration hash to remain unchanged. If the selected channel is full-range 0..100, the clamp subcheck is recorded as not applicable inside the evidence; the two fail-closed checks still run.
+
+Automation records `Q-DMX-14::invalid_value.sequence`. Because the manifest classifies Q-DMX-14 as `AUTO_PHYSICAL`, the parent gate remains pending until the batched physical confirmation verifies that no unsafe visible output change occurred and any clamp stayed within the configured limit.

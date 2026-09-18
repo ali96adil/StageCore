@@ -19,6 +19,7 @@ MAPPINGS = [
     ("Q-DMX-09", "physical.observation", ["supersession.sequence"], "A visible active fade was interrupted by the newer SET and the superseded fade did not resume."),
     ("Q-DMX-10", "physical.observation", ["blackout.command"], "Lighting output visibly reached immediate blackout."),
     ("Q-DMX-11", "physical.observation", ["precondition_set.command", "timed_blackout.command"], "Lighting visibly faded to blackout over the configured timed-blackout duration."),
+    ("Q-DMX-14", "physical.observation", ["invalid_value.sequence"], "Invalid out-of-range/unknown-channel requests caused no visible unsafe change; any configured-bound clamp stayed within the channel limit and output restored."),
 ]
 
 

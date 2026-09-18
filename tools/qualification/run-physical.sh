@@ -220,6 +220,40 @@ PY
   esac
 }
 
+invoke_envelope_milestone() {
+  local gate="$1" key="$2" mode="$3" device_id="$4" project_id="$5" channel="$6" start_level="$7" target_level="$8" fade_ms="$9"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior envelope milestone"
+    return
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  set +e
+  python3 - "$mode" "$device_id" "$project_id" "$channel" "$start_level" "$target_level" "$fade_ms" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper envelope-gate >"$evidence" 2>"$evidence.stderr"
+import json, sys
+print(json.dumps({
+    "mode": sys.argv[1],
+    "device_id": sys.argv[2],
+    "project_id": sys.argv[3],
+    "channel_key": sys.argv[4],
+    "start_level": float(sys.argv[5]),
+    "target_level": float(sys.argv[6]),
+    "fade_ms": int(sys.argv[7]),
+}, separators=(",", ":")))
+PY
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]] && ! python3 tools/qualification/validate-envelope-gate-evidence.py \
+      --input "$evidence" --mode "$mode" >"$evidence.validation" 2>&1; then
+    rc=1
+  fi
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$evidence" "real-node $mode envelope milestone passed through the root-only qualification socket" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "qualification envelope path is not ready" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "real-node $mode envelope milestone failed" ;;
+  esac
+}
+
 invoke_supersession() {
   local gate="$1" key="$2" device_id="$3" channel_key="$4" start_level="$5" target_level="$6" replacement_level="$7" fade_ms="$8" activation_timeout_ms="$9"
   if ! should_run_milestone "$gate" "$key"; then
@@ -486,6 +520,13 @@ PY
           record_gate "$gate" BLOCKED "$RUN_DIR/evidence/$gate.envelope.json" "duplicate/expiry test values are not configured"
         fi
       done
+    fi
+
+    if [[ "$single_ok" -eq 1 ]]; then
+      invoke_envelope_milestone Q-DMX-14 invalid_value.sequence invalid-value "$lighting_device" "$lighting_project" "$channel" "$set_level" "$fade_level" "$fade_ms"
+      sleep "$hold"
+    elif should_run_milestone Q-DMX-14 invalid_value.sequence; then
+      record_milestone Q-DMX-14 invalid_value.sequence BLOCKED "$RUN_DIR/evidence/Q-DMX-14.invalid_value.sequence.json" "invalid-value qualification channel/levels are not configured"
     fi
 
     if [[ "$supersession_ok" -eq 1 ]]; then

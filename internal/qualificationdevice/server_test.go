@@ -78,6 +78,22 @@ func TestUnixQualificationServerIsLocalBoundedAndMode0600(t *testing.T) {
 		t.Fatalf("status=%d calls=%d", resp.StatusCode, fake.calls)
 	}
 
+	var configRead requestBody
+	_ = json.Unmarshal(body, &configRead)
+	configRead.Command.CommandID = "qualification-test-config"
+	configRead.Command.CommandType = "LIGHTING_CONFIG_READ"
+	configRead.Command.Payload = json.RawMessage(`{}`)
+	configRaw, _ := json.Marshal(configRead)
+	configReq, _ := http.NewRequest(http.MethodPost, "http://unix/v1/device-envelope", bytes.NewReader(configRaw))
+	configResp, err := client.Do(configReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer configResp.Body.Close()
+	if configResp.StatusCode != http.StatusOK || fake.calls != 2 {
+		t.Fatalf("config-read status=%d calls=%d", configResp.StatusCode, fake.calls)
+	}
+
 	var invalid requestBody
 	_ = json.Unmarshal(body, &invalid)
 	invalid.Command.CommandType = "LIGHTING_CONFIG_APPLY"
@@ -88,7 +104,7 @@ func TestUnixQualificationServerIsLocalBoundedAndMode0600(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusBadRequest || fake.calls != 1 {
+	if resp2.StatusCode != http.StatusBadRequest || fake.calls != 2 {
 		t.Fatalf("invalid status=%d calls=%d", resp2.StatusCode, fake.calls)
 	}
 }
