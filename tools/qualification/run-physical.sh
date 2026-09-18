@@ -860,7 +860,6 @@ PY
     fi
     fi
   fi
-fi
 
 python3 tools/qualification/physical-confirmations.py pending --state "$STATE_FILE" >"$RUN_DIR/evidence/pending-physical.txt"
 cp "$STATE_FILE" "$RUN_DIR/evidence/campaign-state.json"
