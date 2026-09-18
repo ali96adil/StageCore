@@ -94,12 +94,14 @@ func (s *Simulator) Configuration() Configuration {
 }
 
 func (s *Simulator) Observation() Observation {
+	configHash, _ := ConfigurationHash(s.config)
 	obs := Observation{
 		SchemaVersion:         SchemaVersion1,
 		CurrentLevels:         s.CurrentLevels(),
 		LastAcceptedCommandID: s.lastAccepted,
 		LastAppliedCommandID:  s.lastApplied,
 		DMXHealthy:            true,
+		ConfigurationHash:     configHash,
 		Authority:             AuthorityStageCore,
 	}
 	if s.active != nil {
