@@ -46,6 +46,7 @@ jobs:
           tools/qualification/test-wifi-loss.sh
           tools/qualification/test-hub-restart-evidence.sh
           tools/qualification/test-dmx-stability.sh
+          tools/qualification/test-emergency-blackout.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

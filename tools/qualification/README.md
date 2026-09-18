@@ -326,3 +326,31 @@ On resume the runner re-arms the same fixed level immediately before the stress 
 The parent Q-DMX-18 gate remains `AUTO_PHYSICAL`. Final PASS additionally requires observing the real decoder/24 V output for the whole window and confirming no visible flicker, jitter, dropout, or level jump while the protected local web UI is active.
 
 The current FLASH CANDIDATE does not expose the protected local web/diagnostic UI required by the frozen firmware handoff. Therefore Q-DMX-18 must remain BLOCKED at the local-web milestone until firmware support exists; network-only evidence is not sufficient.
+
+## Q-DMX-19 local emergency blackout with StageCore unavailable
+
+Q-DMX-19 is deliberately the last bounded lighting fault action in the runner. It is double-armed by the ordinary physical-action switch plus:
+
+```text
+STAGECORE_QUALIFICATION_ENABLE_HUB_UNAVAILABLE=1
+```
+
+Do **not** enable this arm until the protected local firmware UI required by `StageCore-ESP32-DMX-Lighting#4` is installed on the exact pinned firmware candidate.
+
+The runner first establishes and captures a fresh nonzero real-lighting baseline. It then uses the root-owned bounded helper to stop only `stagecore-hub.service` and proves the service is inactive. It never invokes the ESP32 local emergency control automatically.
+
+While Hub is intentionally unavailable, use the protected ESP32 local emergency-blackout control and physically verify that the real lighting reaches blackout. Then, without manually restarting Hub, record the action and resume:
+
+```bash
+tools/qualification/campaign.sh q19-status
+tools/qualification/campaign.sh q19-ack "protected local emergency blackout visibly forced the real output to black while Hub was unavailable"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+On resume, before the normal Hub preflight, the runner sees the durable Q-DMX-19 outage + manual-blackout milestones and uses the bounded helper to restart only `stagecore-hub.service`. It then performs ordinary readiness/device discovery and Q-DMX-19 post verification.
+
+Automated post PASS requires the same device/project/firmware/configuration, no ESP32 reboot/reset-reason change, fresh ONLINE READY/WARNING state, healthy DMX, STAGECORE authority after recovery, blackout levels, no active fade, no replay of the pre-outage StageCore command ID, and a second stable-blackout observation after a hold.
+
+The parent gate remains `AUTO_PHYSICAL`; final PASS additionally requires the operator confirmation that the protected local control itself visibly caused blackout while Hub was actually unavailable.
+
+If the operator interrupts the process after Hub stop, do not run an ordinary qualification resume until the local emergency action has been performed and recorded with `q19-ack`. The recovery hook intentionally will not restart Hub before that acknowledgement.

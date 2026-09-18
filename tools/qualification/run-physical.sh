@@ -42,7 +42,8 @@ CREDENTIAL_FILE="${STAGECORE_QUALIFICATION_OPERATOR_CREDENTIAL:-$HOME/.config/st
 CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 Q15_DIR="$(dirname "$STATE_FILE")/q-dmx-15"
 Q16_DIR="$(dirname "$STATE_FILE")/q-dmx-16"
-mkdir -p "$Q15_DIR" "$Q16_DIR"
+Q19_DIR="$(dirname "$STATE_FILE")/q-dmx-19"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -545,6 +546,147 @@ PY
   esac
 }
 
+stage_q19_emergency_blackout() {
+  local device_id="$1" project_id="$2" channel_key="$3" test_level="$4" hold_seconds="$5"
+  local precondition_key="emergency.precondition_set"
+  local pre_key="emergency.pre"
+  local unavailable_key="hub_unavailable.action"
+  local blackout_key="local_blackout.action"
+  local recovery_key="hub_recovery.action"
+  local post_key="emergency.post"
+  local stable_pre="$Q19_DIR/emergency.pre.json"
+  local verify="$Q19_DIR/emergency.verify.json"
+
+  if [[ "$(milestone_status Q-DMX-19 "$post_key")" == "PASS" ]]; then
+    record "Q-DMX-19::$post_key" PASS "resume preserved validated local-emergency post evidence"
+    return 0
+  fi
+
+  if [[ "$(milestone_status Q-DMX-19 "$pre_key")" != "PASS" ]]; then
+    if [[ "$(milestone_status Q-DMX-19 "$precondition_key")" != "PASS" ]]; then
+      invoke_command physical-command Q-DMX-19 "$precondition_key" LIGHTING_CHANNELS_SET \
+        "$device_id" "$project_id" "{\"channels\":{\"$channel_key\":$test_level}}"
+    fi
+    if [[ "$(milestone_status Q-DMX-19 "$precondition_key")" != "PASS" ]]; then
+      return 3
+    fi
+    sleep "$hold_seconds"
+
+    local probe="$RUN_DIR/evidence/Q-DMX-19.pre.probe.json"
+    set +e
+    capture_live_device_probe "$probe" >"$RUN_DIR/evidence/Q-DMX-19.pre.probe.log" 2>&1
+    local probe_rc=$?
+    set -e
+    if [[ "$probe_rc" -ne 0 ]]; then
+      record_milestone Q-DMX-19 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.pre.probe.log" "baseline probe unavailable; re-arm the nonzero output on resume"
+      record_milestone Q-DMX-19 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.pre.probe.log" "fresh local-emergency baseline unavailable"
+      return 3
+    fi
+
+    set +e
+    python3 tools/qualification/emergency-blackout.py capture \
+      --probe "$probe" --device-id "$device_id" --project-id "$project_id" \
+      --require-nonzero-channel "$channel_key" --out "$stable_pre" \
+      >"$RUN_DIR/evidence/Q-DMX-19.pre.log" 2>&1
+    local pre_rc=$?
+    set -e
+    if [[ "$pre_rc" -eq 0 ]]; then
+      record_milestone Q-DMX-19 "$pre_key" PASS "$stable_pre" "fresh nonzero baseline captured before taking only the Hub unavailable"
+    else
+      record_milestone Q-DMX-19 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.pre.log" "nonzero baseline was not proven; re-arm on resume"
+      record_milestone Q-DMX-19 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.pre.log" "local-emergency baseline is not fresh/nonzero"
+      return 3
+    fi
+  fi
+
+  if [[ "$(milestone_status Q-DMX-19 "$unavailable_key")" != "PASS" ]]; then
+    local outage_evidence="$RUN_DIR/evidence/Q-DMX-19.hub-unavailable.log"
+    set +e
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-stop \
+      >"$outage_evidence" 2>&1
+    local stop_rc=$?
+    set -e
+    if [[ "$stop_rc" -eq 0 ]]; then
+      record_milestone Q-DMX-19 "$unavailable_key" PASS "$outage_evidence" "stagecore-hub.service stopped and verified inactive; ESP32 remains powered for local emergency blackout"
+    else
+      record_milestone Q-DMX-19 "$unavailable_key" FAIL "$outage_evidence" "could not establish bounded Hub-unavailable state"
+      record_gate Q-DMX-19 FAIL "$outage_evidence" "Hub-unavailable precondition could not be established safely"
+      return 1
+    fi
+  fi
+
+  if [[ "$(milestone_status Q-DMX-19 "$blackout_key")" != "PASS" ]]; then
+    if [[ "$(milestone_status Q-DMX-19 "$blackout_key")" != "BLOCKED" ]]; then
+      record_milestone Q-DMX-19 "$blackout_key" BLOCKED "$stable_pre" "Hub is unavailable; use the protected local emergency-blackout control, confirm real blackout, then run q19-ack before resuming"
+    else
+      record "Q-DMX-19::$blackout_key" BLOCKED "Hub remains intentionally unavailable; awaiting protected local emergency-blackout acknowledgement"
+    fi
+    return 3
+  fi
+
+  if [[ "$(milestone_status Q-DMX-19 "$recovery_key")" != "PASS" ]]; then
+    record "Q-DMX-19::$recovery_key" BLOCKED "resume runner so the bounded recovery hook can restart Hub before post verification"
+    return 3
+  fi
+
+  local post_probe="$RUN_DIR/evidence/Q-DMX-19.post.probe.json"
+  local stable_probe="$RUN_DIR/evidence/Q-DMX-19.stable.probe.json"
+  local post="$RUN_DIR/evidence/Q-DMX-19.post.json"
+  local stable="$RUN_DIR/evidence/Q-DMX-19.stable.json"
+
+  set +e
+  capture_live_device_probe "$post_probe" >"$RUN_DIR/evidence/Q-DMX-19.post.probe.log" 2>&1
+  local post_probe_rc=$?
+  set -e
+  if [[ "$post_probe_rc" -ne 0 ]]; then
+    record_milestone Q-DMX-19 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.post.probe.log" "lighting node has not returned to a fresh StageCore observation after Hub recovery"
+    return 3
+  fi
+  python3 tools/qualification/emergency-blackout.py capture \
+    --probe "$post_probe" --device-id "$device_id" --project-id "$project_id" --out "$post" \
+    >"$RUN_DIR/evidence/Q-DMX-19.post.log" 2>&1 || {
+      record_milestone Q-DMX-19 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.post.log" "post-recovery observation is not usable"
+      return 3
+    }
+
+  sleep 2
+  set +e
+  capture_live_device_probe "$stable_probe" >"$RUN_DIR/evidence/Q-DMX-19.stable.probe.log" 2>&1
+  local stable_probe_rc=$?
+  set -e
+  if [[ "$stable_probe_rc" -ne 0 ]]; then
+    record_milestone Q-DMX-19 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.stable.probe.log" "stable post-recovery observation unavailable"
+    return 3
+  fi
+  python3 tools/qualification/emergency-blackout.py capture \
+    --probe "$stable_probe" --device-id "$device_id" --project-id "$project_id" --out "$stable" \
+    >"$RUN_DIR/evidence/Q-DMX-19.stable.log" 2>&1 || {
+      record_milestone Q-DMX-19 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-19.stable.log" "stable post-recovery observation is not usable"
+      return 3
+    }
+
+  local unavailable_at blackout_at recovery_at
+  unavailable_at="$(milestone_updated_at Q-DMX-19 "$unavailable_key")"
+  blackout_at="$(milestone_updated_at Q-DMX-19 "$blackout_key")"
+  recovery_at="$(milestone_updated_at Q-DMX-19 "$recovery_key")"
+
+  set +e
+  python3 tools/qualification/emergency-blackout.py verify \
+    --pre "$stable_pre" --post "$post" --stable "$stable" \
+    --hub-unavailable-at "$unavailable_at" --blackout-at "$blackout_at" --recovery-at "$recovery_at" \
+    --out "$verify" >"$RUN_DIR/evidence/Q-DMX-19.verify.log" 2>&1
+  local verify_rc=$?
+  set -e
+  if [[ "$verify_rc" -eq 0 ]]; then
+    record_milestone Q-DMX-19 "$post_key" PASS "$verify" "local emergency blackout remained safe through Hub recovery with no ESP reboot or stale replay"
+    return 0
+  fi
+
+  record_milestone Q-DMX-19 "$post_key" FAIL "$RUN_DIR/evidence/Q-DMX-19.verify.log" "local emergency-blackout recovery evidence failed"
+  record_gate Q-DMX-19 FAIL "$RUN_DIR/evidence/Q-DMX-19.verify.log" "local emergency blackout or recovery violated safe-state/no-replay requirements"
+  return 1
+}
+
 invoke_envelope_gate() {
   local gate="$1" mode="$2" device_id="$3" project_id="$4" channel="$5" start_level="$6" target_level="$7" fade_ms="$8"
   if ! should_run_gate "$gate"; then
@@ -672,6 +814,30 @@ measure_fade_timing() {
   fi
 }
 
+recover_q19_if_needed() {
+  if [[ "$(milestone_status Q-DMX-19 hub_unavailable.action)" != "PASS" ]]; then
+    return 0
+  fi
+  if [[ "$(milestone_status Q-DMX-19 hub_recovery.action)" == "PASS" ]]; then
+    return 0
+  fi
+  if [[ "$(milestone_status Q-DMX-19 local_blackout.action)" != "PASS" ]]; then
+    return 0
+  fi
+
+  local evidence="$RUN_DIR/evidence/Q-DMX-19.hub-recovery.log"
+  set +e
+  ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-restart \
+    >"$evidence" 2>&1
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    record_milestone Q-DMX-19 hub_recovery.action PASS "$evidence" "bounded recovery restarted stagecore-hub.service after local emergency blackout acknowledgement"
+  else
+    record_milestone Q-DMX-19 hub_recovery.action BLOCKED "$evidence" "Hub recovery failed; keep the local output at emergency blackout and retry recovery"
+  fi
+}
+
 check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
@@ -695,6 +861,7 @@ else
   SSH_TARGET="$PI_USER@$PI_HOST"
   SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$SSH_KEY")
   check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
+  recover_q19_if_needed
   check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
   check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
   if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe       >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
@@ -978,6 +1145,12 @@ PY
       stage_q18_stability "$lighting_device" "$lighting_project" "$channel" "$set_level" "$hold" "$stability_seconds" "$stability_interval_ms" || true
     elif should_run_milestone Q-DMX-18 stress.pre; then
       record_milestone Q-DMX-18 stress.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-18.pre.log" "configure a nonzero test level and explicit stability duration 10..300 seconds"
+    fi
+
+    if [[ "${STAGECORE_QUALIFICATION_ENABLE_HUB_UNAVAILABLE:-0}" == "1" && "$single_ok" -eq 1 && "$set_level" != "0" && "$set_level" != "0.0" ]]; then
+      stage_q19_emergency_blackout "$lighting_device" "$lighting_project" "$channel" "$set_level" "$hold" || true
+    elif should_run_milestone Q-DMX-19 emergency.pre; then
+      record_milestone Q-DMX-19 emergency.pre BLOCKED "$RUN_DIR/evidence/Q-DMX-19.pre.log" "local emergency gate requires explicit Hub-unavailable arm and a configured nonzero single-channel test level"
     fi
     fi
     fi

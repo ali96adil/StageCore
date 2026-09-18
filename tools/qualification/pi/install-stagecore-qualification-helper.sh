@@ -56,8 +56,8 @@ systemctl daemon-reload
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-journal, %s device-probe, %s safe-command, %s physical-command, %s supersession-command, %s envelope-gate, %s hub-restart-gate, %s dmx-stability-gate, %s qualification-socket-status\n' \
-  "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
+printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-stop, %s service-journal, %s device-probe, %s safe-command, %s physical-command, %s supersession-command, %s envelope-gate, %s hub-restart-gate, %s dmx-stability-gate, %s qualification-socket-status\n' \
+  "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
 
 command -v visudo >/dev/null 2>&1 || { echo "visudo is required to validate the bounded sudo policy" >&2; exit 69; }
 visudo -cf "$tmp" >/dev/null

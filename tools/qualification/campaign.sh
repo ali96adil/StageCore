@@ -21,6 +21,8 @@ Usage:
   tools/qualification/campaign.sh q16-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh q18-status
   tools/qualification/campaign.sh q18-ack <note>
+  tools/qualification/campaign.sh q19-status
+  tools/qualification/campaign.sh q19-ack <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -137,6 +139,35 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-18 --key local_web.action \
       --status PASS --actor manual-local-web-activity --evidence manual-local-web-activity --note "$note"
+    ;;
+  q19-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'local_emergency_blackout\tprecondition=%s\tpre=%s\thub_unavailable=%s\tlocal_blackout=%s\thub_recovery=%s\tpost=%s\n' \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key emergency.precondition_set)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key emergency.pre)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key hub_unavailable.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key local_blackout.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key hub_recovery.action)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key emergency.post)"
+    ;;
+  q19-ack)
+    [[ "$#" -ge 2 ]] || { usage >&2; exit 64; }
+    note="$2"
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key emergency.pre)"
+    unavailable="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key hub_unavailable.action)"
+    blackout="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key local_blackout.action)"
+    recovery="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key hub_recovery.action)"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-19 --key emergency.post)"
+    [[ "$pre" == "PASS" ]] || { echo "local-emergency baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$unavailable" == "PASS" ]] || { echo "Hub-unavailable evidence is not PASS" >&2; exit 3; }
+    [[ "$blackout" != "PASS" ]] || { echo "local emergency blackout is already acknowledged" >&2; exit 3; }
+    [[ "$recovery" != "PASS" ]] || { echo "Hub was already recovered before local blackout acknowledgement" >&2; exit 3; }
+    [[ "$post" != "PASS" ]] || { echo "local-emergency post evidence is already PASS" >&2; exit 3; }
+    [[ -n "$note" ]] || { echo "local emergency blackout note is required" >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-19 --key local_blackout.action \
+      --status PASS --actor manual-local-emergency --evidence manual-local-emergency --note "$note"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }

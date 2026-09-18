@@ -12,6 +12,15 @@ case "${1:-}" in
     systemctl restart stagecore-hub.service
     exec systemctl is-active stagecore-hub.service
     ;;
+  service-stop)
+    [[ "$#" -eq 1 ]] || exit 64
+    systemctl stop stagecore-hub.service
+    if systemctl is-active --quiet stagecore-hub.service; then
+      echo "stagecore-hub.service remained active" >&2
+      exit 1
+    fi
+    printf 'inactive\n'
+    ;;
   service-journal)
     [[ "$#" -eq 1 ]] || exit 64
     exec journalctl -u stagecore-hub.service -n 300 --no-pager
