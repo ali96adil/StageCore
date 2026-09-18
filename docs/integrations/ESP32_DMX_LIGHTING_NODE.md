@@ -1,6 +1,6 @@
 # ESP32 DMX Lighting Node Integration
 
-Status: Slice 1 contract + deterministic simulator
+Status: Slice 2 profile + revision configuration + Runtime Snapshot binding
 
 Tracker: #147
 
@@ -60,6 +60,18 @@ Issue #147 predates the production Stage Device runtime. Current repository auth
 - reconnect never replays prior commands.
 
 The lighting contract only defines lighting-specific payloads and observations.
+
+## Stage Device classification
+
+The current Phase 4 `stage_devices.device_kind` database constraint predates this integration and permits only the existing coarse runtime classes. Slice 2 deliberately does **not** rebuild that trust/command table solely to add a lighting enum.
+
+The ESP32 DMX Lighting Node therefore uses the existing coarse `GENERIC` Stage Device kind plus the authoritative official profile ID:
+
+```text
+stagecore.esp32-dmx-lighting-node
+```
+
+The profile ID is the product-specific semantic type and is required by revision lighting bindings. This avoids a risky migration of the canonical Stage Device identity/command tables while still giving discovery/profile matching an exact lighting identity.
 
 ## Device identity and discovery
 
