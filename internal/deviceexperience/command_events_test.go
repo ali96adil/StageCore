@@ -222,7 +222,10 @@ func TestTerminalCommandIsNotVisibleBeforeCompletionEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := []string{events[0].EventType, events[1].EventType}; len(events) != 2 || got[0] != "stage_device.command.accepted" || got[1] != "stage_device.command.completed" {
-		t.Fatalf("events=%v", events)
+	if len(events) != 2 {
+		t.Fatalf("event count=%d want=2: %+v", len(events), events)
+	}
+	if events[0].EventType != "stage_device.command.accepted" || events[1].EventType != "stage_device.command.completed" {
+		t.Fatalf("event types=%s,%s", events[0].EventType, events[1].EventType)
 	}
 }
