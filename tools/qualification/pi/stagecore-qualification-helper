@@ -20,6 +20,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-probe
     ;;
+  safe-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-command
+    ;;
   *)
     echo "unsupported qualification helper operation" >&2
     exit 64

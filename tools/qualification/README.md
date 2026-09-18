@@ -131,3 +131,25 @@ The previous result is retained in gate history. No campaign-wide wipe is perfor
 ### Qualification defect handling
 
 Stop and fix immediately only when a defect is safety-critical, corrupts or invalidates evidence/state, proves the wrong candidate is installed, or makes downstream gates unsafe/untrustworthy. Otherwise record the gate FAIL with evidence, track a narrow defect, continue independent gates, then fix and rerun only affected gates plus required regression.
+
+## Bounded non-destructive command evidence
+
+The first executable qualification commands are deliberately allowlisted:
+
+- `TABLET_PREPARE`
+- `LIGHTING_STATE_READ`
+- `LIGHTING_CONFIG_READ`
+
+The Pi helper rejects every other command type. It logs into the Hub only through loopback, dispatches through the canonical authenticated Operator / Stage Device path, waits for the canonical persisted terminal command result, then logs out. Credentials are read from stdin and are never written to evidence.
+
+Configure the local Operator credential once with a hidden password prompt:
+
+```bash
+tools/qualification/setup-operator-credential.py
+```
+
+The default local credential file is `~/.config/stagecore/qualification-operator.json` with mode 0600. Do not commit or paste that credential into chat.
+
+For Tablet PREPARE, set `STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER` in the local qualification config to a known installed media number. The command is recorded as the `prepare.command` milestone under `Q-TAB-06`; it does **not** mark the full physical PREPARE+GO gate PASS by itself.
+
+Lighting state/config reads are recorded as `state_read.command` and `config_read.command` milestones under `Q-DMX-20`. Milestones survive interruption and are skipped on `--resume` after PASS.

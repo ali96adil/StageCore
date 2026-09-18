@@ -14,21 +14,24 @@ fi
 
 SOURCE_HELPER="/tmp/stagecore-qualification-helper"
 SOURCE_PROBE="/tmp/stagecore-qualification-probe"
+SOURCE_COMMAND="/tmp/stagecore-qualification-command"
 DEST_HELPER="/usr/local/libexec/stagecore-qualification-helper"
 DEST_PROBE="/usr/local/libexec/stagecore-qualification-probe"
+DEST_COMMAND="/usr/local/libexec/stagecore-qualification-command"
 SUDOERS="/etc/sudoers.d/stagecore-qualification"
 
 [[ -f "$SOURCE_HELPER" ]] || { echo "missing $SOURCE_HELPER" >&2; exit 66; }
 [[ -f "$SOURCE_PROBE" ]] || { echo "missing $SOURCE_PROBE" >&2; exit 66; }
+[[ -f "$SOURCE_COMMAND" ]] || { echo "missing $SOURCE_COMMAND" >&2; exit 66; }
 
 install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 "$SOURCE_HELPER" "$DEST_HELPER"
 install -o root -g root -m 0755 "$SOURCE_PROBE" "$DEST_PROBE"
+install -o root -g root -m 0755 "$SOURCE_COMMAND" "$DEST_COMMAND"
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-journal, %s device-probe\n' \
-  "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
+printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-journal, %s device-probe, %s safe-command\n'   "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
 
 if ! command -v visudo >/dev/null 2>&1; then
   echo "visudo is required to validate the bounded sudo policy" >&2
