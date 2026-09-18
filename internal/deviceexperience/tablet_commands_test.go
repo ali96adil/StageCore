@@ -10,7 +10,6 @@ func TestTabletControllerCommandCapabilities(t *testing.T) {
 		CommandTabletStop:          CapabilityTabletStop,
 		CommandTabletBlackout:      CapabilityTabletBlackout,
 		CommandTabletBlackoutClear: CapabilityTabletBlackoutClear,
-		CommandTabletSelectMedia:   CapabilityTabletSelectMedia,
 		CommandTabletOverlayPlay:   CapabilityTabletOverlayPlay,
 		CommandTabletOverlayClear:  CapabilityTabletOverlayClear,
 		CommandTabletLiveShow:      CapabilityTabletLiveShow,
