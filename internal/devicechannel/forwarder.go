@@ -12,6 +12,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
+	snapshotpkg "github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -80,6 +82,19 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 		return *sessionFailure
 	}
 
+	parameters := req.Parameters
+	if lightingnode.CommandCapability(commandType) != "" {
+		manifest, decodeErr := snapshotpkg.Decode(snapshot.Manifest)
+		if decodeErr != nil {
+			return stageDeviceFailure("LIGHTING_SNAPSHOT_INVALID", decodeErr.Error())
+		}
+		resolved, resolveErr := lightingnode.ResolveCueCommandPayload(manifest.LightingNodes, targetConfig.DeviceID, commandType, req.Parameters)
+		if resolveErr != nil {
+			return stageDeviceFailure("LIGHTING_ALIAS_RESOLUTION_FAILED", resolveErr.Error())
+		}
+		parameters = resolved
+	}
+
 	priority := strings.TrimSpace(req.Priority)
 	if priority == "" {
 		priority = "P1"
@@ -112,7 +127,7 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 		RuntimeSnapshotID: snapshot.ID,
 		Priority:          priority,
 		IdempotencyKey:    "cue-action:" + strings.TrimSpace(req.ExecutionID),
-		Payload:           req.Parameters,
+		Payload:           parameters,
 		DeadlineAt:        deadline,
 	})
 	if err != nil {
