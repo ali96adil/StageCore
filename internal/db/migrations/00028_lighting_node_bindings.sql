@@ -39,7 +39,51 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- F-012 extension: direct SQL writes to lighting configuration are blocked
+-- while an authoritative SHOW session is active for the owning Project.
+-- +goose StatementBegin
+CREATE TRIGGER f012_lock_lighting_node_bindings_insert BEFORE INSERT ON lighting_node_revision_bindings
+WHEN EXISTS (
+    SELECT 1
+    FROM project_revisions pr
+    JOIN f012_locked_projects lp ON lp.project_id = pr.project_id
+    WHERE pr.revision_id = NEW.revision_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'SHOW_CONFIGURATION_LOCKED');
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER f012_lock_lighting_node_bindings_update BEFORE UPDATE ON lighting_node_revision_bindings
+WHEN EXISTS (
+    SELECT 1
+    FROM project_revisions pr
+    JOIN f012_locked_projects lp ON lp.project_id = pr.project_id
+    WHERE pr.revision_id IN (NEW.revision_id, OLD.revision_id)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'SHOW_CONFIGURATION_LOCKED');
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER f012_lock_lighting_node_bindings_delete BEFORE DELETE ON lighting_node_revision_bindings
+WHEN EXISTS (
+    SELECT 1
+    FROM project_revisions pr
+    JOIN f012_locked_projects lp ON lp.project_id = pr.project_id
+    WHERE pr.revision_id = OLD.revision_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'SHOW_CONFIGURATION_LOCKED');
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS f012_lock_lighting_node_bindings_delete;
+DROP TRIGGER IF EXISTS f012_lock_lighting_node_bindings_update;
+DROP TRIGGER IF EXISTS f012_lock_lighting_node_bindings_insert;
 DROP TRIGGER IF EXISTS lighting_node_revision_bindings_inherit;
 DROP INDEX IF EXISTS lighting_node_revision_bindings_device_idx;
 DROP TABLE IF EXISTS lighting_node_revision_bindings;
