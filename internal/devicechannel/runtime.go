@@ -312,6 +312,19 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if !r.commandBoundTo(message.CommandID, current) {
 				continue
 			}
+			// Long-running Stage Device work (notably a local lighting fade)
+			// may acknowledge acceptance before it reaches a terminal result.
+			// The Hub already persisted ACCEPTED when it dispatched the command,
+			// so an intermediate device ACK keeps the same connection binding
+			// without creating a second accepted event or replay authority.
+			if message.Status == contracts.CommandAccepted {
+				continue
+			}
+			switch message.Status {
+			case contracts.CommandRejected, contracts.CommandCompleted, contracts.CommandFailed, contracts.CommandTimedOut, contracts.CommandCancelled:
+			default:
+				return
+			}
 			resultBytes, err := json.Marshal(contracts.CommandResult{
 				CommandID: strings.TrimSpace(message.CommandID),
 				Status:    message.Status,
