@@ -33,6 +33,7 @@ jobs:
         run: |
           tools/qualification/test-runner.sh
           tools/qualification/test-device-probe.sh
+          tools/qualification/test-manifest.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

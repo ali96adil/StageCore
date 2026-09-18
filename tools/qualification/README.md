@@ -65,3 +65,27 @@ tools/qualification/test-device-probe.sh
 The tests require no Pi, Tablet, ESP32 or network.
 
 Command execution, resumable state, cumulative Phase 4–7 gates and aggregated physical confirmations are added in subsequent slices.
+
+## Authoritative qualification manifest
+
+`tools/qualification/manifest.json` is the durable gate inventory for this campaign. It is derived from the currently authoritative open trackers:
+
+- #148 — cumulative Phases 4–7 umbrella and final system sequence;
+- #195 — Tablet Controller + Tablet Player RC3 physical acceptance;
+- #221 — ESP32 DMX firmware + real hardware acceptance;
+- #138 — remaining Phase 4 Callboard, Live Video and Network Cockpit gates.
+
+Each gate has a stable `Q-...` id, a source issue/section, an acceptance statement, and one execution method:
+
+- `AUTO` — software/network/device evidence can decide the gate;
+- `AUTO_PHYSICAL` — automation drives and records the test, but real physical observation is part of PASS;
+- `MANUAL` — inherently physical/documentary confirmation;
+- `EVIDENCE` — release/CI/candidate evidence recorded from the authoritative build source.
+
+The runner copies the exact manifest into each evidence directory before device operations. Later slices bind executable handlers to these stable gate IDs instead of inventing a second checklist.
+
+Validate it without hardware:
+
+```bash
+tools/qualification/test-manifest.sh
+```

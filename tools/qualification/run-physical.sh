@@ -83,6 +83,8 @@ check_probe() {
 check_cmd "local.git" git rev-parse HEAD || true
 check_cmd "local.go" go version || true
 check_cmd "local.tests" go test ./... || true
+check_cmd "manifest.validation" python3 tools/qualification/validate-manifest.py --summary || true
+cp tools/qualification/manifest.json "$RUN_DIR/evidence/qualification-manifest.json"
 
 PI_HOST="${STAGECORE_PI_HOST:-}"
 PI_USER="${STAGECORE_PI_USER:-}"
