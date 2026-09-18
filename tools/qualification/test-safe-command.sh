@@ -44,7 +44,12 @@ class H(BaseHTTPRequestHandler):
         command_type = body["command_type"]
         command_id=f"cmd-{H.counter}"
         if "/tablet-controller/commands" in self.path:
-            assert command_type in {"TABLET_PREPARE","TABLET_PLAY","TABLET_PAUSE","TABLET_STOP"}
+            assert command_type in {
+                "TABLET_PREPARE","TABLET_PLAY","TABLET_PAUSE","TABLET_STOP",
+                "TABLET_BLACKOUT","TABLET_BLACKOUT_CLEAR",
+                "TABLET_OVERLAY_PLAY","TABLET_OVERLAY_CLEAR",
+                "TABLET_LIVE_SHOW","TABLET_LIVE_HIDE",
+            }
             response={"results":[{"device_id":"tablet-01","command":{"envelope":{"command_id":command_id}}}]}
         else:
             assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ","LIGHTING_CHANNELS_SET","LIGHTING_CHANNELS_FADE","LIGHTING_BLACKOUT"}
@@ -86,6 +91,20 @@ grep -F '"session_token": "[REDACTED]"' "$tmp/config.json" >/dev/null
 
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"TABLET_PLAY","payload":{"media_number":1}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/play.json"
+for spec in \
+  'TABLET_OVERLAY_PLAY {"media_number":2}' \
+  'TABLET_OVERLAY_CLEAR {}' \
+  'TABLET_LIVE_SHOW {"media_key":"camera-a"}' \
+  'TABLET_LIVE_HIDE {}' \
+  'TABLET_BLACKOUT {}' \
+  'TABLET_BLACKOUT_CLEAR {}' \
+  'TABLET_PAUSE {}' \
+  'TABLET_STOP {}'; do
+  tablet_command="${spec%% *}"
+  tablet_payload="${spec#* }"
+  printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"%s","payload":%s}\n' "$tablet_command" "$tablet_payload" | \
+    python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/$tablet_command.json"
+done
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20}}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/set.json"
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20,"cold":35}}}\n' | \
@@ -96,6 +115,13 @@ printf '{"username":"owner","password":"secret","project_id":"project-1","device
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/timed-blackout.json"
 python3 "$ROOT/tools/qualification/validate-fade-timing.py" --input "$tmp/multi-fade.json" --expected-ms 750 --tolerance-ms 1 >/dev/null
 python3 "$ROOT/tools/qualification/validate-fade-timing.py" --input "$tmp/timed-blackout.json" --expected-ms 900 --tolerance-ms 1 >/dev/null
+
+set +e
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"TABLET_LIVE_SHOW","payload":{}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null
+bad_live_rc=$?
+set -e
+[[ "$bad_live_rc" -ne 0 ]]
 
 set +e
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{}}\n' |   python3 "$HELPER" --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null

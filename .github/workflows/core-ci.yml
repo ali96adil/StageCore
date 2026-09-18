@@ -49,6 +49,7 @@ jobs:
           tools/qualification/test-emergency-blackout.sh
           tools/qualification/test-lighting-config-truth.sh
           tools/qualification/test-electrical-path.sh
+          tools/qualification/test-dmx-full-chain.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

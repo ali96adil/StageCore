@@ -405,3 +405,24 @@ Each acknowledgement requires an explicit PASS/FAIL plus a physical observation 
 Do not infer RS-485 polarity from the letters A/B alone: vendor labeling conventions vary. The evidence must trace the actual MAX485/module terminals to the decoder's documented D+/D-/COM (or equivalent) terminals.
 
 The physical runner now treats Q-DMX-21 as a hard pre-energization interlock. Read-only StageCore/device checks can still run, but all lighting physical actions—including set/fade/blackout and fault-injection qualification—are suppressed until Q-DMX-21 is PASS.
+
+
+## Tablet media-layer batch — Q-TAB-08 / Q-TAB-09 / Q-TAB-10
+
+The physical runner now keeps the prepared main media playing while it exercises three independent RC3 layer/control gates in one armed tablet sequence:
+
+1. Q-TAB-08: overlay play + clear using `STAGECORE_TABLET_QUALIFICATION_OVERLAY_MEDIA_NUMBER`;
+2. Q-TAB-09: live show + hide using `STAGECORE_TABLET_QUALIFICATION_LIVE_MEDIA_KEY`;
+3. Q-TAB-10: blackout + clear.
+
+Pause/stop (Q-TAB-07) runs only after those layer checks, so Q-TAB-08 can truthfully verify that overlay use does not stop the main layer. A failure in one non-safety tablet gate does not suppress the independent later layer gates; command evidence remains isolated by stable milestone IDs.
+
+Command completion alone does not make these AUTO_PHYSICAL gates PASS. The aggregated physical confirmation still requires seeing overlay continuity, live show/hide, and blackout/clear on the real Android tablet.
+
+## Q-DMX-22 full-chain aggregate
+
+Q-DMX-22 is the final ESP32/DMX full-chain gate. The runner evaluates it only from durable campaign truth; it does not invent a synthetic hardware PASS.
+
+`Q-DMX-22::regression.prereqs` becomes PASS only when Q-DMX-01..Q-DMX-21 are all terminal PASS/N/A on a campaign that pins the exact StageCore SHA, exact lighting firmware SHA, and exact hardware baseline ID.
+
+Any failed prerequisite makes the aggregate FAIL. Missing pins or incomplete prerequisites make it BLOCKED. After the prerequisite aggregate passes, Q-DMX-22 still remains AUTO_PHYSICAL until the operator confirms the representative real Raspberry Pi + Stage LAN + ESP32 + MAX485/DMX decoder + 24 V lighting chain behaved correctly.

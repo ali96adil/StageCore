@@ -10,6 +10,9 @@ from pathlib import Path
 MAPPINGS = [
     ("Q-TAB-06", "physical.observation", ["prepare.command", "play.command"], "Tablet visibly prepared and played the expected main media."),
     ("Q-TAB-07", "physical.observation", ["pause.command", "stop.command"], "Tablet visibly paused and stopped main playback as expected."),
+    ("Q-TAB-08", "physical.observation", ["overlay_play.command", "overlay_clear.command"], "Tablet visibly showed and cleared the overlay while main playback continued underneath."),
+    ("Q-TAB-09", "physical.observation", ["live_show.command", "live_hide.command"], "Tablet visibly showed and hid the configured live layer."),
+    ("Q-TAB-10", "physical.observation", ["blackout.command", "blackout_clear.command"], "Tablet visibly blacked out and then restored the prior presentation when blackout was cleared."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),
     ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),
     ("Q-DMX-05", "physical.observation", ["fade.command"], "Selected DMX channel visibly completed the requested fade smoothly."),
@@ -25,6 +28,7 @@ MAPPINGS = [
     ("Q-DMX-17", "physical.observation", ["restart.sequence"], "A visible active fade was interrupted by the Hub restart and did not resume or replay after the ESP32 reconnected; output remained in the safe state."),
     ("Q-DMX-18", "physical.observation", ["local_web.action", "stress.auto"], "While bounded Stage Device state/config traffic and protected read-only local-web activity ran together, real DMX output showed no visible flicker/jitter/dropout and the fixed level stayed stable."),
     ("Q-DMX-19", "physical.observation", ["local_blackout.action", "emergency.post"], "With StageCore Hub confirmed unavailable, the protected local emergency control visibly forced real lighting to blackout; after Hub recovery no stale brightness returned."),
+    ("Q-DMX-22", "physical.observation", ["regression.prereqs"], "Full pinned Raspberry Pi + Stage LAN + ESP32 + MAX485/DMX decoder + 24 V lighting chain completed representative control/regression with no visible unsafe behavior."),
 ]
 
 

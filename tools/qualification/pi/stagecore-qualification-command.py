@@ -13,6 +13,9 @@ import urllib.request
 SAFE_COMMANDS = {"TABLET_PREPARE", "LIGHTING_STATE_READ", "LIGHTING_CONFIG_READ"}
 PHYSICAL_COMMANDS = {
     "TABLET_PLAY", "TABLET_PAUSE", "TABLET_STOP",
+    "TABLET_BLACKOUT", "TABLET_BLACKOUT_CLEAR",
+    "TABLET_OVERLAY_PLAY", "TABLET_OVERLAY_CLEAR",
+    "TABLET_LIVE_SHOW", "TABLET_LIVE_HIDE",
     "LIGHTING_CHANNELS_SET", "LIGHTING_CHANNELS_FADE", "LIGHTING_BLACKOUT",
 }
 TERMINAL = {"REJECTED", "COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
@@ -171,7 +174,25 @@ def validate_payload(command_type, payload):
             return {"media_number": media}
         return {"tablet_cue_id": bounded_text(payload.get("tablet_cue_id"), "tablet_cue_id", 256)}
 
-    if command_type in {"TABLET_PAUSE", "TABLET_STOP", "LIGHTING_STATE_READ", "LIGHTING_CONFIG_READ"}:
+    if command_type == "TABLET_OVERLAY_PLAY":
+        if set(payload) != {"media_number"}:
+            die("TABLET_OVERLAY_PLAY qualification requires media_number")
+        media = payload.get("media_number")
+        if isinstance(media, bool) or not isinstance(media, int) or media < 1 or media > 9999:
+            die("TABLET_OVERLAY_PLAY media_number must be 1..9999")
+        return {"media_number": media}
+
+    if command_type == "TABLET_LIVE_SHOW":
+        if set(payload) != {"media_key"}:
+            die("TABLET_LIVE_SHOW qualification requires media_key")
+        return {"media_key": bounded_text(payload.get("media_key"), "media_key", 256)}
+
+    if command_type in {
+        "TABLET_PAUSE", "TABLET_STOP",
+        "TABLET_BLACKOUT", "TABLET_BLACKOUT_CLEAR",
+        "TABLET_OVERLAY_CLEAR", "TABLET_LIVE_HIDE",
+        "LIGHTING_STATE_READ", "LIGHTING_CONFIG_READ",
+    }:
         if payload:
             die(f"{command_type} requires an empty payload")
         return {}
