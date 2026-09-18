@@ -40,6 +40,8 @@ STATE_FILE="${STAGECORE_QUALIFICATION_STATE:-$STATE_ROOT/qualification-campaign.
 MANIFEST="tools/qualification/manifest.json"
 CREDENTIAL_FILE="${STAGECORE_QUALIFICATION_OPERATOR_CREDENTIAL:-$HOME/.config/stagecore/qualification-operator.json}"
 CURRENT_STAGECORE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+Q15_DIR="$(dirname "$STATE_FILE")/q-dmx-15"
+mkdir -p "$Q15_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -186,6 +188,82 @@ invoke_command() {
   esac
 }
 
+
+milestone_updated_at() {
+  python3 - "$STATE_FILE" "$1" "$2" <<'PY'
+import json, sys
+state=json.load(open(sys.argv[1], encoding="utf-8"))
+item=((state.get("gates",{}).get(sys.argv[2],{}).get("milestones",{}).get(sys.argv[3])) or {})
+print(item.get("updated_at",""))
+PY
+}
+
+stage_q15_event() {
+  local event="$1" key="$2" device_id="$3" project_id="$4"
+  local pre_key="$key.pre" action_key="$key.action" post_key="$key.post"
+  local pre="$Q15_DIR/$event.pre.json"
+  local stable_post="$Q15_DIR/$event.post.json"
+  local verify="$Q15_DIR/$event.verify.json"
+
+  if [[ "$(milestone_status Q-DMX-15 "$post_key")" == "PASS" ]]; then
+    record "Q-DMX-15::$post_key" PASS "resume preserved validated $event post evidence"
+    return 0
+  fi
+
+  if [[ "$(milestone_status Q-DMX-15 "$pre_key")" != "PASS" ]]; then
+    set +e
+    python3 tools/qualification/power-event.py capture       --probe "$RUN_DIR/evidence/devices.json" --device-id "$device_id" --project-id "$project_id" --out "$pre"       >"$RUN_DIR/evidence/Q-DMX-15.$event.pre.log" 2>&1
+    local capture_rc=$?
+    set -e
+    if [[ "$capture_rc" -eq 0 ]]; then
+      record_milestone Q-DMX-15 "$pre_key" PASS "$pre" "$event baseline captured before manual hardware action"
+    elif [[ "$capture_rc" -eq 3 ]]; then
+      record_milestone Q-DMX-15 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-15.$event.pre.log" "$event baseline target is not ready"
+      return 3
+    else
+      record_milestone Q-DMX-15 "$pre_key" FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.pre.log" "$event baseline capture failed"
+      record_gate Q-DMX-15 FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.pre.log" "Q-DMX-15 evidence capture failed; stop before unsafe hardware qualification"
+      return 1
+    fi
+  fi
+
+  local action_status
+  action_status="$(milestone_status Q-DMX-15 "$action_key")"
+  if [[ "$action_status" != "PASS" ]]; then
+    if [[ "$action_status" != "BLOCKED" ]]; then
+      record_milestone Q-DMX-15 "$action_key" BLOCKED "$pre" "awaiting explicit manual $event action; acknowledge only after the hardware action is complete"
+    else
+      record "Q-DMX-15::$action_key" BLOCKED "awaiting explicit manual $event action"
+    fi
+    return 3
+  fi
+
+  local post="$RUN_DIR/evidence/Q-DMX-15.$event.post.json"
+  set +e
+  python3 tools/qualification/power-event.py capture     --probe "$RUN_DIR/evidence/devices.json" --device-id "$device_id" --project-id "$project_id" --out "$post"     >"$RUN_DIR/evidence/Q-DMX-15.$event.post.log" 2>&1
+  local post_rc=$?
+  set -e
+  if [[ "$post_rc" -ne 0 ]]; then
+    record_milestone Q-DMX-15 "$post_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-15.$event.post.log" "$event post-reboot observation is not yet available"
+    return 3
+  fi
+
+  local action_at
+  action_at="$(milestone_updated_at Q-DMX-15 "$action_key")"
+  set +e
+  python3 tools/qualification/power-event.py verify     --event "$event" --pre "$pre" --post "$post" --action-at "$action_at" --out "$verify"     >"$RUN_DIR/evidence/Q-DMX-15.$event.verify.log" 2>&1
+  local verify_rc=$?
+  set -e
+  if [[ "$verify_rc" -eq 0 ]]; then
+    cp "$post" "$stable_post"
+    record_milestone Q-DMX-15 "$post_key" PASS "$verify" "$event reboot/reset reason, fresh runtime, stable config hash, healthy DMX and logical blackout verified"
+    return 0
+  fi
+
+  record_milestone Q-DMX-15 "$post_key" FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.verify.log" "$event post evidence failed safe-output verification"
+  record_gate Q-DMX-15 FAIL "$RUN_DIR/evidence/Q-DMX-15.$event.verify.log" "$event did not return to the required safe output state; stop and investigate before continuing"
+  return 1
+}
 
 invoke_envelope_gate() {
   local gate="$1" mode="$2" device_id="$3" project_id="$4" channel="$5" start_level="$6" target_level="$7" fade_ms="$8"
@@ -465,7 +543,16 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
       supersession_ok=1
     fi
 
-    if [[ "$single_ok" -eq 1 ]]; then
+    if [[ "$(gate_status Q-DMX-15)" != "FAIL" && "$(gate_status Q-DMX-15)" != "PASS" ]]; then
+      stage_q15_event power-cycle power_cycle "$lighting_device" "$lighting_project" || true
+      if [[ "$(milestone_status Q-DMX-15 power_cycle.post)" == "PASS" ]]; then
+        stage_q15_event brownout brownout "$lighting_device" "$lighting_project" || true
+      fi
+    fi
+
+    if [[ "$(gate_status Q-DMX-15)" == "FAIL" ]]; then
+      record "Q-DMX-15.safety-stop" FAIL "power-event safe-output verification failed; remaining lighting physical actions suppressed"
+    elif [[ "$single_ok" -eq 1 ]]; then
       invoke_command physical-command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
       sleep "$hold"
       invoke_command physical-command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"
@@ -570,6 +657,7 @@ PY
           record_milestone Q-DMX-11 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-11.$key.json" "timed-blackout precondition or duration is not configured"
         fi
       done
+    fi
     fi
   fi
 fi

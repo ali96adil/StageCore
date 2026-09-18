@@ -228,3 +228,33 @@ Q-DMX-14 deliberately avoids automatic configuration mutation. The real-node seq
 When the selected channel has a configured bound narrower than 0..100, the same sequence also sends an in-schema value beyond that configured bound and requires the firmware to clamp to the exact configured minimum/maximum. It then restores the original level and requires the configuration hash to remain unchanged. If the selected channel is full-range 0..100, the clamp subcheck is recorded as not applicable inside the evidence; the two fail-closed checks still run.
 
 Automation records `Q-DMX-14::invalid_value.sequence`. Because the manifest classifies Q-DMX-14 as `AUTO_PHYSICAL`, the parent gate remains pending until the batched physical confirmation verifies that no unsafe visible output change occurred and any clamp stayed within the configured limit.
+
+## Q-DMX-15 boot / power-cycle / brownout checkpoint
+
+Q-DMX-15 is interruption-safe and deliberately requires two explicit hardware actions. The runner never power-cycles or browns out the ESP32 automatically.
+
+When physical actions are armed, the runner first stores a durable pre-event snapshot under the campaign state directory and records `Q-DMX-15::power_cycle.pre`. It then stops at a BLOCKED manual-action milestone. After the real power-cycle is complete, acknowledge only the action itself:
+
+```bash
+tools/qualification/campaign.sh q15-ack power-cycle "ESP32 supply was fully removed and restored"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+The resumed runner captures post-reboot evidence before sending any further output-changing lighting command. PASS requires the same device/project/firmware/config hash, a reboot after the prepared baseline, `reset_reason=POWERON`, fresh ONLINE/READY runtime, healthy DMX, no active fade, and every logical current level at blackout zero.
+
+Only after that post evidence passes does the runner prepare the brownout baseline. Perform the brownout only with a controlled low-voltage test method suitable for the ESP32 power path; do not short the 24 V supply or mains wiring. Then acknowledge:
+
+```bash
+tools/qualification/campaign.sh q15-ack brownout "controlled ESP32 brownout was induced and supply recovered"
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+Brownout PASS requires `reset_reason=BROWNOUT`, `brownout_warning=true`, fresh ONLINE/WARNING runtime, the same configuration hash, healthy DMX, no active fade, and logical blackout. Any automated safe-output failure marks Q-DMX-15 FAIL immediately and suppresses later lighting physical actions until the defect is investigated.
+
+Inspect the two-stage checkpoint at any time:
+
+```bash
+tools/qualification/campaign.sh q15-status
+```
+
+Even after both automated post-event checks pass, Q-DMX-15 remains `AUTO_PHYSICAL`: the final parent PASS is recorded only when the operator confirms that both reboot events visibly returned the real lighting output to the safe blackout state.

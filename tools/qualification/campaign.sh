@@ -15,6 +15,8 @@ Usage:
   tools/qualification/campaign.sh pending-physical
   tools/qualification/campaign.sh confirm-pending <PASS|FAIL> <note>
   tools/qualification/campaign.sh confirm-one <GATE_ID> <PASS|FAIL> <note>
+  tools/qualification/campaign.sh q15-status
+  tools/qualification/campaign.sh q15-ack <power-cycle|brownout> <note>
 
 Examples:
   tools/qualification/campaign.sh status
@@ -46,6 +48,32 @@ case "$cmd" in
   confirm-one)
     [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
     exec python3 "$ROOT/tools/qualification/physical-confirmations.py" confirm-one --state "$STATE" --gate "$2" --status "$3" --note "$4"
+    ;;
+  q15-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    for event in power_cycle brownout; do
+      printf '%s\tpre=%s\taction=%s\tpost=%s\n'         "$event"         "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$event.pre")"         "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$event.action")"         "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$event.post")"
+    done
+    ;;
+  q15-ack)
+    [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
+    event="$2"; note="$4"
+    case "$event" in
+      power-cycle) key="power_cycle" ;;
+      brownout) key="brownout" ;;
+      *) echo "event must be power-cycle or brownout" >&2; exit 64 ;;
+    esac
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$key.pre")"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key "$key.post")"
+    [[ "$pre" == "PASS" ]] || { echo "$event baseline is not prepared; run qualification first" >&2; exit 3; }
+    [[ "$post" != "PASS" ]] || { echo "$event post evidence is already PASS" >&2; exit 3; }
+    if [[ "$event" == "brownout" ]]; then
+      power_post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-DMX-15 --key power_cycle.post)"
+      [[ "$power_post" == "PASS" ]] || { echo "power-cycle post evidence must PASS before brownout" >&2; exit 3; }
+    fi
+    [[ -n "$note" ]] || { echo "hardware action note is required" >&2; exit 64; }
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record       --state "$STATE" --manifest "$MANIFEST" --gate Q-DMX-15 --key "$key.action"       --status PASS --actor manual-hardware-action --evidence manual-hardware-action --note "$note"
     ;;
   repin)
     [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
