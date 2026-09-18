@@ -83,7 +83,7 @@ Normal production flow is:
 2. it uses the existing secure pairing bootstrap;
 3. operator approval creates the existing trusted identity;
 4. the node authenticates a short-lived Stage Device runtime session;
-5. it sends `device.hello` with the lighting device kind/profile/capabilities introduced in later slices;
+5. it sends `device.hello` with coarse `GENERIC` device kind, official `stagecore.esp32-dmx-lighting-node` profile ID, and the lighting capabilities;
 6. reconnect re-authenticates and never replays old commands.
 
 StageCore must not treat mDNS discovery itself as trust.
@@ -114,7 +114,7 @@ LIGHTING_CONFIG_READ
 LIGHTING_CONFIG_APPLY
 ```
 
-The existing Stage Device command mapping is intentionally not modified in Slice 1. Wiring these capabilities into the production Stage Device command path is a later bounded slice after the contract is green.
+Slice 3 wires all seven command types into the production Stage Device command path. Runtime/Cue execution is intentionally limited to set/fade/blackout; state/config/identify remain commissioning/operator commands.
 
 ## Channel configuration schema
 
@@ -157,7 +157,7 @@ Rules:
 - inversion is applied only at the physical DMX conversion boundary;
 - blackout is a safety command and resolves all enabled channels to logical 0, independently of ordinary show levels.
 
-Project Cue Actions will use project-scoped logical aliases. A later Runtime Snapshot slice will resolve those aliases to node identity + stable `channel_key`. Cues must not store raw DMX channel numbers.
+Project Cue Actions use project-scoped logical aliases. Slice 2 stores their resolved node identity + stable `channel_key` in Runtime Snapshot v5. Cues must not store raw DMX channel numbers.
 
 ## Normalized level conversion
 
@@ -214,7 +214,7 @@ Blackout is expected to use P0 authority when issued as an emergency/safety acti
 
 ### State/config/identify
 
-Read/config/identify commands remain explicit command/result operations. Structural configuration mutation must be blocked by the normal StageCore SHOW mutation rules before dispatch.
+Read/config/identify commands remain explicit command/result operations. `LIGHTING_IDENTIFY` and `LIGHTING_CONFIG_APPLY` fail closed during active SHOW. `LIGHTING_CONFIG_APPLY` additionally requires a Published Runtime Snapshot and an exact payload match to that snapshot's authoritative configuration for the same lighting node.
 
 ## At-most-once and expiry
 
@@ -230,6 +230,19 @@ Required behavior:
 - interrupted post-dispatch execution remains explicit/ambiguous rather than being automatically retried.
 
 Core already provides connection-generation fencing and canonical command persistence. Firmware must also retain enough bounded recent command identity state to prevent duplicate physical application across transport retries/reconnects.
+
+## Production command authority
+
+Slice 3 keeps all lighting execution inside the canonical Stage Device runtime.
+
+- every lighting command requires the connected device to advertise the official `stagecore.esp32-dmx-lighting-node` profile;
+- `LIGHTING_CHANNELS_SET`, `LIGHTING_CHANNELS_FADE`, and `LIGHTING_BLACKOUT` are Cue-safe runtime commands;
+- `LIGHTING_STATE_READ`, `LIGHTING_IDENTIFY`, `LIGHTING_CONFIG_READ`, and `LIGHTING_CONFIG_APPLY` are commissioning/operator commands and do not map through the Cue forwarder;
+- `LIGHTING_CONFIG_APPLY` must reference a Published Runtime Snapshot for the same Project and its payload must exactly match that snapshot's authoritative configuration for the same node;
+- `LIGHTING_IDENTIFY` and `LIGHTING_CONFIG_APPLY` are rejected while a SHOW session is active;
+- a long-running local fade may emit an intermediate `ACCEPTED` result and later one terminal result;
+- an intermediate `ACCEPTED` result keeps the original in-flight connection binding and does not create a second accepted event or replay authority;
+- existing Stage Device disconnect/reconnect generation fencing still terminalizes ambiguous in-flight execution and never replays it automatically.
 
 ## Startup and failsafe
 
@@ -301,9 +314,9 @@ The firmware boundary must include:
 
 ## Slice plan after this foundation
 
-1. **Slice 1 — current:** contract + deterministic fake node + safety tests.
-2. **Slice 2:** Stage Device kind + F-021 Lighting Node profile + revision-backed node/channel configuration and Runtime Snapshot mapping contract.
-3. **Slice 3:** production Stage Device command mapping/result path for set/fade/blackout/state/identify/config.
+1. **Slice 1 — implemented:** contract + deterministic fake node + safety tests.
+2. **Slice 2 — implemented:** official F-021 Lighting Node profile + revision-backed node/channel configuration + Runtime Snapshot v5 mapping.
+3. **Slice 3 — implemented:** production Stage Device command mapping/result path for set/fade/blackout/state/identify/config, strict payload validation, profile/snapshot authority, and intermediate ACCEPTED → terminal result support.
 4. **Slice 4:** Cue Engine and graphical Cue Builder logical-alias authoring.
 5. **Slice 5:** bilingual/RTL Operator device/configuration/readiness workspace and official ADDON packaging.
 6. **Slice 6:** software qualification/freeze, documentation reconciliation and handoff to real ESP32 firmware/physical qualification.
