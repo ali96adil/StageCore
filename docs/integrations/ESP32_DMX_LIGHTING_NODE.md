@@ -1,6 +1,6 @@
 # ESP32 DMX Lighting Node Integration
 
-Status: Slice 4 logical aliases + graphical Lighting Cue Builder
+Status: Slice 5 operator configuration + readiness + official ADDON
 
 Tracker: #147
 
@@ -260,6 +260,64 @@ Slice 4 keeps operator authoring logical and snapshot-safe.
 - blackout authoring targets configured lighting nodes and defaults to P0 when no explicit priority is supplied;
 - the source of truth remains ordinary revision-backed Cues/Actions and the normal Cue endpoints, matching the Tablet Scene authoring architecture.
 
+## Operator configuration, health and ADDON packaging
+
+Slice 5 completes the Core-side operator workflow without introducing a second runtime.
+
+### Lighting Setup
+
+The bilingual Operator workspace exposes structural configuration separately from Cue authoring:
+
+- up to 12 physical DMX channels per node;
+- stable hidden `channel_key` values;
+- physical channel number;
+- enabled/disabled state;
+- display name;
+- type: dimmer, warm white, cold white, RGB components or unused;
+- physical zone;
+- logical minimum/maximum level;
+- inversion;
+- project logical alias.
+
+Edits are persisted through the existing revision/Draft authority. Editing a validated Project creates the normal successor Draft. Active SHOW configuration locking applies through both Store guards and the existing database trigger added in Slice 2.
+
+### Readiness and configuration identity
+
+StageCore computes a canonical SHA-256 hash over the canonical node configuration. The same hash is part of the Lighting Node observation contract.
+
+The Lighting Setup workspace combines the existing Stage Device runtime state with the lighting observation and reports READY/WARNING/BLOCKER reasons including:
+
+- offline/stale/revoked device;
+- Stage Device readiness state;
+- missing structural configuration;
+- DMX unhealthy;
+- brownout warning;
+- FAILSAFE or local-web authority;
+- missing or mismatched configuration hash.
+
+A configuration mismatch is a warning rather than proof of a physical failure because a newer Draft may intentionally differ from the last configuration applied to the node.
+
+### Commissioning commands
+
+The graphical workspace exposes two bounded commissioning operations:
+
+- **Identify** resolves a project alias to the node-local `channel_key` and sends the existing `LIGHTING_IDENTIFY` command.
+- **Apply Published Config** loads the node configuration from the latest Published Runtime Snapshot and sends the existing `LIGHTING_CONFIG_APPLY` command.
+
+Neither action invents a side channel. Both use the authenticated Stage Device runtime and the command authority from Slice 3. `LIGHTING_CONFIG_APPLY` remains snapshot-authoritative and both identify/config mutation remain blocked where the existing SHOW safety rules require it.
+
+### Official ADDON
+
+`extensions/stagecore.lighting-controller` is an official `ADDON` with a non-executable payload:
+
+- transport: `STAGE_DEVICE_V1`;
+- runtime process: false;
+- lighting authority: Cue Engine;
+- configuration authority: Runtime Snapshot;
+- no independent socket, pairing database, command queue or network permission.
+
+Hub bootstrap imports the immutable payload through the existing Software Repository/Vault and registers it through the same OFFICIAL Extension Library path used by Tablet Controller.
+
 ## Startup and failsafe
 
 Production firmware must:
@@ -334,7 +392,7 @@ The firmware boundary must include:
 2. **Slice 2 — implemented:** official F-021 Lighting Node profile + revision-backed node/channel configuration + Runtime Snapshot v5 mapping.
 3. **Slice 3 — implemented:** production Stage Device command mapping/result path for set/fade/blackout/state/identify/config, strict payload validation, profile/snapshot authority, and intermediate ACCEPTED → terminal result support.
 4. **Slice 4 — implemented:** Cue Engine logical-alias resolution from the Published Runtime Snapshot + graphical bilingual Lighting Cue Builder for set/fade/blackout. The builder groups aliases by lighting node so one node receives one multi-channel command, preserving one local fade clock per ESP32. Cross-node actions are emitted in parallel with the same Cue correlation.
-5. **Slice 5:** bilingual/RTL Operator device/configuration/readiness workspace and official ADDON packaging.
+5. **Slice 5 — implemented:** bilingual/RTL Lighting Setup workspace for revision-backed 12-channel configuration and logical aliases; readiness/health derived from canonical Stage Device observations; safe Identify and Apply Published Config commissioning actions; official non-executable `stagecore.lighting-controller` ADDON bundled through the existing Vault/Extension Library bootstrap.
 6. **Slice 6:** software qualification/freeze, documentation reconciliation and handoff to real ESP32 firmware/physical qualification.
 
 Physical ESP32/MAX485/DMX qualification remains separate and must not be claimed from simulator evidence.
