@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	lightingcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.lighting-controller"
 	tabletcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.tablet-controller"
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -142,6 +143,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if _, err := extensionLibrary.BootstrapOfficial(ctx, extension.BundledOfficialPackage{
+		Manifest:         lightingcontrollerbundle.ManifestBytes(),
+		Payload:          lightingcontrollerbundle.PayloadBytes(),
+		Platform:         "linux",
+		Architecture:     runtime.GOARCH,
+		OriginalFilename: lightingcontrollerbundle.ProductID + "-" + lightingcontrollerbundle.Version + ".addon",
+		ReleaseNotes:     "Bundled StageCore Lighting Controller ADDON.",
+	}, "stagecore:bootstrap"); err != nil {
+		if errors.Is(err, domain.ErrShowConfigurationLocked) {
+			logger.Warn("official extension bootstrap deferred by SHOW configuration lock", "extension_id", lightingcontrollerbundle.ProductID)
+		} else {
+			logger.Error("official extension bootstrap failed", "extension_id", lightingcontrollerbundle.ProductID, "error", err)
+			os.Exit(1)
+		}
+	}
 	extensionInstaller, err := extension.NewInstaller(
 		extensionLibrary,
 		filepath.Join(application.Config.DataRoot, "extensions"),
@@ -226,6 +242,7 @@ func main() {
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingController(userAuth, application.DeviceExperience, application.Store),
+		httpapi.WithOperatorLightingCommissioning(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorCueReorder(userAuth, application.Store),
 		httpapi.WithOperatorPreflight(userAuth, preflightService),
