@@ -354,3 +354,30 @@ Automated post PASS requires the same device/project/firmware/configuration, no 
 The parent gate remains `AUTO_PHYSICAL`; final PASS additionally requires the operator confirmation that the protected local control itself visibly caused blackout while Hub was actually unavailable.
 
 If the operator interrupts the process after Hub stop, do not run an ordinary qualification resume until the local emergency action has been performed and recorded with `q19-ack`. The recovery hook intentionally will not restart Hub before that acknowledgement.
+
+## Q-DMX-20 authoritative observation / configuration truth
+
+Q-DMX-20 no longer treats a non-empty device `configuration_hash` as sufficient evidence.
+
+The gate is now staged as:
+
+```text
+observation.readiness
+state_read.command
+config_read.command
+published_config.truth
+→ Q-DMX-20 PASS
+```
+
+The runner requires the exact pinned `STAGECORE_RUNTIME_SNAPSHOT_ID`. A root-owned read-only helper opens the StageCore SQLite database in read-only mode and reads only that exact `runtime_snapshots` row. It requires the snapshot to be `PUBLISHED`, belong to the pinned Project, use a lighting-capable manifest schema, and contain exactly one binding for the selected official lighting device.
+
+The final validator intentionally uses StageCore's production `lightingnode.CanonicalConfiguration` / SHA-256 rules rather than duplicating the hash algorithm in shell. PASS requires all four identities to agree:
+
+1. the immutable Published Runtime Snapshot's authoritative lighting configuration;
+2. the real node's `LIGHTING_CONFIG_READ` payload;
+3. the real node's `LIGHTING_STATE_READ.configuration_hash`;
+4. the latest canonical Stage Device observation `configuration_hash`.
+
+It also requires ONLINE/READY, healthy DMX, no brownout warning, and STAGECORE authority. A missing/not-current Published Snapshot is BLOCKED; a configuration/hash/identity mismatch is FAIL and the runner suppresses downstream physical lighting actions because the qualification baseline is not trustworthy.
+
+No `LIGHTING_CONFIG_APPLY` is issued by this gate.

@@ -47,6 +47,7 @@ jobs:
           tools/qualification/test-hub-restart-evidence.sh
           tools/qualification/test-dmx-stability.sh
           tools/qualification/test-emergency-blackout.sh
+          tools/qualification/test-lighting-config-truth.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests
