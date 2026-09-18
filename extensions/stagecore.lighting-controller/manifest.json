@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.lighting-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "source": "OFFICIAL",
+  "name": {
+    "en": "Lighting Controller",
+    "ar-IQ": "التحكم بالإضاءة"
+  },
+  "summary": {
+    "en": "Graphical StageCore experience for authenticated ESP32 DMX lighting nodes, channel configuration, readiness and lighting cues.",
+    "ar-IQ": "واجهة رسومية لإدارة عقد ESP32 DMX الموثقة وإعداد القنوات والجاهزية وكيوهات الإضاءة من StageCore."
+  },
+  "compatibility": {
+    "api_min": 1,
+    "api_max": 1,
+    "platforms": ["linux"],
+    "architectures": ["arm64", "amd64"]
+  },
+  "capabilities": [
+    "lighting.controller.workspace",
+    "lighting.controller.device-profile",
+    "lighting.controller.configuration",
+    "lighting.controller.cue-actions",
+    "lighting.controller.health"
+  ]
+}
