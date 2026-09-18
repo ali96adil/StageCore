@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/contracts"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
 
 const ProtocolVersion1 = "stagecore.device/1"
@@ -211,6 +212,13 @@ var commandCapability = map[string]string{
 	"VIDEO_SOURCE_SELECT":  CapabilityVideoSourceSelect,
 	"VIDEO_SOURCE_ROUTE":   CapabilityVideoSourceRoute,
 	"VIDEO_SOURCE_INSPECT": CapabilityVideoSourceInspect,
+	lightingnode.CommandChannelsSet:  lightingnode.CapabilityChannelsSet,
+	lightingnode.CommandChannelsFade: lightingnode.CapabilityChannelsFade,
+	lightingnode.CommandBlackout:     lightingnode.CapabilityBlackout,
+	lightingnode.CommandStateRead:    lightingnode.CapabilityStateRead,
+	lightingnode.CommandIdentify:     lightingnode.CapabilityIdentify,
+	lightingnode.CommandConfigRead:   lightingnode.CapabilityConfigRead,
+	lightingnode.CommandConfigApply:  lightingnode.CapabilityConfigApply,
 }
 
 func LiveSourceCapabilityKeys() []string {
