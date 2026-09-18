@@ -1,6 +1,6 @@
 # ESP32 DMX Lighting Node Integration
 
-Status: Slice 5 operator configuration + readiness + official ADDON
+Status: Slice 6 software freeze candidate — exact-main CI evidence pending
 
 Tracker: #147
 
@@ -393,6 +393,19 @@ The firmware boundary must include:
 3. **Slice 3 — implemented:** production Stage Device command mapping/result path for set/fade/blackout/state/identify/config, strict payload validation, profile/snapshot authority, and intermediate ACCEPTED → terminal result support.
 4. **Slice 4 — implemented:** Cue Engine logical-alias resolution from the Published Runtime Snapshot + graphical bilingual Lighting Cue Builder for set/fade/blackout. The builder groups aliases by lighting node so one node receives one multi-channel command, preserving one local fade clock per ESP32. Cross-node actions are emitted in parallel with the same Cue correlation.
 5. **Slice 5 — implemented:** bilingual/RTL Lighting Setup workspace for revision-backed 12-channel configuration and logical aliases; readiness/health derived from canonical Stage Device observations; safe Identify and Apply Published Config commissioning actions; official non-executable `stagecore.lighting-controller` ADDON bundled through the existing Vault/Extension Library bootstrap.
-6. **Slice 6:** software qualification/freeze, documentation reconciliation and handoff to real ESP32 firmware/physical qualification.
+6. **Slice 6 — freeze candidate:** software qualification evidence and documentation are reconciled in docs/qualification/ESP32_DMX_LIGHTING_NODE_SOFTWARE_FREEZE.md. Slices 1–5 are merged at implementation candidate 218a1bc2c8abb6debc35f5bf8e2d8065bf8035b7; exact-main Core CI evidence is still required before StageCore-side SOFTWARE READY may be claimed. Firmware and physical MAX485/DMX qualification remain separate.
 
 Physical ESP32/MAX485/DMX qualification remains separate and must not be claimed from simulator evidence.
+
+## Software freeze status
+
+The StageCore-side implementation candidate after Slices 1–5 is:
+
+~~~text
+218a1bc2c8abb6debc35f5bf8e2d8065bf8035b7
+~~~
+
+All promoted slice heads passed Core CI before merge. At the time Slice 6 closeout was opened, no post-merge Core CI record for that exact main SHA was visible through the connected GitHub evidence surface. The integration is therefore a **software freeze candidate**, not yet SOFTWARE READY.
+
+See docs/qualification/ESP32_DMX_LIGHTING_NODE_SOFTWARE_FREEZE.md for the evidence matrix and firmware/physical handoff.
+
