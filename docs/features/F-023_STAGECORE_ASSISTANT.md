@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 7 promoted feature. Slice A defines the software contract and safety boundary. Physical/product qualification remains deferred under Issue #148.
+Phase 7 software implementation through Slice E is merged on `main`. Slices A–E provide the bounded Assistant contract, evidence-grounded diagnostics, editable Draft proposals, bilingual/RTL Operator workspace, and rehearsal/simulation assistance with explicit no-live-output authority. Slice F software qualification/freeze is in progress. Physical/product qualification remains deferred under Issue #148.
 
 ## Product goal
 
@@ -146,13 +146,26 @@ Slice A is accepted when:
 
 Slice A does not add HTTP endpoints, Operator UI, persistence schema, provider credentials, real model network access, or any runtime command path.
 
-## Later slices
+## Implemented slices
 
-- Slice B — evidence-grounded read-only diagnostics and explanation.
-- Slice C — editable Draft proposal integration with stale-baseline and explicit Apply checks.
-- Slice D — bilingual/RTL Operator Assistant workspace.
-- Slice E — rehearsal/Digital Twin assistance with no-real-output guarantees.
-- Slice F — final deterministic software qualification and Phase 7 freeze.
+- Slice A — versioned Assistant contract, safety boundary, canonical context/redaction, and deterministic provider seam.
+- Slice B — evidence-grounded read-only diagnostics and explanations from canonical StageCore evidence.
+- Slice C — editable Draft proposal preview/apply flow with explicit operator authority, stale-baseline protection, SHOW locks, RBAC, and audit reuse.
+- Slice D — authenticated bilingual/RTL Operator Assistant workspace with explicit Apply/Discard and provider-offline independence.
+- Slice E — F-024/rehearsal assistance grounded in SIMULATION, Flight Recorder, and advisory F-028 evidence; deterministic acceptance tests prove troubleshooting remains read-only, preparation remains Draft-only, and SIMULATION context cannot acquire real render/device/live execution authority.
+
+## Slice F — software qualification / freeze
+
+Slice F is closeout work, not a new Assistant execution feature. The freeze may be declared only when:
+
+- promoted-slice deterministic Core CI evidence is PASS;
+- Companion/Android CI is required only if their code or contracts changed;
+- deterministic safety tests retain the no-GO/emergency/safety-critical authority boundary;
+- normal offline/manual StageCore operation remains independent of Assistant/provider availability;
+- required exact-main CI is verified PASS on the final freeze SHA;
+- this document and the Phase 7 tracker identify the exact frozen software SHA truthfully.
+
+Until those gates are satisfied, Phase 7 is not described as software-frozen. Issue #148 remains the separate cumulative physical/product qualification gate.
 
 ## Qualification boundary
 
