@@ -56,8 +56,8 @@ case "$cmd" in
     done
     ;;
   q15-ack)
-    [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
-    event="$2"; note="$4"
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    event="$2"; note="$3"
     case "$event" in
       power-cycle) key="power_cycle" ;;
       brownout) key="brownout" ;;
