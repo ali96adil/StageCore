@@ -52,6 +52,11 @@ set -e
 state="$tmp/campaign.json"
 python3 "$STATE_TOOL" init --state "$state" --manifest "$MANIFEST" --stagecore-sha test >/dev/null
 python3 "$MILESTONE_TOOL" record --state "$state" --manifest "$MANIFEST"   --gate Q-DMX-16 --key wifi_loss.pre --status PASS --actor self-test --evidence "$tmp/pre.json" --note prepared >/dev/null
+set +e
+STAGECORE_QUALIFICATION_STATE="$state" "$ROOT/tools/qualification/campaign.sh" q16-ack reconnect "too early" >/dev/null 2>&1
+early_reconnect_rc=$?
+set -e
+[[ "$early_reconnect_rc" -ne 0 ]]
 STAGECORE_QUALIFICATION_STATE="$state" "$ROOT/tools/qualification/campaign.sh" q16-ack disconnect "ESP32 Wi-Fi isolated" >/dev/null
 [[ "$(python3 "$MILESTONE_TOOL" get --state "$state" --gate Q-DMX-16 --key wifi_loss.disconnect_action)" == "PASS" ]]
 

@@ -302,6 +302,7 @@ stage_q16_wifi_loss() {
     local probe_rc=$?
     set -e
     if [[ "$probe_rc" -ne 0 ]]; then
+      record_milestone Q-DMX-16 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.probe.log" "baseline probe unavailable; re-arm the nonzero precondition on resume"
       record_milestone Q-DMX-16 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.probe.log" "fresh nonzero Wi-Fi-loss baseline probe is unavailable"
       return 3
     fi
@@ -313,6 +314,7 @@ stage_q16_wifi_loss() {
     if [[ "$pre_rc" -eq 0 ]]; then
       record_milestone Q-DMX-16 "$pre_key" PASS "$stable_pre" "fresh nonzero lighting baseline captured before ESP-only Wi-Fi isolation"
     else
+      record_milestone Q-DMX-16 "$precondition_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "nonzero baseline was not proven; re-arm the precondition on resume"
       record_milestone Q-DMX-16 "$pre_key" BLOCKED "$RUN_DIR/evidence/Q-DMX-16.pre.log" "Wi-Fi-loss baseline is not a fresh nonzero lighting state"
       return 3
     fi
