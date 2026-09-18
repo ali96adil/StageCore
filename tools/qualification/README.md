@@ -179,3 +179,15 @@ tools/qualification/campaign.sh confirm-pending PASS "all listed tablet and ligh
 ```
 
 If every listed observation is correct, `confirm-pending PASS` records the group in one operation. If one item is wrong, record that gate first with `campaign.sh confirm-one <GATE_ID> FAIL "<what was wrong>"`, then confirm the remaining pending observations. Command evidence/history remains preserved.
+
+## Multi-channel and timed-blackout checkpoints
+
+The armed lighting sequence now binds the next #221 gates without changing the physical-PASS rule:
+
+- `Q-DMX-04::multi_set.command` — two configured channels in one canonical SET command;
+- `Q-DMX-06::multi_fade.command` — the same two channels in one synchronized FADE command;
+- `Q-DMX-11::precondition_set.command` + `timed_blackout.command` — restore visible output, then issue timed blackout.
+
+Configure the second logical channel and test levels locally with `STAGECORE_LIGHTING_QUALIFICATION_SECOND_CHANNEL_KEY`, `...SECOND_SET_LEVEL`, `...SECOND_FADE_LEVEL`, and `STAGECORE_LIGHTING_QUALIFICATION_TIMED_BLACKOUT_MS`. The two channel keys must be different.
+
+Command completion remains only a milestone. `Q-DMX-04`, `Q-DMX-06`, and `Q-DMX-11` become PASS only after the corresponding physical observation is explicitly confirmed.

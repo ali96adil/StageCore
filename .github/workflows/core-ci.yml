@@ -35,6 +35,10 @@ jobs:
           tools/qualification/test-device-probe.sh
           tools/qualification/test-manifest.sh
           tools/qualification/test-campaign-state.sh
+          tools/qualification/test-milestone.sh
+          tools/qualification/test-safe-command.sh
+          tools/qualification/test-command-evidence.sh
+          tools/qualification/test-physical-confirmations.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

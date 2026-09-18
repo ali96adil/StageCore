@@ -85,11 +85,24 @@ printf '{"username":"owner","password":"secret","project_id":"project-1","device
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/play.json"
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20}}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/set.json"
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20,"cold":35}}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/multi-set.json"
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_FADE","payload":{"channels":{"warm":50,"cold":40},"fade_ms":750}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/multi-fade.json"
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_BLACKOUT","payload":{"fade_ms":900}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/timed-blackout.json"
 
 set +e
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{}}\n' |   python3 "$HELPER" --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]]
+
+set +e
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"c1":1,"c2":2,"c3":3,"c4":4,"c5":5,"c6":6,"c7":7,"c8":8,"c9":9,"c10":10,"c11":11,"c12":12,"c13":13}}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 1 >/dev/null
+too_many_rc=$?
+set -e
+[[ "$too_many_rc" -ne 0 ]]
 
 echo "qualification safe-command self-test PASS"

@@ -11,8 +11,11 @@ MAPPINGS = [
     ("Q-TAB-06", "physical.observation", ["prepare.command", "play.command"], "Tablet visibly prepared and played the expected main media."),
     ("Q-TAB-07", "physical.observation", ["pause.command", "stop.command"], "Tablet visibly paused and stopped main playback as expected."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),
+    ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),
     ("Q-DMX-05", "physical.observation", ["fade.command"], "Selected DMX channel visibly completed the requested fade smoothly."),
+    ("Q-DMX-06", "physical.observation", ["multi_fade.command"], "Two configured DMX channels visibly faded in synchronization."),
     ("Q-DMX-10", "physical.observation", ["blackout.command"], "Lighting output visibly reached immediate blackout."),
+    ("Q-DMX-11", "physical.observation", ["precondition_set.command", "timed_blackout.command"], "Lighting visibly faded to blackout over the configured timed-blackout duration."),
 ]
 
 

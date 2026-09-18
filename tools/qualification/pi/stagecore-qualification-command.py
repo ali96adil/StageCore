@@ -171,27 +171,37 @@ def validate_payload(command_type, payload):
         return {}
 
     if command_type == "LIGHTING_CHANNELS_SET":
-        if set(payload) != {"channels"} or not isinstance(payload.get("channels"), dict) or len(payload["channels"]) != 1:
-            die("LIGHTING_CHANNELS_SET qualification requires exactly one channel")
-        key, level = next(iter(payload["channels"].items()))
-        return {"channels": {bounded_text(key, "channel_key", 64): bounded_level(level, "level")}}
+        if set(payload) != {"channels"} or not isinstance(payload.get("channels"), dict):
+            die("LIGHTING_CHANNELS_SET qualification requires channels")
+        if not 1 <= len(payload["channels"]) <= 12:
+            die("LIGHTING_CHANNELS_SET qualification requires 1..12 channels")
+        channels = {}
+        for key, level in payload["channels"].items():
+            channels[bounded_text(key, "channel_key", 64)] = bounded_level(level, "level")
+        return {"channels": channels}
 
     if command_type == "LIGHTING_CHANNELS_FADE":
-        if set(payload) != {"channels", "fade_ms"} or not isinstance(payload.get("channels"), dict) or len(payload["channels"]) != 1:
-            die("LIGHTING_CHANNELS_FADE qualification requires exactly one channel and fade_ms")
+        if set(payload) != {"channels", "fade_ms"} or not isinstance(payload.get("channels"), dict):
+            die("LIGHTING_CHANNELS_FADE qualification requires channels and fade_ms")
+        if not 1 <= len(payload["channels"]) <= 12:
+            die("LIGHTING_CHANNELS_FADE qualification requires 1..12 channels")
         fade_ms = payload.get("fade_ms")
-        if isinstance(fade_ms, bool) or not isinstance(fade_ms, int) or fade_ms < 100 or fade_ms > 10000:
-            die("fade_ms must be within 100..10000")
-        key, level = next(iter(payload["channels"].items()))
-        return {
-            "channels": {bounded_text(key, "channel_key", 64): bounded_level(level, "level")},
-            "fade_ms": fade_ms,
-        }
+        if isinstance(fade_ms, bool) or not isinstance(fade_ms, int) or fade_ms < 100 or fade_ms > 120000:
+            die("fade_ms must be within 100..120000")
+        channels = {}
+        for key, level in payload["channels"].items():
+            channels[bounded_text(key, "channel_key", 64)] = bounded_level(level, "level")
+        return {"channels": channels, "fade_ms": fade_ms}
 
     if command_type == "LIGHTING_BLACKOUT":
-        if payload not in ({}, {"fade_ms": 0}):
-            die("immediate qualification blackout only accepts empty payload")
-        return {}
+        if payload == {} or payload == {"fade_ms": 0}:
+            return {}
+        if set(payload) != {"fade_ms"}:
+            die("LIGHTING_BLACKOUT qualification accepts only optional fade_ms")
+        fade_ms = payload.get("fade_ms")
+        if isinstance(fade_ms, bool) or not isinstance(fade_ms, int) or fade_ms < 100 or fade_ms > 120000:
+            die("blackout fade_ms must be within 100..120000")
+        return {"fade_ms": fade_ms}
 
     die("unsupported qualification command")
 

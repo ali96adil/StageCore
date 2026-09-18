@@ -302,7 +302,25 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
     set_level="${STAGECORE_LIGHTING_QUALIFICATION_SET_LEVEL:-}"
     fade_level="${STAGECORE_LIGHTING_QUALIFICATION_FADE_LEVEL:-}"
     fade_ms="${STAGECORE_LIGHTING_QUALIFICATION_FADE_MS:-}"
+    second_channel="${STAGECORE_LIGHTING_QUALIFICATION_SECOND_CHANNEL_KEY:-}"
+    second_set_level="${STAGECORE_LIGHTING_QUALIFICATION_SECOND_SET_LEVEL:-}"
+    second_fade_level="${STAGECORE_LIGHTING_QUALIFICATION_SECOND_FADE_LEVEL:-}"
+    timed_blackout_ms="${STAGECORE_LIGHTING_QUALIFICATION_TIMED_BLACKOUT_MS:-}"
+
+    single_ok=0
+    multi_ok=0
+    timed_ok=0
     if [[ -n "$channel" && "$set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$fade_ms" =~ ^[0-9]+$ ]]; then
+      single_ok=1
+    fi
+    if [[ "$single_ok" -eq 1 && -n "$second_channel" && "$second_channel" != "$channel" && "$second_set_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ && "$second_fade_level" =~ ^([0-9]|[1-9][0-9]|100)([.][0-9]+)?$ ]]; then
+      multi_ok=1
+    fi
+    if [[ "$timed_blackout_ms" =~ ^[0-9]+$ && "$timed_blackout_ms" -ge 100 && "$timed_blackout_ms" -le 120000 ]]; then
+      timed_ok=1
+    fi
+
+    if [[ "$single_ok" -eq 1 ]]; then
       invoke_command physical-command Q-DMX-03 set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level}}"
       sleep "$hold"
       invoke_command physical-command Q-DMX-05 fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level},\"fade_ms\":$fade_ms}"
@@ -310,12 +328,47 @@ if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
 import sys, time
 time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
 PY
-      invoke_command physical-command Q-DMX-10 blackout.command LIGHTING_BLACKOUT "$lighting_device" "$lighting_project" '{}'
     else
-      for spec in "Q-DMX-03 set.command" "Q-DMX-05 fade.command" "Q-DMX-10 blackout.command"; do
+      for spec in "Q-DMX-03 set.command" "Q-DMX-05 fade.command"; do
         set -- $spec
         if should_run_milestone "$1" "$2"; then
-          record_milestone "$1" "$2" BLOCKED "$RUN_DIR/evidence/$1.$2.json" "complete lighting physical-action test values are not configured"
+          record_milestone "$1" "$2" BLOCKED "$RUN_DIR/evidence/$1.$2.json" "single-channel physical-action values are not configured"
+        fi
+      done
+    fi
+
+    if [[ "$multi_ok" -eq 1 ]]; then
+      invoke_command physical-command Q-DMX-04 multi_set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level,\"$second_channel\":$second_set_level}}"
+      sleep "$hold"
+      invoke_command physical-command Q-DMX-06 multi_fade.command LIGHTING_CHANNELS_FADE "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$fade_level,\"$second_channel\":$second_fade_level},\"fade_ms\":$fade_ms}"
+      python3 - "$fade_ms" "$hold" <<'PY'
+import sys, time
+time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
+PY
+    else
+      for spec in "Q-DMX-04 multi_set.command" "Q-DMX-06 multi_fade.command"; do
+        set -- $spec
+        if should_run_milestone "$1" "$2"; then
+          record_milestone "$1" "$2" BLOCKED "$RUN_DIR/evidence/$1.$2.json" "second-channel physical-action values are not configured"
+        fi
+      done
+    fi
+
+    invoke_command physical-command Q-DMX-10 blackout.command LIGHTING_BLACKOUT "$lighting_device" "$lighting_project" '{}'
+    sleep "$hold"
+
+    if [[ "$multi_ok" -eq 1 && "$timed_ok" -eq 1 ]]; then
+      invoke_command physical-command Q-DMX-11 precondition_set.command LIGHTING_CHANNELS_SET "$lighting_device" "$lighting_project" "{\"channels\":{\"$channel\":$set_level,\"$second_channel\":$second_set_level}}"
+      sleep "$hold"
+      invoke_command physical-command Q-DMX-11 timed_blackout.command LIGHTING_BLACKOUT "$lighting_device" "$lighting_project" "{\"fade_ms\":$timed_blackout_ms}"
+      python3 - "$timed_blackout_ms" "$hold" <<'PY'
+import sys, time
+time.sleep((int(sys.argv[1]) / 1000.0) + float(sys.argv[2]))
+PY
+    else
+      for key in precondition_set.command timed_blackout.command; do
+        if should_run_milestone Q-DMX-11 "$key"; then
+          record_milestone Q-DMX-11 "$key" BLOCKED "$RUN_DIR/evidence/Q-DMX-11.$key.json" "timed-blackout precondition or duration is not configured"
         fi
       done
     fi
