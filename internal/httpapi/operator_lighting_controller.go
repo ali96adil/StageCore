@@ -84,6 +84,8 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 			return
 		}
 
+		registerOperatorLightingConfigurationRoutes(s.mux, auth, devices, stageStore)
+
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			project, err := stageStore.GetProject(r.Context(), projectID)
