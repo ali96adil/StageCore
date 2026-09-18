@@ -1,0 +1,146 @@
+.lighting-setup-head { align-items: flex-start; }
+
+.lighting-config-list,
+.lighting-channel-rows {
+  display: grid;
+  gap: 14px;
+}
+
+.lighting-config-card {
+  display: grid;
+  gap: 14px;
+}
+
+.lighting-config-head,
+.lighting-config-status,
+.lighting-config-actions,
+.lighting-identify-row,
+.lighting-current-levels,
+.lighting-health-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.lighting-config-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.lighting-health-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--sc-info-border);
+  background: var(--sc-info-bg);
+  color: var(--sc-info-fg);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.lighting-health-badge.ready {
+  border-color: var(--sc-success-border);
+  background: var(--sc-success-bg);
+  color: var(--sc-success-fg);
+}
+
+.lighting-health-badge.warning {
+  border-color: var(--sc-warning-border);
+  background: var(--sc-warning-bg);
+  color: var(--sc-warning-fg);
+}
+
+.lighting-health-badge.blocker {
+  border-color: var(--sc-danger-border);
+  background: var(--sc-danger-bg);
+  color: var(--sc-danger-fg);
+}
+
+.lighting-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 8px;
+}
+
+.lighting-health-grid > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--sc-border-default);
+  border-radius: 10px;
+  background: var(--sc-bg-surface);
+}
+
+.lighting-health-grid span {
+  display: block;
+  color: var(--sc-text-secondary);
+  font-size: .72rem;
+}
+
+.lighting-health-grid strong {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.lighting-channel-editor {
+  overflow-x: auto;
+}
+
+.lighting-channel-header,
+.lighting-channel-row {
+  display: grid;
+  grid-template-columns: 54px 90px minmax(145px, 1.1fr) minmax(150px, 1.2fr) minmax(125px, 1fr) minmax(110px, 1fr) 86px 86px 80px;
+  gap: 8px;
+  align-items: end;
+  min-width: 1050px;
+}
+
+.lighting-channel-header {
+  padding: 0 10px 8px;
+  color: var(--sc-text-secondary);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.lighting-channel-row {
+  padding: 10px;
+  border: 1px solid var(--sc-border-default);
+  border-radius: 12px;
+  background: var(--sc-bg-surface);
+}
+
+.lighting-channel-row label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: .72rem;
+  color: var(--sc-text-secondary);
+}
+
+.lighting-channel-number {
+  align-self: center;
+  justify-self: center;
+  font-weight: 800;
+  font-size: 1.05rem;
+}
+
+.lighting-channel-row .lighting-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+}
+
+.lighting-channel-row input,
+.lighting-channel-row select {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .lighting-config-head {
+    display: grid;
+  }
+}
