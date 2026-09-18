@@ -53,5 +53,21 @@ if grep -R -F 'do-not-print-this-value' "$tmp/runs" "$tmp/stdout" "$tmp/stderr" 
   exit 1
 fi
 
+# Resume preserves already-PASS gates from the durable campaign state.
+python3 "$REPO_ROOT/tools/qualification/qualification-state.py" record \
+  --state "$tmp/campaign.json" --manifest "$REPO_ROOT/tools/qualification/manifest.json" \
+  --gate Q-TAB-04 --status PASS --actor self-test --evidence prior-run >/dev/null
+set +e
+PATH="$tmp/bin:$PATH" \
+STAGECORE_QUALIFICATION_ENV="$tmp/qualification.env" \
+STAGECORE_QUALIFICATION_RUN_ROOT="$tmp/resume-runs" \
+STAGECORE_QUALIFICATION_STATE="$tmp/campaign.json" \
+"$RUNNER" --resume --non-interactive >"$tmp/resume-stdout" 2>"$tmp/resume-stderr"
+resume_rc=$?
+set -e
+[[ "$resume_rc" -eq 3 ]]
+resume_report="$(find "$tmp/resume-runs" -name report.md -type f -print -quit)"
+grep -F '| Q-TAB-04 | **PASS** | resume preserved prior terminal result' "$resume_report" >/dev/null
+
 "$RUNNER" --help >/dev/null
 echo "qualification runner self-test PASS"

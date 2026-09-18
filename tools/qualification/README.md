@@ -89,3 +89,45 @@ Validate it without hardware:
 ```bash
 tools/qualification/test-manifest.sh
 ```
+
+## Durable campaign state and interruption-safe resume
+
+Campaign progress is stored outside the repository by default at:
+
+```text
+~/.local/state/stagecore/qualification-campaign.json
+```
+
+The file is written atomically under an exclusive lock. Each gate keeps its current result plus history. The campaign pins the StageCore SHA and optional Tablet/firmware/hardware identities. A changed non-empty pin cannot silently reuse earlier PASS evidence.
+
+Resume after any interruption:
+
+```bash
+tools/qualification/run-physical.sh --resume --non-interactive
+```
+
+Already-PASS and N/A gates are preserved. FAIL/BLOCKED/PENDING gates remain eligible. This makes chat/session/credit interruption irrelevant to previously captured evidence.
+
+Inspect campaign progress:
+
+```bash
+tools/qualification/campaign.sh status
+```
+
+Manual fallback uses the same gate IDs and same state file:
+
+```bash
+tools/qualification/campaign.sh manual Q-TAB-06 PASS "operator observed expected video"
+```
+
+If a candidate component is deliberately replaced after a defect fix, repin it and explicitly invalidate only the affected gates plus required regression:
+
+```bash
+tools/qualification/campaign.sh repin lighting_firmware_sha <new-sha> "long-fade fix" Q-DMX-08 Q-DMX-09 Q-DMX-22
+```
+
+The previous result is retained in gate history. No campaign-wide wipe is performed.
+
+### Qualification defect handling
+
+Stop and fix immediately only when a defect is safety-critical, corrupts or invalidates evidence/state, proves the wrong candidate is installed, or makes downstream gates unsafe/untrustworthy. Otherwise record the gate FAIL with evidence, track a narrow defect, continue independent gates, then fix and rerun only affected gates plus required regression.

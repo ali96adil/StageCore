@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--kind", choices=("tablet", "lighting"), required=True)
     parser.add_argument("--device-id", default="")
     parser.add_argument("--project-id", default="")
-    parser.add_argument("--max-age-seconds", type=int, default=20)
+    parser.add_argument("--max-age-seconds", type=int, default=20)\n    parser.add_argument("--check", choices=("readiness","scope","observation"), default="readiness")\n    parser.add_argument("--runtime-snapshot-id", default="")
     args = parser.parse_args()
 
     with open(args.input, "r", encoding="utf-8") as fh:

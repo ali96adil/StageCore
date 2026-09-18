@@ -49,6 +49,28 @@ record() {
   printf '%s\t%s\t%s\n' "$id" "$status" "$detail" >>"$RESULTS"
 }
 
+gate_status() {
+  python3 tools/qualification/qualification-state.py get --state "$STATE_FILE" --gate "$1"
+}
+
+record_gate() {
+  local gate="$1" status="$2" evidence="$3" note="$4"
+  python3 tools/qualification/qualification-state.py record \
+    --state "$STATE_FILE" --manifest "$MANIFEST" --gate "$gate" --status "$status" \
+    --actor runner --evidence "$evidence" --note "$note" >/dev/null
+  record "$gate" "$status" "$note; evidence=$evidence"
+}
+
+should_run_gate() {
+  local gate="$1"
+  if [[ "$MODE" != "resume" ]]; then
+    return 0
+  fi
+  local status
+  status="$(gate_status "$gate")"
+  [[ "$status" != "PASS" && "$status" != "N/A" ]]
+}
+
 check_cmd() {
   local id="$1"
   shift
@@ -60,23 +82,31 @@ check_cmd() {
   return 1
 }
 
-check_probe() {
-  local id="$1" kind="$2" device_id="$3"
-  local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --max-age-seconds 20)
+run_gate_probe() {
+  local gate="$1" kind="$2" device_id="$3" check="$4"
+  if ! should_run_gate "$gate"; then
+    record "$gate" "$(gate_status "$gate")" "resume preserved prior terminal result"
+    return
+  fi
+  local evidence="$RUN_DIR/evidence/$gate.log"
+  local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --check "$check" --max-age-seconds 20)
   if [[ -n "${STAGECORE_PROJECT_ID:-}" ]]; then
     args+=(--project-id "$STAGECORE_PROJECT_ID")
+  fi
+  if [[ -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
+    args+=(--runtime-snapshot-id "$STAGECORE_RUNTIME_SNAPSHOT_ID")
   fi
   if [[ -n "$device_id" ]]; then
     args+=(--device-id "$device_id")
   fi
   set +e
-  python3 tools/qualification/assert-device-probe.py "${args[@]}" >"$RUN_DIR/evidence/$id.log" 2>&1
+  python3 tools/qualification/assert-device-probe.py "${args[@]}" >"$evidence" 2>&1
   local rc=$?
   set -e
   case "$rc" in
-    0) record "$id" PASS "see evidence/$id.log" ;;
-    3) record "$id" BLOCKED "see evidence/$id.log" ;;
-    *) record "$id" FAIL "see evidence/$id.log" ;;
+    0) record_gate "$gate" PASS "$evidence" "canonical read-only device evidence passed" ;;
+    3) record_gate "$gate" BLOCKED "$evidence" "required target/baseline evidence is not yet available" ;;
+    *) record_gate "$gate" FAIL "$evidence" "canonical read-only device evidence failed" ;;
   esac
 }
 
@@ -114,11 +144,17 @@ else
 fi
 
 if [[ "$PROBE_AVAILABLE" -eq 1 ]]; then
-  check_probe "tablet.readiness" tablet "${STAGECORE_TABLET_DEVICE_ID:-}"
-  check_probe "lighting.readiness" lighting "${STAGECORE_LIGHTING_NODE_ID:-}"
+  run_gate_probe "Q-TAB-04" tablet "${STAGECORE_TABLET_DEVICE_ID:-}" readiness
+  run_gate_probe "Q-TAB-05" tablet "${STAGECORE_TABLET_DEVICE_ID:-}" scope
+  run_gate_probe "Q-DMX-20" lighting "${STAGECORE_LIGHTING_NODE_ID:-}" observation
 else
-  record "tablet.readiness" BLOCKED "canonical device probe unavailable"
-  record "lighting.readiness" BLOCKED "canonical device probe unavailable"
+  for gate in Q-TAB-04 Q-TAB-05 Q-DMX-20; do
+    if should_run_gate "$gate"; then
+      record_gate "$gate" BLOCKED "$RUN_DIR/evidence/device-probe.stderr" "canonical device probe unavailable"
+    else
+      record "$gate" "$(gate_status "$gate")" "resume preserved prior terminal result"
+    fi
+  done
 fi
 
 {
