@@ -7,7 +7,7 @@
       refresh: "Refresh", newScene: "New scene", allTablets: "All tablets", playlistFor: "Playlist for", noScenes: "No Tablet Scenes yet.",
       scene: "Scene", actions: "actions", edit: "Edit", duplicate: "Duplicate", remove: "Remove", moveUp: "Move up", moveDown: "Move down",
       back: "Back", save: "Save scene", name: "Scene name", label: "Label", addAction: "Add tablet action", tablet: "Tablet", operation: "Layer / action",
-      mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainSelect: "Main · Select media", mainPause: "Main · Pause", mainStop: "Main · Stop",
+      mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainPause: "Main · Pause", mainStop: "Main · Stop",
       overlayPlay: "Overlay · Play", overlayClear: "Overlay · Clear", liveShow: "Live · Show", liveHide: "Live · Hide",
       blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
     },
@@ -16,14 +16,14 @@
       refresh: "تحديث", newScene: "مشهد جديد", allTablets: "كل التابلتات", playlistFor: "Playlist لـ", noScenes: "ماكو Tablet Scenes حالياً.",
       scene: "مشهد", actions: "أوامر", edit: "تعديل", duplicate: "نسخ", remove: "حذف", moveUp: "للأعلى", moveDown: "للأسفل",
       back: "رجوع", save: "حفظ المشهد", name: "اسم المشهد", label: "الرمز", addAction: "إضافة أمر تابلت", tablet: "التابلت", operation: "الطبقة / الأمر",
-      mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainSelect: "Main · اختيار ميديا", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
+      mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
       overlayPlay: "Overlay · تشغيل", overlayClear: "Overlay · مسح", liveShow: "Live · إظهار", liveHide: "Live · إخفاء",
       blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveKey: "Live media key", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
     },
   };
 
   const commands = [
-    ["TABLET_PREPARE", "mainPrepare"], ["TABLET_PLAY", "mainPlay"], ["TABLET_SELECT_MEDIA", "mainSelect"],
+    ["TABLET_PREPARE", "mainPrepare"], ["TABLET_PLAY", "mainPlay"],
     ["TABLET_PAUSE", "mainPause"], ["TABLET_STOP", "mainStop"], ["TABLET_OVERLAY_PLAY", "overlayPlay"],
     ["TABLET_OVERLAY_CLEAR", "overlayClear"], ["TABLET_LIVE_SHOW", "liveShow"], ["TABLET_LIVE_HIDE", "liveHide"],
     ["TABLET_BLACKOUT", "blackout"], ["TABLET_BLACKOUT_CLEAR", "blackoutClear"],
@@ -156,7 +156,7 @@
       });
       return;
     }
-    if (["TABLET_SELECT_MEDIA", "TABLET_OVERLAY_PLAY"].includes(command)) {
+    if (command === "TABLET_OVERLAY_PLAY") {
       host.innerHTML = `<label>${esc(tx("mediaNumber"))}<input class="tablet-param-single" type="number" min="1" value="${Number(params.media_number || 1)}"></label>`;
       return;
     }
@@ -181,7 +181,7 @@
       }
       return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-media input")?.value || 1)) };
     }
-    if (["TABLET_SELECT_MEDIA", "TABLET_OVERLAY_PLAY"].includes(command)) return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-single")?.value || 1)) };
+    if (command === "TABLET_OVERLAY_PLAY") return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-single")?.value || 1)) };
     if (command === "TABLET_OVERLAY_CLEAR") return { dissolve_ms: Math.max(0, Number(params.querySelector(".tablet-param-single")?.value || 0)) };
     if (command === "TABLET_LIVE_SHOW") {
       const mediaKey = params.querySelector(".tablet-param-single")?.value.trim() || "";
