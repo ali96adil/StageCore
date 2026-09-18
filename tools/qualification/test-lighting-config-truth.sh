@@ -45,10 +45,10 @@ hash="$(cat "$tmp/hash")"
 printf '{"device_id":"%s","project_id":"%s","runtime_snapshot_id":"%s"}\n' "$device" "$project" "$snapshot" |   python3 "$PUBLISHED" --db "$db" >"$tmp/published.json"
 
 python3 - "$tmp/probe.json" "$device" "$project" "$hash" <<'PY'
-import json,sys,time
+import datetime, json, sys, time
 path,device,project,h=sys.argv[1:]
 now=time.time()
-data={"schema_version":1,"generated_at":__import__("datetime").datetime.datetime.now(__import__("datetime").timezone.utc).isoformat(),"devices":[{"device_id":device,"project_id":project,
+data={"schema_version":1,"generated_at":datetime.datetime.now(datetime.timezone.utc).isoformat(),"devices":[{"device_id":device,"project_id":project,
 "profile_id":"stagecore.esp32-dmx-lighting-node","runtime":{"connection_state":"ONLINE","readiness":"READY",
 "last_seen_at_us":int(now*1_000_000),"observed":{"schema_version":1,"firmware_version":"test",
 "current_levels":{"warm":0,"cold":0},"dmx_healthy":True,"configuration_hash":h,
