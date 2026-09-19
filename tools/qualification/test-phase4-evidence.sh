@@ -23,7 +23,7 @@ CREATE TABLE cue_executions(cue_execution_id TEXT PRIMARY KEY,cue_id TEXT,sessio
 CREATE TABLE action_executions(action_execution_id TEXT PRIMARY KEY,cue_execution_id TEXT,action_id TEXT,result TEXT);
 CREATE TABLE stage_device_commands(command_id TEXT PRIMARY KEY,project_id TEXT,device_id TEXT,correlation_id TEXT,
  command_type TEXT,status TEXT,causation_id TEXT,runtime_snapshot_id TEXT);
-CREATE TABLE live_video_sources(source_id TEXT PRIMARY KEY,project_id TEXT,source_class TEXT,readiness TEXT,desired_enabled INTEGER,execution_device_id TEXT);
+CREATE TABLE live_video_sources(source_id TEXT PRIMARY KEY,project_id TEXT,source_class TEXT,readiness TEXT,desired_enabled INTEGER,execution_device_id TEXT,execution_machine_role_id TEXT);
 CREATE TABLE network_observations(observation_id TEXT PRIMARY KEY,target_kind TEXT,target_id TEXT,observed_at_us INTEGER,latency_ms REAL,jitter_ms REAL);
 """)
 c.execute("INSERT INTO projects VALUES ('p1')")
@@ -38,7 +38,7 @@ c.execute("INSERT INTO sessions VALUES (?,?,?)",("session-1","p1","snap-1"))
 c.execute("INSERT INTO cue_executions VALUES (?,?,?,?,?,?)",("exec-1","cue-1","session-1","correlation-1","COMPLETED",now-2_000_000))
 c.execute("INSERT INTO action_executions VALUES (?,?,?,?)",("action-exec-1","exec-1","a1","COMPLETED"))
 c.execute("INSERT INTO stage_device_commands VALUES (?,?,?,?,?,?,?,?)",("display-cmd-1","p1","display-1","correlation-1","DISPLAY_MESSAGE","COMPLETED","action-exec-1","snap-1"))
-c.execute("INSERT INTO live_video_sources VALUES (?,?,?,?,?,?)",("live-1","p1","NETWORK_STREAM","READY",1,"render-1"))
+c.execute("INSERT INTO live_video_sources VALUES (?,?,?,?,?,?,?)",("live-1","p1","NETWORK_STREAM","READY",1,None,"render-1"))
 c.execute("INSERT INTO network_observations VALUES (?,?,?,?,?,?)",("network-1","STAGE_DEVICE","display-1",now,None,None))
 c.execute("INSERT INTO network_observations VALUES (?,?,?,?,?,?)",("network-other","STAGE_DEVICE","other-device",now,140.0,20.0))
 c.commit();c.close()
