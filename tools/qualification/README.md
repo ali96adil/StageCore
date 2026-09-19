@@ -520,3 +520,10 @@ Q-DRAFT-01 and Q-DRAFT-04 remain human UI observations; Q-DRAFT-02/03/05/06/07 a
 
 
 Q-TAB-16 command evidence is also pinned to the same Runtime Snapshot used by group availability. Each returned command ID is checked in `stage_device_commands` for the exact device ID, project ID, `TABLET_PLAY` type and Runtime Snapshot before a group command milestone can pass. A logout failure is never allowed to replace an already captured qualification result.
+
+
+## Phase 4 Callboard / Live Video / Network inventory foundation
+
+The root-owned read-only `phase4-inventory` helper captures actual Stage Display capabilities and ONLINE/READY freshness, configured Live Video source classes/readiness, and latest Network Cockpit observation values for the pinned project. Sensitive endpoint URLs, network addresses, source configs and observed-state blobs are excluded. Network metrics remain `UNVERIFIED` when numeric and `NOT_MEASURED` when absent, never invented.
+
+The runner records this inventory as a stable `inventory.baseline` milestone under `Q-CALL-01`, `Q-LIVE-01` and `Q-NET-01`. **Inventory milestone PASS is not physical/product gate PASS.** Q-CALL-01..06, Q-LIVE-01..04 and Q-NET-01..04 remain open until real display commands/rendering, camera/Companion execution, disconnect/reconnect, telemetry provenance and corresponding observations are proven. Q-CALL-04 N/A cannot be inferred from absence of a real display; Q-LIVE-01 requires at least one real source, and Q-LIVE-04 records unavailable classes explicitly.

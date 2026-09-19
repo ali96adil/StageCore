@@ -414,6 +414,44 @@ PY
 }
 
 
+capture_phase4_inventory() {
+  local evidence="$RUN_DIR/evidence/phase4-inventory.json"
+  local project_id="${STAGECORE_PROJECT_ID:-}"
+  if [[ "$PROBE_AVAILABLE" -ne 1 || -z "$project_id" ]]; then
+    for gate in Q-CALL-01 Q-LIVE-01 Q-NET-01; do
+      if should_run_milestone "$gate" inventory.baseline; then
+        record_milestone "$gate" inventory.baseline BLOCKED "$evidence" "real Pi or project inventory unavailable"
+      fi
+    done
+    return 3
+  fi
+  set +e
+  python3 - "$project_id" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper phase4-inventory \
+      >"$evidence" 2>"$evidence.stderr"
+import json,sys
+print(json.dumps({"project_id":sys.argv[1]},separators=(",",":")))
+PY
+  local rc=$?
+  set -e
+  for gate in Q-CALL-01 Q-LIVE-01 Q-NET-01; do
+    if should_run_milestone "$gate" inventory.baseline; then
+      case "$rc" in
+        0) record_milestone "$gate" inventory.baseline PASS "$evidence" "redacted real Phase 4 inventory captured, NOT physical gate PASS" ;;
+        3) record_milestone "$gate" inventory.baseline BLOCKED "$evidence" "live Phase 4 inventory unavailable" ;;
+        *) record_milestone "$gate" inventory.baseline FAIL "$evidence" "live Phase 4 inventory failed" ;;
+      esac
+    else
+      record "$gate::inventory.baseline" PASS "resume preserved prior Phase 4 inventory"
+    fi
+  done
+  case "$rc" in
+    0) record "phase4.inventory" PASS "redacted inventory captured; 14 product/physical gates remain separately unqualified" ;;
+    3) record "phase4.inventory" BLOCKED "Phase 4 inventory unavailable" ;;
+    *) record "phase4.inventory" FAIL "Phase 4 inventory failed" ;;
+  esac
+  return "$rc"
+}
 invoke_tablet_group_availability() {
   local project_id="$1" snapshot_id="$2" group_name="$3"
   local gate="Q-TAB-16" key="group.availability" evidence="$QTAB16_DIR/availability.json"
@@ -1474,6 +1512,8 @@ PY
 fi
 
 stage_draft_recovery
+
+capture_phase4_inventory || true
 
 if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
   IFS="$(printf '\t')" read -r _tablet_device tablet_project <<<"$tablet_target"

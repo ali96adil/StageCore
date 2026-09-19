@@ -49,6 +49,10 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-tablet-group
     ;;
+  phase4-inventory)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-phase4-inventory
+    ;;
   draft-evidence)
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-draft-evidence

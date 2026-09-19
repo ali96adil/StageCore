@@ -55,6 +55,7 @@ jobs:
           tools/qualification/test-tablet-group.sh
           tools/qualification/test-draft-recovery.sh
           tools/qualification/test-batch-workflows.sh
+          tools/qualification/test-phase4-inventory.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests
