@@ -159,11 +159,19 @@ def network_null_metrics(conn, data):
         stop("project unavailable", 3)
     rows = conn.execute(
         """SELECT o.target_kind,o.target_id,o.latency_ms,o.jitter_ms FROM network_observations o
-           WHERE o.observation_id=(
+           WHERE (
+             o.target_kind IN ('HUB','COMPANION')
+             OR (o.target_kind='STAGE_DEVICE' AND o.target_id IN (
+                 SELECT device_id FROM stage_devices WHERE project_id=?))
+             OR (o.target_kind='LIVE_SOURCE' AND o.target_id IN (
+                 SELECT source_id FROM live_video_sources WHERE project_id=?))
+           )
+           AND o.observation_id=(
                SELECT n.observation_id FROM network_observations n
                WHERE n.target_kind=o.target_kind AND n.target_id=o.target_id
                ORDER BY n.observed_at_us DESC,n.observation_id DESC LIMIT 1
-           ) ORDER BY o.target_kind,o.target_id"""
+           ) ORDER BY o.target_kind,o.target_id""",
+        (project, project),
     ).fetchall()
     if not rows:
         stop("no real network observation exists", 3)
