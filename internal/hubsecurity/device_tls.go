@@ -2,6 +2,7 @@ package hubsecurity
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -11,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"time"
@@ -24,10 +26,11 @@ var (
 const deviceTLSTransportKeyContext = "StageCore Device TLS P-256 v1\x00"
 
 // DeviceTLSCertificate returns the deterministic certificate used by the F-004
-// LAN device gateway. The durable Hub Ed25519 identity remains authoritative:
-// it signs the TLS leaf. The leaf itself uses a P-256 transport key because the
-// Apple TLS stack used by the macOS Companion cannot negotiate a server
-// CertificateVerify with the Hub's Ed25519 key.
+// LAN device gateway. The leaf uses a P-256 transport key and signature because
+// both Apple SecureTransport and the ESP32 mbedTLS X.509 parser must be able to
+// negotiate and parse it. The durable Hub Ed25519 identity remains authoritative
+// through the advertised Hub fingerprint and the identity response read over the
+// leaf-pinned channel.
 //
 // The P-256 transport key is deterministically and domain-separately derived
 // from the durable Hub private key, so the certificate pin remains stable
@@ -72,23 +75,8 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 	if serial.Sign() == 0 {
 		serial.SetInt64(1)
 	}
-	identityKeyDigest := sha256.Sum256(identityPublic)
 	transportKeyDigest := sha256.Sum256(transportPublicDER)
 
-	issuer := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			Organization: []string{"StageCore"},
-			CommonName:   "StageCore Hub Identity",
-		},
-		NotBefore:             deviceCertificateNotBefore,
-		NotAfter:              deviceCertificateNotAfter,
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		SubjectKeyId:          append([]byte(nil), identityKeyDigest[:20]...),
-		PublicKey:             identityPublic,
-	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
@@ -101,12 +89,10 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		SubjectKeyId:          append([]byte(nil), transportKeyDigest[:20]...),
+		AuthorityKeyId:        append([]byte(nil), transportKeyDigest[:20]...),
 	}
-	der, err := x509.CreateCertificate(nil, template, issuer, &transportPrivate.PublicKey, identityPrivate)
+	der, err := x509.CreateCertificate(nil, template, template, &transportPrivate.PublicKey, deterministicECDSASigner{private: transportPrivate})
 	if err != nil {
-		// The certificate is signed by Ed25519, which is deterministic and does
-		// not consume randomness. A nil reader keeps pin generation explicit: if
-		// that contract changes, fail rather than silently rotating the pin.
 		return tls.Certificate{}, "", fmt.Errorf("create deterministic device TLS certificate: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(der)
@@ -119,6 +105,21 @@ func (s *Service) DeviceTLSCertificate(ctx context.Context) (tls.Certificate, st
 		PrivateKey:  transportPrivate,
 		Leaf:        leaf,
 	}, hex.EncodeToString(certificateDigest[:]), nil
+}
+
+// deterministicECDSASigner uses the standard RFC 6979 path for the one
+// immutable certificate signature. Runtime TLS CertificateVerify signatures
+// continue to use the real transport private key and the platform CSPRNG.
+type deterministicECDSASigner struct {
+	private *ecdsa.PrivateKey
+}
+
+func (signer deterministicECDSASigner) Public() crypto.PublicKey {
+	return &signer.private.PublicKey
+}
+
+func (signer deterministicECDSASigner) Sign(_ io.Reader, digest []byte, options crypto.SignerOpts) ([]byte, error) {
+	return signer.private.Sign(nil, digest, options)
 }
 
 func deriveDeviceTLSTransportKey(identityPrivate ed25519.PrivateKey) (*ecdsa.PrivateKey, error) {
