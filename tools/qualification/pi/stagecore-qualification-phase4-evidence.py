@@ -133,7 +133,7 @@ def source_coverage(conn, data):
     if conn.execute("SELECT 1 FROM projects WHERE project_id=?", (project,)).fetchone() is None:
         stop("project unavailable", 3)
     rows = conn.execute(
-        """SELECT source_id,source_class,readiness,desired_enabled,execution_device_id
+        """SELECT source_id,source_class,readiness,desired_enabled,execution_device_id,execution_machine_role_id
            FROM live_video_sources WHERE project_id=? ORDER BY source_class,source_id""",
         (project,),
     ).fetchall()
@@ -146,7 +146,8 @@ def source_coverage(conn, data):
         "unconfigured_classes": sorted(set(SOURCE_CLASSES) - configured),
         "sources": [
             {"source_id": r[0], "source_class": r[1], "readiness": r[2],
-             "desired_enabled": r[3] == 1, "execution_device_id": r[4] or ""}
+             "desired_enabled": r[3] == 1, "execution_device_id": r[4] or "",
+             "execution_machine_role_id": r[5] or ""}
             for r in rows
         ],
         "limitations": "Configuration is not physical availability or a source open/render PASS.",

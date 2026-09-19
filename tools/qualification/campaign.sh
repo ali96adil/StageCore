@@ -464,9 +464,9 @@ if requested=="N/A":
 else:
     matches=[r for r in data.get("sources",[]) if r.get("source_class")==name
              and r.get("desired_enabled") and r.get("readiness")=="READY"
-             and r.get("execution_device_id")]
+             and (bool(r.get("execution_device_id")) != bool(r.get("execution_machine_role_id")))]
     if not matches:
-        raise SystemExit("PASS requires a configured READY enabled source with an execution device")
+        raise SystemExit("PASS requires a configured READY enabled source with exactly one execution device or Machine Role")
     print("configured and ready class: "+name)
 PY
     python3 "$ROOT/tools/qualification/qualification-milestone.py" record \

@@ -13,7 +13,7 @@ cat >"$tmp/coverage.json" <<'JSON'
 {"status":"PASS","mode":"source-coverage","project_id":"project-1",
  "configured_classes":["NETWORK_STREAM"],"unconfigured_classes":["LOCAL_CAMERA","USB_CAPTURE"],
  "sources":[{"source_id":"live-1","source_class":"NETWORK_STREAM","readiness":"READY",
-             "desired_enabled":true,"execution_device_id":"renderer-1"}]}
+             "desired_enabled":true,"execution_device_id":"","execution_machine_role_id":"mac-companion-role"}]}
 JSON
 python3 "$MILESTONE" record --state "$state" --manifest "$MANIFEST" --gate Q-LIVE-04 --key class.coverage \
   --status PASS --actor self-test --evidence "$tmp/coverage.json" --note "read-only real source coverage" >/dev/null
@@ -49,4 +49,37 @@ STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qlive04-ack LOCAL_CAMERA N/A 
 locked_rc=$?
 set -e
 [[ "$locked_rc" -eq 3 ]]
+# A legacy Stage Device placement remains supported, while ambiguous placement fails closed.
+legacy="$tmp/legacy.json"
+python3 "$STATE_TOOL" init --state "$legacy" --manifest "$MANIFEST" --stagecore-sha test >/dev/null
+python3 "$STATE_TOOL" record --state "$legacy" --manifest "$MANIFEST" --gate Q-LIVE-01 \
+  --status PASS --actor self-test --evidence physical-observation --note "real source qualified" >/dev/null
+python3 - "$tmp/coverage.json" "$tmp/legacy-coverage.json" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+source=data["sources"][0]
+source["execution_device_id"]="renderer-1"
+source["execution_machine_role_id"]=""
+json.dump(data,open(sys.argv[2],"w"))
+PY
+python3 "$MILESTONE" record --state "$legacy" --manifest "$MANIFEST" --gate Q-LIVE-04 --key class.coverage \
+  --status PASS --actor self-test --evidence "$tmp/legacy-coverage.json" --note "legacy coverage" >/dev/null
+STAGECORE_QUALIFICATION_STATE="$legacy" "$CAMPAIGN" qlive04-ack NETWORK_STREAM PASS "real legacy device" >/dev/null
+python3 - "$tmp/coverage.json" "$tmp/ambiguous-coverage.json" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+data["sources"][0]["execution_device_id"]="renderer-1"
+json.dump(data,open(sys.argv[2],"w"))
+PY
+ambiguous="$tmp/ambiguous.json"
+python3 "$STATE_TOOL" init --state "$ambiguous" --manifest "$MANIFEST" --stagecore-sha test >/dev/null
+python3 "$STATE_TOOL" record --state "$ambiguous" --manifest "$MANIFEST" --gate Q-LIVE-01 \
+  --status PASS --actor self-test --evidence physical-observation --note "real source qualified" >/dev/null
+python3 "$MILESTONE" record --state "$ambiguous" --manifest "$MANIFEST" --gate Q-LIVE-04 --key class.coverage \
+  --status PASS --actor self-test --evidence "$tmp/ambiguous-coverage.json" --note "ambiguous coverage" >/dev/null
+set +e
+STAGECORE_QUALIFICATION_STATE="$ambiguous" "$CAMPAIGN" qlive04-ack NETWORK_STREAM PASS "ambiguous" >/dev/null 2>&1
+ambiguous_rc=$?
+set -e
+[[ "$ambiguous_rc" -ne 0 ]]
 echo "qualification explicit live source-class workflow self-test PASS"

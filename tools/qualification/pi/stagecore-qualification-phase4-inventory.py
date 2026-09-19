@@ -71,7 +71,7 @@ def main():
                 })
             sources = []
             for row in conn.execute(
-                """SELECT source_id,name,source_class,execution_device_id,required,desired_enabled,
+                """SELECT source_id,name,source_class,execution_device_id,execution_machine_role_id,required,desired_enabled,
                           readiness,last_observed_at_us
                    FROM live_video_sources WHERE project_id=? ORDER BY source_id""",
                 (project,),
@@ -80,9 +80,10 @@ def main():
                     stop("invalid live source class", 1)
                 sources.append({
                     "source_id": row[0], "name": row[1], "source_class": row[2],
-                    "execution_device_id": row[3] or "", "required": row[4] == 1,
-                    "desired_enabled": row[5] == 1, "readiness": row[6],
-                    "fresh": row[7] is not None and 0 <= now - row[7] <= 15000000,
+                    "execution_device_id": row[3] or "", "execution_machine_role_id": row[4] or "",
+                    "required": row[5] == 1, "desired_enabled": row[6] == 1,
+                    "readiness": row[7],
+                    "fresh": row[8] is not None and 0 <= now - row[8] <= 15000000,
                 })
             targets = {}
             for row in conn.execute(
