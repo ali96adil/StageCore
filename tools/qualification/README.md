@@ -488,14 +488,14 @@ The runner reads the live Tablet registry and only considers enabled RC3-profile
 
 If at least two qualified members exist, the physical runner sends **one** Tablet Controller request using `group_name` (not two independent device commands) and verifies that the returned target set is exactly the qualified same-group set and every real `TABLET_PLAY` terminalizes COMPLETED. Final PASS still requires a physical observation that at least two tablets visibly started the expected media.
 
-If the pinned campaign genuinely has fewer than two eligible same-group physical tablets, the runner records durable availability evidence and does not silently waive the gate. Use:
+If the pinned campaign genuinely has fewer than two eligible physical tablets total, the runner records durable availability evidence and does not silently waive the gate. Two available tablets placed in different/empty groups are a configuration problem, **not** an N/A condition. Use:
 
 ```bash
 tools/qualification/campaign.sh q16-status
 tools/qualification/campaign.sh q16-na "only one physical Android tablet is available on this campaign hardware baseline"
 ```
 
-`q16-na` refuses unless the current durable evidence says `INSUFFICIENT`.
+`q16-na` refuses unless the current durable evidence says `INSUFFICIENT_HARDWARE`, `eligible_device_count < 2`, and `na_allowed=true`. It refuses N/A when two or more eligible tablets exist but group configuration is wrong.
 
 ### Q-DRAFT-01..07 recovery workflow
 

@@ -97,6 +97,7 @@ def baseline(conn, project_id):
         "parent":{
             "revision_id":parent[0],"revision_number":parent[2],"status":parent[3],
             "parent_revision_id":parent[4],"created_at_us":parent[5],"created_by":parent[6],
+            "change_note":parent[7],
         },
         "published_snapshot":{
             "runtime_snapshot_id":snap[0],"revision_id":snap[1],"snapshot_version":snap[2],
@@ -158,6 +159,8 @@ def post(conn, base):
     ).fetchone()
     if project is None:
         fail("qualification project disappeared")
+    if project[1] != base.get("project_lifecycle_state"):
+        fail("project lifecycle state changed during Draft recovery")
     if project[0]==draft["revision_id"]:
         fail("Draft has not yet been discarded through the physical Operator UI",3)
     if project[0]!=parent["revision_id"]:
@@ -168,6 +171,22 @@ def post(conn, base):
         fail("abandoned Draft is not SUPERSEDED")
     if parent_now is None or parent_now[3]!="VALIDATED":
         fail("validated parent was mutated during discard")
+    parent_exact={
+        "revision_id":parent_now[0],"revision_number":parent_now[2],"status":parent_now[3],
+        "parent_revision_id":parent_now[4],"created_at_us":parent_now[5],"created_by":parent_now[6],
+        "change_note":parent_now[7],
+    }
+    if parent_exact != parent:
+        fail("validated parent revision changed during discard")
+    draft_count=conn.execute(
+        "SELECT COUNT(*) FROM project_revisions WHERE project_id=? AND status='DRAFT'",
+        (project_id,),
+    ).fetchone()[0]
+    if draft_count != 0:
+        fail("clean recovery state still contains a Draft revision")
+    latest=snapshot(conn,project_id)
+    if latest is None or latest[0] != snap0["runtime_snapshot_id"]:
+        fail("latest PUBLISHED Runtime Snapshot identity changed during discard")
     snap=conn.execute(
         """SELECT runtime_snapshot_id,revision_id,snapshot_version,created_at_us,created_by,content_hash,manifest_json,status
            FROM runtime_snapshots WHERE runtime_snapshot_id=?""",
@@ -204,7 +223,7 @@ def post(conn, base):
     return {
         "status":"PASS","mode":"post","project_id":project_id,
         "draft_revision_id":draft["revision_id"],"draft_status":draft_now[3],
-        "restored_revision_id":project[0],
+        "restored_revision_id":project[0],"remaining_draft_count":draft_count,
         "published_snapshot":snap_now,
         "audit":matched,
     }

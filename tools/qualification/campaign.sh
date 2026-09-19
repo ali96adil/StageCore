@@ -256,12 +256,13 @@ print((m.get("evidence") or [""])[0])
 PY
 )"
     [[ -n "$evidence" && -f "$evidence" ]] || { echo "Tablet group availability evidence is missing" >&2; exit 3; }
-    state_value="$(python3 - "$evidence" <<'PY'
+    read -r state_value na_allowed eligible_count < <(python3 - "$evidence" <<'PY'
 import json,sys
-print(json.load(open(sys.argv[1],encoding="utf-8")).get("selection_state",""))
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+print(data.get("selection_state",""), str(bool(data.get("na_allowed"))).lower(), int(data.get("eligible_device_count",0)))
 PY
-)"
-    [[ "$state_value" == "INSUFFICIENT" ]] || { echo "N/A is allowed only when current pinned evidence has fewer than two eligible same-group tablets" >&2; exit 3; }
+)
+    [[ "$state_value" == "INSUFFICIENT_HARDWARE" && "$na_allowed" == "true" && "$eligible_count" -lt 2 ]] || { echo "N/A is allowed only when current evidence proves fewer than two eligible physical tablets; group misconfiguration is not N/A" >&2; exit 3; }
     exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-16 --status N/A \
       --actor manual-hardware-availability --evidence "$evidence" --note "$note"

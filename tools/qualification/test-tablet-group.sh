@@ -35,6 +35,10 @@ class H(BaseHTTPRequestHandler):
  def do_POST(self):
   n=int(self.headers.get("Content-Length","0")); body=json.loads(self.rfile.read(n) or b"{}")
   if self.path.endswith("/auth/login"): self.sendj(200,{"csrf_token":"csrf"}); return
+  if self.path.endswith("/auth/logout"): self.sendj(200,{}); return
+  assert body.get("group_name")=="actors"
+  assert not body.get("all") and not body.get("device_ids")
+  assert body.get("command_type")=="TABLET_PLAY"
   results=[]
   c=sqlite3.connect(db)
   for i,d in enumerate(("tablet-01","tablet-02"),1):

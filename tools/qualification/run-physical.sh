@@ -554,8 +554,13 @@ stage_draft_recovery() {
 
   local nonowner="${STAGECORE_QUALIFICATION_NONOWNER_CREDENTIAL_FILE:-$HOME/.config/stagecore/qualification-technician.json}"
   invoke_draft_negative Q-DRAFT-02 owner_only.http draft-owner-only "$nonowner" "$project_id" "$baseline" || true
-  if [[ "$(milestone_status Q-DRAFT-02 owner_only.http)" == "PASS" ]]; then
+  owner_only_status="$(milestone_status Q-DRAFT-02 owner_only.http)"
+  if [[ "$owner_only_status" == "PASS" ]]; then
     record_gate Q-DRAFT-02 PASS "$RUN_DIR/evidence/Q-DRAFT-02.owner_only.http.json" "authenticated non-OWNER discard attempt was rejected OWNER_REQUIRED with no baseline mutation"
+  elif [[ "$owner_only_status" == "FAIL" ]]; then
+    record_gate Q-DRAFT-02 FAIL "$RUN_DIR/evidence/Q-DRAFT-02.owner_only.http.json" "OWNER-only recovery boundary failed"
+  else
+    record_gate Q-DRAFT-02 BLOCKED "$RUN_DIR/evidence/Q-DRAFT-02.owner_only.http.json" "separate non-OWNER qualification credential/probe is not ready"
   fi
 
   if should_run_milestone Q-DRAFT-03 show.active; then
@@ -563,9 +568,18 @@ stage_draft_recovery() {
   fi
   if [[ "$(milestone_status Q-DRAFT-03 show.active)" == "PASS" ]]; then
     invoke_draft_negative Q-DRAFT-03 show_lock.http draft-show-lock "$CREDENTIAL_FILE" "$project_id" "$baseline" || true
-    if [[ "$(milestone_status Q-DRAFT-03 show_lock.http)" == "PASS" ]]; then
+    show_lock_status="$(milestone_status Q-DRAFT-03 show_lock.http)"
+    if [[ "$show_lock_status" == "PASS" ]]; then
       record_gate Q-DRAFT-03 PASS "$RUN_DIR/evidence/Q-DRAFT-03.show_lock.http.json" "OWNER discard was rejected SHOW_CONFIGURATION_LOCKED during the active SHOW and baseline remained unchanged"
+    elif [[ "$show_lock_status" == "FAIL" ]]; then
+      record_gate Q-DRAFT-03 FAIL "$RUN_DIR/evidence/Q-DRAFT-03.show_lock.http.json" "SHOW structural-lock recovery boundary failed"
+    else
+      record_gate Q-DRAFT-03 BLOCKED "$RUN_DIR/evidence/Q-DRAFT-03.show_lock.http.json" "OWNER negative SHOW-lock probe is not ready"
     fi
+  elif [[ "$(milestone_status Q-DRAFT-03 show.active)" == "FAIL" ]]; then
+    record_gate Q-DRAFT-03 FAIL "$RUN_DIR/evidence/Q-DRAFT-03.show.active.json" "active-SHOW Draft baseline evidence failed"
+  else
+    record_gate Q-DRAFT-03 BLOCKED "$RUN_DIR/evidence/Q-DRAFT-03.show.active.json" "enter SHOW on the exact qualification project, then resume to exercise the structural-lock rejection"
   fi
 
   if [[ "$(gate_status Q-DRAFT-01)" == "PASS" && "$(gate_status Q-DRAFT-02)" == "PASS" && "$(gate_status Q-DRAFT-03)" == "PASS" && "$(gate_status Q-DRAFT-04)" == "PASS" ]]; then
@@ -1566,8 +1580,10 @@ print(json.load(open(sys.argv[1],encoding="utf-8")).get("project_id",""))
 PY
 )"
       invoke_tablet_group_play "$project_id" "$media" || true
-    elif [[ "$selection_state" == "INSUFFICIENT" ]]; then
-      record "Q-TAB-16" BLOCKED "fewer than two same-group ONLINE/READY tablets are available; use campaign.sh q16-na with an explicit physical-availability note if this is the actual campaign hardware limit"
+    elif [[ "$selection_state" == "INSUFFICIENT_HARDWARE" ]]; then
+      record "Q-TAB-16" BLOCKED "fewer than two eligible physical tablets exist on the pinned campaign; q16-na may be used with an explicit hardware-availability note"
+    elif [[ "$selection_state" == "GROUP_CONFIGURATION_REQUIRED" ]]; then
+      record "Q-TAB-16" BLOCKED "at least two eligible tablets exist, but no qualified same-group target is available; fix/group the tablet configuration instead of marking N/A"
     fi
   fi
 

@@ -337,9 +337,9 @@ def mode_group_availability(conn, data):
         (project_id, TABLET_PROFILE, TABLET_KIND),
     ).fetchall()
     groups = {}
+    eligible_devices = []
     for row in rows:
-        group = str(row[1] or "").strip()
-        if not group or row[3] != "ONLINE" or row[4] != "READY":
+        if row[3] != "ONLINE" or row[4] != "READY":
             continue
         try:
             caps = json.loads(row[2] or "[]")
@@ -350,26 +350,38 @@ def mode_group_availability(conn, data):
             continue
         if observed.get("project_id") != project_id or observed.get("runtime_snapshot_id") != snapshot_id:
             continue
-        groups.setdefault(group, []).append(row[0])
-    eligible = {k:v for k,v in groups.items() if len(v) >= 2}
-    if requested_group:
-        devices = groups.get(requested_group, [])
-        selection_state = "ELIGIBLE" if len(devices) >= 2 else "INSUFFICIENT"
+        eligible_devices.append(row[0])
+        group = str(row[1] or "").strip()
+        if group:
+            groups.setdefault(group, []).append(row[0])
+    eligible_groups = {k:v for k,v in groups.items() if len(v) >= 2}
+    if len(eligible_devices) < 2:
         selected_group = requested_group
-    elif len(eligible) == 1:
-        selected_group, devices = next(iter(eligible.items()))
+        devices = groups.get(requested_group, []) if requested_group else []
+        selection_state = "INSUFFICIENT_HARDWARE"
+        na_allowed = True
+    elif requested_group:
+        selected_group = requested_group
+        devices = groups.get(requested_group, [])
+        selection_state = "ELIGIBLE" if len(devices) >= 2 else "GROUP_CONFIGURATION_REQUIRED"
+        na_allowed = False
+    elif len(eligible_groups) == 1:
+        selected_group, devices = next(iter(eligible_groups.items()))
         selection_state = "ELIGIBLE"
-    elif len(eligible) == 0:
+        na_allowed = False
+    elif len(eligible_groups) == 0:
         selected_group = ""
         devices = []
-        selection_state = "INSUFFICIENT"
+        selection_state = "GROUP_CONFIGURATION_REQUIRED"
+        na_allowed = False
     else:
         fail("multiple eligible Tablet groups exist; configure STAGECORE_TABLET_QUALIFICATION_GROUP", 3)
     emit({
         "status":"PASS","mode":"group-availability","project_id":project_id,
         "runtime_snapshot_id":snapshot_id,"requested_group":requested_group,
         "selection_state":selection_state,"selected_group":selected_group,
-        "device_ids":devices,"groups":groups,
+        "device_ids":devices,"eligible_device_ids":eligible_devices,
+        "eligible_device_count":len(eligible_devices),"na_allowed":na_allowed,"groups":groups,
     })
 
 def main():

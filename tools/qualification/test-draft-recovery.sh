@@ -21,14 +21,19 @@ CREATE TABLE security_audit_records(audit_id TEXT,event_type TEXT,occurred_at_us
 """)
 p="project-1"; parent="rev-parent"; draft="rev-draft"; snap="snap-1"
 c.execute("INSERT INTO projects VALUES (?,?,?)",(p,draft,"ACTIVE"))
-c.execute("INSERT INTO project_revisions VALUES (?,?,?,?,?,?,?,?)",(parent,p,1,"VALIDATED",None,now-3_000_000,"owner",""))
-c.execute("INSERT INTO project_revisions VALUES (?,?,?,?,?,?,?,?)",(draft,p,2,"DRAFT",parent,now-2_000_000,"owner",""))
+c.execute("INSERT INTO project_revisions VALUES (?,?,?,?,?,?,?,?)",(parent,p,1,"VALIDATED",None,now-3_000_000,"owner","validated baseline"))
+c.execute("INSERT INTO project_revisions VALUES (?,?,?,?,?,?,?,?)",(draft,p,2,"DRAFT",parent,now-2_000_000,"owner","working"))
 c.execute("INSERT INTO runtime_snapshots VALUES (?,?,?,?,?,?,?,?,?)",(snap,p,parent,1,now-2_500_000,"owner","h"*64,'{"schema_version":5}',"PUBLISHED"))
 c.commit(); c.close()
 PY
 
 printf '%s\n' '{"mode":"baseline","project_id":"project-1"}' | python3 "$EVIDENCE" --db "$db" >"$tmp/baseline.json"
 grep -F '"status":"PASS"' "$tmp/baseline.json" >/dev/null
+python3 - "$tmp/baseline.json" <<'PY' | python3 "$EVIDENCE" --db "$db" >"$tmp/unchanged.json"
+import json,sys
+print(json.dumps({"mode":"unchanged","project_id":"project-1","baseline":json.load(open(sys.argv[1]))}))
+PY
+grep -F '"status":"PASS"' "$tmp/unchanged.json" >/dev/null
 
 python3 - "$db" <<'PY'
 import sqlite3,sys,time
@@ -56,68 +61,45 @@ import json,sys
 print(json.dumps({"mode":"post","project_id":"project-1","baseline":json.load(open(sys.argv[1]))}))
 PY
 grep -F '"draft_status":"SUPERSEDED"' "$tmp/post.json" >/dev/null
+grep -F '"remaining_draft_count":0' "$tmp/post.json" >/dev/null
 grep -F '"audit_id":"audit-1"' "$tmp/post.json" >/dev/null
 
-python3 - "$tmp/port" <<'PY' &
+start_server() {
+  local status="$1" error="$2"
+  rm -f "$tmp/port"
+  python3 - "$tmp/port" "$status" "$error" <<'PY' &
 import json,sys
 from http.server import BaseHTTPRequestHandler,HTTPServer
+status=int(sys.argv[2]); error=sys.argv[3]
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
+    def sendj(self,code,obj):
+        raw=json.dumps(obj).encode(); self.send_response(code)
+        self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw)))
+        self.end_headers(); self.wfile.write(raw)
     def do_POST(self):
         n=int(self.headers.get("Content-Length","0")); self.rfile.read(n)
-        body={"csrf_token":"csrf-test"}
-        raw=json.dumps(body).encode(); self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
+        self.sendj(200,{"csrf_token":"csrf-test"})
     def do_DELETE(self):
         n=int(self.headers.get("Content-Length","0")); self.rfile.read(n)
-        mode=self.headers.get("X-Test-Mode","")
-        # mode is selected by server port below via path query not headers; alternate by project.
-        code=403 if "owner-only" in self.path else 423
-        err="OWNER_REQUIRED" if code==403 else "SHOW_CONFIGURATION_LOCKED"
-        raw=json.dumps({"error_code":err}).encode(); self.send_response(code); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
+        self.sendj(status,{"error_code":error})
 srv=HTTPServer(("127.0.0.1",0),H)
 open(sys.argv[1],"w").write(str(srv.server_port))
 srv.serve_forever()
 PY
-server_pid=$!
-for _ in $(seq 1 50); do [[ -s "$tmp/port" ]] && break; sleep .05; done
-port="$(cat "$tmp/port")"
+  server_pid=$!
+  for _ in $(seq 1 50); do [[ -s "$tmp/port" ]] && break; sleep .05; done
+  [[ -s "$tmp/port" ]]
+}
 
-# Separate tiny servers are easier to make deterministic for the exact expected status.
-kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; server_pid=""
-python3 - "$tmp/port" <<'PY' &
-import json,sys
-from http.server import BaseHTTPRequestHandler,HTTPServer
-class H(BaseHTTPRequestHandler):
-    def log_message(self,*a): pass
-    def _send(self,code,obj):
-        raw=json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
-    def do_POST(self):
-        n=int(self.headers.get("Content-Length","0")); self.rfile.read(n)
-        self._send(200,{"csrf_token":"csrf-test"})
-    def do_DELETE(self):
-        n=int(self.headers.get("Content-Length","0")); self.rfile.read(n)
-        self._send(403,{"error_code":"OWNER_REQUIRED"})
-srv=HTTPServer(("127.0.0.1",0),H); open(sys.argv[1],"w").write(str(srv.server_port)); srv.serve_forever()
-PY
-server_pid=$!; for _ in $(seq 1 50); do [[ -s "$tmp/port" ]] && break; sleep .05; done; port="$(cat "$tmp/port")"
+start_server 403 OWNER_REQUIRED
+port="$(cat "$tmp/port")"
 printf '%s\n' '{"username":"tech","password":"secret","project_id":"project-1"}' | python3 "$HTTP" --mode owner-only --hub-url "http://127.0.0.1:$port" >"$tmp/http1.json"
 grep -F '"error_code":"OWNER_REQUIRED"' "$tmp/http1.json" >/dev/null
-kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; server_pid=""; rm -f "$tmp/port"
+kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; server_pid=""
 
-python3 - "$tmp/port" <<'PY' &
-import json,sys
-from http.server import BaseHTTPRequestHandler,HTTPServer
-class H(BaseHTTPRequestHandler):
-    def log_message(self,*a): pass
-    def _send(self,code,obj):
-        raw=json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
-    def do_POST(self):
-        n=int(self.headers.get("Content-Length","0")); self.rfile.read(n); self._send(200,{"csrf_token":"csrf-test"})
-    def do_DELETE(self):
-        n=int(self.headers.get("Content-Length","0")); self.rfile.read(n); self._send(423,{"error_code":"SHOW_CONFIGURATION_LOCKED"})
-srv=HTTPServer(("127.0.0.1",0),H); open(sys.argv[1],"w").write(str(srv.server_port)); srv.serve_forever()
-PY
-server_pid=$!; for _ in $(seq 1 50); do [[ -s "$tmp/port" ]] && break; sleep .05; done; port="$(cat "$tmp/port")"
+start_server 423 SHOW_CONFIGURATION_LOCKED
+port="$(cat "$tmp/port")"
 printf '%s\n' '{"username":"owner","password":"secret","project_id":"project-1"}' | python3 "$HTTP" --mode show-lock --hub-url "http://127.0.0.1:$port" >"$tmp/http2.json"
 grep -F '"error_code":"SHOW_CONFIGURATION_LOCKED"' "$tmp/http2.json" >/dev/null
 
