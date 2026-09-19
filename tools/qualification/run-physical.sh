@@ -48,7 +48,8 @@ QTAB16_DIR="$(dirname "$STATE_FILE")/q-tab-16"
 QDRAFT_DIR="$(dirname "$STATE_FILE")/q-draft"
 QPHASE4_DIR="$(dirname "$STATE_FILE")/q-phase4"
 QNET_DIR="$(dirname "$STATE_FILE")/q-net"
-mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR" "$QPHASE4_DIR" "$QNET_DIR"
+QCALL06_DIR="$(dirname "$STATE_FILE")/q-call-06"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR" "$QPHASE4_DIR" "$QNET_DIR" "$QCALL06_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -415,6 +416,81 @@ PY
   invoke_tablet_evidence Q-TAB-14 "$post_key" reconnect-post "$device_id" "$project_id" "$extra"
 }
 
+
+
+stage_qcall06_reconnect() {
+  local project="$(printenv STAGECORE_PROJECT_ID || true)"
+  local configured="$(printenv STAGECORE_CALLBOARD_DEVICE_ID || true)"
+  local inventory="$RUN_DIR/evidence/phase4-inventory.json"
+  local baseline="$QCALL06_DIR/reconnect.pre.json" post="$RUN_DIR/evidence/Q-CALL-06.reconnect.post.json"
+  if [[ "$PROBE_AVAILABLE" -ne 1 || -z "$project" || ! -s "$inventory" || \
+        "$(milestone_status Q-CALL-03 alert.command)" != "PASS" || \
+        "$(milestone_status Q-CALL-03 clear.command)" != "PASS" ]]; then
+    if should_run_milestone Q-CALL-06 reconnect.pre; then
+      record_milestone Q-CALL-06 reconnect.pre BLOCKED "$baseline" "real bounded alert and clear are required before expiry/reconnect"
+    fi
+    return 3
+  fi
+  local selected device target_project has_chime rc
+  set +e
+  selected="$(python3 tools/qualification/select-callboard.py --input "$inventory" --device-id "$configured" 2>"$RUN_DIR/evidence/Q-CALL-06.target.stderr")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    record_milestone Q-CALL-06 reconnect.pre BLOCKED "$baseline" "real selected display unavailable"
+    return 3
+  fi
+  IFS="$(printf '\t')" read -r device target_project has_chime <<<"$selected"
+  if [[ "$(milestone_status Q-CALL-06 reconnect.post)" == "PASS" ]]; then
+    record "Q-CALL-06::reconnect.post" PASS "resume preserved genuine reconnect evidence"
+    return 0
+  fi
+  if [[ "$(milestone_status Q-CALL-06 reconnect.pre)" != "PASS" ]]; then
+    set +e
+    python3 - "$target_project" "$device" <<'PY' | \
+      ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper callboard-reconnect >"$baseline" 2>"$baseline.stderr"
+import json,sys
+print(json.dumps({"mode":"pre","project_id":sys.argv[1],"device_id":sys.argv[2]},separators=(",",":")))
+PY
+    rc=$?
+    set -e
+    case "$rc" in
+      0) record_milestone Q-CALL-06 reconnect.pre PASS "$baseline" "real expired-alert/clear/connected baseline; isolation remains manual" ;;
+      3) record_milestone Q-CALL-06 reconnect.pre BLOCKED "$baseline" "real expiry or fresh display baseline unavailable" ;;
+      *) record_milestone Q-CALL-06 reconnect.pre FAIL "$baseline" "unexpected real display baseline evidence" ;;
+    esac
+    [[ "$rc" -eq 0 ]] || return "$rc"
+  elif [[ ! -s "$baseline" ]]; then
+    local prior
+    prior="$(milestone_evidence Q-CALL-06 reconnect.pre)"
+    if [[ -n "$prior" && -s "$prior" ]]; then
+      cp "$prior" "$baseline"
+    else
+      record_gate Q-CALL-06 BLOCKED "$baseline" "durable baseline lost; invalidate Q-CALL-06 before retrying"
+      return 3
+    fi
+  fi
+  if [[ "$(milestone_status Q-CALL-06 disconnect.action)" != "PASS" || \
+        "$(milestone_status Q-CALL-06 reconnect.action)" != "PASS" ]]; then
+    record "Q-CALL-06.manual" BLOCKED "isolate only selected display network, qcall06-ack disconnect/reconnect, then resume"
+    return 3
+  fi
+  set +e
+  python3 - "$target_project" "$device" "$baseline" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper callboard-reconnect >"$post" 2>"$post.stderr"
+import json,sys
+print(json.dumps({"mode":"post","project_id":sys.argv[1],"device_id":sys.argv[2],
+                  "baseline":json.load(open(sys.argv[3],encoding="utf-8"))},separators=(",",":")))
+PY
+  rc=$?
+  set -e
+  case "$rc" in
+    0) record_milestone Q-CALL-06 reconnect.post PASS "$post" "real expiry/no-production-replay and recovery; separate physical observation required" ;;
+    3) record_milestone Q-CALL-06 reconnect.post BLOCKED "$post" "real display disconnect/recovery evidence incomplete" ;;
+    *) record_milestone Q-CALL-06 reconnect.post FAIL "$post" "replay or unexpected real display state detected" ;;
+  esac
+  return "$rc"
+}
 
 stage_qcall_commands() {
   local inventory="$RUN_DIR/evidence/phase4-inventory.json"
@@ -2116,6 +2192,8 @@ evaluate_qdmx22() {
       ;;
   esac
 }
+
+stage_qcall06_reconnect || true
 
 evaluate_qdmx22 || true
 

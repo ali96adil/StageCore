@@ -32,6 +32,8 @@ Usage:
   tools/qualification/campaign.sh q16-status
   tools/qualification/campaign.sh q16-na <note>
   tools/qualification/campaign.sh qcall04-na <note>
+  tools/qualification/campaign.sh qcall06-status
+  tools/qualification/campaign.sh qcall06-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh qlive04-status
   tools/qualification/campaign.sh qlive04-ack <LOCAL_CAMERA|USB_CAPTURE|NETWORK_STREAM> <PASS|N/A> <physical-note>
   tools/qualification/campaign.sh draft-status
@@ -204,6 +206,36 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-11 --status PASS \
       --actor manual-ui-observation --evidence physical-observation --note "$note"
+    ;;
+  qcall06-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state missing" >&2; exit 66; }
+    for key in reconnect.pre disconnect.action reconnect.action reconnect.post; do
+      printf 'Q-CALL-06::%s=%s\n' "$key" "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-06 --key "$key")"
+    done
+    ;;
+  qcall06-ack)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    phase="$2"; note="$3"
+    [[ -n "$note" && -f "$STATE" ]] || { echo "physical network note and existing campaign are required" >&2; exit 64; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-06 --key reconnect.pre)"
+    dis="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-06 --key disconnect.action)"
+    rec="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-06 --key reconnect.action)"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-06 --key reconnect.post)"
+    [[ "$pre" == "PASS" && "$post" != "PASS" ]] || { echo "durable expired-alert baseline required" >&2; exit 3; }
+    case "$phase" in
+      disconnect)
+        [[ "$dis" != "PASS" && "$rec" != "PASS" ]] || { echo "disconnect already acknowledged" >&2; exit 3; }
+        key="disconnect.action"
+        ;;
+      reconnect)
+        [[ "$dis" == "PASS" && "$rec" != "PASS" ]] || { echo "acknowledge disconnect first" >&2; exit 3; }
+        key="reconnect.action"
+        ;;
+      *) echo "phase must be disconnect or reconnect" >&2; exit 64 ;;
+    esac
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-CALL-06 --key "$key" \
+      --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
     ;;
   qnet-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state missing: $STATE" >&2; exit 66; }

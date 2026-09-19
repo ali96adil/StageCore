@@ -25,7 +25,7 @@ for spec in \
   "Q-NET-04 warning.observations" \
   "Q-CALL-01 message.command" "Q-CALL-02 countdown.command" \
   "Q-CALL-03 alert.command" "Q-CALL-03 clear.command" "Q-CALL-04 chime.command" \
-  "Q-CALL-05 published.cue" \
+  "Q-CALL-05 published.cue" "Q-CALL-06 reconnect.post" \
   "Q-DMX-03 set.command" "Q-DMX-04 multi_set.command" \
   "Q-DMX-05 fade.command" "Q-DMX-06 multi_fade.command" \
   "Q-DMX-07 timing.measurement" \
@@ -51,7 +51,7 @@ import json, sys
 rows=json.load(open(sys.argv[1], encoding="utf-8"))
 ids={r["gate_id"] for r in rows}
 for gate in (
-    "Q-TAB-06","Q-TAB-07","Q-TAB-08","Q-TAB-09","Q-TAB-10","Q-TAB-12","Q-TAB-13","Q-TAB-14","Q-TAB-16","Q-NET-01","Q-NET-02","Q-NET-04","Q-CALL-01","Q-CALL-02","Q-CALL-03","Q-CALL-04","Q-CALL-05",
+    "Q-TAB-06","Q-TAB-07","Q-TAB-08","Q-TAB-09","Q-TAB-10","Q-TAB-12","Q-TAB-13","Q-TAB-14","Q-TAB-16","Q-NET-01","Q-NET-02","Q-NET-04","Q-CALL-01","Q-CALL-02","Q-CALL-03","Q-CALL-04","Q-CALL-05","Q-CALL-06",
     "Q-DMX-03","Q-DMX-04","Q-DMX-05","Q-DMX-06","Q-DMX-07","Q-DMX-08",
     "Q-DMX-09","Q-DMX-10","Q-DMX-11","Q-DMX-14","Q-DMX-15","Q-DMX-16",
     "Q-DMX-17","Q-DMX-18","Q-DMX-19","Q-DMX-22",
@@ -63,7 +63,7 @@ python3 "$CONFIRM" confirm-one --state "$state" --gate Q-DMX-06 --status FAIL --
 [[ "$(python3 "$STATE_TOOL" get --state "$state" --gate Q-DMX-06)" == "FAIL" ]]
 
 python3 "$CONFIRM" confirm-all --state "$state" --status PASS --note "operator observed all remaining listed outputs" >/dev/null
-for gate in Q-TAB-06 Q-TAB-07 Q-TAB-08 Q-TAB-09 Q-TAB-10 Q-TAB-12 Q-TAB-13 Q-TAB-14 Q-TAB-16 Q-NET-01 Q-NET-02 Q-NET-04 Q-CALL-01 Q-CALL-02 Q-CALL-03 Q-CALL-04 Q-CALL-05 Q-DMX-03 Q-DMX-04 Q-DMX-05 Q-DMX-07 Q-DMX-08 Q-DMX-09 Q-DMX-10 Q-DMX-11 Q-DMX-14 Q-DMX-15 Q-DMX-16 Q-DMX-17 Q-DMX-18 Q-DMX-19 Q-DMX-22; do
+for gate in Q-TAB-06 Q-TAB-07 Q-TAB-08 Q-TAB-09 Q-TAB-10 Q-TAB-12 Q-TAB-13 Q-TAB-14 Q-TAB-16 Q-NET-01 Q-NET-02 Q-NET-04 Q-CALL-01 Q-CALL-02 Q-CALL-03 Q-CALL-04 Q-CALL-05 Q-CALL-06 Q-DMX-03 Q-DMX-04 Q-DMX-05 Q-DMX-07 Q-DMX-08 Q-DMX-09 Q-DMX-10 Q-DMX-11 Q-DMX-14 Q-DMX-15 Q-DMX-16 Q-DMX-17 Q-DMX-18 Q-DMX-19 Q-DMX-22; do
   [[ "$(python3 "$STATE_TOOL" get --state "$state" --gate "$gate")" == "PASS" ]]
 done
 [[ "$(python3 "$STATE_TOOL" get --state "$state" --gate Q-DMX-06)" == "FAIL" ]]

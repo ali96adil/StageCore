@@ -30,4 +30,19 @@ STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qnet-ack reconnect "device re
 [[ "$(python3 "$M" get --state "$state" --gate Q-NET-02 --key reconnect.action)" == "PASS" ]]
 STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qnet-status >"$tmp/status.txt"
 grep -F 'Q-NET-02::reconnect.action=PASS' "$tmp/status.txt" >/dev/null
-echo "qualification Network workflow self-test PASS"
+set +e
+STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qcall06-ack disconnect "too early" >/dev/null 2>&1
+early=$?
+set -e
+[[ "$early" -eq 3 ]]
+python3 "$M" record --state "$state" --manifest "$MANIFEST" --gate Q-CALL-06 --key reconnect.pre --status PASS --actor self-test --evidence "$tmp/callboard-pre.json" --note expired >/dev/null
+set +e
+STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qcall06-ack reconnect "too early" >/dev/null 2>&1
+reorder=$?
+set -e
+[[ "$reorder" -eq 3 ]]
+STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qcall06-ack disconnect "display-only network isolated" >/dev/null
+STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qcall06-ack reconnect "display recovered" >/dev/null
+STAGECORE_QUALIFICATION_STATE="$state" "$CAMPAIGN" qcall06-status >"$tmp/callboard-status.txt"
+grep -F 'Q-CALL-06::reconnect.action=PASS' "$tmp/callboard-status.txt" >/dev/null
+echo "qualification Network and Callboard workflow self-test PASS"

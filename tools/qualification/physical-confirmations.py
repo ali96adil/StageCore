@@ -21,6 +21,7 @@ MAPPINGS = [
     ("Q-CALL-02", "physical.observation", ["countdown.command"], "Real Stage Display countdown visibly advanced from one absolute target; it was not repeatedly driven by Hub commands."),
     ("Q-CALL-03", "physical.observation", ["alert.command", "clear.command"], "The selected real Stage Display visibly rendered the bounded semantic pulse alert."),
     ("Q-CALL-04", "physical.observation", ["chime.command"], "The selected real Stage Display audibly played exactly one optional qualification chime."),
+    ("Q-CALL-06", "physical.observation", ["reconnect.post"], "The real display showed no replay of the expired alert/chime after its network recovered."),
     ("Q-CALL-05", "physical.observation", ["published.cue"], "A Published Callboard Cue or timeline visibly invoked the real Stage Display without autonomous GO."),
     ("Q-NET-01", "physical.observation", ["cockpit.api"], "The Operator Network Cockpit visibly showed the same real project Stage Device(s), Companion and Live Video source(s) proven by the authenticated API evidence."),
     ("Q-NET-02", "physical.observation", ["disconnect.action", "reconnect.action", "reconnect.observations"], "During real device-only network isolation, the Operator Cockpit visibly classified disconnect and recovery on the exact selected device."),

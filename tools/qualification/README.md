@@ -565,3 +565,10 @@ The Pi verifier requires a real ordered `UNREACHABLE`/`WEBSOCKET_DISCONNECTED` o
 ### Q-NET-01 / Q-NET-03 authenticated Cockpit truth
 
 The runner authenticates to the real read-only `/api/v1/network/cockpit` surface and cross-checks it against latest SQLite observations for the pinned project. Q-NET-01 requires at least one enabled Stage Device, one desired-enabled Live Video source, and a real Companion observation; each must be present in the API with matching reachability/transport/latency/jitter. Final Q-NET-01 PASS still needs physical Operator UI confirmation. Q-NET-03 AUTO passes only when every expected target latency/jitter is actually null and remains null through the API; pinned `phase4.js` renders null as `—`. Any numeric metric produces `PROVENANCE_REQUIRED` and leaves Q-NET-03 BLOCKED until actual measurement provenance is qualified. Sensitive addresses, endpoints, configs, raw details and credentials are never written to evidence.
+
+
+### Q-CALL-06 — real expired alert and display reconnect
+
+The root-owned read-only `callboard-reconnect` helper requires a completed real bounded DISPLAY_ALERT (expired) followed by DISPLAY_CLEAR to durable IDLE, and a fresh connected/ONLINE/READY Stage Display. The baseline is durable across runs. No network isolation is automatic.
+
+Isolate only selected display network (not Hub, power or other clients), run `campaign.sh qcall06-ack disconnect "display-only network isolated"`, restore network, then `campaign.sh qcall06-ack reconnect "display network restored"`, and resume. Post evidence requires actual ordered disconnect/reconnect observations, fresh ONLINE/READY, unchanged production command count and durable IDLE command identity. Missing baseline after disconnection fails closed. Physical PASS still requires real visual observation of no expired alert/chime replay. No credentials or source config is collected.
