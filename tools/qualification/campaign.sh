@@ -25,6 +25,8 @@ Usage:
   tools/qualification/campaign.sh q19-ack <note>
   tools/qualification/campaign.sh q11-status
   tools/qualification/campaign.sh q11-ack <note>
+  tools/qualification/campaign.sh qnet-status
+  tools/qualification/campaign.sh qnet-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh q14-status
   tools/qualification/campaign.sh q14-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh q16-status
@@ -202,6 +204,38 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-11 --status PASS \
       --actor manual-ui-observation --evidence physical-observation --note "$note"
+    ;;
+  qnet-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state missing: $STATE" >&2; exit 66; }
+    for spec in "Q-NET-02 network.pre" "Q-NET-02 disconnect.action" "Q-NET-02 reconnect.action" "Q-NET-02 reconnect.observations" "Q-NET-04 warning.observations"; do
+      read -r gate key <<<"$spec"
+      printf "%s::%s=%s\n" "$gate" "$key" "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate "$gate" --key "$key")"
+    done
+    ;;
+  qnet-ack)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    phase="$2"; note="$3"
+    [[ -n "$note" ]] || { echo "network action observation note is required" >&2; exit 64; }
+    [[ -f "$STATE" ]] || { echo "qualification campaign state missing: $STATE" >&2; exit 66; }
+    pre="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-NET-02 --key network.pre)"
+    dis="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-NET-02 --key disconnect.action)"
+    rec="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-NET-02 --key reconnect.action)"
+    post="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-NET-02 --key reconnect.observations)"
+    [[ "$pre" == "PASS" && "$post" != "PASS" ]] || { echo "network baseline must PASS and post evidence must still be pending" >&2; exit 3; }
+    case "$phase" in
+      disconnect)
+        [[ "$dis" != "PASS" && "$rec" != "PASS" ]] || { echo "network disconnect already acknowledged" >&2; exit 3; }
+        key="disconnect.action"
+        ;;
+      reconnect)
+        [[ "$dis" == "PASS" && "$rec" != "PASS" ]] || { echo "acknowledge disconnect before reconnect and only once" >&2; exit 3; }
+        key="reconnect.action"
+        ;;
+      *) echo "phase must be disconnect or reconnect" >&2; exit 64 ;;
+    esac
+    exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-NET-02 --key "$key" \
+      --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
     ;;
   q14-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }

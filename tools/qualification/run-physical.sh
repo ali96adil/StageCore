@@ -47,7 +47,8 @@ Q14_DIR="$(dirname "$STATE_FILE")/q-tab-14"
 QTAB16_DIR="$(dirname "$STATE_FILE")/q-tab-16"
 QDRAFT_DIR="$(dirname "$STATE_FILE")/q-draft"
 QPHASE4_DIR="$(dirname "$STATE_FILE")/q-phase4"
-mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR" "$QPHASE4_DIR"
+QNET_DIR="$(dirname "$STATE_FILE")/q-net"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR" "$QPHASE4_DIR" "$QNET_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -481,6 +482,87 @@ PY
   return "$rc"
 }
 
+stage_qnet_fault() {
+  local project="${STAGECORE_PROJECT_ID:-}"
+  local device="${STAGECORE_NETWORK_QUALIFICATION_DEVICE_ID:-${STAGECORE_TABLET_DEVICE_ID:-}}"
+  local baseline="$QNET_DIR/network.pre.json"
+  local post="$RUN_DIR/evidence/Q-NET-02.reconnect.observations.json"
+  if [[ -z "$project" || -z "$device" || "$PROBE_AVAILABLE" -ne 1 ]]; then
+    if should_run_milestone Q-NET-02 network.pre; then
+      record_milestone Q-NET-02 network.pre BLOCKED "$baseline" "configure pinned project and real Stage Device network target; Pi probe must be available"
+    fi
+    return 3
+  fi
+  if [[ "$(milestone_status Q-NET-02 network.pre)" != "PASS" ]]; then
+    set +e
+    python3 - "$project" "$device" <<'PY' | \
+      ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper network-fault >"$baseline" 2>"$baseline.stderr"
+import json,sys
+print(json.dumps({"mode":"pre","project_id":sys.argv[1],"device_id":sys.argv[2]},separators=(",",":")))
+PY
+    rc=$?
+    set -e
+    case "$rc" in
+      0) record_milestone Q-NET-02 network.pre PASS "$baseline" "real connected/ONLINE/READY network baseline captured; disconnect remains manual" ;;
+      3) record_milestone Q-NET-02 network.pre BLOCKED "$baseline" "fresh real Stage Device network baseline unavailable" ;;
+      *) record_milestone Q-NET-02 network.pre FAIL "$baseline" "real network baseline validation failed" ;;
+    esac
+    [[ "$rc" -eq 0 ]] || return "$rc"
+  elif [[ ! -s "$baseline" ]]; then
+    prior="$(milestone_evidence Q-NET-02 network.pre)"
+    if [[ -n "$prior" && -s "$prior" ]]; then
+      cp "$prior" "$baseline"
+    else
+      record_gate Q-NET-02 BLOCKED "$baseline" "durable pre-disconnect baseline lost; deliberately invalidate Q-NET-02/04 before retrying"
+      return 3
+    fi
+  fi
+  if [[ "$(milestone_status Q-NET-02 disconnect.action)" != "PASS" || "$(milestone_status Q-NET-02 reconnect.action)" != "PASS" ]]; then
+    record "Q-NET-02.manual" BLOCKED "disconnect only the selected Stage Device network, restore network, acknowledge qnet-ack disconnect/reconnect, then resume"
+    return 3
+  fi
+  if [[ "$(milestone_status Q-NET-02 reconnect.observations)" == "PASS" && "$(milestone_status Q-NET-04 warning.observations)" == "PASS" ]]; then
+    record "Q-NET-02::reconnect.observations" PASS "resume preserved real disconnect/reconnect evidence"
+    record "Q-NET-04::warning.observations" PASS "resume preserved real network warning evidence"
+    return 0
+  fi
+  set +e
+  python3 - "$project" "$device" "$baseline" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper network-fault >"$post" 2>"$post.stderr"
+import json,sys
+print(json.dumps({"mode":"post","project_id":sys.argv[1],"device_id":sys.argv[2],
+                  "baseline":json.load(open(sys.argv[3],encoding="utf-8"))},separators=(",",":")))
+PY
+  rc=$?
+  set -e
+  case "$rc" in
+    0)
+      if should_run_milestone Q-NET-02 reconnect.observations; then
+        record_milestone Q-NET-02 reconnect.observations PASS "$post" "real ordered disconnect/reconnect observations and fresh runtime recovered; UI confirmation still required"
+      fi
+      if should_run_milestone Q-NET-04 warning.observations; then
+        record_milestone Q-NET-04 warning.observations PASS "$post" "real unreachable/transport warning reason recorded; actionable UI confirmation still required"
+      fi
+      ;;
+    3)
+      for spec in "Q-NET-02 reconnect.observations" "Q-NET-04 warning.observations"; do
+        read -r gate key <<<"$spec"
+        if should_run_milestone "$gate" "$key"; then
+          record_milestone "$gate" "$key" BLOCKED "$post" "real network disconnect/recovery evidence incomplete"
+        fi
+      done
+      ;;
+    *)
+      for spec in "Q-NET-02 reconnect.observations" "Q-NET-04 warning.observations"; do
+        read -r gate key <<<"$spec"
+        if should_run_milestone "$gate" "$key"; then
+          record_milestone "$gate" "$key" FAIL "$post" "network fault observations or target authority mismatch"
+        fi
+      done
+      ;;
+  esac
+  return "$rc"
+}
 phase4_followup_evidence() {
   local project="${STAGECORE_PROJECT_ID:-}"
   local inventory="$RUN_DIR/evidence/phase4-inventory.json"
@@ -1634,6 +1716,7 @@ stage_draft_recovery
 
 capture_phase4_inventory || true
 phase4_followup_evidence || true
+stage_qnet_fault || true
 
 if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
   IFS="$(printf '\t')" read -r _tablet_device tablet_project <<<"$tablet_target"

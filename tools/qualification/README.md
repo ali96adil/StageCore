@@ -553,3 +553,10 @@ Each PASS requires at least one configured, desired-enabled, READY source with a
 ### Q-CALL-05 and Q-NET-03 evidence-only gates
 
 The runner captures Q-CALL-05 exact Cue/action/command causation and Q-NET-03 null-vs-numeric persistence in one read-only batch. Neither automatic evidence milestone grants a physical gate PASS by itself: Callboard Cue rendering requires explicit physical confirmation; non-null network metrics require verified measurement provenance and actual Operator Cockpit classification. Q-CALL-06, Q-LIVE-01..03 and Q-NET-01/02/04 remain open pending live fault/reconnect and client/Companion evidence.
+
+
+### Q-NET-02 / Q-NET-04 real network fault batch
+
+Set `STAGECORE_NETWORK_QUALIFICATION_DEVICE_ID` to one actual enabled Stage Device in the pinned project (defaults to `STAGECORE_TABLET_DEVICE_ID`). The runner first captures a durable root-owned, read-only connected/ONLINE/READY baseline. It **never** disconnects a device. During a bounded controlled rehearsal, isolate **only that device's Wi-Fi/network**, leaving the Pi/Hub, other devices and power untouched. Run `campaign.sh qnet-status`, `campaign.sh qnet-ack disconnect "device-only network disconnected"`, restore the device network, then `campaign.sh qnet-ack reconnect "device network restored"`, and resume the runner.
+
+The Pi verifier requires a real ordered `UNREACHABLE`/`WEBSOCKET_DISCONNECTED` observation after the baseline, a later `REACHABLE`/`WEBSOCKET_CONNECTED` observation, and a fresh ONLINE/READY Stage Device runtime. It records the genuine warning reason. Q-NET-02 and Q-NET-04 remain AUTO_PHYSICAL until their **separate** physical confirmations verify Operator Cockpit classification and actionable warning. No synthetic network observation or latency/jitter metric is accepted. A lost durable pre-disconnect baseline fails closed; deliberate gate invalidation is required rather than recapturing after disconnect. Other gates remain independent.
