@@ -366,7 +366,7 @@ PY
     done
     ;;
   qlive04-ack)
-    [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
+    [[ "$#" -ge 4 ]] || { usage >&2; exit 64; }
     class="$2"; status="$3"; note="$4"
     [[ -n "$note" ]] || { echo "physical observation note is required" >&2; exit 64; }
     case "$class" in LOCAL_CAMERA|USB_CAPTURE|NETWORK_STREAM) ;; *) echo "invalid source class" >&2; exit 64 ;; esac
@@ -405,21 +405,29 @@ else:
 PY
     python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-LIVE-04 --key "class.$class" \
-      --status PASS --actor manual-physical-classification --evidence "$coverage" \
+      --status "$status" --actor manual-physical-classification --evidence "$coverage" \
       --note "$class $status: $note" >/dev/null
-    # Parent PASS only after every source class has been explicitly classified,
-    # and at least one real, configured source has been confirmed PASS.
-    python3 - "$STATE" "$coverage" "$class" "$status" <<'PY'
+    # Parent PASS only after an explicit acknowledgement for all three classes
+    # and a real PASS for at least one available class.
+    result="$(python3 - "$STATE" <<'PY'
 import json,sys
-data=json.load(open(sys.argv[1],encoding="utf-8"))
-gate=data["gates"]["Q-LIVE-04"]
+state=json.load(open(sys.argv[1],encoding="utf-8"))
+milestones=state["gates"]["Q-LIVE-04"].get("milestones",{})
 classes=("LOCAL_CAMERA","USB_CAPTURE","NETWORK_STREAM")
-milestones=gate.get("milestones",{})
-if all((milestones.get("class."+name) or {}).get("status")=="PASS" for name in classes):
-    print("all source classes acknowledged")
+statuses=[(milestones.get("class."+name) or {}).get("status","PENDING") for name in classes]
+if all(status in ("PASS","N/A") for status in statuses) and "PASS" in statuses:
+    print("COMPLETE")
 else:
-    print("remaining source classes require explicit acknowledgement")
+    print("INCOMPLETE")
 PY
+)"
+    if [[ "$result" == "COMPLETE" ]]; then
+      exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+        --state "$STATE" --manifest "$MANIFEST" --gate Q-LIVE-04 --status PASS \
+        --actor manual-physical-classification --evidence "$coverage" \
+        --note "All source classes explicitly qualified or unavailable (N/A) on pinned physical campaign; last: $class $status: $note"
+    fi
+    echo "Recorded $class=$status; remaining classes must be explicitly classified."
     ;;
   q21-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }

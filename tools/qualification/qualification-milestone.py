@@ -7,7 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 
-ALLOWED = {"PASS", "FAIL", "BLOCKED"}
+ALLOWED = {"PASS", "FAIL", "BLOCKED", "N/A"}
 
 
 def now():
@@ -68,7 +68,7 @@ def cmd_get(args):
 
 def cmd_record(args):
     if args.status not in ALLOWED:
-        raise SystemExit("milestone status must be PASS, FAIL, or BLOCKED")
+        raise SystemExit("milestone status must be PASS, FAIL, BLOCKED, or N/A")
     gates = manifest_gates(args.manifest)
     if args.gate not in gates:
         raise SystemExit(f"unknown manifest gate {args.gate}")
