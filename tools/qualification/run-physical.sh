@@ -449,7 +449,7 @@ stage_qcall_commands() {
   if [[ "$has_chime" == "1" ]]; then
     invoke_command physical-command Q-CALL-04 chime.command DISPLAY_CHIME "$device" "$project" '{}'
     sleep 2
-  else
+  elif [[ "$(gate_status Q-CALL-04)" != "N/A" ]]; then
     record "Q-CALL-04" BLOCKED "qualified display lacks optional chime; explicit qcall04-na needs physical capability note after Q-CALL-01 observation"
   fi
   invoke_command physical-command Q-CALL-03 clear.command DISPLAY_CLEAR "$device" "$project" '{}'

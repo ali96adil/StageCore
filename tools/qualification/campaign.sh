@@ -29,6 +29,7 @@ Usage:
   tools/qualification/campaign.sh q14-ack <disconnect|reconnect> <note>
   tools/qualification/campaign.sh q16-status
   tools/qualification/campaign.sh q16-na <note>
+  tools/qualification/campaign.sh qcall04-na <note>
   tools/qualification/campaign.sh draft-status
   tools/qualification/campaign.sh draft-ack <visible|confirmation> <note>
   tools/qualification/campaign.sh q21-status
@@ -266,6 +267,46 @@ PY
     exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-16 --status N/A \
       --actor manual-hardware-availability --evidence "$evidence" --note "$note"
+    ;;
+  qcall04-na)
+    [[ "$#" -ge 2 ]] || { usage >&2; exit 64; }
+    note="$2"
+    [[ -n "$note" ]] || { echo "physical chime-capability note required" >&2; exit 64; }
+    [[ -f "$STATE" ]] || { echo "qualification state missing: $STATE" >&2; exit 66; }
+    [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-CALL-01)" == "PASS" ]] || { echo "real Callboard message physical observation must PASS first" >&2; exit 3; }
+    [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-CALL-04)" != "PASS" ]] || { echo "chime is already physically qualified" >&2; exit 3; }
+    [[ "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-CALL-04 --key chime.command)" != "PASS" ]] || { echo "chime command already executed" >&2; exit 3; }
+    read -r inventory message < <(python3 - "$STATE" <<'PY'
+import json,sys
+state=json.load(open(sys.argv[1],encoding="utf-8"))
+def evidence(gate,key):
+ m=((state.get("gates",{}).get(gate,{}).get("milestones",{}).get(key)) or {})
+ return (m.get("evidence") or [""])[0]
+print(evidence("Q-CALL-01","inventory.baseline"),evidence("Q-CALL-01","message.command"))
+PY
+)
+    [[ -s "$inventory" && -s "$message" ]] || { echo "real inventory and completed message evidence required" >&2; exit 3; }
+    set +e
+    python3 - "$inventory" "$message" <<'PY'
+import json,sys
+inv=json.load(open(sys.argv[1],encoding="utf-8"))
+cmd=json.load(open(sys.argv[2],encoding="utf-8"))
+assert inv.get("status")=="PASS" and cmd.get("status")=="COMPLETED"
+assert cmd.get("qualification_command")=="DISPLAY_MESSAGE"
+device=cmd.get("device_id")
+rows=[d for d in inv.get("displays",[]) if d.get("device_id")==device]
+assert len(rows)==1 and rows[0].get("enabled") and rows[0].get("fresh")
+assert rows[0].get("connection_state")=="ONLINE" and rows[0].get("readiness")=="READY"
+assert "display.chime.play" not in rows[0].get("capabilities",[])
+assert inv.get("availability",{}).get("eligible_display_count",0)>=1
+assert inv.get("availability",{}).get("eligible_chime_display_count",-1)==0
+PY
+    verified=$?
+    set -e
+    [[ "$verified" -eq 0 ]] || { echo "optional chime is not proven unavailable on the qualified real display(s)" >&2; exit 3; }
+    exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-CALL-04 --status N/A \
+      --actor manual-hardware-capability --evidence "$inventory" --evidence "$message" --note "$note"
     ;;
   draft-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
