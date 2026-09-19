@@ -16,6 +16,7 @@ PHYSICAL_COMMANDS = {
     "TABLET_BLACKOUT", "TABLET_BLACKOUT_CLEAR",
     "TABLET_OVERLAY_PLAY", "TABLET_OVERLAY_CLEAR",
     "TABLET_LIVE_SHOW", "TABLET_LIVE_HIDE",
+    "DISPLAY_MESSAGE", "DISPLAY_COUNTDOWN", "DISPLAY_ALERT", "DISPLAY_CLEAR", "DISPLAY_CHIME",
     "LIGHTING_CHANNELS_SET", "LIGHTING_CHANNELS_FADE", "LIGHTING_BLACKOUT",
 }
 TERMINAL = {"REJECTED", "COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED"}
@@ -197,6 +198,46 @@ def validate_payload(command_type, payload):
             die(f"{command_type} requires an empty payload")
         return {}
 
+    if command_type == "DISPLAY_MESSAGE":
+        if set(payload) - {"message", "category"}:
+            die("DISPLAY_MESSAGE has unsupported fields")
+        message = bounded_text(payload.get("message"), "display message", 240)
+        category = str(payload.get("category") or "INFO").strip().upper()
+        if category not in {"INFO", "STANDBY", "PLACES", "SHOW_START", "WARNING"}:
+            die("unsupported DISPLAY_MESSAGE category")
+        return {"message": message, "category": category}
+
+    if command_type == "DISPLAY_COUNTDOWN":
+        if set(payload) - {"duration_seconds", "message"} or "duration_seconds" not in payload:
+            die("DISPLAY_COUNTDOWN requires duration_seconds and optional message")
+        duration = payload["duration_seconds"]
+        if isinstance(duration, bool) or not isinstance(duration, int) or not 30 <= duration <= 120:
+            die("qualification countdown must be 30..120 seconds")
+        message = bounded_text(payload.get("message") or "Qualification countdown", "countdown message", 240)
+        return {"duration_seconds": duration, "message": message}
+
+    if command_type == "DISPLAY_ALERT":
+        if set(payload) - {"message", "role", "motion", "intensity_percent", "duration_seconds"}:
+            die("DISPLAY_ALERT has unsupported fields")
+        message = bounded_text(payload.get("message") or "Qualification alert", "alert message", 240)
+        role = str(payload.get("role") or "WARNING").strip().upper()
+        motion = str(payload.get("motion") or "PULSE").strip().upper()
+        intensity = payload.get("intensity_percent", 40)
+        duration = payload.get("duration_seconds", 3)
+        if role not in {"INFO", "STANDBY", "PLACES", "SHOW_START", "WARNING"} or motion not in {"STEADY", "PULSE", "FLASH"}:
+            die("unsupported alert presentation")
+        if isinstance(intensity, bool) or not isinstance(intensity, int) or not 1 <= intensity <= 60:
+            die("qualification alert intensity must be 1..60")
+        if isinstance(duration, bool) or not isinstance(duration, int) or not 1 <= duration <= 5:
+            die("qualification alert duration must be 1..5 seconds")
+        return {"message": message, "role": role, "motion": motion,
+                "intensity_percent": intensity, "duration_seconds": duration}
+
+    if command_type in {"DISPLAY_CLEAR", "DISPLAY_CHIME"}:
+        if payload:
+            die(f"{command_type} requires an empty payload")
+        return {}
+
     if command_type == "LIGHTING_CHANNELS_SET":
         if set(payload) != {"channels"} or not isinstance(payload.get("channels"), dict):
             die("LIGHTING_CHANNELS_SET qualification requires channels")
@@ -233,6 +274,46 @@ def validate_payload(command_type, payload):
     die("unsupported qualification command")
 
 
+
+DISPLAY_CAPABILITY = {
+    "DISPLAY_MESSAGE": "display.message.show",
+    "DISPLAY_COUNTDOWN": "display.countdown.show",
+    "DISPLAY_ALERT": "display.alert.show",
+    "DISPLAY_CLEAR": "display.clear",
+    "DISPLAY_CHIME": "display.chime.play",
+}
+
+
+def validate_display_target(db_path, project_id, device_id, command_type):
+    """Fail closed before login or dispatch: target must be an eligible real display."""
+    try:
+        conn = sqlite3.connect("file:" + db_path + "?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                """SELECT d.project_id,d.device_kind,d.enabled,d.protocol_version,d.capabilities_json,
+                          r.connection_state,r.readiness,r.last_seen_at_us
+                   FROM stage_devices d LEFT JOIN stage_device_runtime_state r ON r.device_id=d.device_id
+                   WHERE d.device_id=?""",
+                (device_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        die("Stage Display registry or runtime unavailable", 3)
+    if not row:
+        die("Stage Display is not registered", 3)
+    if row[0] != project_id or row[1] != "STAGE_DISPLAY" or row[2] != 1 or row[3] != "stagecore.device/1":
+        die("Stage Display identity/project/protocol is not qualified", 3)
+    try:
+        capabilities = json.loads(row[4] or "[]")
+    except (ValueError, TypeError):
+        die("Stage Display capabilities are invalid")
+    if not isinstance(capabilities, list) or DISPLAY_CAPABILITY[command_type] not in capabilities:
+        die("Stage Display lacks required capability", 3)
+    now_us = int(time.time() * 1_000_000)
+    if row[5] != "ONLINE" or row[6] != "READY" or row[7] is None or not 0 <= now_us - row[7] <= 15_000_000:
+        die("Stage Display is not freshly ONLINE/READY", 3)
+
 def main():
     parser = argparse.ArgumentParser(description="Bounded StageCore physical qualification command helper")
     parser.add_argument("--hub-url", default="http://127.0.0.1:7840")
@@ -255,9 +336,11 @@ def main():
         die("command is outside the qualification allowlist")
 
     project_id = str(data.get("project_id") or "").strip()
-    if command_type.startswith("TABLET_"):
+    if command_type.startswith(("TABLET_", "DISPLAY_")):
         project_id = bounded_text(project_id, "project_id", 256)
     payload = validate_payload(command_type, data.get("payload"))
+    if command_type.startswith("DISPLAY_"):
+        validate_display_target(args.db, project_id, device_id, command_type)
     expected_error_code = str(args.expect_error_code or "").strip()
     if expected_error_code and command_type != "TABLET_PREPARE":
         die("expected-error qualification is limited to TABLET_PREPARE")

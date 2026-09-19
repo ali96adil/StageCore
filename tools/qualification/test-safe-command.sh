@@ -10,7 +10,7 @@ db="$tmp/stagecore.sqlite3"
 port_file="$tmp/port"
 
 python3 - "$db" "$port_file" <<'PY' &
-import json, sqlite3, sys, threading
+import json, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 db, port_file = sys.argv[1], sys.argv[2]
@@ -18,6 +18,18 @@ conn=sqlite3.connect(db)
 conn.execute("""CREATE TABLE stage_device_commands (
  command_id TEXT PRIMARY KEY, command_type TEXT, status TEXT, result_json TEXT, issued_at_us INTEGER, completed_at_us INTEGER
 )""")
+conn.execute("""CREATE TABLE stage_devices (
+ device_id TEXT PRIMARY KEY, project_id TEXT, device_kind TEXT,
+ enabled INTEGER, protocol_version TEXT, capabilities_json TEXT
+)""")
+conn.execute("""CREATE TABLE stage_device_runtime_state (
+ device_id TEXT PRIMARY KEY, connection_state TEXT, readiness TEXT, last_seen_at_us INTEGER
+)""")
+conn.execute("INSERT INTO stage_devices VALUES (?,?,?,?,?,?)",
+ ("display-01","project-1","STAGE_DISPLAY",1,"stagecore.device/1",
+  '["display.message.show","display.countdown.show","display.alert.show","display.clear","display.chime.play"]'))
+conn.execute("INSERT INTO stage_device_runtime_state VALUES (?,?,?,?)",
+ ("display-01","ONLINE","READY",int(time.time()*1000000)))
 conn.commit(); conn.close()
 
 class H(BaseHTTPRequestHandler):
@@ -52,7 +64,7 @@ class H(BaseHTTPRequestHandler):
             }
             response={"results":[{"device_id":"tablet-01","command":{"envelope":{"command_id":command_id}}}]}
         else:
-            assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ","LIGHTING_CHANNELS_SET","LIGHTING_CHANNELS_FADE","LIGHTING_BLACKOUT"}
+            assert command_type in {"LIGHTING_STATE_READ","LIGHTING_CONFIG_READ","LIGHTING_CHANNELS_SET","LIGHTING_CHANNELS_FADE","LIGHTING_BLACKOUT","DISPLAY_MESSAGE","DISPLAY_COUNTDOWN","DISPLAY_ALERT","DISPLAY_CLEAR","DISPLAY_CHIME"}
             response={"envelope":{"command_id":command_id}}
         c=sqlite3.connect(db)
         issued_at_us=1_000_000
@@ -114,6 +126,27 @@ for spec in \
   printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"tablet-01","command_type":"%s","payload":%s}\n' "$tablet_command" "$tablet_payload" | \
     python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/$tablet_command.json"
 done
+for spec in \
+  'DISPLAY_MESSAGE {"message":"Qualification standby","category":"STANDBY"}' \
+  'DISPLAY_COUNTDOWN {"duration_seconds":60,"message":"Qualification countdown"}' \
+  'DISPLAY_ALERT {"message":"Qualification alert","role":"WARNING","motion":"PULSE","intensity_percent":40,"duration_seconds":3}' \
+  'DISPLAY_CHIME {}' \
+  'DISPLAY_CLEAR {}'; do
+  display_command="${spec%% *}"
+  display_payload="${spec#* }"
+  printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"display-01","command_type":"%s","payload":%s}\n' "$display_command" "$display_payload" | \
+    python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/$display_command.json"
+done
+set +e
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"DISPLAY_MESSAGE","payload":{"message":"wrong target"}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/wrong-display.json"
+wrong_display_rc=$?
+printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"display-01","command_type":"DISPLAY_ALERT","payload":{"role":"CRITICAL","intensity_percent":100}}\n' | \
+  python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/invalid-alert.json"
+invalid_alert_rc=$?
+set -e
+[[ "$wrong_display_rc" -eq 3 && "$invalid_alert_rc" -ne 0 ]]
+
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20}}}\n' | \
   python3 "$HELPER" --allow-physical --hub-url "$base" --db "$db" --timeout-seconds 2 >"$tmp/set.json"
 printf '{"username":"owner","password":"secret","project_id":"project-1","device_id":"lighting-01","command_type":"LIGHTING_CHANNELS_SET","payload":{"channels":{"warm":20,"cold":35}}}\n' | \
