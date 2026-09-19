@@ -30,6 +30,8 @@ Usage:
   tools/qualification/campaign.sh q16-status
   tools/qualification/campaign.sh q16-na <note>
   tools/qualification/campaign.sh qcall04-na <note>
+  tools/qualification/campaign.sh qlive04-status
+  tools/qualification/campaign.sh qlive04-ack <LOCAL_CAMERA|USB_CAPTURE|NETWORK_STREAM> <PASS|N/A> <physical-note>
   tools/qualification/campaign.sh draft-status
   tools/qualification/campaign.sh draft-ack <visible|confirmation> <note>
   tools/qualification/campaign.sh q21-status
@@ -354,6 +356,70 @@ PY
         ;;
       *) echo "phase must be visible or confirmation" >&2; exit 64 ;;
     esac
+    ;;
+  qlive04-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist" >&2; exit 66; }
+    printf 'Q-LIVE-01=%s\n' "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-LIVE-01)"
+    printf 'Q-LIVE-04=%s\n' "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-LIVE-04)"
+    for class in LOCAL_CAMERA USB_CAPTURE NETWORK_STREAM; do
+      printf '%s=%s\n' "$class" "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-LIVE-04 --key "class.$class")"
+    done
+    ;;
+  qlive04-ack)
+    [[ "$#" -ge 5 ]] || { usage >&2; exit 64; }
+    class="$2"; status="$3"; note="$4"
+    [[ -n "$note" ]] || { echo "physical observation note is required" >&2; exit 64; }
+    case "$class" in LOCAL_CAMERA|USB_CAPTURE|NETWORK_STREAM) ;; *) echo "invalid source class" >&2; exit 64 ;; esac
+    case "$status" in PASS|N/A) ;; *) echo "status must be PASS or N/A" >&2; exit 64 ;; esac
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist" >&2; exit 66; }
+    [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-LIVE-01)" == "PASS" ]] || { echo "real Q-LIVE-01 physical source qualification must PASS first" >&2; exit 3; }
+    [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-LIVE-04)" != "PASS" ]] || { echo "Q-LIVE-04 is already qualified" >&2; exit 3; }
+    previous="$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-LIVE-04 --key "class.$class")"
+    [[ "$previous" != "PASS" && "$previous" != "N/A" ]] || { echo "source class already acknowledged" >&2; exit 3; }
+    coverage="$(python3 - "$STATE" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+item=data.get("gates",{}).get("Q-LIVE-04",{}).get("milestones",{}).get("class.coverage",{})
+print((item.get("evidence") or [""])[0])
+PY
+)"
+    [[ -n "$coverage" && -f "$coverage" ]] || { echo "durable class coverage evidence missing; resume runner first" >&2; exit 3; }
+    python3 - "$coverage" "$class" "$status" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+name,requested=sys.argv[2:]
+if data.get("status")!="PASS" or data.get("mode")!="source-coverage":
+    raise SystemExit("invalid live source coverage evidence")
+configured=set(data.get("configured_classes",[]))
+if requested=="N/A":
+    if name in configured:
+        raise SystemExit("configured source class cannot be silently marked N/A")
+    print("confirmed unconfigured class: "+name)
+else:
+    matches=[r for r in data.get("sources",[]) if r.get("source_class")==name
+             and r.get("desired_enabled") and r.get("readiness")=="READY"
+             and r.get("execution_device_id")]
+    if not matches:
+        raise SystemExit("PASS requires a configured READY enabled source with an execution device")
+    print("configured and ready class: "+name)
+PY
+    python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-LIVE-04 --key "class.$class" \
+      --status PASS --actor manual-physical-classification --evidence "$coverage" \
+      --note "$class $status: $note" >/dev/null
+    # Parent PASS only after every source class has been explicitly classified,
+    # and at least one real, configured source has been confirmed PASS.
+    python3 - "$STATE" "$coverage" "$class" "$status" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+gate=data["gates"]["Q-LIVE-04"]
+classes=("LOCAL_CAMERA","USB_CAPTURE","NETWORK_STREAM")
+milestones=gate.get("milestones",{})
+if all((milestones.get("class."+name) or {}).get("status")=="PASS" for name in classes):
+    print("all source classes acknowledged")
+else:
+    print("remaining source classes require explicit acknowledgement")
+PY
     ;;
   q21-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
