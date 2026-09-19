@@ -563,6 +563,37 @@ PY
   esac
   return "$rc"
 }
+run_network_cockpit_truth() {
+  local out="$RUN_DIR/evidence/Q-NET-01.cockpit.api.json"
+  if [[ "$PROBE_AVAILABLE" -ne 1 || -z "${STAGECORE_PROJECT_ID:-}" || ! -f "$CREDENTIAL_FILE" ]]; then
+    for spec in "Q-NET-01 cockpit.api" "Q-NET-03 cockpit.metrics"; do
+      read -r gate key <<<"$spec"
+      if should_run_milestone "$gate" "$key"; then record_milestone "$gate" "$key" BLOCKED "$out" "real authenticated Network Cockpit prerequisites unavailable"; fi
+    done
+    return 3
+  fi
+  set +e
+  python3 - "$CREDENTIAL_FILE" "$STAGECORE_PROJECT_ID" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper network-cockpit >"$out" 2>"$out.stderr"
+import json,sys
+c=json.load(open(sys.argv[1],encoding="utf-8"))
+print(json.dumps({"username":c.get("username",""),"password":c.get("password",""),"project_id":sys.argv[2]},separators=(",",":")))
+PY
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 0 ]]; then
+    should_run_milestone Q-NET-01 cockpit.api && record_milestone Q-NET-01 cockpit.api PASS "$out" "authenticated Cockpit API contains expected real project Stage Devices, Companion and Live source targets"
+    should_run_milestone Q-NET-03 cockpit.metrics && record_milestone Q-NET-03 cockpit.metrics PASS "$out" "all expected real target latency/jitter remain NOT_MEASURED null through Cockpit API"
+    record_gate Q-NET-03 PASS "$out" "unknown latency/jitter remained null; pinned Operator UI renders null metrics as dash instead of fabricating values"
+  elif [[ "$rc" -eq 3 ]]; then
+    should_run_milestone Q-NET-01 cockpit.api && record_milestone Q-NET-01 cockpit.api BLOCKED "$out" "real Cockpit target visibility incomplete"
+    should_run_milestone Q-NET-03 cockpit.metrics && record_milestone Q-NET-03 cockpit.metrics BLOCKED "$out" "numeric metrics exist without qualified measurement provenance, or Cockpit prerequisites are incomplete"
+  else
+    should_run_milestone Q-NET-01 cockpit.api && record_milestone Q-NET-01 cockpit.api FAIL "$out" "Cockpit/API target truth mismatch"
+    should_run_milestone Q-NET-03 cockpit.metrics && record_milestone Q-NET-03 cockpit.metrics FAIL "$out" "Cockpit metric truth mismatch"
+  fi
+  return "$rc"
+}
 phase4_followup_evidence() {
   local project="${STAGECORE_PROJECT_ID:-}"
   local inventory="$RUN_DIR/evidence/phase4-inventory.json"
@@ -1716,6 +1747,7 @@ stage_draft_recovery
 
 capture_phase4_inventory || true
 phase4_followup_evidence || true
+run_network_cockpit_truth || true
 stage_qnet_fault || true
 
 if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then

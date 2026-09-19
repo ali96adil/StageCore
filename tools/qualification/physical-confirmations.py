@@ -22,6 +22,7 @@ MAPPINGS = [
     ("Q-CALL-03", "physical.observation", ["alert.command", "clear.command"], "The selected real Stage Display visibly rendered the bounded semantic pulse alert."),
     ("Q-CALL-04", "physical.observation", ["chime.command"], "The selected real Stage Display audibly played exactly one optional qualification chime."),
     ("Q-CALL-05", "physical.observation", ["published.cue"], "A Published Callboard Cue or timeline visibly invoked the real Stage Display without autonomous GO."),
+    ("Q-NET-01", "physical.observation", ["cockpit.api"], "The Operator Network Cockpit visibly showed the same real project Stage Device(s), Companion and Live Video source(s) proven by the authenticated API evidence."),
     ("Q-NET-02", "physical.observation", ["disconnect.action", "reconnect.action", "reconnect.observations"], "During real device-only network isolation, the Operator Cockpit visibly classified disconnect and recovery on the exact selected device."),
     ("Q-NET-04", "physical.observation", ["warning.observations"], "The real Stage Network Cockpit presented the observed unreachable/transport warning with a truthful actionable reason, without inventing latency or jitter."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),

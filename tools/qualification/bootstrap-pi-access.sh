@@ -45,6 +45,7 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-draft-http.py" "$TA
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-phase4-inventory.py" "$TARGET:/tmp/stagecore-qualification-phase4-inventory"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-phase4-evidence.py" "$TARGET:/tmp/stagecore-qualification-phase4-evidence"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-network-fault.py" "$TARGET:/tmp/stagecore-qualification-network-fault"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-network-cockpit.py" "$TARGET:/tmp/stagecore-qualification-network-cockpit"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/install-stagecore-qualification-helper.sh" "$TARGET:/tmp/install-stagecore-qualification-helper.sh"
 ssh -t -i "$KEY" -o IdentitiesOnly=yes "$TARGET"   "chmod 700 /tmp/install-stagecore-qualification-helper.sh && sudo /tmp/install-stagecore-qualification-helper.sh '$STAGECORE_PI_USER'"
 
