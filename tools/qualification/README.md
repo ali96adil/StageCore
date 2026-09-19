@@ -517,3 +517,6 @@ tools/qualification/campaign.sh draft-ack confirmation "confirmation explicitly 
 Then perform the confirmed Discard Draft through the UI and resume the runner. Post evidence requires all of the following simultaneously: project current revision restored to the exact validated parent, abandoned Draft is `SUPERSEDED`, the exact published Runtime Snapshot row including `manifest_json` and `content_hash` is unchanged, and a successful `project.draft.discard` security-audit record identifies the exact restored revision.
 
 Q-DRAFT-01 and Q-DRAFT-04 remain human UI observations; Q-DRAFT-02/03/05/06/07 are evidence-backed automatic gates. No raw DB mutation or hidden successful discard API path is used by qualification.
+
+
+Q-TAB-16 command evidence is also pinned to the same Runtime Snapshot used by group availability. Each returned command ID is checked in `stage_device_commands` for the exact device ID, project ID, `TABLET_PLAY` type and Runtime Snapshot before a group command milestone can pass. A logout failure is never allowed to replace an already captured qualification result.

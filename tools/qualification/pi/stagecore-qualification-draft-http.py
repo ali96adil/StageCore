@@ -75,7 +75,7 @@ def main():
     finally:
         if csrf:
             try: request(opener,base+"/api/v1/auth/logout","POST",{},{"X-StageCore-CSRF":csrf})
-            except Exception: pass
+            except (Exception, SystemExit): pass
     expected_status=403 if args.mode=="owner-only" else 423
     expected_code="OWNER_REQUIRED" if args.mode=="owner-only" else "SHOW_CONFIGURATION_LOCKED"
     if status!=expected_status or detail.get("error_code")!=expected_code:

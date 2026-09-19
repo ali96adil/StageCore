@@ -450,7 +450,8 @@ cred=json.load(open(sys.argv[1],encoding="utf-8"))
 avail=json.load(open(sys.argv[3],encoding="utf-8"))
 print(json.dumps({
  "username":cred.get("username",""),"password":cred.get("password",""),
- "project_id":sys.argv[2],"group_name":avail.get("selected_group",""),
+ "project_id":sys.argv[2],"runtime_snapshot_id":avail.get("runtime_snapshot_id",""),
+ "group_name":avail.get("selected_group",""),
  "expected_device_ids":avail.get("device_ids",[]),"media_number":int(sys.argv[4]),
 },separators=(",",":")))
 PY

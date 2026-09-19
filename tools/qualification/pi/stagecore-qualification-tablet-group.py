@@ -50,19 +50,31 @@ def request(opener,url,method,body,headers=None):
         try: detail=json.loads(payload.decode() or "{}")
         except Exception: detail={}
         fail(f"Hub HTTP {exc.code}: {detail.get('error','HTTP_ERROR')}")
+    except OSError as exc:
+        fail("Hub request unavailable: "+str(exc),3)
 
 
-def wait(db_path,command_id,timeout=15):
+def wait(db_path,command_id,device_id,project_id,snapshot_id,timeout=15):
     deadline=time.monotonic()+timeout
     uri="file:"+db_path+"?mode=ro"
     while time.monotonic()<deadline:
         conn=sqlite3.connect(uri,uri=True)
         try:
-            row=conn.execute("SELECT status,result_json FROM stage_device_commands WHERE command_id=?",(command_id,)).fetchone()
+            row=conn.execute(
+                """SELECT device_id,project_id,command_type,runtime_snapshot_id,status,result_json
+                   FROM stage_device_commands WHERE command_id=?""",
+                (command_id,),
+            ).fetchone()
         finally:
             conn.close()
-        if row and row[0] in TERMINAL:
-            return {"command_id":command_id,"status":row[0]}
+        if row and row[4] in TERMINAL:
+            if row[0] != device_id or row[1] != project_id or row[2] != "TABLET_PLAY" or row[3] != snapshot_id:
+                return {"command_id":command_id,"status":"CORRELATION_MISMATCH"}
+            return {
+                "command_id":command_id,"status":row[4],
+                "device_id":row[0],"project_id":row[1],
+                "command_type":row[2],"runtime_snapshot_id":row[3],
+            }
         time.sleep(.1)
     return {"command_id":command_id,"status":"WAIT_TIMEOUT"}
 
@@ -75,6 +87,7 @@ def main():
     data=read_request()
     username=text(data.get("username"),"username",128); password=text(data.get("password"),"password",1024)
     project_id=text(data.get("project_id"),"project_id"); group_name=text(data.get("group_name"),"group_name",128)
+    snapshot_id=text(data.get("runtime_snapshot_id"),"runtime_snapshot_id")
     expected=data.get("expected_device_ids")
     if not isinstance(expected,list): fail("expected_device_ids must be a list")
     expected=[text(v,"device_id") for v in expected]
@@ -95,7 +108,8 @@ def main():
     finally:
         if csrf:
             try: request(opener,base+"/api/v1/auth/logout","POST",{},{"X-StageCore-CSRF":csrf})
-            except Exception: pass
+            except (Exception, SystemExit): pass
+    correlation_id=text(response.get("correlation_id"),"correlation_id",128)
     results=response.get("results")
     if not isinstance(results,list): fail("Tablet group response missing results")
     actual=[str(item.get("device_id") or "").strip() for item in results]
@@ -107,11 +121,11 @@ def main():
         envelope=((item.get("command") or {}).get("envelope") or {})
         cid=text(envelope.get("command_id"),"command_id",128)
         commands.append((item["device_id"],cid))
-    terminals=[{"device_id":device,**wait(args.db,cid)} for device,cid in commands]
+    terminals=[wait(args.db,cid,device,project_id,snapshot_id) for device,cid in commands]
     if any(item["status"]!="COMPLETED" for item in terminals):
         emit({"status":"FAIL","mode":"group-play","group_name":group_name,"device_ids":actual,"results":terminals})
         return 1
-    emit({"status":"PASS","mode":"group-play","project_id":project_id,"group_name":group_name,"device_ids":actual,"correlation_id":response.get("correlation_id",""),"results":terminals})
+    emit({"status":"PASS","mode":"group-play","project_id":project_id,"runtime_snapshot_id":snapshot_id,"group_name":group_name,"device_ids":actual,"correlation_id":correlation_id,"results":terminals})
     return 0
 
 
