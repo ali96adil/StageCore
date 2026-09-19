@@ -63,7 +63,7 @@ The Device Gateway exposes only the device-facing surface required by this slice
 
 It does not become a second Operator Web server.
 
-The gateway uses a self-signed StageCore device certificate whose key is the existing durable Hub Ed25519 identity key. The certificate bytes are deterministic for that Hub identity, so its SHA-256 pin is stable across normal restarts. This is a local identity/pinning mechanism, not a public Web PKI certificate.
+The gateway uses a self-signed StageCore device certificate with a P-256 transport key and ECDSA-SHA256 signature so Apple SecureTransport and embedded mbedTLS clients can both parse and negotiate it. The transport key is deterministically and domain-separately derived from the durable Hub Ed25519 identity key, and the certificate bytes are deterministic for that Hub identity, so its SHA-256 pin is stable across normal restarts. Clients bind that pin to the advertised Hub ID/fingerprint and verify the same identity through the pinned channel before pairing. This is a local identity/pinning mechanism, not a public Web PKI certificate.
 
 ### Bonjour / mDNS
 

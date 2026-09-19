@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+case "${1:-}" in
+  service-status)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec systemctl is-active stagecore-hub.service
+    ;;
+  service-restart)
+    [[ "$#" -eq 1 ]] || exit 64
+    systemctl restart stagecore-hub.service
+    exec systemctl is-active stagecore-hub.service
+    ;;
+  service-stop)
+    [[ "$#" -eq 1 ]] || exit 64
+    systemctl stop stagecore-hub.service
+    if systemctl is-active --quiet stagecore-hub.service; then
+      echo "stagecore-hub.service remained active" >&2
+      exit 1
+    fi
+    printf 'inactive\n'
+    ;;
+  service-journal)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec journalctl -u stagecore-hub.service -n 300 --no-pager
+    ;;
+  device-probe)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-probe
+    ;;
+  safe-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-command
+    ;;
+  physical-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-command --allow-physical
+    ;;
+  tablet-negative-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-command --expect-error-code MEDIA_NOT_FOUND
+    ;;
+  tablet-evidence)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-tablet-evidence
+    ;;
+  tablet-group-play)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-tablet-group
+    ;;
+  network-cockpit)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-network-cockpit
+    ;;
+  callboard-reconnect)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-callboard-reconnect
+    ;;
+  network-fault)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-network-fault
+    ;;
+  phase4-evidence)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-phase4-evidence
+    ;;
+  phase4-inventory)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-phase4-inventory
+    ;;
+  draft-evidence)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-evidence
+    ;;
+  draft-owner-only)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-http --mode owner-only
+    ;;
+  draft-show-lock)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-http --mode show-lock
+    ;;
+  supersession-command)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-supersession
+    ;;
+  envelope-gate)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-envelope-gates
+    ;;
+  hub-restart-gate)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-hub-restart
+    ;;
+  dmx-stability-gate)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-dmx-stability
+    ;;
+  published-lighting-config)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-published-lighting
+    ;;
+  qualification-socket-status)
+    [[ "$#" -eq 1 ]] || exit 64
+    test -S /run/stagecore-qualification/qualification-envelope.sock
+    ;;
+  *)
+    echo "unsupported qualification helper operation" >&2
+    exit 64
+    ;;
+esac

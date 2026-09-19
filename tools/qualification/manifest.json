@@ -1,0 +1,633 @@
+{
+  "schema_version": 1,
+  "title": "StageCore cumulative physical qualification manifest",
+  "policy_issue": 148,
+  "status": "PLANNED",
+  "rules": {
+    "result_states": [
+      "PENDING",
+      "PASS",
+      "FAIL",
+      "BLOCKED",
+      "N/A"
+    ],
+    "methods": [
+      "AUTO",
+      "AUTO_PHYSICAL",
+      "MANUAL",
+      "EVIDENCE"
+    ],
+    "na_requires_reason": true,
+    "physical_pass_requires_real_observation": true,
+    "source_issues": [
+      138,
+      148,
+      195,
+      221
+    ]
+  },
+  "groups": [
+    {
+      "id": "system",
+      "title": "Final cumulative system candidate",
+      "source_issue": 148,
+      "gates": [
+        {
+          "id": "Q-SYS-01",
+          "method": "EVIDENCE",
+          "acceptance": "Choose and record one exact final StageCore main SHA",
+          "source_section": "Final cumulative qualification after return / 1",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-02",
+          "method": "EVIDENCE",
+          "acceptance": "Full Core CI PASS on the exact final SHA",
+          "source_section": "Final cumulative qualification after return / 2",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-03",
+          "method": "EVIDENCE",
+          "acceptance": "Record Companion/Android/other client CI and build evidence where code changed",
+          "source_section": "Final cumulative qualification after return / 3",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-04",
+          "method": "AUTO",
+          "acceptance": "Build exact Linux ARM64 release and offline media; verify manifests and hashes",
+          "source_section": "Final cumulative qualification after return / 4",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-05",
+          "method": "AUTO",
+          "acceptance": "Preserve pre-update Pi health, database and rollback baseline",
+          "source_section": "Final cumulative qualification after return / 5",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-06",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Perform one supported cumulative update to the final candidate",
+          "source_section": "Final cumulative qualification after return / 6",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-SYS-07",
+          "method": "AUTO",
+          "acceptance": "Verify installed hashes, migrations, service READY, Doctor, controlled restart persistence and no replay",
+          "source_section": "Final cumulative qualification after return / 7",
+          "na_allowed": false
+        }
+      ]
+    },
+    {
+      "id": "draft-recovery",
+      "title": "Issue #137 Draft recovery physical gate",
+      "source_issue": 148,
+      "gates": [
+        {
+          "id": "Q-DRAFT-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Real Draft exposes Discard Draft / Arabic equivalent",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-02",
+          "method": "AUTO",
+          "acceptance": "Discard Draft is OWNER-only",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-03",
+          "method": "AUTO",
+          "acceptance": "Discard Draft is blocked by active SHOW structural lock",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-04",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Discard requires explicit confirmation identifying the abandoned Draft",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-05",
+          "method": "AUTO",
+          "acceptance": "Validated/published revision and immutable Runtime Snapshot remain unchanged",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-06",
+          "method": "AUTO",
+          "acceptance": "Abandoned Draft becomes safely superseded and clean working state is restored",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DRAFT-07",
+          "method": "AUTO",
+          "acceptance": "Audit/security event is recorded",
+          "source_section": "Explicitly deferred Phase 4 gates / #137 Draft recovery",
+          "na_allowed": false
+        }
+      ]
+    },
+    {
+      "id": "tablet",
+      "title": "Tablet Controller + Tablet Player RC3",
+      "source_issue": 195,
+      "gates": [
+        {
+          "id": "Q-TAB-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Install the exact V1 RC3 APK on the target Android tablet",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-02",
+          "method": "AUTO",
+          "acceptance": "Confirm versionCode=102, versionName=1.0.0-rc3 and expected owner/build identity",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-03",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Pair through the authenticated StageCore device channel",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-04",
+          "method": "AUTO",
+          "acceptance": "Tablet appears ONLINE / READY in Tablet Controller",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-05",
+          "method": "AUTO",
+          "acceptance": "Runtime project/snapshot scope matches the active manifest",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-06",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Main PREPARE then GO succeeds on the real tablet",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-07",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Main pause and stop succeed",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-08",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Overlay play and clear work without stopping main playback",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-09",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Live layer show/hide succeeds",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-10",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Blackout and clear blackout succeed",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-11",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Graphical Cue Builder creates canonical tablet Cue Actions without exposing JSON or target refs",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-12",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Published Cue execution reaches the tablet through Cue Engine / Stage Device forwarder",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-13",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Missing media is reported clearly to the Operator",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-14",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Network disconnect/reconnect does not replay old commands",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-15",
+          "method": "AUTO",
+          "acceptance": "Mismatched project or Runtime Snapshot command is rejected",
+          "source_section": "Physical acceptance",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-TAB-16",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Tablet group targeting is verified with at least two tablets when available",
+          "source_section": "Physical acceptance",
+          "na_allowed": true
+        }
+      ]
+    },
+    {
+      "id": "phase4-callboard-live-network",
+      "title": "Remaining Phase 4 real-device gates",
+      "source_issue": 138,
+      "gates": [
+        {
+          "id": "Q-CALL-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Real Callboard message send succeeds",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-CALL-02",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Real countdown renders and advances correctly",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-CALL-03",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Real visual alert succeeds",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-CALL-04",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Optional chime succeeds only when client capability exists",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": true
+        },
+        {
+          "id": "Q-CALL-05",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Cue/timeline-driven Callboard invocation works without GO authority",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-CALL-06",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Callboard reconnect/expiry behavior is safe",
+          "source_section": "I2 — F-006 real callboard path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-LIVE-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "At least one available real Live Video source class is qualified on the intended client/Companion path",
+          "source_section": "I3 — F-007 real live-video path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-LIVE-02",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Capture/render work stays on the intended client/Companion path rather than burdening Hub",
+          "source_section": "I3 — F-007 real live-video path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-LIVE-03",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Live source loss/reconnect/readiness is truthful",
+          "source_section": "I3 — F-007 real live-video path",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-LIVE-04",
+          "method": "MANUAL",
+          "acceptance": "Unavailable source classes are explicitly recorded N/A rather than claimed PASS",
+          "source_section": "I3 — F-007 real live-video path",
+          "na_allowed": true
+        },
+        {
+          "id": "Q-NET-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Stage Network Cockpit shows real tablet/device/Companion/source visibility",
+          "source_section": "I4 — F-022 real network cockpit",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-NET-02",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Deliberate disconnect/reconnect is classified correctly",
+          "source_section": "I4 — F-022 real network cockpit",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-NET-03",
+          "method": "AUTO",
+          "acceptance": "Latency/transport metrics are shown only when actually measured",
+          "source_section": "I4 — F-022 real network cockpit",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-NET-04",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Representative network failures produce truthful actionable warnings",
+          "source_section": "I4 — F-022 real network cockpit",
+          "na_allowed": false
+        }
+      ]
+    },
+    {
+      "id": "esp32-dmx",
+      "title": "ESP32 DMX Lighting Node firmware + physical path",
+      "source_issue": 221,
+      "gates": [
+        {
+          "id": "Q-DMX-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Provision the node without firmware rebuild",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-02",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Discovery/pair/remember/revoke/reconnect works with persistent node identity",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-03",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "One-channel set produces the intended physical DMX output",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-04",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Multi-channel set produces the intended physical DMX outputs",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-05",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "One-channel fade completes correctly",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-06",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Multi-channel synchronized fade on one ESP32 completes correctly",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-07",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Fade timing is measured and within the documented tolerance",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-08",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Long fade completes without premature timeout",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-09",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "A newer command deterministically supersedes an active fade",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-10",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Immediate blackout works",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-11",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Timed blackout works",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-12",
+          "method": "AUTO",
+          "acceptance": "Duplicate command ID executes at most once",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-13",
+          "method": "AUTO",
+          "acceptance": "Expired command is rejected and does not affect output",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-14",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Invalid config/value fails closed or clamps safely",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-15",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Boot, power-cycle and brownout return to a safe output state",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-16",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Wi-Fi loss follows the configured failsafe policy",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-17",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Hub restart does not replay stale or ambiguous commands",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-18",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "DMX remains stable under network and local-web activity",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-19",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Local emergency blackout works while StageCore is unavailable",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-20",
+          "method": "AUTO",
+          "acceptance": "Observation/readiness/configuration-hash truth is visible in StageCore",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-21",
+          "method": "MANUAL",
+          "acceptance": "MAX485 polarity/common/termination/logic-voltage path is documented and physically verified before energizing",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-DMX-22",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Full Raspberry Pi + Stage LAN + ESP32 + DMX + 24 V lighting regression passes",
+          "source_section": "Physical qualification",
+          "na_allowed": false
+        }
+      ]
+    },
+    {
+      "id": "phase4-regression",
+      "title": "Phase 4 cumulative regression",
+      "source_issue": 148,
+      "gates": [
+        {
+          "id": "Q-P4R-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "F-004 discovery/pair/reconnect remains healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-02",
+          "method": "AUTO",
+          "acceptance": "F-012 SHOW lock remains healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-03",
+          "method": "AUTO",
+          "acceptance": "F-021 Device Profiles remain healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-04",
+          "method": "AUTO",
+          "acceptance": "F-015 extension trust/lifecycle remains healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-05",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "F-018/F-028 timing paths are not regressed",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-06",
+          "method": "AUTO",
+          "acceptance": "F-019 capsule compatibility remains healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-07",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "F-025 execution-environment path remains healthy",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-08",
+          "method": "AUTO",
+          "acceptance": "Persistence/security/history remain readable",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P4R-09",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Representative REHEARSAL and SHOW workflow passes",
+          "source_section": "Phase 4 cumulative regression",
+          "na_allowed": false
+        }
+      ]
+    },
+    {
+      "id": "later-phases",
+      "title": "Deferred later-phase physical/product gates",
+      "source_issue": 148,
+      "gates": [
+        {
+          "id": "Q-P5-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Run the Phase 5 simulation/recovery physical and fault gates against the final candidate",
+          "source_section": "Final cumulative qualification after return / 9",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P6-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Run the Phase 6 real visual-engine/media/output gates against the final candidate",
+          "source_section": "Final cumulative qualification after return / 10",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-P7-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Run the Phase 7 Assistant safety/authority/product gates against the final candidate",
+          "source_section": "Final cumulative qualification after return / 11",
+          "na_allowed": false
+        },
+        {
+          "id": "Q-FINAL-01",
+          "method": "AUTO_PHYSICAL",
+          "acceptance": "Finish with a full representative REHEARSAL/SHOW regression",
+          "source_section": "Final cumulative qualification after return / 12",
+          "na_allowed": false
+        }
+      ]
+    }
+  ]
+}

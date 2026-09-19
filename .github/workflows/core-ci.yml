@@ -28,6 +28,42 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Test
         run: go test ./...
+      - name: Qualification runner self-tests
+        if: matrix.go == '1.26.x'
+        run: |
+          tools/qualification/test-runner.sh
+          tools/qualification/test-device-probe.sh
+          tools/qualification/test-manifest.sh
+          tools/qualification/test-campaign-state.sh
+          tools/qualification/test-milestone.sh
+          tools/qualification/test-safe-command.sh
+          tools/qualification/test-command-evidence.sh
+          tools/qualification/test-physical-confirmations.sh
+          tools/qualification/test-fade-timing.sh
+          tools/qualification/test-supersession.sh
+          tools/qualification/test-envelope-gates.sh
+          tools/qualification/test-power-event.sh
+          tools/qualification/test-wifi-loss.sh
+          tools/qualification/test-hub-restart-evidence.sh
+          tools/qualification/test-dmx-stability.sh
+          tools/qualification/test-emergency-blackout.sh
+          tools/qualification/test-lighting-config-truth.sh
+          tools/qualification/test-electrical-path.sh
+          tools/qualification/test-dmx-full-chain.sh
+          tools/qualification/test-tablet-evidence.sh
+          tools/qualification/test-tablet-workflow.sh
+          tools/qualification/test-tablet-group.sh
+          tools/qualification/test-draft-recovery.sh
+          tools/qualification/test-batch-workflows.sh
+          tools/qualification/test-phase4-inventory.sh
+          tools/qualification/test-phase4-evidence.sh
+          tools/qualification/test-callboard-reconnect.sh
+          tools/qualification/test-network-fault.sh
+          tools/qualification/test-network-cockpit.sh
+          tools/qualification/test-network-workflow.sh
+          tools/qualification/test-live-class-workflow.sh
+          tools/qualification/test-callboard-selection.sh
+          tools/qualification/test-callboard-optional.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests
