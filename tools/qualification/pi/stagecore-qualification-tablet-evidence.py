@@ -320,6 +320,58 @@ def mode_reconnect_post(conn, data):
     })
 
 
+def mode_group_availability(conn, data):
+    project_id = text(data.get("project_id"), "project_id")
+    snapshot_id = text(data.get("runtime_snapshot_id"), "runtime_snapshot_id")
+    requested_group = str(data.get("group_name") or "").strip()
+    if len(requested_group) > 128 or any(ord(ch) < 32 for ch in requested_group):
+        fail("invalid group_name")
+    rows = conn.execute(
+        """
+        SELECT d.device_id,d.group_name,d.capabilities_json,r.connection_state,r.readiness,r.observed_state_json
+        FROM stage_devices d
+        LEFT JOIN stage_device_runtime_state r ON r.device_id=d.device_id
+        WHERE d.project_id=? AND d.profile_id=? AND d.device_kind=? AND d.enabled=1
+        ORDER BY d.group_name,d.device_id
+        """,
+        (project_id, TABLET_PROFILE, TABLET_KIND),
+    ).fetchall()
+    groups = {}
+    for row in rows:
+        group = str(row[1] or "").strip()
+        if not group or row[3] != "ONLINE" or row[4] != "READY":
+            continue
+        try:
+            caps = json.loads(row[2] or "[]")
+            observed = json.loads(row[5] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if "tablet.media.play" not in caps:
+            continue
+        if observed.get("project_id") != project_id or observed.get("runtime_snapshot_id") != snapshot_id:
+            continue
+        groups.setdefault(group, []).append(row[0])
+    eligible = {k:v for k,v in groups.items() if len(v) >= 2}
+    if requested_group:
+        devices = groups.get(requested_group, [])
+        selection_state = "ELIGIBLE" if len(devices) >= 2 else "INSUFFICIENT"
+        selected_group = requested_group
+    elif len(eligible) == 1:
+        selected_group, devices = next(iter(eligible.items()))
+        selection_state = "ELIGIBLE"
+    elif len(eligible) == 0:
+        selected_group = ""
+        devices = []
+        selection_state = "INSUFFICIENT"
+    else:
+        fail("multiple eligible Tablet groups exist; configure STAGECORE_TABLET_QUALIFICATION_GROUP", 3)
+    emit({
+        "status":"PASS","mode":"group-availability","project_id":project_id,
+        "runtime_snapshot_id":snapshot_id,"requested_group":requested_group,
+        "selection_state":selection_state,"selected_group":selected_group,
+        "device_ids":devices,"groups":groups,
+    })
+
 def main():
     parser = argparse.ArgumentParser(description="Read-only Tablet qualification evidence")
     parser.add_argument("--db", default="/var/lib/stagecore/data/db/stagecore.sqlite3")
@@ -336,6 +388,8 @@ def main():
             mode_reconnect_pre(conn, data)
         elif mode == "reconnect-post":
             mode_reconnect_post(conn, data)
+        elif mode == "group-availability":
+            mode_group_availability(conn, data)
         else:
             fail("unsupported tablet evidence mode")
     except sqlite3.Error as exc:

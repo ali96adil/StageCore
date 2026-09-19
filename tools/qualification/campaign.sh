@@ -27,6 +27,10 @@ Usage:
   tools/qualification/campaign.sh q11-ack <note>
   tools/qualification/campaign.sh q14-status
   tools/qualification/campaign.sh q14-ack <disconnect|reconnect> <note>
+  tools/qualification/campaign.sh q16-status
+  tools/qualification/campaign.sh q16-na <note>
+  tools/qualification/campaign.sh draft-status
+  tools/qualification/campaign.sh draft-ack <visible|confirmation> <note>
   tools/qualification/campaign.sh q21-status
   tools/qualification/campaign.sh q21-ack <documented|logic-voltage|de-re|polarity|common|termination> <PASS|FAIL> <note>
 
@@ -230,6 +234,84 @@ case "$cmd" in
     exec python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
       --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-14 --key "$key" \
       --status PASS --actor manual-network-action --evidence manual-network-action --note "$note"
+    ;;
+  q16-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    printf 'tablet_group\tavailability=%s\tgroup_play=%s\tphysical=%s\tgate=%s\n' \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-16 --key group.availability)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-16 --key group_play.command)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-milestone.py" get --state "$STATE" --gate Q-TAB-16 --key physical.observation)" \
+      "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-TAB-16)"
+    ;;
+  q16-na)
+    [[ "$#" -ge 2 ]] || { usage >&2; exit 64; }
+    note="$2"
+    [[ -n "$note" ]] || { echo "physical availability reason is required" >&2; exit 64; }
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    evidence="$(python3 - "$STATE" <<'PY'
+import json,sys
+state=json.load(open(sys.argv[1],encoding="utf-8"))
+m=((state.get("gates",{}).get("Q-TAB-16",{}).get("milestones",{}).get("group.availability")) or {})
+print((m.get("evidence") or [""])[0])
+PY
+)"
+    [[ -n "$evidence" && -f "$evidence" ]] || { echo "Tablet group availability evidence is missing" >&2; exit 3; }
+    state_value="$(python3 - "$evidence" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1],encoding="utf-8")).get("selection_state",""))
+PY
+)"
+    [[ "$state_value" == "INSUFFICIENT" ]] || { echo "N/A is allowed only when current pinned evidence has fewer than two eligible same-group tablets" >&2; exit 3; }
+    exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+      --state "$STATE" --manifest "$MANIFEST" --gate Q-TAB-16 --status N/A \
+      --actor manual-hardware-availability --evidence "$evidence" --note "$note"
+    ;;
+  draft-status)
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    for gate in Q-DRAFT-01 Q-DRAFT-02 Q-DRAFT-03 Q-DRAFT-04 Q-DRAFT-05 Q-DRAFT-06 Q-DRAFT-07; do
+      printf '%s=%s\n' "$gate" "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate "$gate")"
+    done
+    ;;
+  draft-ack)
+    [[ "$#" -ge 3 ]] || { usage >&2; exit 64; }
+    phase="$2"; note="$3"
+    [[ -n "$note" ]] || { echo "Draft UI observation note is required" >&2; exit 64; }
+    [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }
+    baseline="$(python3 - "$STATE" <<'PY'
+import json,sys
+state=json.load(open(sys.argv[1],encoding="utf-8"))
+m=((state.get("gates",{}).get("Q-DRAFT-01",{}).get("milestones",{}).get("baseline.state")) or {})
+print((m.get("evidence") or [""])[0])
+PY
+)"
+    [[ -n "$baseline" && -f "$baseline" ]] || { echo "Draft recovery baseline is not ready" >&2; exit 3; }
+    draft_id="$(python3 - "$baseline" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1],encoding="utf-8"))["draft"]["revision_id"])
+PY
+)"
+    case "$phase" in
+      visible)
+        [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-DRAFT-02)" == "PASS" ]] || { echo "OWNER-only negative gate must PASS first" >&2; exit 3; }
+        [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-DRAFT-03)" == "PASS" ]] || { echo "SHOW-lock negative gate must PASS first" >&2; exit 3; }
+        python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+          --state "$STATE" --manifest "$MANIFEST" --gate Q-DRAFT-01 --key ui.visible --status PASS \
+          --actor manual-ui-observation --evidence physical-observation --note "Draft $draft_id: $note" >/dev/null
+        exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+          --state "$STATE" --manifest "$MANIFEST" --gate Q-DRAFT-01 --status PASS \
+          --actor manual-ui-observation --evidence physical-observation --note "Draft $draft_id: $note"
+        ;;
+      confirmation)
+        [[ "$(python3 "$ROOT/tools/qualification/qualification-state.py" get --state "$STATE" --gate Q-DRAFT-01)" == "PASS" ]] || { echo "visible Discard Draft UI must be confirmed first" >&2; exit 3; }
+        python3 "$ROOT/tools/qualification/qualification-milestone.py" record \
+          --state "$STATE" --manifest "$MANIFEST" --gate Q-DRAFT-04 --key ui.confirmation --status PASS \
+          --actor manual-ui-observation --evidence physical-observation --note "Confirmation identified Draft $draft_id: $note" >/dev/null
+        exec python3 "$ROOT/tools/qualification/qualification-state.py" record \
+          --state "$STATE" --manifest "$MANIFEST" --gate Q-DRAFT-04 --status PASS \
+          --actor manual-ui-observation --evidence physical-observation --note "Confirmation identified Draft $draft_id: $note"
+        ;;
+      *) echo "phase must be visible or confirmation" >&2; exit 64 ;;
+    esac
     ;;
   q21-status)
     [[ -f "$STATE" ]] || { echo "qualification campaign state does not exist: $STATE" >&2; exit 66; }

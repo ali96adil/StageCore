@@ -44,7 +44,9 @@ Q15_DIR="$(dirname "$STATE_FILE")/q-dmx-15"
 Q16_DIR="$(dirname "$STATE_FILE")/q-dmx-16"
 Q19_DIR="$(dirname "$STATE_FILE")/q-dmx-19"
 Q14_DIR="$(dirname "$STATE_FILE")/q-tab-14"
-mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR"
+QTAB16_DIR="$(dirname "$STATE_FILE")/q-tab-16"
+QDRAFT_DIR="$(dirname "$STATE_FILE")/q-draft"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -409,6 +411,188 @@ print(json.dumps({
 PY
 )"
   invoke_tablet_evidence Q-TAB-14 "$post_key" reconnect-post "$device_id" "$project_id" "$extra"
+}
+
+
+invoke_tablet_group_availability() {
+  local project_id="$1" snapshot_id="$2" group_name="$3"
+  local gate="Q-TAB-16" key="group.availability" evidence="$QTAB16_DIR/availability.json"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved Tablet group availability evidence"
+    return 0
+  fi
+  extra="$(python3 - "$snapshot_id" "$group_name" <<'PY'
+import json,sys
+print(json.dumps({"runtime_snapshot_id":sys.argv[1],"group_name":sys.argv[2]},separators=(",",":")))
+PY
+)"
+  invoke_tablet_evidence "$gate" "$key" group-availability "" "$project_id" "$extra" "$evidence"
+}
+
+invoke_tablet_group_play() {
+  local project_id="$1" evidence="$QTAB16_DIR/availability.json" media="$2"
+  local gate="Q-TAB-16" key="group_play.command"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved real Tablet group command evidence"
+    return 0
+  fi
+  local out="$RUN_DIR/evidence/Q-TAB-16.group_play.command.json"
+  if [[ ! -f "$CREDENTIAL_FILE" || ! -s "$evidence" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$out" "Operator credential or durable group availability evidence is missing"
+    return 3
+  fi
+  set +e
+  python3 - "$CREDENTIAL_FILE" "$project_id" "$evidence" "$media" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper tablet-group-play \
+      >"$out" 2>"$out.stderr"
+import json,sys
+cred=json.load(open(sys.argv[1],encoding="utf-8"))
+avail=json.load(open(sys.argv[3],encoding="utf-8"))
+print(json.dumps({
+ "username":cred.get("username",""),"password":cred.get("password",""),
+ "project_id":sys.argv[2],"group_name":avail.get("selected_group",""),
+ "expected_device_ids":avail.get("device_ids",[]),"media_number":int(sys.argv[4]),
+},separators=(",",":")))
+PY
+  rc=$?
+  set -e
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$out" "single canonical Tablet Controller group selector completed PLAY on every qualified group member; physical observation still required" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$out" "Tablet group PLAY target unavailable" ;;
+    *) record_milestone "$gate" "$key" FAIL "$out" "Tablet group selector/PLAY evidence failed" ;;
+  esac
+  return "$rc"
+}
+
+invoke_draft_evidence() {
+  local gate="$1" key="$2" mode="$3" project_id="$4" baseline_path="$5" evidence="$6"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved Draft recovery evidence"
+    return 0
+  fi
+  set +e
+  python3 - "$mode" "$project_id" "$baseline_path" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper draft-evidence \
+      >"$evidence" 2>"$evidence.stderr"
+import json,sys
+mode,project,path=sys.argv[1:]
+value={"mode":mode,"project_id":project}
+if path:
+    value["baseline"]=json.load(open(path,encoding="utf-8"))
+print(json.dumps(value,separators=(",",":")))
+PY
+  rc=$?
+  set -e
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$evidence" "$mode Draft recovery evidence validated on the live StageCore database" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "$mode Draft recovery prerequisite is not ready" ;;
+    *) record_milestone "$gate" "$key" FAIL "$evidence" "$mode Draft recovery evidence failed" ;;
+  esac
+  return "$rc"
+}
+
+invoke_draft_negative() {
+  local gate="$1" key="$2" helper_op="$3" credential_file="$4" project_id="$5" baseline="$6"
+  local evidence="$RUN_DIR/evidence/$gate.$key.json"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved Draft negative-probe evidence"
+    return 0
+  fi
+  if [[ ! -f "$credential_file" ]]; then
+    record_milestone "$gate" "$key" BLOCKED "$evidence" "required local qualification credential is not configured"
+    return 3
+  fi
+  set +e
+  python3 - "$credential_file" "$project_id" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper "$helper_op" \
+      >"$evidence" 2>"$evidence.stderr"
+import json,sys
+cred=json.load(open(sys.argv[1],encoding="utf-8"))
+print(json.dumps({"username":cred.get("username",""),"password":cred.get("password",""),"project_id":sys.argv[2]},separators=(",",":")))
+PY
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    if [[ "$rc" -eq 3 ]]; then
+      record_milestone "$gate" "$key" BLOCKED "$evidence" "Draft negative probe unavailable"
+    else
+      record_milestone "$gate" "$key" FAIL "$evidence" "Draft negative probe did not return the required rejection"
+    fi
+    return "$rc"
+  fi
+  local unchanged="$RUN_DIR/evidence/$gate.$key.unchanged.json"
+  set +e
+  python3 - unchanged "$project_id" "$baseline" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper draft-evidence \
+      >"$unchanged" 2>"$unchanged.stderr"
+import json,sys
+print(json.dumps({"mode":"unchanged","project_id":sys.argv[2],"baseline":json.load(open(sys.argv[3],encoding="utf-8"))},separators=(",",":")))
+PY
+  unchanged_rc=$?
+  set -e
+  if [[ "$unchanged_rc" -eq 0 ]]; then
+    record_milestone "$gate" "$key" PASS "$evidence" "required HTTP rejection observed and Draft/snapshot remained unchanged"
+    return 0
+  fi
+  record_milestone "$gate" "$key" FAIL "$unchanged" "negative Draft probe unexpectedly changed recovery baseline"
+  return 1
+}
+
+stage_draft_recovery() {
+  local project_id="${STAGECORE_DRAFT_QUALIFICATION_PROJECT_ID:-}"
+  [[ -n "$project_id" ]] || return 0
+  local baseline="$QDRAFT_DIR/baseline.json"
+  if [[ "$(milestone_status Q-DRAFT-01 baseline.state)" != "PASS" ]]; then
+    invoke_draft_evidence Q-DRAFT-01 baseline.state baseline "$project_id" "" "$baseline" || return 0
+  elif [[ ! -s "$baseline" ]]; then
+    prior="$(milestone_evidence Q-DRAFT-01 baseline.state)"
+    if [[ -n "$prior" && -s "$prior" ]]; then cp "$prior" "$baseline"; else
+      record_gate Q-DRAFT-01 BLOCKED "$baseline" "durable Draft recovery baseline evidence is unavailable; invalidate Q-DRAFT gates before retrying"
+      return 0
+    fi
+  fi
+
+  local nonowner="${STAGECORE_QUALIFICATION_NONOWNER_CREDENTIAL_FILE:-$HOME/.config/stagecore/qualification-technician.json}"
+  invoke_draft_negative Q-DRAFT-02 owner_only.http draft-owner-only "$nonowner" "$project_id" "$baseline" || true
+  if [[ "$(milestone_status Q-DRAFT-02 owner_only.http)" == "PASS" ]]; then
+    record_gate Q-DRAFT-02 PASS "$RUN_DIR/evidence/Q-DRAFT-02.owner_only.http.json" "authenticated non-OWNER discard attempt was rejected OWNER_REQUIRED with no baseline mutation"
+  fi
+
+  if should_run_milestone Q-DRAFT-03 show.active; then
+    invoke_draft_evidence Q-DRAFT-03 show.active show-active "$project_id" "$baseline" "$RUN_DIR/evidence/Q-DRAFT-03.show.active.json" || true
+  fi
+  if [[ "$(milestone_status Q-DRAFT-03 show.active)" == "PASS" ]]; then
+    invoke_draft_negative Q-DRAFT-03 show_lock.http draft-show-lock "$CREDENTIAL_FILE" "$project_id" "$baseline" || true
+    if [[ "$(milestone_status Q-DRAFT-03 show_lock.http)" == "PASS" ]]; then
+      record_gate Q-DRAFT-03 PASS "$RUN_DIR/evidence/Q-DRAFT-03.show_lock.http.json" "OWNER discard was rejected SHOW_CONFIGURATION_LOCKED during the active SHOW and baseline remained unchanged"
+    fi
+  fi
+
+  if [[ "$(gate_status Q-DRAFT-01)" == "PASS" && "$(gate_status Q-DRAFT-02)" == "PASS" && "$(gate_status Q-DRAFT-03)" == "PASS" && "$(gate_status Q-DRAFT-04)" == "PASS" ]]; then
+    local post="$RUN_DIR/evidence/Q-DRAFT-05.post.json"
+    set +e
+    python3 - post "$project_id" "$baseline" <<'PY' | \
+      ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper draft-evidence \
+        >"$post" 2>"$post.stderr"
+import json,sys
+print(json.dumps({"mode":"post","project_id":sys.argv[2],"baseline":json.load(open(sys.argv[3],encoding="utf-8"))},separators=(",",":")))
+PY
+    post_rc=$?
+    set -e
+    if [[ "$post_rc" -eq 0 ]]; then
+      record_gate Q-DRAFT-05 PASS "$post" "validated parent and exact immutable Published Runtime Snapshot remained unchanged"
+      record_gate Q-DRAFT-06 PASS "$post" "abandoned Draft became SUPERSEDED and project current revision restored the validated parent"
+      record_gate Q-DRAFT-07 PASS "$post" "successful project.draft.discard security audit recorded exact restored revision"
+    elif [[ "$post_rc" -eq 3 ]]; then
+      for g in Q-DRAFT-05 Q-DRAFT-06 Q-DRAFT-07; do
+        [[ "$(gate_status "$g")" == "PASS" ]] || record_gate "$g" BLOCKED "$post" "perform the confirmed Discard Draft action through the real Operator UI, then resume"
+      done
+    else
+      for g in Q-DRAFT-05 Q-DRAFT-06 Q-DRAFT-07; do
+        record_gate "$g" FAIL "$post" "post-discard recovery evidence failed"
+      done
+    fi
+  fi
 }
 
 
@@ -1274,6 +1458,13 @@ PY
   fi
 fi
 
+stage_draft_recovery
+
+if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
+  IFS="$(printf '\t')" read -r _tablet_device tablet_project <<<"$tablet_target"
+  invoke_tablet_group_availability "$tablet_project" "$STAGECORE_RUNTIME_SNAPSHOT_ID" "${STAGECORE_TABLET_QUALIFICATION_GROUP:-}" || true
+fi
+
 if [[ "$lighting_target_rc" -eq 0 && "$(milestone_status Q-DMX-20 observation.readiness)" == "PASS" ]]; then
   IFS="$(printf '\t')" read -r lighting_device lighting_project <<<"$lighting_target"
   invoke_command safe-command Q-DMX-20 state_read.command LIGHTING_STATE_READ "$lighting_device" "$lighting_project" '{}'
@@ -1358,6 +1549,25 @@ PY
         sleep "$hold"
         invoke_command physical-command Q-TAB-07 stop.command TABLET_STOP "$tablet_device" "$tablet_project" '{}'
       fi
+    fi
+  fi
+
+  if [[ "$(milestone_status Q-TAB-16 group.availability)" == "PASS" && "$(gate_status Q-TAB-16)" != "N/A" ]]; then
+    selection_state="$(python3 - "$QTAB16_DIR/availability.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1],encoding="utf-8")).get("selection_state",""))
+PY
+)"
+    media="${STAGECORE_TABLET_QUALIFICATION_MEDIA_NUMBER:-}"
+    if [[ "$selection_state" == "ELIGIBLE" && "$media" =~ ^[1-9][0-9]*$ ]]; then
+      project_id="$(python3 - "$QTAB16_DIR/availability.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1],encoding="utf-8")).get("project_id",""))
+PY
+)"
+      invoke_tablet_group_play "$project_id" "$media" || true
+    elif [[ "$selection_state" == "INSUFFICIENT" ]]; then
+      record "Q-TAB-16" BLOCKED "fewer than two same-group ONLINE/READY tablets are available; use campaign.sh q16-na with an explicit physical-availability note if this is the actual campaign hardware limit"
     fi
   fi
 

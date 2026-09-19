@@ -39,6 +39,9 @@ scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-hub-restart.py" "$T
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-dmx-stability.py" "$TARGET:/tmp/stagecore-qualification-dmx-stability"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-published-lighting.py" "$TARGET:/tmp/stagecore-qualification-published-lighting"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-tablet-evidence.py" "$TARGET:/tmp/stagecore-qualification-tablet-evidence"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-tablet-group.py" "$TARGET:/tmp/stagecore-qualification-tablet-group"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-draft-evidence.py" "$TARGET:/tmp/stagecore-qualification-draft-evidence"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/stagecore-qualification-draft-http.py" "$TARGET:/tmp/stagecore-qualification-draft-http"
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/pi/install-stagecore-qualification-helper.sh" "$TARGET:/tmp/install-stagecore-qualification-helper.sh"
 ssh -t -i "$KEY" -o IdentitiesOnly=yes "$TARGET"   "chmod 700 /tmp/install-stagecore-qualification-helper.sh && sudo /tmp/install-stagecore-qualification-helper.sh '$STAGECORE_PI_USER'"
 

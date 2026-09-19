@@ -45,6 +45,22 @@ case "${1:-}" in
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-tablet-evidence
     ;;
+  tablet-group-play)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-tablet-group
+    ;;
+  draft-evidence)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-evidence
+    ;;
+  draft-owner-only)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-http --mode owner-only
+    ;;
+  draft-show-lock)
+    [[ "$#" -eq 1 ]] || exit 64
+    exec /usr/local/libexec/stagecore-qualification-draft-http --mode show-lock
+    ;;
   supersession-command)
     [[ "$#" -eq 1 ]] || exit 64
     exec /usr/local/libexec/stagecore-qualification-supersession

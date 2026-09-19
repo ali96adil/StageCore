@@ -52,6 +52,9 @@ jobs:
           tools/qualification/test-dmx-full-chain.sh
           tools/qualification/test-tablet-evidence.sh
           tools/qualification/test-tablet-workflow.sh
+          tools/qualification/test-tablet-group.sh
+          tools/qualification/test-draft-recovery.sh
+          tools/qualification/test-batch-workflows.sh
       - name: Vet
         run: go vet ./...
       - name: Race tests

@@ -478,3 +478,42 @@ Q-TAB-14 stores its reconnect baseline directly under the durable campaign state
 Reconnect network evidence uses the durable pre-disconnect capture time as the start of the observation window, so a deliberate operator pause before acknowledging the disconnect cannot erase a real `WEBSOCKET_DISCONNECTED` observation.
 
 Q-TAB-12 additionally correlates every completed canonical Tablet action execution with the corresponding Stage Device command `causation_id`; a Cue-level correlation alone is not sufficient.
+
+
+## Batch: Q-TAB-16 + Q-DRAFT-01..07
+
+### Q-TAB-16 two-tablet group targeting / justified N/A
+
+The runner reads the live Tablet registry and only considers enabled RC3-profile Tablet Players that are ONLINE/READY, advertise `tablet.media.play`, share the pinned project/snapshot scope, and have a non-empty `group_name`. `STAGECORE_TABLET_QUALIFICATION_GROUP` may pin one group.
+
+If at least two qualified members exist, the physical runner sends **one** Tablet Controller request using `group_name` (not two independent device commands) and verifies that the returned target set is exactly the qualified same-group set and every real `TABLET_PLAY` terminalizes COMPLETED. Final PASS still requires a physical observation that at least two tablets visibly started the expected media.
+
+If the pinned campaign genuinely has fewer than two eligible same-group physical tablets, the runner records durable availability evidence and does not silently waive the gate. Use:
+
+```bash
+tools/qualification/campaign.sh q16-status
+tools/qualification/campaign.sh q16-na "only one physical Android tablet is available on this campaign hardware baseline"
+```
+
+`q16-na` refuses unless the current durable evidence says `INSUFFICIENT`.
+
+### Q-DRAFT-01..07 recovery workflow
+
+Set `STAGECORE_DRAFT_QUALIFICATION_PROJECT_ID` to the preserved/dedicated project whose current revision is the real child Draft. Configure a separate non-OWNER local credential at `STAGECORE_QUALIFICATION_NONOWNER_CREDENTIAL_FILE` (default `~/.config/stagecore/qualification-technician.json`) with `setup-operator-credential.py --output ...`; the runner never creates users or stores credentials in evidence.
+
+The runner first captures a durable read-only baseline containing the exact Draft, validated parent, immutable PUBLISHED Runtime Snapshot bytes/hash/identity, and audit boundary. It then performs two bounded **negative-only** HTTP probes:
+
+- authenticated non-OWNER DELETE must return `OWNER_REQUIRED` and leave Draft/snapshot unchanged;
+- while that exact project has an ACTIVE SHOW, OWNER DELETE must return `SHOW_CONFIGURATION_LOCKED` and leave Draft/snapshot unchanged.
+
+The helper has no successful discard mode. The actual successful discard must be performed through the real graphical Operator UI. After the two automatic negative gates pass, exit SHOW and observe the recovery UI:
+
+```bash
+tools/qualification/campaign.sh draft-status
+tools/qualification/campaign.sh draft-ack visible "Discard Draft control is visible for the real Draft"
+tools/qualification/campaign.sh draft-ack confirmation "confirmation explicitly names the Draft; cancelled once before final approval"
+```
+
+Then perform the confirmed Discard Draft through the UI and resume the runner. Post evidence requires all of the following simultaneously: project current revision restored to the exact validated parent, abandoned Draft is `SUPERSEDED`, the exact published Runtime Snapshot row including `manifest_json` and `content_hash` is unchanged, and a successful `project.draft.discard` security-audit record identifies the exact restored revision.
+
+Q-DRAFT-01 and Q-DRAFT-04 remain human UI observations; Q-DRAFT-02/03/05/06/07 are evidence-backed automatic gates. No raw DB mutation or hidden successful discard API path is used by qualification.

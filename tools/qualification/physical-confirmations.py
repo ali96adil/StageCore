@@ -16,6 +16,7 @@ MAPPINGS = [
     ("Q-TAB-12", "physical.observation", ["published.execution"], "The Published qualification Tablet Scene visibly reached the real tablet through Cue Engine / Stage Device forwarding."),
     ("Q-TAB-13", "physical.observation", ["missing_media.command"], "The intentionally missing media produced a clear operator-visible failure matching MEDIA_NOT_FOUND."),
     ("Q-TAB-14", "physical.observation", ["reconnect.post"], "After the Tablet network disconnect/reconnect, the prior media command did not visibly replay or restart."),
+    ("Q-TAB-16", "physical.observation", ["group_play.command"], "A single Tablet Controller group target visibly started the expected media on at least two real tablets in the same qualified group."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),
     ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),
     ("Q-DMX-05", "physical.observation", ["fade.command"], "Selected DMX channel visibly completed the requested fade smoothly."),
