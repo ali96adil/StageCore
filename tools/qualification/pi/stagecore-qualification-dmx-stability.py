@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 
-SOCKET_PATH = os.environ.get("STAGECORE_QUALIFICATION_SOCKET", "/var/lib/stagecore/qualification-envelope.sock")
+SOCKET_PATH = os.environ.get("STAGECORE_QUALIFICATION_SOCKET", "/run/stagecore-qualification/qualification-envelope.sock")
 DB_PATH = os.environ.get("STAGECORE_DB", "/var/lib/stagecore/data/db/stagecore.sqlite3")
 
 

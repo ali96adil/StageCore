@@ -10,7 +10,7 @@ import uuid
 
 SOCKET_PATH = os.environ.get(
     "STAGECORE_QUALIFICATION_SOCKET",
-    "/var/lib/stagecore/qualification-envelope.sock",
+    "/run/stagecore-qualification/qualification-envelope.sock",
 )
 
 

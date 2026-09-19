@@ -103,7 +103,7 @@ case "${1:-}" in
     ;;
   qualification-socket-status)
     [[ "$#" -eq 1 ]] || exit 64
-    test -S /var/lib/stagecore/qualification-envelope.sock
+    test -S /run/stagecore-qualification/qualification-envelope.sock
     ;;
   *)
     echo "unsupported qualification helper operation" >&2

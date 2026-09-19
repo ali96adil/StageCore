@@ -89,7 +89,11 @@ install -o root -g root -m 0755 "$SOURCE_CALLBOARD_RECONNECT" "$DEST_CALLBOARD_R
 
 install -d -o root -g root -m 0755 "$DROPIN_DIR"
 dropin_tmp="$(mktemp)"
-printf '%s\n' '[Service]' 'Environment=STAGECORE_QUALIFICATION_SOCKET=/var/lib/stagecore/qualification-envelope.sock' >"$dropin_tmp"
+printf '%s\n' \
+  '[Service]' \
+  'Environment=STAGECORE_QUALIFICATION_SOCKET=/run/stagecore-qualification/qualification-envelope.sock' \
+  'RuntimeDirectory=stagecore-qualification' \
+  'RuntimeDirectoryMode=0700' >"$dropin_tmp"
 install -o root -g root -m 0644 "$dropin_tmp" "$DROPIN"
 rm -f "$dropin_tmp"
 systemctl daemon-reload

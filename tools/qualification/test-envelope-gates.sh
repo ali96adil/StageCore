@@ -4,10 +4,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HELPER="$ROOT/tools/qualification/pi/stagecore-qualification-envelope-gates.py"
 VALIDATOR="$ROOT/tools/qualification/validate-envelope-gate-evidence.py"
+INSTALLER="$ROOT/tools/qualification/pi/install-stagecore-qualification-helper.sh"
+ROOT_HELPER="$ROOT/tools/qualification/pi/stagecore-qualification-helper"
+DMX_STABILITY="$ROOT/tools/qualification/pi/stagecore-qualification-dmx-stability.py"
 tmp="$(mktemp -d)"
 server_pid=""
 trap '[[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 sock="$tmp/qualification.sock"
+
+runtime_socket="/run/stagecore-qualification/qualification-envelope.sock"
+grep -F "Environment=STAGECORE_QUALIFICATION_SOCKET=$runtime_socket" "$INSTALLER" >/dev/null
+grep -F 'RuntimeDirectory=stagecore-qualification' "$INSTALLER" >/dev/null
+grep -F 'RuntimeDirectoryMode=0700' "$INSTALLER" >/dev/null
+grep -F "$runtime_socket" "$ROOT_HELPER" >/dev/null
+grep -F "$runtime_socket" "$HELPER" >/dev/null
+grep -F "$runtime_socket" "$DMX_STABILITY" >/dev/null
+if grep -F '/var/lib/stagecore/qualification-envelope.sock' \
+  "$INSTALLER" "$ROOT_HELPER" "$HELPER" "$DMX_STABILITY" >/dev/null; then
+  echo "qualification socket must not be placed under the read-only /var/lib/stagecore root" >&2
+  exit 1
+fi
 
 python3 - "$sock" <<'PY' &
 import json, os, socketserver, sys

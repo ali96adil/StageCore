@@ -212,7 +212,7 @@ Configure `STAGECORE_LIGHTING_QUALIFICATION_SUPERSESSION_FADE_MS`, `STAGECORE_LI
 
 Q-DMX-12 and Q-DMX-13 need firmware behavior that the normal production Operator API intentionally prevents: production idempotency never resends the same command ID, and Core rejects an already-expired deadline before dispatch. Qualification therefore uses a dormant, root-only Unix-socket path inside the Hub.
 
-The path is disabled unless `STAGECORE_QUALIFICATION_SOCKET` is set. The one-time Pi qualification bootstrap installs a systemd drop-in pointing it at `/var/lib/stagecore/qualification-envelope.sock`, restarts Hub once, and creates the socket with mode 0600. It is not a TCP/LAN endpoint.
+The path is disabled unless `STAGECORE_QUALIFICATION_SOCKET` is set. The one-time Pi qualification bootstrap installs a systemd drop-in pointing it at `/run/stagecore-qualification/qualification-envelope.sock`, provisions that parent through `RuntimeDirectory=stagecore-qualification` with mode 0700, restarts Hub once, and creates the socket with mode 0600. It is not a TCP/LAN endpoint.
 
 The socket accepts only qualification-prefixed envelopes from issuer `qualification:physical-runner` and only the bounded command set needed here: SET, FADE, STATE_READ, and read-only CONFIG_READ. CONFIG_APPLY remains forbidden. These test envelopes bypass production command persistence by design so exact duplicate IDs and already-expired deadlines can reach the real firmware parser/dedupe/expiry logic.
 
