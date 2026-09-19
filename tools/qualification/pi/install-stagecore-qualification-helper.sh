@@ -25,6 +25,7 @@ SOURCE_TABLET_GROUP="/tmp/stagecore-qualification-tablet-group"
 SOURCE_DRAFT_EVIDENCE="/tmp/stagecore-qualification-draft-evidence"
 SOURCE_DRAFT_HTTP="/tmp/stagecore-qualification-draft-http"
 SOURCE_PHASE4_INVENTORY="/tmp/stagecore-qualification-phase4-inventory"
+SOURCE_PHASE4_EVIDENCE="/tmp/stagecore-qualification-phase4-evidence"
 DEST_HELPER="/usr/local/libexec/stagecore-qualification-helper"
 DEST_PROBE="/usr/local/libexec/stagecore-qualification-probe"
 DEST_COMMAND="/usr/local/libexec/stagecore-qualification-command"
@@ -38,6 +39,7 @@ DEST_TABLET_GROUP="/usr/local/libexec/stagecore-qualification-tablet-group"
 DEST_DRAFT_EVIDENCE="/usr/local/libexec/stagecore-qualification-draft-evidence"
 DEST_DRAFT_HTTP="/usr/local/libexec/stagecore-qualification-draft-http"
 DEST_PHASE4_INVENTORY="/usr/local/libexec/stagecore-qualification-phase4-inventory"
+DEST_PHASE4_EVIDENCE="/usr/local/libexec/stagecore-qualification-phase4-evidence"
 SUDOERS="/etc/sudoers.d/stagecore-qualification"
 DROPIN_DIR="/etc/systemd/system/stagecore-hub.service.d"
 DROPIN="$DROPIN_DIR/qualification-envelope.conf"
@@ -55,6 +57,7 @@ DROPIN="$DROPIN_DIR/qualification-envelope.conf"
 [[ -f "$SOURCE_DRAFT_EVIDENCE" ]] || { echo "missing $SOURCE_DRAFT_EVIDENCE" >&2; exit 66; }
 [[ -f "$SOURCE_DRAFT_HTTP" ]] || { echo "missing $SOURCE_DRAFT_HTTP" >&2; exit 66; }
 [[ -f "$SOURCE_PHASE4_INVENTORY" ]] || { echo "missing $SOURCE_PHASE4_INVENTORY" >&2; exit 66; }
+[[ -f "$SOURCE_PHASE4_EVIDENCE" ]] || { echo "missing $SOURCE_PHASE4_EVIDENCE" >&2; exit 66; }
 
 install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 "$SOURCE_HELPER" "$DEST_HELPER"
@@ -70,6 +73,7 @@ install -o root -g root -m 0755 "$SOURCE_TABLET_GROUP" "$DEST_TABLET_GROUP"
 install -o root -g root -m 0755 "$SOURCE_DRAFT_EVIDENCE" "$DEST_DRAFT_EVIDENCE"
 install -o root -g root -m 0755 "$SOURCE_DRAFT_HTTP" "$DEST_DRAFT_HTTP"
 install -o root -g root -m 0755 "$SOURCE_PHASE4_INVENTORY" "$DEST_PHASE4_INVENTORY"
+install -o root -g root -m 0755 "$SOURCE_PHASE4_EVIDENCE" "$DEST_PHASE4_EVIDENCE"
 
 install -d -o root -g root -m 0755 "$DROPIN_DIR"
 dropin_tmp="$(mktemp)"
@@ -80,8 +84,8 @@ systemctl daemon-reload
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-stop, %s service-journal, %s device-probe, %s safe-command, %s physical-command, %s tablet-negative-command, %s tablet-evidence, %s tablet-group-play, %s draft-evidence, %s draft-owner-only, %s draft-show-lock, %s phase4-inventory, %s supersession-command, %s envelope-gate, %s hub-restart-gate, %s dmx-stability-gate, %s published-lighting-config, %s qualification-socket-status\n' \
-  "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
+printf '%s ALL=(root) NOPASSWD: %s service-status, %s service-restart, %s service-stop, %s service-journal, %s device-probe, %s safe-command, %s physical-command, %s tablet-negative-command, %s tablet-evidence, %s tablet-group-play, %s draft-evidence, %s draft-owner-only, %s draft-show-lock, %s phase4-inventory, %s phase4-evidence, %s supersession-command, %s envelope-gate, %s hub-restart-gate, %s dmx-stability-gate, %s published-lighting-config, %s qualification-socket-status\n' \
+  "$TARGET_USER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" "$DEST_HELPER" >"$tmp"
 
 command -v visudo >/dev/null 2>&1 || { echo "visudo is required to validate the bounded sudo policy" >&2; exit 69; }
 visudo -cf "$tmp" >/dev/null
