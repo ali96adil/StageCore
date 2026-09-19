@@ -535,3 +535,21 @@ When `STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS=1`, the runner selects exa
 
 
 Optional `Q-CALL-04` chime N/A must not be synthesized by the runner. After a real Q-CALL-01 message physical PASS, run `tools/qualification/campaign.sh qcall04-na "selected real display and all qualified available displays lack display.chime.play"`. The command requires stored real inventory, the exact completed DISPLAY_MESSAGE device, zero eligible chime-capable displays, and a physical hardware note. A missing display or available chime-capable display cannot produce N/A.
+
+
+### Q-LIVE-04 — explicit class-by-class qualification
+
+After **Q-LIVE-01 physically PASSES** on the intended client/Companion path, the runner retains redacted source-class coverage under the durable campaign state directory. The operator must explicitly classify each of the three source classes, rather than treating absent classes as a simulated PASS:
+
+```bash
+tools/qualification/campaign.sh qlive04-status
+tools/qualification/campaign.sh qlive04-ack NETWORK_STREAM PASS "Observed source rendered on the intended Companion"
+tools/qualification/campaign.sh qlive04-ack LOCAL_CAMERA N/A "No local camera on pinned campaign hardware"
+tools/qualification/campaign.sh qlive04-ack USB_CAPTURE N/A "No USB capture on pinned campaign hardware"
+```
+
+Each PASS requires at least one configured, desired-enabled, READY source with a named execution device plus a human physical observation note. Each N/A requires that the source class is not configured **and** a human hardware-availability explanation. The parent Q-LIVE-04 becomes PASS only after all three classes are individually PASS or N/A and at least one class is PASS. A missing Q-LIVE-01 physical PASS, wrongly grouped configured source, or missing durable coverage fails closed. This does not mark Q-LIVE-02/03 or Q-NET-03 PASS.
+
+### Q-CALL-05 and Q-NET-03 evidence-only gates
+
+The runner captures Q-CALL-05 exact Cue/action/command causation and Q-NET-03 null-vs-numeric persistence in one read-only batch. Neither automatic evidence milestone grants a physical gate PASS by itself: Callboard Cue rendering requires explicit physical confirmation; non-null network metrics require verified measurement provenance and actual Operator Cockpit classification. Q-CALL-06, Q-LIVE-01..03 and Q-NET-01/02/04 remain open pending live fault/reconnect and client/Companion evidence.

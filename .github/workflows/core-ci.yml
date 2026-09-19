@@ -57,6 +57,7 @@ jobs:
           tools/qualification/test-batch-workflows.sh
           tools/qualification/test-phase4-inventory.sh
           tools/qualification/test-phase4-evidence.sh
+          tools/qualification/test-live-class-workflow.sh
           tools/qualification/test-callboard-selection.sh
           tools/qualification/test-callboard-optional.sh
       - name: Vet
