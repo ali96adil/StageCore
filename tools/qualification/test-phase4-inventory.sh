@@ -12,13 +12,13 @@ c.executescript("""
 CREATE TABLE projects(project_id TEXT PRIMARY KEY);
 CREATE TABLE stage_devices(device_id TEXT PRIMARY KEY,project_id TEXT,device_kind TEXT,display_name TEXT,capabilities_json TEXT,enabled INTEGER,protocol_version TEXT);
 CREATE TABLE stage_device_runtime_state(device_id TEXT PRIMARY KEY,connection_state TEXT,readiness TEXT,last_seen_at_us INTEGER);
-CREATE TABLE live_video_sources(source_id TEXT PRIMARY KEY,project_id TEXT,name TEXT,source_class TEXT,execution_device_id TEXT,required INTEGER,desired_enabled INTEGER,readiness TEXT,last_observed_at_us INTEGER,endpoint_ref TEXT,config_json TEXT);
+CREATE TABLE live_video_sources(source_id TEXT PRIMARY KEY,project_id TEXT,name TEXT,source_class TEXT,execution_device_id TEXT,execution_machine_role_id TEXT,required INTEGER,desired_enabled INTEGER,readiness TEXT,last_observed_at_us INTEGER,endpoint_ref TEXT,config_json TEXT);
 CREATE TABLE network_observations(observation_id TEXT PRIMARY KEY,target_kind TEXT,target_id TEXT,observed_at_us INTEGER,reachability TEXT,transport_state TEXT,latency_ms REAL,jitter_ms REAL,error_code TEXT,address TEXT,details_json TEXT);
 """)
 c.execute("INSERT INTO projects VALUES ('project-1')")
 c.execute("INSERT INTO stage_devices VALUES (?,?,?,?,?,?,?)",("display-1","project-1","STAGE_DISPLAY","Crew display",'["display.message.show","display.chime.play"]',1,"stagecore.device/1"))
 c.execute("INSERT INTO stage_device_runtime_state VALUES (?,?,?,?)",("display-1","ONLINE","READY",now))
-c.execute("INSERT INTO live_video_sources VALUES (?,?,?,?,?,?,?,?,?,?,?)",("source-1","project-1","Camera","NETWORK_STREAM","render-1",1,1,"READY",now,"rtsp://user:password@private","{\"secret\":\"unexposed\"}"))
+c.execute("INSERT INTO live_video_sources VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",("source-1","project-1","Camera","NETWORK_STREAM",None,"render-1",1,1,"READY",now,"rtsp://user:password@private","{\"secret\":\"unexposed\"}"))
 c.execute("INSERT INTO network_observations VALUES (?,?,?,?,?,?,?,?,?,?,?)",("obs-1","STAGE_DEVICE","display-1",now,"REACHABLE","WEBSOCKET_CONNECTED",None,None,"","192.168.3.10","{\"token\":\"unexposed\"}"))
 c.commit();c.close()
 PY
