@@ -21,6 +21,7 @@ MAPPINGS = [
     ("Q-CALL-02", "physical.observation", ["countdown.command"], "Real Stage Display countdown visibly advanced from one absolute target; it was not repeatedly driven by Hub commands."),
     ("Q-CALL-03", "physical.observation", ["alert.command", "clear.command"], "The selected real Stage Display visibly rendered the bounded semantic pulse alert."),
     ("Q-CALL-04", "physical.observation", ["chime.command"], "The selected real Stage Display audibly played exactly one optional qualification chime."),
+    ("Q-CALL-05", "physical.observation", ["published.cue"], "A Published Callboard Cue or timeline visibly invoked the real Stage Display without autonomous GO."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),
     ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),
     ("Q-DMX-05", "physical.observation", ["fade.command"], "Selected DMX channel visibly completed the requested fade smoothly."),

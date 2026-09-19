@@ -46,7 +46,8 @@ Q19_DIR="$(dirname "$STATE_FILE")/q-dmx-19"
 Q14_DIR="$(dirname "$STATE_FILE")/q-tab-14"
 QTAB16_DIR="$(dirname "$STATE_FILE")/q-tab-16"
 QDRAFT_DIR="$(dirname "$STATE_FILE")/q-draft"
-mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR"
+QPHASE4_DIR="$(dirname "$STATE_FILE")/q-phase4"
+mkdir -p "$Q15_DIR" "$Q16_DIR" "$Q19_DIR" "$Q14_DIR" "$QTAB16_DIR" "$QDRAFT_DIR" "$QPHASE4_DIR"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 python3 tools/qualification/qualification-state.py init   --state "$STATE_FILE"   --manifest "$MANIFEST"   --stagecore-sha "$CURRENT_STAGECORE_SHA"   --tablet-build-sha "${STAGECORE_TABLET_BUILD_SHA:-}"   --tablet-apk-sha256 "${STAGECORE_TABLET_APK_SHA256:-}"   --lighting-firmware-sha "${STAGECORE_LIGHTING_FIRMWARE_SHA:-}"   --hardware-baseline-id "${STAGECORE_HARDWARE_BASELINE_ID:-}" >/dev/null
@@ -454,6 +455,84 @@ stage_qcall_commands() {
   fi
   invoke_command physical-command Q-CALL-03 clear.command DISPLAY_CLEAR "$device" "$project" '{}'
 }
+
+invoke_phase4_evidence() {
+  local gate="$1" key="$2" mode="$3" extra="$4" out="$5"
+  if ! should_run_milestone "$gate" "$key"; then
+    record "$gate::$key" PASS "resume preserved prior read-only Phase 4 evidence"
+    return 0
+  fi
+  set +e
+  python3 - "$mode" "$extra" <<'PY' | \
+    ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper phase4-evidence \
+      >"$out" 2>"$out.stderr"
+import json,sys
+obj=json.loads(sys.argv[2])
+obj["mode"]=sys.argv[1]
+print(json.dumps(obj,separators=(",",":")))
+PY
+  local rc=$?
+  set -e
+  case "$rc" in
+    0) record_milestone "$gate" "$key" PASS "$out" "$mode read-only evidence captured; no physical gate PASS" ;;
+    3) record_milestone "$gate" "$key" BLOCKED "$out" "$mode awaiting proof or prerequisite" ;;
+    *) record_milestone "$gate" "$key" FAIL "$out" "$mode read-only validation failed" ;;
+  esac
+  return "$rc"
+}
+
+phase4_followup_evidence() {
+  local project="${STAGECORE_PROJECT_ID:-}"
+  local inventory="$RUN_DIR/evidence/phase4-inventory.json"
+  local source_out="$QPHASE4_DIR/source-coverage.json"
+  local metric_out="$RUN_DIR/evidence/Q-NET-03.null_metrics.persistence.json"
+  local cue_out="$RUN_DIR/evidence/Q-CALL-05.published.cue.json"
+  if [[ "$PROBE_AVAILABLE" -ne 1 || -z "$project" || ! -s "$inventory" ]] || \
+       [[ "$(milestone_status Q-LIVE-01 inventory.baseline)" != "PASS" ]]; then
+    for spec in "Q-CALL-05 published.cue" "Q-LIVE-04 class.coverage" "Q-NET-03 null_metrics.persistence"; do
+      read -r gate key <<<"$spec"
+      if should_run_milestone "$gate" "$key"; then
+        record_milestone "$gate" "$key" BLOCKED "$RUN_DIR/evidence/$gate.$key.json" "real Phase 4 inventory unavailable"
+      fi
+    done
+    return 3
+  fi
+  local single
+  single="$(python3 - "$project" <<'PY'
+import json,sys
+print(json.dumps({"project_id":sys.argv[1]},separators=(",",":")))
+PY
+)"
+  invoke_phase4_evidence Q-LIVE-04 class.coverage source-coverage "$single" "$source_out" || true
+  invoke_phase4_evidence Q-NET-03 null_metrics.persistence network-null-metrics "$single" "$metric_out" || true
+
+  if [[ "$(gate_status Q-CALL-01)" != "PASS" || -z "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" || -z "${STAGECORE_CALLBOARD_QUALIFICATION_CUE_NAME:-}" ]]; then
+    if should_run_milestone Q-CALL-05 published.cue; then
+      record_milestone Q-CALL-05 published.cue BLOCKED "$cue_out" "confirm real message, then Publish/execute the Callboard Cue in pinned Runtime Snapshot"
+    fi
+    return 0
+  fi
+  local selected device selected_project has_chime rc extra
+  set +e
+  selected="$(python3 tools/qualification/select-callboard.py --input "$inventory" --device-id "${STAGECORE_CALLBOARD_DEVICE_ID:-}" 2>"$RUN_DIR/evidence/callboard-cue-target.stderr")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    record_milestone Q-CALL-05 published.cue BLOCKED "$cue_out" "real display target unavailable or ambiguous"
+    return 3
+  fi
+  IFS="$(printf '\t')" read -r device selected_project has_chime <<<"$selected"
+  extra="$(python3 - "$selected_project" "$device" "$STAGECORE_RUNTIME_SNAPSHOT_ID" "$STAGECORE_CALLBOARD_QUALIFICATION_CUE_NAME" <<'PY'
+import json,sys
+print(json.dumps({
+ "project_id":sys.argv[1],"device_id":sys.argv[2],
+ "runtime_snapshot_id":sys.argv[3],"cue_name":sys.argv[4],
+},separators=(",",":")))
+PY
+)"
+  invoke_phase4_evidence Q-CALL-05 published.cue callboard-cue "$extra" "$cue_out" || true
+}
+
 capture_phase4_inventory() {
   local evidence="$RUN_DIR/evidence/phase4-inventory.json"
   local project_id="${STAGECORE_PROJECT_ID:-}"
@@ -1554,6 +1633,7 @@ fi
 stage_draft_recovery
 
 capture_phase4_inventory || true
+phase4_followup_evidence || true
 
 if [[ "$tablet_target_rc" -eq 0 && "$(gate_status Q-TAB-04)" == "PASS" && "$(gate_status Q-TAB-05)" == "PASS" && -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]]; then
   IFS="$(printf '\t')" read -r _tablet_device tablet_project <<<"$tablet_target"
