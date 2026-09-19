@@ -21,7 +21,7 @@ for spec in \
   "Q-TAB-14 reconnect.post" \
   "Q-TAB-16 group_play.command" \
   "Q-CALL-01 message.command" "Q-CALL-02 countdown.command" \
-  "Q-CALL-03 alert.command" "Q-CALL-04 chime.command" \
+  "Q-CALL-03 alert.command" "Q-CALL-03 clear.command" "Q-CALL-04 chime.command" \
   "Q-DMX-03 set.command" "Q-DMX-04 multi_set.command" \
   "Q-DMX-05 fade.command" "Q-DMX-06 multi_fade.command" \
   "Q-DMX-07 timing.measurement" \

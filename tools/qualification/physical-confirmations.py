@@ -19,7 +19,7 @@ MAPPINGS = [
     ("Q-TAB-16", "physical.observation", ["group_play.command"], "A single Tablet Controller group target visibly started the expected media on at least two real tablets in the same qualified group."),
     ("Q-CALL-01", "physical.observation", ["message.command"], "The selected real Stage Display visibly rendered the qualification message."),
     ("Q-CALL-02", "physical.observation", ["countdown.command"], "Real Stage Display countdown visibly advanced from one absolute target; it was not repeatedly driven by Hub commands."),
-    ("Q-CALL-03", "physical.observation", ["alert.command"], "The selected real Stage Display visibly rendered the bounded semantic pulse alert."),
+    ("Q-CALL-03", "physical.observation", ["alert.command", "clear.command"], "The selected real Stage Display visibly rendered the bounded semantic pulse alert."),
     ("Q-CALL-04", "physical.observation", ["chime.command"], "The selected real Stage Display audibly played exactly one optional qualification chime."),
     ("Q-DMX-03", "physical.observation", ["set.command"], "Selected DMX channel visibly reached the commanded test level."),
     ("Q-DMX-04", "physical.observation", ["multi_set.command"], "Two configured DMX channels visibly reached their commanded levels."),

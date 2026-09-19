@@ -414,6 +414,46 @@ PY
 }
 
 
+stage_qcall_commands() {
+  local inventory="$RUN_DIR/evidence/phase4-inventory.json"
+  local selected rc device project has_chime
+  set +e
+  selected="$(python3 tools/qualification/select-callboard.py --input "$inventory" --device-id "${STAGECORE_CALLBOARD_DEVICE_ID:-}" 2>"$RUN_DIR/evidence/callboard-target.stderr")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    for gate in Q-CALL-01 Q-CALL-02 Q-CALL-03 Q-CALL-04; do
+      record "$gate.target" BLOCKED "real Stage Display target not qualified; see callboard-target.stderr"
+    done
+    return 3
+  fi
+  IFS="$(printf '\t')" read -r device project has_chime <<<"$selected"
+  invoke_command physical-command Q-CALL-01 message.command DISPLAY_MESSAGE "$device" "$project" '{"message":"StageCore qualification standby","category":"STANDBY"}'
+  if [[ "$(milestone_status Q-CALL-01 message.command)" != "PASS" ]]; then
+    record "Q-CALL.safety-stop" BLOCKED "DISPLAY_MESSAGE failed; rest of Callboard actions suppressed"
+    return 3
+  fi
+  sleep 4
+  invoke_command physical-command Q-CALL-02 countdown.command DISPLAY_COUNTDOWN "$device" "$project" '{"duration_seconds":60,"message":"Qualification countdown"}'
+  if [[ "$(milestone_status Q-CALL-02 countdown.command)" != "PASS" ]]; then
+    record "Q-CALL.safety-stop" BLOCKED "DISPLAY_COUNTDOWN failed; later Callboard actions suppressed"
+    return 3
+  fi
+  sleep 8
+  invoke_command physical-command Q-CALL-03 alert.command DISPLAY_ALERT "$device" "$project" '{"message":"Qualification alert","role":"WARNING","motion":"PULSE","intensity_percent":40,"duration_seconds":3}'
+  if [[ "$(milestone_status Q-CALL-03 alert.command)" != "PASS" ]]; then
+    record "Q-CALL.safety-stop" BLOCKED "DISPLAY_ALERT failed; later Callboard actions suppressed"
+    return 3
+  fi
+  sleep 4
+  if [[ "$has_chime" == "1" ]]; then
+    invoke_command physical-command Q-CALL-04 chime.command DISPLAY_CHIME "$device" "$project" '{}'
+    sleep 2
+  else
+    record "Q-CALL-04" BLOCKED "qualified display lacks optional chime; explicit qcall04-na needs physical capability note after Q-CALL-01 observation"
+  fi
+  invoke_command physical-command Q-CALL-03 clear.command DISPLAY_CLEAR "$device" "$project" '{}'
+}
 capture_phase4_inventory() {
   local evidence="$RUN_DIR/evidence/phase4-inventory.json"
   local project_id="${STAGECORE_PROJECT_ID:-}"
@@ -1555,6 +1595,8 @@ esac
 if [[ "${STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS:-0}" == "1" ]]; then
   hold="${STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS:-2}"
   [[ "$hold" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "invalid STAGECORE_QUALIFICATION_PHYSICAL_HOLD_SECONDS" >&2; exit 2; }
+
+  stage_qcall_commands || true
 
   if [[ "$tablet_target_rc" -eq 0 && "$(milestone_status Q-TAB-06 prepare.command)" == "PASS" ]]; then
     IFS="$(printf '\t')" read -r tablet_device tablet_project <<<"$tablet_target"
