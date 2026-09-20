@@ -66,6 +66,11 @@ jobs:
           tools/qualification/test-live-class-workflow.sh
           tools/qualification/test-callboard-selection.sh
           tools/qualification/test-callboard-optional.sh
+      - name: Pi GitHub control agent tests
+        if: matrix.go == '1.26.x'
+        run: |
+          bash -n tools/qualification/pi_control/install.sh
+          python3 -m unittest discover -s tools/qualification/pi_control -p 'test_*.py' -v
       - name: Vet
         run: go vet ./...
       - name: Race tests
