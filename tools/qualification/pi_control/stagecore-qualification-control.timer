@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll private GitHub for StageCore read-only status requests
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=stagecore-qualification-control.service
+
+[Install]
+WantedBy=timers.target
