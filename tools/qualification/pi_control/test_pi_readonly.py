@@ -136,6 +136,31 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(again["processed_gates"]["Q-TAB-05"], "PASS")
         self.assertEqual(again["counts"]["FAIL"], 0)
 
+    def test_partial_issue_retry_does_not_duplicate_gate_or_milestone_history(self):
+        with mock.patch.object(pi_readonly, "targets", return_value={
+            "project_id": "", "runtime_snapshot_id": "",
+            "tablet_id": "", "lighting_id": "",
+        }):
+            probe = self.snapshot([])
+            with mock.patch.object(pi_readonly.export_summary, "export_summary",
+                                   side_effect=FileNotFoundError("simulated missing deployed report")):
+                with self.assertRaises(FileNotFoundError):
+                    pi_readonly.run_readonly(self.cfg, 305, manifest=MANIFEST, probe=probe)
+            saved = json.loads((self.state_dir / "campaign.json").read_text())
+            self.assertEqual(saved["gates"]["Q-TAB-04"]["status"], "BLOCKED")
+            self.assertEqual(saved["gates"]["Q-DMX-20"]["status"], "BLOCKED")
+            outcome = pi_readonly.run_readonly(self.cfg, 305, manifest=MANIFEST, probe=probe)
+            self.assertEqual(outcome["processed_gates"]["Q-TAB-04"], "BLOCKED")
+            self.assertEqual(outcome["processed_gates"]["Q-DMX-20"], "BLOCKED")
+            final = json.loads((self.state_dir / "campaign.json").read_text())
+            for gate in ("Q-TAB-04", "Q-TAB-05", "Q-DMX-20"):
+                self.assertEqual(final["gates"][gate]["history"], saved["gates"][gate]["history"])
+            key = "observation.readiness"
+            self.assertEqual(
+                final["gates"]["Q-DMX-20"]["milestones"][key]["history"],
+                saved["gates"]["Q-DMX-20"]["milestones"][key]["history"],
+            )
+
     def test_only_pinned_author_can_request_run_readonly(self):
         request = {"title": agent.REQUEST_TITLE, "state": "open",
                    "user": {"login": "ali96adil"}, "author_association": "OWNER",
