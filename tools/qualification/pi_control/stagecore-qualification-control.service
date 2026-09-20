@@ -1,0 +1,26 @@
+[Unit]
+Description=StageCore private GitHub qualification status poll (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=stagecore-control
+Group=stagecore-control
+ExecStart=/usr/bin/python3 /opt/stagecore-qualification-control/agent.py --config /etc/stagecore-qualification-control/config.json
+WorkingDirectory=/var/lib/stagecore-control
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/stagecore-control
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+UMask=0077
+TimeoutStartSec=45
+
+[Install]
+WantedBy=multi-user.target
