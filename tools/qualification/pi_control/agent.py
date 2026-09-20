@@ -42,7 +42,7 @@ def parse_request(issue, owner, pinned_sha):
         return None
     if not isinstance(request, dict) or set(request) != ALLOWED_KEYS:
         return None
-    if request["version"] != 1 or request["action"] not in ("status", "report", "verify-campaign") :
+    if request["version"] != 1 or request["action"] not in ("status", "report", "verify-campaign", "run-readonly") :
         return None
     if not isinstance(request["candidate_sha"], str) or not SHA_RE.fullmatch(request["candidate_sha"]):
         return None
@@ -171,7 +171,7 @@ def read_campaign_report(config):
         if set(snapshot) != expected:
             raise ValueError("unrecognized summary schema")
         if snapshot["format"] != "stagecore-imported-campaign-summary-v1" or (
-                snapshot["provenance"] != "MAC_IMPORTED_SNAPSHOT_NOT_LIVE_PI_EVIDENCE"):
+                snapshot["provenance"] not in ("MAC_IMPORTED_SNAPSHOT_NOT_LIVE_PI_EVIDENCE", "PI_READONLY_PROBE_WITH_IMPORTED_BASELINE")):
             raise ValueError("untrusted summary provenance")
         if snapshot["candidate_sha"] != config["pinned_sha"]:
             raise ValueError("summary candidate mismatch")
@@ -253,9 +253,12 @@ def poll_once(config, github):
                     result = read_status(config)
                 elif request["action"] == "report":
                     result = read_campaign_report(config)
-                else:
+                elif request["action"] == "verify-campaign":
                     from verify_campaign import verify_live_campaign
                     result = verify_live_campaign(config)
+                else:
+                    from pi_readonly import run_readonly
+                    result = run_readonly(config, number)
                 atomic_journal(state, number, result)
             fence = chr(96) * 3
             body = marker + "\nStageCore read-only " + request["action"] + " (not a physical qualification PASS):\n\n" + (
