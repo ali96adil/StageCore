@@ -56,7 +56,7 @@ def digest_tree(root):
         rel = "." if path == safe_root else path.relative_to(safe_root).as_posix()
         kind = "D" if stat.S_ISDIR(info.st_mode) else "F"
         digest.update((kind + "\0" + rel + "\0" +
-                       format(stat.S_IMODE(info.st_mode), "o") + "\0").encode())
+                       format(info.st_mode & 0o777, "o") + "\0").encode())
         if kind == "F":
             with path.open("rb") as stream:
                 while True:
