@@ -136,6 +136,28 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(again["processed_gates"]["Q-TAB-05"], "PASS")
         self.assertEqual(again["counts"]["FAIL"], 0)
 
+    def test_unreadable_snapshot_fails_closed_without_campaign_mutation(self):
+        probe = self.snapshot([])
+        before = (self.state_dir / "campaign.json").read_bytes()
+        original = Path.read_bytes
+        def deny_probe(path):
+            if path == probe:
+                raise PermissionError("probe group not readable")
+            return original(path)
+        with mock.patch.object(Path, "read_bytes", deny_probe):
+            outcome = pi_readonly.run_readonly(
+                self.cfg, 304, manifest=MANIFEST, probe=probe)
+        self.assertEqual(outcome["qualification"], "PROBE_UNREADABLE_NO_MUTATION")
+        self.assertEqual((self.state_dir / "campaign.json").read_bytes(), before)
+
+    def test_collector_runtime_group_matches_unprivileged_agent(self):
+        service = (HERE / "stagecore-qualification-probe.service").read_text()
+        collector = (HERE / "collect_probe.sh").read_text()
+        self.assertIn("User=root\\n", service)
+        self.assertIn("Group=stagecore-control\\n", service)
+        self.assertIn("RuntimeDirectoryMode=0750\\n", service)
+        self.assertIn("chown root:stagecore-control", collector)
+
     def test_partial_issue_retry_does_not_duplicate_gate_or_milestone_history(self):
         with mock.patch.object(pi_readonly, "targets", return_value={
             "project_id": "", "runtime_snapshot_id": "",
