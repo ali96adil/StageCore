@@ -10,6 +10,7 @@ Group=root
 ExecStart=/bin/bash /opt/stagecore-qualification-control/collect_probe.sh
 RuntimeDirectory=stagecore-qualification-probe
 RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
