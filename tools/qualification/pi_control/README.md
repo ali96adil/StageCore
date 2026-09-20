@@ -160,3 +160,28 @@ This summary is an interim visibility step. The Mac still owns the raw
   device outputs and physical observations outside unattended control.
 
 Refs #226, #227, #228, #225.
+
+## Cumulative batch inventory: ALL 79 gates (non-mutating)
+
+Run `triage_all_79.py` on the existing Pi against the canonical manifest,
+current imported campaign and latest privileged read-only probe. The script
+prints **exactly 79 sanitized rows** with preserved status, execution method
+and grouped prerequisite. It refuses candidate/manifest/inventory mismatch.
+It does **not** run 79 physical tests, write to the campaign, infer PASS from
+power or CI, read credentials or invoke devices/Hub lifecycle methods.
+It may be used while Tablet registration or Lighting readiness is blocked.
+
+From the checked exact-CI branch on the operator Mac, copy only the script to
+`stagecore-qualification:triage_all_79.py` and execute
+`ssh -tt stagecore-qualification 'sudo python3 "$HOME/triage_all_79.py"'`.
+The output contains no raw identifiers, note, tokens or published
+configuration. The default Pi control timer and Hub are unaffected.
+
+**Do not substitute the original Mac `run-physical.sh --resume` for this
+non-mutating inventory:** that runner includes deliberate network isolation,
+Hub restart, electrical/emergency output and other armed physical sequences,
+and requires its own reviewed operator rehearsal window. Once the 79-row
+triage is available, group recorded defects by root cause, fix one bounded
+slice, and retry only affected gates plus required regression while
+preserving the campaign history.
+
