@@ -42,7 +42,7 @@ def parse_request(issue, owner, pinned_sha):
         return None
     if not isinstance(request, dict) or set(request) != ALLOWED_KEYS:
         return None
-    if request["version"] != 1 or request["action"] not in ("status", "report") :
+    if request["version"] != 1 or request["action"] not in ("status", "report", "verify-campaign") :
         return None
     if not isinstance(request["candidate_sha"], str) or not SHA_RE.fullmatch(request["candidate_sha"]):
         return None
@@ -249,8 +249,13 @@ def poll_once(config, github):
             if journal.exists():
                 result = json.loads(journal.read_text(encoding="utf-8"))
             else:
-                result = (read_status(config) if request["action"] == "status"
-                          else read_campaign_report(config))
+                if request["action"] == "status":
+                    result = read_status(config)
+                elif request["action"] == "report":
+                    result = read_campaign_report(config)
+                else:
+                    from verify_campaign import verify_live_campaign
+                    result = verify_live_campaign(config)
                 atomic_journal(state, number, result)
             fence = chr(96) * 3
             body = marker + "\nStageCore read-only " + request["action"] + " (not a physical qualification PASS):\n\n" + (
