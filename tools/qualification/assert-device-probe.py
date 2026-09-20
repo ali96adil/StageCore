@@ -43,6 +43,8 @@ def main():
     parser.add_argument("--runtime-snapshot-id", default="")
     parser.add_argument("--max-age-seconds", type=int, default=20)
     parser.add_argument("--check", choices=("readiness", "scope", "observation"), default="readiness")
+    parser.add_argument("--expect-online", choices=("yes", "no", "unknown"), default="unknown",
+                        help="yes: an explicitly powered-on device must be ONLINE/READY; no: confirmed intentionally off; unknown: no physical power evidence")
     args = parser.parse_args()
 
     with open(args.input, "r", encoding="utf-8") as fh:
@@ -77,19 +79,31 @@ def main():
         fail(f"{args.kind} missing capabilities: {','.join(missing)}")
 
     runtime = device.get("runtime")
+    # A stale Hub observation cannot establish whether the device is powered.
+    # Do not classify a confirmed switched-off Tablet/ESP32 as a product defect.
+    # Once the operator explicitly confirms that the device is powered on,
+    # missing reachability/readiness is a genuine test failure.
+    unavailable_code = 1 if args.expect_online == "yes" else 3
+    power_reason = ("confirmed powered-on target" if args.expect_online == "yes" else
+                    "confirmed intentionally powered off" if args.expect_online == "no" else
+                    "power state not independently confirmed")
     if not runtime:
-        fail(f"{args.kind} has no runtime observation")
+        fail(f"DEVICE_UNAVAILABLE: {args.kind} has no runtime observation; {power_reason}",
+             unavailable_code)
     if runtime.get("connection_state") != "ONLINE":
-        fail(f"{args.kind} connection={runtime.get('connection_state')}")
+        fail(f"DEVICE_UNAVAILABLE: {args.kind} connection={runtime.get('connection_state')}; {power_reason}",
+             unavailable_code)
     if runtime.get("readiness") != "READY":
-        fail(f"{args.kind} readiness={runtime.get('readiness')}")
+        fail(f"DEVICE_UNAVAILABLE: {args.kind} readiness={runtime.get('readiness')}; {power_reason}",
+             unavailable_code)
 
     last_seen_us = runtime.get("last_seen_at_us")
     if not isinstance(last_seen_us, int):
-        fail(f"{args.kind} missing last_seen")
+        fail(f"DEVICE_UNAVAILABLE: {args.kind} missing last_seen; {power_reason}", unavailable_code)
     age = time.time() - (last_seen_us / 1_000_000)
     if age < -5 or age > args.max_age_seconds:
-        fail(f"{args.kind} observation stale age_seconds={age:.1f}")
+        fail(f"DEVICE_UNAVAILABLE: {args.kind} observation stale age_seconds={age:.1f}; {power_reason}",
+             unavailable_code)
 
     observed = runtime.get("observed") or {}
 
