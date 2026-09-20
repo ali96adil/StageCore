@@ -14,10 +14,11 @@ PROBE=stagecore-qualification-probe
 [[ "$(sha256sum /opt/stagecore/bin/stagecore-hub | awk '{print $1}')" == "$HUB_SHA" ]] || { echo "STOP: deployed Hub digest differs" >&2; exit 3; }
 [[ "$(sha256sum "$DEST/manifest.json" | awk '{print $1}')" == "$MANIFEST_SHA" ]] || { echo "STOP: installed manifest differs" >&2; exit 3; }
 [[ -f "$PRIVATE/campaign.json" && ! -L "$PRIVATE/campaign.json" ]] || { echo "STOP: canonical Pi campaign unavailable" >&2; exit 3; }
-for file in export_summary.py pi_readonly.py qualification-report.py "$PROBE.service"; do
+for file in export_summary.py pi_readonly.py qualification-report.py collect_probe.sh "$PROBE.service"; do
   [[ -f "$HERE/$file" && ! -L "$HERE/$file" ]] || { echo "STOP: missing reviewed repair input $file" >&2; exit 3; }
 done
 python3 -m py_compile "$HERE/export_summary.py" "$HERE/pi_readonly.py" "$HERE/qualification-report.py"
+bash -n "$HERE/collect_probe.sh"
 python3 - "$HERE" "$PRIVATE/campaign.json" "$DEST/manifest.json" <<'PY'
 import importlib.util,sys
 from pathlib import Path
@@ -41,6 +42,7 @@ systemctl stop "$PROBE.timer" "$PROBE.service"
 install -o root -g root -m 0644 "$HERE/export_summary.py" "$DEST/export_summary.py"
 install -o root -g root -m 0644 "$HERE/pi_readonly.py" "$DEST/pi_readonly.py"
 install -o root -g root -m 0644 "$HERE/qualification-report.py" "$DEST/qualification-report.py"
+install -o root -g root -m 0755 "$HERE/collect_probe.sh" "$DEST/collect_probe.sh"
 install -o root -g root -m 0644 "$HERE/$PROBE.service" "/etc/systemd/system/$PROBE.service"
 systemctl daemon-reload
 systemctl start "$PROBE.service"
