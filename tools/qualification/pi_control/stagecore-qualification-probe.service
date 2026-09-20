@@ -6,7 +6,8 @@ Requires=stagecore-hub.service
 [Service]
 Type=oneshot
 User=root
-Group=root
+# RuntimeDirectory must retain group search permission for the unprivileged agent.
+Group=stagecore-control
 ExecStart=/bin/bash /opt/stagecore-qualification-control/collect_probe.sh
 RuntimeDirectory=stagecore-qualification-probe
 RuntimeDirectoryMode=0750
