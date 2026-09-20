@@ -49,8 +49,8 @@ class RollbackAuditTest(unittest.TestCase):
             root.chmod(0o700)
             actual, files, size = rollback.digest_tree(root)
             h = hashlib.sha256()
-            h.update(b"D\0.\0700\0\0")
-            h.update(b"F\0a.txt\0600\0abc\0")
+            h.update(b"D\0.\0" + b"700\0\0")
+            h.update(b"F\0a.txt\0" + b"600\0abc\0")
             self.assertEqual(actual, h.hexdigest())
             self.assertEqual((files, size), (1, 3))
 
