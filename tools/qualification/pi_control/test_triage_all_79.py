@@ -44,6 +44,9 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(result["device_facts"]["tablet_registered"], 0)
         self.assertEqual(result["device_facts"]["lighting_online"], 1)
         actions = {row["gate"]: row["next"] for row in result["gates"]}
+        self.assertEqual(actions["Q-TAB-01"], "EXACT_APK_INSTALLATION_PHYSICAL_EVIDENCE_REQUIRED")
+        self.assertEqual(actions["Q-TAB-02"], "EXACT_RC3_APK_BUILD_IDENTITY_EVIDENCE_REQUIRED")
+        self.assertEqual(actions["Q-TAB-03"], "SECURE_TABLET_PAIRING_REQUIRED")
         self.assertEqual(actions["Q-TAB-04"], "TABLET_REGISTRATION_REQUIRED")
         self.assertEqual(actions["Q-DMX-20"], "LIGHTING_READINESS_AND_PUBLISHED_CONFIG_REQUIRED")
         self.assertEqual(sum(group["total"] for group in result["groups"]), 79)
