@@ -30,7 +30,7 @@ def fixtures(folder):
         "schema_version": 1,
         "manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "pins": {"stagecore_sha": SHA},
-        "campaign_id": "test",
+        "campaign_id": "2026-09-20T120557Z",
         "created_at": "2026-09-20T00:00:00Z",
         "gates": {g["id"]: {
             "status": "PENDING", "method": "AUTO", "evidence": [],
