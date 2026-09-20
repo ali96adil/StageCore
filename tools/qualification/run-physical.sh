@@ -1735,8 +1735,24 @@ else
     recover_q19_if_needed
     INSTALLED_MATCH=0
     installed_log="$RUN_DIR/evidence/pi-installed-revision.log"
+    revision_evidence=0
+    # Prefer the Pi's Go buildinfo tool, but a deployed production Pi is not
+    # required to have a Go toolchain. Inspect the installed binary locally
+    # when the remote tool is absent or cannot decode its metadata.
     if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" go version -m /opt/stagecore/bin/stagecore-hub \
          >"$installed_log" 2>"$RUN_DIR/evidence/pi-installed-revision.stderr"; then
+      revision_evidence=1
+    else
+      installed_binary="$(mktemp "${TMPDIR:-/tmp}/stagecore-installed-hub.XXXXXX")"
+      if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" cat /opt/stagecore/bin/stagecore-hub \
+           >"$installed_binary" 2>"$RUN_DIR/evidence/pi-installed-copy.stderr" && \
+           go version -m "$installed_binary" >"$installed_log" \
+             2>"$RUN_DIR/evidence/pi-installed-local-go.stderr"; then
+        revision_evidence=1
+      fi
+      rm -f "$installed_binary"
+    fi
+    if [[ "$revision_evidence" -eq 1 ]]; then
       if python3 tools/qualification/assert-installed-revision.py \
            --input "$installed_log" --expected "$CURRENT_STAGECORE_SHA" \
            >"$RUN_DIR/evidence/pi-installed-revision.check"; then
@@ -1746,7 +1762,7 @@ else
         record "pi.installed.revision" BLOCKED "Pi Hub is not the pinned candidate; see evidence/pi-installed-revision.check"
       fi
     else
-      record "pi.installed.revision" BLOCKED "cannot establish installed Hub revision from read-only SSH evidence"
+      record "pi.installed.revision" BLOCKED "cannot establish installed Hub revision from read-only SSH/binary evidence"
     fi
     if [[ "$INSTALLED_MATCH" -eq 1 ]]; then
       check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
