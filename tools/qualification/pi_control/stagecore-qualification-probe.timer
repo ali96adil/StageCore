@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh StageCore read-only device snapshot
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=stagecore-qualification-probe.service
+
+[Install]
+WantedBy=timers.target
