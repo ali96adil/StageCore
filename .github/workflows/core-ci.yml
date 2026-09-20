@@ -33,6 +33,7 @@ jobs:
         run: |
           tools/qualification/test-runner.sh
           tools/qualification/test-device-probe.sh
+          bash tools/qualification/test-installed-revision.sh
           tools/qualification/test-manifest.sh
           tools/qualification/test-campaign-state.sh
           bash tools/qualification/test-qualification-report.sh
