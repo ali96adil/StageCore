@@ -55,6 +55,14 @@ case "${1:-}" in
     cat "$REPORT_DIR/defects.csv"
     echo "===== BLOCKED ====="
     cat "$REPORT_DIR/blocked.csv"
+    # Local preflight checks are not manifest gates (and must not inflate progress).
+    # Their raw failures remain durably captured in each run's results.tsv.
+    latest_results="$(find qualification/runs -mindepth 2 -maxdepth 2 -name results.tsv -type f 2>/dev/null | LC_ALL=C sort -r | head -n 1 || true)"
+    if [[ -n "$latest_results" ]]; then
+      echo "===== LATEST RUN PRECHECKS / TRANSIENT BLOCKERS ====="
+      awk -F '\\t' '($2 == "FAIL" || $2 == "BLOCKED") && $1 !~ /^Q-/ { print }' "$latest_results"
+      echo "RAW RUN: $latest_results"
+    fi
     ;;
   manual)
     shift
