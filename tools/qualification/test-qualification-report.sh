@@ -43,7 +43,7 @@ assert s["counts"]["FAIL"] == 0 and s["counts"]["PASS"] == 2
 assert list(csv.DictReader((out/"defects.csv").open())) == []
 PY
 STAGECORE_QUALIFICATION_STATE="$state" STAGECORE_QUALIFICATION_REPORT_DIR="$tmp/wrapper-report" \
-  "$ROOT/tools/qualification/qualify.sh" status >"$tmp/wrapper-status"
+  bash "$ROOT/tools/qualification/qualify.sh" status >"$tmp/wrapper-status"
 grep -q "^QUALIFICATION " "$tmp/wrapper-status"
 bash -n "$ROOT/tools/qualification/qualify.sh"
 echo "qualification progress and retry reporting self-test PASS"
