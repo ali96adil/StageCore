@@ -1716,11 +1716,33 @@ else
   recover_q19_if_needed
   check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
   check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
-  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe       >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
-    PROBE_AVAILABLE=1
-    record "devices.probe" PASS "see evidence/devices.json"
+  # A remote SSH connection is NOT evidence that the correct StageCore
+  # release was deployed. Gate all product/device checks on exact Hub SHA.
+  INSTALLED_MATCH=0
+  installed_log="$RUN_DIR/evidence/pi-installed-revision.log"
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" go version -m /opt/stagecore/bin/stagecore-hub \
+       >"$installed_log" 2>"$RUN_DIR/evidence/pi-installed-revision.stderr"; then
+    if python3 tools/qualification/assert-installed-revision.py \
+         --input "$installed_log" --expected "$CURRENT_STAGECORE_SHA" \
+         >"$RUN_DIR/evidence/pi-installed-revision.check"; then
+      INSTALLED_MATCH=1
+      record "pi.installed.revision" PASS "exact installed Hub revision matches pinned candidate"
+    else
+      record "pi.installed.revision" BLOCKED "Pi Hub is not the pinned qualification candidate; see evidence/pi-installed-revision.check"
+    fi
   else
-    record "devices.probe" FAIL "see evidence/device-probe.stderr"
+    record "pi.installed.revision" BLOCKED "cannot establish installed Hub revision from read-only SSH evidence"
+  fi
+  if [[ "$INSTALLED_MATCH" -eq 1 ]]; then
+    if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe \
+         >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
+      PROBE_AVAILABLE=1
+      record "devices.probe" PASS "see evidence/devices.json"
+    else
+      record "devices.probe" FAIL "Hub device-probe failed on the pinned candidate; see evidence/device-probe.stderr"
+    fi
+  else
+    record "devices.probe" BLOCKED "device evidence deferred until installed Hub matches the pinned candidate"
   fi
 fi
 
