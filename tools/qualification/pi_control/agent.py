@@ -195,8 +195,9 @@ def poll_once(config, github):
             else:
                 result = read_status(config)
                 atomic_journal(state, number, result)
+            fence = chr(96) * 3
             body = marker + "\nStageCore read-only status (not a physical qualification PASS):\n\n" + (
-                "\`\`\`json\n" + json.dumps(result, sort_keys=True, indent=2) + "\n\`\`\`"
+                fence + "json\n" + json.dumps(result, sort_keys=True, indent=2) + "\n" + fence
             )
             github.post_result(number, body)
             github.close(number)
