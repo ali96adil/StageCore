@@ -574,6 +574,19 @@ The root-owned read-only `callboard-reconnect` helper requires a completed real 
 Isolate only selected display network (not Hub, power or other clients), run `campaign.sh qcall06-ack disconnect "display-only network isolated"`, restore network, then `campaign.sh qcall06-ack reconnect "display network restored"`, and resume. Post evidence requires actual ordered disconnect/reconnect observations, fresh ONLINE/READY, unchanged production command count and durable IDLE command identity. Missing baseline after disconnection fails closed. Physical PASS still requires real visual observation of no expired alert/chime replay. No credentials or source config is collected.
 
 
+## Remote deployment and intentional offline hardware
+
+The supported exact-SHA Pi update, secure remote SSH access, installed-revision
+guard and intentional powered-off Tablet/ESP32 flags are documented in
+[`REMOTE_AND_DEPLOYMENT.md`](REMOTE_AND_DEPLOYMENT.md). Do not run against an
+outdated or unverified Hub: `pi.installed.revision` must PASS first.
+`DEFERRED_OFFLINE` is a BLOCKED readiness prerequisite, **not** an accepted
+physical check and not a product FAIL. When the device is intentionally off,
+use `STAGECORE_TABLET_EXPECT_ON=0` and/or `STAGECORE_LIGHTING_EXPECT_ON=0`;
+after you independently confirm power ON, set the relevant value to `1`
+before retry. Running from outside the house requires an authenticated
+private network connection to the Pi; never forward the Hub or SSH publicly.
+
 ## One-command campaign and percentage dashboard
 
 After the documented **one-time** key/credential setup and supported installation of the
