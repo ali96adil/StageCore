@@ -42,7 +42,7 @@ def parse_request(issue, owner, pinned_sha):
         return None
     if not isinstance(request, dict) or set(request) != ALLOWED_KEYS:
         return None
-    if request["version"] != 1 or request["action"] != "status":
+    if request["version"] != 1 or request["action"] not in ("status", "report") :
         return None
     if not isinstance(request["candidate_sha"], str) or not SHA_RE.fullmatch(request["candidate_sha"]):
         return None
@@ -158,6 +158,62 @@ def read_status(config):
     }
 
 
+def read_campaign_report(config):
+    """Read only a sanitized imported summary, never the private raw evidence."""
+    path = Path(config["state_dir"]) / "campaign-summary.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+        return {"qualification": "IMPORT_REQUIRED_NOT_LIVE_PI_EVIDENCE",
+                "candidate_sha": config["pinned_sha"]}
+    try:
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        expected = {"format", "campaign_id", "candidate_sha", "manifest_sha256",
+                    "total", "completed", "remaining", "counts", "groups", "provenance"}
+        if set(snapshot) != expected:
+            raise ValueError("unrecognized summary schema")
+        if snapshot["format"] != "stagecore-imported-campaign-summary-v1" or (
+                snapshot["provenance"] != "MAC_IMPORTED_SNAPSHOT_NOT_LIVE_PI_EVIDENCE"):
+            raise ValueError("untrusted summary provenance")
+        if snapshot["candidate_sha"] != config["pinned_sha"]:
+            raise ValueError("summary candidate mismatch")
+        if not re.fullmatch(r"[0-9a-f]{64}", snapshot["manifest_sha256"]):
+            raise ValueError("invalid manifest digest")
+        if not isinstance(snapshot["campaign_id"], str) or len(snapshot["campaign_id"]) > 128:
+            raise ValueError("invalid campaign ID")
+        counts = snapshot["counts"]
+        keys = {"PASS", "FAIL", "BLOCKED", "PENDING", "N/A"}
+        if not isinstance(counts, dict) or set(counts) != keys:
+            raise ValueError("invalid gate result counts")
+        if any(type(x) is not int or x < 0 for x in counts.values()):
+            raise ValueError("invalid gate count")
+        total = snapshot["total"]
+        completed = snapshot["completed"]
+        remaining = snapshot["remaining"]
+        if (type(total) is not int or total <= 0 or total > 1000 or
+                type(completed) is not int or type(remaining) is not int or
+                completed != counts["PASS"] + counts["N/A"] or
+                sum(counts.values()) != total or remaining != total - completed):
+            raise ValueError("inconsistent gate counts")
+        groups = snapshot["groups"]
+        if not isinstance(groups, list) or len(groups) > 30:
+            raise ValueError("invalid groups")
+        for group in groups:
+            if not isinstance(group, dict) or set(group) != {"id", "total", "completed", "counts"}:
+                raise ValueError("invalid group schema")
+            if not isinstance(group["id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", group["id"]):
+                raise ValueError("invalid group ID")
+            if set(group["counts"]) != keys or any(type(v) is not int or v < 0 for v in group["counts"].values()):
+                raise ValueError("invalid group counts")
+            if group["total"] != sum(group["counts"].values()) or (
+                    group["completed"] != group["counts"]["PASS"] + group["counts"]["N/A"]):
+                raise ValueError("inconsistent group counts")
+        if sum(g["total"] for g in groups) != total:
+            raise ValueError("group totals mismatch")
+        return snapshot
+    except (OSError, ValueError, TypeError, KeyError):
+        return {"qualification": "INVALID_IMPORTED_SUMMARY_NOT_PHYSICAL_PASS",
+                "candidate_sha": config["pinned_sha"]}
+
+
 def atomic_journal(directory, number, result):
     path = directory / ("issue-{}.json".format(number))
     temp = directory / (".issue-{}.tmp".format(number))
@@ -193,10 +249,11 @@ def poll_once(config, github):
             if journal.exists():
                 result = json.loads(journal.read_text(encoding="utf-8"))
             else:
-                result = read_status(config)
+                result = (read_status(config) if request["action"] == "status"
+                          else read_campaign_report(config))
                 atomic_journal(state, number, result)
             fence = chr(96) * 3
-            body = marker + "\nStageCore read-only status (not a physical qualification PASS):\n\n" + (
+            body = marker + "\nStageCore read-only " + request["action"] + " (not a physical qualification PASS):\n\n" + (
                 fence + "json\n" + json.dumps(result, sort_keys=True, indent=2) + "\n" + fence
             )
             github.post_result(number, body)
