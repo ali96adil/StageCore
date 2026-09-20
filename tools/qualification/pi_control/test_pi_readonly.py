@@ -153,9 +153,9 @@ class RunnerTest(unittest.TestCase):
     def test_collector_runtime_group_matches_unprivileged_agent(self):
         service = (HERE / "stagecore-qualification-probe.service").read_text()
         collector = (HERE / "collect_probe.sh").read_text()
-        self.assertIn("User=root\\n", service)
-        self.assertIn("Group=stagecore-control\\n", service)
-        self.assertIn("RuntimeDirectoryMode=0750\\n", service)
+        self.assertIn("User=root\n", service)
+        self.assertIn("Group=stagecore-control\n", service)
+        self.assertIn("RuntimeDirectoryMode=0750\n", service)
         self.assertIn("chown root:stagecore-control", collector)
 
     def test_partial_issue_retry_does_not_duplicate_gate_or_milestone_history(self):
