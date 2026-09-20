@@ -71,6 +71,7 @@ jobs:
         run: |
           bash -n tools/qualification/pi_control/install.sh
           bash -n tools/qualification/pi_control/upgrade-readonly.sh
+          bash -n tools/qualification/pi_control/repair-readonly.sh
           bash -n tools/qualification/pi_control/collect_probe.sh
           python3 -m unittest discover -s tools/qualification/pi_control -p 'test_*.py' -v
       - name: Vet
