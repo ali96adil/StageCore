@@ -105,7 +105,8 @@ def run_readonly(config, issue_number, *, manifest=MANIFEST, probe=SNAPSHOT):
                 "candidate_sha": config["pinned_sha"]}
     try:
         if probe.is_symlink() or not probe.is_file():
-            raise FileNotFoundError("canonical probe unavailable")
+            return {"qualification": "PROBE_SNAPSHOT_MISSING_OR_STALE_NO_MUTATION",
+                    "candidate_sha": config["pinned_sha"]}
         probe_info = probe.stat()
         if time.time() - probe_info.st_mtime > 150:
             return {"qualification": "PROBE_SNAPSHOT_MISSING_OR_STALE_NO_MUTATION",
