@@ -12,7 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 RESULTS = ("PENDING", "PASS", "FAIL", "BLOCKED", "N/A")
-SENSITIVE = re.compile(r"(?i)(password|secret|token|cookie|authorization|private.key)\\s*[:=]\\s*\\S+")
+SENSITIVE = re.compile(r"(?i)(password|secret|token|cookie|authorization|private.key)\s*[:=]\s*\S+")
 
 
 def safe(value):
@@ -59,8 +59,10 @@ def as_csv(fields, rows):
 def summarize(manifest, state):
     manifest_gates = {}
     group_names = {}
+    group_issues = {}
     for group in manifest["groups"]:
         group_names[group["id"]] = group["title"]
+        group_issues[group["id"]] = group["source_issue"]
         for gate in group["gates"]:
             gate_id = gate["id"]
             if gate_id in manifest_gates:
@@ -82,7 +84,7 @@ def summarize(manifest, state):
         rows.append({
             "gate_id": gate_id,
             "group": group_id,
-            "source_issue": definition["source_issue"],
+            "source_issue": group_issues[group_id],
             "method": definition["method"],
             "acceptance": definition["acceptance"],
             "status": status,
