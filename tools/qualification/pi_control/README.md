@@ -100,6 +100,50 @@ After the timer polls and processes the issue, read its result comment through
 the connected GitHub tool. Creating the issue **before the Pi agent is
 installed** only creates an inert issue; it does not run a command.
 
+## Second slice: pinned campaign summary (imported, not live)
+
+This separate follow-up branch adds a read-only `report` action. It does not
+migrate raw evidence or run the physical campaign. First, export the **existing**
+Mac campaign with the authoritative manifest. The exporter verifies the
+manifest SHA and excludes all evidence paths, notes, secrets, command payloads,
+device IDs and names. It writes only aggregate counts and group counts.
+
+After this branch passes Linux CI, the operator can fetch it into a separate
+Mac worktree and deploy only the updated agent (the old timer and token remain
+in place):
+
+```bash
+git -C "$HOME/StageCore" fetch origin qualification/pi-campaign-summary-control
+git -C "$HOME/StageCore" worktree add --detach "$HOME/StageCore-control-report" origin/qualification/pi-campaign-summary-control
+cd "$HOME/StageCore-control-report"
+python3 tools/qualification/pi_control/export_summary.py \
+  --state "$HOME/.local/state/stagecore/qualification-campaign.json" \
+  --manifest tools/qualification/manifest.json \
+  --output "$HOME/.local/state/stagecore/qualification-safe-summary.json"
+scp tools/qualification/pi_control/agent.py stagecore-qualification:pi-agent-next.py
+scp "$HOME/.local/state/stagecore/qualification-safe-summary.json" stagecore-qualification:pi-campaign-summary.json
+ssh -tt stagecore-qualification 'sudo systemctl stop stagecore-qualification-control.timer && sudo install -o stagecore-control -g stagecore-control -m 0600 "$HOME/pi-campaign-summary.json" /var/lib/stagecore-control/campaign-summary.json && sudo install -o root -g root -m 0644 "$HOME/pi-agent-next.py" /opt/stagecore-qualification-control/agent.py && sudo systemctl start stagecore-qualification-control.timer'
+```
+
+Before issuing a request, verify locally on the Mac that the source state
+remains pinned to the **installed** candidate SHA and that CI passed for the
+exact control-agent code. Do not use these install commands to modify Hub,
+credential files or the archived original campaign.
+
+After the next timer tick, a trusted actor can create the private Issue title
+`StageCore Qualification Request v1` with the JSON body:
+
+```json
+{"version":1,"action":"report","candidate_sha":"809d1f4ce7a5824c27ecf82d78cd779cd28f6e6a"}
+```
+
+The Pi returns `MAC_IMPORTED_SNAPSHOT_NOT_LIVE_PI_EVIDENCE` with only
+manifest-validated counts. A missing or mismatched snapshot yields
+`IMPORT_REQUIRED_NOT_LIVE_PI_EVIDENCE` or
+`INVALID_IMPORTED_SUMMARY_NOT_PHYSICAL_PASS`, never a fabricated PASS.
+This summary is an interim visibility step. The Mac still owns the raw
+79-gate campaign until a subsequent explicit, integrity-checked migration.
+
 ## Next slice, deliberately not implemented here
 
 - Safely move/import the existing zero-completed 79-gate campaign and its
