@@ -157,6 +157,8 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("Group=stagecore-control\n", service)
         self.assertIn("RuntimeDirectoryMode=0750\n", service)
         self.assertIn("chown root:stagecore-control", collector)
+        self.assertNotIn("Requires=stagecore-hub.service", service)
+        self.assertIn("systemctl is-active --quiet stagecore-hub.service", collector)
 
     def test_partial_issue_retry_does_not_duplicate_gate_or_milestone_history(self):
         with mock.patch.object(pi_readonly, "targets", return_value={
