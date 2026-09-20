@@ -103,11 +103,19 @@ def run_readonly(config, issue_number, *, manifest=MANIFEST, probe=SNAPSHOT):
     if not guarded["installed_binary_matches"] or guarded["hub_service"] != "active" or not guarded["hub_ready"]:
         return {"qualification": "PI_HUB_NOT_READY_NO_MUTATION",
                 "candidate_sha": config["pinned_sha"]}
-    if probe.is_symlink() or not probe.is_file() or time.time() - probe.stat().st_mtime > 150:
-        return {"qualification": "PROBE_SNAPSHOT_MISSING_OR_STALE_NO_MUTATION",
-                "candidate_sha": config["pinned_sha"]}
-    if probe.stat().st_size > 1024 * 1024:
-        return {"qualification": "PROBE_TOO_LARGE_NO_MUTATION",
+    try:
+        if probe.is_symlink() or not probe.is_file():
+            raise FileNotFoundError("canonical probe unavailable")
+        probe_info = probe.stat()
+        if time.time() - probe_info.st_mtime > 150:
+            return {"qualification": "PROBE_SNAPSHOT_MISSING_OR_STALE_NO_MUTATION",
+                    "candidate_sha": config["pinned_sha"]}
+        if probe_info.st_size > 1024 * 1024:
+            return {"qualification": "PROBE_TOO_LARGE_NO_MUTATION",
+                    "candidate_sha": config["pinned_sha"]}
+        probe_bytes = probe.read_bytes()
+    except (OSError, ValueError):
+        return {"qualification": "PROBE_UNREADABLE_NO_MUTATION",
                 "candidate_sha": config["pinned_sha"]}
     try:
         settings = targets()
@@ -117,7 +125,11 @@ def run_readonly(config, issue_number, *, manifest=MANIFEST, probe=SNAPSHOT):
 
     state_dir = Path(config["state_dir"])
     campaign = state_dir / "campaign.json"
-    snapshot = json.loads(probe.read_text(encoding="utf-8"))
+    try:
+        snapshot = json.loads(probe_bytes)
+    except (ValueError, TypeError):
+        return {"qualification": "INVALID_PROBE_SNAPSHOT_NO_MUTATION",
+                "candidate_sha": config["pinned_sha"]}
     if snapshot.get("schema_version") != 1 or not isinstance(snapshot.get("devices"), list):
         return {"qualification": "INVALID_PROBE_SNAPSHOT_NO_MUTATION",
                 "candidate_sha": config["pinned_sha"]}
@@ -132,26 +144,32 @@ def run_readonly(config, issue_number, *, manifest=MANIFEST, probe=SNAPSHOT):
             raise ValueError("unsafe previous evidence")
     else:
         with path.open("xb") as out:
-            out.write(probe.read_bytes())
+            out.write(probe_bytes)
         path.chmod(0o600)
     outcomes = {}
     existing = json.loads(campaign.read_text(encoding="utf-8"))["gates"]
 
+    def already_recorded_this_request(gate):
+        item = existing[gate]
+        return (item.get("actor") == "pi-readonly-probe" and
+                str(path) in item.get("evidence", []) and
+                item.get("status") in ("PASS", "FAIL", "BLOCKED"))
+
     def apply(gate, status, message):
-        if existing[gate]["status"] in ("PASS", "N/A"):
+        if existing[gate]["status"] in ("PASS", "N/A") or already_recorded_this_request(gate):
             outcomes[gate] = existing[gate]["status"]
             return
         record(campaign, gate, status, path, message)
         outcomes[gate] = status
 
-    if existing["Q-TAB-04"]["status"] in ("PASS", "N/A"):
+    if existing["Q-TAB-04"]["status"] in ("PASS", "N/A") or already_recorded_this_request("Q-TAB-04"):
         outcomes["Q-TAB-04"] = existing["Q-TAB-04"]["status"]
     else:
         tablet_result = run_assert(path, "tablet", "readiness", settings)
         tablet_status = classify(tablet_result)
         apply("Q-TAB-04", tablet_status, "Pi canonical read-only tablet readiness")
 
-    if existing["Q-TAB-05"]["status"] in ("PASS", "N/A"):
+    if existing["Q-TAB-05"]["status"] in ("PASS", "N/A") or already_recorded_this_request("Q-TAB-05"):
         outcomes["Q-TAB-05"] = existing["Q-TAB-05"]["status"]
     elif outcomes["Q-TAB-04"] != "PASS" or not settings["project_id"] or not settings["runtime_snapshot_id"]:
         apply("Q-TAB-05", "BLOCKED", "Exact operator-confirmed project and snapshot plus READY Tablet required")
@@ -159,13 +177,15 @@ def run_readonly(config, issue_number, *, manifest=MANIFEST, probe=SNAPSHOT):
         scope_result = run_assert(path, "tablet", "scope", settings)
         apply("Q-TAB-05", classify(scope_result), "Pi canonical read-only Tablet scope assertion")
 
-    if existing["Q-DMX-20"]["status"] in ("PASS", "N/A"):
+    if existing["Q-DMX-20"]["status"] in ("PASS", "N/A") or already_recorded_this_request("Q-DMX-20"):
         outcomes["Q-DMX-20"] = existing["Q-DMX-20"]["status"]
     else:
         lighting_result = run_assert(path, "lighting", "observation", settings)
         lighting_status = classify(lighting_result)
         old_milestone = (existing["Q-DMX-20"].get("milestones") or {}).get("observation.readiness", {})
-        if old_milestone.get("status") != "PASS":
+        if old_milestone.get("status") != "PASS" and not (
+                old_milestone.get("actor") == "pi-readonly-probe" and
+                str(path) in old_milestone.get("evidence", [])):
             record(campaign, "Q-DMX-20", lighting_status, path,
                    "Pi read-only canonical lighting readiness/observation",
                    milestone="observation.readiness")
