@@ -24,7 +24,7 @@ def verify_campaign(state, manifest_data, manifest_raw):
         raise ValueError("campaign schema/manifest mismatch")
     if state.get("pins", {}).get("stagecore_sha") != SHA:
         raise ValueError("campaign does not match the deployed Hub candidate")
-    if not isinstance(state.get("campaign_id"), str) or len(state["campaign_id"]) > 128:
+    if not isinstance(state.get("campaign_id"), str) or not re.fullmatch(r"[0-9TZ:+.\\-]{1,128}", state["campaign_id"]):
         raise ValueError("missing/invalid campaign identity")
     manifest_gates = {g["id"]: g for group in manifest_data.get("groups", [])
                       for g in group.get("gates", [])}
