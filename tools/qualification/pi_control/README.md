@@ -191,3 +191,24 @@ preserving the campaign history.
 `batch_preflight.py` imports `triage_all_79.py` from the same directory. It verifies the exact deployed Hub binary digest, reads service and loopback readiness, and aggregates canonical SQLite project, published Runtime Snapshot, lighting binding, device kind, live source and network row counts using `mode=ro` plus `PRAGMA query_only`. It outputs no raw device/project IDs, configurations or credentials. A published manifest count is NOT proof that the real ESP32 applied it, and this script NEVER records gate PASS.
 
 Stage both files to the same Pi operator directory, refresh the existing read-only probe timer once, and run `sudo python3` on the batch script. Do not run the armed physical runner in place of this preflight. Keep the canonical campaign, Hub SHA and private evidence unchanged.
+
+## Read-only F-010 rollback snapshot checksum audit
+
+`verify_rollback.py` checks the **latest** snapshot inside
+`/var/backups/stagecore/updates`: manifest schema/identity, exactly four
+expected managed payloads, and Go-compatible streaming SHA-256 tree digests,
+regular-file counts and byte sizes. It refuses symlinks and non-regular
+payload entries. It does not restore/copy/prune, load tokens, stop the Hub or
+mutate canonical qualification status. This is checksum verification, **not
+a real restore or evidence for Q-SYS-05 PASS** by itself.
+
+After exact-head CI succeeds, stage only the reviewed script on Pi, then
+execute `sudo python3 "$HOME/pi_readonly_stage/verify_rollback.py"`.
+Because the data-root payload can be large, streaming verification may
+take time; run outside show time and do not interrupt unless necessary.
+
+The earlier `PRAGMA foreign_keys=0` in a newly opened read-only SQLite
+connection is a connection-local setting, not an FK corruption finding.
+For a separate relationship audit, explicitly enable `PRAGMA foreign_keys=ON`
+on a **read-only** connection before `PRAGMA foreign_key_check` and
+report only its pass/fail status, never row IDs.
