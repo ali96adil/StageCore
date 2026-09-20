@@ -41,43 +41,51 @@ administration, workflow, contents write, or other repositories. Do not enter
 the token into ChatGPT, a GitHub issue, a commit, CI logs or source control.
 Revoke it in GitHub to cut off the channel.
 
-## Operator provisioning (not yet executed)
+## One-time operator provisioning (NOT YET EXECUTED)
 
-Install from a reviewed/approved version of this slice, **not by blindly
-running unreviewed PR code on the Pi**:
+First confirm this branch's Linux CI PASS and review its status-only code.
+Create a **fine-grained GitHub PAT** restricted to this private `StageCore`
+repository with **Issues: Read/write** and metadata read. Do not paste it
+into ChatGPT, terminal commands, issues, logs or a repository.
 
-1. Create the system account `stagecore-control` (system, no interactive
-   shell), and private state directory `/var/lib/stagecore-control` owned by
-   that account with mode `0700`.
-2. Install `agent.py` into
-   `/opt/stagecore-qualification-control/agent.py` owned by root and not
-   writable by the agent.
-3. Create root-managed `/etc/stagecore-qualification-control/config.json`,
-   readable by the dedicated account, with the exact keys shown below.
-   Create its `token` as a regular, non-symlink file owned by the dedicated
-   account with mode `0600`. Provision the PAT **locally** through an approved
-   protected prompt/file mechanism.
-4. Install the supplied service and timer under `/etc/systemd/system/`;
-   review them before `systemctl daemon-reload` and
-   `systemctl enable --now stagecore-qualification-control.timer`.
-5. Verify one `systemctl start stagecore-qualification-control.service`
-   status run, then verify service logs are free of sensitive data.
-   Do not enable the timer until the manual service check passes.
+From the Mac, fetch the control branch and copy its four deployment files
+to the Pi using the already-authorized Cloudflare SSH alias:
 
-Example configuration for the exact qualified candidate (substitute a new
-reviewed candidate and independently checked local binary hash before any
-repin; **the agent refuses mismatches**):
-
-```json
-{
-  "repo": "ali96adil/StageCore",
-  "owner_login": "ali96adil",
-  "pinned_sha": "809d1f4ce7a5824c27ecf82d78cd779cd28f6e6a",
-  "expected_hub_sha256": "34681e3ce7595d4caf63f1a306f496f4172f398065a2fe7885bc2bacc6ce7bfe",
-  "token_file": "/etc/stagecore-qualification-control/token",
-  "state_dir": "/var/lib/stagecore-control"
-}
+```bash
+git -C "$HOME/StageCore" fetch origin qualification/pi-github-control-readonly
+git -C "$HOME/StageCore" worktree add --detach "$HOME/StageCore-control" origin/qualification/pi-github-control-readonly
+scp -r "$HOME/StageCore-control/tools/qualification/pi_control" stagecore-qualification:pi_control
 ```
+
+If the worktree already exists, verify its HEAD is the reviewed CI SHA
+instead of overwriting it. On an **interactive** Mac-to-Pi SSH session:
+
+```bash
+ssh -tt stagecore-qualification 'sudo bash "$HOME/pi_control/install.sh"'
+```
+
+This installer refuses a Hub binary hash other than the already qualified
+`809d1f4` candidate, creates a dedicated `stagecore-control` unprivileged
+system user and isolated private directories, and asks for the GitHub PAT
+through a local hidden terminal prompt. It installs a systemd oneshot service
+and timer, performs one status-only connectivity test, then enables polling.
+If authentication fails, the timer is not enabled. It does **not** restart or
+modify the StageCore Hub, grant sudo to the new agent, or touch the 79-gate
+campaign state.
+
+Check that the timer is active without printing credentials:
+
+```bash
+ssh stagecore-qualification 'systemctl is-enabled stagecore-qualification-control.timer; systemctl is-active stagecore-qualification-control.timer'
+```
+
+The private Pi configuration pins `candidate_sha` to
+`809d1f4ce7a5824c27ecf82d78cd779cd28f6e6a` and expected installed
+Hub SHA-256 to
+`34681e3ce7595d4caf63f1a306f496f4172f398065a2fe7885bc2bacc6ce7bfe`.
+Credentials are stored **only on the Pi**. Revoke the PAT in GitHub, then
+disable the systemd timer, to cut off the channel. The old Cloudflare
+SSH path remains available for break-glass maintenance.
 
 ## Create a status request from connected GitHub
 
