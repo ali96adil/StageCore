@@ -6,6 +6,8 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 OUT=/run/stagecore-qualification-probe
 PROBE=/usr/local/libexec/stagecore-qualification-probe
 [[ "$(id -u)" == 0 && -f "$PROBE" && ! -L "$PROBE" ]] || exit 3
+# A read-only timer must never activate an intentionally stopped production Hub.
+systemctl is-active --quiet stagecore-hub.service || exit 3
 install -d -o root -g stagecore-control -m 0750 "$OUT"
 TEMP="$(mktemp "$OUT/.probe.XXXXXXXX")"
 trap 'rm -f "$TEMP"' EXIT
