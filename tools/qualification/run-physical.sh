@@ -918,6 +918,10 @@ PY
 stage_draft_recovery() {
   local project_id="${STAGECORE_DRAFT_QUALIFICATION_PROJECT_ID:-}"
   [[ -n "$project_id" ]] || return 0
+  if [[ "$PROBE_AVAILABLE" -ne 1 ]]; then
+    record "Q-DRAFT.prerequisite" BLOCKED "pinned Pi candidate/device probe is unavailable; Draft recovery probes deferred"
+    return 3
+  fi
   local baseline="$QDRAFT_DIR/baseline.json"
   if [[ "$(milestone_status Q-DRAFT-01 baseline.state)" != "PASS" ]]; then
     invoke_draft_evidence Q-DRAFT-01 baseline.state baseline "$project_id" "" "$baseline" || return 0
