@@ -148,7 +148,13 @@ run_gate_probe() {
   set -e
   case "$rc" in
     0) record_gate "$gate" PASS "$evidence" "canonical read-only device evidence passed" ;;
-    3) record_gate "$gate" BLOCKED "$evidence" "required target/baseline evidence is not yet available" ;;
+    3)
+      if grep -q "DEVICE_UNAVAILABLE:" "$evidence"; then
+        record_gate "$gate" BLOCKED "$evidence" "DEFERRED_OFFLINE: Tablet/ESP32 is not available; no product fault established until power is confirmed ON"
+      else
+        record_gate "$gate" BLOCKED "$evidence" "required target/baseline evidence is not yet available"
+      fi
+      ;;
     *) record_gate "$gate" FAIL "$evidence" "canonical read-only device evidence failed" ;;
   esac
 }
@@ -180,7 +186,13 @@ run_gate_probe_milestone() {
   set -e
   case "$rc" in
     0) record_milestone "$gate" "$key" PASS "$evidence" "canonical read-only device observation/readiness passed" ;;
-    3) record_milestone "$gate" "$key" BLOCKED "$evidence" "required target/baseline observation is not yet available" ;;
+    3)
+      if grep -q "DEVICE_UNAVAILABLE:" "$evidence"; then
+        record_milestone "$gate" "$key" BLOCKED "$evidence" "DEFERRED_OFFLINE: device unpowered/unknown; retry after confirming it is ON"
+      else
+        record_milestone "$gate" "$key" BLOCKED "$evidence" "required target/baseline observation is not yet available"
+      fi
+      ;;
     *) record_milestone "$gate" "$key" FAIL "$evidence" "canonical device observation/readiness failed" ;;
   esac
 }
