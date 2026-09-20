@@ -71,4 +71,47 @@ assert "payload_json" not in raw
 assert "result_json" not in raw
 PY
 
+# A device that is intentionally powered off is deferred, not a product FAIL.
+# When its power has been independently confirmed ON, the same missing
+# observation is a real connectivity/readiness failure.
+python3 - "$probe" "$tmp/offline.json" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1], encoding="utf-8"))
+for device in data["devices"]:
+    if device["device_id"] in {"tablet-01", "lighting-01"}:
+        device["runtime"]["connection_state"]="OFFLINE"
+        device["runtime"]["readiness"]="WARNING"
+json.dump(data,open(sys.argv[2],"w",encoding="utf-8"))
+PY
+for kind in tablet lighting; do
+  set +e
+  python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$tmp/offline.json" --kind "$kind" --expect-online no >"$tmp/$kind.off.log" 2>&1
+  deferred_rc=$?
+  python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$tmp/offline.json" --kind "$kind" --expect-online yes >"$tmp/$kind.live.log" 2>&1
+  live_rc=$?
+  set -e
+  [[ "$deferred_rc" -eq 3 ]]
+  [[ "$live_rc" -eq 1 ]]
+  grep -q "DEVICE_UNAVAILABLE" "$tmp/$kind.off.log"
+done
+# A broken protocol contract is still a real defect even if the unit is off.
+python3 - "$tmp/offline.json" "$tmp/invalid.json" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1],encoding="utf-8"))
+data["devices"][0]["protocol_version"]="stagecore.device/invalid"
+json.dump(data,open(sys.argv[2],"w",encoding="utf-8"))
+PY
+set +e
+python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$tmp/invalid.json" --kind lighting --expect-online no >"$tmp/contract.log" 2>&1
+# The exact first profile depends on fixture ordering; check tablet explicitly too.
+python3 "$REPO_ROOT/tools/qualification/assert-device-probe.py" --input "$tmp/invalid.json" --kind tablet --expect-online no >"$tmp/tablet-contract.log" 2>&1
+tablet_rc=$?
+set -e
+# At least one of the two devices has the deliberately invalid contract.
+if grep -q "protocol mismatch" "$tmp/contract.log"; then
+  :
+else
+  [[ "$tablet_rc" -eq 1 ]] && grep -q "protocol mismatch" "$tmp/tablet-contract.log"
+fi
+
 echo "qualification device probe self-test PASS"
