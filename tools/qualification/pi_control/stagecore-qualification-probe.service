@@ -1,7 +1,7 @@
 [Unit]
 Description=StageCore bounded read-only qualification device snapshot
 After=stagecore-hub.service
-Requires=stagecore-hub.service
+# Never auto-start the production Hub when the snapshot timer fires.
 
 [Service]
 Type=oneshot
