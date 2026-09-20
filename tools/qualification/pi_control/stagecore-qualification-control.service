@@ -20,7 +20,7 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 LockPersonality=yes
 UMask=0077
-TimeoutStartSec=45
+TimeoutStartSec=120
 
 [Install]
 WantedBy=multi-user.target

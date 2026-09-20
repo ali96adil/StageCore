@@ -11,7 +11,11 @@ import os
 from pathlib import Path
 import tempfile
 
-REPORT_MODULE = Path(__file__).resolve().parent.parent / "qualification-report.py"
+# Source-tree layout differs from the root-owned Pi install directory.
+# Prefer the co-installed audited report module; retain source-tree fallback.
+DEPLOYED_REPORT_MODULE = Path(__file__).resolve().parent / "qualification-report.py"
+SOURCE_REPORT_MODULE = Path(__file__).resolve().parent.parent / "qualification-report.py"
+REPORT_MODULE = DEPLOYED_REPORT_MODULE if DEPLOYED_REPORT_MODULE.is_file() else SOURCE_REPORT_MODULE
 ALLOWED = ("PASS", "FAIL", "BLOCKED", "PENDING", "N/A")
 
 

@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -66,6 +67,17 @@ class SummaryTest(unittest.TestCase):
             self.assertEqual(snapshot["completed"], 0)
             exporter.save(snapshot, folder / "campaign-summary.json")
             self.assertEqual(agent.read_campaign_report(config(folder)), snapshot)
+
+    def test_deployed_report_module_next_to_exporter(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root)
+            shutil.copy2(HERE / "export_summary.py", folder / "export_summary.py")
+            shutil.copy2(HERE.parent / "qualification-report.py",
+                         folder / "qualification-report.py")
+            deployed = load("deployed_summary_fixture", folder / "export_summary.py")
+            self.assertEqual(deployed.REPORT_MODULE, folder / "qualification-report.py")
+            state, manifest = make_state(folder)
+            self.assertEqual(deployed.export_summary(state, manifest)["total"], 1)
 
     def test_wrong_manifest_rejected_before_export(self):
         with tempfile.TemporaryDirectory() as root:

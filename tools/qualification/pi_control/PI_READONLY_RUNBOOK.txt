@@ -1,0 +1,62 @@
+StageCore Pi read-only qualification upgrade (operator runbook)
+=================================================================
+
+Scope
+-----
+This follow-up extends the already-verified private GitHub status/report agent
+with exact-SHA immutable 79-gate campaign import and only the following live
+read-only work: Q-TAB-04, Q-TAB-05 and Q-DMX-20 observation.readiness.
+There is NO automatic full 79-gate runner, device output, Hub restart/update,
+fault injection, network disconnection, or physical/manual gate approval.
+
+The agent itself remains unprivileged with no sudo. A separate root-owned,
+systemd-sandboxed timer runs only the pre-existing canonical read-only device
+probe and emits a private, short-lived JSON snapshot. Raw devices and old
+campaign evidence are never posted to GitHub. The old Mac raw campaign and
+evidence MUST be preserved.
+
+After exact-head GitHub-hosted Linux CI SUCCESS, use the reviewed exact
+commit from the private draft PR (do not choose an unrelated or newer SHA).
+
+On the operator Mac:
+
+  git -C "$HOME/StageCore" fetch origin qualification/pi-readonly-probe-runner
+  git -C "$HOME/StageCore" worktree add --detach "$HOME/StageCore-control-runner" REVIEWED_CI_SHA
+  cd "$HOME/StageCore-control-runner"
+  mkdir -p "$HOME/pi_readonly_stage"
+  cp tools/qualification/pi_control/*.py tools/qualification/pi_control/*.sh tools/qualification/pi_control/*.service tools/qualification/pi_control/*.timer "$HOME/pi_readonly_stage/"
+  cp tools/qualification/manifest.json tools/qualification/qualification-state.py tools/qualification/qualification-milestone.py tools/qualification/assert-device-probe.py "$HOME/pi_readonly_stage/"
+  cp "$HOME/.local/state/stagecore/qualification-campaign.json" "$HOME/pi_readonly_stage/qualification-campaign.json"
+  chmod 600 "$HOME/pi_readonly_stage/qualification-campaign.json"
+  scp -r "$HOME/pi_readonly_stage" stagecore-qualification:pi_readonly_stage
+  ssh -tt stagecore-qualification 'sudo bash "$HOME/pi_readonly_stage/upgrade-readonly.sh"'
+
+The installer refuses to continue if the installed Hub SHA, manifest digest,
+candidate pin, campaign inventory, or read-only probe prerequisites differ.
+A campaign previously imported on Pi is never overwritten if its bytes differ.
+The installer changes only the GitHub-control and probe services and leaves
+the production StageCore Hub untouched.
+
+Check both timers (expected: active / active):
+
+  ssh stagecore-qualification 'systemctl is-active stagecore-qualification-control.timer; systemctl is-active stagecore-qualification-probe.timer'
+
+Once upgraded, an owner-only private GitHub issue can contain the exact JSON:
+
+  {"version":1,"action":"verify-campaign","candidate_sha":"809d1f4ce7a5824c27ecf82d78cd779cd28f6e6a"}
+
+or, separately:
+
+  {"version":1,"action":"run-readonly","candidate_sha":"809d1f4ce7a5824c27ecf82d78cd779cd28f6e6a"}
+
+One read-only probe command can update only the three allowlisted gates; any
+pre-existing PASS/N/A is retained. Q-DMX-20 cannot be fully PASS from mere
+readiness, because published configuration truth remains required. Q-TAB-05
+requires independently provided expected project and runtime snapshot;
+otherwise BLOCKED. Offline/unknown power remains BLOCKED, not product FAIL.
+
+Report provenance after live probing is
+PI_READONLY_PROBE_WITH_IMPORTED_BASELINE: only the allowlisted gates were
+actually re-evaluated on Pi; other gates remain imported/not physically tested.
+The original full runner still needs a separate future, safety-reviewed
+migration before any physical-action or recovery scenarios are enabled.
