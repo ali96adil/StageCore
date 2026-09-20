@@ -1,0 +1,25 @@
+[Unit]
+Description=StageCore bounded read-only qualification device snapshot
+After=stagecore-hub.service
+Requires=stagecore-hub.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/bin/bash /opt/stagecore-qualification-control/collect_probe.sh
+RuntimeDirectory=stagecore-qualification-probe
+RuntimeDirectoryMode=0750
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/run/stagecore-qualification-probe
+UMask=0077
+TimeoutStartSec=25
