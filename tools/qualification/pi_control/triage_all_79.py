@@ -108,6 +108,12 @@ def summarize(manifest, raw_manifest, campaign, probe=None, targets=None, now=No
             gc[status] += 1
             if status in ("PASS", "N/A"):
                 action = "PRESERVE_RECORDED_RESULT"
+            elif gid == "Q-TAB-01":
+                action = "EXACT_APK_INSTALLATION_PHYSICAL_EVIDENCE_REQUIRED"
+            elif gid == "Q-TAB-02":
+                action = "EXACT_RC3_APK_BUILD_IDENTITY_EVIDENCE_REQUIRED"
+            elif gid == "Q-TAB-03" and device_facts["tablet_registered"] == 0:
+                action = "SECURE_TABLET_PAIRING_REQUIRED"
             elif gid.startswith("Q-TAB-") and device_facts["tablet_registered"] == 0:
                 action = "TABLET_REGISTRATION_REQUIRED"
             elif gid in ("Q-TAB-04", "Q-TAB-05") and device_facts["tablet_online_ready"] == 0:
