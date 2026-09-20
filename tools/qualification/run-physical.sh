@@ -1728,37 +1728,49 @@ elif [[ ! -f "$SSH_KEY" ]]; then
 else
   SSH_TARGET="$PI_USER@$PI_HOST"
   SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$SSH_KEY")
-  check_cmd "pi.ssh" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready || true
-  recover_q19_if_needed
-  check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
-  check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
-  # A remote SSH connection is NOT evidence that the correct StageCore
-  # release was deployed. Gate all product/device checks on exact Hub SHA.
-  INSTALLED_MATCH=0
-  installed_log="$RUN_DIR/evidence/pi-installed-revision.log"
-  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" go version -m /opt/stagecore/bin/stagecore-hub \
-       >"$installed_log" 2>"$RUN_DIR/evidence/pi-installed-revision.stderr"; then
-    if python3 tools/qualification/assert-installed-revision.py \
-         --input "$installed_log" --expected "$CURRENT_STAGECORE_SHA" \
-         >"$RUN_DIR/evidence/pi-installed-revision.check"; then
-      INSTALLED_MATCH=1
-      record "pi.installed.revision" PASS "exact installed Hub revision matches pinned candidate"
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" printf ready >"$RUN_DIR/evidence/pi.ssh.log" 2>&1; then
+    record "pi.ssh" PASS "private SSH path reachable"
+    # A preceding interrupted emergency-blackout check must recover safely
+    # before any new action, independently of software-candidate suitability.
+    recover_q19_if_needed
+    INSTALLED_MATCH=0
+    installed_log="$RUN_DIR/evidence/pi-installed-revision.log"
+    if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" go version -m /opt/stagecore/bin/stagecore-hub \
+         >"$installed_log" 2>"$RUN_DIR/evidence/pi-installed-revision.stderr"; then
+      if python3 tools/qualification/assert-installed-revision.py \
+           --input "$installed_log" --expected "$CURRENT_STAGECORE_SHA" \
+           >"$RUN_DIR/evidence/pi-installed-revision.check"; then
+        INSTALLED_MATCH=1
+        record "pi.installed.revision" PASS "exact installed Hub revision matches pinned candidate"
+      else
+        record "pi.installed.revision" BLOCKED "Pi Hub is not the pinned candidate; see evidence/pi-installed-revision.check"
+      fi
     else
-      record "pi.installed.revision" BLOCKED "Pi Hub is not the pinned qualification candidate; see evidence/pi-installed-revision.check"
+      record "pi.installed.revision" BLOCKED "cannot establish installed Hub revision from read-only SSH evidence"
+    fi
+    if [[ "$INSTALLED_MATCH" -eq 1 ]]; then
+      check_cmd "pi.hub.service" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper service-status || true
+      check_cmd "pi.hub.ready" ssh "${SSH_OPTS[@]}" "$SSH_TARGET" curl -fsS http://127.0.0.1:7840/health/ready || true
+      if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe \
+           >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
+        PROBE_AVAILABLE=1
+        record "devices.probe" PASS "see evidence/devices.json"
+      else
+        record "devices.probe" FAIL "Hub device-probe failed on pinned candidate; see evidence/device-probe.stderr"
+      fi
+    else
+      record "pi.hub.service" BLOCKED "deferred until installed Hub matches pinned candidate"
+      record "pi.hub.ready" BLOCKED "deferred until installed Hub matches pinned candidate"
+      record "devices.probe" BLOCKED "device evidence deferred until installed Hub matches pinned candidate"
     fi
   else
-    record "pi.installed.revision" BLOCKED "cannot establish installed Hub revision from read-only SSH evidence"
-  fi
-  if [[ "$INSTALLED_MATCH" -eq 1 ]]; then
-    if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" sudo -n /usr/local/libexec/stagecore-qualification-helper device-probe \
-         >"$RUN_DIR/evidence/devices.json" 2>"$RUN_DIR/evidence/device-probe.stderr"; then
-      PROBE_AVAILABLE=1
-      record "devices.probe" PASS "see evidence/devices.json"
-    else
-      record "devices.probe" FAIL "Hub device-probe failed on the pinned candidate; see evidence/device-probe.stderr"
-    fi
-  else
-    record "devices.probe" BLOCKED "device evidence deferred until installed Hub matches the pinned candidate"
+    # Remote home/VPN power or connectivity can be unavailable independently
+    # of any StageCore product defect. Do not manufacture FAIL from missing SSH.
+    record "pi.ssh" BLOCKED "private SSH/Pi connectivity unavailable; see evidence/pi.ssh.log"
+    record "pi.installed.revision" BLOCKED "Pi cannot be queried while private SSH is unavailable"
+    record "pi.hub.service" BLOCKED "Pi unavailable; no service health assertion made"
+    record "pi.hub.ready" BLOCKED "Pi unavailable; no Hub readiness assertion made"
+    record "devices.probe" BLOCKED "device evidence deferred until Pi is reachable"
   fi
 fi
 
