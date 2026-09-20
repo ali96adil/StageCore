@@ -19,7 +19,7 @@ PROBE=stagecore-qualification-probe
 }
 [[ -d "$PRIVATE" && ! -L "$PRIVATE" ]] || { echo "STOP: private control state missing" >&2; exit 3; }
 [[ "$(stat -c %a "$PRIVATE")" == 700 ]] || { echo "STOP: private state permissions changed" >&2; exit 3; }
-for file in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py assert-device-probe.py manifest.json collect_probe.sh "$PROBE.service" "$PROBE.timer" "$SERVICE.service" qualification-campaign.json; do
+for file in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py assert-device-probe.py qualification-report.py manifest.json collect_probe.sh "$PROBE.service" "$PROBE.timer" "$SERVICE.service" qualification-campaign.json; do
   [[ -f "$HERE/$file" && ! -L "$HERE/$file" ]] || { echo "STOP: expected input missing: $file" >&2; exit 3; }
 done
 [[ "$(sha256sum "$HERE/manifest.json" | awk '{print $1}')" == "$MANIFEST_SHA" ]] || {
@@ -37,7 +37,7 @@ manifest=json.loads(raw)
 result=verify_campaign(state,manifest,raw)
 print("Verified canonical pinned campaign:",result["completed"],"/",result["total"])
 PY
-for script in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py assert-device-probe.py; do
+for script in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py qualification-report.py assert-device-probe.py; do
   python3 -m py_compile "$HERE/$script"
 done
 bash -n "$HERE/collect_probe.sh"
@@ -54,7 +54,7 @@ rollback() {
 trap rollback EXIT
 systemctl stop "$SERVICE.timer" "$SERVICE.service"
 stopped=1
-for file in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py assert-device-probe.py manifest.json collect_probe.sh; do
+for file in agent.py import_campaign.py verify_campaign.py export_summary.py pi_readonly.py qualification-state.py qualification-milestone.py qualification-report.py assert-device-probe.py manifest.json collect_probe.sh; do
   mode=0644
   [[ "$file" == collect_probe.sh ]] && mode=0755
   install -o root -g root -m "$mode" "$HERE/$file" "$DEST/$file"
