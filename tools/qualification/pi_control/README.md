@@ -122,7 +122,7 @@ python3 tools/qualification/pi_control/export_summary.py \
   --output "$HOME/.local/state/stagecore/qualification-safe-summary.json"
 scp tools/qualification/pi_control/agent.py stagecore-qualification:pi-agent-next.py
 scp "$HOME/.local/state/stagecore/qualification-safe-summary.json" stagecore-qualification:pi-campaign-summary.json
-ssh -tt stagecore-qualification 'sudo install -o root -g root -m 0644 "$HOME/pi-agent-next.py" /opt/stagecore-qualification-control/agent.py && sudo install -o stagecore-control -g stagecore-control -m 0600 "$HOME/pi-campaign-summary.json" /var/lib/stagecore-control/campaign-summary.json'
+ssh -tt stagecore-qualification 'sudo systemctl stop stagecore-qualification-control.timer && sudo install -o stagecore-control -g stagecore-control -m 0600 "$HOME/pi-campaign-summary.json" /var/lib/stagecore-control/campaign-summary.json && sudo install -o root -g root -m 0644 "$HOME/pi-agent-next.py" /opt/stagecore-qualification-control/agent.py && sudo systemctl start stagecore-qualification-control.timer'
 ```
 
 Before issuing a request, verify locally on the Mac that the source state
