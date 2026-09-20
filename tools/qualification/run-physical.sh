@@ -129,6 +129,15 @@ run_gate_probe() {
   fi
   local evidence="$RUN_DIR/evidence/$gate.log"
   local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --check "$check" --max-age-seconds 20)
+  # Power status is operator-confirmed; unknown/off intentionally defers reachability.
+  local expected_var="STAGECORE_TABLET_EXPECT_ON"
+  [[ "$kind" == "lighting" ]] && expected_var="STAGECORE_LIGHTING_EXPECT_ON"
+  case "${!expected_var:-unknown}" in
+    1|yes|on) args+=(--expect-online yes) ;;
+    0|no|off) args+=(--expect-online no) ;;
+    unknown|"") args+=(--expect-online unknown) ;;
+    *) echo "invalid $expected_var; use 0, 1, or unknown" >&2; return 2 ;;
+  esac
   [[ -n "${STAGECORE_PROJECT_ID:-}" ]] && args+=(--project-id "$STAGECORE_PROJECT_ID")
   [[ -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]] && args+=(--runtime-snapshot-id "$STAGECORE_RUNTIME_SNAPSHOT_ID")
   [[ -n "$device_id" ]] && args+=(--device-id "$device_id")
@@ -152,6 +161,15 @@ run_gate_probe_milestone() {
   fi
   local evidence="$RUN_DIR/evidence/$gate.$key.log"
   local args=(--input "$RUN_DIR/evidence/devices.json" --kind "$kind" --check "$check" --max-age-seconds 20)
+  # Power status is operator-confirmed; unknown/off intentionally defers reachability.
+  local expected_var="STAGECORE_TABLET_EXPECT_ON"
+  [[ "$kind" == "lighting" ]] && expected_var="STAGECORE_LIGHTING_EXPECT_ON"
+  case "${!expected_var:-unknown}" in
+    1|yes|on) args+=(--expect-online yes) ;;
+    0|no|off) args+=(--expect-online no) ;;
+    unknown|"") args+=(--expect-online unknown) ;;
+    *) echo "invalid $expected_var; use 0, 1, or unknown" >&2; return 2 ;;
+  esac
   [[ -n "${STAGECORE_PROJECT_ID:-}" ]] && args+=(--project-id "$STAGECORE_PROJECT_ID")
   [[ -n "${STAGECORE_RUNTIME_SNAPSHOT_ID:-}" ]] && args+=(--runtime-snapshot-id "$STAGECORE_RUNTIME_SNAPSHOT_ID")
   [[ -n "$device_id" ]] && args+=(--device-id "$device_id")
