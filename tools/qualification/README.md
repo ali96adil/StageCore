@@ -572,3 +572,65 @@ The runner authenticates to the real read-only `/api/v1/network/cockpit` surface
 The root-owned read-only `callboard-reconnect` helper requires a completed real bounded DISPLAY_ALERT (expired) followed by DISPLAY_CLEAR to durable IDLE, and a fresh connected/ONLINE/READY Stage Display. The baseline is durable across runs. No network isolation is automatic.
 
 Isolate only selected display network (not Hub, power or other clients), run `campaign.sh qcall06-ack disconnect "display-only network isolated"`, restore network, then `campaign.sh qcall06-ack reconnect "display network restored"`, and resume. Post evidence requires actual ordered disconnect/reconnect observations, fresh ONLINE/READY, unchanged production command count and durable IDLE command identity. Missing baseline after disconnection fails closed. Physical PASS still requires real visual observation of no expired alert/chime replay. No credentials or source config is collected.
+
+
+## One-command campaign and percentage dashboard
+
+After the documented **one-time** key/credential setup and supported installation of the
+**exact matching qualification candidate** on the Pi, use the single entrypoint:
+
+```bash
+bash tools/qualification/qualify.sh run
+```
+
+The first run starts the manifest-backed campaign. Every later `run` automatically selects
+resume, preserving already-PASS / N/A gates and their evidence. Alternatively use the
+explicit second command after defect fixes, changed device readiness, or manual actions:
+
+```bash
+bash tools/qualification/qualify.sh retry
+bash tools/qualification/qualify.sh status
+bash tools/qualification/qualify.sh issues
+```
+
+The runner continues independent checks, but stops unsafe/dependent actions where a
+physical or trust prerequisite fails. It does **not** auto-restart the Pi, deploy a new
+candidate, authorize dangerous test actions, power-cycle hardware, or turn missing physical
+observation into PASS. Physical output commands remain behind
+`STAGECORE_QUALIFICATION_ENABLE_PHYSICAL_ACTIONS=1` and the documented separate
+fault-arms/safety gates. Re-running `retry` cannot substitute for the required operator
+observation. A baseline change requires a deliberate `campaign.sh repin` with explicit
+affected-gate invalidation; it cannot silently reuse earlier evidence.
+
+The dashboard writes private local artifacts under
+`~/.local/state/stagecore/qualification-reports/` (overridable with
+`STAGECORE_QUALIFICATION_REPORT_DIR`):
+
+- `summary.md`: completed/total, verified and assessed percentages, per-area counts.
+- `summary.json`: machine-readable progress and counts.
+- `defects.csv`: FAIL parent gates and any failed command/evidence milestones.
+- `blocked.csv`: BLOCKED gates and blocked underlying milestones, including those
+  whose parent remains PENDING.
+- `manual.csv`: uncompleted AUTO_PHYSICAL/MANUAL gates to confirm physically.
+
+Progress uses each unique manifest gate **once**: `(PASS + N/A) / total`; the
+separate applicable verification rate is `PASS / (total - N/A)`. FAIL/BLOCKED/PENDING
+are not completed. A completed command milestone does not inflate the overall percentage;
+an AUTO_PHYSICAL gate needs the actual physical observation. If acceptance is not listed
+in the manifest, the dashboard cannot claim that it was verified.
+
+The failure register is local and derived from the durable state; it does not auto-create
+GitHub issues or share local addresses, logs or evidence. For a discovered product defect,
+record the corresponding GitHub issue separately using redacted evidence. When an actual
+component build changes, repin only after choosing the affected gates and required
+regressions. Do not assume the new SHA inherits earlier physical PASS.
+
+The dashboard is not a substitute for exact-head GitHub Actions status, Companion/
+Android evidence, or deferred Phase 5–7 checks that are not individually inventoried.
+`qualify.sh` reports them as pending until the responsible evidence or manual gate exists.
+
+Self-test without connecting devices:
+
+```bash
+bash tools/qualification/test-qualification-report.sh
+```
