@@ -66,7 +66,7 @@ func TestScopeRejectsStaleProjectEpochAndSnapshot(t *testing.T) {
 
 func TestTransferRequiresFreshBlackoutAndKeepsNewProjectBlocked(t *testing.T) {
 	current := Assignment{DeviceID: "device-01", ProjectID: "project-A", Epoch: 5, State: Active, SnapshotID: "old-published"}
-	intent := TransferIntent{DeviceID: "device-01", FromProjectID: "project-A", ToProjectID: "project-B", ExpectedEpoch: 5, Challenge: "fresh-nonce"}
+	intent := TransferIntent{DeviceID: "device-01", FromProjectID: "project-A", ToProjectID: "project-B", ExpectedEpoch: 5, ExpectedChannels: 12, Challenge: "fresh-nonce"}
 	ack := BlackoutAck{DeviceID: "device-01", Epoch: 5, Challenge: "fresh-nonce", Blackout: true, ChannelLevels: make([]uint8, 12)}
 	next, err := intent.VerifyBlackout(current, ack)
 	if err != nil {
@@ -91,6 +91,7 @@ func TestTransferRequiresFreshBlackoutAndKeepsNewProjectBlocked(t *testing.T) {
 		{"old epoch", func(_ *TransferIntent, a *BlackoutAck){a.Epoch=4}},
 		{"false blackout", func(_ *TransferIntent, a *BlackoutAck){a.Blackout=false}},
 		{"missing levels", func(_ *TransferIntent, a *BlackoutAck){a.ChannelLevels=nil}},
+		{"incomplete channel report", func(_ *TransferIntent, a *BlackoutAck){a.ChannelLevels=a.ChannelLevels[:1]}},
 		{"nonzero DMX level", func(_ *TransferIntent, a *BlackoutAck){a.ChannelLevels[2]=255}},
 		{"different expected epoch", func(i *TransferIntent, _ *BlackoutAck){i.ExpectedEpoch=4}},
 		{"wrong previous project", func(i *TransferIntent, _ *BlackoutAck){i.FromProjectID="project-C"}},
@@ -111,7 +112,7 @@ func TestTransferRequiresFreshBlackoutAndKeepsNewProjectBlocked(t *testing.T) {
 
 func TestTransferToUnassignedRemainsDark(t *testing.T) {
 	current := Assignment{DeviceID:"device-01", ProjectID:"project-A", Epoch:8, State:Active}
-	intent := TransferIntent{DeviceID:"device-01", FromProjectID:"project-A", ToProjectID:"", ExpectedEpoch:8, Challenge:"nonce"}
+	intent := TransferIntent{DeviceID:"device-01", FromProjectID:"project-A", ToProjectID:"", ExpectedEpoch:8, ExpectedChannels:2, Challenge:"nonce"}
 	ack := BlackoutAck{DeviceID:"device-01", Epoch:8, Challenge:"nonce", Blackout:true, ChannelLevels:[]uint8{0,0}}
 	next, err := intent.VerifyBlackout(current, ack)
 	if err != nil || next.State != Unassigned || next.ProjectID != "" || next.Epoch != 9 {
@@ -125,7 +126,7 @@ func TestTransferToUnassignedRemainsDark(t *testing.T) {
 func TestTransferRejectsEpochOverflow(t *testing.T) {
 	const max = ^uint64(0)
 	current:=Assignment{DeviceID:"device-01",ProjectID:"old", Epoch:max,State:Active}
-	intent:=TransferIntent{DeviceID:"device-01",FromProjectID:"old",ToProjectID:"new",ExpectedEpoch:max,Challenge:"nonce"}
+	intent:=TransferIntent{DeviceID:"device-01",FromProjectID:"old",ToProjectID:"new",ExpectedEpoch:max,ExpectedChannels:1,Challenge:"nonce"}
 	ack:=BlackoutAck{DeviceID:"device-01",Epoch:max,Challenge:"nonce",Blackout:true,ChannelLevels:[]uint8{0}}
 	if _, err:=intent.VerifyBlackout(current,ack); !errors.Is(err, ErrInvalidAssignment) {
 		t.Fatalf("overflow must fail closed: %v",err)
