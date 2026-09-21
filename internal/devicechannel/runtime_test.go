@@ -391,6 +391,10 @@ func TestAuthenticatedV2HelloRegistersOnlyUnassignedWithoutRuntimeReady(t *testi
 		response["commands_enabled"] != false {
 		t.Fatalf("v2 bootstrap must be unassigned and blackout-only: %+v", response)
 	}
+	firstGeneration, ok := f.runtime.CurrentV2Generation(testDeviceID)
+	if !ok || firstGeneration < 1 {
+		t.Fatalf("authenticated first v2 generation=%d ok=%v", firstGeneration, ok)
+	}
 	device, err := f.repo.GetDevice(ctx, testDeviceID)
 	if err != nil || device.ProjectID != "" || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
 		device.Runtime == nil || device.Runtime.Readiness != deviceexperience.ReadinessBlocker {
@@ -461,6 +465,11 @@ func TestAuthenticatedV2HelloRegistersOnlyUnassignedWithoutRuntimeReady(t *testi
 	if repeat["type"] != "assignment.state" || repeat["state"] != "UNASSIGNED" ||
 		repeat["assignment_epoch"] != float64(1) {
 		t.Fatalf("v2 reconnect changed Hub authority: %+v", repeat)
+	}
+	secondGeneration, ok := f.runtime.CurrentV2Generation(testDeviceID)
+	if !ok || secondGeneration <= firstGeneration {
+		t.Fatalf("v2 reconnect reused stale socket generation first=%d second=%d ok=%v",
+			firstGeneration, secondGeneration, ok)
 	}
 }
 
