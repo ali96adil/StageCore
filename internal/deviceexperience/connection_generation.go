@@ -19,7 +19,7 @@ func (r *Repository) AllocateV2ConnectionGeneration(ctx context.Context) (int64,
 	err := r.db.QueryRowContext(ctx, `
 		UPDATE stage_device_v2_connection_sequence
 		SET generation = generation + 1
-		WHERE singleton = 1 AND generation < 9223372036854775807
+		WHERE singleton = 1 AND generation < 9007199254740991
 		RETURNING generation
 	`).Scan(&generation)
 	if err != nil || generation <= 0 {
