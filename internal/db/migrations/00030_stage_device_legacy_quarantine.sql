@@ -67,7 +67,32 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- A v2-controlled node cannot silently regain v1 authority, and a
+-- project change (including unassignment) must advance the device-scoped
+-- epoch. These SQL constraints do not replace verified blackout/Operator
+-- approval; they only rule out two unsafe storage shortcuts.
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_assignment_no_legacy_downgrade
+BEFORE UPDATE OF assignment_state ON stage_device_assignments
+WHEN OLD.assignment_state <> 'LEGACY' AND NEW.assignment_state = 'LEGACY'
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_LEGACY_DOWNGRADE_FENCED');
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_assignment_project_epoch_guard
+BEFORE UPDATE OF project_id, assignment_epoch ON stage_device_assignments
+WHEN NEW.project_id IS NOT OLD.project_id
+     AND NEW.assignment_epoch <= OLD.assignment_epoch
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_ASSIGNMENT_EPOCH_STALE');
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS stage_device_assignment_project_epoch_guard;
+DROP TRIGGER IF EXISTS stage_device_assignment_no_legacy_downgrade;
 DROP TRIGGER IF EXISTS stage_device_assignment_block_readiness;
 DROP TRIGGER IF EXISTS stage_device_legacy_hello_update_guard;
 DROP TRIGGER IF EXISTS stage_device_legacy_command_insert_guard;
