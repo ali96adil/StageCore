@@ -47,6 +47,16 @@ func WithOperatorLightingLiveDiagnostics(
 						return
 					}
 					diagnostic := reader.Read(r.Context(), projectID, deviceID)
+					// Fail closed on any future/unrecognized status rather than
+					// accidentally exposing it as READY in the Operator API.
+					switch diagnostic.Status {
+					case livereconcile.SoftwareDiagnosticUnknown,
+						livereconcile.SoftwareDiagnosticBlocked,
+						livereconcile.SoftwareDiagnosticUnsafe:
+					default:
+						diagnostic.Status = livereconcile.SoftwareDiagnosticUnknown
+						diagnostic.Reason = "unrecognized diagnostic status"
+					}
 					advice := livereconcile.AdviseBlockedRecovery(diagnostic)
 					// Keep UNKNOWN free of stale channel data and identity
 					// fields even if a future reader accidentally populates
