@@ -137,3 +137,84 @@ func TestLegacyReconnectDoesNotBecomeOfflineFromOldSocket(t *testing.T) {
 	}
 	t.Fatal("replacement observation not persisted")
 }
+
+func TestBlockedV2AutoProbeStartsOnlyAfterPersistedEpochReceipt(t *testing.T) {
+	t.Setenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE", "1")
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	caps := append(lightingnode.CapabilityKeys(), "lighting.state_probe/1")
+	if _, err := f.repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Blocked Probe Node", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: caps,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const setupChallenge = "7777777777777777777777777777777777777777777777777777777777777777"
+	commit, err := f.repo.CommitVerifiedBlackoutTransfer(ctx, deviceexperience.VerifiedTransferInput{
+		DeviceID: testDeviceID, ToProjectID: f.projectID, ExpectedEpoch: 1,
+		ConnectionGeneration: 1, Challenge: setupChallenge,
+		AckDeviceID: testDeviceID, AckEpoch: 1, AckGeneration: 1,
+		AckChallenge: setupChallenge, AckBlackout: true,
+		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
+		ActorID: "test-owner", IdempotencyKey: "auto-blocked-probe-test",
+	})
+	if err != nil || commit.NextState != "BLOCKED" {
+		t.Fatalf("setup BLOCKED assignment=%+v err=%v", commit, err)
+	}
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	ws, err := websocket.Dial(url, "", f.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "device.hello", "schema_version": 1,
+		"device_id": testDeviceID, "project_id": "",
+		"device_kind": deviceexperience.DeviceGeneric, "display_name": "Blocked Probe Node",
+		"profile_id": lightingnode.ProfileID, "protocol_version": deviceexperience.ProtocolVersion2,
+		"capabilities": caps, "readiness": deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var welcome map[string]any
+	err = websocket.JSON.Receive(ws, &welcome)
+	_ = ws.SetReadDeadline(time.Time{})
+	if err != nil || welcome["type"] != "assignment.state" ||
+		welcome["state"] != "BLOCKED" || welcome["commands_enabled"] != false ||
+		welcome["epoch_ack_required"] != true {
+		t.Fatalf("expected blocked welcome: %+v err=%v", welcome, err)
+	}
+	// No state probe may preempt the durable epoch ACK; the firmware
+	// must persist the zero-state epoch before receiving probe traffic.
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "assignment.epoch_ack", "schema_version": 2,
+		"device_id": testDeviceID, "project_id": f.projectID,
+		"assignment_epoch": welcome["assignment_epoch"],
+		"connection_generation": welcome["connection_generation"],
+		"blackout": true, "channel_levels": make([]int, lightingnode.MaxChannels),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var receipt map[string]any
+	err = websocket.JSON.Receive(ws, &receipt)
+	_ = ws.SetReadDeadline(time.Time{})
+	if err != nil || receipt["type"] != "assignment.epoch_ack_receipt" ||
+		receipt["state"] != "BLOCKED" || receipt["commands_enabled"] != false {
+		t.Fatalf("probe arrived before receipt or epoch denied: %+v err=%v", receipt, err)
+	}
+	request := readProbeRequest(t, ws)
+	sendProbeReport(t, ws, request, make([]int, lightingnode.MaxChannels))
+	report := waitForV2ProbeCache(t, f)
+	if report.CommandsEnabled || report.PhysicalVerified || report.Unsafe {
+		t.Fatalf("blocked diagnostic changed software authority: %+v", report)
+	}
+	assigned, err := f.repo.GetAssignmentRecord(ctx, testDeviceID)
+	if err != nil || assigned.State != "BLOCKED" || assigned.ProjectID != f.projectID ||
+		assigned.Epoch != 2 || assigned.RuntimeSnapshotID != "" {
+		t.Fatalf("read-only report modified project/epoch/snapshot: %+v err=%v", assigned, err)
+	}
+}
