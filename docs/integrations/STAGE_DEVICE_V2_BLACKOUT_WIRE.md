@@ -143,8 +143,8 @@ The Hub records every v2 socket generation in a SQLite singleton
 socket or sending `assignment.state`. Allocation is an atomic SQL
 `UPDATE ... RETURNING`, serialized even across overlapping Hub processes.
 The migration initializes its high-water mark above historical generations
-in transfer intents and BLOCKED epoch ACKs. Exhaustion or a storage failure
-rejects the new v2 connection; no process-local fallback is permitted.
+in transfer intents and BLOCKED epoch ACKs. The counter is capped at `9007199254740991` (largest exact IEEE-754 JSON integer), matching the experimental ESP firmware's wire parser.
+Exhaustion or a storage failure rejects the new v2 connection; no process-local fallback is permitted.
 
 Without a durable fence, a restart could reuse generation `1`, matching a
 previously persisted software-zero epoch ACK and causing the Operator
