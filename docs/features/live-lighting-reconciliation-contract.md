@@ -53,6 +53,32 @@ actual authenticated connection and the originating response before consuming
 its challenge. Never use a pure comparison result as a READY flag or an
 automatic permission to leave blackout.
 
+## Opt-in authenticated software report transport (next source-only slice)
+
+`devicechannel.ProbeV2SoftwareLevels` now has a bounded, fresh diagnostic
+request/response on the **current authenticated v2 socket**, carrying Hub
+assignment epoch, a durable connection generation, and a 32-byte random
+challenge. The receiving path accepts a report only on the exact pending
+connection, checks full 12-channel logical values and ranges, revalidates
+the runtime credential and Hub-owned assignment, then labels the result as
+software-only. A missing/late/unsolicited/malformed response fails closed;
+timeouts close the old socket. A diagnostic probe and an assignment blackout
+challenge cannot overlap.
+
+The request is **not automatically sent on reconnect**. It requires explicit
+`lighting.state_probe/1` capability advertisement. The current v2 firmware
+does not advertise/respond to that capability; its existing blackout-only
+operation remains unchanged. The response cannot mark READY, change a
+Project, activate a snapshot, dispatch any command, or verify physical DMX
+decoder/LED values. An unexpected nonzero or non-blackout report is surfaced
+as `UnsafeWhileUnactivated`, never corrected silently.
+
+To meet the requested same-Cue-5 self-healing behavior, the next dependency
+is firmware capability plus trusted, current LIVE desired-state derivation,
+followed by a session/revision-bound `LiveLightingObservationGate` comparison,
+separate v2 ACTIVE command authority, and explicitly approved safe partial
+correction. Do not equate this raw diagnostic with a matched Cue.
+
 ## Follow-up gates
 
 1. Connect authenticated versioned observation challenge/response to the Hub.
