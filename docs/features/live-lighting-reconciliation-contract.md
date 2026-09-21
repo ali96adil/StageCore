@@ -34,6 +34,25 @@ No runtime handler invokes this helper yet. No automatic retries, device
 commands, output enablement, snapshot activation, Pi deployment, firmware
 flashing, or physical qualification are part of this slice.
 
+## Fresh observation gate (stacked next source-only slice)
+
+`deviceexperience.LiveLightingObservationGate` now issues cryptographically random,
+bounded-time, one-use challenges for **every** reconnect, including unchanged
+Cue 5. A new Begin invalidates any previous challenge for that device. The
+socket owner must pass its exact challenge when cancelling, so delayed cleanup
+from an old connection cannot erase the replacement's pending verification.
+An expired response, duplicate response, old socket/assignment, cue change,
+same-cue desired revision change or lost command authority is BLOCKED; no
+optimistic MATCH or replay. Tests exercise 32 concurrent completion attempts
+and require at most one matching result.
+
+This is still **source-only**: there is no authenticated runtime message
+handler, no live desired-state derivation, no v2 ACTIVE state, no correction
+dispatcher and no physical DMX/LED proof. The transport must validate the
+actual authenticated connection and the originating response before consuming
+its challenge. Never use a pure comparison result as a READY flag or an
+automatic permission to leave blackout.
+
 ## Follow-up gates
 
 1. Connect authenticated versioned observation challenge/response to the Hub.
