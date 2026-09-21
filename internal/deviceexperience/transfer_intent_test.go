@@ -147,3 +147,73 @@ func TestTransferIntentSQLRejectsStaleEpoch(t *testing.T) {
 		t.Fatalf("rejected raw SQL changed intent rows: count=%d err=%v", count, err)
 	}
 }
+
+func TestV2ProjectDeleteRequiresUnassignmentAndHistoricalIntentDoesNotPinTarget(t *testing.T) {
+	ctx := context.Background()
+	repo, handle, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "v2-project-lifetime-01", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Reusable Lighting", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	}
+	if _, err := repo.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	intent := deviceexperience.TransferPreflightInput{
+		DeviceID: device.ID, TargetProjectID: projectID, ExpectedEpoch: 1,
+	}
+	res, err := repo.ReserveTransferIntent(ctx, intent, 1, lightingnode.MaxChannels, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A pending attempt by itself does not own its target Project; deletion
+	// must not be forever blocked by immutable transfer history.
+	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err != nil {
+		t.Fatalf("historical pending intent incorrectly pinned Project deletion: %v", err)
+	}
+	var retained string
+	if err := handle.DB.QueryRowContext(ctx,
+		"SELECT to_project_id FROM stage_device_transfer_intents WHERE transfer_id=?",
+		res.TransferID).Scan(&retained); err != nil || retained != projectID {
+		t.Fatalf("historical transfer intent lost target: %q err=%v", retained, err)
+	}
+	if _, err := repo.PreflightTransfer(ctx, intent); err == nil {
+		t.Fatal("deleted Project remained eligible for a transfer")
+	}
+
+	// Once a project is the actual v2 sidecar owner, deleting it must not
+	// silently null out the assignment without an epoch increment/blackout.
+	var now int64 = time.Now().UTC().UnixMicro()
+	if _, err := handle.DB.ExecContext(ctx, `
+		INSERT INTO projects(project_id,name,lifecycle_state,created_at_us,updated_at_us)
+		VALUES (?,?,?,?,?)
+	`, projectID, "Recreated Show", "ACTIVE", now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=?, assignment_state='BLOCKED', assignment_epoch=2
+		WHERE device_id=?
+	`, projectID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err == nil {
+		t.Fatal("deleting a v2 BLOCKED Project silently dropped device ownership")
+	}
+	record, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil || record.ProjectID != projectID || record.State != "BLOCKED" || record.Epoch != 2 {
+		t.Fatalf("failed delete changed v2 assignment: %+v err=%v", record, err)
+	}
+	// Explicitly unassigned metadata is not sufficient to certify physical
+	// blackout; this verifies only the database project-lifetime constraint.
+	if _, err := handle.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=NULL, assignment_state='UNASSIGNED', assignment_epoch=3
+		WHERE device_id=?
+	`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err != nil {
+		t.Fatalf("explicitly unassigned Project still pinned: %v", err)
+	}
+}
