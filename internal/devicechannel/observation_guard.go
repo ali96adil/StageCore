@@ -33,8 +33,9 @@ func (r *Runtime) observeCurrentDevice(
 	if _, err := r.repository.ObserveDevice(ctx, observation); err != nil {
 		return true, err
 	}
-	_, err := r.repository.RecordNetworkObservation(ctx, network)
-	return true, err
+	// Network diagnostics are best effort, as in the existing v1 protocol.
+	_, _ = r.repository.RecordNetworkObservation(ctx, network)
+	return true, nil
 }
 
 // probeV2AfterReconnect is an OPTIONAL software diagnostic, never a cue,
