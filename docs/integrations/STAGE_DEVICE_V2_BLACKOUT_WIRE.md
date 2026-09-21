@@ -136,6 +136,28 @@ command authority as false. The bilingual Stage Devices Operator page uses
 this read-only view and the pairing-protected unassigned inventory; it does
 **not** render a transfer or v1 command button for a v2 node.
 
+## Hub restart: durable connection-generation fence
+
+The Hub records every v2 socket generation in a SQLite singleton
+(`stage_device_v2_connection_sequence`, schema 35) **before** registering a
+socket or sending `assignment.state`. Allocation is an atomic SQL
+`UPDATE ... RETURNING`, serialized even across overlapping Hub processes.
+The migration initializes its high-water mark above historical generations
+in transfer intents and BLOCKED epoch ACKs. Exhaustion or a storage failure
+rejects the new v2 connection; no process-local fallback is permitted.
+
+Without a durable fence, a restart could reuse generation `1`, matching a
+previously persisted software-zero epoch ACK and causing the Operator
+transfer-status API to mislabel a **historical** report as **current**.
+The status may claim a current software report only if the stored ACK matches
+the live authenticated generation. A replacement socket or a restarted Hub
+must obtain a strictly newer generation and wait for a fresh zero report.
+This safeguard does not independently verify physical output.
+
+Legacy v1 command sessions do not depend on this v2 SQL allocator. No
+snapshot, Project assignment or DMX output is activated by allocating a
+generation.
+
 ## Qualification boundary
 
 A software ACK is the device's **report** that all logical outputs reached zero; it cannot independently establish the voltage/current/light output of a real DMX decoder or LED strip. Physical wiring, DMX refresh/decoder behavior, loss of Wi-Fi during fades, old-command rejection and actual strip darkness remain separate physical qualification gates. Do not merge or deploy these source-only drafts based on CI alone.
