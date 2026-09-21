@@ -31,6 +31,25 @@ WHEN EXISTS (
     SELECT 1 FROM stage_device_assignments
     WHERE device_id = OLD.device_id AND assignment_state <> 'LEGACY'
 )
+-- Explicit Hub disable/revocation MUST remain possible even while fenced.
+-- This narrowly allows 1->0 only when all identity/project metadata is
+-- unchanged; a v1 hello, re-enable, or other mutation is still rejected.
+AND NOT (
+    OLD.enabled = 1 AND NEW.enabled = 0
+    AND NEW.device_id IS OLD.device_id
+    AND NEW.project_id IS OLD.project_id
+    AND NEW.profile_id IS OLD.profile_id
+    AND NEW.device_kind IS OLD.device_kind
+    AND NEW.display_name IS OLD.display_name
+    AND NEW.platform IS OLD.platform
+    AND NEW.architecture IS OLD.architecture
+    AND NEW.client_version IS OLD.client_version
+    AND NEW.protocol_version IS OLD.protocol_version
+    AND NEW.capabilities_json IS OLD.capabilities_json
+    AND NEW.group_name IS OLD.group_name
+    AND NEW.location_name IS OLD.location_name
+    AND NEW.created_at_us IS OLD.created_at_us
+)
 BEGIN
     SELECT RAISE(ABORT, 'STAGE_DEVICE_V1_HELLO_FENCED');
 END;
