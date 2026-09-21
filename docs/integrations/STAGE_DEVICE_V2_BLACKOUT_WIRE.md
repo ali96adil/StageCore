@@ -89,9 +89,11 @@ generation, `state=BLOCKED`, `persisted=true`,
 back to failsafe/reconnect, not ACTIVE. Same-epoch exact reconnects may report
 again; stale epoch, Project, generation and nonzero/partial reports are denied.
 
-**Still missing:** authorized Operator write route, device-side Project
-configuration/snapshot activation, actual project-scoped v2 command execution,
-and independent physical DMX decoder/LED validation.
+**Still missing:** a production-qualified Operator transfer UI/workflow (the
+separate, disabled-by-default software-only HTTP route below is not production
+authorization), device-side Project configuration/snapshot activation, actual
+project-scoped v2 command execution, and independent physical DMX decoder/LED
+validation.
 
 ## Experimental Operator contract (source-only; disabled by default)
 
@@ -135,6 +137,22 @@ endpoint always reports physical verification, snapshot activation and new
 command authority as false. The bilingual Stage Devices Operator page uses
 this read-only view and the pairing-protected unassigned inventory; it does
 **not** render a transfer or v1 command button for a v2 node.
+
+## Cancellation and expired blackout requests
+
+If the Operator browser disconnects, cancels its request, or the bounded
+software-blackout ACK budget expires, the Hub now closes that authenticated
+v2 socket **before** accepting another attempt. It marks the saved PENDING
+intent `CANCELLED` without modifying the Project, epoch, snapshot, command
+queue or canonical committed-transfer audit. A subsequently buffered ACK
+from the old socket cannot complete the abandoned attempt or be reused for
+a new reservation: the device must authenticate and obtain a new durable
+connection generation. The node itself remains under its local failsafe
+blackout. Timeout/cancellation is not a physical output measurement.
+
+The separate Go integration regressions simulate a silent node and a
+canceled browser operation, verify the intent/audit/assignment invariants,
+and require a newer generation on the next authenticated v2 hello.
 
 ## Hub restart: durable connection-generation fence
 
