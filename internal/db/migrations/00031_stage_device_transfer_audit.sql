@@ -14,7 +14,8 @@ CREATE TABLE stage_device_assignment_transfers (
     challenge_sha256 TEXT NOT NULL CHECK(length(challenge_sha256) = 64),
     next_state TEXT NOT NULL CHECK(next_state IN ('BLOCKED', 'UNASSIGNED')),
     committed_at_us INTEGER NOT NULL,
-    UNIQUE(device_id, idempotency_key)
+    UNIQUE(device_id, idempotency_key),
+    UNIQUE(device_id, challenge_sha256)
 );
 CREATE INDEX stage_device_assignment_transfers_device_epoch_idx
 ON stage_device_assignment_transfers(device_id, to_epoch);
