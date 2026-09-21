@@ -318,3 +318,39 @@ func TestDeviceDisabledStateCannotBeResetByReconnect(t *testing.T) {
 		t.Fatalf("disabled device must reject runtime commands: %v", err)
 	}
 }
+
+func TestUnassignedAndDisabledDevicesCannotAdvertiseReady(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	cases := []struct {
+		name string
+		device deviceexperience.Device
+	}{
+		{name: "unassigned", device: deviceexperience.Device{
+			ID: "unassigned-readiness", Kind: deviceexperience.DeviceTabletPlayer,
+			DisplayName: "Unassigned", ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Enabled: true,
+		}},
+		{name: "disabled", device: deviceexperience.Device{
+			ID: "disabled-readiness", ProjectID: projectID, Kind: deviceexperience.DeviceTabletPlayer,
+			DisplayName: "Disabled", ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Enabled: false,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := repo.UpsertDevice(ctx, tc.device); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				state, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+					DeviceID: tc.device.ID, Connection: deviceexperience.ConnectionOnline,
+					Readiness: deviceexperience.ReadinessReady,
+				})
+				if err != nil || state.Readiness != deviceexperience.ReadinessBlocker {
+					t.Fatalf("untrusted READY report %d escaped guard: %+v err=%v", i, state, err)
+				}
+			}
+		})
+	}
+}
