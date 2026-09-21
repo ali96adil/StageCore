@@ -178,7 +178,7 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	}
 	observed := normalizeJSON(observation.ObservedState, `{}`)
 	network := normalizeJSON(observation.NetworkState, `{}`)
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO stage_device_runtime_state
 		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
 		VALUES (?, ?, ?, ?, ?, ?)
