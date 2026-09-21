@@ -31,6 +31,7 @@ type Runtime struct {
 	mu             sync.Mutex
 	connections    map[string]*connection
 	inflight       map[string]*connection
+	pendingBlackouts map[string]*pendingBlackout
 	nextGeneration int64
 	closed         bool
 }
@@ -71,6 +72,12 @@ type inboundMessage struct {
 	SchemaVersion int                        `json:"schema_version"`
 	DeviceID      string                     `json:"device_id"`
 	CommandID     string                     `json:"command_id,omitempty"`
+	TransferID string `json:"transfer_id,omitempty"`
+	AssignmentEpoch int64 `json:"assignment_epoch,omitempty"`
+	ConnectionGeneration int64 `json:"connection_generation,omitempty"`
+	Challenge string `json:"challenge,omitempty"`
+	Blackout bool `json:"blackout,omitempty"`
+	ChannelLevels []int `json:"channel_levels,omitempty"`
 	Status        contracts.CommandStatus    `json:"status,omitempty"`
 	Payload       json.RawMessage            `json:"payload,omitempty"`
 	Error         *contracts.ContractError   `json:"error,omitempty"`
@@ -101,6 +108,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		auth:        auth,
 		connections: make(map[string]*connection),
 		inflight:    make(map[string]*connection),
+		pendingBlackouts: make(map[string]*pendingBlackout),
 	}
 }
 
@@ -316,7 +324,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}
 		}
 	}()
-	defer func() { <-monitorDone }()
+	// Close the socket BEFORE waiting for the revocation monitor. The
+	// monitor exits when current.closed is signaled; waiting first would
+	// deadlock whenever an invalid inbound frame causes an early return.
+	defer func() {
+		current.close()
+		<-monitorDone
+	}()
 
 	if isV2Unassigned {
 		assignment, err := r.repository.GetAssignmentRecord(ctx, device.ID)
@@ -380,6 +394,16 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "assignment.blackout_ack":
+			if !isV2Unassigned {
+				return
+			}
+			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+				return
+			}
+			if !r.deliverBlackoutAck(current, message) {
+				return
+			}
 		case "command.result":
 			// An unassigned v2 node can never report completion of a
 			// project command on this connection.
