@@ -1,6 +1,7 @@
 package operatorweb
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,12 +22,9 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 		}
 	}
 
-	for _, marker := range []string{
-		`#workspaceNav [data-phase4-nav="true"].f017-profile-hidden`,
-		`display: block !important;`,
-	} {
-		if !strings.Contains(css, marker) {
-			t.Fatalf("workspace profile Phase 4 compatibility rule missing %q", marker)
-		}
-	}
-}
+	// Keep the Phase 4 marker and visible declaration inside the same scoped
+	// exemption without requiring an obsolete single-selector spelling.
+	exemption := regexp.MustCompile(`(?s)#workspaceNav\s+:is\(([^)]*)\)\.f017-profile-hidden\s*\{\s*display:\s*block\s*!important;`).FindStringSubmatch(css)
+	if len(exemption) != 2 || !strings.Contains(exemption[1], `[data-phase4-nav="true"]`) {
+		t.Fatal("workspace profile Phase 4 visibility exemption missing or incorrectly scoped")
+	}}
