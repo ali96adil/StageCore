@@ -20,6 +20,11 @@ import (
 // fresh blackout request/response. A raw request or client observation MUST
 // NEVER be passed directly to CommitVerifiedBlackoutTransfer.
 type VerifiedTransferInput struct {
+	// ReservationID binds a future trusted socket confirmation to one
+	// exact nonexpired PENDING intent. Empty is retained only for existing
+	// source-only repository qualification tests; live orchestration must
+	// always supply the committed reservation ID.
+	ReservationID      string
 	DeviceID          string
 	FromProjectID     string
 	ToProjectID       string
@@ -55,6 +60,7 @@ type TransferCommitRecord struct {
 // transfer lock before calling this method. There is deliberately no HTTP
 // endpoint calling this method in the current draft.
 func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in VerifiedTransferInput) (TransferCommitRecord, error) {
+	in.ReservationID = strings.TrimSpace(in.ReservationID)
 	in.DeviceID = strings.TrimSpace(in.DeviceID)
 	in.FromProjectID = strings.TrimSpace(in.FromProjectID)
 	in.ToProjectID = strings.TrimSpace(in.ToProjectID)
@@ -86,6 +92,34 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 	}
 	defer tx.Rollback()
 
+	// The reservation check shares the exact SQLite transaction with the
+	// subsequent sidecar CAS and audit. No caller-supplied confirmation can
+	// silently pick a different Project/epoch/generation/nonce or replay an
+	// expired attempt. A later reconnect must not reuse a prior reservation.
+	if in.ReservationID != "" {
+		var storedDevice, storedFrom, storedTo, storedHash, status, storedActor string
+		var storedEpoch, storedGeneration, storedChannels, expiresUS int64
+		err = tx.QueryRowContext(ctx, `
+			SELECT device_id, COALESCE(from_project_id,''), COALESCE(to_project_id,''),
+			       expected_epoch, connection_generation, expected_channels,
+			       challenge_sha256, status, requested_by, expires_at_us
+			FROM stage_device_transfer_intents WHERE transfer_id=?
+		`, in.ReservationID).Scan(&storedDevice, &storedFrom, &storedTo,
+			&storedEpoch, &storedGeneration, &storedChannels, &storedHash,
+			&status, &storedActor, &expiresUS)
+		if err != nil {
+			return TransferCommitRecord{}, fmt.Errorf("%w: reservation unavailable: %v", ErrInvalidState, err)
+		}
+		if storedDevice != in.DeviceID || storedFrom != in.FromProjectID ||
+			storedTo != in.ToProjectID || storedEpoch != in.ExpectedEpoch ||
+			storedGeneration != in.ConnectionGeneration ||
+			storedChannels != lightingnode.MaxChannels || storedHash != challengeHash ||
+			storedActor != in.ActorID || (status != "PENDING" && status != "COMMITTED") ||
+			(status == "PENDING" && r.now().UTC().UnixMicro() >= expiresUS) {
+			return TransferCommitRecord{}, fmt.Errorf("%w: reservation scope or expiry does not match", ErrInvalidState)
+		}
+	}
+
 	// An uncertain previous commit may be retried only with EXACTLY the same
 	// actor, intent, epoch, authenticated generation and challenge.
 	var old TransferCommitRecord
@@ -106,6 +140,9 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 			oldActor != in.ActorID || oldGeneration != in.ConnectionGeneration ||
 			oldHash != challengeHash {
 			return TransferCommitRecord{}, fmt.Errorf("%w: idempotency key used for a different transfer", ErrInvalidState)
+		}
+		if in.ReservationID != "" && old.TransferID != in.ReservationID {
+			return TransferCommitRecord{}, fmt.Errorf("%w: different reservation for idempotency replay", ErrInvalidState)
 		}
 		old.Reused = true
 		return old, nil
@@ -186,9 +223,12 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 	if err != nil || changed != 1 {
 		return TransferCommitRecord{}, fmt.Errorf("%w: concurrent transfer changed assignment", ErrInvalidState)
 	}
-	transferID, err := stageid.New()
-	if err != nil {
-		return TransferCommitRecord{}, fmt.Errorf("allocate transfer audit ID: %w", err)
+	transferID := in.ReservationID
+	if transferID == "" {
+		transferID, err = stageid.New()
+		if err != nil {
+			return TransferCommitRecord{}, fmt.Errorf("allocate transfer audit ID: %w", err)
+		}
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO stage_device_assignment_transfers
@@ -201,6 +241,24 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 		in.ConnectionGeneration, challengeHash, nextState, nowUS)
 	if err != nil {
 		return TransferCommitRecord{}, fmt.Errorf("record verified transfer in audit: %w", err)
+	}
+	// A reservation only becomes COMMITTED after its matching CAS + audit
+	// exist in this SAME transaction. The schema-33 trigger verifies those
+	// identities, epoch, target and hash. If this update fails, rollback
+	// undoes the assignment mutation and audit as well.
+	if in.ReservationID != "" {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE stage_device_transfer_intents
+			SET status='COMMITTED', updated_at_us=?
+			WHERE transfer_id=? AND status='PENDING' AND expires_at_us>?
+		`, nowUS, in.ReservationID, nowUS)
+		if err != nil {
+			return TransferCommitRecord{}, fmt.Errorf("%w: finalize pending intent: %v", ErrInvalidState, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return TransferCommitRecord{}, fmt.Errorf("%w: reservation expired or already finalized", ErrInvalidState)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return TransferCommitRecord{}, fmt.Errorf("commit verified transfer: %w", err)
