@@ -168,6 +168,31 @@ all authority and LIVE state after its own observation. The currently
 experimental v2 node does not support output activation; no automatic
 nonzero command is permitted.
 
+## Atomicity-aware Hub diagnostic read (stacked read-only batch)
+
+`livereconcile.NewBlockedDiagnosticReader(store, repository, runtime).Read`
+now composes the current published session/Cue projection with the
+authenticated current-socket diagnostic. It requires the Hub-approved v2
+Lighting identity and capability, BLOCKED Project/epoch with **no activated
+snapshot**, and a *durably persisted all-zero epoch ACK for this exact
+connection generation*. An older socket's ACK cannot authorize its report.
+
+The reader rederives the current completed Cue (including the latest
+execution ID), rechecks the device's Hub-approved capabilities, assignment
+epoch, generation, persisted epoch ACK and cached reported values, then
+rechecks report age and status. Changing Cue 5 to Cue 7, repeating Cue 5 with
+a different execution, revoking trust, transferring Project, reconnecting or
+replacing the report mid-read returns `UNKNOWN` without displaying an
+apparently current diff. This is double-checked for a **diagnostic read only**,
+not an atomic dispatch guarantee.
+
+Tests use deterministic in-memory session, device and socket read models to
+fault-inject each scope change. The result remains only `UNKNOWN`,
+`BLOCKED` or `UNSAFE`; `CommandsEnabled=false` and
+`PhysicalVerified=false` unconditionally. No Operator route, automatic
+correction/GO replay, v2 ACTIVE grant, Pi deployment, ESP flashing or
+physical qualification is included.
+
 ## Follow-up gates
 
 1. Connect authenticated versioned observation challenge/response to the Hub.
