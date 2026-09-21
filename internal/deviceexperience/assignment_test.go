@@ -155,3 +155,34 @@ func TestAssignmentMigrationBackfillsPreExistingStageDevice(t *testing.T) {
 		t.Fatalf("migration altered legacy device identity or enabled state: %+v err=%v", loaded, err)
 	}
 }
+
+func TestAssignedLegacyDevicePreventsDestructiveProjectDelete(t *testing.T) {
+	ctx := context.Background()
+	repo, handle, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "surviving-lighting-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Surviving lighting node",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+
+	// stage_devices.project_id still has ON DELETE CASCADE. Until its FK can
+	// be rebuilt, reject project deletion instead of losing physical identity.
+	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id = ?", projectID); err == nil {
+		t.Fatal("project delete unexpectedly cascaded into paired device identity")
+	}
+	survivor, err := repo.GetDevice(ctx, device.ID)
+	if err != nil || survivor.ProjectID != projectID || !survivor.Enabled {
+		t.Fatalf("failed delete lost original device: %+v err=%v", survivor, err)
+	}
+	record, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil || record.State != deviceexperience.AssignmentLegacy || record.ProjectID != projectID {
+		t.Fatalf("failed delete lost assignment metadata: %+v err=%v", record, err)
+	}
+	var projectCount int
+	if err := handle.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM projects WHERE project_id = ?", projectID).Scan(&projectCount); err != nil || projectCount != 1 {
+		t.Fatalf("failed delete lost project: count=%d err=%v", projectCount, err)
+	}
+}
