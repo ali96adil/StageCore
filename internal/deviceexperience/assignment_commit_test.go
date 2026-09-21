@@ -59,6 +59,13 @@ func TestVerifiedTransferCASPersistsBlockedEpochAndAuditWithoutAuthorizingComman
 	}); err == nil {
 		t.Fatal("BLOCKED v2 device accepted ordinary project command")
 	}
+	listed, err := repo.ListDevices(ctx, targetID)
+	if err != nil || len(listed) != 1 || listed[0].ID != deviceID ||
+		listed[0].ProjectID != "" || listed[0].Assignment == nil ||
+		listed[0].Assignment.ProjectID != targetID ||
+		listed[0].Assignment.State != "BLOCKED" {
+		t.Fatalf("Hub-owned target inventory did not display blocked device: %+v err=%v", listed, err)
+	}
 	var count int
 	if err := handle.DB.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM stage_device_assignment_transfers WHERE device_id=?", deviceID).Scan(&count); err != nil || count != 1 {
@@ -97,6 +104,15 @@ func TestVerifiedTransferCASPersistsBlockedEpochAndAuditWithoutAuthorizingComman
 	reassigned, err := repo.CommitVerifiedBlackoutTransfer(ctx, toSecond)
 	if err != nil || reassigned.FromEpoch != 2 || reassigned.ToEpoch != 3 || reassigned.NextState != "BLOCKED" {
 		t.Fatalf("second Project transfer failed: %+v err=%v", reassigned, err)
+	}
+	oldInventory, err := repo.ListDevices(ctx, targetID)
+	if err != nil || len(oldInventory) != 0 {
+		t.Fatalf("old Project still lists transferred device: %+v err=%v", oldInventory, err)
+	}
+	newInventory, err := repo.ListDevices(ctx, second.ID)
+	if err != nil || len(newInventory) != 1 || newInventory[0].Assignment == nil ||
+		newInventory[0].Assignment.ProjectID != second.ID || newInventory[0].Assignment.Epoch != 3 {
+		t.Fatalf("new Project inventory missing Hub-assigned device: %+v err=%v", newInventory, err)
 	}
 	// Unassign persists the next epoch; old project and old snapshot cannot
 	// regain authority just because a v1 client or API returns.
