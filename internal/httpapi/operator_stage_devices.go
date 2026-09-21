@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -168,6 +170,91 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, map[string]any{
 				"preflight": preflight,
 				"note": "CHECK_ONLY_NOT_A_TRANSFER_OR_PHYSICAL_BLACKOUT_PROOF",
+			})
+		}))
+
+		// EXPERIMENTAL / disabled by default. This route only commits a
+		// BLOCKED/UNASSIGNED epoch after a device-reported SOFTWARE blackout.
+		// It never activates a snapshot or new Project commands and is not
+		// evidence that a physical DMX fixture is electrically dark.
+		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/assignment/software-transfer", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER") != "1" {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_TRANSFER_DISABLED"})
+				return
+			}
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			var input struct {
+				ExpectedProjectID string `json:"expected_project_id"`
+				TargetProjectID   string `json:"target_project_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm          string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			// Explicit acknowledgement cannot be inherited from Preflight or
+			// inferred from a Project choice; the action is blackout-first.
+			const confirmation = "BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_TRANSFER_CONFIRMATION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			intent := deviceexperience.TransferPreflightInput{
+				DeviceID: deviceID,
+				ExpectedProjectID: input.ExpectedProjectID,
+				TargetProjectID: input.TargetProjectID,
+				ExpectedEpoch: input.ExpectedEpoch,
+			}
+			if _, err := devices.PreflightTransfer(r.Context(), intent); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_BLOCKED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteReservedSoftwareTransferAuthorized(
+				r.Context(), intent, actor, reauthorize)
+			if err != nil {
+				// Never interpret an error as a successful transfer. Client
+				// must refetch Hub-owned assignment, not retry a stale ACK.
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "STAGE_DEVICE_SOFTWARE_TRANSFER_NOT_COMMITTED",
+					"note": "VERIFY_HUB_ASSIGNMENT_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"transfer": record,
+				"state": record.NextState,
+				"commands_enabled": false,
+				"physical_blackout_verified": false,
+				"epoch_ack_required": record.NextState == "BLOCKED",
+				"note": "SOFTWARE_ACK_ONLY_NOT_PHYSICAL_DMX_QUALIFICATION",
 			})
 		}))
 
