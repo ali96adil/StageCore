@@ -5,8 +5,8 @@
 CREATE TABLE stage_device_transfer_intents (
     transfer_id TEXT PRIMARY KEY CHECK(length(transfer_id) = 36),
     device_id TEXT NOT NULL REFERENCES stage_device_identity_registry(device_id) ON DELETE RESTRICT,
-    from_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
-    to_project_id TEXT REFERENCES projects(project_id) ON DELETE RESTRICT,
+    from_project_id TEXT,
+    to_project_id TEXT,
     expected_epoch INTEGER NOT NULL CHECK(expected_epoch > 0 AND expected_epoch < 9223372036854775807),
     connection_generation INTEGER NOT NULL CHECK(connection_generation > 0),
     expected_channels INTEGER NOT NULL CHECK(expected_channels BETWEEN 1 AND 512),
@@ -47,6 +47,12 @@ WHEN NEW.status <> 'PENDING'
         AND a.assignment_state IN ('UNASSIGNED', 'BLOCKED')
         AND a.runtime_snapshot_id = ''
   )
+  OR (NEW.from_project_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM projects p WHERE p.project_id = NEW.from_project_id
+  ))
+  OR (NEW.to_project_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM projects p WHERE p.project_id = NEW.to_project_id
+  ))
   OR EXISTS (
       SELECT 1 FROM stage_device_commands c
       WHERE c.device_id = NEW.device_id AND c.status = 'ACCEPTED'
@@ -87,7 +93,24 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- A v2 BLOCKED/ACTIVE node must be explicitly unassigned (new epoch +
+-- blackout) before deleting its currently owning Project. The v1 deletion
+-- guard in migration 29 only checks stage_devices.project_id; v2 keeps its
+-- Hub-owned project in the independent sidecar.
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_v2_assignment_protect_project_delete
+BEFORE DELETE ON projects
+WHEN EXISTS (
+    SELECT 1 FROM stage_device_assignments
+    WHERE project_id = OLD.project_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_PROJECT_ASSIGNED');
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS stage_device_v2_assignment_protect_project_delete;
 DROP TRIGGER IF EXISTS stage_device_transfer_status_guard;
 DROP TRIGGER IF EXISTS stage_device_transfer_insert_guard;
 DROP INDEX IF EXISTS stage_device_transfer_recent_idx;
