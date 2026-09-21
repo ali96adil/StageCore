@@ -31,6 +31,7 @@ const testDeviceID = "44444444-4444-4444-8444-444444444444"
 type runtimeFixture struct {
 	runtime   *devicechannel.Runtime
 	repo      *deviceexperience.Repository
+	dbHandle  *db.Handle
 	auth      *companionauth.Service
 	projectID string
 	token     string
@@ -79,7 +80,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 		t.Fatal(err)
 	}
 	runtime := devicechannel.New(repo, auth)
-	fixture := &runtimeFixture{runtime: runtime, repo: repo, auth: auth, projectID: project.ID, token: credential.Token, session: session}
+	fixture := &runtimeFixture{runtime: runtime, repo: repo, dbHandle: handle, auth: auth, projectID: project.ID, token: credential.Token, session: session}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtime.ServeWebSocket(w, r, session, credential.Token)
 	}))
