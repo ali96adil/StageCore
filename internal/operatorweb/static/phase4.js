@@ -310,6 +310,43 @@
       </article>`;
   }
 
+  // This view consumes a GET-only software diagnostic. It never marks READY,
+  // sends GO, asks for an output command, or treats logical DMX as physical.
+  function renderLightingDiagnostic(view) {
+    const d = view?.diagnostic || {};
+    const accepted = ["UNKNOWN", "BLOCKED", "UNSAFE"];
+    const status = view?.source === "SOFTWARE_ONLY" && accepted.includes(d.status) ? d.status : "UNKNOWN";
+    const reason = status === "BLOCKED" ? t("diagnosticBlocked")
+      : status === "UNSAFE" ? t("diagnosticUnsafe") : t("diagnosticUnknown");
+    if (status === "UNKNOWN") {
+      // Strip ALL stale Cue/session/channel data, even from an unexpected API response.
+      return `<div class="phase4-lighting-diagnostic-info">${pulse("UNKNOWN")}
+        <p>${esc(reason)}</p><p class="muted">${esc(t("diagnosticNoCommand"))}</p></div>`;
+    }
+    const desired = d.desired_slots || {};
+    const reported = d.reported_slots || {};
+    const differing = new Set(Array.isArray(d.differing_slots) ? d.differing_slots.map(Number) : []);
+    const slots = [...new Set([...Object.keys(desired), ...Object.keys(reported)].map(Number))]
+      .filter((value) => Number.isInteger(value) && value >= 1 && value <= 12).sort((a, b) => a - b);
+    const level = (value) => value != null && Number.isInteger(Number(value)) &&
+      Number(value) >= 0 && Number(value) <= 255 ? String(Number(value)) : t("unknown");
+    const rows = slots.map((slot) => `<tr>
+      <th scope="row">${slot}</th><td>${esc(level(desired[slot]))}</td>
+      <td>${esc(level(reported[slot]))}</td>
+      <td>${differing.has(slot) ? esc(t("diagnosticDiff")) : "—"}</td>
+    </tr>`).join("");
+    return `<div class="phase4-lighting-diagnostic-info">
+      <div class="phase4-status-row">${pulse(status)}<strong>${esc(t("diagnosticSource"))}</strong></div>
+      <p>${esc(reason)}</p>
+      <p class="mono">${esc(t("diagnosticCue"))}: ${esc(d.cue_id || "—")}
+        · ${esc(t("diagnosticExecution"))}: ${esc(d.cue_execution_id || "—")}</p>
+      ${rows ? `<div class="phase4-diagnostic-scroll"><table class="phase4-diagnostic-table">
+        <thead><tr><th>${esc(t("diagnosticChannel"))}</th><th>${esc(t("diagnosticTarget"))}</th>
+        <th>${esc(t("diagnosticReported"))}</th><th>${esc(t("diagnosticDiff"))}</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : `<p>${esc(t("diagnosticNoDiff"))}</p>`}
+      <p class="muted">${esc(t("diagnosticNoCommand"))}</p>
+    </div>`;
+  }
   async function renderStageDevices() {
     pageHeader(t("devicesTitle"), t("devicesSub"), renderStageDevices);
     const projectID = currentProjectID();
