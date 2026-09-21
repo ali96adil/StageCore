@@ -142,11 +142,21 @@ func TestBlockedV2AutoProbeStartsOnlyAfterPersistedEpochReceipt(t *testing.T) {
 	t.Setenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE", "1")
 	f := newRuntimeFixture(t)
 	ctx := context.Background()
+	// Hub-approved registration owns the allowlisted capability; an old
+	// firmware socket without that capability must not receive a probe.
+	caps := append(lightingnode.CapabilityKeys(), "lighting.state_probe/1")
+	if _, err := f.repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Blocked Probe Node", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: caps,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Exercise the canonical reserved-transfer path. Direct sidecar creation
 	// is not enough for the epoch-ACK DB trigger: the persisted committed
 	// transfer audit and reservation must exist before the Hub accepts ACK.
 	prepareBlockedEpoch(t, f)
-	caps := append(lightingnode.CapabilityKeys(), "lighting.state_probe/1")
 	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
 	ws, err := websocket.Dial(url, "", f.server.URL)
 	if err != nil {
