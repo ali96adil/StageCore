@@ -127,6 +127,50 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, record)
 		}))
 
+		// An explicit read-only transfer preflight. The requester needs both
+		// project.edit and companion.pair before seeing device identity or
+		// project affiliation. The returned result does not mutate storage
+		// and is NEVER sufficient to authorize a later transfer commit.
+		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/assignment/preflight", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			var input struct {
+				ExpectedProjectID string `json:"expected_project_id"`
+				TargetProjectID   string `json:"target_project_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			preflight, err := devices.PreflightTransfer(r.Context(), deviceexperience.TransferPreflightInput{
+				DeviceID: deviceID, ExpectedProjectID: input.ExpectedProjectID,
+				TargetProjectID: input.TargetProjectID, ExpectedEpoch: input.ExpectedEpoch,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+				return
+			}
+			if err != nil {
+				if errors.Is(err, deviceexperience.ErrInvalidState) {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_BLOCKED"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_UNAVAILABLE"})
+				return
+			}
+			if !runtime.IsConnected(deviceID) {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_OFFLINE"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"preflight": preflight,
+				"note": "CHECK_ONLY_NOT_A_TRANSFER_OR_PHYSICAL_BLACKOUT_PROOF",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			device, err := devices.GetDevice(r.Context(), deviceID)

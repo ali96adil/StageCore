@@ -12,6 +12,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -374,6 +375,78 @@ func TestOperatorUnassignedV2InventoryRequiresPairingPermission(t *testing.T) {
 		if res.Code != http.StatusForbidden {
 			t.Fatalf("operator accessed pairing metadata path=%q status=%d body=%s", guarded, res.Code, res.Body.String())
 		}
+	}
+}
+
+func TestOperatorTransferPreflightDoesNotMutateAndRequiresPermissionsAndOnlineNode(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	target, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Target Show", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "unassigned-preflight-api", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "New Lighting Node", ProtocolVersion: deviceexperience.ProtocolVersion2, ProfileID: lightingnode.ProfileID, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/stage-devices/unassigned-preflight-api/assignment/preflight"
+	payload := `{"expected_project_id":"","target_project_id":"` + target.ID + `","expected_assignment_epoch":1}`
+	perform := func(credential userauth.Credential, csrf bool, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.RemoteAddr = "127.0.0.1:19044"
+		req.Header.Set("Content-Type", "application/json")
+		if csrf {
+			req.Header.Set(csrfHeader, credential.CSRFToken)
+		}
+		if credential.Token != "" {
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+		}
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	if res := perform(userauth.Credential{}, false, payload); res.Code == http.StatusOK {
+		t.Fatalf("unauthenticated preflight succeeded: %s", res.Body.String())
+	}
+	if res := perform(owner, false, payload); res.Code == http.StatusOK {
+		t.Fatalf("preflight missing CSRF succeeded: %s", res.Body.String())
+	}
+	const password = "StageCore preflight operator password"
+	if _, err := h.auth.CreateUser(ctx, "transfer-operator", password, userauth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.Login(ctx, "transfer-operator", password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := perform(operator, true, payload); res.Code != http.StatusForbidden {
+		t.Fatalf("operator lacking edit/pair permission status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := perform(owner, true, payload); res.Code != http.StatusConflict ||
+		!bytes.Contains(res.Body.Bytes(), []byte("STAGE_DEVICE_OFFLINE")) {
+		t.Fatalf("offline device was eligible for transfer: status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := perform(owner, true, `{"expected_assignment_epoch":2,"target_project_id":"`+target.ID+`"}`); res.Code != http.StatusConflict ||
+		!bytes.Contains(res.Body.Bytes(), []byte("STAGE_DEVICE_TRANSFER_PREFLIGHT_BLOCKED")) {
+		t.Fatalf("stale epoch request was accepted: status=%d body=%s", res.Code, res.Body.String())
+	}
+	record, err := devices.GetAssignmentRecord(ctx, "unassigned-preflight-api")
+	if err != nil || record.State != "UNASSIGNED" || record.Epoch != 1 || record.ProjectID != "" {
+		t.Fatalf("read-only HTTP preflight modified storage: %+v err=%v", record, err)
 	}
 }
 
