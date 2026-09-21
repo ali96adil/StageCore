@@ -405,6 +405,26 @@
           : `<div class="phase4-empty">${esc(t("v2UnassignedEmpty"))}</div>`}
       </section>` : ""}`;
 
+    body.querySelectorAll("[data-live-diagnostic-device]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.liveDiagnosticDevice;
+        const target = button.closest(".phase4-lighting-diagnostic")?.querySelector(".phase4-lighting-diagnostic-result");
+        if (!target || !deviceID) return;
+        button.disabled = true;
+        target.textContent = t("diagnosticLoading");
+        try {
+          // The only network action for this control is the authenticated GET.
+          const view = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller/nodes/${encodeURIComponent(deviceID)}/live-diagnostic`);
+          if (!target.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;
+          target.innerHTML = renderLightingDiagnostic(view);
+        } catch (_) {
+          // Remove previous results after any transport/auth/scope failure.
+          if (target.isConnected) target.textContent = t("diagnosticUnavailable");
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
     body.querySelectorAll("[data-command]").forEach((button) => {
       button.addEventListener("click", async () => {
         const controls = button.closest("[data-controls]");
