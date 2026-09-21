@@ -168,7 +168,13 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	}
 	// Client health reports do not grant command authority. A device that has
 	// no Hub-owned project assignment, or is disabled, cannot be READY.
-	if device.ProjectID == "" || !device.Enabled {
+	// A sidecar in PREPARING/BLOCKED/UNASSIGNED/ACTIVE is never proof
+	// of v2 runtime readiness. An old device.observation cannot re-enable it.
+	assignment, err := r.GetAssignmentRecord(ctx, observation.DeviceID)
+	if err != nil {
+		return RuntimeState{}, fmt.Errorf("%w: assignment metadata unavailable: %v", ErrInvalidState, err)
+	}
+	if device.ProjectID == "" || !device.Enabled || assignment.State != AssignmentLegacy || assignment.ProjectID != device.ProjectID {
 		observation.Readiness = ReadinessBlocker
 	}
 	if observation.ObservedAt.IsZero() {
