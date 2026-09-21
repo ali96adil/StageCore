@@ -87,7 +87,9 @@ func (r *Runtime) probeV2SoftwareLevelsForConnection(
 	current := r.connections[deviceID]
 	if r.closed || current == nil || (expected != nil && current != expected) ||
 		current.protocolVersion != deviceexperience.ProtocolVersion2 ||
-		current.generation <= 0 || r.pendingV2LightingProbes[deviceID] != nil ||
+		current.generation <= 0 ||
+		!containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) ||
+		r.pendingV2LightingProbes[deviceID] != nil ||
 		r.pendingBlackouts[deviceID] != nil {
 		r.mu.Unlock()
 		return fail("no exclusive current authenticated v2 socket")
