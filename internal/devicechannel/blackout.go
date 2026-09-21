@@ -56,7 +56,8 @@ func (r *Runtime) RequestSoftwareBlackout(ctx context.Context, reservation devic
 	current := r.connections[reservation.DeviceID]
 	if r.closed || current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
 		current.generation != reservation.ConnectionGeneration ||
-		r.pendingBlackouts[reservation.DeviceID] != nil {
+		r.pendingBlackouts[reservation.DeviceID] != nil ||
+		r.pendingV2LightingProbes[reservation.DeviceID] != nil {
 		r.mu.Unlock()
 		return SoftwareBlackoutConfirmation{}, ErrBlackoutNotVerified
 	}
