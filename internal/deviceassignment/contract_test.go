@@ -133,3 +133,23 @@ func TestTransferRejectsEpochOverflow(t *testing.T) {
 		t.Fatalf("overflow must fail closed: %v",err)
 	}
 }
+
+func TestSQLiteAssignmentEpochBoundary(t *testing.T) {
+	const max = ^uint64(0) >> 1
+	if err := (Assignment{DeviceID: "node-01", ProjectID: "project-A", Epoch: max, State: Active}).Validate(); err != nil {
+		t.Fatalf("last signed integer epoch should be representable: %v", err)
+	}
+	if err := (Assignment{DeviceID: "node-01", ProjectID: "project-A", Epoch: max + 1, State: Active}).Validate(); !errors.Is(err, ErrInvalidAssignment) {
+		t.Fatalf("epoch exceeding persistent storage accepted: %v", err)
+	}
+	current := Assignment{DeviceID: "node-01", ProjectID: "project-A", Epoch: max, State: Active}
+	intent := TransferIntent{
+		DeviceID: "node-01", FromProjectID: "project-A", ToProjectID: "project-B",
+		ExpectedEpoch: max, ConnectionGeneration: 1, ExpectedChannels: 1, Challenge: "fresh",
+	}
+	ack := BlackoutAck{DeviceID: "node-01", Epoch: max, ConnectionGeneration: 1,
+		Challenge: "fresh", Blackout: true, ChannelLevels: []uint8{0}}
+	if _, err := intent.VerifyBlackout(current, ack); !errors.Is(err, ErrInvalidAssignment) {
+		t.Fatalf("epoch increment beyond SQLite signed integer range accepted: %v", err)
+	}
+}
