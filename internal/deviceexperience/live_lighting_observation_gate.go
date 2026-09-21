@@ -66,15 +66,18 @@ func (g *LiveLightingObservationGate) Begin(deviceID string, scope LiveLightingS
 	return challenge, nil
 }
 
-// Cancel invalidates the current challenge on disconnect/authorization
-// revocation. Transport owners must call it after closing that exact socket;
-// Begin on a replacement socket also invalidates the old challenge.
-func (g *LiveLightingObservationGate) Cancel(deviceID string) {
-	if g == nil {
+// Cancel invalidates only the *exact* challenge owned by the closing
+// socket. A delayed old-socket cleanup must never clear a replacement socket's
+// fresh challenge. Begin on a replacement socket also replaces the old token.
+func (g *LiveLightingObservationGate) Cancel(deviceID, challenge string) {
+	if g == nil || strings.TrimSpace(challenge) == "" {
 		return
 	}
 	g.mu.Lock()
-	delete(g.pending, strings.TrimSpace(deviceID))
+	id := strings.TrimSpace(deviceID)
+	if pending, found := g.pending[id]; found && pending.challenge == challenge {
+		delete(g.pending, id)
+	}
 	g.mu.Unlock()
 }
 
