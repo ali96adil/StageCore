@@ -27,4 +27,5 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 	exemption := regexp.MustCompile(`(?s)#workspaceNav\s+:is\(([^)]*)\)\.f017-profile-hidden\s*\{\s*display:\s*block\s*!important;`).FindStringSubmatch(css)
 	if len(exemption) != 2 || !strings.Contains(exemption[1], `[data-phase4-nav="true"]`) {
 		t.Fatal("workspace profile Phase 4 visibility exemption missing or incorrectly scoped")
-	}}
+	}
+}
