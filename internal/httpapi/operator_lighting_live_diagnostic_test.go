@@ -173,3 +173,38 @@ func TestOperatorLightingLiveDiagnosticUnknownNeverReturnsStaleLevels(t *testing
 		t.Fatalf("UNKNOWN leaked stale scope or correction authority: %d %s",res.Code,res.Body.String())
 	}
 }
+
+func TestOperatorLightingLiveDiagnosticUnknownFutureStatusFailsClosed(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Future Status", CreatedBy: "owner",
+	})
+	if err != nil { t.Fatal(err) }
+	reader := &testLightingDiagnosticReader{
+		projectID:project.ID, deviceID:"node-1",
+		response:livereconcile.BlockedSoftwareDiagnostic{
+			Status:livereconcile.SoftwareDiagnosticStatus("READY"),
+			Reason:"claimed future readiness",
+			CueID:"cue-5",DesiredSlots:map[int]uint8{2:140},
+		},
+	}
+	handler := New(WithOperatorLightingLiveDiagnostics(h.auth,stageStore,reader)).Handler()
+	owner,err:=h.auth.Login(ctx,"owner",h.password,"127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/lighting-controller/nodes/node-1/live-diagnostic",nil)
+	req.RemoteAddr="127.0.0.1:23006"
+	req.AddCookie(&http.Cookie{Name:browserSessionCookie,Value:owner.Token})
+	res:=httptest.NewRecorder()
+	handler.ServeHTTP(res,req)
+	if res.Code!=http.StatusOK ||
+		!strings.Contains(res.Body.String(), "\"status\":\"UNKNOWN\"") ||
+		!strings.Contains(res.Body.String(), "ACQUIRE_FRESH_OBSERVATION") ||
+		strings.Contains(res.Body.String(), "\"status\":\"READY\"") ||
+		strings.Contains(res.Body.String(), "cue-5") ||
+		strings.Contains(res.Body.String(), "\"2\":140") {
+		t.Fatalf("future status escaped safe default: %d %s",res.Code,res.Body.String())
+	}
+}
