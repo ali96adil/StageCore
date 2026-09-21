@@ -33,6 +33,7 @@ type Runtime struct {
 	connections    map[string]*connection
 	inflight       map[string]*connection
 	pendingBlackouts map[string]*pendingBlackout
+	pendingV2LightingProbes map[string]*pendingV2LightingProbe
 	nextGeneration int64
 	closed         bool
 }
@@ -42,6 +43,7 @@ type connection struct {
 	ws              *websocket.Conn
 	deviceID        string
 	protocolVersion string
+	sessionToken    string
 	generation      int64
 	writeMu         sync.Mutex
 	once            sync.Once
@@ -79,6 +81,7 @@ type inboundMessage struct {
 	ConnectionGeneration int64 `json:"connection_generation,omitempty"`
 	Challenge string `json:"challenge,omitempty"`
 	Blackout bool `json:"blackout,omitempty"`
+	LevelsKnown bool `json:"levels_known,omitempty"`
 	ChannelLevels []int `json:"channel_levels,omitempty"`
 	Status        contracts.CommandStatus    `json:"status,omitempty"`
 	Payload       json.RawMessage            `json:"payload,omitempty"`
@@ -111,6 +114,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		connections: make(map[string]*connection),
 		inflight:    make(map[string]*connection),
 		pendingBlackouts: make(map[string]*pendingBlackout),
+		pendingV2LightingProbes: make(map[string]*pendingV2LightingProbe),
 	}
 }
 
@@ -284,7 +288,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	// allocated and it has become the current connection. This ordering
 	// prevents an exhausted/unavailable counter from creating a ghost
 	// ONLINE device record that could mislead Operator commissioning.
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, closed: make(chan struct{})}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, closed: make(chan struct{})}
 	previous, err := r.register(ctx, current)
 	if err != nil {
 		current.close()
@@ -404,6 +408,18 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "lighting.state_report":
+			// Opt-in read-only diagnostic; it cannot activate v2, change
+			// assignment, satisfy the published Snapshot or claim READY.
+			if !isV2Unassigned {
+				return
+			}
+			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+				return
+			}
+			if !r.deliverV2LightingReport(current, message) {
+				return
+			}
 		case "assignment.epoch_ack":
 			// A separate reconnect after a committed software-blackout
 			// transfer proves only that this exact authenticated v2 socket
