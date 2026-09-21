@@ -8,7 +8,6 @@ package deviceassignment
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -124,7 +123,7 @@ func (t TransferIntent) VerifyBlackout(current Assignment, ack BlackoutAck) (Ass
 	if t.DeviceID == "" || t.DeviceID != strings.TrimSpace(t.DeviceID) ||
 		t.FromProjectID != strings.TrimSpace(t.FromProjectID) ||
 		t.ToProjectID != strings.TrimSpace(t.ToProjectID) ||
-		t.ExpectedEpoch == 0 || t.ExpectedEpoch == math.MaxUint64 ||
+		t.ExpectedEpoch == 0 || t.ExpectedEpoch == ^uint64(0) ||
 		t.Challenge == "" || t.Challenge != strings.TrimSpace(t.Challenge) ||
 		t.FromProjectID == t.ToProjectID ||
 		current.DeviceID != t.DeviceID || current.Epoch != t.ExpectedEpoch ||
