@@ -39,7 +39,7 @@ type V2SoftwareLevels struct {
 	ConnectionGeneration    int64
 	ChannelLevels           []uint8
 	ReportedBlackout        bool
-	NonZeroWhileBlocked     bool
+	UnsafeWhileUnactivated   bool
 	PhysicalOutputVerified  bool
 	CommandsEnabled         bool
 }
@@ -185,7 +185,7 @@ func (r *Runtime) ProbeV2SoftwareLevels(ctx context.Context, deviceID string) (V
 		ProjectID: latest.ProjectID, AssignmentEpoch: latest.Epoch,
 		ConnectionGeneration: current.generation, ChannelLevels: levels,
 		ReportedBlackout: report.Blackout,
-		NonZeroWhileBlocked: nonzero && latest.State == "BLOCKED",
+		UnsafeWhileUnactivated: nonzero || !report.Blackout,
 		PhysicalOutputVerified: false, CommandsEnabled: false,
 	}, nil
 }
