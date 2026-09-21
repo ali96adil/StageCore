@@ -199,3 +199,88 @@ func TestSoftwareTransferCancelsOnOperatorRevocationBetweenACKAndCommit(t *testi
 		t.Fatalf("revoked Operator produced epoch ACK: %v", err)
 	}
 }
+
+func TestV2SoftwareTransferCancellationFencesLateACK(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(context.CancelFunc)
+	}{
+		{"browser request canceled", func(cancel context.CancelFunc) { cancel() }},
+		{"ACK deadline expired", func(context.CancelFunc) {
+			// Let the device remain silent beyond this request's deadline.
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRuntimeFixture(t)
+			ws := connectLightingV2ForBlackout(t, f)
+			ctx, cancel := context.WithTimeout(context.Background(), 1250*time.Millisecond)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.runtime.ExecuteReservedSoftwareTransfer(ctx,
+					deviceexperience.TransferPreflightInput{
+						DeviceID: testDeviceID, TargetProjectID: f.projectID, ExpectedEpoch: 1,
+					}, "owner")
+				done <- err
+			}()
+			_ = ws.SetReadDeadline(time.Now().Add(4 * time.Second))
+			var request struct {
+				Type string `json:"type"`
+				TransferID string `json:"transfer_id"`
+				Challenge string `json:"challenge"`
+				AssignmentEpoch int64 `json:"assignment_epoch"`
+				ConnectionGeneration int64 `json:"connection_generation"`
+			}
+			err := websocket.JSON.Receive(ws, &request)
+			_ = ws.SetReadDeadline(time.Time{})
+			if err != nil || request.Type != "assignment.blackout" || request.TransferID == "" {
+				t.Fatalf("no pending blackout to cancel: %+v err=%v", request, err)
+			}
+			tc.stop(cancel)
+			select {
+			case err := <-done:
+				if !errors.Is(err, devicechannel.ErrBlackoutNotVerified) {
+					t.Fatalf("canceled transfer committed: %v", err)
+				}
+			case <-time.After(4 * time.Second):
+				t.Fatal("canceled software handshake did not return")
+			}
+			if generation, online := f.runtime.CurrentV2Generation(testDeviceID); online {
+				t.Fatalf("canceled socket retained old generation %d", generation)
+			}
+			var status string
+			if err := f.dbHandle.DB.QueryRowContext(context.Background(),
+				"SELECT status FROM stage_device_transfer_intents WHERE transfer_id=?", request.TransferID).
+				Scan(&status); err != nil || status != "CANCELLED" {
+				t.Fatalf("aborted intent not canceled: status=%q err=%v", status, err)
+			}
+			var audits int
+			if err := f.dbHandle.DB.QueryRowContext(context.Background(),
+				"SELECT COUNT(*) FROM stage_device_assignment_transfers WHERE transfer_id=?", request.TransferID).
+				Scan(&audits); err != nil || audits != 0 {
+				t.Fatalf("abort committed transfer audit=%d err=%v", audits, err)
+			}
+			// A late ACK from the old socket, even if buffered by the
+			// network, cannot make a new reservation for the old generation.
+			_ = websocket.JSON.Send(ws, map[string]any{
+				"type": "assignment.blackout_ack", "schema_version": 2,
+				"device_id": testDeviceID, "transfer_id": request.TransferID,
+				"challenge": request.Challenge, "assignment_epoch": request.AssignmentEpoch,
+				"connection_generation": request.ConnectionGeneration,
+				"blackout": true, "channel_levels": make([]int, lightingnode.MaxChannels),
+			})
+			assignment, err := f.repo.GetAssignmentRecord(context.Background(), testDeviceID)
+			if err != nil || assignment.State != "UNASSIGNED" || assignment.ProjectID != "" ||
+				assignment.Epoch != 1 || assignment.RuntimeSnapshotID != "" {
+				t.Fatalf("late ACK changed Hub assignment: %+v err=%v", assignment, err)
+			}
+			fresh := connectLightingV2ForBlackout(t, f)
+			defer fresh.Close()
+			newGeneration, online := f.runtime.CurrentV2Generation(testDeviceID)
+			if !online || newGeneration <= request.ConnectionGeneration {
+				t.Fatalf("reconnect reused canceled socket generation: old=%d new=%d online=%t",
+					request.ConnectionGeneration, newGeneration, online)
+			}
+		})
+	}
+}
