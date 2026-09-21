@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,8 @@ type Runtime struct {
 	inflight       map[string]*connection
 	pendingBlackouts map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
+	latestV2SoftwareLevels map[string]V2SoftwareLevels
+	autoProbeV2 bool
 	nextGeneration int64
 	closed         bool
 }
@@ -44,6 +47,7 @@ type connection struct {
 	deviceID        string
 	protocolVersion string
 	sessionToken    string
+	advertisedCapabilities []string
 	generation      int64
 	writeMu         sync.Mutex
 	once            sync.Once
@@ -115,6 +119,8 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		inflight:    make(map[string]*connection),
 		pendingBlackouts: make(map[string]*pendingBlackout),
 		pendingV2LightingProbes: make(map[string]*pendingV2LightingProbe),
+		latestV2SoftwareLevels: make(map[string]V2SoftwareLevels),
+		autoProbeV2: os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 }
 
@@ -133,6 +139,7 @@ func (r *Runtime) Close() {
 		connections = append(connections, current)
 	}
 	r.connections = make(map[string]*connection)
+	r.latestV2SoftwareLevels = make(map[string]V2SoftwareLevels)
 	r.mu.Unlock()
 	for _, current := range connections {
 		current.close()
@@ -288,7 +295,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	// allocated and it has become the current connection. This ordering
 	// prevents an exhausted/unavailable counter from creating a ghost
 	// ONLINE device record that could mislead Operator commissioning.
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, closed: make(chan struct{})}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
 	previous, err := r.register(ctx, current)
 	if err != nil {
 		current.close()
@@ -302,23 +309,22 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
 	}
-	if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+	if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 		DeviceID:      device.ID,
 		Connection:    deviceexperience.ConnectionOnline,
 		Readiness:     readiness,
 		ObservedState: hello.ObservedState,
 		NetworkState:  hello.NetworkState,
-	}); err != nil {
-		return
-	}
-	_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+	}, deviceexperience.NetworkObservation{
 		TargetKind:     "STAGE_DEVICE",
 		TargetID:       device.ID,
 		Reachability:   deviceexperience.Reachable,
 		TransportState: "WEBSOCKET_CONNECTED",
 		Address:        remoteAddress,
 		Details:        json.RawMessage(`{"authenticated":true}`),
-	})
+	}); err != nil || !same {
+		return
+	}
 
 	monitorDone := make(chan struct{})
 	go func() {
@@ -371,6 +377,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		}
 		if err := current.send(response); err != nil {
 			return
+		}
+		// UNASSIGNED has no epoch receipt. A negotiated probe is diagnostic
+		// only; never treat its result as READY or an output instruction.
+		if assignment.State == "UNASSIGNED" &&
+			containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+			containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
+			r.probeV2AfterReconnect(current)
 		}
 	} else {
 		if err := current.send(map[string]any{
@@ -468,6 +481,12 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}); err != nil {
 				return
 			}
+			// BLOCKED nodes may answer diagnostics only after their committed
+			// epoch has been persistently acknowledged; never before the receipt.
+			if containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+				containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
+				r.probeV2AfterReconnect(current)
+			}
 		case "assignment.blackout_ack":
 			if !isV2Unassigned {
 				return
@@ -524,16 +543,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if readiness == "" {
 				readiness = deviceexperience.ReadinessUnknown
 			}
-			if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+			if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 				DeviceID:      device.ID,
 				Connection:    deviceexperience.ConnectionOnline,
 				Readiness:     readiness,
 				ObservedState: message.ObservedState,
 				NetworkState:  message.NetworkState,
-			}); err != nil {
-				return
-			}
-			_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+			}, deviceexperience.NetworkObservation{
 				TargetKind:     "STAGE_DEVICE",
 				TargetID:       device.ID,
 				Reachability:   deviceexperience.Reachable,
@@ -541,7 +557,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				LatencyMS:      message.LatencyMS,
 				JitterMS:       message.JitterMS,
 				Address:        remoteAddress,
-			})
+			}); err != nil || !same {
+				return
+			}
 		default:
 			return
 		}
@@ -573,6 +591,7 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		current.generation = r.nextGeneration
 	}
 	previous := r.connections[current.deviceID]
+	delete(r.latestV2SoftwareLevels, current.deviceID)
 	r.connections[current.deviceID] = current
 	return previous, nil
 }
@@ -581,12 +600,29 @@ func (r *Runtime) unregister(current *connection) {
 	if current == nil {
 		return
 	}
-	shouldObserveOffline := false
 	pending := make([]string, 0)
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		delete(r.connections, current.deviceID)
-		shouldObserveOffline = !r.closed
+		delete(r.latestV2SoftwareLevels, current.deviceID)
+		// Do not release r.mu before persisting OFFLINE: a replacement
+		// connection could otherwise register and persist ONLINE first,
+		// only to have this old socket incorrectly overwrite it OFFLINE.
+		if !r.closed {
+			offlineCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = r.repository.ObserveDevice(offlineCtx, deviceexperience.RuntimeObservation{
+				DeviceID:   current.deviceID,
+				Connection: deviceexperience.ConnectionOffline,
+				Readiness:  deviceexperience.ReadinessWarning,
+			})
+			_, _ = r.repository.RecordNetworkObservation(offlineCtx, deviceexperience.NetworkObservation{
+				TargetKind:     "STAGE_DEVICE",
+				TargetID:       current.deviceID,
+				Reachability:   deviceexperience.Unreachable,
+				TransportState: "WEBSOCKET_DISCONNECTED",
+			})
+			cancel()
+		}
 	}
 	for commandID, bound := range r.inflight {
 		if bound == current {
@@ -601,19 +637,6 @@ func (r *Runtime) unregister(current *connection) {
 	defer cancel()
 	for _, commandID := range pending {
 		r.failInterruptedCommand(ctx, commandID, current.deviceID)
-	}
-	if shouldObserveOffline {
-		_, _ = r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
-			DeviceID:   current.deviceID,
-			Connection: deviceexperience.ConnectionOffline,
-			Readiness:  deviceexperience.ReadinessWarning,
-		})
-		_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
-			TargetKind:     "STAGE_DEVICE",
-			TargetID:       current.deviceID,
-			Reachability:   deviceexperience.Unreachable,
-			TransportState: "WEBSOCKET_DISCONNECTED",
-		})
 	}
 }
 

@@ -37,6 +37,7 @@ type V2SoftwareLevels struct {
 	ProjectID               string
 	AssignmentEpoch         int64
 	ConnectionGeneration    int64
+	ObservedAt              time.Time
 	ChannelLevels           []uint8
 	ReportedBlackout        bool
 	UnsafeWhileUnactivated   bool
@@ -51,6 +52,12 @@ type V2SoftwareLevels struct {
 // does not advertise it. Callers must separately derive current LIVE desired
 // state and apply the #255 one-use scope gate before any future comparison.
 func (r *Runtime) ProbeV2SoftwareLevels(ctx context.Context, deviceID string) (V2SoftwareLevels, error) {
+	return r.probeV2SoftwareLevelsForConnection(ctx, deviceID, nil)
+}
+
+func (r *Runtime) probeV2SoftwareLevelsForConnection(
+	ctx context.Context, deviceID string, expected *connection,
+) (V2SoftwareLevels, error) {
 	fail := func(reason string) (V2SoftwareLevels, error) {
 		return V2SoftwareLevels{}, fmt.Errorf("%w: %s", ErrV2LightingProbeUnavailable, reason)
 	}
@@ -78,8 +85,11 @@ func (r *Runtime) ProbeV2SoftwareLevels(ctx context.Context, deviceID string) (V
 	challenge := hex.EncodeToString(random[:])
 	r.mu.Lock()
 	current := r.connections[deviceID]
-	if r.closed || current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
-		current.generation <= 0 || r.pendingV2LightingProbes[deviceID] != nil ||
+	if r.closed || current == nil || (expected != nil && current != expected) ||
+		current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 ||
+		!containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) ||
+		r.pendingV2LightingProbes[deviceID] != nil ||
 		r.pendingBlackouts[deviceID] != nil {
 		r.mu.Unlock()
 		return fail("no exclusive current authenticated v2 socket")
@@ -180,14 +190,63 @@ func (r *Runtime) ProbeV2SoftwareLevels(ctx context.Context, deviceID string) (V
 		latest.Epoch != assignment.Epoch || latest.RuntimeSnapshotID != assignment.RuntimeSnapshotID {
 		return fail("Hub assignment changed while observing")
 	}
-	return V2SoftwareLevels{
+	result := V2SoftwareLevels{
 		DeviceID: deviceID, AssignmentState: latest.State,
 		ProjectID: latest.ProjectID, AssignmentEpoch: latest.Epoch,
 		ConnectionGeneration: current.generation, ChannelLevels: levels,
 		ReportedBlackout: report.Blackout,
 		UnsafeWhileUnactivated: nonzero || !report.Blackout,
 		PhysicalOutputVerified: false, CommandsEnabled: false,
-	}, nil
+		ObservedAt: time.Now().UTC(),
+	}
+	// Store diagnostics only for this exact live socket. Reconnect, Close
+	// and unregister invalidate the cache; NEVER promote the report to
+	// runtime.ready or use it as an automatic output command.
+	r.mu.Lock()
+	if r.closed || r.connections[deviceID] != current {
+		r.mu.Unlock()
+		return fail("socket changed before report publication")
+	}
+	select {
+	case <-current.closed:
+		r.mu.Unlock()
+		return fail("socket closed before report publication")
+	default:
+	}
+	if r.latestV2SoftwareLevels == nil {
+		r.latestV2SoftwareLevels = make(map[string]V2SoftwareLevels)
+	}
+	cached := result
+	cached.ChannelLevels = append([]uint8(nil), result.ChannelLevels...)
+	r.latestV2SoftwareLevels[deviceID] = cached
+	r.mu.Unlock()
+	return result, nil
+}
+
+// LatestV2SoftwareLevels returns an immutable copy of the last current-socket
+// diagnostic. It never claims the physical decoder or LED output is measured
+// and never grants command or snapshot authority. A new socket invalidates it.
+func (r *Runtime) LatestV2SoftwareLevels(deviceID string) (V2SoftwareLevels, bool) {
+	if r == nil {
+		return V2SoftwareLevels{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	deviceID = strings.TrimSpace(deviceID)
+	current := r.connections[deviceID]
+	result, found := r.latestV2SoftwareLevels[deviceID]
+	if r.closed || !found || current == nil ||
+		current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation != result.ConnectionGeneration {
+		return V2SoftwareLevels{}, false
+	}
+	select {
+	case <-current.closed:
+		return V2SoftwareLevels{}, false
+	default:
+	}
+	result.ChannelLevels = append([]uint8(nil), result.ChannelLevels...)
+	return result, true
 }
 
 func containsCapability(capabilities []string, required string) bool {

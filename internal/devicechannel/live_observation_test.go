@@ -68,7 +68,7 @@ func readProbeRequest(t *testing.T, ws *websocket.Conn) map[string]any {
 	_ = ws.SetReadDeadline(time.Time{})
 	if err != nil || request["type"] != "lighting.state_probe" ||
 		request["schema_version"] != float64(2) ||
-		request["device_id"] != testDeviceID || request["assignment_epoch"] != float64(1) ||
+		request["device_id"] != testDeviceID ||
 		request["commands_enabled"] != false || len(request["challenge"].(string)) != 64 ||
 		request["expected_channels"] != float64(lightingnode.MaxChannels) {
 		t.Fatalf("invalid read-only probe request: %+v err=%v", request, err)
