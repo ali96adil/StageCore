@@ -93,6 +93,49 @@ again; stale epoch, Project, generation and nonzero/partial reports are denied.
 configuration/snapshot activation, actual project-scoped v2 command execution,
 and independent physical DMX decoder/LED validation.
 
+## Experimental Operator contract (source-only; disabled by default)
+
+The Hub registers `POST /api/v1/stage-devices/{device_id}/assignment/software-transfer`
+but returns `STAGE_DEVICE_TRANSFER_DISABLED` unless
+`STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER=1`. **Do not enable this flag
+on show hardware.** The route uses authenticated same-origin browser session
+and CSRF, and requires both `project.edit` and `companion.pair` for the
+current role. Its JSON body is:
+
+```json
+{
+  "expected_project_id": "",
+  "target_project_id": "Hub-existing-target-Project-uuid",
+  "expected_assignment_epoch": 1,
+  "confirm": "BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"
+}
+```
+
+An empty current Project identifies an unassigned v2 node; an empty target
+Project means unassign, if the authoritative Preflight permits it. The browser
+cannot specify a nonce, socket generation, ACK, final state or snapshot. The
+Hub generates its own reservation and sends a fresh, authenticated challenge,
+then revalidates Operator session/CSRF/permissions *again* after the zero
+report and before database commit. The database rechecks both SHOW locks,
+existing Projects, outstanding commands and current assignment/epoch.
+
+Only a verified matching **software** ACK may advance the Hub sidecar into
+`BLOCKED`/`UNASSIGNED`; the HTTP response is `202 Accepted` with the audit,
+`commands_enabled=false`, `physical_blackout_verified=false` and
+`epoch_ack_required=true` for BLOCKED. A failed, stale, revoked, offline or
+ambiguous attempt returns no transfer success. The caller must GET the latest
+Hub-owned assignment before retrying.
+
+Read-only
+`GET /api/v1/stage-devices/{device_id}/assignment/transfer-status`
+requires both `project.read` and `companion.pair`. It reports a persisted
+BLOCKED software-zero ACK as **current** only if it matches the Hub's live
+authenticated v2 connection generation; old records remain historical. This
+endpoint always reports physical verification, snapshot activation and new
+command authority as false. The bilingual Stage Devices Operator page uses
+this read-only view and the pairing-protected unassigned inventory; it does
+**not** render a transfer or v1 command button for a v2 node.
+
 ## Qualification boundary
 
 A software ACK is the device's **report** that all logical outputs reached zero; it cannot independently establish the voltage/current/light output of a real DMX decoder or LED strip. Physical wiring, DMX refresh/decoder behavior, loss of Wi-Fi during fades, old-command rejection and actual strip darkness remain separate physical qualification gates. Do not merge or deploy these source-only drafts based on CI alone.
