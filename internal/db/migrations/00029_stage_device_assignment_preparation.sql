@@ -42,6 +42,21 @@ BEGIN
 END;
 -- +goose StatementEnd
 
+-- Until device identity is decoupled from the old project's ON DELETE
+-- CASCADE FK, fail closed instead of silently deleting a paired device and its
+-- history. A future audited FK migration must replace this temporary guard.
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_assignments_protect_project_delete
+BEFORE DELETE ON projects
+WHEN EXISTS (
+    SELECT 1 FROM stage_devices WHERE project_id = OLD.project_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_PROJECT_ASSIGNED');
+END;
+-- +goose StatementEnd
+
 -- +goose Down
+DROP TRIGGER IF EXISTS stage_device_assignments_protect_project_delete;
 DROP TRIGGER IF EXISTS stage_device_assignments_legacy_on_insert;
 DROP TABLE IF EXISTS stage_device_assignments;
