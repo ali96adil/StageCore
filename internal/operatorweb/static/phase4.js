@@ -238,7 +238,7 @@
   }
 
   function tabletControls(device) {
-    if (device.device_kind !== "TABLET_PLAYER" || !canRuntime()) return "";
+    if (device.device_kind !== "TABLET_PLAYER" || device.protocol_version === "stagecore.device/2" || !canRuntime()) return "";
     return `
       <label>${esc(t("media"))}
         <input class="phase4-media" data-device="${esc(device.device_id)}" placeholder="01.mp4" dir="ltr">
