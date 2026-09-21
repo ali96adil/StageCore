@@ -214,7 +214,9 @@ func (r *Runtime) probeV2SoftwareLevelsForConnection(
 	if r.latestV2SoftwareLevels == nil {
 		r.latestV2SoftwareLevels = make(map[string]V2SoftwareLevels)
 	}
-	r.latestV2SoftwareLevels[deviceID] = result
+	cached := result
+	cached.ChannelLevels = append([]uint8(nil), result.ChannelLevels...)
+	r.latestV2SoftwareLevels[deviceID] = cached
 	r.mu.Unlock()
 	return result, nil
 }
