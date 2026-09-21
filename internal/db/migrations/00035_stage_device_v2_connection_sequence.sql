@@ -5,7 +5,7 @@
 -- This is NOT Project authority or physical DMX proof.
 CREATE TABLE stage_device_v2_connection_sequence (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    generation INTEGER NOT NULL CHECK(generation >= 0 AND generation <= 9223372036854775807)
+    generation INTEGER NOT NULL CHECK(generation >= 0 AND generation <= 9007199254740991)
 );
 
 INSERT INTO stage_device_v2_connection_sequence (singleton, generation)
@@ -21,7 +21,7 @@ CREATE TRIGGER stage_device_v2_connection_monotonic
 BEFORE UPDATE ON stage_device_v2_connection_sequence
 WHEN NEW.singleton != OLD.singleton
   OR NEW.generation != OLD.generation + 1
-  OR OLD.generation >= 9223372036854775807
+  OR OLD.generation >= 9007199254740991
 BEGIN
     SELECT RAISE(ABORT, 'STAGE_DEVICE_CONNECTION_GENERATION_REWIND');
 END;
