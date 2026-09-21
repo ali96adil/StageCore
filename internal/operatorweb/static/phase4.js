@@ -377,7 +377,7 @@
     pageHeader(t("callboardTitle"), t("callboardSub"), renderCallboard);
     const projectID = currentProjectID();
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`);
-    const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
+    const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY" && device.protocol_version !== "stagecore.device/2");
     const body = document.getElementById("phase4Body");
     if (!displays.length) {
       body.innerHTML = `<div class="phase4-empty">${esc(t("noDisplays"))}</div>`;
@@ -448,7 +448,7 @@
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`),
     ]);
     const sources = sourcesPayload.sources || [];
-    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE");
+    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
     const body = document.getElementById("phase4Body");
     const editable = canEdit();
     body.innerHTML = `
