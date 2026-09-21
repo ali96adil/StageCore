@@ -112,6 +112,35 @@ The Core workflow retains Go 1.26/1.27, race and ARM64 coverage. It now
 cancels superseded runs for the **same PR**. Stage changes on an unreviewed
 branch before opening the PR to avoid starting unnecessary runs.
 
+## Conservative current-Cue desired-state derivation (next source-only batch)
+
+`livereconcile.NewService(store).ReadCurrentLighting(ctx, projectID, deviceID)`
+reads the Hub's **active SHOW/REHEARSAL session**; it rejects SIMULATION,
+incomplete Cue execution, manual confirmation, unfinished or repeated failed
+same-Cue GO, changed session, untrusted/unpublished snapshot, and snapshot
+hash mismatch. It reads a version-5 immutable published manifest and resolves
+only explicitly enabled lighting actions for the requested device through
+pinned aliases and channel configuration, including the 0–100% to DMX slot
+conversion and inversion. It then rereads the session and latest Cue execution
+to detect a concurrent GO. The resulting identity includes Project, Session,
+Snapshot ID/hash, Cue ID **and completed Cue execution ID**.
+
+This projection is intentionally strict: each enabled configured channel must
+be deterministically defined by the current completed Cue. It rejects
+ambiguous/duplicate writes, non-idempotent device actions, nonfatal lighting
+errors, unsupported parallel execution, and partial Cue updates whose other
+channels depend on previous GO/overrides. Such cases are `UNKNOWN`, not
+false `MATCH`; a future durable state checkpoint may support partial Cues.
+The scoped result is **read-only** and does not imply that an assignment is
+ACTIVE or physical DMX/LED output has been independently observed.
+
+The connection-level opt-in report and the current-Cue desired projection
+remain **separate safety boundaries**. They must not be joined for automatic
+correction until a coordinator proves same current session/snapshot,
+configuration, authorized epoch/socket generation, fresh observation,
+latest desired-state revision and all SHOW/output gates. The existing v2
+image remains BLOCKED and must not receive a nonzero command on reconnect.
+
 ## Follow-up gates
 
 1. Connect authenticated versioned observation challenge/response to the Hub.
