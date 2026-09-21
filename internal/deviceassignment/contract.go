@@ -100,16 +100,18 @@ type TransferIntent struct {
 	DeviceID      string
 	FromProjectID string
 	ToProjectID   string
-	ExpectedEpoch    uint64
-	ExpectedChannels uint16
+	ExpectedEpoch         uint64
+	ConnectionGeneration  uint64
+	ExpectedChannels      uint16
 	Challenge        string
 }
 
 type BlackoutAck struct {
 	DeviceID      string
-	Epoch         uint64
-	Challenge     string
-	Blackout      bool
+	Epoch                uint64
+	ConnectionGeneration uint64
+	Challenge            string
+	Blackout             bool
 	ChannelLevels []uint8
 }
 
@@ -125,6 +127,7 @@ func (t TransferIntent) VerifyBlackout(current Assignment, ack BlackoutAck) (Ass
 		t.FromProjectID != strings.TrimSpace(t.FromProjectID) ||
 		t.ToProjectID != strings.TrimSpace(t.ToProjectID) ||
 		t.ExpectedEpoch == 0 || t.ExpectedEpoch == ^uint64(0) ||
+		t.ConnectionGeneration == 0 ||
 		t.ExpectedChannels == 0 || t.ExpectedChannels > 512 ||
 		t.Challenge == "" || t.Challenge != strings.TrimSpace(t.Challenge) ||
 		t.FromProjectID == t.ToProjectID ||
@@ -136,6 +139,7 @@ func (t TransferIntent) VerifyBlackout(current Assignment, ack BlackoutAck) (Ass
 		return Assignment{}, fmt.Errorf("%w: current state does not permit transfer", ErrInvalidAssignment)
 	}
 	if ack.DeviceID != t.DeviceID || ack.Epoch != t.ExpectedEpoch ||
+		ack.ConnectionGeneration != t.ConnectionGeneration ||
 		ack.Challenge != t.Challenge || !ack.Blackout ||
 		len(ack.ChannelLevels) != int(t.ExpectedChannels) {
 		return Assignment{}, fmt.Errorf("%w: identity, epoch, challenge or blackout state mismatch", ErrInvalidBlackout)
