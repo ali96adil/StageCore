@@ -116,7 +116,7 @@ func (s *Service) ReadCurrentLighting(ctx context.Context, projectID, deviceID s
 	// correction coordinator must independently recheck immediately before
 	// any command and once its ACK is received.
 	latestSession, err := s.sessions.GetSession(ctx, session.ID)
-	if err != nil || !sameCompletedSession(session, latestSession) {
+	if err != nil || !sameCompletedSession(*session, latestSession) {
 		return fail("Hub session or current Cue changed during desired-state read")
 	}
 	running, err = s.sessions.HasRunningCueExecution(ctx, session.ID)
