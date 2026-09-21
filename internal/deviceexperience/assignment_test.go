@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/db/migrations"
+	"github.com/pressly/goose/v3"
 )
 
 func TestLegacyAssignmentSidecarRegistersWithoutActivatingV2(t *testing.T) {
@@ -114,5 +116,42 @@ func TestAssignmentMetadataSchemaRejectsInvalidTransitionAndEpoch(t *testing.T) 
 	got, err := repo.GetAssignmentRecord(ctx, device.ID)
 	if err != nil || got.State != deviceexperience.AssignmentLegacy || got.ProjectID != projectID || got.Epoch != 1 {
 		t.Fatalf("invalid attempts changed legacy assignment: %+v err=%v", got, err)
+	}
+}
+
+func TestAssignmentMigrationBackfillsPreExistingStageDevice(t *testing.T) {
+	ctx := context.Background()
+	repo, handle, projectID := newRepository(t)
+
+	// Emulate upgrading an existing v1 database from schema 28, where
+	// Stage Devices already exist but the new assignment table does not.
+	goose.SetBaseFS(migrations.FS)
+	t.Cleanup(func() { goose.SetBaseFS(nil) })
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(handle.DB, ".", 28); err != nil {
+		t.Fatalf("downgrade test fixture: %v", err)
+	}
+	legacy := deviceexperience.Device{
+		ID: "existing-before-v2-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Previously paired Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, legacy); err != nil {
+		t.Fatalf("register v1 node before migration: %v", err)
+	}
+	if err := goose.UpTo(handle.DB, ".", 29); err != nil {
+		t.Fatalf("upgrade test fixture to v2 metadata schema: %v", err)
+	}
+	record, err := repo.GetAssignmentRecord(ctx, legacy.ID)
+	if err != nil || record.DeviceID != legacy.ID || record.ProjectID != projectID ||
+		record.State != deviceexperience.AssignmentLegacy || record.Epoch != 1 ||
+		record.RuntimeSnapshotID != "" {
+		t.Fatalf("pre-existing device was not safely backfilled: %+v err=%v", record, err)
+	}
+	loaded, err := repo.GetDevice(ctx, legacy.ID)
+	if err != nil || loaded.ProjectID != projectID || !loaded.Enabled {
+		t.Fatalf("migration altered legacy device identity or enabled state: %+v err=%v", loaded, err)
 	}
 }
