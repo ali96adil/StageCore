@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -46,6 +47,27 @@ func WithOperatorStageDevices(
 				return
 			}
 			writeJSON(w, http.StatusOK, item)
+		}))
+
+		// Read-only legacy/v2 assignment metadata for inventory diagnostics.
+		// This does not assign or transfer a device, and LEGACY is never a
+		// statement that the new authenticated v2 handshake has completed.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
+			if err != nil {
+				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_ID_INVALID"})
+					return
+				}
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+				return
+			}
+			writeJSON(w, http.StatusOK, record)
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
