@@ -65,10 +65,13 @@ software-only. A missing/late/unsolicited/malformed response fails closed;
 timeouts close the old socket. A diagnostic probe and an assignment blackout
 challenge cannot overlap.
 
-The request is **not automatically sent on reconnect**. It requires explicit
-`lighting.state_probe/1` capability advertisement. The current v2 firmware
-does not advertise/respond to that capability; its existing blackout-only
-operation remains unchanged. The response cannot mark READY, change a
+By default, the request is **not** automatically sent on reconnect.
+It requires `lighting.state_probe/1` capability advertisement, and automatic
+reconnect diagnostics additionally require Hub opt-in
+`STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE=1`. This feature remains source-only
+and unapproved for show hardware. Legacy v1 and the unchanged default v2
+blackout-only firmware do not advertise the probe capability; only separate
+firmware Draft #11's opt-in CI image does. The response cannot mark READY, change a
 Project, activate a snapshot, dispatch any command, or verify physical DMX
 decoder/LED values. An unexpected nonzero or non-blackout report is surfaced
 as `UnsafeWhileUnactivated`, never corrected silently.
@@ -78,6 +81,33 @@ is firmware capability plus trusted, current LIVE desired-state derivation,
 followed by a session/revision-bound `LiveLightingObservationGate` comparison,
 separate v2 ACTIVE command authority, and explicitly approved safe partial
 correction. Do not equate this raw diagnostic with a matched Cue.
+
+## Batched reconnect guards (opt-in, source-only)
+
+The Hub rejects any `device.hello` or `device.observation` write from a
+displaced socket, and persists an old connection's OFFLINE transition under
+the same lock as socket registration. The newer connection's ONLINE state
+cannot be overwritten by late old-socket updates, including under the legacy
+v1 protocol.
+
+For an opted-in v2 node, automatic probing starts once per authenticated
+reconnect: after the UNASSIGNED `assignment.state`, or for BLOCKED only
+after the Hub has persisted the epoch ACK and sent the non-activating receipt.
+The probe is fenced to the exact initiating socket and stores its
+software-only 12-channel diagnostic in a generation-bound in-memory cache.
+A reconnect invalidates the cache; reads return independent copies.
+No diagnostic changes the Project, epoch, snapshot, `READY` state or output.
+An unexpected nonzero/non-blackout report is flagged, not corrected.
+
+This is **not yet live Cue-5 reconciliation**. The raw observation has no
+published-snapshot/current-cue authority, and the experimental v2 node is
+not ACTIVE. Comparing it to cached targets or replaying old GO commands is
+unsafe. A current-state derivation and independently qualified v2 activation
+are prerequisites to bounded partial corrections.
+
+The Core workflow retains Go 1.26/1.27, race and ARM64 coverage. It now
+cancels superseded runs for the **same PR**. Stage changes on an unreviewed
+branch before opening the PR to avoid starting unnecessary runs.
 
 ## Follow-up gates
 
