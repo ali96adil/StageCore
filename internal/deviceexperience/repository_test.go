@@ -287,3 +287,34 @@ func TestDeviceProjectOwnershipRequiresHubTransfer(t *testing.T) {
 		t.Fatalf("unchanged unbound reconnect should work: %v", err)
 	}
 }
+
+func TestDeviceDisabledStateCannotBeResetByReconnect(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	original := deviceexperience.Device{
+		ID: "tablet-disabled-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceTabletPlayer, DisplayName: "Disabled tablet",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: false,
+	}
+	if _, err := repo.UpsertDevice(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	// A device's hello cannot override the disabled state recorded by the Hub.
+	reconnect := original
+	reconnect.Enabled = true
+	reconnect.DisplayName = "Untrusted reconnect"
+	actual, err := repo.UpsertDevice(ctx, reconnect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Enabled {
+		t.Fatalf("reconnect must not re-enable disabled device: %+v", actual)
+	}
+	if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, DeviceID: original.ID, CommandType: "TABLET_PLAY",
+		Issuer: "operator:test", Payload: json.RawMessage(`{"media_key":"01"}`),
+	}); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+		t.Fatalf("disabled device must reject runtime commands: %v", err)
+	}
+}
