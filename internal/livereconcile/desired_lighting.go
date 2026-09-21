@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
@@ -124,6 +123,16 @@ func (s *Service) ReadCurrentLighting(ctx context.Context, projectID, deviceID s
 	if err != nil || running {
 		return fail("a new Cue began while deriving state")
 	}
+	latestExecutions, err := s.sessions.ListCueExecutions(ctx, session.ID)
+	if err != nil {
+		return fail("execution history unavailable during final scope check")
+	}
+	confirmed, ok := latestCueExecution(latestExecutions)
+	if !ok || confirmed.ID != latest.ID ||
+		confirmed.Result != domain.ExecutionCompleted ||
+		confirmed.CompletedAt == nil {
+		return fail("latest Cue execution advanced during desired-state read")
+	}
 	return DesiredLighting{
 		ProjectID: projectID, SessionID: session.ID, SnapshotID: pinned.ID,
 		SnapshotHash: pinned.ContentHash, CueID: *session.CurrentCueID,
@@ -214,9 +223,17 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 			continue
 		}
 		target := manifest.ResolveTarget(action.TargetRef)
-		if target == nil || target.LogicalType != "stage_device" {
-			// Other devices may execute in this Cue; they are not state
-			// inputs for this particular lighting node.
+		if target == nil {
+			// A missing lighting-capability target could be this very device:
+			// never guess its intended channels when authoring is malformed.
+			switch action.CapabilityKey {
+			case lightingnode.CapabilityChannelsSet, lightingnode.CapabilityChannelsFade,
+				lightingnode.CapabilityBlackout:
+				return fail("lighting action has no published target binding")
+			}
+			continue
+		}
+		if target.LogicalType != "stage_device" {
 			continue
 		}
 		var address struct { DeviceID string `json:"device_id"` }
@@ -318,6 +335,3 @@ func SortedChannels(levels map[int]uint8) []int {
 	return slots
 }
 
-// Compile-time guard: a caller must never try to use wall-clock age as a
-// replacement for the exact current Cue execution identity.
-var _ = time.Time{}
