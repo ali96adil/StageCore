@@ -16,6 +16,7 @@ import (
 type DeviceAuthority interface {
 	GetDevice(context.Context, string) (deviceexperience.Device, error)
 	GetAssignmentRecord(context.Context, string) (deviceexperience.AssignmentRecord, error)
+	GetBlockedEpochAck(context.Context, string, int64) (deviceexperience.BlockedEpochAck, error)
 }
 
 // SoftwareReporter is a read-only current-socket diagnostic view. It never
@@ -77,6 +78,10 @@ func (r *BlockedDiagnosticReader) Read(ctx context.Context, projectID, deviceID 
 	if !ok || generation <= 0 {
 		return unknown("current authenticated socket generation unavailable")
 	}
+	ack, err := r.devices.GetBlockedEpochAck(ctx, deviceID, assignment.Epoch)
+	if err != nil || !validCurrentEpochAck(ack, assignment, generation) {
+		return unknown("persisted software-zero epoch ACK missing for current socket")
+	}
 	out := AssessBlockedSoftware(desired, report, assignment.Epoch, generation, r.now().UTC())
 	if out.Status == SoftwareDiagnosticUnknown {
 		return unknown(out.Reason)
@@ -100,6 +105,10 @@ func (r *BlockedDiagnosticReader) Read(ctx context.Context, projectID, deviceID 
 	finalGeneration, ok := r.reporter.CurrentV2Generation(deviceID)
 	if !ok || finalGeneration != generation {
 		return unknown("authenticated socket changed during diagnostic")
+	}
+	finalAck, err := r.devices.GetBlockedEpochAck(ctx, deviceID, finalAssignment.Epoch)
+	if err != nil || !validCurrentEpochAck(finalAck, finalAssignment, finalGeneration) {
+		return unknown("current-socket zero epoch ACK missing or changed during diagnostic")
 	}
 	finalReport, ok := r.reporter.LatestV2SoftwareLevels(deviceID)
 	if !ok || !sameSoftwareReport(report, finalReport) {
@@ -141,6 +150,15 @@ func validBlockedAssignment(a deviceexperience.AssignmentRecord, deviceID, proje
 	// A BLOCKED v2 assignment is NOT an activated Runtime Snapshot.
 	return a.DeviceID == deviceID && a.ProjectID == projectID &&
 		a.State == "BLOCKED" && a.Epoch > 1 && a.RuntimeSnapshotID == ""
+}
+
+func validCurrentEpochAck(ack deviceexperience.BlockedEpochAck, assignment deviceexperience.AssignmentRecord, generation int64) bool {
+	return ack.DeviceID == assignment.DeviceID &&
+		ack.ProjectID == assignment.ProjectID &&
+		ack.AssignmentEpoch == assignment.Epoch &&
+		ack.ConnectionGeneration == generation &&
+		ack.ChannelCount == lightingnode.MaxChannels &&
+		!ack.AcknowledgedAt.IsZero()
 }
 
 func sameBlockedAssignment(before, after deviceexperience.AssignmentRecord) bool {
