@@ -5,9 +5,21 @@
 -- This migration does not enable transfers, change runtime.ready, or alter the
 -- existing project FK on stage_devices (which currently deletes on project
 -- removal and requires a separate audited table rebuild/migration).
+--
+-- Durable device *identity* is project-independent and is not command/pairing
+-- authority. Actual pairing credentials remain in companion_device_keys; the
+-- project-linked v1 stage_devices row is still required by the v1 runtime.
+CREATE TABLE stage_device_identity_registry (
+    device_id TEXT PRIMARY KEY,
+    created_at_us INTEGER NOT NULL
+);
+
+INSERT INTO stage_device_identity_registry (device_id, created_at_us)
+SELECT device_id, created_at_us FROM stage_devices;
+
 CREATE TABLE stage_device_assignments (
     device_id TEXT PRIMARY KEY
-        REFERENCES stage_devices(device_id) ON DELETE CASCADE,
+        REFERENCES stage_device_identity_registry(device_id) ON DELETE RESTRICT,
     project_id TEXT
         REFERENCES projects(project_id) ON DELETE SET NULL,
     assignment_epoch INTEGER NOT NULL DEFAULT 1
@@ -35,6 +47,8 @@ FROM stage_devices;
 CREATE TRIGGER stage_device_assignments_legacy_on_insert
 AFTER INSERT ON stage_devices
 BEGIN
+    INSERT INTO stage_device_identity_registry (device_id, created_at_us)
+    VALUES (NEW.device_id, NEW.created_at_us);
     INSERT INTO stage_device_assignments
         (device_id, project_id, assignment_epoch, assignment_state,
          runtime_snapshot_id, updated_at_us)
@@ -60,3 +74,4 @@ END;
 DROP TRIGGER IF EXISTS stage_device_assignments_protect_project_delete;
 DROP TRIGGER IF EXISTS stage_device_assignments_legacy_on_insert;
 DROP TABLE IF EXISTS stage_device_assignments;
+DROP TABLE IF EXISTS stage_device_identity_registry;
