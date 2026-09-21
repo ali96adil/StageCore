@@ -79,11 +79,12 @@ Project, activate a snapshot, dispatch any command, or verify physical DMX
 decoder/LED values. An unexpected nonzero or non-blackout report is surfaced
 as `UnsafeWhileUnactivated`, never corrected silently.
 
-To meet the requested same-Cue-5 self-healing behavior, the next dependency
-is firmware capability plus trusted, current LIVE desired-state derivation,
-followed by a session/revision-bound `LiveLightingObservationGate` comparison,
-separate v2 ACTIVE command authority, and explicitly approved safe partial
-correction. Do not equate this raw diagnostic with a matched Cue.
+The next section adds a conservative, current-completed-Cue desired
+projection; it does **not** yet connect the raw diagnostic to the one-use
+`LiveLightingObservationGate`. Firmware capability, separate v2 ACTIVE
+command authority and explicitly approved safe partial correction remain
+independent prerequisites. Do not equate this raw diagnostic with a matched
+Cue.
 
 ## Batched reconnect guards (opt-in, source-only)
 
