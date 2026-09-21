@@ -31,6 +31,13 @@ func TestLegacyAssignmentSidecarRegistersWithoutActivatingV2(t *testing.T) {
 	if _, err := repo.UpsertDevice(ctx, device); err != nil {
 		t.Fatal(err)
 	}
+	// The v2 identity registry is not linked to a project lifetime.
+	var identityCount int
+	if err := handle.DB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM stage_device_identity_registry WHERE device_id = ?",
+		device.ID).Scan(&identityCount); err != nil || identityCount != 1 {
+		t.Fatalf("new Stage Device lacks durable identity: count=%d err=%v", identityCount, err)
+	}
 	record, err := repo.GetAssignmentRecord(ctx, device.ID)
 	if err != nil || record.ProjectID != projectID || record.Epoch != 1 ||
 		record.State != deviceexperience.AssignmentLegacy || record.RuntimeSnapshotID != "" {
@@ -143,6 +150,12 @@ func TestAssignmentMigrationBackfillsPreExistingStageDevice(t *testing.T) {
 	}
 	if err := goose.UpTo(handle.DB, ".", 29); err != nil {
 		t.Fatalf("upgrade test fixture to v2 metadata schema: %v", err)
+	}
+	var existingIdentity int
+	if err := handle.DB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM stage_device_identity_registry WHERE device_id = ?",
+		legacy.ID).Scan(&existingIdentity); err != nil || existingIdentity != 1 {
+		t.Fatalf("migration lost pre-existing physical identity: count=%d err=%v", existingIdentity, err)
 	}
 	record, err := repo.GetAssignmentRecord(ctx, legacy.ID)
 	if err != nil || record.DeviceID != legacy.ID || record.ProjectID != projectID ||
