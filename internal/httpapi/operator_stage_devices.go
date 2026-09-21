@@ -129,6 +129,60 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, record)
 		}))
 
+		// Read-only Operator status for the current Hub-owned v2 assignment.
+		// An ACK stored on an earlier socket is historical, not live proof.
+		// This endpoint never reports independent physical DMX verification.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment/transfer-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			assignment, err := devices.GetAssignmentRecord(r.Context(), deviceID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_STATUS_UNAVAILABLE"})
+				return
+			}
+			generation, online := runtime.CurrentV2Generation(deviceID)
+			reported := false
+			var ack *deviceexperience.BlockedEpochAck
+			if assignment.State == "BLOCKED" {
+				record, err := devices.GetBlockedEpochAck(r.Context(), deviceID, assignment.Epoch)
+				if err == nil && record.ProjectID == assignment.ProjectID {
+					ack = &record
+					reported = online && generation == record.ConnectionGeneration
+				} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_EPOCH_ACK_UNAVAILABLE"})
+					return
+				}
+			}
+			status := "NOT_ELIGIBLE_FOR_V2_TRANSFER"
+			switch assignment.State {
+			case "UNASSIGNED":
+				status = "UNASSIGNED"
+			case "BLOCKED":
+				status = "AWAITING_CURRENT_SOFTWARE_EPOCH_ACK"
+				if reported {
+					status = "CURRENT_SOFTWARE_ZERO_REPORTED_BLOCKED"
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"assignment": assignment,
+				"epoch_ack": ack,
+				"connection_online": online,
+				"software_zero_report_current_connection": reported,
+				"status": status,
+				"commands_enabled": false,
+				"snapshot_active": false,
+				"physical_blackout_verified": false,
+				"note": "DEVICE_REPORT_ONLY_NO_INDEPENDENT_PHYSICAL_DMX_PROOF",
+			})
+		}))
+
 		// An explicit read-only transfer preflight. The requester needs both
 		// project.edit and companion.pair before seeing device identity or
 		// project affiliation. The returned result does not mutate storage
