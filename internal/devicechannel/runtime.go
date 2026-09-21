@@ -208,7 +208,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if hello.ProtocolVersion == "" {
 		hello.ProtocolVersion = deviceexperience.ProtocolVersion1
 	}
-	device, err := r.repository.UpsertDevice(ctx, deviceexperience.Device{
+	isV2Unassigned := hello.ProtocolVersion == deviceexperience.ProtocolVersion2
+	// In a v2 hello the client NEVER chooses a Project. A project-bearing
+	// v2 hello is a protocol violation even when the credential is valid.
+	if isV2Unassigned && strings.TrimSpace(hello.ProjectID) != "" {
+		_ = ws.Close()
+		return
+	}
+	deviceInput := deviceexperience.Device{
 		ID:              hello.DeviceID,
 		ProjectID:       strings.TrimSpace(hello.ProjectID),
 		ProfileID:       strings.TrimSpace(hello.ProfileID),
@@ -222,7 +229,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		GroupName:       hello.GroupName,
 		LocationName:    hello.LocationName,
 		Enabled:         true,
-	})
+	}
+	var device deviceexperience.Device
+	var err error
+	if isV2Unassigned {
+		device, err = r.repository.RegisterUnassignedV2(ctx, deviceInput)
+	} else {
+		device, err = r.repository.UpsertDevice(ctx, deviceInput)
+	}
 	if err != nil {
 		_ = ws.Close()
 		return
@@ -275,24 +289,45 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	}()
 	defer func() { <-monitorDone }()
 
-	if err := current.send(map[string]any{
-		"type":             "runtime.ready",
-		"schema_version":   runtimeSchemaVersion,
-		"device_id":        device.ID,
-		"protocol_version": deviceexperience.ProtocolVersion1,
-	}); err != nil {
-		return
-	}
-	if state, ok, err := r.repository.SafeDisplayStateForReconnect(ctx, device.ID); err != nil {
-		return
-	} else if ok {
-		if err := current.send(displayStateMessage{
-			Type:          "display.state",
-			SchemaVersion: runtimeSchemaVersion,
-			DeviceID:      device.ID,
-			State:         state,
+	if isV2Unassigned {
+		assignment, err := r.repository.GetAssignmentRecord(ctx, device.ID)
+		if err != nil || assignment.State != "UNASSIGNED" || assignment.ProjectID != "" {
+			return
+		}
+		// This is an authenticated inventory response, NOT runtime.ready and
+		// NOT evidence of a verified physical blackout or permission to
+		// execute project commands.
+		if err := current.send(map[string]any{
+			"type":             "assignment.state",
+			"schema_version":   2,
+			"device_id":        device.ID,
+			"assignment_epoch": assignment.Epoch,
+			"state":            "UNASSIGNED",
+			"blackout_required": true,
+			"commands_enabled":  false,
 		}); err != nil {
 			return
+		}
+	} else {
+		if err := current.send(map[string]any{
+			"type":             "runtime.ready",
+			"schema_version":   runtimeSchemaVersion,
+			"device_id":        device.ID,
+			"protocol_version": deviceexperience.ProtocolVersion1,
+		}); err != nil {
+			return
+		}
+		if state, ok, err := r.repository.SafeDisplayStateForReconnect(ctx, device.ID); err != nil {
+			return
+		} else if ok {
+			if err := current.send(displayStateMessage{
+				Type:          "display.state",
+				SchemaVersion: runtimeSchemaVersion,
+				DeviceID:      device.ID,
+				State:         state,
+			}); err != nil {
+				return
+			}
 		}
 	}
 
@@ -301,11 +336,20 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		if err := websocket.JSON.Receive(ws, &message); err != nil {
 			return
 		}
-		if message.SchemaVersion != runtimeSchemaVersion || strings.TrimSpace(message.DeviceID) != device.ID {
+		expectedSchema := runtimeSchemaVersion
+		if isV2Unassigned {
+			expectedSchema = 2
+		}
+		if message.SchemaVersion != expectedSchema || strings.TrimSpace(message.DeviceID) != device.ID {
 			return
 		}
 		switch message.Type {
 		case "command.result":
+			// An unassigned v2 node can never report completion of a
+			// project command on this connection.
+			if isV2Unassigned {
+				return
+			}
 			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
 				return
 			}

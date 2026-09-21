@@ -279,3 +279,74 @@ func TestOperatorStageDeviceAssignmentMetadataIsReadOnlyAndAuthenticated(t *test
 		t.Fatalf("unknown assignment status=%d body=%s", missing.Code, missing.Body.String())
 	}
 }
+
+func TestOperatorUnassignedV2InventoryRequiresPairingPermission(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Legacy Show", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "legacy-inventory-01", ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Legacy Tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "unassigned-v2-inventory-01", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "New Lighting Node", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	path := "/api/v1/stage-devices/unassigned"
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19030"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code == http.StatusOK {
+		t.Fatalf("unassigned identity inventory leaked without authentication: %s", res.Body.String())
+	}
+
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19031"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("paired-device inventory status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Devices []struct {
+			DeviceID string `json:"device_id"`
+			DisplayName string `json:"display_name"`
+			AssignmentEpoch int64 `json:"assignment_epoch"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Devices) != 1 || response.Devices[0].DeviceID != "unassigned-v2-inventory-01" ||
+		response.Devices[0].DisplayName != "New Lighting Node" || response.Devices[0].AssignmentEpoch != 1 {
+		t.Fatalf("unassigned v2 inventory=%+v", response.Devices)
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("legacy-inventory-01")) ||
+		bytes.Contains(res.Body.Bytes(), []byte("project_id")) {
+		t.Fatalf("inventory included legacy devices or project authority: %s", res.Body.String())
+	}
+}
