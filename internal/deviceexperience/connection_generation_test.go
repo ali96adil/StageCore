@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"math"
+	"path/filepath"
+	"sync"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 )
 
@@ -60,5 +63,56 @@ func TestV2GenerationFailsClosedAtInt64Exhaustion(t *testing.T) {
 	}
 	if _, err := repo.AllocateV2ConnectionGeneration(ctx); !errors.Is(err, deviceexperience.ErrInvalidState) {
 		t.Fatalf("exhausted sequence reused generation: %v", err)
+	}
+}
+
+func TestV2GenerationUniqueAcrossOverlappingDatabaseConnections(t *testing.T) {
+	ctx := context.Background()
+	first, handle, _ := newRepository(t)
+	root := filepath.Dir(filepath.Dir(handle.Path))
+	secondHandle, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondHandle.Close()
+	second, err := deviceexperience.NewRepository(secondHandle.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Independent SQLite connections emulate two overlapping Hub processes,
+	// not merely two goroutines sharing one sql.DB. No allocated generation
+	// can be repeated even if both runtimes read the same starting high-water.
+	var wg sync.WaitGroup
+	values := make(chan int64, 8)
+	failures := make(chan error, 8)
+	for _, repository := range []*deviceexperience.Repository{first, second} {
+		wg.Add(1)
+		go func(repo *deviceexperience.Repository) {
+			defer wg.Done()
+			for i := 0; i < 4; i++ {
+				generation, err := repo.AllocateV2ConnectionGeneration(ctx)
+				if err != nil {
+					failures <- err
+					return
+				}
+				values <- generation
+			}
+		}(repository)
+	}
+	wg.Wait()
+	close(failures)
+	close(values)
+	for err := range failures {
+		t.Fatalf("parallel Hub generation allocation failed: %v", err)
+	}
+	seen := map[int64]bool{}
+	for generation := range values {
+		if generation <= 0 || seen[generation] {
+			t.Fatalf("parallel Hub reused generation=%d", generation)
+		}
+		seen[generation] = true
+	}
+	if len(seen) != 8 {
+		t.Fatalf("only allocated %d/8 unique generations", len(seen))
 	}
 }
