@@ -215,3 +215,67 @@ func TestOperatorNetworkCockpitReturnsLatestTargetState(t *testing.T) {
 		t.Fatalf("targets=%+v", response.Targets)
 	}
 }
+
+func TestOperatorStageDeviceAssignmentMetadataIsReadOnlyAndAuthenticated(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Assignment Inventory", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "lighting-readonly-01", ProjectID: project.ID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	path := "/api/v1/stage-devices/lighting-readonly-01/assignment"
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19009"
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, req)
+	if unauthorized.Code == http.StatusOK {
+		t.Fatal("unauthenticated assignment metadata was exposed")
+	}
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19010"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("assignment GET status=%d body=%s", res.Code, res.Body.String())
+	}
+	var record deviceexperience.AssignmentRecord
+	if err := json.Unmarshal(res.Body.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.DeviceID != "lighting-readonly-01" || record.ProjectID != project.ID ||
+		record.State != deviceexperience.AssignmentLegacy || record.Epoch != 1 {
+		t.Fatalf("read-only assignment inventory=%+v", record)
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("ACTIVE")) {
+		t.Fatalf("legacy enrollment falsely promoted to v2 active: %s", res.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/stage-devices/missing/assignment", nil)
+	req.RemoteAddr = "127.0.0.1:19011"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, req)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown assignment status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
