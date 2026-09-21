@@ -3,7 +3,6 @@ package deviceexperience_test
 import (
 	"context"
 	"errors"
-	"math"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -48,7 +47,7 @@ func TestV2GenerationDurableMonotonicAcrossRepositoryRestart(t *testing.T) {
 	}
 }
 
-func TestV2GenerationFailsClosedAtInt64Exhaustion(t *testing.T) {
+func TestV2GenerationFailsClosedAtFirmwareJSONLimit(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, _ := newRepository(t)
 	// Simulate approaching the upper bound without bypassing the SQL
@@ -58,7 +57,7 @@ func TestV2GenerationFailsClosedAtInt64Exhaustion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := handle.DB.ExecContext(ctx,
-		"UPDATE stage_device_v2_connection_sequence SET generation=? WHERE singleton=1", int64(math.MaxInt64)); err != nil {
+		"UPDATE stage_device_v2_connection_sequence SET generation=? WHERE singleton=1", int64(9007199254740991)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.AllocateV2ConnectionGeneration(ctx); !errors.Is(err, deviceexperience.ErrInvalidState) {
