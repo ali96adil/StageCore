@@ -306,6 +306,12 @@
             <p>${esc(v2Status?.software_zero_report_current_connection ? t("v2CurrentSoftwareZero") : t("v2NoCurrentSoftwareZero"))}</p>
             <p>${esc(t("v2HardwareUnverified"))}</p>
           </div>` : ""}
+        ${device.protocol_version === "stagecore.device/2" &&
+          device.profile_id === "stagecore.esp32-dmx-lighting-node" ? `
+          <section class="phase4-lighting-diagnostic">
+            <button class="button ghost" data-live-diagnostic-device="${esc(device.device_id)}" type="button">${esc(t("liveDiagnostic"))}</button>
+            <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
+          </section>` : ""}
         ${tabletControls(device)}
       </article>`;
   }
