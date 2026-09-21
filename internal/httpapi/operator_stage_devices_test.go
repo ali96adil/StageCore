@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
@@ -277,5 +278,145 @@ func TestOperatorStageDeviceAssignmentMetadataIsReadOnlyAndAuthenticated(t *test
 	handler.ServeHTTP(missing, req)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("unknown assignment status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestOperatorUnassignedV2InventoryRequiresPairingPermission(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Legacy Show", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "legacy-inventory-01", ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Legacy Tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "unassigned-v2-inventory-01", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "New Lighting Node", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	path := "/api/v1/stage-devices/unassigned"
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19030"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code == http.StatusOK {
+		t.Fatalf("unassigned identity inventory leaked without authentication: %s", res.Body.String())
+	}
+
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:19031"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("paired-device inventory status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Devices []struct {
+			DeviceID string `json:"device_id"`
+			DisplayName string `json:"display_name"`
+			AssignmentEpoch int64 `json:"assignment_epoch"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Devices) != 1 || response.Devices[0].DeviceID != "unassigned-v2-inventory-01" ||
+		response.Devices[0].DisplayName != "New Lighting Node" || response.Devices[0].AssignmentEpoch != 1 {
+		t.Fatalf("unassigned v2 inventory=%+v", response.Devices)
+	}
+	if bytes.Contains(res.Body.Bytes(), []byte("legacy-inventory-01")) ||
+		bytes.Contains(res.Body.Bytes(), []byte("project_id")) {
+		t.Fatalf("inventory included legacy devices or project authority: %s", res.Body.String())
+	}
+
+	// An ordinary show Operator may read project devices but is not
+	// authorized to enumerate/read project-independent pairing identities.
+	const operatorPassword = "v2 pairing inventory operator password"
+	if _, err := h.auth.CreateUser(ctx, "v2-inventory-operator", operatorPassword, userauth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.Login(ctx, "v2-inventory-operator", operatorPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guarded := range []string{
+		"/api/v1/stage-devices/unassigned",
+		"/api/v1/stage-devices/unassigned-v2-inventory-01",
+		"/api/v1/stage-devices/unassigned-v2-inventory-01/assignment",
+	} {
+		req := httptest.NewRequest(http.MethodGet, guarded, nil)
+		req.RemoteAddr = "127.0.0.1:19032"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: operator.Token})
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("operator accessed pairing metadata path=%q status=%d body=%s", guarded, res.Code, res.Body.String())
+		}
+	}
+}
+
+func TestProjectScopedStageDeviceRoutesRejectBlankProjectSelector(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "unassigned-hidden-from-blank-project", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Unassigned", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/projects/%20/stage-devices"},
+		{http.MethodPost, "/api/v1/projects/%20/stage-device-commands"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString("{}"))
+		req.RemoteAddr = "127.0.0.1:19045"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		if tc.method == http.MethodPost {
+			req.Header.Set(csrfHeader, owner.CSRFToken)
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusBadRequest ||
+			!bytes.Contains(res.Body.Bytes(), []byte("STAGE_DEVICE_PROJECT_REQUIRED")) ||
+			bytes.Contains(res.Body.Bytes(), []byte("unassigned-hidden-from-blank-project")) {
+			t.Fatalf("blank project exposed global inventory: method=%s path=%s status=%d body=%s",
+				tc.method, tc.path, res.Code, res.Body.String())
+		}
 	}
 }

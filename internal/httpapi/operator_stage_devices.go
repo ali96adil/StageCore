@@ -32,6 +32,10 @@ func WithOperatorStageDevices(
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
@@ -40,10 +44,59 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, map[string]any{"devices": items})
 		}))
 
+		// Device provisioning inventory is not scoped to any Project yet.
+		// Only an operator authorized for pairing may discover unassigned v2
+		// identities. This endpoint grants NO Assign/Transfer authority.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			items, err := devices.ListDevices(r.Context(), "")
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
+				return
+			}
+			type unassignedDevice struct {
+				DeviceID        string                       `json:"device_id"`
+				DisplayName     string                       `json:"display_name"`
+				DeviceKind      deviceexperience.DeviceKind  `json:"device_kind"`
+				AssignmentEpoch int64                        `json:"assignment_epoch"`
+				Connection      deviceexperience.ConnectionState `json:"connection_state,omitempty"`
+				Readiness       deviceexperience.Readiness       `json:"readiness,omitempty"`
+			}
+			out := make([]unassignedDevice, 0)
+			for _, item := range items {
+				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+					continue
+				}
+				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+					return
+				}
+				if assignment.State != "UNASSIGNED" || assignment.ProjectID != "" {
+					continue
+				}
+				view := unassignedDevice{
+					DeviceID: item.ID, DisplayName: item.DisplayName,
+					DeviceKind: item.Kind, AssignmentEpoch: assignment.Epoch,
+				}
+				if item.Runtime != nil {
+					view.Connection = item.Runtime.Connection
+					view.Readiness = item.Runtime.Readiness
+				}
+				out = append(out, view)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+		}))
+
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			item, err := devices.GetDevice(r.Context(), strings.TrimSpace(r.PathValue("device_id")))
 			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+				return
+			}
+			// Unassigned identities are pairing inventory, not members of
+			// whichever Project the requesting user happens to read.
+			if item.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
 				return
 			}
 			writeJSON(w, http.StatusOK, item)
@@ -52,7 +105,7 @@ func WithOperatorStageDevices(
 		// Read-only legacy/v2 assignment metadata for inventory diagnostics.
 		// This does not assign or transfer a device, and LEGACY is never a
 		// statement that the new authenticated v2 handshake has completed.
-		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
 			if err != nil {
@@ -65,6 +118,10 @@ func WithOperatorStageDevices(
 					return
 				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+				return
+			}
+			if record.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
 				return
 			}
 			writeJSON(w, http.StatusOK, record)
@@ -125,6 +182,10 @@ func WithOperatorStageDevices(
 		// canonical Stage Device metadata, not browser-only filtering.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-device-commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			var input struct {
 				All               bool            `json:"all"`
 				GroupName         string          `json:"group_name"`
