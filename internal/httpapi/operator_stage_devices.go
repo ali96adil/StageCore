@@ -32,6 +32,10 @@ func WithOperatorStageDevices(
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
@@ -178,6 +182,10 @@ func WithOperatorStageDevices(
 		// canonical Stage Device metadata, not browser-only filtering.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-device-commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			var input struct {
 				All               bool            `json:"all"`
 				GroupName         string          `json:"group_name"`
