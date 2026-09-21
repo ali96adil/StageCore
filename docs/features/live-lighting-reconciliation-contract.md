@@ -142,6 +142,32 @@ configuration, authorized epoch/socket generation, fresh observation,
 latest desired-state revision and all SHOW/output gates. The existing v2
 image remains BLOCKED and must not receive a nonzero command on reconnect.
 
+## Software-only blocked-node diagnostics (next batched source-only slice)
+
+`livereconcile.AssessBlockedSoftware` joins a conservative completed current
+Cue projection with the exact current-socket diagnostic from v2 **BLOCKED**
+firmware. It validates current Hub assignment epoch and connection generation,
+Project ownership, nonempty Snapshot/Cue execution identity, age and length of
+the device-reported 12-slot software frame. A transfer, missing/future/stale
+report, bad channel or unexpected command/physical-proof claim returns
+`UNKNOWN`.
+
+For a complete, scoped report it displays the software levels and sorted
+differing configured slots. A physically unverified local blackout is
+`BLOCKED` even if all configured Cue levels are also zero. An unexpected
+nonzero slot anywhere in the full 12-slot universe (including disabled/spare
+slots), or any non-blackout report, is `UNSAFE`. The diagnostic **cannot**
+report MATCH, READY, ACTIVE or RECOVERING; it always states
+`PhysicalVerified=false` and `CommandsEnabled=false`. Differences are
+Operator information only and are NEVER correction commands.
+
+This source-only helper has no Operator endpoint or socket command access.
+Its caller must fetch fresh current session/assignment/socket again when
+displaying it; an eventual dispatch coordinator must independently recheck
+all authority and LIVE state after its own observation. The currently
+experimental v2 node does not support output activation; no automatic
+nonzero command is permitted.
+
 ## Follow-up gates
 
 1. Connect authenticated versioned observation challenge/response to the Hub.
