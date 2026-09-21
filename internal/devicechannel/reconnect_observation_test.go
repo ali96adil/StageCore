@@ -207,6 +207,10 @@ func TestBlockedV2AutoProbeStartsOnlyAfterPersistedEpochReceipt(t *testing.T) {
 		t.Fatalf("probe arrived before receipt or epoch denied: %+v err=%v", receipt, err)
 	}
 	request := readProbeRequest(t, ws)
+	if request["assignment_epoch"] != welcome["assignment_epoch"] ||
+		request["connection_generation"] != welcome["connection_generation"] {
+		t.Fatalf("probe not scoped to persisted BLOCKED epoch: %+v", request)
+	}
 	sendProbeReport(t, ws, request, make([]int, lightingnode.MaxChannels))
 	report := waitForV2ProbeCache(t, f)
 	if report.CommandsEnabled || report.PhysicalVerified || report.Unsafe {
