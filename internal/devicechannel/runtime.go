@@ -34,6 +34,7 @@ type Runtime struct {
 	inflight       map[string]*connection
 	pendingBlackouts map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
+	latestV2SoftwareLevels map[string]V2SoftwareLevels
 	nextGeneration int64
 	closed         bool
 }
@@ -115,6 +116,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		inflight:    make(map[string]*connection),
 		pendingBlackouts: make(map[string]*pendingBlackout),
 		pendingV2LightingProbes: make(map[string]*pendingV2LightingProbe),
+		latestV2SoftwareLevels: make(map[string]V2SoftwareLevels),
 	}
 }
 
@@ -133,6 +135,7 @@ func (r *Runtime) Close() {
 		connections = append(connections, current)
 	}
 	r.connections = make(map[string]*connection)
+	r.latestV2SoftwareLevels = make(map[string]V2SoftwareLevels)
 	r.mu.Unlock()
 	for _, current := range connections {
 		current.close()
@@ -302,23 +305,22 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
 	}
-	if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+	if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 		DeviceID:      device.ID,
 		Connection:    deviceexperience.ConnectionOnline,
 		Readiness:     readiness,
 		ObservedState: hello.ObservedState,
 		NetworkState:  hello.NetworkState,
-	}); err != nil {
-		return
-	}
-	_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+	}, deviceexperience.NetworkObservation{
 		TargetKind:     "STAGE_DEVICE",
 		TargetID:       device.ID,
 		Reachability:   deviceexperience.Reachable,
 		TransportState: "WEBSOCKET_CONNECTED",
 		Address:        remoteAddress,
 		Details:        json.RawMessage(`{"authenticated":true}`),
-	})
+	}); err != nil || !same {
+		return
+	}
 
 	monitorDone := make(chan struct{})
 	go func() {
@@ -371,6 +373,12 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		}
 		if err := current.send(response); err != nil {
 			return
+		}
+		// UNASSIGNED has no epoch receipt. A negotiated probe is diagnostic
+		// only; never treat its result as READY or an output instruction.
+		if assignment.State == "UNASSIGNED" &&
+			containsCapability(device.Capabilities, V2LightingStateProbeCapability) {
+			r.probeV2AfterReconnect(current)
 		}
 	} else {
 		if err := current.send(map[string]any{
@@ -468,6 +476,11 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}); err != nil {
 				return
 			}
+			// BLOCKED nodes may answer diagnostics only after their committed
+			// epoch has been persistently acknowledged; never before the receipt.
+			if containsCapability(device.Capabilities, V2LightingStateProbeCapability) {
+				r.probeV2AfterReconnect(current)
+			}
 		case "assignment.blackout_ack":
 			if !isV2Unassigned {
 				return
@@ -524,16 +537,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if readiness == "" {
 				readiness = deviceexperience.ReadinessUnknown
 			}
-			if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+			if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 				DeviceID:      device.ID,
 				Connection:    deviceexperience.ConnectionOnline,
 				Readiness:     readiness,
 				ObservedState: message.ObservedState,
 				NetworkState:  message.NetworkState,
-			}); err != nil {
-				return
-			}
-			_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+			}, deviceexperience.NetworkObservation{
 				TargetKind:     "STAGE_DEVICE",
 				TargetID:       device.ID,
 				Reachability:   deviceexperience.Reachable,
@@ -541,7 +551,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				LatencyMS:      message.LatencyMS,
 				JitterMS:       message.JitterMS,
 				Address:        remoteAddress,
-			})
+			}); err != nil || !same {
+				return
+			}
 		default:
 			return
 		}
@@ -573,6 +585,7 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		current.generation = r.nextGeneration
 	}
 	previous := r.connections[current.deviceID]
+	delete(r.latestV2SoftwareLevels, current.deviceID)
 	r.connections[current.deviceID] = current
 	return previous, nil
 }
