@@ -15,8 +15,11 @@ import (
 type diagnosticDeviceStore struct {
 	device deviceexperience.Device
 	assignment deviceexperience.AssignmentRecord
+	ack deviceexperience.BlockedEpochAck
 	deviceReads int
 	assignmentReads int
+	ackReads int
+	onAck func(*diagnosticDeviceStore)
 	onDevice func(*diagnosticDeviceStore)
 	onAssignment func(*diagnosticDeviceStore)
 }
@@ -29,6 +32,11 @@ func (s *diagnosticDeviceStore) GetAssignmentRecord(_ context.Context, _ string)
 	s.assignmentReads++
 	if s.onAssignment != nil { s.onAssignment(s) }
 	return s.assignment,nil
+}
+func (s *diagnosticDeviceStore) GetBlockedEpochAck(_ context.Context, _ string, _ int64) (deviceexperience.BlockedEpochAck,error) {
+	s.ackReads++
+	if s.onAck != nil {s.onAck(s)}
+	return s.ack,nil
 }
 
 type diagnosticReporter struct {
@@ -68,6 +76,11 @@ func diagnosticReaderFixture(t *testing.T)(*BlockedDiagnosticReader,*memorySessi
 		assignment:deviceexperience.AssignmentRecord{
 			DeviceID:testLightingDevice,ProjectID:testProject,Epoch:7,State:"BLOCKED",
 		},
+		ack:deviceexperience.BlockedEpochAck{
+			DeviceID:testLightingDevice,ProjectID:testProject,
+			AssignmentEpoch:7,ConnectionGeneration:21,
+			ChannelCount:lightingnode.MaxChannels,AcknowledgedAt:now.Add(-time.Second),
+		},
 	}
 	devices.device.Capabilities=[]string{devicechannel.V2LightingStateProbeCapability}
 	reporter:=&diagnosticReporter{report:report,generation:21}
@@ -83,7 +96,7 @@ func TestBlockedDiagnosticReaderCurrentCueAndScopedSoftwareOnly(t *testing.T) {
 		!reflect.DeepEqual(got.DifferingSlots,[]int{1,2,3}) ||
 		got.CueID!="cue-5" || got.CueExecutionID!="execution-5" ||
 		devices.deviceReads<2 || devices.assignmentReads<2 ||
-		reporter.reportReads<2 || reporter.generationReads<2 {
+		devices.ackReads<2 || reporter.reportReads<2 || reporter.generationReads<2 {
 		t.Fatalf("read-only scoped diagnostic=%+v deviceReads=%d assignmentReads=%d reportReads=%d generationReads=%d",
 			got,devices.deviceReads,devices.assignmentReads,reporter.reportReads,reporter.generationReads)
 	}
@@ -130,6 +143,9 @@ func TestBlockedDiagnosticReaderFailsClosedOnMidReadScopeChanges(t *testing.T) {
 		{"assignment transfer",func(_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){
 			d.onAssignment=func(d *diagnosticDeviceStore){if d.assignmentReads==2 {d.assignment.Epoch++;d.assignment.ProjectID="other"}}
 		}},
+		{"revoked epoch ACK",func(_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){
+			d.onAck=func(d *diagnosticDeviceStore){if d.ackReads==2 {d.ack.ConnectionGeneration--}}
+		}},
 		{"device revoked",func(_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){
 			d.onDevice=func(d *diagnosticDeviceStore){if d.deviceReads==2 {d.device.Enabled=false}}
 		}},
@@ -168,6 +184,8 @@ func TestBlockedDiagnosticReaderFailsClosedOnMissingUntrustedOrExpiredInput(t *t
 		{"missing channel",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,_ *diagnosticDeviceStore,r *diagnosticReporter){r.report.ChannelLevels=r.report.ChannelLevels[:11]}},
 		{"different device report",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,_ *diagnosticDeviceStore,r *diagnosticReporter){r.report.DeviceID="other"}},
 		{"unassigned",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.assignment.State="UNASSIGNED";d.assignment.ProjectID=""}},
+		{"historical epoch ACK",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.ack.ConnectionGeneration=20}},
+		{"missing epoch ACK",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.ack.AcknowledgedAt=time.Time{}}},
 		{"v2 ACTIVE without physical proof",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.assignment.State="ACTIVE"}},
 		{"unexpected snapshot activation",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.assignment.RuntimeSnapshotID="snapshot-1"}},
 		{"not negotiated",func(_ *BlockedDiagnosticReader,_ *memorySessionStore,d *diagnosticDeviceStore,_ *diagnosticReporter){d.device.Capabilities=nil}},
