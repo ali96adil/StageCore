@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
@@ -348,5 +349,30 @@ func TestOperatorUnassignedV2InventoryRequiresPairingPermission(t *testing.T) {
 	if bytes.Contains(res.Body.Bytes(), []byte("legacy-inventory-01")) ||
 		bytes.Contains(res.Body.Bytes(), []byte("project_id")) {
 		t.Fatalf("inventory included legacy devices or project authority: %s", res.Body.String())
+	}
+
+	// An ordinary show Operator may read project devices but is not
+	// authorized to enumerate/read project-independent pairing identities.
+	const operatorPassword = "v2 pairing inventory operator password"
+	if _, err := h.auth.CreateUser(ctx, "v2-inventory-operator", operatorPassword, userauth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.Login(ctx, "v2-inventory-operator", operatorPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guarded := range []string{
+		"/api/v1/stage-devices/unassigned",
+		"/api/v1/stage-devices/unassigned-v2-inventory-01",
+		"/api/v1/stage-devices/unassigned-v2-inventory-01/assignment",
+	} {
+		req := httptest.NewRequest(http.MethodGet, guarded, nil)
+		req.RemoteAddr = "127.0.0.1:19032"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: operator.Token})
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("operator accessed pairing metadata path=%q status=%d body=%s", guarded, res.Code, res.Body.String())
+		}
 	}
 }
