@@ -124,3 +124,48 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatalf("unknown operator path status=%d, want 404", missingRes.Code)
 	}
 }
+
+func TestOperatorAddonNavigationSurvivesLegacyWorkspaceProfiles(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	read := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "127.0.0.1:19505"
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", path, res.Code, res.Body.String())
+		}
+		return res.Body.String()
+	}
+
+	css := read("/workspace-profile.css")
+	for _, selector := range []string{
+		`[data-phase4-nav="true"]`,
+		`[data-tablet-controller-nav="true"]`,
+		`[data-tablet-scenes-nav="true"]`,
+		`[data-lighting-cues-nav="true"]`,
+		`[data-lighting-setup-nav="true"]`,
+		`[data-visual-engine-nav="true"]`,
+		`[data-assistant-nav="true"]`,
+	} {
+		if !strings.Contains(css, selector) {
+			t.Errorf("legacy profile CSS missing feature-owned navigation exemption %s", selector)
+		}
+	}
+	if !strings.Contains(css, ").f017-profile-hidden {\n  display: block !important;") {
+		t.Fatal("feature-owned navigation exemptions must override the F-017 hide rule")
+	}
+
+	js := read("/phase4.js")
+	for _, component := range []string{"window.renderTabletController", "window.renderLightingSetup"} {
+		if !strings.Contains(js, component) {
+			t.Errorf("phase4 bundle missing %s", component)
+		}
+	}
+
+	appCSS := read("/app.css")
+	if !strings.Contains(appCSS, "overflow-y: auto;") {
+		t.Fatal("operator sidebar needs an independent vertical scroll for injected navigation")
+	}
+}
