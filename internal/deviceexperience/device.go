@@ -37,7 +37,9 @@ func (r *Repository) UpsertDevice(ctx context.Context, device Device) (Device, e
 	}
 	now := r.now().UTC()
 	nowUS := now.UnixMicro()
-	_, err = r.db.ExecContext(ctx, `
+	// Client reconnect metadata cannot reassign an existing device. Project
+	// transfer requires a distinct, authorized Hub-side operation.
+	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO stage_devices
 		(device_id, project_id, profile_id, device_kind, display_name, platform, architecture,
 		 client_version, protocol_version, capabilities_json, group_name, location_name, enabled,
@@ -57,11 +59,19 @@ func (r *Repository) UpsertDevice(ctx context.Context, device Device) (Device, e
 		location_name=excluded.location_name,
 		enabled=excluded.enabled,
 		updated_at_us=excluded.updated_at_us
+		WHERE stage_devices.project_id IS excluded.project_id
 	`, device.ID, device.ProjectID, device.ProfileID, device.Kind, device.DisplayName,
 		device.Platform, device.Architecture, device.ClientVersion, device.ProtocolVersion,
 		string(caps), device.GroupName, device.LocationName, boolInt(device.Enabled), nowUS, nowUS)
 	if err != nil {
 		return Device{}, fmt.Errorf("upsert stage device: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return Device{}, fmt.Errorf("read stage device upsert result: %w", err)
+	}
+	if changed == 0 {
+		return Device{}, fmt.Errorf("%w: project reassignment requires authorized Hub transfer", ErrInvalidDevice)
 	}
 	return r.GetDevice(ctx, device.ID)
 }
