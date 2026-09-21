@@ -162,8 +162,14 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	if observation.DeviceID == "" || !validConnectionState(observation.Connection) || !validReadiness(observation.Readiness) {
 		return RuntimeState{}, ErrInvalidState
 	}
-	if _, err := r.GetDevice(ctx, observation.DeviceID); err != nil {
+	device, err := r.GetDevice(ctx, observation.DeviceID)
+	if err != nil {
 		return RuntimeState{}, err
+	}
+	// Client health reports do not grant command authority. A device that has
+	// no Hub-owned project assignment, or is disabled, cannot be READY.
+	if device.ProjectID == "" || !device.Enabled {
+		observation.Readiness = ReadinessBlocker
 	}
 	if observation.ObservedAt.IsZero() {
 		observation.ObservedAt = r.now().UTC()
