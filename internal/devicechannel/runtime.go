@@ -349,13 +349,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			"schema_version":   2,
 			"device_id":        device.ID,
 			"assignment_epoch": assignment.Epoch,
+			"connection_generation": current.generation,
 			"state":            assignment.State,
 			"blackout_required": true,
 			"commands_enabled":  false,
 		}
 		if assignment.State == "BLOCKED" {
 			response["project_id"] = assignment.ProjectID
-			response["connection_generation"] = current.generation
 			response["epoch_ack_required"] = true
 		}
 		if err := current.send(response); err != nil {
