@@ -280,6 +280,20 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		_ = ws.Close()
 		return
 	}
+	// A v2 socket is NOT online until its generation has been durably
+	// allocated and it has become the current connection. This ordering
+	// prevents an exhausted/unavailable counter from creating a ghost
+	// ONLINE device record that could mislead Operator commissioning.
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, closed: make(chan struct{})}
+	previous, err := r.register(ctx, current)
+	if err != nil {
+		current.close()
+		return
+	}
+	defer r.unregister(current)
+	if previous != nil {
+		previous.close()
+	}
 	readiness := hello.Readiness
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
@@ -291,7 +305,6 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		ObservedState: hello.ObservedState,
 		NetworkState:  hello.NetworkState,
 	}); err != nil {
-		_ = ws.Close()
 		return
 	}
 	_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
@@ -302,17 +315,6 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		Address:        remoteAddress,
 		Details:        json.RawMessage(`{"authenticated":true}`),
 	})
-
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, closed: make(chan struct{})}
-	previous, err := r.register(ctx, current)
-	if err != nil {
-		current.close()
-		return
-	}
-	if previous != nil {
-		previous.close()
-	}
-	defer r.unregister(current)
 
 	monitorDone := make(chan struct{})
 	go func() {
