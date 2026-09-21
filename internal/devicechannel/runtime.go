@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,19 +28,22 @@ type Runtime struct {
 	repository *deviceexperience.Repository
 	auth       *companionauth.Service
 
-	mu          sync.Mutex
-	connections map[string]*connection
-	inflight    map[string]*connection
-	closed      bool
+	mu             sync.Mutex
+	connections    map[string]*connection
+	inflight       map[string]*connection
+	nextGeneration int64
+	closed         bool
 }
 
 type connection struct {
-	owner    *Runtime
-	ws       *websocket.Conn
-	deviceID string
-	writeMu  sync.Mutex
-	once     sync.Once
-	closed   chan struct{}
+	owner           *Runtime
+	ws              *websocket.Conn
+	deviceID        string
+	protocolVersion string
+	generation      int64
+	writeMu         sync.Mutex
+	once            sync.Once
+	closed          chan struct{}
 }
 
 type helloMessage struct {
@@ -128,6 +132,31 @@ func (r *Runtime) IsConnected(deviceID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return !r.closed && r.connections[strings.TrimSpace(deviceID)] != nil
+}
+
+// CurrentV2Generation identifies the currently registered authenticated v2
+// socket. The Hub issues a new generation for each successful reconnect.
+// This is not a physical blackout proof, project transfer or readiness grant.
+func (r *Runtime) CurrentV2Generation(deviceID string) (int64, bool) {
+	if r == nil {
+		return 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return 0, false
+	}
+	current := r.connections[strings.TrimSpace(deviceID)]
+	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 {
+		return 0, false
+	}
+	select {
+	case <-current.closed:
+		return 0, false
+	default:
+		return current.generation, true
+	}
 }
 
 func (r *Runtime) ServeWebSocket(w http.ResponseWriter, request *http.Request, session domain.CompanionRuntimeSession, token string) {
@@ -264,7 +293,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		Details:        json.RawMessage(`{"authenticated":true}`),
 	})
 
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, closed: make(chan struct{})}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, closed: make(chan struct{})}
 	if previous := r.register(current); previous != nil {
 		previous.close()
 	}
@@ -427,6 +456,11 @@ func (r *Runtime) register(current *connection) *connection {
 	if r.closed {
 		return current
 	}
+	if r.nextGeneration == math.MaxInt64 {
+		return current // fail closed; never reuse a previously issued generation
+	}
+	r.nextGeneration++
+	current.generation = r.nextGeneration
 	previous := r.connections[current.deviceID]
 	r.connections[current.deviceID] = current
 	return previous
