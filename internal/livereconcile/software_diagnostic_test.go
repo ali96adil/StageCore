@@ -48,6 +48,18 @@ func TestBlockedV2ZeroDiagnosticCannotBeMistakenForReady(t *testing.T) {
 	}
 }
 
+func TestMatchingZeroCueStillCannotActivateBlockedV2(t *testing.T) {
+	desired, report, now := blockedDiagnosticFixture(t)
+	for channel := range desired.Channels {
+		desired.Channels[channel] = 0
+	}
+	got := AssessBlockedSoftware(desired, report, 7, 21, now)
+	if got.Status != SoftwareDiagnosticBlocked || len(got.DifferingSlots) != 0 ||
+		got.CommandsEnabled || got.PhysicalVerified {
+		t.Fatalf("matching software zero must never mark output READY: %+v", got)
+	}
+}
+
 func TestBlockedV2UnexpectedNonzeroOnlyReportsDriftWithoutCorrection(t *testing.T) {
 	desired, report, now := blockedDiagnosticFixture(t)
 	report.ChannelLevels[0] = 180
