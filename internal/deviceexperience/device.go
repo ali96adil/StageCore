@@ -57,7 +57,8 @@ func (r *Repository) UpsertDevice(ctx context.Context, device Device) (Device, e
 		capabilities_json=excluded.capabilities_json,
 		group_name=excluded.group_name,
 		location_name=excluded.location_name,
-		enabled=excluded.enabled,
+		-- Enabled/revoked state belongs to the Hub, never to a reconnect hello.
+		enabled=stage_devices.enabled,
 		updated_at_us=excluded.updated_at_us
 		WHERE stage_devices.project_id IS excluded.project_id
 	`, device.ID, device.ProjectID, device.ProfileID, device.Kind, device.DisplayName,
