@@ -376,3 +376,47 @@ func TestOperatorUnassignedV2InventoryRequiresPairingPermission(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectScopedStageDeviceRoutesRejectBlankProjectSelector(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "unassigned-hidden-from-blank-project", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Unassigned", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/projects/%20/stage-devices"},
+		{http.MethodPost, "/api/v1/projects/%20/stage-device-commands"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString("{}"))
+		req.RemoteAddr = "127.0.0.1:19045"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		if tc.method == http.MethodPost {
+			req.Header.Set(csrfHeader, owner.CSRFToken)
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusBadRequest ||
+			!bytes.Contains(res.Body.Bytes(), []byte("STAGE_DEVICE_PROJECT_REQUIRED")) ||
+			bytes.Contains(res.Body.Bytes(), []byte("unassigned-hidden-from-blank-project")) {
+			t.Fatalf("blank project exposed global inventory: method=%s path=%s status=%d body=%s",
+				tc.method, tc.path, res.Code, res.Body.String())
+		}
+	}
+}
