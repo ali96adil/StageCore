@@ -278,7 +278,7 @@
         </div>
         ${device.protocol_version === "stagecore.device/2" ? `
           <div class="phase4-empty" role="status">
-            <strong>${esc(t("v2BlockedStatus"))}: ${esc(v2Status?.status || "BLOCKED")}</strong>
+            <strong>${esc(t("v2BlockedStatus"))}: ${esc(v2Status?.status || "NOT_VERIFIED")}</strong>
             <p>${esc(v2Status?.software_zero_report_current_connection ? t("v2CurrentSoftwareZero") : t("v2NoCurrentSoftwareZero"))}</p>
             <p>${esc(t("v2HardwareUnverified"))}</p>
           </div>` : ""}
