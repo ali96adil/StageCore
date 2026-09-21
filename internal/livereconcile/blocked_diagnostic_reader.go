@@ -70,8 +70,8 @@ func (r *BlockedDiagnosticReader) Read(ctx context.Context, projectID, deviceID 
 		return unknown("current Hub-owned BLOCKED assignment missing or changed")
 	}
 	report, ok := r.reporter.LatestV2SoftwareLevels(deviceID)
-	if !ok {
-		return unknown("no fresh current-socket software observation; only optional diagnostic is available")
+	if !ok || report.DeviceID != deviceID {
+		return unknown("no fresh current-socket software observation for the selected device")
 	}
 	generation, ok := r.reporter.CurrentV2Generation(deviceID)
 	if !ok || generation <= 0 {
@@ -157,7 +157,8 @@ func sameDesiredLighting(a, b DesiredLighting) bool {
 		return false
 	}
 	for slot, value := range a.Channels {
-		if b.Channels[slot] != value {
+		other, exists := b.Channels[slot]
+		if !exists || other != value {
 			return false
 		}
 	}
