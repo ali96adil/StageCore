@@ -216,13 +216,32 @@ non-blackout software state. All advice returns
 published Cue can never grant READY. A device must be separately qualified
 for assignment activation, output authorization and actual DMX/LED physical
 verification before the **different**, explicitly reviewed stateful
-partial-correction path can be enabled. This route does not add an Operator
-UI panel or button yet.
+partial-correction path can be enabled. The following source-only slice adds a GET-only readout on Stage Devices;
+no output controls are added.
 
 Security tests assert browser authentication, existing Project validation,
 no cross-project or stale-UNKNOWN Cue data, no command material, method GET
 only and no-store response headers. Policy tests cover same Cue 5 slot-2
 drift, normal BLOCKED, unexpected output and unknown future statuses.
+
+## Stage Devices diagnostic panel (read-only UI batch)
+
+For a v2 ESP32 Lighting Node shown in the selected Project's Stage Devices
+inventory, a localized English/Iraqi-Arabic **Read current Cue / node report**
+button requests only the authenticated GET diagnostic route. The UI displays
+the current Cue and completed execution, bounded DMX 1–12 logical target and
+reported values, sorted differing slots and an explicit software-only/physical
+unverified warning. BLOCKED and UNSAFE have distinct warning styling; a
+matching zero software frame still remains BLOCKED and never becomes READY.
+UNKNOWN clears all old Cue/slot state, and failed requests replace previous
+values rather than displaying them as fresh. A late request is ignored after
+navigating away or switching Projects.
+
+The v1 Lighting Controller configuration and existing tablet command controls
+are untouched. The panel has **no POST, command payload, Apply, GO or
+Auto-Correct control**. Normal show hardware stays on the pinned software and
+firmware; the draft is not an instruction to deploy or flash. Software-only
+state still does not prove actual DMX decoder/LED output.
 
 ## Follow-up gates
 
