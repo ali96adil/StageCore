@@ -28,6 +28,7 @@ type Runtime struct {
 	repository *deviceexperience.Repository
 	auth       *companionauth.Service
 
+	transferMu     sync.Mutex
 	mu             sync.Mutex
 	connections    map[string]*connection
 	inflight       map[string]*connection
