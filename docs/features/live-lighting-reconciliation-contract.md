@@ -189,9 +189,40 @@ not an atomic dispatch guarantee.
 Tests use deterministic in-memory session, device and socket read models to
 fault-inject each scope change. The result remains only `UNKNOWN`,
 `BLOCKED` or `UNSAFE`; `CommandsEnabled=false` and
-`PhysicalVerified=false` unconditionally. No Operator route, automatic
-correction/GO replay, v2 ACTIVE grant, Pi deployment, ESP flashing or
-physical qualification is included.
+`PhysicalVerified=false` unconditionally. At this checkpoint the
+read-model itself has no Operator route; the next section adds a separate
+read-only route. No automatic correction/GO replay, v2 ACTIVE grant, Pi
+deployment, ESP flashing or physical qualification is included.
+
+## Read-only Operator diagnostic and versioned recovery advice
+
+`GET /api/v1/projects/{project_id}/lighting-controller/nodes/{device_id}/live-diagnostic`
+is authenticated with `PermissionProjectRead`, validates the Project
+exists, sends `Cache-Control: no-store`, and calls the Hub-only
+`BlockedDiagnosticReader`. The response is versioned (`schema_version: 1`)
+and explicitly `SOFTWARE_ONLY`; its `diagnostic` includes current Cue
+execution, Project/snapshot/socket/epoch context and per-slot differences
+*only after* the current-scope checks succeed. `UNKNOWN` clears all old
+Cue IDs, desired/reported levels and differing slots before serialization.
+The route supports GET only, uses no `Runtime.Dispatch` and never sends a
+probe or a DMX command.
+
+`recovery_advice` has an independent version-1 advisory policy:
+`ACQUIRE_FRESH_OBSERVATION` for UNKNOWN, `KEEP_BLACKOUT` for normal
+BLOCKED software zero and `INSPECT_OUTPUT` for unexpected nonzero or
+non-blackout software state. All advice returns
+`auto_correct_allowed: false` and
+`physical_output_verified: false`. Even software zero matching the
+published Cue can never grant READY. A device must be separately qualified
+for assignment activation, output authorization and actual DMX/LED physical
+verification before the **different**, explicitly reviewed stateful
+partial-correction path can be enabled. This route does not add an Operator
+UI panel or button yet.
+
+Security tests assert browser authentication, existing Project validation,
+no cross-project or stale-UNKNOWN Cue data, no command material, method GET
+only and no-store response headers. Policy tests cover same Cue 5 slot-2
+drift, normal BLOCKED, unexpected output and unknown future statuses.
 
 ## Follow-up gates
 
