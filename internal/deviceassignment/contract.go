@@ -17,6 +17,10 @@ var (
 	ErrInvalidBlackout   = errors.New("invalid stage device blackout acknowledgment")
 )
 
+// SQLite persists assignment_epoch as a positive signed INTEGER.
+// Reserve the upper bound so a committed transfer can increment it safely.
+const maxPersistentEpoch = ^uint64(0) >> 1
+
 type State string
 
 const (
@@ -37,7 +41,7 @@ type Assignment struct {
 }
 
 func (a Assignment) Validate() error {
-	if strings.TrimSpace(a.DeviceID) == "" || a.DeviceID != strings.TrimSpace(a.DeviceID) || a.Epoch == 0 {
+	if strings.TrimSpace(a.DeviceID) == "" || a.DeviceID != strings.TrimSpace(a.DeviceID) || (a.Epoch == 0 || a.Epoch > maxPersistentEpoch) {
 		return fmt.Errorf("%w: device identity and nonzero epoch required", ErrInvalidAssignment)
 	}
 	switch a.State {
@@ -126,7 +130,7 @@ func (t TransferIntent) VerifyBlackout(current Assignment, ack BlackoutAck) (Ass
 	if t.DeviceID == "" || t.DeviceID != strings.TrimSpace(t.DeviceID) ||
 		t.FromProjectID != strings.TrimSpace(t.FromProjectID) ||
 		t.ToProjectID != strings.TrimSpace(t.ToProjectID) ||
-		t.ExpectedEpoch == 0 || t.ExpectedEpoch == ^uint64(0) ||
+		t.ExpectedEpoch == 0 || t.ExpectedEpoch >= maxPersistentEpoch ||
 		t.ConnectionGeneration == 0 ||
 		t.ExpectedChannels == 0 || t.ExpectedChannels > 512 ||
 		t.Challenge == "" || t.Challenge != strings.TrimSpace(t.Challenge) ||
