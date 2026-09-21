@@ -51,6 +51,48 @@ The future firmware must independently authenticate the Hub/TLS identity, check 
 
 A matching ACK returns only an **internal software-zero confirmation**. It **does not** transition the stored assignment. A separately reviewed coordinator must then recheck permissions, live generation, SHOW and pending-command safety, verify that the exact nonexpired reservation is still PENDING, atomically CAS the sidecar to a new epoch with state BLOCKED/UNASSIGNED and write canonical audit. The node must acknowledge the *new* epoch before a new Project snapshot can be activated. v1 commands remain database-fenced throughout.
 
+## Hub → node: committed BLOCKED epoch / software-zero receipt
+
+After the Hub atomically commits a reserved software-zero transfer, it closes the
+old socket. On a new authenticated v2 socket it sends `assignment.state` with
+`state=BLOCKED`, the new `project_id`, `assignment_epoch`,
+`connection_generation`, `epoch_ack_required=true`,
+`blackout_required=true`, and `commands_enabled=false`.
+
+The experimental node must first cancel old effects, write and await software
+confirmation of zero for **all 12 physical DMX channels**, then atomically
+persist the monotonic epoch plus a hash of the Hub Project and BLOCKED state in
+NVS. A lower epoch or changed Project/state at the same epoch is rejected after
+reboot. The persisted hash is **not** authorization to command a Project.
+
+Only after those checks does the node send:
+
+```json
+{
+  "type": "assignment.epoch_ack",
+  "schema_version": 2,
+  "device_id": "stable-device-uuid",
+  "project_id": "Hub-committed-Project-uuid",
+  "assignment_epoch": 2,
+  "connection_generation": 8,
+  "blackout": true,
+  "channel_levels": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+}
+```
+
+The Hub revalidates the runtime credential, current socket, committed audit and
+reservation, Project, epoch and complete zero report; it records the epoch ACK
+without touching the BLOCKED assignment or activating a snapshot. It replies
+with `assignment.epoch_ack_receipt`, including matching ID/Project/epoch/
+generation, `state=BLOCKED`, `persisted=true`,
+`commands_enabled=false`. A missing receipt forces the experimental node
+back to failsafe/reconnect, not ACTIVE. Same-epoch exact reconnects may report
+again; stale epoch, Project, generation and nonzero/partial reports are denied.
+
+**Still missing:** authorized Operator write route, device-side Project
+configuration/snapshot activation, actual project-scoped v2 command execution,
+and independent physical DMX decoder/LED validation.
+
 ## Qualification boundary
 
 A software ACK is the device's **report** that all logical outputs reached zero; it cannot independently establish the voltage/current/light output of a real DMX decoder or LED strip. Physical wiring, DMX refresh/decoder behavior, loss of Wi-Fi during fades, old-command rejection and actual strip darkness remain separate physical qualification gates. Do not merge or deploy these source-only drafts based on CI alone.

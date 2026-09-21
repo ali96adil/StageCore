@@ -72,6 +72,7 @@ type inboundMessage struct {
 	Type          string                     `json:"type"`
 	SchemaVersion int                        `json:"schema_version"`
 	DeviceID      string                     `json:"device_id"`
+	ProjectID     string                     `json:"project_id,omitempty"`
 	CommandID     string                     `json:"command_id,omitempty"`
 	TransferID string `json:"transfer_id,omitempty"`
 	AssignmentEpoch int64 `json:"assignment_epoch,omitempty"`
@@ -348,6 +349,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			"schema_version":   2,
 			"device_id":        device.ID,
 			"assignment_epoch": assignment.Epoch,
+			"connection_generation": current.generation,
 			"state":            assignment.State,
 			"blackout_required": true,
 			"commands_enabled":  false,
@@ -395,6 +397,54 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "assignment.epoch_ack":
+			// A separate reconnect after a committed software-blackout
+			// transfer proves only that this exact authenticated v2 socket
+			// reports the new BLOCKED epoch with all logical channels 0.
+			// No project commands, snapshot or ACTIVE state are granted.
+			if !isV2Unassigned ||
+				message.AssignmentEpoch <= 1 ||
+				message.ConnectionGeneration != current.generation {
+				return
+			}
+			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+				return
+			}
+			r.mu.Lock()
+			same := !r.closed && r.connections[device.ID] == current
+			if same {
+				select {
+				case <-current.closed:
+					same = false
+				default:
+				}
+			}
+			if !same {
+				r.mu.Unlock()
+				return
+			}
+			ack, err := r.repository.RecordBlockedEpochAck(ctx,
+				device.ID, message.ProjectID, message.AssignmentEpoch,
+				current.generation, message.Blackout, message.ChannelLevels)
+			r.mu.Unlock()
+			if err != nil {
+				return
+			}
+			// Receipt is informational: it explicitly carries no authority
+			// to switch on lights, replay a snapshot or execute cues.
+			if err := current.send(map[string]any{
+				"type": "assignment.epoch_ack_receipt",
+				"schema_version": 2,
+				"device_id": device.ID,
+				"project_id": ack.ProjectID,
+				"assignment_epoch": ack.AssignmentEpoch,
+				"connection_generation": ack.ConnectionGeneration,
+				"state": "BLOCKED",
+				"commands_enabled": false,
+				"persisted": true,
+			}); err != nil {
+				return
+			}
 		case "assignment.blackout_ack":
 			if !isV2Unassigned {
 				return
