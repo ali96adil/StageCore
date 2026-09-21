@@ -493,3 +493,89 @@ func TestProjectScopedStageDeviceRoutesRejectBlankProjectSelector(t *testing.T) 
 		}
 	}
 }
+
+func TestExperimentalSoftwareTransferRequiresFlagCSRFPairingAndExplicitConsent(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	target, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Target Show", CreatedBy: "owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "v2-unassigned-transfer-api"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Lighting", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/stage-devices/" + deviceID + "/assignment/software-transfer"
+	body := `{"expected_project_id":"","target_project_id":"` + target.ID +
+		`","expected_assignment_epoch":1,"confirm":"BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"}`
+	invoke := func(credentials userauth.Credential, includeCSRF bool, payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
+		req.RemoteAddr = "127.0.0.1:19220"
+		req.Header.Set("Content-Type", "application/json")
+		if includeCSRF {
+			req.Header.Set(csrfHeader, credentials.CSRFToken)
+		}
+		if credentials.Token != "" {
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credentials.Token})
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+	t.Setenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER", "")
+	if res := invoke(owner, true, body); res.Code != http.StatusNotFound {
+		t.Fatalf("feature disabled but transfer exposed: status=%d body=%s", res.Code, res.Body.String())
+	}
+	t.Setenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER", "1")
+	if res := invoke(userauth.Credential{}, false, body); res.Code == http.StatusAccepted {
+		t.Fatalf("unauthenticated transfer accepted: %s", res.Body.String())
+	}
+	if res := invoke(owner, false, body); res.Code == http.StatusAccepted {
+		t.Fatalf("missing CSRF transfer accepted: %s", res.Body.String())
+	}
+	const password = "StageCore transfer operator password"
+	if _, err := h.auth.CreateUser(ctx, "transfer-operator", password, userauth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.Login(ctx, "transfer-operator", password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := invoke(operator, true, body); res.Code != http.StatusForbidden {
+		t.Fatalf("role without edit and pair transferred: status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := invoke(owner, true, `{"expected_assignment_epoch":1,"target_project_id":"`+target.ID+`"}`); res.Code != http.StatusBadRequest {
+		t.Fatalf("implicit software blackout consent allowed: status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := invoke(owner, true, body); res.Code != http.StatusConflict {
+		t.Fatalf("offline node was transferred: status=%d body=%s", res.Code, res.Body.String())
+	}
+	record, err := devices.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || record.State != "UNASSIGNED" || record.ProjectID != "" || record.Epoch != 1 {
+		t.Fatalf("denied requests modified Hub-owned device assignment: %+v err=%v", record, err)
+	}
+	var reservations int
+	if err := h.db.DB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM stage_device_transfer_intents WHERE device_id=?", deviceID).
+		Scan(&reservations); err != nil || reservations != 0 {
+		t.Fatalf("unauthorized requests created reservations=%d err=%v", reservations, err)
+	}
+}
