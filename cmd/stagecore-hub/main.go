@@ -22,6 +22,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
+	"github.com/ali96adil/StageCore/internal/livereconcile"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
@@ -242,6 +243,8 @@ func main() {
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingController(userAuth, application.DeviceExperience, application.Store),
+		httpapi.WithOperatorLightingLiveDiagnostics(userAuth, application.Store,
+			livereconcile.NewBlockedDiagnosticReader(application.Store, application.DeviceExperience, application.DeviceRuntime)),
 		httpapi.WithOperatorLightingCommissioning(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorCuePublish(userAuth, application.Store, publisher),
 		httpapi.WithOperatorCueReorder(userAuth, application.Store),
