@@ -118,18 +118,34 @@ func (r *Repository) GetDevice(ctx context.Context, deviceID string) (Device, er
 	if err == nil {
 		device.Runtime = &state
 	}
+	if device.ProtocolVersion == ProtocolVersion2 {
+		assignment, err := r.GetAssignmentRecord(ctx, device.ID)
+		if err != nil {
+			return Device{}, fmt.Errorf("read v2 device assignment: %w", err)
+		}
+		device.Assignment = &assignment
+	}
 	return device, nil
 }
 
 func (r *Repository) ListDevices(ctx context.Context, projectID string) ([]Device, error) {
 	projectID = strings.TrimSpace(projectID)
-	query := `SELECT device_id FROM stage_devices`
+	// Legacy project_id stays authoritative for v1 commands. For v2
+	// inventory only, the Hub-owned assignment sidecar determines which
+	// Project should list a BLOCKED device. No new command authority is
+	// derived from project listing.
+	query := `SELECT d.device_id FROM stage_devices d
+		JOIN stage_device_assignments a ON a.device_id = d.device_id`
 	args := []any{}
 	if projectID != "" {
-		query += ` WHERE project_id = ?`
-		args = append(args, projectID)
+		query += ` WHERE
+			(d.project_id = ? AND a.assignment_state = 'LEGACY' AND a.project_id = ?)
+			OR
+			(d.protocol_version = 'stagecore.device/2' AND a.project_id = ?
+			 AND a.assignment_state IN ('PREPARING', 'BLOCKED', 'ACTIVE'))`
+		args = append(args, projectID, projectID, projectID)
 	}
-	query += ` ORDER BY display_name COLLATE NOCASE, device_id`
+	query += ` ORDER BY d.display_name COLLATE NOCASE, d.device_id`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list stage devices: %w", err)
