@@ -2,6 +2,7 @@ package devicechannel_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -130,5 +131,71 @@ func TestV2ReservedSoftwareTransferRejectsUnverifiedAckAndPreservesEpoch(t *test
 	rec, err := f.repo.GetAssignmentRecord(context.Background(), testDeviceID)
 	if err != nil || rec.State != "UNASSIGNED" || rec.ProjectID != "" || rec.Epoch != 1 {
 		t.Fatalf("failed software ACK changed assignment: %+v err=%v", rec, err)
+	}
+}
+
+func TestSoftwareTransferCancelsOnOperatorRevocationBetweenACKAndCommit(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ws := connectLightingV2ForBlackout(t, f)
+	var validations int
+	sentinel := errors.New("operator revoked before epoch commit")
+	type outcome struct {
+		record deviceexperience.TransferCommitRecord
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		got, err := f.runtime.ExecuteReservedSoftwareTransferAuthorized(
+			context.Background(),
+			deviceexperience.TransferPreflightInput{
+				DeviceID: testDeviceID, TargetProjectID: f.projectID, ExpectedEpoch: 1,
+			}, "owner", func(context.Context) error {
+				validations++
+				if validations > 1 {
+					return sentinel
+				}
+				return nil
+			})
+		done <- outcome{got, err}
+	}()
+	_ = ws.SetReadDeadline(time.Now().Add(4 * time.Second))
+	var request struct {
+		Type string `json:"type"`
+		TransferID string `json:"transfer_id"`
+		Challenge string `json:"challenge"`
+		AssignmentEpoch int64 `json:"assignment_epoch"`
+		ConnectionGeneration int64 `json:"connection_generation"`
+	}
+	err := websocket.JSON.Receive(ws, &request)
+	_ = ws.SetReadDeadline(time.Time{})
+	if err != nil || request.Type != "assignment.blackout" {
+		t.Fatalf("expected blackout before reauthorization: %+v err=%v", request, err)
+	}
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "assignment.blackout_ack", "schema_version": 2,
+		"device_id": testDeviceID, "transfer_id": request.TransferID,
+		"challenge": request.Challenge, "assignment_epoch": request.AssignmentEpoch,
+		"connection_generation": request.ConnectionGeneration,
+		"blackout": true, "channel_levels": make([]int, lightingnode.MaxChannels),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		if !errors.Is(result.err, devicechannel.ErrBlackoutNotVerified) ||
+			result.record.TransferID != "" || validations != 2 {
+			t.Fatalf("revoked Operator committed transfer: %+v err=%v checks=%d",
+				result.record, result.err, validations)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("Operator revocation did not abort pending transfer")
+	}
+	assignment, err := f.repo.GetAssignmentRecord(context.Background(), testDeviceID)
+	if err != nil || assignment.ProjectID != "" || assignment.Epoch != 1 ||
+		assignment.State != "UNASSIGNED" {
+		t.Fatalf("revocation changed Hub assignment: %+v err=%v", assignment, err)
+	}
+	if _, err := f.repo.GetBlockedEpochAck(context.Background(), testDeviceID, 2); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("revoked Operator produced epoch ACK: %v", err)
 	}
 }
