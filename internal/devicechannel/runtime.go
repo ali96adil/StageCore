@@ -597,12 +597,29 @@ func (r *Runtime) unregister(current *connection) {
 	if current == nil {
 		return
 	}
-	shouldObserveOffline := false
 	pending := make([]string, 0)
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		delete(r.connections, current.deviceID)
-		shouldObserveOffline = !r.closed
+		delete(r.latestV2SoftwareLevels, current.deviceID)
+		// Do not release r.mu before persisting OFFLINE: a replacement
+		// connection could otherwise register and persist ONLINE first,
+		// only to have this old socket incorrectly overwrite it OFFLINE.
+		if !r.closed {
+			offlineCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = r.repository.ObserveDevice(offlineCtx, deviceexperience.RuntimeObservation{
+				DeviceID:   current.deviceID,
+				Connection: deviceexperience.ConnectionOffline,
+				Readiness:  deviceexperience.ReadinessWarning,
+			})
+			_, _ = r.repository.RecordNetworkObservation(offlineCtx, deviceexperience.NetworkObservation{
+				TargetKind:     "STAGE_DEVICE",
+				TargetID:       current.deviceID,
+				Reachability:   deviceexperience.Unreachable,
+				TransportState: "WEBSOCKET_DISCONNECTED",
+			})
+			cancel()
+		}
 	}
 	for commandID, bound := range r.inflight {
 		if bound == current {
@@ -617,19 +634,6 @@ func (r *Runtime) unregister(current *connection) {
 	defer cancel()
 	for _, commandID := range pending {
 		r.failInterruptedCommand(ctx, commandID, current.deviceID)
-	}
-	if shouldObserveOffline {
-		_, _ = r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
-			DeviceID:   current.deviceID,
-			Connection: deviceexperience.ConnectionOffline,
-			Readiness:  deviceexperience.ReadinessWarning,
-		})
-		_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
-			TargetKind:     "STAGE_DEVICE",
-			TargetID:       current.deviceID,
-			Reachability:   deviceexperience.Unreachable,
-			TransportState: "WEBSOCKET_DISCONNECTED",
-		})
 	}
 }
 
