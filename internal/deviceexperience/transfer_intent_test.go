@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,7 +149,7 @@ func TestTransferIntentSQLRejectsStaleEpoch(t *testing.T) {
 	}
 }
 
-func TestV2ProjectDeleteRequiresUnassignmentAndHistoricalIntentDoesNotPinTarget(t *testing.T) {
+func TestV2ProjectDeleteRequiresUnassignmentWithoutHistoricalIntentFK(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, projectID := newRepository(t)
 	device := deviceexperience.Device{
@@ -166,30 +167,39 @@ func TestV2ProjectDeleteRequiresUnassignmentAndHistoricalIntentDoesNotPinTarget(
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A pending attempt by itself does not own its target Project; deletion
-	// must not be forever blocked by immutable transfer history.
-	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err != nil {
-		t.Fatalf("historical pending intent incorrectly pinned Project deletion: %v", err)
+	// Assert the targeted invariant directly: historical from/to references
+	// are text, not FKs that pin a Project forever. Other product records
+	// (such as revisions) may independently restrict whole-Project deletion.
+	rows, err := handle.DB.QueryContext(ctx, "PRAGMA foreign_key_list(stage_device_transfer_intents)")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for rows.Next() {
+		var id, seq int
+		var table, from, to, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		if from == "from_project_id" || from == "to_project_id" {
+			rows.Close()
+			t.Fatalf("historical transfer Project reference is restrictive FK: from=%q table=%q", from, table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
 	var retained string
 	if err := handle.DB.QueryRowContext(ctx,
 		"SELECT to_project_id FROM stage_device_transfer_intents WHERE transfer_id=?",
 		res.TransferID).Scan(&retained); err != nil || retained != projectID {
 		t.Fatalf("historical transfer intent lost target: %q err=%v", retained, err)
 	}
-	if _, err := repo.PreflightTransfer(ctx, intent); err == nil {
-		t.Fatal("deleted Project remained eligible for a transfer")
-	}
 
-	// Once a project is the actual v2 sidecar owner, deleting it must not
-	// silently null out the assignment without an epoch increment/blackout.
-	var now int64 = time.Now().UTC().UnixMicro()
-	if _, err := handle.DB.ExecContext(ctx, `
-		INSERT INTO projects(project_id,name,lifecycle_state,created_at_us,updated_at_us)
-		VALUES (?,?,?,?,?)
-	`, projectID, "Recreated Show", "ACTIVE", now, now); err != nil {
-		t.Fatal(err)
-	}
+	// Once a Project is the actual v2 sidecar owner, only the explicit
+	// unassignment flow (new epoch + verified blackout) may release it.
 	if _, err := handle.DB.ExecContext(ctx, `
 		UPDATE stage_device_assignments
 		SET project_id=?, assignment_state='BLOCKED', assignment_epoch=2
@@ -197,15 +207,17 @@ func TestV2ProjectDeleteRequiresUnassignmentAndHistoricalIntentDoesNotPinTarget(
 	`, projectID, device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err == nil {
-		t.Fatal("deleting a v2 BLOCKED Project silently dropped device ownership")
+	_, err = handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID)
+	if err == nil || !strings.Contains(err.Error(), "STAGE_DEVICE_PROJECT_ASSIGNED") {
+		t.Fatalf("v2 Project deletion was not fenced by Stage Device trigger: %v", err)
 	}
 	record, err := repo.GetAssignmentRecord(ctx, device.ID)
 	if err != nil || record.ProjectID != projectID || record.State != "BLOCKED" || record.Epoch != 2 {
 		t.Fatalf("failed delete changed v2 assignment: %+v err=%v", record, err)
 	}
-	// Explicitly unassigned metadata is not sufficient to certify physical
-	// blackout; this verifies only the database project-lifetime constraint.
+	// Database-only simulation of an explicit unassign; not an assertion
+	// that any physical strip has gone dark. The Stage Device-specific guard
+	// must then release, regardless of any unrelated Project lifecycle FKs.
 	if _, err := handle.DB.ExecContext(ctx, `
 		UPDATE stage_device_assignments
 		SET project_id=NULL, assignment_state='UNASSIGNED', assignment_epoch=3
@@ -213,7 +225,8 @@ func TestV2ProjectDeleteRequiresUnassignmentAndHistoricalIntentDoesNotPinTarget(
 	`, device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID); err != nil {
-		t.Fatalf("explicitly unassigned Project still pinned: %v", err)
+	if _, err := handle.DB.ExecContext(ctx, "DELETE FROM projects WHERE project_id=?", projectID);
+		err != nil && strings.Contains(err.Error(), "STAGE_DEVICE_PROJECT_ASSIGNED") {
+		t.Fatalf("unassigned v2 node still blocked Project deletion: %v", err)
 	}
 }
