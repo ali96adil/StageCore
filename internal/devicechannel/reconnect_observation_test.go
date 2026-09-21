@@ -222,3 +222,18 @@ func TestBlockedV2AutoProbeStartsOnlyAfterPersistedEpochReceipt(t *testing.T) {
 		t.Fatalf("read-only report modified project/epoch/snapshot: %+v err=%v", assigned, err)
 	}
 }
+
+func TestAutoProbeOptInCannotSendUnsupportedFrameToLegacyV2(t *testing.T) {
+	t.Setenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE", "1")
+	f := newRuntimeFixture(t)
+	ws := connectV2ReadOnlyProbe(t, f, false)
+	defer ws.Close()
+	_ = ws.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+	var unexpected map[string]any
+	if err := websocket.JSON.Receive(ws, &unexpected); err == nil {
+		t.Fatalf("unadvertised v2 node received an experimental probe: %+v", unexpected)
+	}
+	if _, exists := f.runtime.LatestV2SoftwareLevels(testDeviceID); exists {
+		t.Fatal("unsupported firmware produced a fresh diagnostic")
+	}
+}
