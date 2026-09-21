@@ -98,3 +98,22 @@ func (r *Repository) ReserveTransferIntent(ctx context.Context, input TransferPr
 		ExpectedChannels: channels, Challenge: challenge, ExpiresAt: expires,
 	}, nil
 }
+// CancelTransferIntent closes an uncommitted reservation after a transport
+// failure or negative software acknowledgment. It never mutates assignment,
+// cannot undo a committed transfer, and preserves the audit/history row.
+func (r *Repository) CancelTransferIntent(ctx context.Context, transferID, deviceID, actor string) error {
+	if r == nil || strings.TrimSpace(transferID) == "" ||
+		strings.TrimSpace(deviceID) == "" || strings.TrimSpace(actor) == "" {
+		return fmt.Errorf("%w: invalid transfer cancellation", ErrInvalidState)
+	}
+	nowUS := r.now().UTC().UnixMicro()
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE stage_device_transfer_intents
+		SET status='CANCELLED', updated_at_us=?
+		WHERE transfer_id=? AND device_id=? AND requested_by=? AND status='PENDING'
+	`, nowUS, strings.TrimSpace(transferID), strings.TrimSpace(deviceID), strings.TrimSpace(actor))
+	if err != nil {
+		return fmt.Errorf("cancel failed transfer intent: %w", err)
+	}
+	return nil
+}
