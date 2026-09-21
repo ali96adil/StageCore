@@ -97,6 +97,10 @@ func (r *Runtime) RequestSoftwareBlackout(ctx context.Context, reservation devic
 		deadline = until
 	}
 	if deadline <= 0 {
+		// The node may still be processing this challenge: close this
+		// transport so a late zero report cannot be confused with any
+		// later reservation on the same authenticated connection.
+		current.close()
 		return SoftwareBlackoutConfirmation{}, ErrBlackoutNotVerified
 	}
 	wait, cancel := context.WithTimeout(ctx, deadline)
@@ -104,6 +108,10 @@ func (r *Runtime) RequestSoftwareBlackout(ctx context.Context, reservation devic
 	var ack inboundMessage
 	select {
 	case <-wait.Done():
+		// A cancelled browser request or expired software-ACK budget must
+		// revoke the pending socket. The deferred reservation cancellation
+		// preserves the previous assignment and its immutable audit history.
+		current.close()
 		return SoftwareBlackoutConfirmation{}, fmt.Errorf("%w: %v", ErrBlackoutNotVerified, wait.Err())
 	case <-current.closed:
 		return SoftwareBlackoutConfirmation{}, ErrBlackoutNotVerified
