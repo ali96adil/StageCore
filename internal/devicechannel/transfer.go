@@ -19,6 +19,19 @@ import (
 func (r *Runtime) ExecuteReservedSoftwareTransfer(
 	ctx context.Context, input deviceexperience.TransferPreflightInput, actorID string,
 ) (deviceexperience.TransferCommitRecord, error) {
+	return r.ExecuteReservedSoftwareTransferAuthorized(ctx, input, actorID, nil)
+}
+
+// ExecuteReservedSoftwareTransferAuthorized is a software-only, fail-closed
+// transfer attempt. A caller with an Operator session MUST supply authorize:
+// it is checked both before reservation and again after the device-reported
+// zero ACK, immediately before transactional epoch CAS. A nil callback is
+// intentionally reserved for the existing internal qualification tests and
+// MUST NEVER be used from an HTTP, cue or other untrusted entry point.
+func (r *Runtime) ExecuteReservedSoftwareTransferAuthorized(
+	ctx context.Context, input deviceexperience.TransferPreflightInput,
+	actorID string, authorize func(context.Context) error,
+) (deviceexperience.TransferCommitRecord, error) {
 	if r == nil || r.repository == nil || r.auth == nil {
 		return deviceexperience.TransferCommitRecord{}, fmt.Errorf("%w: runtime unavailable", ErrBlackoutNotVerified)
 	}
@@ -27,6 +40,11 @@ func (r *Runtime) ExecuteReservedSoftwareTransfer(
 	r.transferMu.Lock()
 	defer r.transferMu.Unlock()
 
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return deviceexperience.TransferCommitRecord{}, fmt.Errorf("%w: operator session no longer authorized: %v", ErrBlackoutNotVerified, err)
+		}
+	}
 	generation, ok := r.CurrentV2Generation(input.DeviceID)
 	if !ok {
 		return deviceexperience.TransferCommitRecord{}, fmt.Errorf("%w: authenticated v2 socket unavailable", ErrBlackoutNotVerified)
@@ -78,6 +96,16 @@ func (r *Runtime) ExecuteReservedSoftwareTransfer(
 	if !same {
 		r.mu.Unlock()
 		return deviceexperience.TransferCommitRecord{}, ErrBlackoutNotVerified
+	}
+	// The Operator may have been revoked, logged out or lost edit/pairing
+	// permission while the node was zeroing its output. A software ACK
+	// cannot overrule that authorization change. The SQLite CAS below
+	// independently rechecks both Projects' SHOW locks and command queue.
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			r.mu.Unlock()
+			return deviceexperience.TransferCommitRecord{}, fmt.Errorf("%w: operator authorization changed before commit: %v", ErrBlackoutNotVerified, err)
+		}
 	}
 	record, err := r.repository.CommitVerifiedBlackoutTransfer(ctx, deviceexperience.VerifiedTransferInput{
 		ReservationID: reservation.TransferID,
