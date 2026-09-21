@@ -83,6 +83,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   position: sticky;
   top: 64px;
   height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 18px 12px;
   border-right: 1px solid var(--line);
   background: #10151c;
