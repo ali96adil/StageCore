@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Runtime struct {
 	pendingBlackouts map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
 	latestV2SoftwareLevels map[string]V2SoftwareLevels
+	autoProbeV2 bool
 	nextGeneration int64
 	closed         bool
 }
@@ -117,6 +119,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 		pendingBlackouts: make(map[string]*pendingBlackout),
 		pendingV2LightingProbes: make(map[string]*pendingV2LightingProbe),
 		latestV2SoftwareLevels: make(map[string]V2SoftwareLevels),
+		autoProbeV2: os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 }
 
