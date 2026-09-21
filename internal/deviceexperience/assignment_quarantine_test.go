@@ -107,3 +107,44 @@ func TestNonLegacyAssignmentFencesCommandsReconnectAndReadiness(t *testing.T) {
 		t.Fatalf("historical command was mutated: %+v err=%v", loaded, err)
 	}
 }
+
+func TestQuarantinedNodeCanBeDisabledButNeverReenabledByLegacyHello(t *testing.T) {
+	ctx := context.Background()
+	repo, h, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "lighting-quarantine-revoke-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments SET assignment_state='BLOCKED'
+		WHERE device_id = ?
+	`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The Hub must retain the ability to disable a node even when a
+	// legacy client cannot mutate its identity or command state.
+	if _, err := h.DB.ExecContext(ctx,
+		"UPDATE stage_devices SET enabled=0 WHERE device_id=?", device.ID); err != nil {
+		t.Fatalf("one-way Hub disable was blocked: %v", err)
+	}
+	record, err := repo.GetDevice(ctx, device.ID)
+	if err != nil || record.Enabled {
+		t.Fatalf("disabled node was re-enabled: %+v err=%v", record, err)
+	}
+	device.Enabled = true
+	if _, err := repo.UpsertDevice(ctx, device); err == nil {
+		t.Fatal("v1 reconnect was able to restore disabled node")
+	}
+	if _, err := h.DB.ExecContext(ctx,
+		"UPDATE stage_devices SET enabled=1 WHERE device_id=?", device.ID); err == nil {
+		t.Fatal("direct SQL silently restored a quarantined disabled node")
+	}
+	record, err = repo.GetDevice(ctx, device.ID)
+	if err != nil || record.Enabled {
+		t.Fatalf("re-enable attempt changed disabled node: %+v err=%v", record, err)
+	}
+}
