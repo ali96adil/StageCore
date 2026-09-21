@@ -49,9 +49,10 @@ func TestNonLegacyAssignmentFencesCommandsReconnectAndReadiness(t *testing.T) {
 		t.Run(tc.state, func(t *testing.T) {
 			if _, err := handle.DB.ExecContext(ctx, `
 				UPDATE stage_device_assignments
-				SET assignment_state = ?, project_id = ?, runtime_snapshot_id = ''
+				SET assignment_state = ?, project_id = ?, runtime_snapshot_id = '',
+				    assignment_epoch = assignment_epoch + CASE WHEN ? IS NULL THEN 1 ELSE 0 END
 				WHERE device_id = ?
-			`, tc.state, tc.project, device.ID); err != nil {
+			`, tc.state, tc.project, tc.project, device.ID); err != nil {
 				t.Fatal(err)
 			}
 			// A previously recorded READY status must be cleared without
@@ -146,5 +147,53 @@ func TestQuarantinedNodeCanBeDisabledButNeverReenabledByLegacyHello(t *testing.T
 	record, err = repo.GetDevice(ctx, device.ID)
 	if err != nil || record.Enabled {
 		t.Fatalf("re-enable attempt changed disabled node: %+v err=%v", record, err)
+	}
+}
+
+func TestAssignmentCannotSilentlyDowngradeOrChangeProjectWithoutNewEpoch(t *testing.T) {
+	ctx := context.Background()
+	repo, h, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "lighting-epoch-fence-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments SET assignment_state='BLOCKED'
+		WHERE device_id = ?
+	`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments SET assignment_state='LEGACY'
+		WHERE device_id = ?
+	`, device.ID); err == nil {
+		t.Fatal("v2 state silently regained legacy command authority")
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments SET project_id = NULL
+		WHERE device_id = ?
+	`, device.ID); err == nil {
+		t.Fatal("unassign without a fresh epoch was accepted")
+	}
+	rec, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil || rec.State != "BLOCKED" || rec.ProjectID != projectID || rec.Epoch != 1 {
+		t.Fatalf("unsafe transition modified assignment: %+v err=%v", rec, err)
+	}
+	// This is ONLY a persistence-level invariant test. Epoch advancement is
+	// necessary but never sufficient to authorize a real physical transfer.
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id = NULL, assignment_state='UNASSIGNED', assignment_epoch=2
+		WHERE device_id = ?
+	`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec, err = repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil || rec.State != "UNASSIGNED" || rec.ProjectID != "" || rec.Epoch != 2 {
+		t.Fatalf("fenced unassignment metadata=%+v err=%v", rec, err)
 	}
 }
