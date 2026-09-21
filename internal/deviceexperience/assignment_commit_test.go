@@ -9,6 +9,8 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -177,5 +179,60 @@ func TestVerifiedTransferCASRejectsForgedIncompleteBlackoutAndInvalidConditions(
 	if err := handle.DB.QueryRowContext(ctx,
 		"SELECT transfer_id FROM stage_device_assignment_transfers LIMIT 1").Scan(&absent); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("rejected transfer created audit entry: %s err=%v", absent, err)
+	}
+}
+
+func TestVerifiedTransferCASRechecksActiveSHOWInsideCommit(t *testing.T) {
+	ctx := context.Background()
+	repo, handle, projectID := newRepository(t)
+	stageStore := store.New(handle.DB, clock.Real{})
+	project, err := stageStore.GetProject(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, project.CurrentRevisionID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	show, err := stageStore.CreateSession(ctx, published.ID, domain.SessionShow, "live show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "v2-cas-show-guard"
+	if _, err := repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, DisplayName: "Lighting",
+		ProfileID: lightingnode.ProfileID, ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	in := deviceexperience.VerifiedTransferInput{
+		DeviceID: deviceID, ToProjectID: projectID, ExpectedEpoch: 1,
+		ConnectionGeneration: 1, Challenge: strings.Repeat("66", 32),
+		AckDeviceID: deviceID, AckEpoch: 1, AckGeneration: 1,
+		AckChallenge: strings.Repeat("66", 32), AckBlackout: true,
+		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
+		ActorID: "owner", IdempotencyKey: "show-check",
+	}
+	if _, err := repo.PreflightTransfer(ctx, deviceexperience.TransferPreflightInput{
+		DeviceID: deviceID, ExpectedEpoch: 1, TargetProjectID: projectID,
+	}); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("active SHOW unexpectedly passed preflight: %v", err)
+	}
+	if _, err := repo.CommitVerifiedBlackoutTransfer(ctx, in); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("active SHOW unexpectedly permitted audit commit: %v", err)
+	}
+	rec, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || rec.State != "UNASSIGNED" || rec.Epoch != 1 || rec.ProjectID != "" {
+		t.Fatalf("SHOW-rejected commit mutated assignment: %+v err=%v", rec, err)
+	}
+	if err := stageStore.EndSession(ctx, show.ID, domain.SessionCompleted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CommitVerifiedBlackoutTransfer(ctx, in); err != nil {
+		t.Fatalf("transfer should be possible only after SHOW exits: %v", err)
 	}
 }
