@@ -17,6 +17,13 @@
       networkSub: "Latest bounded observations for Hub, Companion, Stage Devices, live sources and endpoints.",
       refresh: "Refresh",
       noDevices: "No paired Stage Devices are registered for this project yet.",
+      v2UnassignedTitle: "Paired v2 devices awaiting Project assignment",
+      v2UnassignedEmpty: "No unassigned v2 devices.",
+      v2BlockedStatus: "Hub assignment status",
+      v2HardwareUnverified: "Software-only status. Physical DMX and fixtures are NOT verified. Project commands remain disabled.",
+      v2CurrentSoftwareZero: "Device reported zero on the current authenticated connection",
+      v2NoCurrentSoftwareZero: "No current-connection zero report",
+      v2NoControls: "Read-only commissioning view; no Project transfer or output controls available.",
       noDisplays: "No Stage Displays are registered for this project yet.",
       noSources: "No live video sources are configured yet.",
       noNetwork: "No network observations have been recorded yet.",
@@ -90,6 +97,13 @@
       networkSub: "آخر حالة مسجلة للـHub والـCompanion وأجهزة المسرح ومصادر الفيديو ونقاط الاتصال.",
       refresh: "تحديث",
       noDevices: "ماكو أجهزة Stage Device مقترنة بهذا المشروع حالياً.",
+      v2UnassignedTitle: "أجهزة v2 المقترنة بانتظار اختيار المشروع",
+      v2UnassignedEmpty: "ماكو أجهزة v2 غير مخصّصة.",
+      v2BlockedStatus: "حالة التخصيص في الـHub",
+      v2HardwareUnverified: "هاي حالة برمجية فقط؛ الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن. أوامر المشروع معطّلة.",
+      v2CurrentSoftwareZero: "الجهاز بلّغ عن صفر على الاتصال الموثّق الحالي",
+      v2NoCurrentSoftwareZero: "ماكو تقرير صفر للاتصال الحالي",
+      v2NoControls: "عرض متابعة فقط؛ نقل المشروع والتحكم بالإضاءة غير متاحين هنا.",
       noDisplays: "ماكو شاشات Stage Display مسجلة بهذا المشروع حالياً.",
       noSources: "ماكو مصادر فيديو حي معرفة حالياً.",
       noNetwork: "ماكو قراءات شبكة مسجلة حالياً.",
@@ -224,7 +238,7 @@
   }
 
   function tabletControls(device) {
-    if (device.device_kind !== "TABLET_PLAYER" || !canRuntime()) return "";
+    if (device.device_kind !== "TABLET_PLAYER" || device.protocol_version === "stagecore.device/2" || !canRuntime()) return "";
     return `
       <label>${esc(t("media"))}
         <input class="phase4-media" data-device="${esc(device.device_id)}" placeholder="01.mp4" dir="ltr">
@@ -238,7 +252,7 @@
       </div>`;
   }
 
-  function deviceCard(device) {
+  function deviceCard(device, v2Status = null) {
     const runtime = device.runtime || {};
     const caps = Array.isArray(device.capabilities) ? device.capabilities : [];
     return `
@@ -262,6 +276,12 @@
           <p class="muted">${esc(t("capabilities"))}</p>
           <div class="phase4-capabilities">${caps.length ? caps.map((cap) => `<span>${esc(cap)}</span>`).join("") : `<span>${esc(t("none"))}</span>`}</div>
         </div>
+        ${device.protocol_version === "stagecore.device/2" ? `
+          <div class="phase4-empty" role="status">
+            <strong>${esc(t("v2BlockedStatus"))}: ${esc(v2Status?.status || "NOT_VERIFIED")}</strong>
+            <p>${esc(v2Status?.software_zero_report_current_connection ? t("v2CurrentSoftwareZero") : t("v2NoCurrentSoftwareZero"))}</p>
+            <p>${esc(t("v2HardwareUnverified"))}</p>
+          </div>` : ""}
         ${tabletControls(device)}
       </article>`;
   }
@@ -272,9 +292,51 @@
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`);
     const devices = payload.devices || [];
     const body = document.getElementById("phase4Body");
-    body.innerHTML = devices.length
-      ? `<div class="phase4-grid">${devices.map(deviceCard).join("")}</div>`
-      : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`;
+    // A v2 sidecar may be BLOCKED for the current Project even though the
+    // legacy project_id column is NULL. Display it, never make it executable.
+    const canPair = ["OWNER", "TECHNICIAN"].includes(state.user?.role);
+    const statuses = {};
+    if (canPair) {
+      await Promise.all(devices.filter((d) => d.protocol_version === "stagecore.device/2").map(async (device) => {
+        try {
+          statuses[device.device_id] = await api(`/api/v1/stage-devices/${encodeURIComponent(device.device_id)}/assignment/transfer-status`);
+        } catch (_) {
+          // Do not turn an unavailable safety reading into a READY claim.
+          statuses[device.device_id] = null;
+        }
+      }));
+    }
+    let unassigned = [];
+    if (canPair) {
+      try {
+        const inventory = await api("/api/v1/stage-devices/unassigned");
+        unassigned = inventory.devices || [];
+      } catch (_) {
+        // Pairing may be disabled or revoked; the server owns access.
+      }
+    }
+    const unassignedCard = (device) => `
+      <article class="phase4-card">
+        <div class="phase4-card-head">
+          <div><p class="eyebrow">stagecore.device/2</p><h3>${esc(device.display_name || device.device_id)}</h3></div>
+          <div class="phase4-status-row">${pulse("UNASSIGNED")} ${pulse(device.connection_state || "OFFLINE")}</div>
+        </div>
+        <dl class="phase4-kv">
+          <div><dt>ID</dt><dd class="mono">${esc(device.device_id)}</dd></div>
+          <div><dt>Epoch</dt><dd>${esc(device.assignment_epoch)}</dd></div>
+        </dl>
+        <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>
+      </article>`;
+    body.innerHTML = `
+      ${devices.length
+        ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id])).join("")}</div>`
+        : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
+      ${canPair ? `<section aria-label="${esc(t("v2UnassignedTitle"))}">
+        <h2>${esc(t("v2UnassignedTitle"))}</h2>
+        ${unassigned.length
+          ? `<div class="phase4-grid">${unassigned.map(unassignedCard).join("")}</div>`
+          : `<div class="phase4-empty">${esc(t("v2UnassignedEmpty"))}</div>`}
+      </section>` : ""}`;
 
     body.querySelectorAll("[data-command]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -315,7 +377,7 @@
     pageHeader(t("callboardTitle"), t("callboardSub"), renderCallboard);
     const projectID = currentProjectID();
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`);
-    const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY");
+    const displays = (payload.devices || []).filter((device) => device.device_kind === "STAGE_DISPLAY" && device.protocol_version !== "stagecore.device/2");
     const body = document.getElementById("phase4Body");
     if (!displays.length) {
       body.innerHTML = `<div class="phase4-empty">${esc(t("noDisplays"))}</div>`;
@@ -386,7 +448,7 @@
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`),
     ]);
     const sources = sourcesPayload.sources || [];
-    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE");
+    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
     const body = document.getElementById("phase4Body");
     const editable = canEdit();
     body.innerHTML = `

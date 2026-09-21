@@ -30,3 +30,24 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 		}
 	}
 }
+
+func TestStageDevicesOperatorV2CommissioningViewNeverEnablesOldControls(t *testing.T) {
+	phase4 := string(mustReadOperatorContractFile(t, "static/phase4.js"))
+	for _, marker := range []string{
+		`device.protocol_version === "stagecore.device/2" || !canRuntime()`,
+		`/api/v1/stage-devices/unassigned`,
+		`/assignment/transfer-status`,
+		`software_zero_report_current_connection`,
+		`v2HardwareUnverified`,
+		`v2NoControls`,
+		`device.device_kind === "STAGE_DISPLAY" && device.protocol_version !== "stagecore.device/2"`,
+		`device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2"`,
+	} {
+		if !strings.Contains(phase4, marker) {
+			t.Fatalf("v2 read-only safety UI missing contract marker %q", marker)
+		}
+	}
+	if strings.Contains(phase4, `/assignment/software-transfer`) {
+		t.Fatal("experimental transfer control must not be visible in Operator UI before physical qualification")
+	}
+}
