@@ -142,27 +142,11 @@ func TestBlockedV2AutoProbeStartsOnlyAfterPersistedEpochReceipt(t *testing.T) {
 	t.Setenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE", "1")
 	f := newRuntimeFixture(t)
 	ctx := context.Background()
+	// Exercise the canonical reserved-transfer path. Direct sidecar creation
+	// is not enough for the epoch-ACK DB trigger: the persisted committed
+	// transfer audit and reservation must exist before the Hub accepts ACK.
+	prepareBlockedEpoch(t, f)
 	caps := append(lightingnode.CapabilityKeys(), "lighting.state_probe/1")
-	if _, err := f.repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
-		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
-		DisplayName: "Blocked Probe Node", ProfileID: lightingnode.ProfileID,
-		ProtocolVersion: deviceexperience.ProtocolVersion2,
-		Enabled: true, Capabilities: caps,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	const setupChallenge = "7777777777777777777777777777777777777777777777777777777777777777"
-	commit, err := f.repo.CommitVerifiedBlackoutTransfer(ctx, deviceexperience.VerifiedTransferInput{
-		DeviceID: testDeviceID, ToProjectID: f.projectID, ExpectedEpoch: 1,
-		ConnectionGeneration: 1, Challenge: setupChallenge,
-		AckDeviceID: testDeviceID, AckEpoch: 1, AckGeneration: 1,
-		AckChallenge: setupChallenge, AckBlackout: true,
-		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
-		ActorID: "test-owner", IdempotencyKey: "auto-blocked-probe-test",
-	})
-	if err != nil || commit.NextState != "BLOCKED" {
-		t.Fatalf("setup BLOCKED assignment=%+v err=%v", commit, err)
-	}
 	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
 	ws, err := websocket.Dial(url, "", f.server.URL)
 	if err != nil {
