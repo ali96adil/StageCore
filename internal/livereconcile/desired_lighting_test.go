@@ -158,7 +158,9 @@ type memorySessionStore struct{
 	executions []domain.CueExecution
 	running bool
 	afterRead func(*domain.Session)
+	afterExecutionRead func(*memorySessionStore)
 	getCalls int
+	listCalls int
 }
 func (s *memorySessionStore) ActiveSessionForProject(_ context.Context,_ string)(*domain.Session,error) {
 	copy:=s.session;return &copy,nil
@@ -169,7 +171,13 @@ func (s *memorySessionStore) GetSession(_ context.Context,_ string)(domain.Sessi
 	return s.session,nil
 }
 func (s *memorySessionStore) GetRuntimeSnapshot(_ context.Context,_ string)(domain.RuntimeSnapshot,error){return s.snapshot,nil}
-func (s *memorySessionStore) ListCueExecutions(_ context.Context,_ string)([]domain.CueExecution,error) {return s.executions,nil}
+func (s *memorySessionStore) ListCueExecutions(_ context.Context,_ string)([]domain.CueExecution,error) {
+	s.listCalls++
+	if s.afterExecutionRead!=nil {
+		s.afterExecutionRead(s)
+	}
+	return s.executions,nil
+}
 func (s *memorySessionStore) HasRunningCueExecution(_ context.Context,_ string)(bool,error){return s.running,nil}
 
 func serviceFixture(t *testing.T) *memorySessionStore {
@@ -230,6 +238,15 @@ func TestReadCurrentLightingRejectsStaleExecutionGoRaceAndWrongSnapshot(t *testi
 		{"snapshot integrity mismatch",func(s *memorySessionStore){s.snapshot.ContentHash=strings.Repeat("0",64)}},
 		{"manually confirmed state required",func(s *memorySessionStore){s.session.StateTruth.ManualConfirmationRequired=true}},
 		{"concurrent GO after read",func(s *memorySessionStore){s.afterRead=func(session *domain.Session){cue:="cue-7";session.CurrentCueID=&cue}}},
+		{"same-Cue repeated failed attempt",func(s *memorySessionStore){s.afterExecutionRead=func(store *memorySessionStore){
+			if store.listCalls == 2 {
+				start:=store.executions[0].StartedAt.Add(3*time.Second)
+				store.executions=append(store.executions,domain.CueExecution{
+					ID:"repeated-cue-5-failed",SessionID:store.session.ID,
+					CueID:"cue-5",StartedAt:start,Result:domain.ExecutionFailed,
+				})
+			}
+		}}},
 	}{
 		t.Run(tc.name,func(t *testing.T){
 			f:=serviceFixture(t);tc.mutate(f)
