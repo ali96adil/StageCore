@@ -4,10 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"golang.org/x/net/websocket"
@@ -189,5 +192,76 @@ func TestBlockedEpochACKPersistsOnlyAfterCurrentSocketReportsAllZero(t *testing.
 		CommandType: lightingnode.CommandBlackout, Issuer: "operator",
 	}); err == nil {
 		t.Fatal("epoch ACK enabled legacy command dispatch")
+	}
+}
+
+func TestV2EpochAckCannotBeMistakenForCurrentAfterHubRestart(t *testing.T) {
+	f := newRuntimeFixture(t)
+	prepareBlockedEpoch(t, f)
+
+	first, generationBefore := connectBlockedEpoch(t, f)
+	if err := websocket.JSON.Send(first, map[string]any{
+		"type": "assignment.epoch_ack", "schema_version": 2,
+		"device_id": testDeviceID, "project_id": f.projectID,
+		"assignment_epoch": 2, "connection_generation": generationBefore,
+		"blackout": true, "channel_levels": make([]int, lightingnode.MaxChannels),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var receipt map[string]any
+	err := websocket.JSON.Receive(first, &receipt)
+	_ = first.SetReadDeadline(time.Time{})
+	if err != nil || receipt["type"] != "assignment.epoch_ack_receipt" {
+		t.Fatalf("original software-zero receipt=%+v err=%v", receipt, err)
+	}
+	stored, err := f.repo.GetBlockedEpochAck(context.Background(), testDeviceID, 2)
+	if err != nil || stored.ConnectionGeneration != generationBefore {
+		t.Fatalf("missing original persisted ACK=%+v err=%v", stored, err)
+	}
+	_ = first.Close()
+	f.runtime.Close()
+	f.server.Close()
+
+	// Reconstruct Hub Runtime over the SAME durable database. Previously
+	// nextGeneration reset to zero and could match the persisted old ACK,
+	// falsely marking it as reported on the newly authenticated socket.
+	f.runtime = devicechannel.New(f.repo, f.auth)
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.runtime.ServeWebSocket(w, r, f.session, f.token)
+	}))
+	next, generationAfter := connectBlockedEpoch(t, f)
+	defer next.Close()
+	if generationAfter <= generationBefore {
+		t.Fatalf("Hub reboot reused an old persisted epoch ACK generation: before=%d after=%d",
+			generationBefore, generationAfter)
+	}
+	historical, err := f.repo.GetBlockedEpochAck(context.Background(), testDeviceID, 2)
+	if err != nil || historical.ConnectionGeneration != generationBefore ||
+		historical.ConnectionGeneration == generationAfter {
+		t.Fatalf("stale report appeared current after restart: %+v err=%v", historical, err)
+	}
+	if err := websocket.JSON.Send(next, map[string]any{
+		"type": "assignment.epoch_ack", "schema_version": 2,
+		"device_id": testDeviceID, "project_id": f.projectID,
+		"assignment_epoch": 2, "connection_generation": generationAfter,
+		"blackout": true, "channel_levels": make([]int, lightingnode.MaxChannels),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = next.SetReadDeadline(time.Now().Add(3 * time.Second))
+	err = websocket.JSON.Receive(next, &receipt)
+	_ = next.SetReadDeadline(time.Time{})
+	if err != nil || receipt["type"] != "assignment.epoch_ack_receipt" {
+		t.Fatalf("fresh post-restart software-zero receipt=%+v err=%v", receipt, err)
+	}
+	fresh, err := f.repo.GetBlockedEpochAck(context.Background(), testDeviceID, 2)
+	if err != nil || fresh.ConnectionGeneration != generationAfter {
+		t.Fatalf("current report not persisted after restart: %+v err=%v", fresh, err)
+	}
+	assignment, err := f.repo.GetAssignmentRecord(context.Background(), testDeviceID)
+	if err != nil || assignment.State != "BLOCKED" || assignment.Epoch != 2 ||
+		assignment.RuntimeSnapshotID != "" {
+		t.Fatalf("reboot/epoch ACK activated outputs: %+v err=%v", assignment, err)
 	}
 }
