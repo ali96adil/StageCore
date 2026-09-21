@@ -291,21 +291,28 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 
 	if isV2Unassigned {
 		assignment, err := r.repository.GetAssignmentRecord(ctx, device.ID)
-		if err != nil || assignment.State != "UNASSIGNED" || assignment.ProjectID != "" {
+		if err != nil ||
+			(assignment.State != "UNASSIGNED" && assignment.State != "BLOCKED") ||
+			(assignment.State == "UNASSIGNED" && assignment.ProjectID != "") ||
+			(assignment.State == "BLOCKED" && assignment.ProjectID == "") {
 			return
 		}
-		// This is an authenticated inventory response, NOT runtime.ready and
-		// NOT evidence of a verified physical blackout or permission to
-		// execute project commands.
-		if err := current.send(map[string]any{
+		// This authenticated inventory response is NOT runtime.ready and
+		// NOT a physical-blackout proof, activation or command authority.
+		response := map[string]any{
 			"type":             "assignment.state",
 			"schema_version":   2,
 			"device_id":        device.ID,
 			"assignment_epoch": assignment.Epoch,
-			"state":            "UNASSIGNED",
+			"state":            assignment.State,
 			"blackout_required": true,
 			"commands_enabled":  false,
-		}); err != nil {
+		}
+		if assignment.State == "BLOCKED" {
+			response["project_id"] = assignment.ProjectID
+			response["epoch_ack_required"] = true
+		}
+		if err := current.send(response); err != nil {
 			return
 		}
 	} else {

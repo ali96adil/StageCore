@@ -15,9 +15,10 @@ const ProtocolVersion2 = "stagecore.device/2"
 // matching Companion runtime identity. The caller MUST NOT take that identity
 // from an anonymous device.hello or mDNS announcement.
 //
-// This deliberately supports only the safe UNASSIGNED bootstrap. It never
-// migrates a v1 node, transfers an existing project, enables v2 commands,
-// accepts a client project or acknowledges physical blackout.
+// New identities always bootstrap UNASSIGNED. Already-v2 identities can
+// reconnect in UNASSIGNED or BLOCKED to read the Hub-owned epoch/project and
+// remain dark. This method never migrates a v1 node, transfers a project,
+// enables v2 commands, accepts a client project or verifies physical blackout.
 func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (Device, error) {
 	device.ID = strings.TrimSpace(device.ID)
 	device.ProjectID = strings.TrimSpace(device.ProjectID)
@@ -59,8 +60,10 @@ func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (D
 	switch {
 	case err == nil:
 		if protocol != ProtocolVersion2 || kind != string(device.Kind) ||
-			legacyProject != "" || enabled != 1 || assignmentState != "UNASSIGNED" ||
-			assignedProject != "" {
+			legacyProject != "" || enabled != 1 ||
+			(assignmentState != "UNASSIGNED" && assignmentState != "BLOCKED") ||
+			(assignmentState == "UNASSIGNED" && assignedProject != "") ||
+			(assignmentState == "BLOCKED" && assignedProject == "") {
 			return Device{}, fmt.Errorf("%w: v2 enrollment conflicts with existing device authority", ErrInvalidDevice)
 		}
 		// No UPDATE for a reconnect: client metadata cannot alter the

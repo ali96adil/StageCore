@@ -20,6 +20,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
@@ -460,5 +461,66 @@ func TestAuthenticatedV2HelloRegistersOnlyUnassignedWithoutRuntimeReady(t *testi
 	if repeat["type"] != "assignment.state" || repeat["state"] != "UNASSIGNED" ||
 		repeat["assignment_epoch"] != float64(1) {
 		t.Fatalf("v2 reconnect changed Hub authority: %+v", repeat)
+	}
+}
+
+func TestAuthenticatedV2BlockedReconnectReadsHubAssignmentWithoutRuntimeReady(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	if _, err := f.repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Reusable Lighting", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: lightingnode.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const challenge = "7777777777777777777777777777777777777777777777777777777777777777"
+	commit, err := f.repo.CommitVerifiedBlackoutTransfer(ctx, deviceexperience.VerifiedTransferInput{
+		DeviceID: testDeviceID, ToProjectID: f.projectID, ExpectedEpoch: 1,
+		ConnectionGeneration: 1, Challenge: challenge,
+		AckDeviceID: testDeviceID, AckEpoch: 1, AckGeneration: 1,
+		AckChallenge: challenge, AckBlackout: true,
+		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
+		ActorID: "test-owner", IdempotencyKey: "blocked-reconnect-test",
+	})
+	if err != nil || commit.NextState != "BLOCKED" || commit.ToEpoch != 2 {
+		t.Fatalf("setup blocked assignment: %+v err=%v", commit, err)
+	}
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	ws, err := websocket.Dial(url, "", f.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "device.hello", "schema_version": 1, "device_id": testDeviceID,
+		"device_kind": deviceexperience.DeviceGeneric, "display_name": "Reusable Lighting",
+		"protocol_version": deviceexperience.ProtocolVersion2,
+		"profile_id": lightingnode.ProfileID, "capabilities": lightingnode.CapabilityKeys(),
+		"readiness": deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var reply map[string]any
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply["type"] != "assignment.state" || reply["schema_version"] != float64(2) ||
+		reply["state"] != "BLOCKED" || reply["project_id"] != f.projectID ||
+		reply["assignment_epoch"] != float64(2) || reply["blackout_required"] != true ||
+		reply["commands_enabled"] != false || reply["epoch_ack_required"] != true {
+		t.Fatalf("reconnect incorrectly activated node or omitted Hub assignment: %+v", reply)
+	}
+	device, err := f.repo.GetDevice(ctx, testDeviceID)
+	if err != nil || device.ProjectID != "" || device.Runtime == nil ||
+		device.Runtime.Readiness != deviceexperience.ReadinessBlocker {
+		t.Fatalf("client READY or v1 Project authority bypassed v2 blocked state: %+v err=%v", device, err)
+	}
+	if _, _, err := f.repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID,
+		CommandType: lightingnode.CommandBlackout, Issuer: "operator",
+	}); err == nil {
+		t.Fatal("blocked v2 node executed ordinary command after reconnect")
 	}
 }
