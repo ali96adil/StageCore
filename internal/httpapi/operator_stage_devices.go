@@ -89,13 +89,19 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				return
 			}
+			// Unassigned identities are pairing inventory, not members of
+			// whichever Project the requesting user happens to read.
+			if item.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
 			writeJSON(w, http.StatusOK, item)
 		}))
 
 		// Read-only legacy/v2 assignment metadata for inventory diagnostics.
 		// This does not assign or transfer a device, and LEGACY is never a
 		// statement that the new authenticated v2 handshake has completed.
-		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
 			if err != nil {
@@ -108,6 +114,10 @@ func WithOperatorStageDevices(
 					return
 				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+				return
+			}
+			if record.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
 				return
 			}
 			writeJSON(w, http.StatusOK, record)
