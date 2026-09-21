@@ -578,4 +578,44 @@ func TestExperimentalSoftwareTransferRequiresFlagCSRFPairingAndExplicitConsent(t
 		Scan(&reservations); err != nil || reservations != 0 {
 		t.Fatalf("unauthorized requests created reservations=%d err=%v", reservations, err)
 	}
+
+	statusPath := "/api/v1/stage-devices/" + deviceID + "/assignment/transfer-status"
+	readStatus := func(credentials userauth.Credential) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, statusPath, nil)
+		req.RemoteAddr = "127.0.0.1:19221"
+		if credentials.Token != "" {
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credentials.Token})
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+	if res := readStatus(userauth.Credential{}); res.Code == http.StatusOK {
+		t.Fatalf("unauthenticated user read pairing transfer status: %s", res.Body.String())
+	}
+	if res := readStatus(operator); res.Code != http.StatusForbidden {
+		t.Fatalf("ProjectRead-only role accessed v2 identity status: status=%d body=%s", res.Code, res.Body.String())
+	}
+	res := readStatus(owner)
+	if res.Code != http.StatusOK {
+		t.Fatalf("Owner unable to read unassigned v2 transfer status: status=%d body=%s", res.Code, res.Body.String())
+	}
+	var status struct {
+		Status string `json:"status"`
+		CommandsEnabled bool `json:"commands_enabled"`
+		SnapshotActive bool `json:"snapshot_active"`
+		PhysicalBlackoutVerified bool `json:"physical_blackout_verified"`
+		SoftwareZeroReportCurrentConnection bool `json:"software_zero_report_current_connection"`
+		ConnectionOnline bool `json:"connection_online"`
+		Assignment deviceexperience.AssignmentRecord `json:"assignment"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "UNASSIGNED" || status.CommandsEnabled ||
+		status.SnapshotActive || status.PhysicalBlackoutVerified ||
+		status.SoftwareZeroReportCurrentConnection || status.ConnectionOnline ||
+		status.Assignment.State != "UNASSIGNED" || status.Assignment.Epoch != 1 {
+		t.Fatalf("unassigned status incorrectly claims authority or physical zero: %+v", status)
+	}
 }
