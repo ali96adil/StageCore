@@ -66,7 +66,10 @@ timeouts close the old socket. A diagnostic probe and an assignment blackout
 challenge cannot overlap.
 
 By default, the request is **not** automatically sent on reconnect.
-It requires `lighting.state_probe/1` capability advertisement, and automatic
+It requires **both** Hub-approved persisted `lighting.state_probe/1`
+capability and advertisement on the exact authenticated socket. A firmware
+upgrade cannot silently add authority through reconnect metadata; approval
+or deliberate reprovisioning is a separate future workflow. Automatic
 reconnect diagnostics additionally require Hub opt-in
 `STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE=1`. This feature remains source-only
 and unapproved for show hardware. Legacy v1 and the unchanged default v2
