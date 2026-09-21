@@ -40,6 +40,8 @@ func TestStageDevicesOperatorV2CommissioningViewNeverEnablesOldControls(t *testi
 		`software_zero_report_current_connection`,
 		`v2HardwareUnverified`,
 		`v2NoControls`,
+		`device.device_kind === "STAGE_DISPLAY" && device.protocol_version !== "stagecore.device/2"`,
+		`device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2"`,
 	} {
 		if !strings.Contains(phase4, marker) {
 			t.Fatalf("v2 read-only safety UI missing contract marker %q", marker)
