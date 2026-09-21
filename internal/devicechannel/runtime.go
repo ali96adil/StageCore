@@ -47,6 +47,7 @@ type connection struct {
 	deviceID        string
 	protocolVersion string
 	sessionToken    string
+	advertisedCapabilities []string
 	generation      int64
 	writeMu         sync.Mutex
 	once            sync.Once
@@ -294,7 +295,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	// allocated and it has become the current connection. This ordering
 	// prevents an exhausted/unavailable counter from creating a ghost
 	// ONLINE device record that could mislead Operator commissioning.
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, closed: make(chan struct{})}
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
 	previous, err := r.register(ctx, current)
 	if err != nil {
 		current.close()
@@ -380,7 +381,8 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		// UNASSIGNED has no epoch receipt. A negotiated probe is diagnostic
 		// only; never treat its result as READY or an output instruction.
 		if assignment.State == "UNASSIGNED" &&
-			containsCapability(device.Capabilities, V2LightingStateProbeCapability) {
+			containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+			containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
 			r.probeV2AfterReconnect(current)
 		}
 	} else {
@@ -481,7 +483,8 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}
 			// BLOCKED nodes may answer diagnostics only after their committed
 			// epoch has been persistently acknowledged; never before the receipt.
-			if containsCapability(device.Capabilities, V2LightingStateProbeCapability) {
+			if containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+				containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
 				r.probeV2AfterReconnect(current)
 			}
 		case "assignment.blackout_ack":
