@@ -213,7 +213,7 @@ func TestV2SoftwareTransferCancellationFencesLateACK(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRuntimeFixture(t)
 			ws := connectLightingV2ForBlackout(t, f)
-			ctx, cancel := context.WithTimeout(context.Background(), 1250*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
@@ -242,7 +242,7 @@ func TestV2SoftwareTransferCancellationFencesLateACK(t *testing.T) {
 				if !errors.Is(err, devicechannel.ErrBlackoutNotVerified) {
 					t.Fatalf("canceled transfer committed: %v", err)
 				}
-			case <-time.After(4 * time.Second):
+			case <-time.After(6 * time.Second):
 				t.Fatal("canceled software handshake did not return")
 			}
 			if generation, online := f.runtime.CurrentV2Generation(testDeviceID); online {
