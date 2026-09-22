@@ -216,6 +216,28 @@ Before merge:
 - Core CI Test/Vet/Race/ARM64 gates pass;
 - Companion Core CI Linux build/tests and macOS acceptance remain green.
 
+## Dynamic IPv4 advertisement refresh (source-only fix)
+
+The mDNS advertiser recomputes eligible IPv4 addresses for each initial, periodic
+and query-triggered announcement instead of reusing only the address set from
+Hub startup. It advertises **only on interfaces whose multicast groups were
+successfully joined at Start**, matching both interface index and name. If a
+joined interface loses its eligible IPv4 address, no stale A record is sent;
+the attempt fails closed. A newly appearing network interface still needs a
+controlled service restart to join the new multicast group.
+
+This addresses the software mechanism behind a DHCP address change on the
+same joined interface (e.g. stale `.131` versus current `.130`). DNS clients
+may retain older cached records until their TTL expires; this change does not
+instantaneously revoke caches or prove an ESP has reconnected. Pure Go tests
+verify the replacement A record, rejection of the old address, and missing or
+unjoined interfaces without requiring a physical network.
+
+**Qualification:** No Pi deployment, Hub restart, ESP flash, SHOW operation,
+physical DMX/LED output or canonical campaign repin is authorized by this
+source-only fix. Verify the installed binary and inspect actual mDNS answers
+after a controlled address change during a separate attended rehearsal window.
+
 ## Physical acceptance
 
 Physical Stage LAN acceptance is intentionally separate from software merge. When the qualified Raspberry Pi and macOS Companion are available together:
