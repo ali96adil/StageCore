@@ -95,11 +95,9 @@ func TestFourViewersOneUpstream(t *testing.T){
   resp,err:=client.Get(downstream.URL+"/api/v0/health")
   if err!=nil{return false}
   defer resp.Body.Close()
-  var health struct{Viewers int;State string}
   // Read the real JSON keys, independent from internal struct field names.
   var data map[string]any
   if json.NewDecoder(resp.Body).Decode(&data)!=nil{return false}
-  _=health
   return resp.StatusCode==200 && data["viewers"]==float64(4) && data["state"]=="ready"
  })
  resp,err:=client.Get(downstream.URL+"/api/v0/stream")
@@ -118,7 +116,7 @@ func TestBoundedLatestFrameAndUnsubscribe(t *testing.T){
  for i:=0;i<300;i++{relay.publish(testJPEG(byte(i)))}
  select{
  case got:=<-ch:
-  if got[2]!=byte(299){t.Fatalf("stale frame delivered: %v",got)}
+  if got[2]!=byte(299 % 256){t.Fatalf("stale frame delivered: %v",got)}
  default:t.Fatal("subscriber received no frame")
  }
  relay.unsubscribe(id)
