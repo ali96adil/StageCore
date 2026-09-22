@@ -358,6 +358,8 @@
     pageHeader(t("devicesTitle"), t("devicesSub"), renderStageDevices);
     const projectID = currentProjectID();
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`);
+    // The project or page may have changed while awaiting the device list.
+    if (state.page !== "devices" || currentProjectID() !== projectID) return;
     const devices = payload.devices || [];
     const body = document.getElementById("phase4Body");
     // A v2 sidecar may be BLOCKED for the current Project even though the
@@ -383,6 +385,8 @@
         // Pairing may be disabled or revoked; the server owns access.
       }
     }
+    // Never paint stale Project inventory after either additional async fetch.
+    if (state.page !== "devices" || currentProjectID() !== projectID) return;
     const unassignedCard = (device) => `
       <article class="phase4-card">
         <div class="phase4-card-head">
@@ -420,7 +424,9 @@
           target.innerHTML = renderLightingDiagnostic(view);
         } catch (_) {
           // Remove previous results after any transport/auth/scope failure.
-          if (target.isConnected) target.textContent = t("diagnosticUnavailable");
+          if (target.isConnected && state.page === "devices" && currentProjectID() === projectID) {
+            target.textContent = t("diagnosticUnavailable");
+          }
         } finally {
           if (button.isConnected) button.disabled = false;
         }
@@ -428,6 +434,8 @@
     });
     body.querySelectorAll("[data-command]").forEach((button) => {
       button.addEventListener("click", async () => {
+        // Stale DOM must never dispatch a tablet command for another Project.
+        if (!button.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;
         const controls = button.closest("[data-controls]");
         const deviceID = controls?.dataset.controls;
         const media = body.querySelector(`.phase4-media[data-device="${CSS.escape(deviceID)}"]`)?.value.trim() || "";
@@ -435,7 +443,7 @@
         try {
           const payload = media ? { media_ref: media } : {};
           await issueCommand(deviceID, button.dataset.command, payload);
-          await renderStageDevices();
+          if (state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();
         } catch (error) {
           phase4Message(errorMessage(error), "error");
         } finally {
