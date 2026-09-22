@@ -34,6 +34,7 @@
 
   let controllerModel = { nodes: [] };
   let cueModel = { cues: [] };
+  let allCueModel = { cues: [] };
 
   function lang() { return document.documentElement.lang?.toLowerCase().startsWith("ar") ? "ar" : "en"; }
   function tx(key) { return text[lang()][key] || text.en[key] || key; }
@@ -57,9 +58,13 @@
   function nodeName(id) { return nodes().find((node) => node.device_id === id)?.display_name || id || "—"; }
 
   async function loadModels() {
-    [controllerModel, cueModel] = await Promise.all([
+    [controllerModel, cueModel, allCueModel] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(pid())}/lighting-controller`),
       api(`/api/v1/projects/${encodeURIComponent(pid())}/lighting-controller/cues`),
+      // The lighting-only view excludes OSC and other Cue types, but order_index
+      // is unique across the entire project revision. Never allocate from only
+      // the filtered lighting list: it can collide with an existing OSC Cue.
+      api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`),
     ]);
   }
 
@@ -125,7 +130,7 @@
   }
 
   function nextOrderIndex() {
-    return (cueModel.cues || []).reduce((max, cue) => Math.max(max, Number(cue.order_index) || 0), -1) + 1;
+    return (allCueModel.cues || []).reduce((max, cue) => Math.max(max, Number(cue.order_index) || 0), -1) + 1;
   }
 
   function renderLightingEditor(cue) {

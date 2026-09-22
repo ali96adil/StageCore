@@ -107,3 +107,37 @@ func TestWorkspaceProfileFoundationContract(t *testing.T) {
 		}
 	}
 }
+
+
+func TestWorkspaceProfileLeavesFeatureNavigationVisible(t *testing.T) {
+	// The legacy profile registry predates Lighting workspaces. They should
+	// retain feature-owned visibility even when a saved F-017 profile is applied.
+	profileJS := string(mustReadOperatorContractFile(t, "static/workspace-profile.js"))
+	cueJS := string(mustReadOperatorContractFile(t, "static/lighting-authoring.js"))
+	setupJS := string(mustReadOperatorContractFile(t, "static/lighting-configuration.js"))
+
+	for _, tc := range []struct {
+		source, page, navMarker string
+	}{
+		{cueJS, "lighting-cues", "button.dataset.lightingCuesNav"},
+		{setupJS, "lighting-setup", "button.dataset.lightingSetupNav"},
+	} {
+		if !strings.Contains(tc.source, `button.dataset.page = "`+tc.page+`"`) {
+			t.Fatalf("feature navigation missing page %q", tc.page)
+		}
+		if !strings.Contains(tc.source, tc.navMarker) {
+			t.Fatalf("feature navigation %q missing owned marker %q", tc.page, tc.navMarker)
+		}
+		if strings.Contains(profileJS, `const F017_PAGES = ["`+tc.page+`"`) {
+			t.Fatalf("feature page %q unexpectedly became an F-017 legacy page", tc.page)
+		}
+	}
+
+	const guard = "if (!F017_PAGES.includes(page)) continue;"
+	const visibility = `button.classList.toggle("f017-profile-hidden", !profile.visible_pages.includes(page));`
+	guardAt := strings.Index(profileJS, guard)
+	visibilityAt := strings.Index(profileJS, visibility)
+	if guardAt < 0 || visibilityAt < 0 || guardAt > visibilityAt {
+		t.Fatal("legacy profile must skip unknown feature pages before toggling navigation visibility")
+	}
+}
