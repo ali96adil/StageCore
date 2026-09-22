@@ -55,3 +55,33 @@ func TestStageDevicesReadOnlyLightingDiagnosticContract(t *testing.T) {
 		t.Fatal("BLOCKED and UNSAFE diagnostics need distinct presentation")
 	}
 }
+
+func TestStageDevicesRejectsStaleProjectInventoryAndCommands(t *testing.T) {
+	source := string(mustReadOperatorContractFile(t, "static/phase4.js"))
+	start := strings.Index(source, "async function renderStageDevices()")
+	if start < 0 {
+		t.Fatal("Stage Devices renderer missing")
+	}
+	end := strings.Index(source[start:], "function displayTargets(")
+	if end < 0 {
+		t.Fatal("Stage Devices renderer boundary missing")
+	}
+	view := source[start : start+end]
+	guard := `if (state.page !== "devices" || currentProjectID() !== projectID) return;`
+	if strings.Count(view, guard) != 2 {
+		t.Fatal("device list and additional inventory must each reject stale project/page responses")
+	}
+	paint := strings.Index(view, "body.innerHTML =")
+	if paint < 0 || strings.LastIndex(view[:paint], guard) < 0 {
+		t.Fatal("Stage Devices must recheck the project immediately before painting")
+	}
+	if !strings.Contains(view, `if (!button.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;`) {
+		t.Fatal("old Stage Devices controls must never dispatch a command")
+	}
+	if !strings.Contains(view, `if (state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();`) {
+		t.Fatal("command completion must not repaint another Project")
+	}
+	if !strings.Contains(view, `target.isConnected && state.page === "devices" && currentProjectID() === projectID`) {
+		t.Fatal("failed diagnostic response must not paint stale Project context")
+	}
+}
