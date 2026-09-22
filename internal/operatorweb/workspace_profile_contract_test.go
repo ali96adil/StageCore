@@ -119,8 +119,8 @@ func TestWorkspaceProfileLeavesFeatureNavigationVisible(t *testing.T) {
 	for _, tc := range []struct {
 		source, page, navMarker string
 	}{
-		{cueJS, "lighting-cues", "data.lightingCuesNav"},
-		{setupJS, "lighting-setup", "data.lightingSetupNav"},
+		{cueJS, "lighting-cues", "button.dataset.lightingCuesNav"},
+		{setupJS, "lighting-setup", "button.dataset.lightingSetupNav"},
 	} {
 		if !strings.Contains(tc.source, `button.dataset.page = "`+tc.page+`"`) {
 			t.Fatalf("feature navigation missing page %q", tc.page)
