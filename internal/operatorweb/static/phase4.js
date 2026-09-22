@@ -354,12 +354,14 @@
       <p class="muted">${esc(t("diagnosticNoCommand"))}</p>
     </div>`;
   }
+  let stageDevicesRenderGeneration = 0;
   async function renderStageDevices() {
+    const renderGeneration = ++stageDevicesRenderGeneration;
     pageHeader(t("devicesTitle"), t("devicesSub"), renderStageDevices);
     const projectID = currentProjectID();
     const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`);
     // The project or page may have changed while awaiting the device list.
-    if (state.page !== "devices" || currentProjectID() !== projectID) return;
+    if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
     const devices = payload.devices || [];
     const body = document.getElementById("phase4Body");
     // A v2 sidecar may be BLOCKED for the current Project even though the
@@ -386,7 +388,7 @@
       }
     }
     // Never paint stale Project inventory after either additional async fetch.
-    if (state.page !== "devices" || currentProjectID() !== projectID) return;
+    if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
     const unassignedCard = (device) => `
       <article class="phase4-card">
         <div class="phase4-card-head">
@@ -420,11 +422,11 @@
         try {
           // The only network action for this control is the authenticated GET.
           const view = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller/nodes/${encodeURIComponent(deviceID)}/live-diagnostic`);
-          if (!target.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;
+          if (!target.isConnected || renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
           target.innerHTML = renderLightingDiagnostic(view);
         } catch (_) {
           // Remove previous results after any transport/auth/scope failure.
-          if (target.isConnected && state.page === "devices" && currentProjectID() === projectID) {
+          if (target.isConnected && renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID) {
             target.textContent = t("diagnosticUnavailable");
           }
         } finally {
@@ -435,7 +437,7 @@
     body.querySelectorAll("[data-command]").forEach((button) => {
       button.addEventListener("click", async () => {
         // Stale DOM must never dispatch a tablet command for another Project.
-        if (!button.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
         const controls = button.closest("[data-controls]");
         const deviceID = controls?.dataset.controls;
         const media = body.querySelector(`.phase4-media[data-device="${CSS.escape(deviceID)}"]`)?.value.trim() || "";
@@ -443,7 +445,7 @@
         try {
           const payload = media ? { media_ref: media } : {};
           await issueCommand(deviceID, button.dataset.command, payload);
-          if (state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();
+          if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();
         } catch (error) {
           phase4Message(errorMessage(error), "error");
         } finally {
