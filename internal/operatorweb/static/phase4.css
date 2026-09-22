@@ -111,3 +111,30 @@
   .phase4-kv { grid-template-columns: 1fr; }
   .phase4-actions .button { flex: 1 1 120px; }
 }
+
+/* Read-only v2 Lighting diagnostics. This panel has no output controls. */
+.phase4-pulse.blocked, .phase4-pulse.unsafe {
+  border-color: var(--sc-danger-border);
+  background: var(--sc-danger-bg);
+  color: var(--sc-danger-fg);
+}
+.phase4-lighting-diagnostic { display: grid; gap: 10px; }
+.phase4-lighting-diagnostic > button { justify-self: start; }
+.phase4-lighting-diagnostic-info {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--sc-warning-border);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--sc-warning-bg);
+}
+.phase4-lighting-diagnostic-info p { margin: 0; }
+.phase4-diagnostic-scroll { overflow-x: auto; }
+.phase4-diagnostic-table { width: 100%; border-collapse: collapse; min-width: 340px; }
+.phase4-diagnostic-table th, .phase4-diagnostic-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--sc-border-default);
+  text-align: start;
+  font-size: .8rem;
+}
+.phase4-diagnostic-table th:first-child { font-variant-numeric: tabular-nums; }
