@@ -321,7 +321,8 @@
   function renderLightingDiagnostic(view) {
     const d = view?.diagnostic || {};
     const accepted = ["UNKNOWN", "BLOCKED", "UNSAFE"];
-    const status = view?.source === "SOFTWARE_ONLY" && accepted.includes(d.status) ? d.status : "UNKNOWN";
+    const status = view?.schema_version === 1 && view?.source === "SOFTWARE_ONLY" && accepted.includes(d.status)
+      ? d.status : "UNKNOWN";
     const reason = status === "BLOCKED" ? t("diagnosticBlocked")
       : status === "UNSAFE" ? t("diagnosticUnsafe") : t("diagnosticUnknown");
     if (status === "UNKNOWN") {
