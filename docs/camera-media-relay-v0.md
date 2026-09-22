@@ -44,3 +44,49 @@ Use Ctrl+C to terminate the temporary relay. Do NOT modify the production stagec
 ## Security and limits
 
 The source and downstream streams use plaintext unauthenticated HTTP. The listener stays loopback-only unless explicitly overridden. There is NO access control for an exposed LAN listener: do not forward this port to the internet or expose it to untrusted Wi-Fi. Before production, define client authentication, firewall segmentation, IP binding, health monitoring, rollback and stage-level readiness policies. A successful Pi loopback test does not establish four-tablet readiness or frame-accurate sync.
+
+
+## Physical checkpoint — 2026-09-22
+
+User-reported Pi-local trial (not automated CI hardware verification): relay health
+returned state=ready, upstream_connected=true and last_frame_age_ms=47 after
+1546 received source frames. A Pi-local MJPEG reader returned HTTP 200 and JPEG
+SOI. In a subsequent four-reader test, health showed viewers=4, max_clients=4
+and 49 additional source frames during five seconds. Four clients each received
+52–53 valid JPEG frames; the fifth connection returned HTTP 503. These
+measurements do **not** constitute physical four-tablet qualification.
+One browser on the trusted show LAN also displayed live relay video;
+no Android app playback has yet been tested.
+
+The camera's DHCP address changed after power cycling. Use current DHCP
+reservation/discovery instead of assuming an earlier address. Wi-Fi RSSI
+ranged roughly -65 to -77 dBm during initial checks; performance, antenna
+selection and reconnection require measurement in show conditions.
+
+## Reproducible four-client test (without Android tablets)
+
+Run this standalone smoke probe from the Pi while the relay is running:
+
+    python3 tools/camera-relay-smoke.py --base-url http://127.0.0.1:9081 --viewers 4 --seconds 5
+
+Or run the exact same probe from the Mac on the trusted show LAN, only after
+explicitly binding the relay to the Pi show-LAN IP with -allow-lan:
+
+    python3 tools/camera-relay-smoke.py --base-url http://<pi-show-lan-ip>:9081 --viewers 4 --seconds 5
+
+The probe opens four HTTP stream connections, reads full bounded JPEG frames,
+samples health, confirms the source frame counter continues advancing and
+expects the fifth viewer to return 503. It closes its own clients. Free the
+four viewer slots by closing earlier test browser tabs first.
+
+A phone and Mac, multiple browser windows, or different browser applications
+on the same Mac can test multiple HTTP connections. Background browser tabs
+can throttle and are not reliable independent display-performance measurements.
+Four separate physical machines are NOT required for the relay fan-out
+connectivity test. Mixed-browser tests do NOT certify the Android player APK,
+real four-tablet Wi-Fi, display latency, cue readiness or synchronization.
+
+Never aim this four-reader probe directly at the ESP32-CAM: the camera
+firmware permits a single upstream connection. Never port-forward or expose
+plaintext unauthenticated relay HTTP to untrusted networks. Do not modify
+production Hub or systemd services for this trial.
