@@ -135,8 +135,19 @@ func (a *Advertiser) readQueries(ctx context.Context, wake chan<- struct{}) {
 }
 
 func (a *Advertiser) announce(ttl uint32) error {
+	// Interface addresses can change without a Hub restart (e.g. DHCP).
+	// Never keep advertising an address captured only at Start.
+	current, err := eligibleIPv4Interfaces(a.announcement.ListenHost)
+	if err != nil {
+		return err
+	}
+	candidates := joinedCurrentIPv4(a.interfaces, current)
+	if len(candidates) == 0 {
+		// Fail closed rather than advertising a stale or unjoined endpoint.
+		return fmt.Errorf("no current IPv4 address on joined Stage Network interfaces")
+	}
 	var firstErr error
-	for _, candidate := range a.interfaces {
+	for _, candidate := range candidates {
 		packet, err := a.announcement.BuildPacket(candidate.addresses, ttl)
 		if err != nil {
 			if firstErr == nil {
@@ -150,6 +161,27 @@ func (a *Advertiser) announce(ttl uint32) error {
 		}
 	}
 	return firstErr
+}
+
+// joinedCurrentIPv4 only selects fresh addresses on multicast groups that
+// were successfully joined at Start. A new interface requires a controlled
+// service restart to join its group; do not claim reachability on it yet.
+func joinedCurrentIPv4(joined, current []discoveryInterface) []discoveryInterface {
+	selected := make([]discoveryInterface, 0, len(joined))
+	for _, original := range joined {
+		for _, candidate := range current {
+			if original.interfaceInfo.Index == candidate.interfaceInfo.Index &&
+				original.interfaceInfo.Name == candidate.interfaceInfo.Name &&
+				len(candidate.addresses) > 0 {
+				selected = append(selected, discoveryInterface{
+					interfaceInfo: original.interfaceInfo,
+					addresses: candidate.addresses,
+				})
+				break
+			}
+		}
+	}
+	return selected
 }
 
 func eligibleIPv4Interfaces(listenHost string) ([]discoveryInterface, error) {
