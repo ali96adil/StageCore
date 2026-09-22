@@ -20,6 +20,7 @@ func TestStageDevicesReadOnlyLightingDiagnosticContract(t *testing.T) {
 		"diagnosticBlocked",
 		"diagnosticUnsafe",
 		"SOFTWARE_ONLY",
+		"view?.schema_version === 1",
 		"currentProjectID() !== projectID",
 		"diagnosticUnavailable",
 	}
