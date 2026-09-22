@@ -67,7 +67,11 @@ func TestStageDevicesRejectsStaleProjectInventoryAndCommands(t *testing.T) {
 		t.Fatal("Stage Devices renderer boundary missing")
 	}
 	view := source[start : start+end]
-	guard := `if (state.page !== "devices" || currentProjectID() !== projectID) return;`
+	if !strings.Contains(source, "let stageDevicesRenderGeneration = 0;") ||
+		!strings.Contains(view, "const renderGeneration = ++stageDevicesRenderGeneration;") {
+		t.Fatal("each Stage Devices render must have a unique generation")
+	}
+	guard := `if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;`
 	if strings.Count(view, guard) != 2 {
 		t.Fatal("device list and additional inventory must each reject stale project/page responses")
 	}
@@ -75,13 +79,13 @@ func TestStageDevicesRejectsStaleProjectInventoryAndCommands(t *testing.T) {
 	if paint < 0 || strings.LastIndex(view[:paint], guard) < 0 {
 		t.Fatal("Stage Devices must recheck the project immediately before painting")
 	}
-	if !strings.Contains(view, `if (!button.isConnected || state.page !== "devices" || currentProjectID() !== projectID) return;`) {
+	if !strings.Contains(view, `if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;`) {
 		t.Fatal("old Stage Devices controls must never dispatch a command")
 	}
-	if !strings.Contains(view, `if (state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();`) {
+	if !strings.Contains(view, `if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID) await renderStageDevices();`) {
 		t.Fatal("command completion must not repaint another Project")
 	}
-	if !strings.Contains(view, `target.isConnected && state.page === "devices" && currentProjectID() === projectID`) {
+	if !strings.Contains(view, `target.isConnected && renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID`) {
 		t.Fatal("failed diagnostic response must not paint stale Project context")
 	}
 }
