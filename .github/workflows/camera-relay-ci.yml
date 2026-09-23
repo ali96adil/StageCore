@@ -7,6 +7,7 @@ on:
       - 'cmd/stagecore-camera-relay/**'
       - 'docs/camera-media-relay-v0.md'
       - 'tools/camera-relay-smoke.py'
+      - 'tools/test_camera_relay_smoke.py'
       - '.github/workflows/camera-relay-ci.yml'
   push:
     branches: [main, 'feat/camera-media-relay-v0']
@@ -31,6 +32,8 @@ jobs:
           cache: true
       - name: Compile portable camera smoke probe
         run: python3 -m py_compile tools/camera-relay-smoke.py
+      - name: Exercise portable smoke probe with fake HTTP relay
+        run: python3 -m unittest discover -s tools -p 'test_camera_relay_smoke.py' -v
       - name: Test camera relay
         run: go test -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
       - name: Race test camera relay
