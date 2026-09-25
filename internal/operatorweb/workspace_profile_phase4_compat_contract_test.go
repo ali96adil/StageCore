@@ -15,6 +15,9 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 		`["video", t("video")]`,
 		`["network", t("network")]`,
 		`button.dataset.phase4Nav = "true"`,
+		`button.dataset.phase4CoreNav = "true"`,
+		`nav.querySelector('[data-phase4-core-nav="true"]')`,
+		`document.querySelectorAll('[data-phase4-core-nav="true"]')`,
 	} {
 		if !strings.Contains(phase4, marker) {
 			t.Fatalf("Phase 4 navigation missing contract marker %q", marker)
