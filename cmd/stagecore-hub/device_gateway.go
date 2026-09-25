@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/app"
@@ -15,10 +16,17 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 )
 
+const bonjourRetryInterval = 5 * time.Second
+
+type discoveryStarter func(context.Context, discovery.Announcement) (*discovery.Advertiser, error)
+
 type deviceGateway struct {
-	server     *http.Server
-	listener   net.Listener
-	advertiser *discovery.Advertiser
+	server   *http.Server
+	listener net.Listener
+
+	advertiserMu sync.Mutex
+	advertiser   *discovery.Advertiser
+	closed       bool
 }
 
 func startDeviceGateway(
@@ -72,16 +80,8 @@ func startDeviceGateway(
 	)
 	if announceErr != nil {
 		logger.Warn("StageCore Bonjour discovery unavailable", "error", announceErr)
-	} else if advertiser, advertiseErr := discovery.Start(ctx, announcement); advertiseErr != nil {
-		logger.Warn("StageCore Bonjour discovery unavailable", "error", advertiseErr)
 	} else {
-		gateway.advertiser = advertiser
-		logger.Info(
-			"StageCore Hub discovery active",
-			"service", discovery.ServiceType,
-			"hub_id", identity.HubID,
-			"device_listen", listenAddress,
-		)
+		startBonjourDiscovery(ctx, logger, gateway, announcement, identity.HubID, listenAddress)
 	}
 
 	go func() {
@@ -91,12 +91,116 @@ func startDeviceGateway(
 	return gateway, nil
 }
 
+func startBonjourDiscovery(
+	ctx context.Context,
+	logger *slog.Logger,
+	gateway *deviceGateway,
+	announcement discovery.Announcement,
+	hubID string,
+	listenAddress string,
+) {
+	advertiser, err := discovery.Start(ctx, announcement)
+	if err == nil {
+		if gateway.installAdvertiser(advertiser) {
+			logDiscoveryActive(logger, hubID, listenAddress, false)
+		} else {
+			_ = advertiser.Close()
+		}
+		return
+	}
+
+	logger.Warn(
+		"StageCore Bonjour discovery unavailable",
+		"error", err,
+		"retrying", true,
+		"retry_interval", bonjourRetryInterval.String(),
+	)
+	go func() {
+		ticker := time.NewTicker(bonjourRetryInterval)
+		defer ticker.Stop()
+		retryBonjourDiscovery(
+			ctx,
+			logger,
+			gateway,
+			announcement,
+			hubID,
+			listenAddress,
+			ticker.C,
+			discovery.Start,
+		)
+	}()
+}
+
+func retryBonjourDiscovery(
+	ctx context.Context,
+	logger *slog.Logger,
+	gateway *deviceGateway,
+	announcement discovery.Announcement,
+	hubID string,
+	listenAddress string,
+	retry <-chan time.Time,
+	start discoveryStarter,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-retry:
+			advertiser, err := start(ctx, announcement)
+			if err != nil {
+				continue
+			}
+			if !gateway.installAdvertiser(advertiser) {
+				_ = advertiser.Close()
+				return
+			}
+			logDiscoveryActive(logger, hubID, listenAddress, true)
+			return
+		}
+	}
+}
+
+func logDiscoveryActive(logger *slog.Logger, hubID, listenAddress string, recovered bool) {
+	logger.Info(
+		"StageCore Hub discovery active",
+		"service", discovery.ServiceType,
+		"hub_id", hubID,
+		"device_listen", listenAddress,
+		"recovered", recovered,
+	)
+}
+
+func (g *deviceGateway) installAdvertiser(advertiser *discovery.Advertiser) bool {
+	if g == nil || advertiser == nil {
+		return false
+	}
+	g.advertiserMu.Lock()
+	defer g.advertiserMu.Unlock()
+	if g.closed || g.advertiser != nil {
+		return false
+	}
+	g.advertiser = advertiser
+	return true
+}
+
+func (g *deviceGateway) takeAdvertiserForShutdown() *discovery.Advertiser {
+	if g == nil {
+		return nil
+	}
+	g.advertiserMu.Lock()
+	defer g.advertiserMu.Unlock()
+	g.closed = true
+	advertiser := g.advertiser
+	g.advertiser = nil
+	return advertiser
+}
+
 func (g *deviceGateway) Shutdown(ctx context.Context) error {
 	if g == nil {
 		return nil
 	}
-	if g.advertiser != nil {
-		_ = g.advertiser.Close()
+	if advertiser := g.takeAdvertiserForShutdown(); advertiser != nil {
+		_ = advertiser.Close()
 	}
 	if g.server == nil {
 		return nil
