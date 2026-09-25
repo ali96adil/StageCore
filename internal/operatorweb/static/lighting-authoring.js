@@ -267,7 +267,7 @@
     const nav = document.getElementById("workspaceNav");
     if (!nav || nav.querySelector('[data-lighting-cues-nav="true"]')) return;
     const button = document.createElement("button");
-    button.type = "button"; button.className = "nav-button"; button.dataset.page = "lighting-cues"; button.dataset.lightingCuesNav = "true"; button.textContent = tx("nav");
+    button.type = "button"; button.className = "nav-button"; button.dataset.page = "lighting-cues"; button.dataset.phase4Nav = "true"; button.dataset.lightingCuesNav = "true"; button.textContent = tx("nav");
     button.addEventListener("click", () => renderLightingCues().catch(showGlobalError));
     const tabletScenes = nav.querySelector('[data-tablet-scenes-nav="true"]');
     if (tabletScenes?.nextSibling) nav.insertBefore(button, tabletScenes.nextSibling); else nav.appendChild(button);
