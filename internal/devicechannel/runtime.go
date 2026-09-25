@@ -266,7 +266,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			case <-current.closed:
 				return
 			case <-ticker.C:
-				if _, err := r.auth.ValidateRuntimeSession(context.Background(), token); err != nil {
+				if _, err := r.auth.ValidateEstablishedRuntimeSession(context.Background(), session.ID); err != nil {
 					current.close()
 					return
 				}
@@ -306,7 +306,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		}
 		switch message.Type {
 		case "command.result":
-			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
 				return
 			}
 			if !r.commandBoundTo(message.CommandID, current) {
@@ -339,7 +339,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}
 			r.unbindCommand(message.CommandID, current)
 		case "device.observation":
-			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
 				return
 			}
 			readiness := message.Readiness
