@@ -63,7 +63,7 @@ The Device Gateway exposes only the device-facing surface required by this slice
 
 It does not become a second Operator Web server.
 
-The gateway uses a self-signed StageCore device certificate whose key is the existing durable Hub Ed25519 identity key. The certificate bytes are deterministic for that Hub identity, so its SHA-256 pin is stable across normal restarts. This is a local identity/pinning mechanism, not a public Web PKI certificate.
+The gateway keeps the durable Hub Ed25519 identity as the authoritative Hub ID/fingerprint and pairing identity. Its TLS credential uses a domain-separated P-256 transport key deterministically derived from that durable identity. The local X.509 leaf is ECDSA-with-SHA-256 self-signed by the P-256 transport key so both Apple TLS clients and ESP-IDF mbedTLS can parse and negotiate it. Certificate bytes remain deterministic for a Hub identity, so the exact leaf SHA-256 pin is stable across normal restarts, backup, and restore. This is a local identity/pinning mechanism, not a public Web PKI certificate.
 
 ### Bonjour / mDNS
 
@@ -202,7 +202,7 @@ This foundation adds no fake Operator Web button. When F-004 receives a browser/
 
 Before merge:
 
-- Hub device certificate is deterministic and tied to the durable Hub identity;
+- Hub device certificate is deterministic, uses ECDSA-with-SHA-256 over a P-256 transport key, and that transport key is deterministically derived from the durable Hub identity;
 - public Hub identity endpoint returns only expected identity metadata;
 - Device Gateway uses TLS and does not expose Operator Web routes;
 - discovery record/TXT generation is deterministic and bounded;

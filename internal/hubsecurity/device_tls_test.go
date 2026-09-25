@@ -52,8 +52,11 @@ func TestDeviceTLSCertificateIsStableAndBoundToHubIdentity(t *testing.T) {
 	if leaf == nil {
 		t.Fatal("device certificate has no parsed leaf")
 	}
-	if leaf.SignatureAlgorithm != x509.PureEd25519 {
-		t.Fatalf("leaf signature algorithm = %v, want Ed25519", leaf.SignatureAlgorithm)
+	if leaf.SignatureAlgorithm != x509.ECDSAWithSHA256 {
+		t.Fatalf("leaf signature algorithm = %v, want ECDSAWithSHA256", leaf.SignatureAlgorithm)
+	}
+	if err := leaf.CheckSignature(leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature); err != nil {
+		t.Fatalf("device certificate self-signature is invalid: %v", err)
 	}
 	if leaf.IsCA {
 		t.Fatal("device certificate must remain an end-entity certificate, not a CA")
@@ -82,8 +85,14 @@ func TestDeviceTLSCertificateIsStableAndBoundToHubIdentity(t *testing.T) {
 	}
 	identityPrivate := ed25519.PrivateKey(identityPrivateBytes)
 	identityPublic := identityPrivate.Public().(ed25519.PublicKey)
-	if !ed25519.Verify(identityPublic, leaf.RawTBSCertificate, leaf.Signature) {
-		t.Fatal("device certificate is not signed by the durable Hub Ed25519 identity")
+	expectedTransport, err := deriveDeviceTLSTransportKey(identityPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedTransport.D.Cmp(transportPrivate.D) != 0 ||
+		expectedTransport.PublicKey.X.Cmp(transportPublic.X) != 0 ||
+		expectedTransport.PublicKey.Y.Cmp(transportPublic.Y) != 0 {
+		t.Fatal("TLS transport key is not deterministically derived from the durable Hub identity")
 	}
 	digest := sha256.Sum256(identityPublic)
 	gotFingerprint := "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:])
