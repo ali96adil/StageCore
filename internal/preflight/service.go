@@ -25,6 +25,11 @@ const (
 	Pass  Status = "PASS"
 	Warn  Status = "WARN"
 	Block Status = "BLOCK"
+
+	// The macOS Companion reports runtime heartbeats every 5 seconds.
+	// Allow three missed heartbeat intervals before declaring the role stale so
+	// normal scheduler/network jitter cannot flap a healthy connection OFFLINE.
+	defaultHeartbeatTimeout = 15 * time.Second
 )
 
 type Check struct {
@@ -125,7 +130,7 @@ func WithHeartbeatTimeout(timeout time.Duration) Option {
 func New(s *store.Store, capabilities *capability.Registry, storage *storagehealth.Monitor, options ...Option) *Service {
 	service := &Service{
 		store: s, capabilities: capabilities, storage: storage,
-		now: time.Now, heartbeatTimeout: 5 * time.Second,
+		now: time.Now, heartbeatTimeout: defaultHeartbeatTimeout,
 	}
 	for _, option := range options {
 		option(service)
