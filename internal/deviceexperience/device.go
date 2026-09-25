@@ -178,6 +178,37 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	return r.getRuntimeState(ctx, observation.DeviceID)
 }
 
+func (r *Repository) MarkDeviceOffline(ctx context.Context, deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return ErrInvalidDevice
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE stage_device_runtime_state
+		SET connection_state = ?, readiness = ?
+		WHERE device_id = ?
+	`, ConnectionOffline, ReadinessWarning, deviceID)
+	if err != nil {
+		return fmt.Errorf("mark stage device offline: %w", err)
+	}
+	if _, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("mark stage device offline rows affected: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) MarkAllDevicesOffline(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE stage_device_runtime_state
+		SET connection_state = ?, readiness = ?
+		WHERE connection_state <> ? OR readiness <> ?
+	`, ConnectionOffline, ReadinessWarning, ConnectionOffline, ReadinessWarning)
+	if err != nil {
+		return fmt.Errorf("reset Stage Device runtime presence: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) getRuntimeState(ctx context.Context, deviceID string) (RuntimeState, error) {
 	var state RuntimeState
 	var lastSeenUS int64
