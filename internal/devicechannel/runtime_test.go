@@ -38,6 +38,10 @@ type runtimeFixture struct {
 }
 
 func newRuntimeFixture(t *testing.T) *runtimeFixture {
+	return newRuntimeFixtureWithOptions(t)
+}
+
+func newRuntimeFixtureWithOptions(t *testing.T, options ...devicechannel.RuntimeOption) *runtimeFixture {
 	t.Helper()
 	ctx := context.Background()
 	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
@@ -77,7 +81,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := devicechannel.New(repo, auth)
+	runtime := devicechannel.New(repo, auth, options...)
 	fixture := &runtimeFixture{runtime: runtime, repo: repo, auth: auth, projectID: project.ID, token: credential.Token, session: session}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtime.ServeWebSocket(w, r, session, credential.Token)
@@ -131,6 +135,51 @@ func (f *runtimeFixture) connect(t *testing.T) *websocket.Conn {
 		t.Fatalf("ready=%+v", ready)
 	}
 	return ws
+}
+
+func TestSilentStageDeviceTimesOutAndPreservesLastSeen(t *testing.T) {
+	f := newRuntimeFixtureWithOptions(t, devicechannel.WithDeviceLivenessTimeout(75*time.Millisecond))
+	ctx := context.Background()
+	ws := f.connect(t)
+	defer ws.Close()
+
+	before, err := f.repo.GetDevice(ctx, testDeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Runtime == nil || before.Runtime.Connection != deviceexperience.ConnectionOnline {
+		t.Fatalf("initial runtime=%+v", before.Runtime)
+	}
+	lastSeen := before.Runtime.LastSeenAt
+
+	deadline := time.Now().Add(2 * time.Second)
+	for f.runtime.IsConnected(testDeviceID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.runtime.IsConnected(testDeviceID) {
+		t.Fatal("silent Stage Device remained connected past liveness timeout")
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for {
+		after, err := f.repo.GetDevice(ctx, testDeviceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.Runtime != nil && after.Runtime.Connection == deviceexperience.ConnectionOffline {
+			if after.Runtime.Readiness != deviceexperience.ReadinessWarning {
+				t.Fatalf("offline readiness=%s, want WARNING", after.Runtime.Readiness)
+			}
+			if !after.Runtime.LastSeenAt.Equal(lastSeen) {
+				t.Fatalf("last seen changed on disconnect: before=%s after=%s", lastSeen, after.Runtime.LastSeenAt)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runtime did not persist OFFLINE: %+v", after.Runtime)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func TestReconnectDoesNotReplayPendingOrDuplicateCommand(t *testing.T) {

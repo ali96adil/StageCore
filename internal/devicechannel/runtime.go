@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/companionauth"
@@ -18,14 +19,26 @@ import (
 )
 
 const (
-	runtimeSchemaVersion = 1
-	maxRuntimeMessage    = 64 << 10
-	revocationPoll       = 250 * time.Millisecond
+	runtimeSchemaVersion        = 1
+	maxRuntimeMessage           = 64 << 10
+	revocationPoll              = 250 * time.Millisecond
+	defaultDeviceLivenessTimeout = 30 * time.Second
 )
 
+type RuntimeOption func(*Runtime)
+
+func WithDeviceLivenessTimeout(timeout time.Duration) RuntimeOption {
+	return func(runtime *Runtime) {
+		if timeout > 0 {
+			runtime.livenessTimeout = timeout
+		}
+	}
+}
+
 type Runtime struct {
-	repository *deviceexperience.Repository
-	auth       *companionauth.Service
+	repository      *deviceexperience.Repository
+	auth            *companionauth.Service
+	livenessTimeout time.Duration
 
 	mu          sync.Mutex
 	connections map[string]*connection
@@ -34,12 +47,13 @@ type Runtime struct {
 }
 
 type connection struct {
-	owner    *Runtime
-	ws       *websocket.Conn
-	deviceID string
-	writeMu  sync.Mutex
-	once     sync.Once
-	closed   chan struct{}
+	owner        *Runtime
+	ws           *websocket.Conn
+	deviceID     string
+	writeMu      sync.Mutex
+	once         sync.Once
+	closed       chan struct{}
+	lastActivity atomic.Int64
 }
 
 type helloMessage struct {
@@ -91,13 +105,20 @@ type displayStateMessage struct {
 	State         deviceexperience.DisplayState `json:"state"`
 }
 
-func New(repository *deviceexperience.Repository, auth *companionauth.Service) *Runtime {
-	return &Runtime{
-		repository:  repository,
-		auth:        auth,
-		connections: make(map[string]*connection),
-		inflight:    make(map[string]*connection),
+func New(repository *deviceexperience.Repository, auth *companionauth.Service, options ...RuntimeOption) *Runtime {
+	runtime := &Runtime{
+		repository:      repository,
+		auth:            auth,
+		livenessTimeout: defaultDeviceLivenessTimeout,
+		connections:     make(map[string]*connection),
+		inflight:        make(map[string]*connection),
 	}
+	for _, option := range options {
+		if option != nil {
+			option(runtime)
+		}
+	}
+	return runtime
 }
 
 func (r *Runtime) Close() {
@@ -251,6 +272,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	})
 
 	current := &connection{owner: r, ws: ws, deviceID: device.ID, closed: make(chan struct{})}
+	current.markActivity()
 	if previous := r.register(current); previous != nil {
 		previous.close()
 	}
@@ -267,6 +289,10 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				return
 			case <-ticker.C:
 				if _, err := r.auth.ValidateEstablishedRuntimeSession(context.Background(), session.ID); err != nil {
+					current.close()
+					return
+				}
+				if r.livenessTimeout > 0 && current.silentFor(time.Now().UTC()) > r.livenessTimeout {
 					current.close()
 					return
 				}
@@ -301,6 +327,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		if err := websocket.JSON.Receive(ws, &message); err != nil {
 			return
 		}
+		current.markActivity()
 		if message.SchemaVersion != runtimeSchemaVersion || strings.TrimSpace(message.DeviceID) != device.ID {
 			return
 		}
@@ -407,11 +434,7 @@ func (r *Runtime) unregister(current *connection) {
 		r.failInterruptedCommand(ctx, commandID, current.deviceID)
 	}
 	if shouldObserveOffline {
-		_, _ = r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
-			DeviceID:   current.deviceID,
-			Connection: deviceexperience.ConnectionOffline,
-			Readiness:  deviceexperience.ReadinessWarning,
-		})
+		_ = r.repository.MarkDeviceOffline(ctx, current.deviceID)
 		_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
 			TargetKind:     "STAGE_DEVICE",
 			TargetID:       current.deviceID,
@@ -419,6 +442,24 @@ func (r *Runtime) unregister(current *connection) {
 			TransportState: "WEBSOCKET_DISCONNECTED",
 		})
 	}
+}
+
+func (c *connection) markActivity() {
+	if c == nil {
+		return
+	}
+	c.lastActivity.Store(time.Now().UTC().UnixNano())
+}
+
+func (c *connection) silentFor(now time.Time) time.Duration {
+	if c == nil {
+		return 0
+	}
+	last := c.lastActivity.Load()
+	if last == 0 {
+		return 0
+	}
+	return now.UTC().Sub(time.Unix(0, last).UTC())
 }
 
 func (r *Runtime) commandBoundTo(commandID string, current *connection) bool {

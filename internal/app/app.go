@@ -95,6 +95,10 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("open Stage Device repository: %w", err)
 	}
+	if err := deviceRepository.MarkAllDevicesOffline(ctx); err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("reset Stage Device runtime presence: %w", err)
+	}
 	if _, err := s.ReconcileInterruptedRuntimeForHub(ctx); err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("reconcile interrupted runtime: %w", err)
