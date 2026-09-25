@@ -258,7 +258,7 @@
     const nav = document.getElementById("workspaceNav");
     if (!nav || nav.querySelector('[data-tablet-scenes-nav="true"]')) return;
     const button = document.createElement("button");
-    button.type = "button"; button.className = "nav-button"; button.dataset.page = "tablet-scenes"; button.dataset.tabletScenesNav = "true"; button.textContent = tx("nav");
+    button.type = "button"; button.className = "nav-button"; button.dataset.page = "tablet-scenes"; button.dataset.phase4Nav = "true"; button.dataset.tabletScenesNav = "true"; button.textContent = tx("nav");
     button.addEventListener("click", () => renderTabletScenes().catch(showGlobalError));
     const controller = nav.querySelector('[data-tablet-controller-nav="true"]');
     if (controller?.nextSibling) nav.insertBefore(button, controller.nextSibling); else nav.appendChild(button);
