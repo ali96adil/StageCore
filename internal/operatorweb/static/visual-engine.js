@@ -273,6 +273,7 @@
     button.type = "button";
     button.className = "nav-button";
     button.dataset.page = "visual-engine";
+    button.dataset.phase4Nav = "true";
     button.dataset.visualEngineNav = "true";
     button.textContent = t("nav");
     button.addEventListener("click", () => renderVisualEngine().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));

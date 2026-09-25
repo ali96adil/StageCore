@@ -249,7 +249,7 @@
     const nav = document.getElementById("workspaceNav");
     if (!nav || nav.querySelector('[data-lighting-setup-nav="true"]')) return;
     const button = document.createElement("button");
-    button.type = "button"; button.className = "nav-button"; button.dataset.page = "lighting-setup"; button.dataset.lightingSetupNav = "true"; button.textContent = tx("nav");
+    button.type = "button"; button.className = "nav-button"; button.dataset.page = "lighting-setup"; button.dataset.phase4Nav = "true"; button.dataset.lightingSetupNav = "true"; button.textContent = tx("nav");
     button.addEventListener("click", () => renderLightingSetup().catch(showGlobalError));
     const cues = nav.querySelector('[data-lighting-cues-nav="true"]');
     if (cues) nav.insertBefore(button, cues); else nav.appendChild(button);
