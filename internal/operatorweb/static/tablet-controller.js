@@ -346,6 +346,7 @@
     button.type = "button";
     button.className = "nav-button";
     button.dataset.page = "tablet-controller";
+    button.dataset.phase4Nav = "true";
     button.dataset.tabletControllerNav = "true";
     button.textContent = t("nav");
     button.addEventListener("click", () => renderTabletController().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
