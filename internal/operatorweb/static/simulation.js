@@ -276,6 +276,7 @@
     button.className = "nav-button";
     button.type = "button";
     button.dataset.page = SIM_PAGE;
+    button.dataset.phase4Nav = "true";
     button.textContent = t("Simulation / المحاكاة", "Simulation / المحاكاة");
     button.addEventListener("click", async () => {
       if (!state.project) return;
