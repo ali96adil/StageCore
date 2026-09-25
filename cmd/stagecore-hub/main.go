@@ -27,6 +27,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
+	"github.com/ali96adil/StageCore/internal/sessionsafety"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
 	"github.com/ali96adil/StageCore/internal/showtemplate"
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
@@ -94,6 +95,11 @@ func main() {
 		application.Store,
 		application.Capabilities,
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
+		runtimecontrol.WithSessionStopSafety(sessionsafety.NewLightingBlackout(
+			application.Store,
+			application.DeviceExperience,
+			application.DeviceRuntime,
+		)),
 	)
 	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin)
 	if simulation == nil {
