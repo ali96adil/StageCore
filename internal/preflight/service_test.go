@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -16,6 +17,13 @@ import (
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func TestPreflightDefaultHeartbeatTimeoutAllowsHeartbeatJitter(t *testing.T) {
+	service := New(nil, nil, nil)
+	if got, want := service.heartbeatTimeout, 15*time.Second; got != want {
+		t.Fatalf("heartbeat timeout=%s, want %s", got, want)
+	}
+}
 
 func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 	ctx := context.Background()
