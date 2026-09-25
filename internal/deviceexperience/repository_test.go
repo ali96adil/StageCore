@@ -77,6 +77,44 @@ func TestDeviceIdentityRuntimeAndProtocol(t *testing.T) {
 	}
 }
 
+func TestMarkAllDevicesOfflinePreservesLastSeen(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	_, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "lighting-01", ProjectID: projectID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Lighting 01", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"lighting.blackout"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: "lighting-01", Connection: deviceexperience.ConnectionOnline, Readiness: deviceexperience.ReadinessReady,
+		ObservedState: json.RawMessage(`{"dmx_healthy":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastSeen := state.LastSeenAt
+
+	if err := repo.MarkAllDevicesOffline(ctx); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.GetDevice(ctx, "lighting-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Runtime == nil {
+		t.Fatal("runtime state missing after startup reset")
+	}
+	if loaded.Runtime.Connection != deviceexperience.ConnectionOffline || loaded.Runtime.Readiness != deviceexperience.ReadinessWarning {
+		t.Fatalf("runtime after reset=%+v", loaded.Runtime)
+	}
+	if !loaded.Runtime.LastSeenAt.Equal(lastSeen) {
+		t.Fatalf("startup reset changed Last Seen: before=%s after=%s", lastSeen, loaded.Runtime.LastSeenAt)
+	}
+}
+
 func TestCommandCapabilityExpiryIdempotencyAndCompletion(t *testing.T) {
 	ctx := context.Background()
 	repo, _, projectID := newRepository(t)
