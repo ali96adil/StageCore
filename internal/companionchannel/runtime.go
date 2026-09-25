@@ -319,6 +319,9 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			if err != nil {
 				return
 			}
+			if err := c.syncRequiredRuntimeIfNeeded(ctx, connection); err != nil {
+				return
+			}
 		case "execution.result":
 			c.acceptResult(connection, data)
 		case "inspection.result":
@@ -352,7 +355,35 @@ func (c *RuntimeChannel) acceptHello(ctx context.Context, connection *runtimeCon
 	if err != nil || role.RequiredRuntimeSnapshotID == nil || strings.TrimSpace(*role.RequiredRuntimeSnapshotID) == "" {
 		return nil
 	}
+	return c.sendSessionReady(ctx, connection, assignment, role)
 
+}
+
+func (c *RuntimeChannel) syncRequiredRuntimeIfNeeded(ctx context.Context, connection *runtimeConnection) error {
+	assignment, err := c.store.GetActiveRoleAssignmentForCompanion(ctx, connection.companionID)
+	if err != nil {
+		return nil
+	}
+	role, err := c.store.GetMachineRole(ctx, assignment.MachineRoleID)
+	if err != nil || role.RequiredRuntimeSnapshotID == nil || strings.TrimSpace(*role.RequiredRuntimeSnapshotID) == "" {
+		return nil
+	}
+	companionState, err := c.store.GetCompanion(ctx, connection.companionID)
+	if err != nil {
+		return err
+	}
+	requiredSnapshotID := strings.TrimSpace(*role.RequiredRuntimeSnapshotID)
+	appliedSnapshotID := ""
+	if companionState.AppliedRuntimeSnapshotID != nil {
+		appliedSnapshotID = strings.TrimSpace(*companionState.AppliedRuntimeSnapshotID)
+	}
+	if appliedSnapshotID == requiredSnapshotID && companionState.ConfigHash == role.RequiredConfigHash {
+		return nil
+	}
+	return c.sendSessionReady(ctx, connection, assignment, role)
+}
+
+func (c *RuntimeChannel) sendSessionReady(ctx context.Context, connection *runtimeConnection, assignment domain.RoleAssignment, role domain.MachineRole) error {
 	requiredMedia := make([]runtimeRequiredMedia, 0)
 	runtimeSnapshot, err := c.store.GetRuntimeSnapshot(ctx, *role.RequiredRuntimeSnapshotID)
 	if err != nil {

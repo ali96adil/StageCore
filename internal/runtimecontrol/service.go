@@ -27,6 +27,7 @@ const (
 )
 
 type ShowGate func(context.Context, string, string) (bool, string, error)
+type SessionStopSafety func(context.Context, domain.Session, contracts.CommandEnvelope) error
 
 type Option func(*Service)
 
@@ -34,11 +35,16 @@ func WithShowGate(gate ShowGate) Option {
 	return func(s *Service) { s.showGate = gate }
 }
 
+func WithSessionStopSafety(safety SessionStopSafety) Option {
+	return func(s *Service) { s.stopSafety = safety }
+}
+
 type Service struct {
 	store    *store.Store
 	engine   *cueengine.Engine
 	executor *stoppableExecutor
-	showGate ShowGate
+	showGate   ShowGate
+	stopSafety SessionStopSafety
 
 	mu     sync.Mutex
 	active map[string]activeRun
@@ -200,6 +206,14 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
+	if err := s.stopActiveCueForSession(ctx, session.ID); err != nil {
+		return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_CUE_UNCONFIRMED", err.Error(), session.ID))
+	}
+	if s.stopSafety != nil {
+		if err := s.stopSafety(ctx, session, command); err != nil {
+			return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_SAFETY_FAILED", err.Error(), session.ID))
+		}
+	}
 	if err := s.store.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {
 		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
 	}
@@ -306,6 +320,26 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	}
 }
 
+func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
+	s.mu.Lock()
+	run, ok := s.active[sessionID]
+	s.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	s.executor.stop(run.correlationID)
+	timer := time.NewTimer(defaultStopWait)
+	defer timer.Stop()
+	select {
+	case <-run.done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("active Cue did not terminate within the bounded stop wait")
+	case <-ctx.Done():
+		return fmt.Errorf("session stop was cancelled while waiting for the active Cue: %w", ctx.Err())
+	}
+}
+
 func (s *Service) rejectWhileActive(ctx context.Context, command contracts.CommandEnvelope, active activeRun) contracts.CommandResult {
 	if existing, terminal, ok := s.reserve(ctx, command); !ok {
 		return existing
@@ -368,6 +402,16 @@ func failed(commandID, code string) contracts.CommandResult {
 	return contracts.CommandResult{
 		CommandID: commandID, Status: contracts.CommandFailed,
 		Error: &contracts.ContractError{ErrorCode: code, Category: "INTERNAL", Message: "internal runtime control failure", Retryable: false},
+	}
+}
+
+func sessionStopSafetyFailure(commandID, code, message, entityID string) contracts.CommandResult {
+	return contracts.CommandResult{
+		CommandID: commandID, Status: contracts.CommandFailed,
+		Error: &contracts.ContractError{
+			ErrorCode: code, Category: "SAFETY", Message: message,
+			Retryable: true, AffectedEntityID: entityID,
+		},
 	}
 }
 

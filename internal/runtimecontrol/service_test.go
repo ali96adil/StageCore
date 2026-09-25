@@ -3,6 +3,7 @@ package runtimecontrol
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -223,5 +224,119 @@ func TestShowRemainsBlockedUntilPreflightGateIsInstalled(t *testing.T) {
 	}
 	if active != nil {
 		t.Fatalf("SHOW rejection created active Session: %+v", active)
+	}
+}
+
+func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, startResult := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000401",
+	})
+	if startResult.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", startResult)
+	}
+
+	h.service.stopSafety = func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
+		if got.ID != session.ID {
+			t.Fatalf("safety Session=%s want %s", got.ID, session.ID)
+		}
+		state, err := h.store.GetSession(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Status != domain.SessionActive {
+			t.Fatalf("safety ran after Session completion: %+v", state)
+		}
+		return fmt.Errorf("lighting blackout was not confirmed")
+	}
+	failedStop := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000402",
+	})
+	if failedStop.Status != contracts.CommandFailed || failedStop.Error == nil || failedStop.Error.ErrorCode != "SESSION_STOP_SAFETY_FAILED" || !failedStop.Error.Retryable {
+		t.Fatalf("failed stop=%+v", failedStop)
+	}
+	state, err := h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != domain.SessionActive || state.EndedAt != nil {
+		t.Fatalf("failed safety incorrectly completed Session: %+v", state)
+	}
+
+	h.service.stopSafety = func(context.Context, domain.Session, contracts.CommandEnvelope) error { return nil }
+	retry := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000403",
+	})
+	if retry.Status != contracts.CommandCompleted {
+		t.Fatalf("retry stop=%+v", retry)
+	}
+	state, err = h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != domain.SessionCompleted || state.EndedAt == nil {
+		t.Fatalf("retry did not complete Session: %+v", state)
+	}
+}
+
+func TestStopSessionCancelsActiveCueBeforeCompleting(t *testing.T) {
+	parameters := json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":5000}}`)
+	h := newRuntimeHarness(t, parameters)
+	ctx := context.Background()
+	session, startResult := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000501",
+	})
+	if startResult.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", startResult)
+	}
+
+	goResultCh := make(chan contracts.CommandResult, 1)
+	go func() {
+		goResultCh <- h.service.Go(context.Background(), CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000000502",
+		})
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		running, err := h.store.HasRunningCueExecution(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Cue did not enter RUNNING state before session stop")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	stop := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000503",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("session stop=%+v", stop)
+	}
+	select {
+	case goResult := <-goResultCh:
+		if goResult.Status != contracts.CommandCancelled {
+			t.Fatalf("GO after session stop status=%s want CANCELLED: %+v", goResult.Status, goResult)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("active Cue did not terminate after session stop")
+	}
+	state, err := h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != domain.SessionCompleted || state.EndedAt == nil {
+		t.Fatalf("session not completed after active Cue cancellation: %+v", state)
 	}
 }

@@ -58,6 +58,23 @@ func (s *Store) CreateRuntimeSnapshot(ctx context.Context, revisionID, createdBy
 		snapshotID, projectID, revisionID, version, nowUS, createdBy, contentHash, manifestJSON); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("insert runtime snapshot: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE machine_roles
+		SET required_runtime_snapshot_id = ?, updated_at_us = ?
+		WHERE project_id = ?`,
+		snapshotID, nowUS, projectID); err != nil {
+		return domain.RuntimeSnapshot{}, fmt.Errorf("advance machine role Runtime Snapshot requirements: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE role_assignments
+		SET state = 'SYNCING', last_evaluated_at_us = ?
+		WHERE state <> 'RELEASED'
+		  AND machine_role_id IN (
+			SELECT machine_role_id FROM machine_roles WHERE project_id = ?
+		  )`,
+		nowUS, projectID); err != nil {
+		return domain.RuntimeSnapshot{}, fmt.Errorf("mark machine role assignments syncing: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("commit runtime snapshot: %w", err)
 	}
