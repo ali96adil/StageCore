@@ -191,7 +191,7 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 	if connection == nil {
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_OFFLINE", "Companion is not connected", domain.ExecutionFailed))
 	}
-	if _, err := c.auth.ValidateRuntimeSession(ctx, connection.token); err != nil {
+	if _, err := c.auth.ValidateEstablishedRuntimeSession(ctx, connection.session.ID); err != nil {
 		connection.close()
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_SESSION_INVALID", "authenticated Companion session is no longer valid", domain.ExecutionFailed))
 	}
@@ -287,7 +287,7 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			case <-connection.closed:
 				return
 			case <-ticker.C:
-				if _, err := c.auth.ValidateRuntimeSession(context.Background(), token); err != nil {
+				if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), session.ID); err != nil {
 					connection.close()
 					return
 				}
@@ -413,7 +413,7 @@ func (c *RuntimeChannel) updateHello(ctx context.Context, connection *runtimeCon
 }
 
 func (c *RuntimeChannel) acceptResult(connection *runtimeConnection, data []byte) {
-	if _, err := c.auth.ValidateRuntimeSession(context.Background(), connection.token); err != nil {
+	if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), connection.session.ID); err != nil {
 		connection.close()
 		return
 	}
