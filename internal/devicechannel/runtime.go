@@ -28,9 +28,10 @@ type Runtime struct {
 	auth       *companionauth.Service
 
 	mu          sync.Mutex
-	connections map[string]*connection
-	inflight    map[string]*connection
-	closed      bool
+	connections   map[string]*connection
+	inflight      map[string]*connection
+	qualification map[string]*qualificationWaiter
+	closed         bool
 }
 
 type connection struct {
@@ -95,8 +96,9 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service) *
 	return &Runtime{
 		repository:  repository,
 		auth:        auth,
-		connections: make(map[string]*connection),
-		inflight:    make(map[string]*connection),
+		connections:   make(map[string]*connection),
+		inflight:      make(map[string]*connection),
+		qualification: make(map[string]*qualificationWaiter),
 	}
 }
 
@@ -308,6 +310,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		case "command.result":
 			if _, err := r.auth.ValidateRuntimeSession(ctx, token); err != nil {
 				return
+			}
+			if r.deliverQualificationResult(message, current) {
+				continue
 			}
 			if !r.commandBoundTo(message.CommandID, current) {
 				continue
