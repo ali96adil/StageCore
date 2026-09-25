@@ -282,3 +282,61 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 		t.Fatalf("retry did not complete Session: %+v", state)
 	}
 }
+
+func TestStopSessionCancelsActiveCueBeforeCompleting(t *testing.T) {
+	parameters := json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":5000}}`)
+	h := newRuntimeHarness(t, parameters)
+	ctx := context.Background()
+	session, startResult := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000501",
+	})
+	if startResult.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", startResult)
+	}
+
+	goResultCh := make(chan contracts.CommandResult, 1)
+	go func() {
+		goResultCh <- h.service.Go(context.Background(), CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000000502",
+		})
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		running, err := h.store.HasRunningCueExecution(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Cue did not enter RUNNING state before session stop")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	stop := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000503",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("session stop=%+v", stop)
+	}
+	select {
+	case goResult := <-goResultCh:
+		if goResult.Status != contracts.CommandCancelled {
+			t.Fatalf("GO after session stop status=%s want CANCELLED: %+v", goResult.Status, goResult)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("active Cue did not terminate after session stop")
+	}
+	state, err := h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != domain.SessionCompleted || state.EndedAt == nil {
+		t.Fatalf("session not completed after active Cue cancellation: %+v", state)
+	}
+}
