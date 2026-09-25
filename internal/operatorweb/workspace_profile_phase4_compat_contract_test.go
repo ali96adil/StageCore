@@ -29,4 +29,18 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 			t.Fatalf("workspace profile Phase 4 compatibility rule missing %q", marker)
 		}
 	}
+
+	for _, asset := range []string{
+		"static/tablet-controller.js",
+		"static/tablet-authoring.js",
+		"static/lighting-configuration.js",
+		"static/lighting-authoring.js",
+		"static/visual-engine.js",
+		"static/simulation.js",
+	} {
+		source := string(mustReadOperatorContractFile(t, asset))
+		if !strings.Contains(source, `button.dataset.phase4Nav = "true"`) {
+			t.Fatalf("%s must mark its injected workspace navigation as Phase 4 compatible", asset)
+		}
+	}
 }
