@@ -483,7 +483,7 @@
 
   function installNavigation() {
     const nav = document.getElementById("workspaceNav");
-    if (!nav || nav.querySelector('[data-phase4-nav="true"]')) return;
+    if (!nav || nav.querySelector('[data-phase4-core-nav="true"]')) return;
     const before = nav.querySelector('[data-page="cues"]');
     const items = [
       ["devices", t("devices")],
@@ -497,6 +497,7 @@
       button.className = "nav-button";
       button.dataset.page = page;
       button.dataset.phase4Nav = "true";
+      button.dataset.phase4CoreNav = "true";
       button.textContent = label;
       button.addEventListener("click", () => renderPhase4Page(page));
       nav.insertBefore(button, before);
@@ -567,7 +568,7 @@
     installNavigation();
     wrapConfiguration();
     document.getElementById("languageSelect")?.addEventListener("change", () => {
-      document.querySelectorAll('[data-phase4-nav="true"]').forEach((button) => button.remove());
+      document.querySelectorAll('[data-phase4-core-nav="true"]').forEach((button) => button.remove());
       installNavigation();
       if (["devices", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
     });
