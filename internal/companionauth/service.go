@@ -304,6 +304,28 @@ func (s *Service) ValidateRuntimeSession(ctx context.Context, token string) (dom
 	return session, nil
 }
 
+/*
+ValidateEstablishedRuntimeSession validates the server-side authority backing an
+already-authenticated runtime channel. Credential expiry is intentionally not
+checked here: the credential TTL gates new handshakes, while an established
+WebSocket remains authoritative until transport loss or explicit revocation.
+*/
+func (s *Service) ValidateEstablishedRuntimeSession(ctx context.Context, sessionID string) (domain.CompanionRuntimeSession, error) {
+	session, err := s.store.GetCompanionRuntimeSession(ctx, strings.TrimSpace(sessionID))
+	if err != nil || session.RevokedAt != nil {
+		return domain.CompanionRuntimeSession{}, &Error{Code: CodeSessionInvalid, Err: errors.New("established runtime session is invalid or revoked")}
+	}
+	companion, err := s.store.GetCompanion(ctx, session.CompanionID)
+	if err != nil || companion.TrustState != domain.CompanionTrusted {
+		return domain.CompanionRuntimeSession{}, &Error{Code: CodeRevoked, Err: errors.New("Companion trust is no longer valid")}
+	}
+	key, err := s.store.GetCompanionDeviceKey(ctx, companion.ID)
+	if err != nil || key.RevokedAt != nil {
+		return domain.CompanionRuntimeSession{}, &Error{Code: CodeRevoked, Err: errors.New("trusted Companion key is no longer valid")}
+	}
+	return session, nil
+}
+
 func (s *Service) Revoke(ctx context.Context, companionID, actor, reason string, authorized bool) error {
 	if !authorized || strings.TrimSpace(actor) == "" {
 		return &Error{Code: CodeApprovalUnauthorized, Err: errors.New("authorized operator revocation is required")}

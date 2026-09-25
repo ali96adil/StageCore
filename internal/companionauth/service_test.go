@@ -96,6 +96,46 @@ func TestPairApproveAuthenticateAndRevokeCompanion(t *testing.T) {
 	}
 }
 
+func TestEstablishedRuntimeSessionSurvivesCredentialExpiryUntilRevoked(t *testing.T) {
+	ctx := context.Background()
+	service, _, now := newFixture(t)
+	privateKey, publicKey := deviceKey(t)
+	companionID := "33333333-3333-4333-8333-333333333333"
+
+	receipt, err := service.RequestPairing(ctx, pairingInput(companionID, publicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApprovePairing(ctx, receipt.RequestID, receipt.PairingCode, companionauth.Approval{Actor: "owner", Authorized: true}); err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := service.BeginAuthentication(ctx, companionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := sign(t, privateKey, companionauth.AuthenticationMessage(companionID, challenge.ChallengeID, challenge.NonceBase64))
+	credential, err := service.CompleteAuthentication(ctx, companionID, challenge.ChallengeID, signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now.current = credential.ExpiresAt.Add(time.Second)
+	if _, err := service.ValidateRuntimeSession(ctx, credential.Token); companionauth.ErrorCode(err) != companionauth.CodeSessionInvalid {
+		t.Fatalf("expired credential unexpectedly valid: %v", err)
+	}
+	established, err := service.ValidateEstablishedRuntimeSession(ctx, credential.SessionID)
+	if err != nil || established.ID != credential.SessionID {
+		t.Fatalf("established session=%#v err=%v", established, err)
+	}
+
+	if err := service.Revoke(ctx, companionID, "owner", "qualification revocation", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ValidateEstablishedRuntimeSession(ctx, credential.SessionID); err == nil {
+		t.Fatal("revoked established runtime session remained valid")
+	}
+}
+
 func TestExpiredPairingRequestCannotBeApproved(t *testing.T) {
 	ctx := context.Background()
 	service, _, now := newFixture(t)

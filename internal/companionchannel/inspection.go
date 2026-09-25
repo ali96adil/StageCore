@@ -164,7 +164,7 @@ func (c *RuntimeChannel) Inspect(ctx context.Context, request InspectionRequest)
 	if connection == nil {
 		return c.finishInspection(key, failedInspection(request.InspectionID, normalized.AdapterKey, InspectionFailed, "COMPANION_OFFLINE", "Companion is not connected"))
 	}
-	if _, err := c.auth.ValidateRuntimeSession(ctx, connection.token); err != nil {
+	if _, err := c.auth.ValidateEstablishedRuntimeSession(ctx, connection.session.ID); err != nil {
 		connection.close()
 		return c.finishInspection(key, failedInspection(request.InspectionID, normalized.AdapterKey, InspectionFailed, "COMPANION_SESSION_INVALID", "authenticated Companion session is no longer valid"))
 	}
@@ -200,7 +200,7 @@ func (c *RuntimeChannel) Inspect(ctx context.Context, request InspectionRequest)
 }
 
 func (c *RuntimeChannel) acceptInspectionResult(connection *runtimeConnection, data []byte) {
-	if _, err := c.auth.ValidateRuntimeSession(context.Background(), connection.token); err != nil {
+	if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), connection.session.ID); err != nil {
 		connection.close()
 		return
 	}
