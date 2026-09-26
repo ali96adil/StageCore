@@ -314,6 +314,91 @@ func WithOperatorStageDevices(
 			})
 		}))
 
+		// EXPERIMENTAL / disabled by default. Activation is a second step after
+		// an attended BLOCKED transfer + current-generation software-zero ACK.
+		// It applies the exact Published Runtime Snapshot configuration while
+		// blackout remains asserted, then requires a fresh reconnect/scope ACK.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/lighting-activation", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION") != "1" {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_ACTIVATION_DISABLED"})
+				return
+			}
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ACTIVATION_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm           string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			const confirmation = "APPLY_PUBLISHED_CONFIG_AND_ACTIVATE_LIGHTING_SOFTWARE_ONLY"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ACTIVATION_CONFIRMATION_REQUIRED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteLightingActivationAuthorized(
+				r.Context(),
+				deviceexperience.LightingActivationInput{
+					DeviceID: deviceID,
+					ProjectID: projectID,
+					RuntimeSnapshotID: strings.TrimSpace(input.RuntimeSnapshotID),
+					ExpectedEpoch: input.ExpectedEpoch,
+				},
+				actor,
+				reauthorize,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "LIGHTING_ACTIVATION_NOT_COMMITTED",
+					"detail": err.Error(),
+					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_SOFTWARE_ZERO_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"activation": record,
+				"state": "ACTIVE",
+				"commands_enabled": false,
+				"reconnect_required": true,
+				"physical_blackout_verified": false,
+				"note": "SOFTWARE_ZERO_AND_CONFIG_HASH_VERIFIED_NOT_PHYSICAL_DMX_QUALIFICATION",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			device, err := devices.GetDevice(r.Context(), deviceID)
