@@ -47,9 +47,11 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	}
 	switch device.ProtocolVersion {
 	case ProtocolVersion1:
-		if device.ProjectID == "" || device.ProjectID != input.ProjectID ||
-			assignment.State != AssignmentLegacy || assignment.ProjectID != input.ProjectID {
-			return DeviceCommand{}, false, fmt.Errorf("%w: legacy command authority does not match Project", ErrInvalidState)
+		if device.ProjectID == "" || device.ProjectID != input.ProjectID {
+			return DeviceCommand{}, false, fmt.Errorf("%w: device is unassigned or belongs to another project", ErrInvalidDevice)
+		}
+		if assignment.State != AssignmentLegacy || assignment.ProjectID != input.ProjectID {
+			return DeviceCommand{}, false, fmt.Errorf("%w: legacy commands fenced by assignment state", ErrInvalidState)
 		}
 	case ProtocolVersion2:
 		if device.ProjectID != "" || device.Kind != DeviceTabletPlayer ||
