@@ -329,3 +329,61 @@ func (r *Repository) CommitTabletSafeAssignment(ctx context.Context, in Verified
 		NextState: nextState,
 	}, nil
 }
+
+
+// ObserveAuthorizedV2Tablet persists READY/health only after Runtime has
+// authenticated the exact current socket and matched its acknowledged Hub-owned
+// ACTIVE Project + Runtime Snapshot. Ordinary device.observation cannot call
+// this path by itself.
+func (r *Repository) ObserveAuthorizedV2Tablet(
+	ctx context.Context,
+	observation RuntimeObservation,
+	projectID string,
+	runtimeSnapshotID string,
+	assignmentEpoch int64,
+) (RuntimeState, error) {
+	observation.DeviceID = strings.TrimSpace(observation.DeviceID)
+	projectID = strings.TrimSpace(projectID)
+	runtimeSnapshotID = strings.TrimSpace(runtimeSnapshotID)
+	if observation.DeviceID == "" || projectID == "" || runtimeSnapshotID == "" ||
+		assignmentEpoch <= 0 || !validConnectionState(observation.Connection) ||
+		!validReadiness(observation.Readiness) {
+		return RuntimeState{}, ErrInvalidState
+	}
+	device, err := r.GetDevice(ctx, observation.DeviceID)
+	if err != nil {
+		return RuntimeState{}, err
+	}
+	if !device.Enabled || device.ProtocolVersion != ProtocolVersion2 ||
+		device.Kind != DeviceTabletPlayer || device.ProfileID != TabletPlayerProfileID ||
+		device.ProjectID != "" || device.Assignment == nil ||
+		device.Assignment.State != "ACTIVE" ||
+		device.Assignment.ProjectID != projectID ||
+		device.Assignment.RuntimeSnapshotID != runtimeSnapshotID ||
+		device.Assignment.Epoch != assignmentEpoch {
+		return RuntimeState{}, fmt.Errorf("%w: v2 tablet runtime scope is not authoritative", ErrInvalidState)
+	}
+	if observation.ObservedAt.IsZero() {
+		observation.ObservedAt = r.now().UTC()
+	} else {
+		observation.ObservedAt = observation.ObservedAt.UTC()
+	}
+	observed := normalizeJSON(observation.ObservedState, `{}`)
+	network := normalizeJSON(observation.NetworkState, `{}`)
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO stage_device_runtime_state
+		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET
+		connection_state=excluded.connection_state,
+		readiness=excluded.readiness,
+		last_seen_at_us=excluded.last_seen_at_us,
+		observed_state_json=excluded.observed_state_json,
+		network_state_json=excluded.network_state_json
+	`, observation.DeviceID, observation.Connection, observation.Readiness,
+		observation.ObservedAt.UnixMicro(), string(observed), string(network))
+	if err != nil {
+		return RuntimeState{}, fmt.Errorf("observe authorized v2 tablet: %w", err)
+	}
+	return r.getRuntimeState(ctx, observation.DeviceID)
+}
