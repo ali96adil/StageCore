@@ -56,10 +56,11 @@ func WithOperatorStageDevices(
 				return
 			}
 			type unassignedDevice struct {
-				DeviceID        string                       `json:"device_id"`
-				DisplayName     string                       `json:"display_name"`
-				DeviceKind      deviceexperience.DeviceKind  `json:"device_kind"`
-				AssignmentEpoch int64                        `json:"assignment_epoch"`
+				DeviceID        string                           `json:"device_id"`
+				DisplayName     string                           `json:"display_name"`
+				DeviceKind      deviceexperience.DeviceKind      `json:"device_kind"`
+				ProfileID       string                           `json:"profile_id,omitempty"`
+				AssignmentEpoch int64                            `json:"assignment_epoch"`
 				Connection      deviceexperience.ConnectionState `json:"connection_state,omitempty"`
 				Readiness       deviceexperience.Readiness       `json:"readiness,omitempty"`
 			}
@@ -78,7 +79,8 @@ func WithOperatorStageDevices(
 				}
 				view := unassignedDevice{
 					DeviceID: item.ID, DisplayName: item.DisplayName,
-					DeviceKind: item.Kind, AssignmentEpoch: assignment.Epoch,
+					DeviceKind: item.Kind, ProfileID: item.ProfileID,
+					AssignmentEpoch: assignment.Epoch,
 				}
 				if item.Runtime != nil {
 					view.Connection = item.Runtime.Connection
@@ -319,10 +321,6 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				return
 			}
-			if device.ProjectID == "" {
-				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
-				return
-			}
 			var input struct {
 				CommandType       string          `json:"command_type"`
 				SessionID         string          `json:"session_id"`
@@ -337,15 +335,35 @@ func WithOperatorStageDevices(
 			if !decodeBoundedJSON(w, r, &input) {
 				return
 			}
+			commandProjectID := device.ProjectID
+			commandSnapshotID := strings.TrimSpace(input.RuntimeSnapshotID)
+			if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
+				if device.Kind != deviceexperience.DeviceTabletPlayer ||
+					device.ProfileID != deviceexperience.TabletPlayerProfileID ||
+					device.Assignment == nil || device.Assignment.State != "ACTIVE" ||
+					device.Assignment.ProjectID == "" || device.Assignment.RuntimeSnapshotID == "" {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
+					return
+				}
+				commandProjectID = device.Assignment.ProjectID
+				if commandSnapshotID != "" && commandSnapshotID != device.Assignment.RuntimeSnapshotID {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SCOPE_MISMATCH"})
+					return
+				}
+				commandSnapshotID = device.Assignment.RuntimeSnapshotID
+			} else if commandProjectID == "" {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
+				return
+			}
 			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
-				ProjectID:         device.ProjectID,
+				ProjectID:         commandProjectID,
 				SessionID:         input.SessionID,
 				DeviceID:          device.ID,
 				CommandType:       input.CommandType,
 				Issuer:            session.User.ID,
 				CorrelationID:     input.CorrelationID,
 				CausationID:       input.CausationID,
-				RuntimeSnapshotID: input.RuntimeSnapshotID,
+				RuntimeSnapshotID: commandSnapshotID,
 				Priority:          input.Priority,
 				IdempotencyKey:    input.IdempotencyKey,
 				Payload:           input.Payload,
