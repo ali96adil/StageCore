@@ -35,20 +35,33 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if err != nil {
 		return DeviceCommand{}, false, err
 	}
-	// An unassigned device has no command authority for ANY project.
-	// A trusted Hub assignment must match the exact command project.
-	if !device.Enabled || device.ProjectID == "" || device.ProjectID != input.ProjectID {
-		return DeviceCommand{}, false, fmt.Errorf("%w: device is disabled, unassigned, or belongs to another project", ErrInvalidDevice)
+	// Command authority is always Hub-owned. Legacy v1 devices still use the
+	// legacy project row plus LEGACY sidecar. Project-independent v2 Tablet
+	// Players use only an ACTIVE sidecar with the exact Project + Snapshot.
+	if !device.Enabled {
+		return DeviceCommand{}, false, fmt.Errorf("%w: device is disabled", ErrInvalidDevice)
 	}
-	// A legacy client never acquires command authority through a v2 sidecar.
-	// Check BEFORE idempotency lookup: replaying an earlier accepted command
-	// must not bypass quarantine once the assignment changes state.
 	assignment, err := r.GetAssignmentRecord(ctx, input.DeviceID)
 	if err != nil {
 		return DeviceCommand{}, false, fmt.Errorf("%w: assignment metadata unavailable: %v", ErrInvalidState, err)
 	}
-	if assignment.State != AssignmentLegacy || assignment.ProjectID != input.ProjectID {
-		return DeviceCommand{}, false, fmt.Errorf("%w: legacy commands fenced by assignment state", ErrInvalidState)
+	switch device.ProtocolVersion {
+	case ProtocolVersion1:
+		if device.ProjectID == "" || device.ProjectID != input.ProjectID ||
+			assignment.State != AssignmentLegacy || assignment.ProjectID != input.ProjectID {
+			return DeviceCommand{}, false, fmt.Errorf("%w: legacy command authority does not match Project", ErrInvalidState)
+		}
+	case ProtocolVersion2:
+		if device.ProjectID != "" || device.Kind != DeviceTabletPlayer ||
+			device.ProfileID != TabletPlayerProfileID ||
+			assignment.State != "ACTIVE" ||
+			assignment.ProjectID != input.ProjectID ||
+			assignment.RuntimeSnapshotID == "" ||
+			assignment.RuntimeSnapshotID != input.RuntimeSnapshotID {
+			return DeviceCommand{}, false, fmt.Errorf("%w: v2 Tablet Player is not ACTIVE for this Project/Runtime Snapshot", ErrInvalidState)
+		}
+	default:
+		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported Stage Device protocol", ErrInvalidState)
 	}
 	if !contains(device.Capabilities, capability) {
 		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, capability)
