@@ -51,10 +51,24 @@ func (r *Repository) PreflightTransfer(ctx context.Context, input TransferPrefli
 	if err != nil {
 		return TransferPreflight{}, err
 	}
-	if record.ProjectID != input.ExpectedProjectID || record.Epoch != input.ExpectedEpoch ||
-		(record.State != "UNASSIGNED" && record.State != "BLOCKED") ||
-		record.RuntimeSnapshotID != "" {
+	validState := (record.State == "UNASSIGNED" && record.ProjectID == "" && record.RuntimeSnapshotID == "") ||
+		(record.State == "BLOCKED" && record.ProjectID != "" && record.RuntimeSnapshotID == "") ||
+		(record.State == "ACTIVE" && record.ProjectID != "" && record.RuntimeSnapshotID != "")
+	if record.ProjectID != input.ExpectedProjectID || record.Epoch != input.ExpectedEpoch || !validState {
 		return TransferPreflight{}, fmt.Errorf("%w: stale or unsupported assignment", ErrInvalidState)
+	}
+	if record.State == "ACTIVE" {
+		var audited int
+		if err := r.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM stage_device_lighting_activation_audit
+			WHERE device_id=? AND project_id=? AND runtime_snapshot_id=?
+			      AND assignment_epoch=?
+		`, input.DeviceID, record.ProjectID, record.RuntimeSnapshotID, record.Epoch).Scan(&audited); err != nil {
+			return TransferPreflight{}, fmt.Errorf("verify active lighting activation audit: %w", err)
+		}
+		if audited != 1 {
+			return TransferPreflight{}, fmt.Errorf("%w: ACTIVE lighting scope has no canonical activation audit", ErrInvalidState)
+		}
 	}
 	// v2 bootstrap does not alter a legacy stage_devices project row.
 	// Keep this preflight restricted to freshly unassigned v2 identities;

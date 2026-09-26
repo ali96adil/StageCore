@@ -91,8 +91,31 @@ func TestVerifiedTransferCASPersistsBlockedEpochAndAuditWithoutAuthorizingComman
 	if _, err := repo.CommitVerifiedBlackoutTransfer(ctx, tampered); !errors.Is(err, deviceexperience.ErrInvalidState) {
 		t.Fatalf("stale first epoch was accepted: %v", err)
 	}
-	// The same node is reusable in another Project without any NVS/project
-	// bootstrap change. Commit remains BLOCKED pending actual node epoch ACK.
+	// Activate the first Project scope as if the separately verified
+	// configuration handshake completed. Transfer must still be possible
+	// without changing Wi-Fi/provisioning or storing a Project ID on the node.
+	const activeSnapshot = "snapshot-active-transfer"
+	if _, err := handle.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET assignment_state='ACTIVE', runtime_snapshot_id=?
+		WHERE device_id=? AND assignment_epoch=2
+	`, activeSnapshot, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, `
+		INSERT INTO stage_device_lighting_activation_audit
+		(activation_id, device_id, actor_id, project_id, runtime_snapshot_id,
+		 assignment_epoch, connection_generation, challenge_sha256,
+		 configuration_sha256, committed_at_us)
+		VALUES ('00000000-0000-0000-0000-000000000002', ?, 'owner', ?, ?,
+		        2, 7, ?, ?, 1)
+	`, deviceID, targetID, activeSnapshot,
+		strings.Repeat("11", 32), strings.Repeat("22", 32)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same ACTIVE node is reusable in another Project without any NVS/project
+	// bootstrap change. Commit returns to BLOCKED pending the new Project epoch ACK.
 	toSecond := input
 	toSecond.FromProjectID = targetID
 	toSecond.ToProjectID = second.ID

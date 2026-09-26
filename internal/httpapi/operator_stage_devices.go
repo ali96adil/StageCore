@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -49,6 +50,59 @@ func WithOperatorStageDevices(
 		// Device provisioning inventory is not scoped to any Project yet.
 		// Only an operator authorized for pairing may discover unassigned v2
 		// identities. This endpoint grants NO Assign/Transfer authority.
+		// Global v2 physical-device inventory. This is intentionally not scoped
+		// to the opened Project: an operator with pairing authority can see the
+		// reusable device identity, its Hub-owned assignment, and the current
+		// authenticated runtime scope. Read-only; it grants no transfer or
+		// command authority.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/inventory", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			items, err := devices.ListDevices(r.Context(), "")
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
+				return
+			}
+			type inventoryDevice struct {
+				DeviceID      string                           `json:"device_id"`
+				DisplayName   string                           `json:"display_name"`
+				DeviceKind    deviceexperience.DeviceKind      `json:"device_kind"`
+				ProfileID     string                           `json:"profile_id,omitempty"`
+				ClientVersion string                           `json:"client_version,omitempty"`
+				Capabilities  []string                         `json:"capabilities,omitempty"`
+				Assignment    deviceexperience.AssignmentRecord `json:"assignment"`
+				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
+				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
+				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
+			}
+			out := make([]inventoryDevice, 0)
+			for _, item := range items {
+				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+					continue
+				}
+				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+					return
+				}
+				view := inventoryDevice{
+					DeviceID: item.ID, DisplayName: item.DisplayName,
+					DeviceKind: item.Kind, ProfileID: item.ProfileID,
+					ClientVersion: item.ClientVersion,
+					Capabilities: append([]string(nil), item.Capabilities...),
+					Assignment: assignment,
+				}
+				if item.Runtime != nil {
+					view.Connection = item.Runtime.Connection
+					view.Readiness = item.Runtime.Readiness
+				}
+				if scope, ok := runtime.CurrentV2Scope(item.ID); ok {
+					copy := scope
+					view.LiveScope = &copy
+				}
+				out = append(out, view)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+		}))
+
 		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
@@ -149,7 +203,8 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_STATUS_UNAVAILABLE"})
 				return
 			}
-			generation, online := runtime.CurrentV2Generation(deviceID)
+			scope, online := runtime.CurrentV2Scope(deviceID)
+			generation := scope.Generation
 			reported := false
 			var ack *deviceexperience.BlockedEpochAck
 			if assignment.State == "BLOCKED" {
@@ -162,6 +217,11 @@ func WithOperatorStageDevices(
 					return
 				}
 			}
+			liveActive := assignment.State == "ACTIVE" && online &&
+				scope.ProjectID == assignment.ProjectID &&
+				scope.RuntimeSnapshotID == assignment.RuntimeSnapshotID &&
+				scope.AssignmentEpoch == assignment.Epoch &&
+				scope.CommandsEnabled
 			status := "NOT_ELIGIBLE_FOR_V2_TRANSFER"
 			switch assignment.State {
 			case "UNASSIGNED":
@@ -171,15 +231,26 @@ func WithOperatorStageDevices(
 				if reported {
 					status = "CURRENT_SOFTWARE_ZERO_REPORTED_BLOCKED"
 				}
+			case "ACTIVE":
+				status = "ACTIVE_AWAITING_CURRENT_SCOPE_ACK"
+				if liveActive {
+					status = "ACTIVE_CURRENT_SCOPE_READY"
+				}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"assignment": assignment,
 				"epoch_ack": ack,
 				"connection_online": online,
 				"software_zero_report_current_connection": reported,
+				"live_scope": func() any {
+					if !online {
+						return nil
+					}
+					return scope
+				}(),
 				"status": status,
-				"commands_enabled": false,
-				"snapshot_active": false,
+				"commands_enabled": liveActive,
+				"snapshot_active": assignment.State == "ACTIVE" && assignment.RuntimeSnapshotID != "",
 				"physical_blackout_verified": false,
 				"note": "DEVICE_REPORT_ONLY_NO_INDEPENDENT_PHYSICAL_DMX_PROOF",
 			})
@@ -314,6 +385,91 @@ func WithOperatorStageDevices(
 			})
 		}))
 
+		// EXPERIMENTAL / disabled by default. Activation is a second step after
+		// an attended BLOCKED transfer + current-generation software-zero ACK.
+		// It applies the exact Published Runtime Snapshot configuration while
+		// blackout remains asserted, then requires a fresh reconnect/scope ACK.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/lighting-activation", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION") != "1" {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_ACTIVATION_DISABLED"})
+				return
+			}
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ACTIVATION_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm           string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			const confirmation = "APPLY_PUBLISHED_CONFIG_AND_ACTIVATE_LIGHTING_SOFTWARE_ONLY"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ACTIVATION_CONFIRMATION_REQUIRED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteLightingActivationAuthorized(
+				r.Context(),
+				deviceexperience.LightingActivationInput{
+					DeviceID: deviceID,
+					ProjectID: projectID,
+					RuntimeSnapshotID: strings.TrimSpace(input.RuntimeSnapshotID),
+					ExpectedEpoch: input.ExpectedEpoch,
+				},
+				actor,
+				reauthorize,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "LIGHTING_ACTIVATION_NOT_COMMITTED",
+					"detail": err.Error(),
+					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_SOFTWARE_ZERO_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"activation": record,
+				"state": "ACTIVE",
+				"commands_enabled": false,
+				"reconnect_required": true,
+				"physical_blackout_verified": false,
+				"note": "SOFTWARE_ZERO_AND_CONFIG_HASH_VERIFIED_NOT_PHYSICAL_DMX_QUALIFICATION",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			device, err := devices.GetDevice(r.Context(), deviceID)
@@ -338,8 +494,10 @@ func WithOperatorStageDevices(
 			commandProjectID := device.ProjectID
 			commandSnapshotID := strings.TrimSpace(input.RuntimeSnapshotID)
 			if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
-				if device.Kind != deviceexperience.DeviceTabletPlayer ||
-					device.ProfileID != deviceexperience.TabletPlayerProfileID ||
+				profileAuthorized := (device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID) ||
+					device.ProfileID == lightingnode.ProfileID
+				if !profileAuthorized ||
 					device.Assignment == nil || device.Assignment.State != "ACTIVE" ||
 					device.Assignment.ProjectID == "" || device.Assignment.RuntimeSnapshotID == "" {
 					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})

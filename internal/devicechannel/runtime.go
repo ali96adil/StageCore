@@ -49,8 +49,9 @@ type Runtime struct {
 	pendingBlackouts        map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
 	latestV2SoftwareLevels  map[string]V2SoftwareLevels
-	pendingTabletAssignments map[string]*pendingTabletAssignment
-	assignmentTransitions    map[string]bool
+	pendingTabletAssignments   map[string]*pendingTabletAssignment
+	pendingLightingActivations map[string]*pendingLightingActivation
+	assignmentTransitions      map[string]bool
 	autoProbeV2              bool
 	nextGeneration           int64
 	closed                   bool
@@ -101,6 +102,8 @@ type inboundMessage struct {
 	ProjectID              string                     `json:"project_id,omitempty"`
 	RuntimeSnapshotID      string                     `json:"runtime_snapshot_id,omitempty"`
 	AssignmentID           string                     `json:"assignment_id,omitempty"`
+	ActivationID           string                     `json:"activation_id,omitempty"`
+	ConfigurationHash      string                     `json:"configuration_hash,omitempty"`
 	CommandID              string                     `json:"command_id,omitempty"`
 	TransferID             string                     `json:"transfer_id,omitempty"`
 	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
@@ -144,8 +147,9 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		pendingBlackouts:          make(map[string]*pendingBlackout),
 		pendingV2LightingProbes:   make(map[string]*pendingV2LightingProbe),
 		latestV2SoftwareLevels:    make(map[string]V2SoftwareLevels),
-		pendingTabletAssignments:  make(map[string]*pendingTabletAssignment),
-		assignmentTransitions:     make(map[string]bool),
+		pendingTabletAssignments:   make(map[string]*pendingTabletAssignment),
+		pendingLightingActivations: make(map[string]*pendingLightingActivation),
+		assignmentTransitions:      make(map[string]bool),
 		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 	for _, option := range options {
@@ -190,6 +194,44 @@ func (r *Runtime) IsConnected(deviceID string) bool {
 // CurrentV2Generation identifies the currently registered authenticated v2
 // socket. The Hub issues a new generation for each successful reconnect.
 // This is not a physical blackout proof, project transfer or readiness grant.
+type V2RuntimeScope struct {
+	Generation        int64    `json:"connection_generation"`
+	ProjectID         string   `json:"project_id,omitempty"`
+	RuntimeSnapshotID string   `json:"runtime_snapshot_id,omitempty"`
+	AssignmentEpoch   int64    `json:"assignment_epoch,omitempty"`
+	CommandsEnabled   bool     `json:"commands_enabled"`
+	Capabilities      []string `json:"capabilities,omitempty"`
+}
+
+func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
+	if r == nil {
+		return V2RuntimeScope{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return V2RuntimeScope{}, false
+	}
+	current := r.connections[strings.TrimSpace(deviceID)]
+	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 {
+		return V2RuntimeScope{}, false
+	}
+	select {
+	case <-current.closed:
+		return V2RuntimeScope{}, false
+	default:
+	}
+	return V2RuntimeScope{
+		Generation: current.generation,
+		ProjectID: current.activeProjectID,
+		RuntimeSnapshotID: current.activeRuntimeSnapshotID,
+		AssignmentEpoch: current.activeAssignmentEpoch,
+		CommandsEnabled: current.commandsEnabled,
+		Capabilities: append([]string(nil), current.advertisedCapabilities...),
+	}, true
+}
+
 func (r *Runtime) CurrentV2Generation(deviceID string) (int64, bool) {
 	if r == nil {
 		return 0, false
@@ -240,6 +282,7 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	if r == nil || r.repository == nil {
 		return deviceexperience.DeviceCommand{}, fmt.Errorf("stage device runtime unavailable")
 	}
+	requiredCapability := deviceexperience.RequiredCapability(strings.TrimSpace(input.CommandType))
 	command, duplicate, err := r.repository.CreateCommand(ctx, input)
 	if err != nil {
 		return deviceexperience.DeviceCommand{}, err
@@ -254,14 +297,17 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	transition := r.assignmentTransitions[command.DeviceID]
 	schemaVersion := runtimeSchemaVersion
 	scopeReady := true
+	capabilityReady := true
 	if current != nil && current.protocolVersion == deviceexperience.ProtocolVersion2 {
 		schemaVersion = 2
 		scopeReady = current.commandsEnabled &&
 			current.activeProjectID == command.Envelope.ProjectID &&
 			current.activeRuntimeSnapshotID == command.Envelope.RuntimeSnapshotID &&
 			current.activeAssignmentEpoch > 0
+		capabilityReady = requiredCapability == "" ||
+			containsCapability(current.advertisedCapabilities, requiredCapability)
 	}
-	if !closed && current != nil && !transition && scopeReady {
+	if !closed && current != nil && !transition && scopeReady && capabilityReady {
 		r.inflight[command.Envelope.CommandID] = current
 	}
 	r.mu.Unlock()
@@ -273,6 +319,9 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	}
 	if !scopeReady {
 		return r.failCommand(ctx, command, "DEVICE_SCOPE_NOT_READY", "Stage Device has not acknowledged the active Project/Runtime Snapshot")
+	}
+	if !capabilityReady {
+		return r.failCommand(ctx, command, "DEVICE_CAPABILITY_MISSING", "Current authenticated Stage Device socket did not advertise the required capability")
 	}
 	message := executeMessage{
 		Type:          "command.execute",
@@ -422,9 +471,10 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		case "BLOCKED":
 			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID == ""
 		case "ACTIVE":
-			valid = device.Kind == deviceexperience.DeviceTabletPlayer &&
-				device.ProfileID == deviceexperience.TabletPlayerProfileID &&
-				assignment.ProjectID != "" && assignment.RuntimeSnapshotID != ""
+			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID != "" &&
+				((device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID) ||
+					device.ProfileID == "stagecore.esp32-dmx-lighting-node")
 		}
 		if !valid {
 			return
@@ -451,6 +501,15 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			response["runtime_snapshot_id"] = assignment.RuntimeSnapshotID
 			response["scope_ack_required"] = true
 			response["safe_media_required"] = false
+			if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
+				scope, err := r.repository.ResolveLightingScope(
+					ctx, device.ID, assignment.ProjectID, assignment.RuntimeSnapshotID)
+				if err != nil {
+					return
+				}
+				response["configuration_hash"] = scope.ConfigurationHash
+				response["blackout_required"] = true
+			}
 		}
 		if err := current.send(response); err != nil {
 			return
@@ -497,6 +556,26 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "lighting.assignment.activate_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverLightingActivationAck(current, message) {
+				return
+			}
+		case "lighting.assignment.scope_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.activateLightingScope(ctx, current, message) {
+				return
+			}
 		case "tablet.assignment.safe_ack":
 			if !isV2 {
 				return
@@ -673,8 +752,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 					}
 					continue
 				}
-				if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
-					return
+				if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
+					if _, err := r.repository.ObserveAuthorizedV2Lighting(ctx, observation, projectID, snapshotID, epoch); err != nil {
+						return
+					}
+				} else {
+					if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
+						return
+					}
 				}
 				_, _ = r.repository.RecordNetworkObservation(ctx, network)
 			} else if same, err := r.observeCurrentDevice(ctx, current, observation, network); err != nil || !same {
