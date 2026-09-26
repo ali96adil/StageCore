@@ -35,8 +35,20 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if err != nil {
 		return DeviceCommand{}, false, err
 	}
-	if !device.Enabled || (device.ProjectID != "" && device.ProjectID != input.ProjectID) {
-		return DeviceCommand{}, false, fmt.Errorf("%w: device is disabled or belongs to another project", ErrInvalidDevice)
+	// An unassigned device has no command authority for ANY project.
+	// A trusted Hub assignment must match the exact command project.
+	if !device.Enabled || device.ProjectID == "" || device.ProjectID != input.ProjectID {
+		return DeviceCommand{}, false, fmt.Errorf("%w: device is disabled, unassigned, or belongs to another project", ErrInvalidDevice)
+	}
+	// A legacy client never acquires command authority through a v2 sidecar.
+	// Check BEFORE idempotency lookup: replaying an earlier accepted command
+	// must not bypass quarantine once the assignment changes state.
+	assignment, err := r.GetAssignmentRecord(ctx, input.DeviceID)
+	if err != nil {
+		return DeviceCommand{}, false, fmt.Errorf("%w: assignment metadata unavailable: %v", ErrInvalidState, err)
+	}
+	if assignment.State != AssignmentLegacy || assignment.ProjectID != input.ProjectID {
+		return DeviceCommand{}, false, fmt.Errorf("%w: legacy commands fenced by assignment state", ErrInvalidState)
 	}
 	if !contains(device.Capabilities, capability) {
 		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, capability)

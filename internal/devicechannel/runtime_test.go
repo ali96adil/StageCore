@@ -20,6 +20,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
@@ -30,6 +31,7 @@ const testDeviceID = "44444444-4444-4444-8444-444444444444"
 type runtimeFixture struct {
 	runtime   *devicechannel.Runtime
 	repo      *deviceexperience.Repository
+	dbHandle  *db.Handle
 	auth      *companionauth.Service
 	projectID string
 	token     string
@@ -82,7 +84,7 @@ func newRuntimeFixtureWithOptions(t *testing.T, options ...devicechannel.Runtime
 		t.Fatal(err)
 	}
 	runtime := devicechannel.New(repo, auth, options...)
-	fixture := &runtimeFixture{runtime: runtime, repo: repo, auth: auth, projectID: project.ID, token: credential.Token, session: session}
+	fixture := &runtimeFixture{runtime: runtime, repo: repo, dbHandle: handle, auth: auth, projectID: project.ID, token: credential.Token, session: session}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		runtime.ServeWebSocket(w, r, session, credential.Token)
 	}))
@@ -359,4 +361,225 @@ func testSign(t *testing.T, privateKey *ecdsa.PrivateKey, message []byte) string
 		t.Fatal(err)
 	}
 	return base64.StdEncoding.EncodeToString(signature)
+}
+
+func TestAuthenticatedReconnectCannotStealProjectOrDropExistingRuntime(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	legitimate := f.connect(t)
+	defer legitimate.Close()
+
+	// The session token is valid, but reconnect metadata is not an
+	// authorization to change the existing Hub-owned project.
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	for _, claimedProject := range []string{"", "another-project"} {
+		t.Run("claim-"+claimedProject, func(t *testing.T) {
+			impostor, err := websocket.Dial(url, "", f.server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer impostor.Close()
+			if err := websocket.JSON.Send(impostor, map[string]any{
+				"type": "device.hello", "schema_version": 1,
+				"device_id": testDeviceID, "project_id": claimedProject,
+				"device_kind": deviceexperience.DeviceTabletPlayer,
+				"display_name": "unapproved transfer",
+				"protocol_version": deviceexperience.ProtocolVersion1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_ = impostor.SetReadDeadline(time.Now().Add(2 * time.Second))
+			var unexpected map[string]any
+			if err := websocket.JSON.Receive(impostor, &unexpected); err == nil {
+				t.Fatalf("invalid hello received runtime authority: %+v", unexpected)
+			}
+			loaded, err := f.repo.GetDevice(ctx, testDeviceID)
+			if err != nil || loaded.ProjectID != f.projectID || loaded.DisplayName != "Tablet 01" {
+				t.Fatalf("unauthorized hello changed registry: %+v err=%v", loaded, err)
+			}
+			if !f.runtime.IsConnected(testDeviceID) {
+				t.Fatal("rejected reconnect displaced the legitimate connection")
+			}
+		})
+	}
+}
+
+func TestAuthenticatedV2HelloRegistersOnlyUnassignedWithoutRuntimeReady(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	connect := func(t *testing.T, projectID string, protocol string) (*websocket.Conn, map[string]any, error) {
+		t.Helper()
+		ws, err := websocket.Dial(url, "", f.server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hello := map[string]any{
+			"type": "device.hello", "schema_version": 1, "device_id": testDeviceID,
+			"project_id": projectID, "device_kind": deviceexperience.DeviceTabletPlayer,
+			"display_name": "V2 Tablet", "platform": "android", "client_version": "v2-dev",
+			"protocol_version": protocol, "capabilities": []string{"tablet.media.play"},
+			"readiness": deviceexperience.ReadinessReady,
+		}
+		if err := websocket.JSON.Send(ws, hello); err != nil {
+			ws.Close()
+			t.Fatal(err)
+		}
+		_ = ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var response map[string]any
+		err = websocket.JSON.Receive(ws, &response)
+		_ = ws.SetReadDeadline(time.Time{})
+		return ws, response, err
+	}
+	ws, response, err := connect(t, "", deviceexperience.ProtocolVersion2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if response["type"] != "assignment.state" || response["state"] != "UNASSIGNED" ||
+		response["assignment_epoch"] != float64(1) || response["blackout_required"] != true ||
+		response["commands_enabled"] != false {
+		t.Fatalf("v2 bootstrap must be unassigned and blackout-only: %+v", response)
+	}
+	firstGeneration, ok := f.runtime.CurrentV2Generation(testDeviceID)
+	if !ok || firstGeneration < 1 {
+		t.Fatalf("authenticated first v2 generation=%d ok=%v", firstGeneration, ok)
+	}
+	device, err := f.repo.GetDevice(ctx, testDeviceID)
+	if err != nil || device.ProjectID != "" || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
+		device.Runtime == nil || device.Runtime.Readiness != deviceexperience.ReadinessBlocker {
+		t.Fatalf("v2 bootstrap gained authority or READY: %+v err=%v", device, err)
+	}
+	assignment, err := f.repo.GetAssignmentRecord(ctx, testDeviceID)
+	if err != nil || assignment.State != "UNASSIGNED" || assignment.ProjectID != "" || assignment.Epoch != 1 {
+		t.Fatalf("unassigned v2 sidecar=%+v err=%v", assignment, err)
+	}
+	if _, _, err := f.repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID,
+		CommandType: "TABLET_PLAY", Issuer: "operator:test",
+	}); err == nil {
+		t.Fatal("unassigned device accepted a project command")
+	}
+
+	for _, tc := range []struct{ name, project, protocol string }{
+		{"client claimed project", f.projectID, deviceexperience.ProtocolVersion2},
+		{"legacy hijack", f.projectID, deviceexperience.ProtocolVersion1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			impostor, response, err := connect(t, tc.project, tc.protocol)
+			defer impostor.Close()
+			if err == nil {
+				t.Fatalf("self-asserted project received runtime authority: %+v", response)
+			}
+			if !f.runtime.IsConnected(testDeviceID) {
+				t.Fatal("rejected hello displaced legitimate v2 connection")
+			}
+			current, err := f.repo.GetAssignmentRecord(ctx, testDeviceID)
+			if err != nil || current.State != "UNASSIGNED" || current.ProjectID != "" {
+				t.Fatalf("rejected hello changed v2 authority: %+v err=%v", current, err)
+			}
+		})
+	}
+
+	// v2 diagnostics can report READY, but no authenticated handshake has
+	// configured the new Project or confirmed the real output, so stay BLOCKER.
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "device.observation", "schema_version": 2, "device_id": testDeviceID,
+		"readiness": deviceexperience.ReadinessReady,
+		"observed_state": json.RawMessage(`{"marker":"unassigned-v2"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		device, err = f.repo.GetDevice(ctx, testDeviceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if device.Runtime != nil && strings.Contains(string(device.Runtime.ObservedState), "unassigned-v2") {
+			if device.Runtime.Readiness != deviceexperience.ReadinessBlocker {
+				t.Fatalf("v2 observation claimed READY: %+v", device.Runtime)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("v2 diagnostic observation not recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	second, repeat, err := connect(t, "", deviceexperience.ProtocolVersion2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if repeat["type"] != "assignment.state" || repeat["state"] != "UNASSIGNED" ||
+		repeat["assignment_epoch"] != float64(1) {
+		t.Fatalf("v2 reconnect changed Hub authority: %+v", repeat)
+	}
+	secondGeneration, ok := f.runtime.CurrentV2Generation(testDeviceID)
+	if !ok || secondGeneration <= firstGeneration {
+		t.Fatalf("v2 reconnect reused stale socket generation first=%d second=%d ok=%v",
+			firstGeneration, secondGeneration, ok)
+	}
+}
+
+func TestAuthenticatedV2BlockedReconnectReadsHubAssignmentWithoutRuntimeReady(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	if _, err := f.repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: testDeviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Reusable Lighting", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: lightingnode.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const challenge = "7777777777777777777777777777777777777777777777777777777777777777"
+	commit, err := f.repo.CommitVerifiedBlackoutTransfer(ctx, deviceexperience.VerifiedTransferInput{
+		DeviceID: testDeviceID, ToProjectID: f.projectID, ExpectedEpoch: 1,
+		ConnectionGeneration: 1, Challenge: challenge,
+		AckDeviceID: testDeviceID, AckEpoch: 1, AckGeneration: 1,
+		AckChallenge: challenge, AckBlackout: true,
+		AckChannelLevels: make([]uint8, lightingnode.MaxChannels),
+		ActorID: "test-owner", IdempotencyKey: "blocked-reconnect-test",
+	})
+	if err != nil || commit.NextState != "BLOCKED" || commit.ToEpoch != 2 {
+		t.Fatalf("setup blocked assignment: %+v err=%v", commit, err)
+	}
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	ws, err := websocket.Dial(url, "", f.server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := websocket.JSON.Send(ws, map[string]any{
+		"type": "device.hello", "schema_version": 1, "device_id": testDeviceID,
+		"device_kind": deviceexperience.DeviceGeneric, "display_name": "Reusable Lighting",
+		"protocol_version": deviceexperience.ProtocolVersion2,
+		"profile_id": lightingnode.ProfileID, "capabilities": lightingnode.CapabilityKeys(),
+		"readiness": deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var reply map[string]any
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply["type"] != "assignment.state" || reply["schema_version"] != float64(2) ||
+		reply["state"] != "BLOCKED" || reply["project_id"] != f.projectID ||
+		reply["assignment_epoch"] != float64(2) || reply["blackout_required"] != true ||
+		reply["commands_enabled"] != false || reply["epoch_ack_required"] != true {
+		t.Fatalf("reconnect incorrectly activated node or omitted Hub assignment: %+v", reply)
+	}
+	device, err := f.repo.GetDevice(ctx, testDeviceID)
+	if err != nil || device.ProjectID != "" || device.Runtime == nil ||
+		device.Runtime.Readiness != deviceexperience.ReadinessBlocker {
+		t.Fatalf("client READY or v1 Project authority bypassed v2 blocked state: %+v err=%v", device, err)
+	}
+	if _, _, err := f.repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID,
+		CommandType: lightingnode.CommandBlackout, Issuer: "operator",
+	}); err == nil {
+		t.Fatal("blocked v2 node executed ordinary command after reconnect")
+	}
 }

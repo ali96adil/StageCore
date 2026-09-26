@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,9 +21,9 @@ import (
 )
 
 const (
-	runtimeSchemaVersion        = 1
-	maxRuntimeMessage           = 64 << 10
-	revocationPoll              = 250 * time.Millisecond
+	runtimeSchemaVersion         = 1
+	maxRuntimeMessage            = 64 << 10
+	revocationPoll               = 250 * time.Millisecond
 	defaultDeviceLivenessTimeout = 30 * time.Second
 )
 
@@ -40,20 +42,30 @@ type Runtime struct {
 	auth            *companionauth.Service
 	livenessTimeout time.Duration
 
-	mu          sync.Mutex
-	connections map[string]*connection
-	inflight    map[string]*connection
-	closed      bool
+	transferMu     sync.Mutex
+	mu             sync.Mutex
+	connections    map[string]*connection
+	inflight       map[string]*connection
+	pendingBlackouts map[string]*pendingBlackout
+	pendingV2LightingProbes map[string]*pendingV2LightingProbe
+	latestV2SoftwareLevels map[string]V2SoftwareLevels
+	autoProbeV2 bool
+	nextGeneration int64
+	closed         bool
 }
 
 type connection struct {
-	owner        *Runtime
-	ws           *websocket.Conn
-	deviceID     string
-	writeMu      sync.Mutex
-	once         sync.Once
-	closed       chan struct{}
-	lastActivity atomic.Int64
+	owner           *Runtime
+	ws              *websocket.Conn
+	deviceID        string
+	protocolVersion string
+	sessionToken    string
+	advertisedCapabilities []string
+	generation      int64
+	writeMu         sync.Mutex
+	once            sync.Once
+	closed          chan struct{}
+	lastActivity    atomic.Int64
 }
 
 type helloMessage struct {
@@ -80,7 +92,15 @@ type inboundMessage struct {
 	Type          string                     `json:"type"`
 	SchemaVersion int                        `json:"schema_version"`
 	DeviceID      string                     `json:"device_id"`
+	ProjectID     string                     `json:"project_id,omitempty"`
 	CommandID     string                     `json:"command_id,omitempty"`
+	TransferID string `json:"transfer_id,omitempty"`
+	AssignmentEpoch int64 `json:"assignment_epoch,omitempty"`
+	ConnectionGeneration int64 `json:"connection_generation,omitempty"`
+	Challenge string `json:"challenge,omitempty"`
+	Blackout bool `json:"blackout,omitempty"`
+	LevelsKnown bool `json:"levels_known,omitempty"`
+	ChannelLevels []int `json:"channel_levels,omitempty"`
 	Status        contracts.CommandStatus    `json:"status,omitempty"`
 	Payload       json.RawMessage            `json:"payload,omitempty"`
 	Error         *contracts.ContractError   `json:"error,omitempty"`
@@ -107,11 +127,15 @@ type displayStateMessage struct {
 
 func New(repository *deviceexperience.Repository, auth *companionauth.Service, options ...RuntimeOption) *Runtime {
 	runtime := &Runtime{
-		repository:      repository,
-		auth:            auth,
-		livenessTimeout: defaultDeviceLivenessTimeout,
-		connections:     make(map[string]*connection),
-		inflight:        make(map[string]*connection),
+		repository:               repository,
+		auth:                     auth,
+		livenessTimeout:          defaultDeviceLivenessTimeout,
+		connections:              make(map[string]*connection),
+		inflight:                 make(map[string]*connection),
+		pendingBlackouts:         make(map[string]*pendingBlackout),
+		pendingV2LightingProbes:  make(map[string]*pendingV2LightingProbe),
+		latestV2SoftwareLevels:   make(map[string]V2SoftwareLevels),
+		autoProbeV2:              os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 	for _, option := range options {
 		if option != nil {
@@ -136,6 +160,7 @@ func (r *Runtime) Close() {
 		connections = append(connections, current)
 	}
 	r.connections = make(map[string]*connection)
+	r.latestV2SoftwareLevels = make(map[string]V2SoftwareLevels)
 	r.mu.Unlock()
 	for _, current := range connections {
 		current.close()
@@ -149,6 +174,31 @@ func (r *Runtime) IsConnected(deviceID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return !r.closed && r.connections[strings.TrimSpace(deviceID)] != nil
+}
+
+// CurrentV2Generation identifies the currently registered authenticated v2
+// socket. The Hub issues a new generation for each successful reconnect.
+// This is not a physical blackout proof, project transfer or readiness grant.
+func (r *Runtime) CurrentV2Generation(deviceID string) (int64, bool) {
+	if r == nil {
+		return 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return 0, false
+	}
+	current := r.connections[strings.TrimSpace(deviceID)]
+	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 {
+		return 0, false
+	}
+	select {
+	case <-current.closed:
+		return 0, false
+	default:
+		return current.generation, true
+	}
 }
 
 func (r *Runtime) ServeWebSocket(w http.ResponseWriter, request *http.Request, session domain.CompanionRuntimeSession, token string) {
@@ -229,7 +279,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if hello.ProtocolVersion == "" {
 		hello.ProtocolVersion = deviceexperience.ProtocolVersion1
 	}
-	device, err := r.repository.UpsertDevice(ctx, deviceexperience.Device{
+	isV2Unassigned := hello.ProtocolVersion == deviceexperience.ProtocolVersion2
+	// In a v2 hello the client NEVER chooses a Project. A project-bearing
+	// v2 hello is a protocol violation even when the credential is valid.
+	if isV2Unassigned && strings.TrimSpace(hello.ProjectID) != "" {
+		_ = ws.Close()
+		return
+	}
+	deviceInput := deviceexperience.Device{
 		ID:              hello.DeviceID,
 		ProjectID:       strings.TrimSpace(hello.ProjectID),
 		ProfileID:       strings.TrimSpace(hello.ProfileID),
@@ -243,40 +300,53 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		GroupName:       hello.GroupName,
 		LocationName:    hello.LocationName,
 		Enabled:         true,
-	})
+	}
+	var device deviceexperience.Device
+	var err error
+	if isV2Unassigned {
+		device, err = r.repository.RegisterUnassignedV2(ctx, deviceInput)
+	} else {
+		device, err = r.repository.UpsertDevice(ctx, deviceInput)
+	}
 	if err != nil {
 		_ = ws.Close()
 		return
+	}
+	// A v2 socket is NOT online until its generation has been durably
+	// allocated and it has become the current connection. This ordering
+	// prevents an exhausted/unavailable counter from creating a ghost
+	// ONLINE device record that could mislead Operator commissioning.
+	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
+	current.markActivity()
+	previous, err := r.register(ctx, current)
+	if err != nil {
+		current.close()
+		return
+	}
+	defer r.unregister(current)
+	if previous != nil {
+		previous.close()
 	}
 	readiness := hello.Readiness
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
 	}
-	if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+	if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 		DeviceID:      device.ID,
 		Connection:    deviceexperience.ConnectionOnline,
 		Readiness:     readiness,
 		ObservedState: hello.ObservedState,
 		NetworkState:  hello.NetworkState,
-	}); err != nil {
-		_ = ws.Close()
-		return
-	}
-	_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+	}, deviceexperience.NetworkObservation{
 		TargetKind:     "STAGE_DEVICE",
 		TargetID:       device.ID,
 		Reachability:   deviceexperience.Reachable,
 		TransportState: "WEBSOCKET_CONNECTED",
 		Address:        remoteAddress,
 		Details:        json.RawMessage(`{"authenticated":true}`),
-	})
-
-	current := &connection{owner: r, ws: ws, deviceID: device.ID, closed: make(chan struct{})}
-	current.markActivity()
-	if previous := r.register(current); previous != nil {
-		previous.close()
+	}); err != nil || !same {
+		return
 	}
-	defer r.unregister(current)
 
 	monitorDone := make(chan struct{})
 	go func() {
@@ -299,26 +369,68 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			}
 		}
 	}()
-	defer func() { <-monitorDone }()
+	// Close the socket BEFORE waiting for the revocation monitor. The
+	// monitor exits when current.closed is signaled; waiting first would
+	// deadlock whenever an invalid inbound frame causes an early return.
+	defer func() {
+		current.close()
+		<-monitorDone
+	}()
 
-	if err := current.send(map[string]any{
-		"type":             "runtime.ready",
-		"schema_version":   runtimeSchemaVersion,
-		"device_id":        device.ID,
-		"protocol_version": deviceexperience.ProtocolVersion1,
-	}); err != nil {
-		return
-	}
-	if state, ok, err := r.repository.SafeDisplayStateForReconnect(ctx, device.ID); err != nil {
-		return
-	} else if ok {
-		if err := current.send(displayStateMessage{
-			Type:          "display.state",
-			SchemaVersion: runtimeSchemaVersion,
-			DeviceID:      device.ID,
-			State:         state,
+	if isV2Unassigned {
+		assignment, err := r.repository.GetAssignmentRecord(ctx, device.ID)
+		if err != nil ||
+			(assignment.State != "UNASSIGNED" && assignment.State != "BLOCKED") ||
+			(assignment.State == "UNASSIGNED" && assignment.ProjectID != "") ||
+			(assignment.State == "BLOCKED" && assignment.ProjectID == "") {
+			return
+		}
+		// This authenticated inventory response is NOT runtime.ready and
+		// NOT a physical-blackout proof, activation or command authority.
+		response := map[string]any{
+			"type":             "assignment.state",
+			"schema_version":   2,
+			"device_id":        device.ID,
+			"assignment_epoch": assignment.Epoch,
+			"connection_generation": current.generation,
+			"state":            assignment.State,
+			"blackout_required": true,
+			"commands_enabled":  false,
+		}
+		if assignment.State == "BLOCKED" {
+			response["project_id"] = assignment.ProjectID
+			response["epoch_ack_required"] = true
+		}
+		if err := current.send(response); err != nil {
+			return
+		}
+		// UNASSIGNED has no epoch receipt. A negotiated probe is diagnostic
+		// only; never treat its result as READY or an output instruction.
+		if assignment.State == "UNASSIGNED" &&
+			containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+			containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
+			r.probeV2AfterReconnect(current)
+		}
+	} else {
+		if err := current.send(map[string]any{
+			"type":             "runtime.ready",
+			"schema_version":   runtimeSchemaVersion,
+			"device_id":        device.ID,
+			"protocol_version": deviceexperience.ProtocolVersion1,
 		}); err != nil {
 			return
+		}
+		if state, ok, err := r.repository.SafeDisplayStateForReconnect(ctx, device.ID); err != nil {
+			return
+		} else if ok {
+			if err := current.send(displayStateMessage{
+				Type:          "display.state",
+				SchemaVersion: runtimeSchemaVersion,
+				DeviceID:      device.ID,
+				State:         state,
+			}); err != nil {
+				return
+			}
 		}
 	}
 
@@ -328,11 +440,96 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		current.markActivity()
-		if message.SchemaVersion != runtimeSchemaVersion || strings.TrimSpace(message.DeviceID) != device.ID {
+		expectedSchema := runtimeSchemaVersion
+		if isV2Unassigned {
+			expectedSchema = 2
+		}
+		if message.SchemaVersion != expectedSchema || strings.TrimSpace(message.DeviceID) != device.ID {
 			return
 		}
 		switch message.Type {
+		case "lighting.state_report":
+			// Opt-in read-only diagnostic; it cannot activate v2, change
+			// assignment, satisfy the published Snapshot or claim READY.
+			if !isV2Unassigned {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverV2LightingReport(current, message) {
+				return
+			}
+		case "assignment.epoch_ack":
+			// A separate reconnect after a committed software-blackout
+			// transfer proves only that this exact authenticated v2 socket
+			// reports the new BLOCKED epoch with all logical channels 0.
+			// No project commands, snapshot or ACTIVE state are granted.
+			if !isV2Unassigned ||
+				message.AssignmentEpoch <= 1 ||
+				message.ConnectionGeneration != current.generation {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			r.mu.Lock()
+			same := !r.closed && r.connections[device.ID] == current
+			if same {
+				select {
+				case <-current.closed:
+					same = false
+				default:
+				}
+			}
+			if !same {
+				r.mu.Unlock()
+				return
+			}
+			ack, err := r.repository.RecordBlockedEpochAck(ctx,
+				device.ID, message.ProjectID, message.AssignmentEpoch,
+				current.generation, message.Blackout, message.ChannelLevels)
+			r.mu.Unlock()
+			if err != nil {
+				return
+			}
+			// Receipt is informational: it explicitly carries no authority
+			// to switch on lights, replay a snapshot or execute cues.
+			if err := current.send(map[string]any{
+				"type": "assignment.epoch_ack_receipt",
+				"schema_version": 2,
+				"device_id": device.ID,
+				"project_id": ack.ProjectID,
+				"assignment_epoch": ack.AssignmentEpoch,
+				"connection_generation": ack.ConnectionGeneration,
+				"state": "BLOCKED",
+				"commands_enabled": false,
+				"persisted": true,
+			}); err != nil {
+				return
+			}
+			// BLOCKED nodes may answer diagnostics only after their committed
+			// epoch has been persistently acknowledged; never before the receipt.
+			if containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
+				containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
+				r.probeV2AfterReconnect(current)
+			}
+		case "assignment.blackout_ack":
+			if !isV2Unassigned {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverBlackoutAck(current, message) {
+				return
+			}
 		case "command.result":
+			// An unassigned v2 node can never report completion of a
+			// project command on this connection.
+			if isV2Unassigned {
+				return
+			}
 			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
 				return
 			}
@@ -373,16 +570,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if readiness == "" {
 				readiness = deviceexperience.ReadinessUnknown
 			}
-			if _, err := r.repository.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+			if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 				DeviceID:      device.ID,
 				Connection:    deviceexperience.ConnectionOnline,
 				Readiness:     readiness,
 				ObservedState: message.ObservedState,
 				NetworkState:  message.NetworkState,
-			}); err != nil {
-				return
-			}
-			_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+			}, deviceexperience.NetworkObservation{
 				TargetKind:     "STAGE_DEVICE",
 				TargetID:       device.ID,
 				Reachability:   deviceexperience.Reachable,
@@ -390,34 +584,68 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				LatencyMS:      message.LatencyMS,
 				JitterMS:       message.JitterMS,
 				Address:        remoteAddress,
-			})
+			}); err != nil || !same {
+				return
+			}
 		default:
 			return
 		}
 	}
 }
 
-func (r *Runtime) register(current *connection) *connection {
+func (r *Runtime) register(ctx context.Context, current *connection) (*connection, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
-		return current
+		return nil, fmt.Errorf("stage device runtime closed")
+	}
+	if current.protocolVersion == deviceexperience.ProtocolVersion2 {
+		// This MUST be persisted before the socket becomes current or an
+		// epoch ACK may collide with a generation from an earlier Hub
+		// process. Allocation is atomic across overlapping Hub instances.
+		generation, err := r.repository.AllocateV2ConnectionGeneration(ctx)
+		if err != nil {
+			return nil, err // fail closed; never issue an in-memory fallback
+		}
+		current.generation = generation
+	} else {
+		// v1 command socket bindings are process-local; do not alter its
+		// legacy transport/command behavior or require a v2 SQL write.
+		if r.nextGeneration == math.MaxInt64 {
+			return nil, fmt.Errorf("legacy Stage Device generation exhausted")
+		}
+		r.nextGeneration++
+		current.generation = r.nextGeneration
 	}
 	previous := r.connections[current.deviceID]
+	delete(r.latestV2SoftwareLevels, current.deviceID)
 	r.connections[current.deviceID] = current
-	return previous
+	return previous, nil
 }
 
 func (r *Runtime) unregister(current *connection) {
 	if current == nil {
 		return
 	}
-	shouldObserveOffline := false
 	pending := make([]string, 0)
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		delete(r.connections, current.deviceID)
-		shouldObserveOffline = !r.closed
+		delete(r.latestV2SoftwareLevels, current.deviceID)
+		// Do not release r.mu before persisting OFFLINE: a replacement
+		// connection could otherwise register and persist ONLINE first,
+		// only to have this old socket incorrectly overwrite it OFFLINE.
+		if !r.closed {
+			offlineCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = r.repository.MarkDeviceOffline(offlineCtx, current.deviceID)
+			_, _ = r.repository.RecordNetworkObservation(offlineCtx, deviceexperience.NetworkObservation{
+				TargetKind:     "STAGE_DEVICE",
+				TargetID:       current.deviceID,
+				Reachability:   deviceexperience.Unreachable,
+				TransportState: "WEBSOCKET_DISCONNECTED",
+			})
+			cancel()
+		}
 	}
 	for commandID, bound := range r.inflight {
 		if bound == current {
@@ -433,16 +661,8 @@ func (r *Runtime) unregister(current *connection) {
 	for _, commandID := range pending {
 		r.failInterruptedCommand(ctx, commandID, current.deviceID)
 	}
-	if shouldObserveOffline {
-		_ = r.repository.MarkDeviceOffline(ctx, current.deviceID)
-		_, _ = r.repository.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
-			TargetKind:     "STAGE_DEVICE",
-			TargetID:       current.deviceID,
-			Reachability:   deviceexperience.Unreachable,
-			TransportState: "WEBSOCKET_DISCONNECTED",
-		})
-	}
 }
+
 
 func (c *connection) markActivity() {
 	if c == nil {
