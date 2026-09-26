@@ -153,24 +153,40 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 
 	// Recheck every mutable preflight condition INSIDE the same transaction;
 	// PRAGMA txlock=immediate is configured on the product SQLite connection.
-	var state, sidecarProject, deviceProtocol, deviceProfile, deviceProject string
+	var state, sidecarProject, sidecarSnapshot, deviceProtocol, deviceProfile, deviceProject string
 	var epoch int64
 	var enabled int
 	err = tx.QueryRowContext(ctx, `
 		SELECT a.assignment_state, COALESCE(a.project_id, ''),
-		       a.assignment_epoch, d.protocol_version, COALESCE(d.profile_id, ''),
-		       COALESCE(d.project_id, ''), d.enabled
+		       a.runtime_snapshot_id, a.assignment_epoch, d.protocol_version,
+		       COALESCE(d.profile_id, ''), COALESCE(d.project_id, ''), d.enabled
 		FROM stage_device_assignments a JOIN stage_devices d ON d.device_id=a.device_id
 		WHERE a.device_id=?
-	`, in.DeviceID).Scan(&state, &sidecarProject, &epoch, &deviceProtocol,
-		&deviceProfile, &deviceProject, &enabled)
+	`, in.DeviceID).Scan(&state, &sidecarProject, &sidecarSnapshot, &epoch,
+		&deviceProtocol, &deviceProfile, &deviceProject, &enabled)
 	if err != nil {
 		return TransferCommitRecord{}, fmt.Errorf("read authoritative transfer state: %w", err)
 	}
-	if sidecarProject != in.FromProjectID || epoch != in.ExpectedEpoch ||
-		(state != "UNASSIGNED" && state != "BLOCKED") || deviceProtocol != ProtocolVersion2 ||
-		deviceProfile != lightingnode.ProfileID || deviceProject != "" || enabled != 1 {
+	validState := (state == "UNASSIGNED" && sidecarProject == "" && sidecarSnapshot == "") ||
+		(state == "BLOCKED" && sidecarProject != "" && sidecarSnapshot == "") ||
+		(state == "ACTIVE" && sidecarProject != "" && sidecarSnapshot != "")
+	if sidecarProject != in.FromProjectID || epoch != in.ExpectedEpoch || !validState ||
+		deviceProtocol != ProtocolVersion2 || deviceProfile != lightingnode.ProfileID ||
+		deviceProject != "" || enabled != 1 {
 		return TransferCommitRecord{}, fmt.Errorf("%w: assignment changed or device is not eligible", ErrInvalidState)
+	}
+	if state == "ACTIVE" {
+		var audited int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM stage_device_lighting_activation_audit
+			WHERE device_id=? AND project_id=? AND runtime_snapshot_id=?
+			      AND assignment_epoch=?
+		`, in.DeviceID, sidecarProject, sidecarSnapshot, epoch).Scan(&audited); err != nil {
+			return TransferCommitRecord{}, fmt.Errorf("recheck active lighting activation audit: %w", err)
+		}
+		if audited != 1 {
+			return TransferCommitRecord{}, fmt.Errorf("%w: ACTIVE lighting scope has no canonical activation audit", ErrInvalidState)
+		}
 	}
 	for _, projectID := range []string{in.FromProjectID, in.ToProjectID} {
 		if projectID == "" {
@@ -213,9 +229,9 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 		SET project_id=NULLIF(?, ''), assignment_epoch=?, assignment_state=?,
 		    runtime_snapshot_id='', updated_at_us=?
 		WHERE device_id=? AND project_id IS NULLIF(?, '')
-		      AND assignment_epoch=? AND assignment_state=?
+		      AND runtime_snapshot_id=? AND assignment_epoch=? AND assignment_state=?
 	`, in.ToProjectID, in.ExpectedEpoch+1, nextState, nowUS, in.DeviceID,
-		in.FromProjectID, in.ExpectedEpoch, state)
+		in.FromProjectID, sidecarSnapshot, in.ExpectedEpoch, state)
 	if err != nil {
 		return TransferCommitRecord{}, fmt.Errorf("CAS v2 assignment: %w", err)
 	}
