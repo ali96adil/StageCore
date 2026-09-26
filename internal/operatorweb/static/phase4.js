@@ -19,6 +19,11 @@
       noDevices: "No paired Stage Devices are registered for this project yet.",
       v2UnassignedTitle: "Paired v2 devices awaiting Project assignment",
       v2UnassignedEmpty: "No unassigned v2 devices.",
+      v2InventoryTitle: "Reusable v2 Stage Device inventory",
+      v2InventoryEmpty: "No other reusable v2 Stage Devices are known to this Hub.",
+      v2AssignedProject: "Assigned Project",
+      v2AssignedSnapshot: "Runtime Snapshot",
+      v2ReusableNote: "This physical device is Hub-owned and reusable across Projects; assignment state controls which Project currently has authority.",
       v2BlockedStatus: "Hub assignment status",
       v2HardwareUnverified: "Software-only status. Physical DMX and fixtures are NOT verified. Project commands remain disabled.",
       v2CurrentSoftwareZero: "Device reported zero on the current authenticated connection",
@@ -117,6 +122,11 @@
       noDevices: "ماكو أجهزة Stage Device مقترنة بهذا المشروع حالياً.",
       v2UnassignedTitle: "أجهزة v2 المقترنة بانتظار اختيار المشروع",
       v2UnassignedEmpty: "ماكو أجهزة v2 غير مخصّصة.",
+      v2InventoryTitle: "أجهزة v2 العامة القابلة لإعادة الاستخدام",
+      v2InventoryEmpty: "ماكو أجهزة v2 أخرى معروفة للـHub.",
+      v2AssignedProject: "المشروع المخصّص",
+      v2AssignedSnapshot: "Runtime Snapshot",
+      v2ReusableNote: "هذا جهاز فعلي تابع للـHub وقابل لإعادة الاستخدام بين المشاريع؛ حالة التخصيص هي اللي تحدد أي مشروع عنده السلطة حالياً.",
       v2BlockedStatus: "حالة التخصيص في الـHub",
       v2HardwareUnverified: "هاي حالة برمجية فقط؛ الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن. أوامر المشروع معطّلة.",
       v2CurrentSoftwareZero: "الجهاز بلّغ عن صفر على الاتصال الموثّق الحالي",
@@ -408,44 +418,55 @@
         }
       }));
     }
-    let unassigned = [];
+    let globalInventory = [];
     let runtimeStatus = null;
     if (canPair) {
       const [inventoryResult, runtimeResult] = await Promise.allSettled([
-        api("/api/v1/stage-devices/unassigned"),
+        api("/api/v1/stage-devices/inventory"),
         api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`),
       ]);
       if (inventoryResult.status === "fulfilled") {
-        unassigned = inventoryResult.value.devices || [];
+        globalInventory = inventoryResult.value.devices || [];
       }
       if (runtimeResult.status === "fulfilled") {
         runtimeStatus = runtimeResult.value;
       }
     }
+    const inventory = globalInventory.filter((device) =>
+      (device.assignment?.project_id || "") !== projectID
+    );
     const assignmentSnapshotID = runtimeStatus?.runtime_snapshot?.runtime_snapshot_id || "";
     const assignmentLocked = runtimeStatus?.mode === "SHOW";
     // Never paint stale Project inventory after either additional async fetch.
     if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
-    const unassignedCard = (device) => {
+    const inventoryCard = (device) => {
+      const assignment = device.assignment || {};
+      const assignmentState = assignment.assignment_state || "UNKNOWN";
+      const assignedProject = assignment.project_id || "";
+      const assignedSnapshot = assignment.runtime_snapshot_id || "";
       const tablet = device.device_kind === "TABLET_PLAYER" &&
         device.profile_id === "stagecore.tablet-player";
-      const canAssignTablet = tablet && device.connection_state === "ONLINE" &&
-        assignmentSnapshotID && !assignmentLocked;
+      const unassigned = assignmentState === "UNASSIGNED" && !assignedProject;
+      const canAssignTablet = tablet && unassigned &&
+        device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
       return `
         <article class="phase4-card">
           <div class="phase4-card-head">
             <div><p class="eyebrow">stagecore.device/2</p><h3>${esc(device.display_name || device.device_id)}</h3></div>
-            <div class="phase4-status-row">${pulse("UNASSIGNED")} ${pulse(device.connection_state || "OFFLINE")}</div>
+            <div class="phase4-status-row">${pulse(assignmentState)} ${pulse(device.connection_state || "OFFLINE")}</div>
           </div>
           <dl class="phase4-kv">
             <div><dt>ID</dt><dd class="mono">${esc(device.device_id)}</dd></div>
-            <div><dt>Epoch</dt><dd>${esc(device.assignment_epoch)}</dd></div>
+            <div><dt>Epoch</dt><dd>${esc(assignment.assignment_epoch || "—")}</dd></div>
+            <div><dt>${esc(t("v2AssignedProject"))}</dt><dd class="mono">${esc(assignedProject || "—")}</dd></div>
+            ${assignedSnapshot ? `<div><dt>${esc(t("v2AssignedSnapshot"))}</dt><dd class="mono">${esc(assignedSnapshot)}</dd></div>` : ""}
           </dl>
-          ${tablet ? `
+          <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
+          ${tablet && unassigned ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
               <button class="button primary" data-assign-tablet="${esc(device.device_id)}"
-                data-assignment-epoch="${esc(device.assignment_epoch)}"
+                data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
                 type="button" ${canAssignTablet ? "" : "disabled"}>
                 ${esc(t("v2AssignTablet"))}
               </button>
@@ -457,11 +478,11 @@
       ${devices.length
         ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id])).join("")}</div>`
         : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
-      ${canPair ? `<section aria-label="${esc(t("v2UnassignedTitle"))}">
-        <h2>${esc(t("v2UnassignedTitle"))}</h2>
-        ${unassigned.length
-          ? `<div class="phase4-grid">${unassigned.map(unassignedCard).join("")}</div>`
-          : `<div class="phase4-empty">${esc(t("v2UnassignedEmpty"))}</div>`}
+      ${canPair ? `<section aria-label="${esc(t("v2InventoryTitle"))}">
+        <h2>${esc(t("v2InventoryTitle"))}</h2>
+        ${inventory.length
+          ? `<div class="phase4-grid">${inventory.map(inventoryCard).join("")}</div>`
+          : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
 
     body.querySelectorAll("[data-assign-tablet]").forEach((button) => {
