@@ -240,3 +240,44 @@ func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
 		t.Fatalf("tablet inventory=%+v", got)
 	}
 }
+
+
+func TestNormalizeTabletLivePayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantKey string
+		wantVal string
+		wantErr bool
+	}{
+		{name: "media key", raw: `{"media_key":"live.camera.01"}`, wantKey: "media_key", wantVal: "live.camera.01"},
+		{name: "http url", raw: `{"url":"http://192.168.3.130:9081/api/v0/stream"}`, wantKey: "url", wantVal: "http://192.168.3.130:9081/api/v0/stream"},
+		{name: "https url", raw: `{"url":"https://relay.example.test/live.mjpeg"}`, wantKey: "url", wantVal: "https://relay.example.test/live.mjpeg"},
+		{name: "both", raw: `{"media_key":"camera","url":"http://relay/live"}`, wantErr: true},
+		{name: "missing", raw: `{}`, wantErr: true},
+		{name: "credentials", raw: `{"url":"http://user:pass@relay/live"}`, wantErr: true},
+		{name: "wrong scheme", raw: `{"url":"file:///tmp/live.mjpeg"}`, wantErr: true},
+		{name: "unknown field", raw: `{"url":"http://relay/live","token":"secret"}`, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeTabletCommandPayload(deviceexperience.CommandTabletLiveShow, json.RawMessage(tc.raw))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object map[string]string
+			if err := json.Unmarshal(got, &object); err != nil {
+				t.Fatal(err)
+			}
+			if len(object) != 1 || object[tc.wantKey] != tc.wantVal {
+				t.Fatalf("normalized payload=%v", object)
+			}
+		})
+	}
+}
