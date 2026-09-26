@@ -257,3 +257,138 @@ func TestDisplaySourceAndCockpitState(t *testing.T) {
 		t.Fatalf("pruned count=%d", count)
 	}
 }
+
+func TestDeviceProjectOwnershipRequiresHubTransfer(t *testing.T) {
+	ctx := context.Background()
+	repo, h, firstProject := newRepository(t)
+	stageStore := store.New(h.DB, clock.Fixed{Time: phase4Time})
+	second, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Second Show", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lighting := deviceexperience.Device{
+		ID: "lighting-reusable-01", ProjectID: firstProject,
+		ProfileID: "stagecore.esp32-dmx-lighting-node", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Front lighting", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"lighting.state.read"}, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, lighting); err != nil {
+		t.Fatal(err)
+	}
+
+	// A new client hello is not a transfer command, even when authenticated.
+	moved := lighting
+	moved.ProjectID = second.ID
+	moved.DisplayName = "Unapproved moved lighting"
+	if _, err := repo.UpsertDevice(ctx, moved); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+		t.Fatalf("cross-project reconnect must be rejected: %v", err)
+	}
+	moved.ProjectID = ""
+	if _, err := repo.UpsertDevice(ctx, moved); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+		t.Fatalf("reconnect cannot silently unassign an owned device: %v", err)
+	}
+	loaded, err := repo.GetDevice(ctx, lighting.ID)
+	if err != nil || loaded.ProjectID != firstProject || loaded.DisplayName != lighting.DisplayName {
+		t.Fatalf("rejected hello mutated lighting ownership: %+v err=%v", loaded, err)
+	}
+
+	lighting.DisplayName = "Front lighting updated"
+	if _, err := repo.UpsertDevice(ctx, lighting); err != nil {
+		t.Fatalf("same-project reconnect must still work: %v", err)
+	}
+
+	// A new unassigned identity may register, but must remain blackout-only:
+	// the absence of an assignment is not authority for every project.
+	unbound := deviceexperience.Device{
+		ID: "tablet-unassigned-01", Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Unassigned", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, unbound); err != nil {
+		t.Fatalf("unassigned registration should be representable: %v", err)
+	}
+	for _, projectID := range []string{firstProject, second.ID} {
+		if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+			ProjectID: projectID, DeviceID: unbound.ID, CommandType: "TABLET_PLAY",
+			Issuer: "operator:test", Payload: json.RawMessage(`{"media_key":"01"}`),
+		}); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+			t.Fatalf("unassigned device must reject project %q commands: %v", projectID, err)
+		}
+	}
+	claimed := unbound
+	claimed.ProjectID = firstProject
+	if _, err := repo.UpsertDevice(ctx, claimed); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+		t.Fatalf("client cannot self-assign an existing unbound identity: %v", err)
+	}
+	if _, err := repo.UpsertDevice(ctx, unbound); err != nil {
+		t.Fatalf("unchanged unbound reconnect should work: %v", err)
+	}
+}
+
+func TestDeviceDisabledStateCannotBeResetByReconnect(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	original := deviceexperience.Device{
+		ID: "tablet-disabled-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceTabletPlayer, DisplayName: "Disabled tablet",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: false,
+	}
+	if _, err := repo.UpsertDevice(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	// A device's hello cannot override the disabled state recorded by the Hub.
+	reconnect := original
+	reconnect.Enabled = true
+	reconnect.DisplayName = "Untrusted reconnect"
+	actual, err := repo.UpsertDevice(ctx, reconnect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Enabled {
+		t.Fatalf("reconnect must not re-enable disabled device: %+v", actual)
+	}
+	if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, DeviceID: original.ID, CommandType: "TABLET_PLAY",
+		Issuer: "operator:test", Payload: json.RawMessage(`{"media_key":"01"}`),
+	}); !errors.Is(err, deviceexperience.ErrInvalidDevice) {
+		t.Fatalf("disabled device must reject runtime commands: %v", err)
+	}
+}
+
+func TestUnassignedAndDisabledDevicesCannotAdvertiseReady(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	cases := []struct {
+		name string
+		device deviceexperience.Device
+	}{
+		{name: "unassigned", device: deviceexperience.Device{
+			ID: "unassigned-readiness", Kind: deviceexperience.DeviceTabletPlayer,
+			DisplayName: "Unassigned", ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Enabled: true,
+		}},
+		{name: "disabled", device: deviceexperience.Device{
+			ID: "disabled-readiness", ProjectID: projectID, Kind: deviceexperience.DeviceTabletPlayer,
+			DisplayName: "Disabled", ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Enabled: false,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := repo.UpsertDevice(ctx, tc.device); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				state, err := repo.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+					DeviceID: tc.device.ID, Connection: deviceexperience.ConnectionOnline,
+					Readiness: deviceexperience.ReadinessReady,
+				})
+				if err != nil || state.Readiness != deviceexperience.ReadinessBlocker {
+					t.Fatalf("untrusted READY report %d escaped guard: %+v err=%v", i, state, err)
+				}
+			}
+		})
+	}
+}

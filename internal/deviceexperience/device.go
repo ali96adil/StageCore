@@ -37,7 +37,9 @@ func (r *Repository) UpsertDevice(ctx context.Context, device Device) (Device, e
 	}
 	now := r.now().UTC()
 	nowUS := now.UnixMicro()
-	_, err = r.db.ExecContext(ctx, `
+	// Client reconnect metadata cannot reassign an existing device. Project
+	// transfer requires a distinct, authorized Hub-side operation.
+	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO stage_devices
 		(device_id, project_id, profile_id, device_kind, display_name, platform, architecture,
 		 client_version, protocol_version, capabilities_json, group_name, location_name, enabled,
@@ -55,13 +57,22 @@ func (r *Repository) UpsertDevice(ctx context.Context, device Device) (Device, e
 		capabilities_json=excluded.capabilities_json,
 		group_name=excluded.group_name,
 		location_name=excluded.location_name,
-		enabled=excluded.enabled,
+		-- Enabled/revoked state belongs to the Hub, never to a reconnect hello.
+		enabled=stage_devices.enabled,
 		updated_at_us=excluded.updated_at_us
+		WHERE stage_devices.project_id IS excluded.project_id
 	`, device.ID, device.ProjectID, device.ProfileID, device.Kind, device.DisplayName,
 		device.Platform, device.Architecture, device.ClientVersion, device.ProtocolVersion,
 		string(caps), device.GroupName, device.LocationName, boolInt(device.Enabled), nowUS, nowUS)
 	if err != nil {
 		return Device{}, fmt.Errorf("upsert stage device: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return Device{}, fmt.Errorf("read stage device upsert result: %w", err)
+	}
+	if changed == 0 {
+		return Device{}, fmt.Errorf("%w: project reassignment requires authorized Hub transfer", ErrInvalidDevice)
 	}
 	return r.GetDevice(ctx, device.ID)
 }
@@ -107,18 +118,34 @@ func (r *Repository) GetDevice(ctx context.Context, deviceID string) (Device, er
 	if err == nil {
 		device.Runtime = &state
 	}
+	if device.ProtocolVersion == ProtocolVersion2 {
+		assignment, err := r.GetAssignmentRecord(ctx, device.ID)
+		if err != nil {
+			return Device{}, fmt.Errorf("read v2 device assignment: %w", err)
+		}
+		device.Assignment = &assignment
+	}
 	return device, nil
 }
 
 func (r *Repository) ListDevices(ctx context.Context, projectID string) ([]Device, error) {
 	projectID = strings.TrimSpace(projectID)
-	query := `SELECT device_id FROM stage_devices`
+	// Legacy project_id stays authoritative for v1 commands. For v2
+	// inventory only, the Hub-owned assignment sidecar determines which
+	// Project should list a BLOCKED device. No new command authority is
+	// derived from project listing.
+	query := `SELECT d.device_id FROM stage_devices d
+		JOIN stage_device_assignments a ON a.device_id = d.device_id`
 	args := []any{}
 	if projectID != "" {
-		query += ` WHERE project_id = ?`
-		args = append(args, projectID)
+		query += ` WHERE
+			(d.project_id = ? AND a.assignment_state = 'LEGACY' AND a.project_id = ?)
+			OR
+			(d.protocol_version = 'stagecore.device/2' AND a.project_id = ?
+			 AND a.assignment_state IN ('PREPARING', 'BLOCKED', 'ACTIVE'))`
+		args = append(args, projectID, projectID, projectID)
 	}
-	query += ` ORDER BY display_name COLLATE NOCASE, device_id`
+	query += ` ORDER BY d.display_name COLLATE NOCASE, d.device_id`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list stage devices: %w", err)
@@ -151,8 +178,20 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	if observation.DeviceID == "" || !validConnectionState(observation.Connection) || !validReadiness(observation.Readiness) {
 		return RuntimeState{}, ErrInvalidState
 	}
-	if _, err := r.GetDevice(ctx, observation.DeviceID); err != nil {
+	device, err := r.GetDevice(ctx, observation.DeviceID)
+	if err != nil {
 		return RuntimeState{}, err
+	}
+	// Client health reports do not grant command authority. A device that has
+	// no Hub-owned project assignment, or is disabled, cannot be READY.
+	// A sidecar in PREPARING/BLOCKED/UNASSIGNED/ACTIVE is never proof
+	// of v2 runtime readiness. An old device.observation cannot re-enable it.
+	assignment, err := r.GetAssignmentRecord(ctx, observation.DeviceID)
+	if err != nil {
+		return RuntimeState{}, fmt.Errorf("%w: assignment metadata unavailable: %v", ErrInvalidState, err)
+	}
+	if device.ProjectID == "" || !device.Enabled || assignment.State != AssignmentLegacy || assignment.ProjectID != device.ProjectID {
+		observation.Readiness = ReadinessBlocker
 	}
 	if observation.ObservedAt.IsZero() {
 		observation.ObservedAt = r.now().UTC()
@@ -161,7 +200,7 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	}
 	observed := normalizeJSON(observation.ObservedState, `{}`)
 	network := normalizeJSON(observation.NetworkState, `{}`)
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO stage_device_runtime_state
 		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -177,6 +216,7 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	}
 	return r.getRuntimeState(ctx, observation.DeviceID)
 }
+
 
 func (r *Repository) MarkDeviceOffline(ctx context.Context, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)

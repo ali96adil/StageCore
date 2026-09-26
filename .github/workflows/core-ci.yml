@@ -5,6 +5,13 @@ on:
   push:
     branches: [main]
 
+# Keep the full matrix, race tests and ARM64 builds, but cancel superseded
+# runs when an in-progress PR receives a newer commit. Engineering batches
+# should be staged on a branch *before* creating a PR.
+concurrency:
+  group: core-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -26,6 +33,9 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      - name: Check Operator JS syntax
+        if: matrix.go == '1.26.x'
+        run: node --check internal/operatorweb/static/phase4.js
       - name: Test
         run: go test ./...
       - name: Vet

@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +34,10 @@ func WithOperatorStageDevices(
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
@@ -39,13 +46,270 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, map[string]any{"devices": items})
 		}))
 
+		// Device provisioning inventory is not scoped to any Project yet.
+		// Only an operator authorized for pairing may discover unassigned v2
+		// identities. This endpoint grants NO Assign/Transfer authority.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			items, err := devices.ListDevices(r.Context(), "")
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
+				return
+			}
+			type unassignedDevice struct {
+				DeviceID        string                       `json:"device_id"`
+				DisplayName     string                       `json:"display_name"`
+				DeviceKind      deviceexperience.DeviceKind  `json:"device_kind"`
+				AssignmentEpoch int64                        `json:"assignment_epoch"`
+				Connection      deviceexperience.ConnectionState `json:"connection_state,omitempty"`
+				Readiness       deviceexperience.Readiness       `json:"readiness,omitempty"`
+			}
+			out := make([]unassignedDevice, 0)
+			for _, item := range items {
+				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+					continue
+				}
+				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+					return
+				}
+				if assignment.State != "UNASSIGNED" || assignment.ProjectID != "" {
+					continue
+				}
+				view := unassignedDevice{
+					DeviceID: item.ID, DisplayName: item.DisplayName,
+					DeviceKind: item.Kind, AssignmentEpoch: assignment.Epoch,
+				}
+				if item.Runtime != nil {
+					view.Connection = item.Runtime.Connection
+					view.Readiness = item.Runtime.Readiness
+				}
+				out = append(out, view)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+		}))
+
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			item, err := devices.GetDevice(r.Context(), strings.TrimSpace(r.PathValue("device_id")))
 			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				return
 			}
+			// Unassigned identities are pairing inventory, not members of
+			// whichever Project the requesting user happens to read.
+			if item.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
 			writeJSON(w, http.StatusOK, item)
+		}))
+
+		// Read-only legacy/v2 assignment metadata for inventory diagnostics.
+		// This does not assign or transfer a device, and LEGACY is never a
+		// statement that the new authenticated v2 handshake has completed.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
+			if err != nil {
+				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_ID_INVALID"})
+					return
+				}
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+				return
+			}
+			if record.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			writeJSON(w, http.StatusOK, record)
+		}))
+
+		// Read-only Operator status for the current Hub-owned v2 assignment.
+		// An ACK stored on an earlier socket is historical, not live proof.
+		// This endpoint never reports independent physical DMX verification.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment/transfer-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			assignment, err := devices.GetAssignmentRecord(r.Context(), deviceID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_STATUS_UNAVAILABLE"})
+				return
+			}
+			generation, online := runtime.CurrentV2Generation(deviceID)
+			reported := false
+			var ack *deviceexperience.BlockedEpochAck
+			if assignment.State == "BLOCKED" {
+				record, err := devices.GetBlockedEpochAck(r.Context(), deviceID, assignment.Epoch)
+				if err == nil && record.ProjectID == assignment.ProjectID {
+					ack = &record
+					reported = online && generation == record.ConnectionGeneration
+				} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_EPOCH_ACK_UNAVAILABLE"})
+					return
+				}
+			}
+			status := "NOT_ELIGIBLE_FOR_V2_TRANSFER"
+			switch assignment.State {
+			case "UNASSIGNED":
+				status = "UNASSIGNED"
+			case "BLOCKED":
+				status = "AWAITING_CURRENT_SOFTWARE_EPOCH_ACK"
+				if reported {
+					status = "CURRENT_SOFTWARE_ZERO_REPORTED_BLOCKED"
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"assignment": assignment,
+				"epoch_ack": ack,
+				"connection_online": online,
+				"software_zero_report_current_connection": reported,
+				"status": status,
+				"commands_enabled": false,
+				"snapshot_active": false,
+				"physical_blackout_verified": false,
+				"note": "DEVICE_REPORT_ONLY_NO_INDEPENDENT_PHYSICAL_DMX_PROOF",
+			})
+		}))
+
+		// An explicit read-only transfer preflight. The requester needs both
+		// project.edit and companion.pair before seeing device identity or
+		// project affiliation. The returned result does not mutate storage
+		// and is NEVER sufficient to authorize a later transfer commit.
+		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/assignment/preflight", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			var input struct {
+				ExpectedProjectID string `json:"expected_project_id"`
+				TargetProjectID   string `json:"target_project_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			preflight, err := devices.PreflightTransfer(r.Context(), deviceexperience.TransferPreflightInput{
+				DeviceID: deviceID, ExpectedProjectID: input.ExpectedProjectID,
+				TargetProjectID: input.TargetProjectID, ExpectedEpoch: input.ExpectedEpoch,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+				return
+			}
+			if err != nil {
+				if errors.Is(err, deviceexperience.ErrInvalidState) {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_BLOCKED"})
+					return
+				}
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_UNAVAILABLE"})
+				return
+			}
+			if !runtime.IsConnected(deviceID) {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_OFFLINE"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"preflight": preflight,
+				"note": "CHECK_ONLY_NOT_A_TRANSFER_OR_PHYSICAL_BLACKOUT_PROOF",
+			})
+		}))
+
+		// EXPERIMENTAL / disabled by default. This route only commits a
+		// BLOCKED/UNASSIGNED epoch after a device-reported SOFTWARE blackout.
+		// It never activates a snapshot or new Project commands and is not
+		// evidence that a physical DMX fixture is electrically dark.
+		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/assignment/software-transfer", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER") != "1" {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_TRANSFER_DISABLED"})
+				return
+			}
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			var input struct {
+				ExpectedProjectID string `json:"expected_project_id"`
+				TargetProjectID   string `json:"target_project_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm          string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			// Explicit acknowledgement cannot be inherited from Preflight or
+			// inferred from a Project choice; the action is blackout-first.
+			const confirmation = "BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_TRANSFER_CONFIRMATION_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			intent := deviceexperience.TransferPreflightInput{
+				DeviceID: deviceID,
+				ExpectedProjectID: input.ExpectedProjectID,
+				TargetProjectID: input.TargetProjectID,
+				ExpectedEpoch: input.ExpectedEpoch,
+			}
+			if _, err := devices.PreflightTransfer(r.Context(), intent); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+					return
+				}
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_TRANSFER_PREFLIGHT_BLOCKED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteReservedSoftwareTransferAuthorized(
+				r.Context(), intent, actor, reauthorize)
+			if err != nil {
+				// Never interpret an error as a successful transfer. Client
+				// must refetch Hub-owned assignment, not retry a stale ACK.
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "STAGE_DEVICE_SOFTWARE_TRANSFER_NOT_COMMITTED",
+					"note": "VERIFY_HUB_ASSIGNMENT_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"transfer": record,
+				"state": record.NextState,
+				"commands_enabled": false,
+				"physical_blackout_verified": false,
+				"epoch_ack_required": record.NextState == "BLOCKED",
+				"note": "SOFTWARE_ACK_ONLY_NOT_PHYSICAL_DMX_QUALIFICATION",
+			})
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -103,6 +367,10 @@ func WithOperatorStageDevices(
 		// canonical Stage Device metadata, not browser-only filtering.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-device-commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
+				return
+			}
 			var input struct {
 				All               bool            `json:"all"`
 				GroupName         string          `json:"group_name"`

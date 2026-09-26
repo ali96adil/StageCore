@@ -71,8 +71,11 @@ type Device struct {
 	LocationName    string        `json:"location_name,omitempty"`
 	Enabled         bool          `json:"enabled"`
 	CreatedAt       time.Time     `json:"created_at"`
-	UpdatedAt       time.Time     `json:"updated_at"`
-	Runtime         *RuntimeState `json:"runtime,omitempty"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+	Runtime         *RuntimeState    `json:"runtime,omitempty"`
+	// V2 Hub-owned assignment is deliberately distinct from the legacy
+	// project_id field, which remains empty until its FK is audited.
+	Assignment      *AssignmentRecord `json:"assignment,omitempty"`
 }
 
 type RuntimeState struct {
