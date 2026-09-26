@@ -31,6 +31,7 @@ func TestMachineRoleOperatorManagerIsEmbeddedAndVisual(t *testing.T) {
 		"machine-role-release",
 		"required_capabilities",
 		"machine_role_id",
+		"target_ref: roleKey",
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("configuration.js missing %q", required)
