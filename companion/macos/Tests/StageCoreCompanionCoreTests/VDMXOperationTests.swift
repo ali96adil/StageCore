@@ -51,6 +51,35 @@ final class VDMXOperationTests: XCTestCase {
         XCTAssertEqual(recorder.target?.standardizedFileURL.path, workspace.standardizedFileURL.path)
     }
 
+
+    func testOpenWithoutSavedWorkspaceOpensVDMXApplicationOnly() async throws {
+        let root = try temporaryDirectory()
+        let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        let recorder = VDMXApplicationOpenRecorder(result: true)
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [application],
+            opener: { _, _ in XCTFail("unsaved workspace must not use target opener"); return false },
+            applicationOpener: { app in recorder.record(application: app) },
+            oscQueryFetcher: { _ in Data() }
+        )
+
+        var configured = manifest(launch: .locator("/tmp/unused.vdmx6"))
+        configured.removeValue(forKey: "launch")
+        configured["assets"] = .array([])
+
+        let outcome = await provider.perform(
+            kind: .open,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertNil(outcome.errorCode)
+        XCTAssertEqual(recorder.count, 1)
+        XCTAssertEqual(recorder.application?.standardizedFileURL.path, application.standardizedFileURL.path)
+    }
+
     func testOpenFailsTruthfullyWhenApplicationOrTargetIsUnavailable() async throws {
         let root = try temporaryDirectory()
         let workspace = root.appendingPathComponent("Show.vdmx6", isDirectory: false)
@@ -143,6 +172,53 @@ final class VDMXOperationTests: XCTestCase {
             guard case .object(let value) = item else { return false }
             return value["key"] == .string("vdmx-internal-state")
                 && value["capture_status"] == .string("UNSUPPORTED")
+        })
+    }
+
+
+    func testUnsavedDemoSnapshotCapturesOSCQueryWithoutWorkspaceAsset() async throws {
+        let root = try temporaryDirectory()
+        let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [application],
+            opener: { _, _ in false },
+            applicationOpener: { _ in true },
+            oscQueryFetcher: { url in
+                if url.query == "HOST_INFO" {
+                    return Data(#"{"NAME":"VDMX"}"#.utf8)
+                }
+                return Data(#"{"FULL_PATH":"/","CONTENTS":{"opacity":{"FULL_PATH":"/opacity","TYPE":"f","VALUE":[0.75]}}}"#.utf8)
+            }
+        )
+        var configured = manifest(launch: .locator("/tmp/unused.vdmx6"))
+        configured.removeValue(forKey: "launch")
+        configured["assets"] = .array([])
+        configured["bindings"] = .array([
+            .object([
+                "key": .string("oscquery"),
+                "kind": .string("NETWORK"),
+                "external_ref": .string("http://127.0.0.1:8080/"),
+            ])
+        ])
+
+        let outcome = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+
+        XCTAssertEqual(outcome.status, .completed)
+        let snapshot = try XCTUnwrap(outcome.snapshot)
+        XCTAssertEqual(snapshot["capture_status"], .string("PARTIAL"))
+        guard case .array(let items) = snapshot["items"] else {
+            return XCTFail("snapshot items missing")
+        }
+        XCTAssertTrue(items.contains { item in
+            guard case .object(let value) = item else { return false }
+            return value["key"] == .string("vdmx-oscquery")
+                && value["capture_status"] == .string("OBSERVED")
         })
     }
 
@@ -314,6 +390,29 @@ private final class VDMXOpenRecorder: @unchecked Sendable {
         lock.withLock {
             recordedCount += 1
             recordedTarget = target
+            recordedApplication = application
+        }
+        return result
+    }
+}
+
+
+private final class VDMXApplicationOpenRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private let result: Bool
+    private var recordedCount = 0
+    private var recordedApplication: URL?
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    var count: Int { lock.withLock { recordedCount } }
+    var application: URL? { lock.withLock { recordedApplication } }
+
+    func record(application: URL) -> Bool {
+        lock.withLock {
+            recordedCount += 1
             recordedApplication = application
         }
         return result
