@@ -52,12 +52,14 @@ func TestWorkspaceProfilePreservesPhase4InjectedNavigation(t *testing.T) {
 func TestStageDevicesOperatorSeparatesLightingSafetyFromTabletAssignment(t *testing.T) {
 	phase4 := string(mustReadOperatorContractFile(t, "static/phase4.js"))
 	for _, marker := range []string{
-		`/api/v1/stage-devices/unassigned`,
+		`/api/v1/stage-devices/inventory`,
 		`/assignment/transfer-status`,
 		`software_zero_report_current_connection`,
 		`device.profile_id === "stagecore.esp32-dmx-lighting-node"`,
 		`device.profile_id === "stagecore.tablet-player"`,
 		`assignment.assignment_state !== "ACTIVE"`,
+		`(device.assignment?.project_id || "") !== projectID`,
+		`v2ReusableNote`,
 		`data-assign-tablet`,
 		`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`,
 		`/tablet-controller/devices/${encodeURIComponent(deviceID)}/assign`,
