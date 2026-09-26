@@ -124,3 +124,32 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatalf("unknown operator path status=%d, want 404", missingRes.Code)
 	}
 }
+
+
+func TestOperatorSidebarKeepsInjectedNavigationScrollable(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/app.css", nil)
+	req.RemoteAddr = "127.0.0.1:17010"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("app.css status=%d body=%s", res.Code, res.Body.String())
+	}
+	css := res.Body.String()
+	sidebarStart := strings.Index(css, ".sidebar {")
+	if sidebarStart < 0 {
+		t.Fatal("operator app.css is missing .sidebar")
+	}
+	sidebarEnd := strings.Index(css[sidebarStart:], "}")
+	if sidebarEnd < 0 {
+		t.Fatal("operator .sidebar rule is incomplete")
+	}
+	sidebar := css[sidebarStart : sidebarStart+sidebarEnd]
+	if !strings.Contains(sidebar, "overflow-y: auto;") {
+		t.Fatal("operator sidebar must scroll independently when injected navigation exceeds the viewport")
+	}
+	if !strings.Contains(sidebar, "overscroll-behavior: contain;") {
+		t.Fatal("operator sidebar must contain wheel/touch overscroll")
+	}
+}
