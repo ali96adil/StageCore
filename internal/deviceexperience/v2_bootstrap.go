@@ -15,10 +15,11 @@ const ProtocolVersion2 = "stagecore.device/2"
 // matching Companion runtime identity. The caller MUST NOT take that identity
 // from an anonymous device.hello or mDNS announcement.
 //
-// New identities always bootstrap UNASSIGNED. Already-v2 identities can
-// reconnect in UNASSIGNED or BLOCKED to read the Hub-owned epoch/project and
-// remain dark. This method never migrates a v1 node, transfers a project,
-// enables v2 commands, accepts a client project or verifies physical blackout.
+// New identities always bootstrap UNASSIGNED. Existing v2 identities may
+// reconnect only in a Hub-owned state that is valid for their stored profile.
+// Lighting remains UNASSIGNED/BLOCKED; Tablet Players may also reconnect ACTIVE
+// with a published Runtime Snapshot already stored by the Hub. The client never
+// supplies Project authority in device.hello.
 func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (Device, error) {
 	device.ID = strings.TrimSpace(device.ID)
 	device.ProjectID = strings.TrimSpace(device.ProjectID)
@@ -48,22 +49,33 @@ func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (D
 
 	// A known v1 node must use an explicit, authenticated migration; a new
 	// device cannot seize its ID or overwrite project-linked command history.
-	var protocol, kind, legacyProject, assignmentState, assignedProject string
+	var protocol, kind, storedProfile, legacyProject, assignmentState, assignedProject, assignedSnapshot string
 	var enabled int
 	err = tx.QueryRowContext(ctx, `
-		SELECT d.protocol_version, d.device_kind, COALESCE(d.project_id, ''),
-		       d.enabled, a.assignment_state, COALESCE(a.project_id, '')
+		SELECT d.protocol_version, d.device_kind, COALESCE(d.profile_id, ''),
+		       COALESCE(d.project_id, ''), d.enabled, a.assignment_state,
+		       COALESCE(a.project_id, ''), a.runtime_snapshot_id
 		FROM stage_devices d
 		JOIN stage_device_assignments a ON a.device_id = d.device_id
 		WHERE d.device_id = ?
-	`, device.ID).Scan(&protocol, &kind, &legacyProject, &enabled, &assignmentState, &assignedProject)
+	`, device.ID).Scan(&protocol, &kind, &storedProfile, &legacyProject, &enabled,
+		&assignmentState, &assignedProject, &assignedSnapshot)
 	switch {
 	case err == nil:
+		validAssignment := false
+		switch assignmentState {
+		case "UNASSIGNED":
+			validAssignment = assignedProject == "" && assignedSnapshot == ""
+		case "BLOCKED":
+			validAssignment = assignedProject != "" && assignedSnapshot == ""
+		case "ACTIVE":
+			validAssignment = kind == string(DeviceTabletPlayer) &&
+				storedProfile == TabletPlayerProfileID &&
+				assignedProject != "" && assignedSnapshot != ""
+		}
 		if protocol != ProtocolVersion2 || kind != string(device.Kind) ||
-			legacyProject != "" || enabled != 1 ||
-			(assignmentState != "UNASSIGNED" && assignmentState != "BLOCKED") ||
-			(assignmentState == "UNASSIGNED" && assignedProject != "") ||
-			(assignmentState == "BLOCKED" && assignedProject == "") {
+			storedProfile != device.ProfileID || legacyProject != "" ||
+			enabled != 1 || !validAssignment {
 			return Device{}, fmt.Errorf("%w: v2 enrollment conflicts with existing device authority", ErrInvalidDevice)
 		}
 		// No UPDATE for a reconnect: client metadata cannot alter the

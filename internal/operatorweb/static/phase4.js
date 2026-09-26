@@ -24,6 +24,12 @@
       v2CurrentSoftwareZero: "Device reported zero on the current authenticated connection",
       v2NoCurrentSoftwareZero: "No current-connection zero report",
       v2NoControls: "Read-only commissioning view; no Project transfer or output controls available.",
+      v2AssignTablet: "Assign tablet to this Project",
+      v2AssigningTablet: "Assigning tablet and entering safe media state…",
+      v2TabletAssigned: "Tablet assigned. Waiting for its authenticated reconnect.",
+      v2TabletNoSnapshot: "Publish a Runtime Snapshot before assigning this tablet.",
+      v2TabletActive: "Hub-owned tablet assignment is active",
+      v2TabletScope: "Runtime Snapshot",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -116,6 +122,12 @@
       v2CurrentSoftwareZero: "الجهاز بلّغ عن صفر على الاتصال الموثّق الحالي",
       v2NoCurrentSoftwareZero: "ماكو تقرير صفر للاتصال الحالي",
       v2NoControls: "عرض متابعة فقط؛ نقل المشروع والتحكم بالإضاءة غير متاحين هنا.",
+      v2AssignTablet: "خصّص التابلت لهذا المشروع",
+      v2AssigningTablet: "جاري تخصيص التابلت وإدخاله بالحالة الآمنة…",
+      v2TabletAssigned: "تم تخصيص التابلت. ننتظر إعادة اتصاله الموثقة.",
+      v2TabletNoSnapshot: "انشر Runtime Snapshot قبل تخصيص هذا التابلت.",
+      v2TabletActive: "تخصيص التابلت من الـHub فعّال",
+      v2TabletScope: "Runtime Snapshot",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
@@ -262,7 +274,15 @@
   }
 
   function tabletControls(device) {
-    if (device.device_kind !== "TABLET_PLAYER" || device.protocol_version === "stagecore.device/2" || !canRuntime()) return "";
+    if (device.device_kind !== "TABLET_PLAYER" || !canRuntime()) return "";
+    if (device.protocol_version === "stagecore.device/2") {
+      const assignment = device.assignment || {};
+      const runtime = device.runtime || {};
+      if (assignment.assignment_state !== "ACTIVE" ||
+          assignment.project_id !== currentProjectID() ||
+          !assignment.runtime_snapshot_id ||
+          runtime.readiness !== "READY") return "";
+    }
     return `
       <label>${esc(t("media"))}
         <input class="phase4-media" data-device="${esc(device.device_id)}" placeholder="01.mp4" dir="ltr">
@@ -300,7 +320,14 @@
           <p class="muted">${esc(t("capabilities"))}</p>
           <div class="phase4-capabilities">${caps.length ? caps.map((cap) => `<span>${esc(cap)}</span>`).join("") : `<span>${esc(t("none"))}</span>`}</div>
         </div>
-        ${device.protocol_version === "stagecore.device/2" ? `
+        ${device.protocol_version === "stagecore.device/2" && device.device_kind === "TABLET_PLAYER" ? `
+          <div class="phase4-empty" role="status">
+            <strong>${esc(t("v2BlockedStatus"))}: ${esc(device.assignment?.assignment_state || "UNKNOWN")}</strong>
+            <p>${esc(t("v2TabletActive"))}</p>
+            <p class="mono">${esc(t("v2TabletScope"))}: ${esc(device.assignment?.runtime_snapshot_id || "—")}</p>
+          </div>` : ""}
+        ${device.protocol_version === "stagecore.device/2" &&
+          device.profile_id === "stagecore.esp32-dmx-lighting-node" ? `
           <div class="phase4-empty" role="status">
             <strong>${esc(t("v2BlockedStatus"))}: ${esc(v2Status?.status || "NOT_VERIFIED")}</strong>
             <p>${esc(v2Status?.software_zero_report_current_connection ? t("v2CurrentSoftwareZero") : t("v2NoCurrentSoftwareZero"))}</p>
@@ -369,7 +396,10 @@
     const canPair = ["OWNER", "TECHNICIAN"].includes(state.user?.role);
     const statuses = {};
     if (canPair) {
-      await Promise.all(devices.filter((d) => d.protocol_version === "stagecore.device/2").map(async (device) => {
+      await Promise.all(devices.filter((d) =>
+        d.protocol_version === "stagecore.device/2" &&
+        d.profile_id === "stagecore.esp32-dmx-lighting-node"
+      ).map(async (device) => {
         try {
           statuses[device.device_id] = await api(`/api/v1/stage-devices/${encodeURIComponent(device.device_id)}/assignment/transfer-status`);
         } catch (_) {
@@ -379,28 +409,50 @@
       }));
     }
     let unassigned = [];
+    let runtimeStatus = null;
     if (canPair) {
-      try {
-        const inventory = await api("/api/v1/stage-devices/unassigned");
-        unassigned = inventory.devices || [];
-      } catch (_) {
-        // Pairing may be disabled or revoked; the server owns access.
+      const [inventoryResult, runtimeResult] = await Promise.allSettled([
+        api("/api/v1/stage-devices/unassigned"),
+        api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`),
+      ]);
+      if (inventoryResult.status === "fulfilled") {
+        unassigned = inventoryResult.value.devices || [];
+      }
+      if (runtimeResult.status === "fulfilled") {
+        runtimeStatus = runtimeResult.value;
       }
     }
+    const assignmentSnapshotID = runtimeStatus?.runtime_snapshot?.runtime_snapshot_id || "";
+    const assignmentLocked = runtimeStatus?.mode === "SHOW";
     // Never paint stale Project inventory after either additional async fetch.
     if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
-    const unassignedCard = (device) => `
-      <article class="phase4-card">
-        <div class="phase4-card-head">
-          <div><p class="eyebrow">stagecore.device/2</p><h3>${esc(device.display_name || device.device_id)}</h3></div>
-          <div class="phase4-status-row">${pulse("UNASSIGNED")} ${pulse(device.connection_state || "OFFLINE")}</div>
-        </div>
-        <dl class="phase4-kv">
-          <div><dt>ID</dt><dd class="mono">${esc(device.device_id)}</dd></div>
-          <div><dt>Epoch</dt><dd>${esc(device.assignment_epoch)}</dd></div>
-        </dl>
-        <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>
-      </article>`;
+    const unassignedCard = (device) => {
+      const tablet = device.device_kind === "TABLET_PLAYER" &&
+        device.profile_id === "stagecore.tablet-player";
+      const canAssignTablet = tablet && device.connection_state === "ONLINE" &&
+        assignmentSnapshotID && !assignmentLocked;
+      return `
+        <article class="phase4-card">
+          <div class="phase4-card-head">
+            <div><p class="eyebrow">stagecore.device/2</p><h3>${esc(device.display_name || device.device_id)}</h3></div>
+            <div class="phase4-status-row">${pulse("UNASSIGNED")} ${pulse(device.connection_state || "OFFLINE")}</div>
+          </div>
+          <dl class="phase4-kv">
+            <div><dt>ID</dt><dd class="mono">${esc(device.device_id)}</dd></div>
+            <div><dt>Epoch</dt><dd>${esc(device.assignment_epoch)}</dd></div>
+          </dl>
+          ${tablet ? `
+            <div class="phase4-empty">
+              <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
+              <button class="button primary" data-assign-tablet="${esc(device.device_id)}"
+                data-assignment-epoch="${esc(device.assignment_epoch)}"
+                type="button" ${canAssignTablet ? "" : "disabled"}>
+                ${esc(t("v2AssignTablet"))}
+              </button>
+            </div>` : `
+            <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
+        </article>`;
+    };
     body.innerHTML = `
       ${devices.length
         ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id])).join("")}</div>`
@@ -411,6 +463,38 @@
           ? `<div class="phase4-grid">${unassigned.map(unassignedCard).join("")}</div>`
           : `<div class="phase4-empty">${esc(t("v2UnassignedEmpty"))}</div>`}
       </section>` : ""}`;
+
+    body.querySelectorAll("[data-assign-tablet]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            !assignmentSnapshotID || assignmentLocked) return;
+        const deviceID = button.dataset.assignTablet;
+        const epoch = Number(button.dataset.assignmentEpoch || 0);
+        if (!deviceID || !Number.isInteger(epoch) || epoch < 1) return;
+        button.disabled = true;
+        phase4Message(t("v2AssigningTablet"));
+        try {
+          await api(`/api/v1/projects/${encodeURIComponent(projectID)}/tablet-controller/devices/${encodeURIComponent(deviceID)}/assign`, {
+            method: "POST",
+            body: JSON.stringify({
+              expected_project_id: "",
+              expected_runtime_snapshot_id: "",
+              expected_assignment_epoch: epoch,
+              runtime_snapshot_id: assignmentSnapshotID,
+            }),
+          });
+          phase4Message(t("v2TabletAssigned"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
 
     body.querySelectorAll("[data-live-diagnostic-device]").forEach((button) => {
       button.addEventListener("click", async () => {

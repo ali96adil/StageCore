@@ -46,12 +46,14 @@ type Runtime struct {
 	mu             sync.Mutex
 	connections    map[string]*connection
 	inflight       map[string]*connection
-	pendingBlackouts map[string]*pendingBlackout
+	pendingBlackouts        map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
-	latestV2SoftwareLevels map[string]V2SoftwareLevels
-	autoProbeV2 bool
-	nextGeneration int64
-	closed         bool
+	latestV2SoftwareLevels  map[string]V2SoftwareLevels
+	pendingTabletAssignments map[string]*pendingTabletAssignment
+	assignmentTransitions    map[string]bool
+	autoProbeV2              bool
+	nextGeneration           int64
+	closed                   bool
 }
 
 type connection struct {
@@ -61,11 +63,15 @@ type connection struct {
 	protocolVersion string
 	sessionToken    string
 	advertisedCapabilities []string
-	generation      int64
-	writeMu         sync.Mutex
-	once            sync.Once
-	closed          chan struct{}
-	lastActivity    atomic.Int64
+	generation              int64
+	activeProjectID          string
+	activeRuntimeSnapshotID  string
+	activeAssignmentEpoch    int64
+	commandsEnabled          bool
+	writeMu                 sync.Mutex
+	once                    sync.Once
+	closed                  chan struct{}
+	lastActivity            atomic.Int64
 }
 
 type helloMessage struct {
@@ -92,13 +98,16 @@ type inboundMessage struct {
 	Type          string                     `json:"type"`
 	SchemaVersion int                        `json:"schema_version"`
 	DeviceID      string                     `json:"device_id"`
-	ProjectID     string                     `json:"project_id,omitempty"`
-	CommandID     string                     `json:"command_id,omitempty"`
-	TransferID string `json:"transfer_id,omitempty"`
-	AssignmentEpoch int64 `json:"assignment_epoch,omitempty"`
-	ConnectionGeneration int64 `json:"connection_generation,omitempty"`
-	Challenge string `json:"challenge,omitempty"`
-	Blackout bool `json:"blackout,omitempty"`
+	ProjectID              string                     `json:"project_id,omitempty"`
+	RuntimeSnapshotID      string                     `json:"runtime_snapshot_id,omitempty"`
+	AssignmentID           string                     `json:"assignment_id,omitempty"`
+	CommandID              string                     `json:"command_id,omitempty"`
+	TransferID             string                     `json:"transfer_id,omitempty"`
+	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
+	ConnectionGeneration   int64                      `json:"connection_generation,omitempty"`
+	Challenge              string                     `json:"challenge,omitempty"`
+	SafeMedia              bool                       `json:"safe_media,omitempty"`
+	Blackout               bool                       `json:"blackout,omitempty"`
 	LevelsKnown bool `json:"levels_known,omitempty"`
 	ChannelLevels []int `json:"channel_levels,omitempty"`
 	Status        contracts.CommandStatus    `json:"status,omitempty"`
@@ -132,10 +141,12 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		livenessTimeout:          defaultDeviceLivenessTimeout,
 		connections:              make(map[string]*connection),
 		inflight:                 make(map[string]*connection),
-		pendingBlackouts:         make(map[string]*pendingBlackout),
-		pendingV2LightingProbes:  make(map[string]*pendingV2LightingProbe),
-		latestV2SoftwareLevels:   make(map[string]V2SoftwareLevels),
-		autoProbeV2:              os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
+		pendingBlackouts:          make(map[string]*pendingBlackout),
+		pendingV2LightingProbes:   make(map[string]*pendingV2LightingProbe),
+		latestV2SoftwareLevels:    make(map[string]V2SoftwareLevels),
+		pendingTabletAssignments:  make(map[string]*pendingTabletAssignment),
+		assignmentTransitions:     make(map[string]bool),
+		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 	for _, option := range options {
 		if option != nil {
@@ -240,16 +251,32 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	r.mu.Lock()
 	current := r.connections[command.DeviceID]
 	closed := r.closed
-	if !closed && current != nil {
+	transition := r.assignmentTransitions[command.DeviceID]
+	schemaVersion := runtimeSchemaVersion
+	scopeReady := true
+	if current != nil && current.protocolVersion == deviceexperience.ProtocolVersion2 {
+		schemaVersion = 2
+		scopeReady = current.commandsEnabled &&
+			current.activeProjectID == command.Envelope.ProjectID &&
+			current.activeRuntimeSnapshotID == command.Envelope.RuntimeSnapshotID &&
+			current.activeAssignmentEpoch > 0
+	}
+	if !closed && current != nil && !transition && scopeReady {
 		r.inflight[command.Envelope.CommandID] = current
 	}
 	r.mu.Unlock()
 	if closed || current == nil {
 		return r.failCommand(ctx, command, "DEVICE_OFFLINE", "Stage Device is not connected")
 	}
+	if transition {
+		return r.failCommand(ctx, command, "DEVICE_ASSIGNMENT_TRANSITION", "Stage Device assignment is changing")
+	}
+	if !scopeReady {
+		return r.failCommand(ctx, command, "DEVICE_SCOPE_NOT_READY", "Stage Device has not acknowledged the active Project/Runtime Snapshot")
+	}
 	message := executeMessage{
 		Type:          "command.execute",
-		SchemaVersion: runtimeSchemaVersion,
+		SchemaVersion: schemaVersion,
 		DeviceID:      command.DeviceID,
 		Command:       command.Envelope,
 	}
@@ -279,10 +306,10 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if hello.ProtocolVersion == "" {
 		hello.ProtocolVersion = deviceexperience.ProtocolVersion1
 	}
-	isV2Unassigned := hello.ProtocolVersion == deviceexperience.ProtocolVersion2
+	isV2 := hello.ProtocolVersion == deviceexperience.ProtocolVersion2
 	// In a v2 hello the client NEVER chooses a Project. A project-bearing
 	// v2 hello is a protocol violation even when the credential is valid.
-	if isV2Unassigned && strings.TrimSpace(hello.ProjectID) != "" {
+	if isV2 && strings.TrimSpace(hello.ProjectID) != "" {
 		_ = ws.Close()
 		return
 	}
@@ -303,7 +330,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	}
 	var device deviceexperience.Device
 	var err error
-	if isV2Unassigned {
+	if isV2 {
 		device, err = r.repository.RegisterUnassignedV2(ctx, deviceInput)
 	} else {
 		device, err = r.repository.UpsertDevice(ctx, deviceInput)
@@ -330,6 +357,12 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	readiness := hello.Readiness
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
+	}
+	// A project-independent v2 socket has inventory authority only until the
+	// Hub-owned assignment/scope handshake completes. Client-provided READY
+	// in device.hello can never promote it to runtime authority.
+	if isV2 {
+		readiness = deviceexperience.ReadinessBlocker
 	}
 	if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 		DeviceID:      device.ID,
@@ -377,35 +410,51 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		<-monitorDone
 	}()
 
-	if isV2Unassigned {
+	if isV2 {
 		assignment, err := r.repository.GetAssignmentRecord(ctx, device.ID)
-		if err != nil ||
-			(assignment.State != "UNASSIGNED" && assignment.State != "BLOCKED") ||
-			(assignment.State == "UNASSIGNED" && assignment.ProjectID != "") ||
-			(assignment.State == "BLOCKED" && assignment.ProjectID == "") {
+		if err != nil {
 			return
 		}
-		// This authenticated inventory response is NOT runtime.ready and
-		// NOT a physical-blackout proof, activation or command authority.
-		response := map[string]any{
-			"type":             "assignment.state",
-			"schema_version":   2,
-			"device_id":        device.ID,
-			"assignment_epoch": assignment.Epoch,
-			"connection_generation": current.generation,
-			"state":            assignment.State,
-			"blackout_required": true,
-			"commands_enabled":  false,
+		valid := false
+		switch assignment.State {
+		case "UNASSIGNED":
+			valid = assignment.ProjectID == "" && assignment.RuntimeSnapshotID == ""
+		case "BLOCKED":
+			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID == ""
+		case "ACTIVE":
+			valid = device.Kind == deviceexperience.DeviceTabletPlayer &&
+				device.ProfileID == deviceexperience.TabletPlayerProfileID &&
+				assignment.ProjectID != "" && assignment.RuntimeSnapshotID != ""
 		}
-		if assignment.State == "BLOCKED" {
+		if !valid {
+			return
+		}
+		response := map[string]any{
+			"type":                  "assignment.state",
+			"schema_version":        2,
+			"device_id":             device.ID,
+			"assignment_epoch":      assignment.Epoch,
+			"connection_generation": current.generation,
+			"state":                 assignment.State,
+			"commands_enabled":      false,
+		}
+		switch assignment.State {
+		case "UNASSIGNED":
+			response["safe_media_required"] = device.Kind == deviceexperience.DeviceTabletPlayer
+			response["blackout_required"] = device.ProfileID != deviceexperience.TabletPlayerProfileID
+		case "BLOCKED":
 			response["project_id"] = assignment.ProjectID
+			response["blackout_required"] = true
 			response["epoch_ack_required"] = true
+		case "ACTIVE":
+			response["project_id"] = assignment.ProjectID
+			response["runtime_snapshot_id"] = assignment.RuntimeSnapshotID
+			response["scope_ack_required"] = true
+			response["safe_media_required"] = false
 		}
 		if err := current.send(response); err != nil {
 			return
 		}
-		// UNASSIGNED has no epoch receipt. A negotiated probe is diagnostic
-		// only; never treat its result as READY or an output instruction.
 		if assignment.State == "UNASSIGNED" &&
 			containsCapability(device.Capabilities, V2LightingStateProbeCapability) &&
 			containsCapability(current.advertisedCapabilities, V2LightingStateProbeCapability) {
@@ -441,17 +490,37 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		}
 		current.markActivity()
 		expectedSchema := runtimeSchemaVersion
-		if isV2Unassigned {
+		if isV2 {
 			expectedSchema = 2
 		}
 		if message.SchemaVersion != expectedSchema || strings.TrimSpace(message.DeviceID) != device.ID {
 			return
 		}
 		switch message.Type {
+		case "tablet.assignment.safe_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverTabletAssignmentAck(current, message) {
+				return
+			}
+		case "assignment.scope_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.activateTabletScope(ctx, current, message) {
+				return
+			}
 		case "lighting.state_report":
 			// Opt-in read-only diagnostic; it cannot activate v2, change
 			// assignment, satisfy the published Snapshot or claim READY.
-			if !isV2Unassigned {
+			if !isV2 {
 				return
 			}
 			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
@@ -465,7 +534,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			// transfer proves only that this exact authenticated v2 socket
 			// reports the new BLOCKED epoch with all logical channels 0.
 			// No project commands, snapshot or ACTIVE state are granted.
-			if !isV2Unassigned ||
+			if !isV2 ||
 				message.AssignmentEpoch <= 1 ||
 				message.ConnectionGeneration != current.generation {
 				return
@@ -515,7 +584,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				r.probeV2AfterReconnect(current)
 			}
 		case "assignment.blackout_ack":
-			if !isV2Unassigned {
+			if !isV2 {
 				return
 			}
 			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
@@ -525,10 +594,13 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				return
 			}
 		case "command.result":
-			// An unassigned v2 node can never report completion of a
-			// project command on this connection.
-			if isV2Unassigned {
-				return
+			if isV2 {
+				r.mu.Lock()
+				allowed := !r.closed && r.connections[device.ID] == current && current.commandsEnabled
+				r.mu.Unlock()
+				if !allowed {
+					return
+				}
 			}
 			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
 				return
@@ -570,13 +642,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if readiness == "" {
 				readiness = deviceexperience.ReadinessUnknown
 			}
-			if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
+			observation := deviceexperience.RuntimeObservation{
 				DeviceID:      device.ID,
 				Connection:    deviceexperience.ConnectionOnline,
 				Readiness:     readiness,
 				ObservedState: message.ObservedState,
 				NetworkState:  message.NetworkState,
-			}, deviceexperience.NetworkObservation{
+			}
+			network := deviceexperience.NetworkObservation{
 				TargetKind:     "STAGE_DEVICE",
 				TargetID:       device.ID,
 				Reachability:   deviceexperience.Reachable,
@@ -584,7 +657,27 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				LatencyMS:      message.LatencyMS,
 				JitterMS:       message.JitterMS,
 				Address:        remoteAddress,
-			}); err != nil || !same {
+			}
+			if isV2 {
+				r.mu.Lock()
+				authorized := !r.closed && r.connections[device.ID] == current &&
+					current.commandsEnabled && current.activeAssignmentEpoch > 0
+				projectID := current.activeProjectID
+				snapshotID := current.activeRuntimeSnapshotID
+				epoch := current.activeAssignmentEpoch
+				r.mu.Unlock()
+				if !authorized {
+					observation.Readiness = deviceexperience.ReadinessBlocker
+					if same, err := r.observeCurrentDevice(ctx, current, observation, network); err != nil || !same {
+						return
+					}
+					continue
+				}
+				if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
+					return
+				}
+				_, _ = r.repository.RecordNetworkObservation(ctx, network)
+			} else if same, err := r.observeCurrentDevice(ctx, current, observation, network); err != nil || !same {
 				return
 			}
 		default:

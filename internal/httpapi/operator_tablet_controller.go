@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -88,6 +89,88 @@ func WithOperatorTabletController(
 			writeJSON(w, http.StatusOK, map[string]any{
 				"devices": tablets,
 				"groups":  groups,
+			})
+		}))
+
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/devices/{device_id}/assign", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "TABLET_ASSIGNMENT_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_ASSIGNMENT_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				ExpectedProjectID        string `json:"expected_project_id"`
+				ExpectedRuntimeSnapshotID string `json:"expected_runtime_snapshot_id"`
+				ExpectedEpoch            int64  `json:"expected_assignment_epoch"`
+				RuntimeSnapshotID         string `json:"runtime_snapshot_id"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			input.RuntimeSnapshotID = strings.TrimSpace(input.RuntimeSnapshotID)
+			snapshot, err := stageStore.GetRuntimeSnapshot(r.Context(), input.RuntimeSnapshotID)
+			if err != nil || snapshot.ProjectID != projectID || snapshot.Status != domain.SnapshotPublished {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "TABLET_ASSIGNMENT_SNAPSHOT_INVALID"})
+				return
+			}
+			intent := deviceexperience.TabletAssignmentInput{
+				DeviceID: deviceID,
+				ExpectedProjectID: input.ExpectedProjectID,
+				ExpectedRuntimeSnapshotID: input.ExpectedRuntimeSnapshotID,
+				TargetProjectID: projectID,
+				TargetRuntimeSnapshotID: input.RuntimeSnapshotID,
+				ExpectedEpoch: input.ExpectedEpoch,
+			}
+			if _, err := devices.PreflightTabletAssignment(r.Context(), intent); err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "TABLET_ASSIGNMENT_PREFLIGHT_BLOCKED",
+					"detail": err.Error(),
+				})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteTabletAssignmentAuthorized(r.Context(), intent, actor, reauthorize)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "TABLET_ASSIGNMENT_NOT_COMMITTED",
+					"detail": err.Error(),
+					"note": "REFETCH_HUB_ASSIGNMENT_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"assignment": record,
+				"commands_enabled": false,
+				"reconnect_required": true,
+				"safe_media_acknowledged": true,
 			})
 		}))
 
@@ -232,7 +315,16 @@ func WithOperatorTabletController(
 func tabletDevices(all []deviceexperience.Device) []deviceexperience.Device {
 	out := make([]deviceexperience.Device, 0)
 	for _, device := range all {
-		if device.Kind == deviceexperience.DeviceTabletPlayer && device.ProtocolVersion == deviceexperience.ProtocolVersion1 {
+		if device.Kind != deviceexperience.DeviceTabletPlayer {
+			continue
+		}
+		if device.ProtocolVersion == deviceexperience.ProtocolVersion1 {
+			out = append(out, device)
+			continue
+		}
+		if device.ProtocolVersion == deviceexperience.ProtocolVersion2 &&
+			device.Assignment != nil && device.Assignment.State == "ACTIVE" &&
+			device.Assignment.ProjectID != "" && device.Assignment.RuntimeSnapshotID != "" {
 			out = append(out, device)
 		}
 	}
@@ -268,6 +360,26 @@ func selectTabletTargets(all []deviceexperience.Device, selectAll bool, group st
 func tabletScope(device deviceexperience.Device, projectID string) (tabletObservedScope, error) {
 	if device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOnline {
 		return tabletObservedScope{}, fmt.Errorf("DEVICE_OFFLINE")
+	}
+	if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
+		if device.Assignment == nil || device.Assignment.State != "ACTIVE" ||
+			device.Assignment.ProjectID != projectID ||
+			strings.TrimSpace(device.Assignment.RuntimeSnapshotID) == "" {
+			return tabletObservedScope{}, fmt.Errorf("HUB_ASSIGNMENT_SCOPE_MISMATCH")
+		}
+		scope := tabletObservedScope{
+			ProjectID: projectID,
+			RuntimeSnapshotID: device.Assignment.RuntimeSnapshotID,
+		}
+		// Tablet Manifest ID remains an optional content hint. It may be read
+		// from live observation, but it never grants Project/Snapshot authority.
+		if len(device.Runtime.ObservedState) != 0 {
+			var observed tabletObservedScope
+			if json.Unmarshal(device.Runtime.ObservedState, &observed) == nil {
+				scope.TabletManifestID = strings.TrimSpace(observed.TabletManifestID)
+			}
+		}
+		return scope, nil
 	}
 	var scope tabletObservedScope
 	if len(device.Runtime.ObservedState) == 0 || json.Unmarshal(device.Runtime.ObservedState, &scope) != nil {
