@@ -1,6 +1,8 @@
 import Foundation
 
 public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
+    public static let defaultLocalOSCControlPort = 9010
+
     public var hubAPIBaseURL: URL
     public var hubRuntimeURL: URL
     public var displayName: String
@@ -34,6 +36,10 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         self.hubBinding = hubBinding
         self.nativeVisualEngineEnabled = nativeVisualEngineEnabled
         self.localOSCControlPort = localOSCControlPort
+    }
+
+    public var effectiveLocalOSCControlPort: Int {
+        localOSCControlPort ?? Self.defaultLocalOSCControlPort
     }
 }
 
@@ -217,7 +223,7 @@ public actor CompanionBootstrap {
             authenticator: securityClient,
             inspectionProviders: inspectionProviders,
             tlsCertificateSHA256: certificatePin,
-            localOSCControlPort: configuration.localOSCControlPort
+            localOSCControlPort: configuration.effectiveLocalOSCControlPort
         )
     }
 
