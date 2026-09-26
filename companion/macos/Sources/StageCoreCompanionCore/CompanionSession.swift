@@ -191,7 +191,7 @@ public actor CompanionSession {
             let request = try decoder.decode(CompanionExecutionRequest.self, from: data)
             return try encoder.encode(await handleExecution(request))
 
-        case .hello, .executionResult:
+        case .hello, .executionResult, .controlSurface:
             throw CompanionSessionError.unexpectedMessage(header.type)
         }
     }
