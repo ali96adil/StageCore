@@ -29,6 +29,7 @@ Health endpoints:
 
 Current engineering status and transition evidence:
 
+- `docs/runbooks/FIRST_SHOW_RUNBOOK.md` — integrated first-rehearsal startup, subsystem order, OSC GO, reusable devices, camera relay and Lighting ACTIVE gate.
 - `docs/BASELINE_STATUS.md`
 - `docs/checkpoints/2026-08-30-m0-m6-physical-qualification-complete.md`
 - `docs/FEATURE_IMPLEMENTATION_ORDER.md`
