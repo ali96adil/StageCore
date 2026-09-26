@@ -76,20 +76,46 @@ func TestTransferPreflightRejectsStaleAndUntrustedStateWithoutMutation(t *testin
 	if result, err := repo.PreflightTransfer(ctx, blocked); err != nil || result.FromProjectID != secondProject.ID {
 		t.Fatalf("blocked v2 reassignment preflight=%+v err=%v", result, err)
 	}
+	const activeSnapshot = "snapshot-active-transfer"
 	if _, err := handle.DB.ExecContext(ctx, `
 		UPDATE stage_device_assignments
-		SET assignment_state='ACTIVE', runtime_snapshot_id=''
+		SET assignment_state='ACTIVE', runtime_snapshot_id=?
 		WHERE device_id = ?
-	`, device.ID); err != nil {
+	`, activeSnapshot, device.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.PreflightTransfer(ctx, blocked); !errors.Is(err, deviceexperience.ErrInvalidState) {
-		t.Fatalf("ACTIVE must remain blocked until v2 command authority is implemented: %v", err)
+		t.Fatalf("unaudited ACTIVE lighting scope must remain fenced: %v", err)
 	}
-	// Client updates are still forbidden after the preflight.
+	if _, err := handle.DB.ExecContext(ctx, `
+		INSERT INTO stage_device_lighting_activation_audit
+		(activation_id, device_id, actor_id, project_id, runtime_snapshot_id,
+		 assignment_epoch, connection_generation, challenge_sha256,
+		 configuration_sha256, committed_at_us)
+		VALUES ('00000000-0000-0000-0000-000000000001', ?, 'owner', ?, ?,
+		        2, 7,
+		        '1111111111111111111111111111111111111111111111111111111111111111',
+		        '2222222222222222222222222222222222222222222222222222222222222222',
+		        1)
+	`, device.ID, secondProject.ID, activeSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := repo.PreflightTransfer(ctx, blocked); err != nil ||
+		result.AssignmentState != "ACTIVE" || result.NextState != "BLOCKED" {
+		t.Fatalf("audited ACTIVE lighting transfer preflight=%+v err=%v", result, err)
+	}
+	// Reconnect may refresh authenticated transport metadata, but it must not
+	// change the Hub-owned ACTIVE Project/Snapshot/epoch.
 	device.DisplayName = "Self claimed"
-	if _, err := repo.RegisterUnassignedV2(ctx, device); err == nil {
-		t.Fatal("assigned v2 node reconnected via unassigned-only enrollment")
+	if _, err := repo.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatalf("audited ACTIVE node could not reconnect project-independently: %v", err)
+	}
+	afterReconnect, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil || afterReconnect.State != "ACTIVE" ||
+		afterReconnect.ProjectID != secondProject.ID ||
+		afterReconnect.RuntimeSnapshotID != activeSnapshot ||
+		afterReconnect.Epoch != 2 {
+		t.Fatalf("ACTIVE reconnect mutated Hub authority: %+v err=%v", afterReconnect, err)
 	}
 }
 
