@@ -19,11 +19,20 @@ import (
 )
 
 const (
-	runtimeSchemaVersion = 1
-	maxRuntimeMessage    = 64 << 10
-	maxRuntimeExecutions = 1024
-	revocationPoll       = 250 * time.Millisecond
+	runtimeSchemaVersion   = 1
+	maxRuntimeMessage      = 64 << 10
+	maxRuntimeExecutions   = 1024
+	revocationPoll         = 250 * time.Millisecond
+	controlSurfaceDebounce = 250 * time.Millisecond
 )
+
+type ControlSurfaceRequest struct {
+	CompanionID string
+	EventID     string
+	Action      string
+}
+
+type ControlSurfaceHandler func(context.Context, ControlSurfaceRequest)
 
 type RuntimeChannel struct {
 	store *store.Store
@@ -37,6 +46,9 @@ type RuntimeChannel struct {
 	inspectionOrder              []string
 	environmentOperationBindings map[string]environmentOperationBinding
 	environmentOperationOrder    []string
+	controlHandler               ControlSurfaceHandler
+	controlInFlight              map[string]bool
+	lastControlAt                map[string]time.Time
 }
 
 type runtimeConnection struct {
@@ -120,6 +132,13 @@ type runtimeExecutionResult struct {
 	Output          json.RawMessage `json:"output"`
 }
 
+type runtimeControlSurfaceEvent struct {
+	Type          string `json:"type"`
+	SchemaVersion int    `json:"schema_version"`
+	EventID       string `json:"event_id"`
+	Action        string `json:"action"`
+}
+
 func NewRuntime(s *store.Store, auth *companionauth.Service) *RuntimeChannel {
 	return &RuntimeChannel{
 		store: s, auth: auth,
@@ -127,7 +146,18 @@ func NewRuntime(s *store.Store, auth *companionauth.Service) *RuntimeChannel {
 		executions:                   make(map[string]*runtimeExecution),
 		inspections:                  make(map[string]*runtimeInspection),
 		environmentOperationBindings: make(map[string]environmentOperationBinding),
+		controlInFlight:              make(map[string]bool),
+		lastControlAt:                make(map[string]time.Time),
 	}
+}
+
+func (c *RuntimeChannel) SetControlSurfaceHandler(handler ControlSurfaceHandler) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.controlHandler = handler
+	c.mu.Unlock()
 }
 
 func (c *RuntimeChannel) ServeWebSocket(
@@ -326,6 +356,10 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			c.acceptResult(connection, data)
 		case "inspection.result":
 			c.acceptInspectionResult(connection, data)
+		case "control.surface":
+			if err := c.acceptControlSurface(connection, data); err != nil {
+				return
+			}
 		default:
 			return
 		}
@@ -443,6 +477,68 @@ func (c *RuntimeChannel) updateHello(ctx context.Context, connection *runtimeCon
 	return c.updateRoleStateFromFreshReport(ctx, companion)
 }
 
+func (c *RuntimeChannel) acceptControlSurface(connection *runtimeConnection, data []byte) error {
+	if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), connection.session.ID); err != nil {
+		connection.close()
+		return err
+	}
+	var wire runtimeControlSurfaceEvent
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Type != "control.surface" || wire.SchemaVersion != runtimeSchemaVersion ||
+		strings.TrimSpace(wire.EventID) == "" || wire.Action != "GO" {
+		return errors.New("invalid Companion control-surface event")
+	}
+
+	now := time.Now()
+	c.mu.Lock()
+	if c.connections[connection.companionID] != connection {
+		c.mu.Unlock()
+		return errors.New("Companion control-surface connection is no longer authoritative")
+	}
+	handler := c.controlHandler
+	if handler == nil {
+		c.mu.Unlock()
+		return nil
+	}
+	if c.controlInFlight[connection.companionID] ||
+		(!c.lastControlAt[connection.companionID].IsZero() && now.Sub(c.lastControlAt[connection.companionID]) < controlSurfaceDebounce) {
+		c.mu.Unlock()
+		return nil
+	}
+	c.controlInFlight[connection.companionID] = true
+	c.lastControlAt[connection.companionID] = now
+	c.mu.Unlock()
+
+	request := ControlSurfaceRequest{
+		CompanionID: connection.companionID,
+		EventID:     strings.TrimSpace(wire.EventID),
+		Action:      wire.Action,
+	}
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-connection.closed:
+				cancel()
+			case <-done:
+			}
+		}()
+		handler(ctx, request)
+		close(done)
+		cancel()
+
+		c.mu.Lock()
+		if c.connections[connection.companionID] == connection {
+			delete(c.controlInFlight, connection.companionID)
+		}
+		c.mu.Unlock()
+	}()
+	return nil
+}
+
 func (c *RuntimeChannel) acceptResult(connection *runtimeConnection, data []byte) {
 	if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), connection.session.ID); err != nil {
 		connection.close()
@@ -505,6 +601,7 @@ func (c *RuntimeChannel) removeConnection(connection *runtimeConnection) {
 	c.mu.Lock()
 	if c.connections[connection.companionID] == connection {
 		delete(c.connections, connection.companionID)
+		delete(c.controlInFlight, connection.companionID)
 		_ = c.store.MarkCompanionRuntimeDisconnected(context.Background(), connection.companionID)
 	}
 	pending := make(map[string]string)
