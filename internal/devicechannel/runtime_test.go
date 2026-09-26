@@ -360,3 +360,44 @@ func testSign(t *testing.T, privateKey *ecdsa.PrivateKey, message []byte) string
 	}
 	return base64.StdEncoding.EncodeToString(signature)
 }
+
+func TestAuthenticatedReconnectCannotStealProjectOrDropExistingRuntime(t *testing.T) {
+	f := newRuntimeFixture(t)
+	ctx := context.Background()
+	legitimate := f.connect(t)
+	defer legitimate.Close()
+
+	// The session token is valid, but reconnect metadata is not an
+	// authorization to change the existing Hub-owned project.
+	url := "ws" + strings.TrimPrefix(f.server.URL, "http")
+	for _, claimedProject := range []string{"", "another-project"} {
+		t.Run("claim-"+claimedProject, func(t *testing.T) {
+			impostor, err := websocket.Dial(url, "", f.server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer impostor.Close()
+			if err := websocket.JSON.Send(impostor, map[string]any{
+				"type": "device.hello", "schema_version": 1,
+				"device_id": testDeviceID, "project_id": claimedProject,
+				"device_kind": deviceexperience.DeviceTabletPlayer,
+				"display_name": "unapproved transfer",
+				"protocol_version": deviceexperience.ProtocolVersion1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_ = impostor.SetReadDeadline(time.Now().Add(2 * time.Second))
+			var unexpected map[string]any
+			if err := websocket.JSON.Receive(impostor, &unexpected); err == nil {
+				t.Fatalf("invalid hello received runtime authority: %+v", unexpected)
+			}
+			loaded, err := f.repo.GetDevice(ctx, testDeviceID)
+			if err != nil || loaded.ProjectID != f.projectID || loaded.DisplayName != "Tablet 01" {
+				t.Fatalf("unauthorized hello changed registry: %+v err=%v", loaded, err)
+			}
+			if !f.runtime.IsConnected(testDeviceID) {
+				t.Fatal("rejected reconnect displaced the legitimate connection")
+			}
+		})
+	}
+}
