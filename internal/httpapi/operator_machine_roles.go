@@ -30,16 +30,31 @@ type machineRoleRuntimeRequirementRequest struct {
 }
 
 type machineRoleView struct {
-	ID                        string    `json:"machine_role_id"`
-	ProjectID                 string    `json:"project_id"`
-	RoleKey                   string    `json:"role_key"`
-	DisplayName               string    `json:"display_name"`
-	RequiredCapabilities      []string  `json:"required_capabilities"`
-	RequiredRuntimeSnapshotID *string   `json:"required_runtime_snapshot_id,omitempty"`
-	RequiredConfigHash        string    `json:"required_config_hash"`
-	Required                  bool      `json:"required"`
-	CreatedAt                 time.Time `json:"created_at"`
-	UpdatedAt                 time.Time `json:"updated_at"`
+	ID                        string              `json:"machine_role_id"`
+	ProjectID                 string              `json:"project_id"`
+	RoleKey                   string              `json:"role_key"`
+	DisplayName               string              `json:"display_name"`
+	RequiredCapabilities      []string            `json:"required_capabilities"`
+	RequiredRuntimeSnapshotID *string             `json:"required_runtime_snapshot_id,omitempty"`
+	RequiredConfigHash        string              `json:"required_config_hash"`
+	Required                  bool                `json:"required"`
+	Assignment                *roleAssignmentView `json:"assignment,omitempty"`
+	CreatedAt                 time.Time           `json:"created_at"`
+	UpdatedAt                 time.Time           `json:"updated_at"`
+}
+
+type companionRoleOptionView struct {
+	ID                       string                    `json:"companion_id"`
+	DisplayName              string                    `json:"display_name"`
+	Hostname                 string                    `json:"hostname"`
+	Platform                 string                    `json:"platform"`
+	Architecture             string                    `json:"architecture"`
+	Version                  string                    `json:"version"`
+	Capabilities             []string                  `json:"capabilities"`
+	TrustState               domain.CompanionTrustState `json:"trust_state"`
+	Readiness                domain.CompanionReadiness  `json:"readiness"`
+	AppliedRuntimeSnapshotID *string                   `json:"applied_runtime_snapshot_id,omitempty"`
+	LastSeenAt               time.Time                 `json:"last_seen_at"`
 }
 
 type roleAssignmentView struct {
@@ -61,6 +76,53 @@ func WithOperatorMachineRoles(auth *userauth.Service, stageStore *store.Store) O
 }
 
 func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/machine-roles", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		roles, err := stageStore.ListMachineRoles(r.Context(), projectID)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_LIST_FAILED")
+			return
+		}
+		roleViews := make([]machineRoleView, 0, len(roles))
+		for _, role := range roles {
+			view := makeMachineRoleView(role)
+			assignment, err := stageStore.GetActiveRoleAssignment(r.Context(), role.ID)
+			if err == nil {
+				assignmentView := makeRoleAssignmentView(assignment)
+				view.Assignment = &assignmentView
+			} else if !errors.Is(err, domain.ErrNotFound) {
+				writeMachineRoleStoreError(w, err, "MACHINE_ROLE_ASSIGNMENT_LIST_FAILED")
+				return
+			}
+			roleViews = append(roleViews, view)
+		}
+		companions, err := stageStore.ListCompanions(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_LIST_FAILED"})
+			return
+		}
+		companionViews := make([]companionRoleOptionView, 0, len(companions))
+		for _, companion := range companions {
+			companionViews = append(companionViews, companionRoleOptionView{
+				ID: companion.ID,
+				DisplayName: companion.DisplayName,
+				Hostname: companion.Hostname,
+				Platform: companion.Platform,
+				Architecture: companion.Architecture,
+				Version: companion.Version,
+				Capabilities: append([]string(nil), companion.Capabilities...),
+				TrustState: companion.TrustState,
+				Readiness: companion.Readiness,
+				AppliedRuntimeSnapshotID: companion.AppliedRuntimeSnapshotID,
+				LastSeenAt: companion.LastSeenAt,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"roles": roleViews,
+			"companions": companionViews,
+		})
+	}))
+
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/machine-roles", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var body machineRoleCreateRequest
