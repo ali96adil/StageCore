@@ -195,12 +195,12 @@ func (r *Runtime) IsConnected(deviceID string) bool {
 // socket. The Hub issues a new generation for each successful reconnect.
 // This is not a physical blackout proof, project transfer or readiness grant.
 type V2RuntimeScope struct {
-	Generation        int64
-	ProjectID         string
-	RuntimeSnapshotID string
-	AssignmentEpoch   int64
-	CommandsEnabled   bool
-	Capabilities      []string
+	Generation        int64    `json:"connection_generation"`
+	ProjectID         string   `json:"project_id,omitempty"`
+	RuntimeSnapshotID string   `json:"runtime_snapshot_id,omitempty"`
+	AssignmentEpoch   int64    `json:"assignment_epoch,omitempty"`
+	CommandsEnabled   bool     `json:"commands_enabled"`
+	Capabilities      []string `json:"capabilities,omitempty"`
 }
 
 func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
