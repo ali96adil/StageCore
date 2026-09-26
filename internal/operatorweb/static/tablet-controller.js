@@ -25,8 +25,12 @@
       overlayClear: "Clear overlay",
       dissolve: "Dissolve ms",
       live: "Live source",
-      liveSub: "Show or hide a media key already configured on the tablet.",
+      liveSub: "Show a configured media key or a direct HTTP(S) live URL.",
+      liveMode: "Source type",
+      liveByKey: "Media key",
+      liveByURL: "Direct URL",
       liveKey: "Media key",
+      liveURL: "Live URL",
       liveShow: "Show live",
       liveHide: "Hide live",
       blackout: "Screen safety",
@@ -46,6 +50,7 @@
       cueReady: "Tablet actions added to a new Draft Cue. Name it and save the Cue.",
       chooseTablet: "Choose at least one tablet.",
       needLiveKey: "Enter a live media key first.",
+      needLiveURL: "Enter an absolute HTTP(S) live URL first.",
       needCueID: "Enter a Tablet Cue ID first.",
       group: "Group",
       all: "All",
@@ -73,8 +78,12 @@
       overlayClear: "مسح Overlay",
       dissolve: "Dissolve ms",
       live: "المصدر الحي",
-      liveSub: "إظهار أو إخفاء media key معرف مسبقاً على التابلت.",
+      liveSub: "إظهار Media key معرف مسبقاً أو رابط HTTP(S) مباشر للبث.",
+      liveMode: "نوع المصدر",
+      liveByKey: "Media key",
+      liveByURL: "رابط مباشر",
       liveKey: "Media key",
+      liveURL: "رابط البث",
       liveShow: "إظهار Live",
       liveHide: "إخفاء Live",
       blackout: "أمان الشاشة",
@@ -94,6 +103,7 @@
       cueReady: "انضافت أوامر التابلت إلى Draft Cue جديد. سمّه واحفظه.",
       chooseTablet: "اختار تابلت واحد على الأقل.",
       needLiveKey: "دخل Live media key أولاً.",
+      needLiveURL: "دخل رابط HTTP(S) كامل للبث أولاً.",
       needCueID: "دخل Tablet Cue ID أولاً.",
       group: "مجموعة",
       all: "الكل",
@@ -216,7 +226,11 @@
           </section>
           <section class="card tablet-control-panel">
             <div><p class="eyebrow">LIVE</p><h2>${esc(t("live"))}</h2><p class="muted">${esc(t("liveSub"))}</p></div>
-            <label>${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
+            <div class="tablet-inline-fields">
+              <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="key">${esc(t("liveByKey"))}</option><option value="url">${esc(t("liveByURL"))}</option></select></label>
+              <label id="tabletLiveKeyWrap">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
+              <label id="tabletLiveURLWrap" class="hidden">${esc(t("liveURL"))}<input id="tabletLiveURL" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
+            </div>
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
           </section>
           <section class="card tablet-control-panel tablet-safety-panel">
@@ -258,6 +272,11 @@
       document.getElementById("tabletCueIDWrap")?.classList.toggle("hidden", !cueMode);
       document.getElementById("tabletMediaNumber")?.closest("label")?.classList.toggle("hidden", cueMode);
     });
+    document.getElementById("tabletLiveMode")?.addEventListener("change", (event) => {
+      const direct = event.target.value === "url";
+      document.getElementById("tabletLiveKeyWrap")?.classList.toggle("hidden", direct);
+      document.getElementById("tabletLiveURLWrap")?.classList.toggle("hidden", !direct);
+    });
     document.querySelectorAll("[data-tablet-command]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
       try { await dispatchTabletCommand(button.dataset.tabletCommand); }
@@ -278,6 +297,15 @@
     if (command === "TABLET_OVERLAY_PLAY") return { media_number: Math.max(1, Number(document.getElementById("tabletOverlayNumber")?.value || 1)) };
     if (command === "TABLET_OVERLAY_CLEAR") return { dissolve_ms: Math.max(0, Number(document.getElementById("tabletOverlayDissolve")?.value || 0)) };
     if (command === "TABLET_LIVE_SHOW") {
+      if (document.getElementById("tabletLiveMode")?.value === "url") {
+        const value = document.getElementById("tabletLiveURL")?.value.trim() || "";
+        let parsed = null;
+        try { parsed = new URL(value); } catch (_) {}
+        if (!parsed || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+          throw new Error(t("needLiveURL"));
+        }
+        return { url: value };
+      }
       const key = document.getElementById("tabletLiveKey")?.value.trim() || "";
       if (!key) throw new Error(t("needLiveKey"));
       return { media_key: key };
