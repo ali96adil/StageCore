@@ -10,6 +10,7 @@ func legacyConfigurationRemainsCompatible() throws {
     #expect(configuration.hubRuntimeURL.absoluteString == "wss://stagecore.example/api/v1/companion/runtime")
     #expect(configuration.hubBinding == nil)
     #expect(configuration.nativeVisualEngineEnabled == nil)
+    #expect(configuration.effectiveLocalOSCControlPort == 9010)
 }
 
 @Test("remembered Hub binding and native visual opt-in persist with Companion configuration")
@@ -30,4 +31,5 @@ func hubBindingRoundTrips() throws {
     #expect(decoded == configuration)
     #expect(decoded.hubBinding?.hubID == "01a045ef-1d7d-7b9b-8bb3-c0daa63fc19d")
     #expect(decoded.nativeVisualEngineEnabled == true)
+    #expect(decoded.effectiveLocalOSCControlPort == 9010)
 }
