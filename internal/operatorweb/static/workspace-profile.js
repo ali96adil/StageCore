@@ -304,6 +304,10 @@ function f017ApplyProfile({ navigateIfNeeded = false } = {}) {
       if (button) nav.appendChild(button);
     }
     for (const [page, button] of buttons.entries()) {
+      // F-017 profiles own only the original pages. Feature workspaces such as
+      // Lighting Cues/Setup and Tablet Scenes own their own navigation entries;
+      // hiding unknown pages here leaves working tools reachable only via JS.
+      if (!F017_PAGES.includes(page)) continue;
       button.classList.toggle("f017-profile-hidden", !profile.visible_pages.includes(page));
     }
   }
