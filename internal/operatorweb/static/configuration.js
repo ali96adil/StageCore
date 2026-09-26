@@ -7,7 +7,32 @@ function configurationEditable() {
 }
 
 async function loadConfiguration() {
-  return api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration`);
+  const projectID = encodeURIComponent(state.project.project_id);
+  const configuration = await api(`/api/v1/projects/${projectID}/configuration`);
+  let machineRoles = { roles: [], companions: [] };
+  if (configurationEditable()) {
+    try {
+      machineRoles = await api(`/api/v1/projects/${projectID}/machine-roles`);
+    } catch (_) {}
+  }
+  return {
+    ...configuration,
+    machine_roles: machineRoles.roles || [],
+    companions: machineRoles.companions || [],
+  };
+}
+
+function companionSupportsRole(companion, role) {
+  if (!companion || companion.trust_state !== "TRUSTED") return false;
+  const available = new Set(companion.capabilities || []);
+  return (role.required_capabilities || []).every((capability) => available.has(capability));
+}
+
+function machineRoleTarget(role, targets) {
+  return (targets || []).find((target) =>
+    target.logical_type === "machine_role" &&
+    target.configuration?.machine_role_id === role.machine_role_id
+  ) || null;
 }
 
 function optionList(items, valueKey, labeler) {
@@ -93,6 +118,56 @@ async function renderConfiguration() {
         <div class="actions-editor" style="margin-top:14px">${(model.routes || []).length ? model.routes.map((route) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(route.name)}</strong>${pill(route.enabled ? "ENABLED" : "DISABLED", route.enabled ? "good" : "neutral")}</div><p class="muted">Input ${esc(route.input_id)} · ${esc(route.priority_class)}</p><p class="mono muted">${esc(route.route_id)}</p></div>`).join("") : `<div class="empty">No routes yet.</div>`}</div>
       </article>
+
+      ${roleCanEdit ? `
+      <article class="card">
+        <p class="eyebrow">COMPANION MACHINE ROLES</p><h2>Mac / Companion roles</h2>
+        <p class="muted">Create stable show roles such as AUDIO-ABLETON or VIDEO-VDMX. Cues target the Role, not a Mac hostname.</p>
+        <form id="machineRoleForm" style="margin-top:14px">
+          <div class="form-grid two">
+            <label>Role key<input id="machineRoleKey" placeholder="AUDIO-ABLETON" required></label>
+            <label>Display name<input id="machineRoleName" placeholder="Ableton Audio"></label>
+          </div>
+          <div class="form-grid two">
+            <label class="check-row"><input id="machineRoleMIDI" type="checkbox" checked> MIDI send</label>
+            <label class="check-row"><input id="machineRoleOSC" type="checkbox"> OSC send</label>
+            <label class="check-row"><input id="machineRoleEcho" type="checkbox"> Local echo / diagnostics</label>
+            <label class="check-row"><input id="machineRoleRequired" type="checkbox" checked> Required for show readiness</label>
+          </div>
+          <button class="button primary" type="submit">Create Machine Role</button>
+          ${!editable ? `<p class="muted">Role assignment is available now. To add a new Role as a Cue target, start a routing Draft.</p>` : ""}
+        </form>
+        <div class="actions-editor" style="margin-top:14px">
+          ${(model.machine_roles || []).length ? model.machine_roles.map((role) => {
+            const target = machineRoleTarget(role, model.targets);
+            const assigned = role.assignment?.companion_id || "";
+            const assignedCompanion = (model.companions || []).find((item) => item.companion_id === assigned);
+            const candidates = (model.companions || []).filter((item) => companionSupportsRole(item, role));
+            return `
+            <div class="action-editor machine-role-row" data-role-id="${esc(role.machine_role_id)}">
+              <div class="section-title-row">
+                <div><strong>${esc(role.role_key)}</strong><p class="muted">${esc(role.display_name || role.role_key)}</p></div>
+                ${pill(role.required ? "REQUIRED" : "OPTIONAL", role.required ? "warn" : "neutral")}
+              </div>
+              <p class="muted">Capabilities: ${esc((role.required_capabilities || []).join(", ") || "none")}</p>
+              <p class="muted">Cue target: ${target ? `<strong>${esc(target.logical_name)}</strong>` : "not created yet"}</p>
+              ${!target && editable ? `<button class="button machine-role-target" type="button" data-role-id="${esc(role.machine_role_id)}" data-role-key="${esc(role.role_key)}">Add as Cue target</button>` : ""}
+              <div class="form-grid two" style="margin-top:10px">
+                <label>Assigned Companion
+                  <select class="machine-role-companion">
+                    <option value="">Select trusted Companion…</option>
+                    ${candidates.map((item) => `<option value="${esc(item.companion_id)}" ${item.companion_id === assigned ? "selected" : ""}>${esc(item.display_name || item.hostname || item.companion_id)} · ${esc(item.readiness || "UNKNOWN")}</option>`).join("")}
+                  </select>
+                </label>
+                <div class="row-actions" style="align-self:end">
+                  ${assigned ? `<button class="button danger machine-role-release" type="button">Release ${esc(assignedCompanion?.display_name || "Companion")}</button>` : `<button class="button primary machine-role-assign" type="button">Assign</button>`}
+                </div>
+              </div>
+              ${!candidates.length ? `<p class="muted">No TRUSTED Companion currently advertises every required capability.</p>` : ""}
+            </div>`;
+          }).join("") : `<div class="empty">No Machine Roles yet.</div>`}
+        </div>
+      </article>` : ""}
     </div>`;
 
   el("refreshConfiguration").addEventListener("click", () => renderConfiguration().catch(configurationError));
@@ -106,6 +181,89 @@ async function renderConfiguration() {
       } catch (error) { configurationError(error); }
     });
   }
+  const machineRoleForm = el("machineRoleForm");
+  if (machineRoleForm) {
+    machineRoleForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const requiredCapabilities = [];
+      if (el("machineRoleMIDI").checked) requiredCapabilities.push("midi.send");
+      if (el("machineRoleOSC").checked) requiredCapabilities.push("osc.send");
+      if (el("machineRoleEcho").checked) requiredCapabilities.push("local.echo");
+      if (!requiredCapabilities.length) {
+        configurationError(new Error("Choose at least one Machine Role capability."));
+        return;
+      }
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles`, {
+          method: "POST",
+          json: {
+            role_key: el("machineRoleKey").value.trim(),
+            display_name: el("machineRoleName").value.trim(),
+            required_capabilities: requiredCapabilities,
+            required: el("machineRoleRequired").checked,
+          },
+        });
+        await renderConfiguration();
+        setMessage(globalMessage, "Machine Role created. Add it as a Cue target from the Role card when a routing Draft is open.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  }
+
+  document.querySelectorAll(".machine-role-assign").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".machine-role-row");
+      const roleID = row?.dataset.roleId || "";
+      const companionID = row?.querySelector(".machine-role-companion")?.value || "";
+      if (!roleID || !companionID) {
+        configurationError(new Error("Choose a trusted Companion before assignment."));
+        return;
+      }
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles/${encodeURIComponent(roleID)}/assignment`, {
+          method: "POST",
+          json: { companion_id: companionID },
+        });
+        await renderConfiguration();
+        setMessage(globalMessage, "Companion assigned to Machine Role.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
+
+  document.querySelectorAll(".machine-role-release").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const row = button.closest(".machine-role-row");
+      const roleID = row?.dataset.roleId || "";
+      if (!roleID || !window.confirm("Release this Companion from the Machine Role?")) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles/${encodeURIComponent(roleID)}/assignment`, {
+          method: "DELETE",
+        });
+        await renderConfiguration();
+        setMessage(globalMessage, "Machine Role assignment released.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
+
+  document.querySelectorAll(".machine-role-target").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const roleID = button.dataset.roleId || "";
+      const roleKey = button.dataset.roleKey || "";
+      if (!roleID || !roleKey) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/targets`, {
+          method: "POST",
+          json: {
+            logical_name: roleKey,
+            logical_type: "machine_role",
+            configuration: { machine_role_id: roleID },
+          },
+        });
+        await refreshProjectAndConfiguration();
+        setMessage(globalMessage, `Machine Role ${roleKey} is now available as a Cue target.`, "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
+
   if (!editable) return;
   el("targetForm").addEventListener("submit", async (event) => {
     event.preventDefault();
