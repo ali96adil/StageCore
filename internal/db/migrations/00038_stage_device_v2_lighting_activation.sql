@@ -22,6 +22,59 @@ CREATE TABLE stage_device_lighting_activation_audit (
 CREATE INDEX stage_device_lighting_activation_device_idx
 ON stage_device_lighting_activation_audit(device_id, committed_at_us DESC);
 
+-- Schema 30 fenced all non-LEGACY stage_devices metadata updates. v2
+-- reconnect now needs one narrow exception for authenticated software telemetry:
+-- client_version + capabilities_json + updated_at_us only. This does not grant
+-- Project/assignment/enabled/profile/kind/display/group/location authority.
+DROP TRIGGER stage_device_legacy_hello_update_guard;
+
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_legacy_hello_update_guard
+BEFORE UPDATE ON stage_devices
+WHEN EXISTS (
+    SELECT 1 FROM stage_device_assignments
+    WHERE device_id = OLD.device_id AND assignment_state <> 'LEGACY'
+)
+AND NOT (
+    (
+        OLD.enabled = 1 AND NEW.enabled = 0
+        AND NEW.device_id IS OLD.device_id
+        AND NEW.project_id IS OLD.project_id
+        AND NEW.profile_id IS OLD.profile_id
+        AND NEW.device_kind IS OLD.device_kind
+        AND NEW.display_name IS OLD.display_name
+        AND NEW.platform IS OLD.platform
+        AND NEW.architecture IS OLD.architecture
+        AND NEW.client_version IS OLD.client_version
+        AND NEW.protocol_version IS OLD.protocol_version
+        AND NEW.capabilities_json IS OLD.capabilities_json
+        AND NEW.group_name IS OLD.group_name
+        AND NEW.location_name IS OLD.location_name
+        AND NEW.created_at_us IS OLD.created_at_us
+    )
+    OR
+    (
+        OLD.enabled = 1 AND NEW.enabled = 1
+        AND OLD.protocol_version = 'stagecore.device/2'
+        AND NEW.protocol_version = 'stagecore.device/2'
+        AND NEW.device_id IS OLD.device_id
+        AND NEW.project_id IS OLD.project_id
+        AND NEW.profile_id IS OLD.profile_id
+        AND NEW.device_kind IS OLD.device_kind
+        AND NEW.display_name IS OLD.display_name
+        AND NEW.platform IS OLD.platform
+        AND NEW.architecture IS OLD.architecture
+        AND NEW.group_name IS OLD.group_name
+        AND NEW.location_name IS OLD.location_name
+        AND NEW.created_at_us IS OLD.created_at_us
+        AND NEW.updated_at_us >= OLD.updated_at_us
+    )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_V1_HELLO_FENCED');
+END;
+-- +goose StatementEnd
+
 -- Schema 32 intentionally allowed only UNASSIGNED/BLOCKED transfer
 -- reservations. Once audited ACTIVE lighting exists, a node must be able to
 -- leave that Project without reprovisioning. Retain the same fail-closed
@@ -144,6 +197,37 @@ DROP TRIGGER stage_device_legacy_command_insert_guard;
 DROP TRIGGER stage_device_transfer_insert_guard;
 DROP INDEX IF EXISTS stage_device_lighting_activation_device_idx;
 DROP TABLE IF EXISTS stage_device_lighting_activation_audit;
+
+DROP TRIGGER stage_device_legacy_hello_update_guard;
+
+-- Restore schema-30 reconnect fence: no non-LEGACY metadata refresh.
+-- +goose StatementBegin
+CREATE TRIGGER stage_device_legacy_hello_update_guard
+BEFORE UPDATE ON stage_devices
+WHEN EXISTS (
+    SELECT 1 FROM stage_device_assignments
+    WHERE device_id = OLD.device_id AND assignment_state <> 'LEGACY'
+)
+AND NOT (
+    OLD.enabled = 1 AND NEW.enabled = 0
+    AND NEW.device_id IS OLD.device_id
+    AND NEW.project_id IS OLD.project_id
+    AND NEW.profile_id IS OLD.profile_id
+    AND NEW.device_kind IS OLD.device_kind
+    AND NEW.display_name IS OLD.display_name
+    AND NEW.platform IS OLD.platform
+    AND NEW.architecture IS OLD.architecture
+    AND NEW.client_version IS OLD.client_version
+    AND NEW.protocol_version IS OLD.protocol_version
+    AND NEW.capabilities_json IS OLD.capabilities_json
+    AND NEW.group_name IS OLD.group_name
+    AND NEW.location_name IS OLD.location_name
+    AND NEW.created_at_us IS OLD.created_at_us
+)
+BEGIN
+    SELECT RAISE(ABORT, 'STAGE_DEVICE_V1_HELLO_FENCED');
+END;
+-- +goose StatementEnd
 
 -- Restore the schema-32 transfer reservation guard: no ACTIVE source scope.
 -- +goose StatementBegin
