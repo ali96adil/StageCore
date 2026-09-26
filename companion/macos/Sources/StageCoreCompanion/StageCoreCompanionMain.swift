@@ -79,7 +79,11 @@ enum StageCoreCompanionMain {
     private static func loadConfiguration(options: CLIOptions) async throws -> CompanionAppConfiguration {
         let store = FileCompanionConfigurationStore(url: configURL(options.configPath))
         if FileManager.default.fileExists(atPath: store.url.path) {
-            let existing = try store.load()
+            var existing = try store.load()
+            if let port = options.oscControlPort, existing.localOSCControlPort != port {
+                existing.localOSCControlPort = port
+                try store.save(existing)
+            }
             guard let binding = existing.hubBinding else {
                 // Legacy/manual configuration remains supported exactly as a
                 // recovery and test path. F-004 never rewrites it into TOFU.
@@ -107,7 +111,8 @@ enum StageCoreCompanionMain {
                 hubAPIBaseURL: apiURL,
                 hubRuntimeURL: runtimeURL,
                 displayName: options.displayName,
-                oscEndpoint: oscEndpoint
+                oscEndpoint: oscEndpoint,
+                localOSCControlPort: options.oscControlPort
             )
             try store.save(configuration)
             return configuration
@@ -125,7 +130,8 @@ enum StageCoreCompanionMain {
             hubRuntimeURL: discovered.runtimeURL,
             displayName: options.displayName,
             oscEndpoint: oscEndpoint,
-            hubBinding: discovered.binding
+            hubBinding: discovered.binding,
+            localOSCControlPort: options.oscControlPort
         )
         try store.save(configuration)
         return configuration
@@ -145,6 +151,11 @@ enum StageCoreCompanionMain {
             case "--display-name": options.displayName = argument
             case "--osc-host": options.oscHost = argument
             case "--osc-port": options.oscPort = Int(argument)
+            case "--osc-control-port":
+                guard let port = Int(argument), (1...65535).contains(port) else {
+                    throw BootstrapCLIError.invalidOSCConfiguration
+                }
+                options.oscControlPort = port
             default: throw BootstrapCLIError.invalidArguments
             }
             index += 2
@@ -216,6 +227,7 @@ private struct CLIOptions {
     var displayName: String
     var oscHost: String?
     var oscPort: Int?
+    var oscControlPort: Int?
 }
 
 private enum BootstrapCLIError: Error {

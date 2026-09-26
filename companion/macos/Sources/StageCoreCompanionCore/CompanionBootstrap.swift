@@ -10,6 +10,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
     public var mediaCacheRoot: URL?
     public var hubBinding: CompanionHubBinding?
     public var nativeVisualEngineEnabled: Bool?
+    public var localOSCControlPort: Int?
 
     public init(
         hubAPIBaseURL: URL,
@@ -20,7 +21,8 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         oscEndpoint: OSCEndpoint? = nil,
         mediaCacheRoot: URL? = nil,
         hubBinding: CompanionHubBinding? = nil,
-        nativeVisualEngineEnabled: Bool? = nil
+        nativeVisualEngineEnabled: Bool? = nil,
+        localOSCControlPort: Int? = nil
     ) {
         self.hubAPIBaseURL = hubAPIBaseURL
         self.hubRuntimeURL = hubRuntimeURL
@@ -31,6 +33,7 @@ public struct CompanionAppConfiguration: Codable, Sendable, Equatable {
         self.mediaCacheRoot = mediaCacheRoot
         self.hubBinding = hubBinding
         self.nativeVisualEngineEnabled = nativeVisualEngineEnabled
+        self.localOSCControlPort = localOSCControlPort
     }
 }
 
@@ -213,7 +216,8 @@ public actor CompanionBootstrap {
             session: companionSession,
             authenticator: securityClient,
             inspectionProviders: inspectionProviders,
-            tlsCertificateSHA256: certificatePin
+            tlsCertificateSHA256: certificatePin,
+            localOSCControlPort: configuration.localOSCControlPort
         )
     }
 

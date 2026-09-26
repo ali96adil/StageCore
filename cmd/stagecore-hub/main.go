@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	tabletcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.tablet-controller"
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/config"
 	"github.com/ali96adil/StageCore/internal/devicepreflight"
 	"github.com/ali96adil/StageCore/internal/deviceprofile"
@@ -101,6 +103,35 @@ func main() {
 			application.DeviceRuntime,
 		)),
 	)
+	application.CompanionRuntime.SetControlSurfaceHandler(func(ctx context.Context, request companionchannel.ControlSurfaceRequest) {
+		if request.Action != "GO" {
+			return
+		}
+		assignment, err := application.Store.GetActiveRoleAssignmentForCompanion(ctx, request.CompanionID)
+		if err != nil || assignment.State != domain.RoleReady {
+			return
+		}
+		role, err := application.Store.GetMachineRole(ctx, assignment.MachineRoleID)
+		if err != nil || role.RequiredRuntimeSnapshotID == nil || strings.TrimSpace(*role.RequiredRuntimeSnapshotID) == "" {
+			return
+		}
+		companionState, err := application.Store.GetCompanion(ctx, request.CompanionID)
+		if err != nil || companionState.Readiness != domain.CompanionReadinessReady ||
+			companionState.AppliedRuntimeSnapshotID == nil ||
+			strings.TrimSpace(*companionState.AppliedRuntimeSnapshotID) != strings.TrimSpace(*role.RequiredRuntimeSnapshotID) ||
+			companionState.ConfigHash != role.RequiredConfigHash {
+			return
+		}
+		session, err := application.Store.ActiveSessionForProject(ctx, role.ProjectID)
+		if err != nil || session == nil || session.RuntimeSnapshotID != strings.TrimSpace(*role.RequiredRuntimeSnapshotID) {
+			return
+		}
+		_ = runtimeControl.Go(ctx, runtimecontrol.CueRequest{
+			SessionID: session.ID,
+			Issuer:    "companion.local_osc:" + request.CompanionID,
+			RequestID: request.EventID,
+		})
+	})
 	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin)
 	if simulation == nil {
 		logger.Error("simulation control startup failed")

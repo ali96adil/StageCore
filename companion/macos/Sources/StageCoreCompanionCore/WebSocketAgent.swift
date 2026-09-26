@@ -12,6 +12,7 @@ public enum CompanionTransportError: Error, Equatable {
     case unsupportedScheme
     case insecureTransportNotAllowed
     case invalidLoopbackHost
+    case invalidLocalOSCControlPort
     case disconnected
 }
 
@@ -53,6 +54,7 @@ public actor WebSocketCompanionAgent {
     private let maxReconnects: Int
     private let heartbeatInterval: Duration
     private let tlsCertificateSHA256: String?
+    private let localOSCControlPort: Int?
 
     public init(
         url: URL,
@@ -63,11 +65,15 @@ public actor WebSocketCompanionAgent {
         reconnectDelay: Duration = .milliseconds(250),
         maxReconnects: Int = 8,
         heartbeatInterval: Duration = .seconds(5),
-        tlsCertificateSHA256: String? = nil
+        tlsCertificateSHA256: String? = nil,
+        localOSCControlPort: Int? = nil
     ) throws {
         try CompanionTransportPolicy.validate(url: url, policy: securityPolicy)
         if let pin = tlsCertificateSHA256, !HubTLS.isValidCertificateSHA256(pin) {
             throw CompanionTransportError.insecureTransportNotAllowed
+        }
+        if let port = localOSCControlPort, !(1...65535).contains(port) {
+            throw CompanionTransportError.invalidLocalOSCControlPort
         }
         self.url = url
         self.securityPolicy = securityPolicy
@@ -78,6 +84,7 @@ public actor WebSocketCompanionAgent {
         self.maxReconnects = max(0, maxReconnects)
         self.heartbeatInterval = heartbeatInterval
         self.tlsCertificateSHA256 = tlsCertificateSHA256
+        self.localOSCControlPort = localOSCControlPort
     }
 
     public func run() async throws {
@@ -127,6 +134,26 @@ public actor WebSocketCompanionAgent {
             }
         }
         defer { heartbeat.cancel() }
+
+        let localControlTask: Task<Void, Never>?
+        if let port = localOSCControlPort {
+            localControlTask = Task {
+                do {
+                    let listener = try LocalOSCControlListener(port: port)
+                    try await listener.run { event in
+                        let data = try JSONEncoder().encode(event)
+                        try await self.send(data, socket: socket)
+                    }
+                } catch is CancellationError {
+                    // Normal connection teardown.
+                } catch {
+                    socket.cancel(with: .goingAway, reason: nil)
+                }
+            }
+        } else {
+            localControlTask = nil
+        }
+        defer { localControlTask?.cancel() }
 
         do {
             try await send(try await session.helloData(), socket: socket)

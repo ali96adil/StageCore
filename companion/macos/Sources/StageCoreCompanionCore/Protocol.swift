@@ -5,6 +5,7 @@ public enum CompanionMessageType: String, Codable, Sendable {
     case sessionReady = "session.ready"
     case executionRequest = "execution.request"
     case executionResult = "execution.result"
+    case controlSurface = "control.surface"
 }
 
 public enum JSONValue: Codable, Sendable, Equatable {
@@ -317,5 +318,31 @@ public struct CompanionExecutionResult: Codable, Sendable, Equatable {
         self.errorCode = errorCode
         self.responseSummary = responseSummary
         self.output = output
+    }
+}
+
+
+public struct CompanionControlSurfaceEvent: Codable, Sendable, Equatable {
+    public let type: CompanionMessageType
+    public let schemaVersion: Int
+    public let eventID: String
+    public let action: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case eventID = "event_id"
+        case action
+    }
+
+    public init(
+        schemaVersion: Int = 1,
+        eventID: String = UUID().uuidString.lowercased(),
+        action: String
+    ) {
+        self.type = .controlSurface
+        self.schemaVersion = schemaVersion
+        self.eventID = eventID
+        self.action = action
     }
 }
