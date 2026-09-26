@@ -158,7 +158,7 @@ func TestOperatorTabletControllerCueActionsCreateCanonicalAliasOnce(t *testing.T
 	}
 }
 
-func TestTabletScopeMatchesAndroidObservedState(t *testing.T) {
+func TestLegacyTabletScopeMatchesAndroidObservedState(t *testing.T) {
 	device := deviceexperience.Device{
 		Runtime: &deviceexperience.RuntimeState{
 			Connection:    deviceexperience.ConnectionOnline,
@@ -175,5 +175,68 @@ func TestTabletScopeMatchesAndroidObservedState(t *testing.T) {
 	device.Runtime.Connection = deviceexperience.ConnectionOffline
 	if _, err := tabletScope(device, "project-1"); err == nil || err.Error() != "DEVICE_OFFLINE" {
 		t.Fatalf("offline err=%v", err)
+	}
+}
+
+
+func TestV2TabletScopeUsesHubAssignmentNotObservedProjectAuthority(t *testing.T) {
+	device := deviceexperience.Device{
+		Kind:            deviceexperience.DeviceTabletPlayer,
+		ProfileID:       deviceexperience.TabletPlayerProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Assignment: &deviceexperience.AssignmentRecord{
+			ProjectID:         "project-hub",
+			RuntimeSnapshotID: "snapshot-hub",
+			Epoch:             4,
+			State:             "ACTIVE",
+		},
+		Runtime: &deviceexperience.RuntimeState{
+			Connection: deviceexperience.ConnectionOnline,
+			Readiness:  deviceexperience.ReadinessReady,
+			ObservedState: json.RawMessage(
+				`{"project_id":"project-client-wrong","runtime_snapshot_id":"snapshot-client-wrong","tablet_manifest_id":"manifest-local"}`,
+			),
+		},
+	}
+
+	scope, err := tabletScope(device, "project-hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.ProjectID != "project-hub" ||
+		scope.RuntimeSnapshotID != "snapshot-hub" ||
+		scope.TabletManifestID != "manifest-local" {
+		t.Fatalf("v2 scope must use Hub assignment and only accept manifest as a hint: %+v", scope)
+	}
+	if _, err := tabletScope(device, "project-client-wrong"); err == nil ||
+		err.Error() != "HUB_ASSIGNMENT_SCOPE_MISMATCH" {
+		t.Fatalf("client-observed Project escaped Hub authority: %v", err)
+	}
+}
+
+func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
+	active := deviceexperience.Device{
+		ID:              "tablet-active",
+		Kind:            deviceexperience.DeviceTabletPlayer,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Assignment: &deviceexperience.AssignmentRecord{
+			ProjectID: "project-1", RuntimeSnapshotID: "snapshot-1",
+			Epoch: 2, State: "ACTIVE",
+		},
+	}
+	unassigned := deviceexperience.Device{
+		ID:              "tablet-unassigned",
+		Kind:            deviceexperience.DeviceTabletPlayer,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Assignment: &deviceexperience.AssignmentRecord{Epoch: 1, State: "UNASSIGNED"},
+	}
+	legacy := deviceexperience.Device{
+		ID:              "tablet-v1",
+		Kind:            deviceexperience.DeviceTabletPlayer,
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+	}
+	got := tabletDevices([]deviceexperience.Device{unassigned, active, legacy})
+	if len(got) != 2 || got[0].ID != "tablet-active" || got[1].ID != "tablet-v1" {
+		t.Fatalf("tablet inventory=%+v", got)
 	}
 }
