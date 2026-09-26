@@ -19,7 +19,7 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"JSON.parse(JSON.stringify(action.timeout_policy))",
 		"JSON.parse(JSON.stringify(action.error_policy))",
 		"Imported ${source.actions.length} Action(s)",
-		"Source Cue stays unchanged",
+		"source Cue stays unchanged",
 	} {
 		if !strings.Contains(source, marker) {
 			t.Fatalf("mixed Cue composer missing contract marker %q", marker)
