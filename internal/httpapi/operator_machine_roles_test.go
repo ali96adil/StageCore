@@ -119,6 +119,32 @@ func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testi
 	if repeated.ID != assignment.ID {
 		t.Fatalf("repeated assignment id=%s, want %s", repeated.ID, assignment.ID)
 	}
+
+	listReq := httptest.NewRequest(http.MethodGet, rolePath, nil)
+	listReq.RemoteAddr = "127.0.0.1:13005"
+	listReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("list roles status=%d body=%s", listRes.Code, listRes.Body.String())
+	}
+	var listing struct {
+		Roles      []machineRoleView       `json:"roles"`
+		Companions []companionRoleOptionView `json:"companions"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Roles) != 1 || listing.Roles[0].ID != role.ID ||
+		listing.Roles[0].Assignment == nil ||
+		listing.Roles[0].Assignment.ID != assignment.ID {
+		t.Fatalf("unexpected role listing: %+v", listing.Roles)
+	}
+	if len(listing.Companions) != 1 || listing.Companions[0].ID != companion.ID ||
+		listing.Companions[0].TrustState != domain.CompanionTrusted ||
+		!machineRoleTestContains(listing.Companions[0].Capabilities, "midi.send") {
+		t.Fatalf("unexpected companion options: %+v", listing.Companions)
+	}
 }
 
 func TestOperatorMachineRoleAssignmentRejectsCrossProjectRole(t *testing.T) {
@@ -222,4 +248,14 @@ func TestOperatorMachineRoleRuntimeRequirementUsesPublishedProjectSnapshot(t *te
 	if emptyRes.Code != http.StatusBadRequest {
 		t.Fatalf("empty runtime requirement status=%d body=%s", emptyRes.Code, emptyRes.Body.String())
 	}
+}
+
+
+func machineRoleTestContains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
