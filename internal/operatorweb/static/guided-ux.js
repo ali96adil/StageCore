@@ -260,7 +260,7 @@ function f002EnsureCapabilityDatalist() {
   if (el("f002CapabilityList")) return;
   const list = document.createElement("datalist");
   list.id = "f002CapabilityList";
-  list.innerHTML = '<option value="osc.send">OSC message</option><option value="local.echo">Local test / echo</option>';
+  list.innerHTML = '<option value="osc.send">OSC message</option><option value="midi.send">MIDI message</option><option value="local.echo">Local test / echo</option>';
   document.body.appendChild(list);
 }
 
@@ -314,6 +314,42 @@ function f002ParseOSCParameters(raw) {
     if (!arg || !["string", "int32", "float32", "bool"].includes(arg.type)) return null;
   }
   return { address: parsed.address, arguments: args };
+}
+
+function f002ParseMIDIParameters(raw) {
+  let parsed;
+  try { parsed = JSON.parse(raw || "{}"); }
+  catch (_) { return null; }
+  if (!Number.isInteger(parsed?.destination_index) || parsed.destination_index < 0 || !Array.isArray(parsed?.bytes)) return null;
+  const bytes = parsed.bytes;
+  if (![2, 3].includes(bytes.length) || bytes.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
+  const status = bytes[0];
+  if (status < 0x80 || status > 0xEF || bytes.slice(1).some((value) => value > 0x7F)) return null;
+  const family = status & 0xF0;
+  let message;
+  if (family === 0x80 && bytes.length === 3) message = "note_off";
+  else if (family === 0x90 && bytes.length === 3) message = "note_on";
+  else if (family === 0xB0 && bytes.length === 3) message = "control_change";
+  else if (family === 0xC0 && bytes.length === 2) message = "program_change";
+  else return null;
+  return {
+    destinationIndex: parsed.destination_index,
+    message,
+    channel: (status & 0x0F) + 1,
+    data1: bytes[1],
+    data2: bytes.length === 3 ? bytes[2] : 0,
+  };
+}
+
+function f002MIDIStatus(message, channel) {
+  const offset = Math.max(0, Math.min(15, Number(channel) - 1));
+  switch (message) {
+    case "note_off": return 0x80 + offset;
+    case "note_on": return 0x90 + offset;
+    case "control_change": return 0xB0 + offset;
+    case "program_change": return 0xC0 + offset;
+    default: return 0x90 + offset;
+  }
 }
 
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
@@ -382,16 +418,36 @@ function f002EnhanceActionCard(card) {
   const parsedOSC = capability.value === "osc.send"
     ? (f002ParseOSCParameters(params.value) || (["", "{}"].includes(rawParameters) ? { address: "", arguments: [] } : null))
     : null;
+  const parsedMIDI = capability.value === "midi.send"
+    ? (f002ParseMIDIParameters(params.value) || (["", "{}"].includes(rawParameters)
+      ? { destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
+      : null))
+    : null;
   const builder = document.createElement("section");
   builder.className = "f002-builder f002-action-builder";
   builder.innerHTML = `
     <div class="f002-builder-head"><div><strong>Action builder</strong><span>Choose the common visual path or keep the expert capability unchanged.</span></div>
-      <label>Action type<select class="f002-action-kind"><option value="osc">Send OSC message</option><option value="advanced">Advanced capability</option></select></label>
+      <label>Action type<select class="f002-action-kind"><option value="osc">Send OSC message</option><option value="midi">Send MIDI message</option><option value="advanced">Advanced capability</option></select></label>
     </div>
     <div class="f002-osc-action">
       <label>OSC address<input class="f002-osc-address" placeholder="/stagecore/go" pattern="/.*" title="OSC address must start with /"></label>
       <div class="section-title-row"><div><strong>Values</strong><p class="muted">Optional OSC arguments in send order.</p></div><button class="button ghost f002-add-argument" type="button">+ Value</button></div>
       <div class="f002-arguments"></div>
+    </div>
+    <div class="f002-midi-action hidden">
+      <div class="form-grid two">
+        <label>MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
+        <label>Message type<select class="f002-midi-message">
+          <option value="note_on">Note On</option>
+          <option value="note_off">Note Off</option>
+          <option value="control_change">Control Change</option>
+          <option value="program_change">Program Change</option>
+        </select></label>
+        <label>MIDI channel<input class="f002-midi-channel" type="number" min="1" max="16" step="1" value="1"></label>
+        <label><span class="f002-midi-data1-label">Note (0–127)</span><input class="f002-midi-data1" type="number" min="0" max="127" step="1" value="60"></label>
+        <label class="f002-midi-data2-field"><span class="f002-midi-data2-label">Velocity (0–127)</span><input class="f002-midi-data2" type="number" min="0" max="127" step="1" value="127"></label>
+      </div>
+      <p class="muted">Ableton Live: use MIDI Map mode to bind this Note or Control Change to the scene, clip, transport or control you want StageCore to trigger.</p>
     </div>`;
   params.closest("label").parentNode.insertBefore(builder, params.closest("label"));
 
@@ -409,22 +465,58 @@ function f002EnhanceActionCard(card) {
 
   const kind = builder.querySelector(".f002-action-kind");
   const oscPanel = builder.querySelector(".f002-osc-action");
+  const midiPanel = builder.querySelector(".f002-midi-action");
   const address = builder.querySelector(".f002-osc-address");
   const argumentsNode = builder.querySelector(".f002-arguments");
-  kind.value = parsedOSC ? "osc" : "advanced";
+  const midiDestination = builder.querySelector(".f002-midi-destination");
+  const midiMessage = builder.querySelector(".f002-midi-message");
+  const midiChannel = builder.querySelector(".f002-midi-channel");
+  const midiData1 = builder.querySelector(".f002-midi-data1");
+  const midiData2 = builder.querySelector(".f002-midi-data2");
+  const midiData1Label = builder.querySelector(".f002-midi-data1-label");
+  const midiData2Label = builder.querySelector(".f002-midi-data2-label");
+  const midiData2Field = builder.querySelector(".f002-midi-data2-field");
+
+  kind.value = parsedOSC ? "osc" : parsedMIDI ? "midi" : "advanced";
   if (parsedOSC) {
     address.value = parsedOSC.address;
     parsedOSC.arguments.forEach((argument) => argumentsNode.appendChild(f002ArgumentRow(argument)));
   }
+  if (parsedMIDI) {
+    midiDestination.value = String(parsedMIDI.destinationIndex);
+    midiMessage.value = parsedMIDI.message;
+    midiChannel.value = String(parsedMIDI.channel);
+    midiData1.value = String(parsedMIDI.data1);
+    midiData2.value = String(parsedMIDI.data2);
+  }
+
+  const renderMIDIFields = () => {
+    const message = midiMessage.value;
+    const program = message === "program_change";
+    const control = message === "control_change";
+    midiData1Label.textContent = program ? "Program (0–127)" : control ? "Controller (0–127)" : "Note (0–127)";
+    midiData2Label.textContent = control ? "Value (0–127)" : "Velocity (0–127)";
+    midiData2Field.classList.toggle("hidden", program);
+    midiData2.required = !program && kind.value === "midi";
+  };
 
   const applyKind = () => {
-    const basic = kind.value === "osc";
-    oscPanel.classList.toggle("hidden", !basic);
-    advanced.open = !basic;
-    address.required = basic;
-    if (basic) capability.value = "osc.send";
+    const osc = kind.value === "osc";
+    const midi = kind.value === "midi";
+    oscPanel.classList.toggle("hidden", !osc);
+    midiPanel.classList.toggle("hidden", !midi);
+    advanced.open = !(osc || midi);
+    address.required = osc;
+    midiDestination.required = midi;
+    midiMessage.required = midi;
+    midiChannel.required = midi;
+    midiData1.required = midi;
+    if (osc) capability.value = "osc.send";
+    if (midi) capability.value = "midi.send";
+    renderMIDIFields();
   };
   kind.addEventListener("change", applyKind);
+  midiMessage.addEventListener("change", renderMIDIFields);
   builder.querySelector(".f002-add-argument").addEventListener("click", () => argumentsNode.appendChild(f002ArgumentRow()));
   applyKind();
 }
@@ -432,13 +524,27 @@ function f002EnhanceActionCard(card) {
 function f002SyncActionCard(card) {
   if (!card?.dataset.f002Enhanced) return;
   const kind = card.querySelector(".f002-action-kind");
-  if (!kind || kind.value !== "osc") return;
+  if (!kind || kind.value === "advanced") return;
   const capability = card.querySelector(".action-capability");
   const params = card.querySelector(".action-parameters");
-  const address = card.querySelector(".f002-osc-address").value.trim();
-  const args = [...card.querySelectorAll(".f002-argument-row")].map(f002ReadArgument);
-  capability.value = "osc.send";
-  params.value = JSON.stringify({ address, arguments: args }, null, 2);
+  if (kind.value === "osc") {
+    const address = card.querySelector(".f002-osc-address").value.trim();
+    const args = [...card.querySelectorAll(".f002-argument-row")].map(f002ReadArgument);
+    capability.value = "osc.send";
+    params.value = JSON.stringify({ address, arguments: args }, null, 2);
+    return;
+  }
+  if (kind.value === "midi") {
+    const destinationIndex = Number.parseInt(card.querySelector(".f002-midi-destination").value, 10);
+    const message = card.querySelector(".f002-midi-message").value;
+    const channel = Number.parseInt(card.querySelector(".f002-midi-channel").value, 10);
+    const data1 = Number.parseInt(card.querySelector(".f002-midi-data1").value, 10);
+    const data2 = Number.parseInt(card.querySelector(".f002-midi-data2").value, 10);
+    const bytes = [f002MIDIStatus(message, channel), data1];
+    if (message !== "program_change") bytes.push(data2);
+    capability.value = "midi.send";
+    params.value = JSON.stringify({ destination_index: destinationIndex, bytes }, null, 2);
+  }
 }
 
 addActionEditor = function f002AddActionEditor(action = null) {
