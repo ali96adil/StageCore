@@ -1,0 +1,58 @@
+name: Camera Relay CI
+
+on:
+  pull_request:
+    paths:
+      - 'internal/camerarelay/**'
+      - 'cmd/stagecore-camera-relay/**'
+      - 'docs/camera-media-relay-v0.md'
+      - 'tools/camera-relay-smoke.py'
+      - 'tools/test_camera_relay_smoke.py'
+      - '.github/workflows/camera-relay-ci.yml'
+  push:
+    branches: [main, 'feat/camera-media-relay-v0']
+    paths:
+      - 'internal/camerarelay/**'
+      - 'cmd/stagecore-camera-relay/**'
+      - 'docs/camera-media-relay-v0.md'
+      - '.github/workflows/camera-relay-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-tests-and-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Compile portable camera smoke probe
+        run: python3 -m py_compile tools/camera-relay-smoke.py
+      - name: Exercise portable smoke probe with fake HTTP relay
+        run: python3 -m unittest discover -s tools -p 'test_camera_relay_smoke.py' -v
+      - name: Test camera relay
+        run: go test -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Race test camera relay
+        run: go test -race -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Vet camera relay
+        run: go vet ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Build Linux ARM64 trial binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/stagecore-camera-relay ./cmd/stagecore-camera-relay
+          sha256sum dist/stagecore-camera-relay > dist/SHA256SUMS
+      - name: Publish unqualified trial artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-relay-linux-arm64-unqualified
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
