@@ -12,20 +12,6 @@ import (
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-func insertPublishedTabletSnapshot(t *testing.T, hDB interface {
-	ExecContext(context.Context, string, ...any) (interface{ RowsAffected() (int64, error) }, error)
-}, projectID, revisionID, snapshotID string) {
-	t.Helper()
-	// Kept below as a compile-time-unused guard; concrete sql.DB helper lives in
-	// each test because database/sql Result cannot be expressed by this facade.
-}
-
-func publishTabletSnapshot(t *testing.T, ctx context.Context, handleDB interface {
-	ExecContext(context.Context, string, ...any) (interface{}, error)
-}, projectID, revisionID, snapshotID string) {
-	t.Helper()
-}
-
 func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, projectID := newRepository(t)
