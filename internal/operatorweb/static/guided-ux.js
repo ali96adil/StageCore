@@ -296,6 +296,68 @@ function f002EnhanceCueDialog() {
     policyLabel.parentNode.insertBefore(details, policyLabel);
     details.appendChild(policyLabel);
   }
+  f002InstallCueComposer();
+}
+
+function f002InstallCueComposer() {
+  if (!actionsEditor) return;
+  document.getElementById("f002CueComposer")?.remove();
+
+  const currentCueID = el("cueId")?.value || "";
+  const sources = (state.cues || []).filter((cue) =>
+    cue.cue_id !== currentCueID && Array.isArray(cue.actions) && cue.actions.length > 0
+  );
+
+  const composer = document.createElement("section");
+  composer.id = "f002CueComposer";
+  composer.className = "f002-builder f002-cue-composer";
+  composer.innerHTML = `
+    <div class="f002-builder-head">
+      <div>
+        <strong>Compose from existing Cues</strong>
+        <span>Copy already-authored Tablet, Lighting, OSC, or other Actions into this mixed Cue. The source Cue stays unchanged.</span>
+      </div>
+    </div>
+    <div class="f002-cue-import-row">
+      <label>Source Cue
+        <select id="f002ImportCue">
+          <option value="">Choose a Cue…</option>
+          ${sources.map((cue) => `<option value="${esc(cue.cue_id)}">${esc(cue.display_label || "—")} · ${esc(cue.name)} · ${Number(cue.actions?.length || 0)} action(s)</option>`).join("")}
+        </select>
+      </label>
+      <button id="f002ImportCueActions" class="button" type="button" ${sources.length ? "" : "disabled"}>Import actions</button>
+    </div>
+    <div id="f002CueComposerMessage" class="message hidden"></div>
+    <p class="muted">Imported Actions are independent copies. Action IDs are regenerated when this Cue is saved, so later edits to the source Cue do not silently alter this mixed Cue.</p>
+  `;
+  actionsEditor.parentNode.insertBefore(composer, actionsEditor);
+
+  composer.querySelector("#f002ImportCueActions")?.addEventListener("click", () => {
+    const select = composer.querySelector("#f002ImportCue");
+    const source = (state.cues || []).find((cue) => cue.cue_id === select?.value);
+    const message = composer.querySelector("#f002CueComposerMessage");
+    if (!source || !Array.isArray(source.actions) || source.actions.length === 0) {
+      if (message) {
+        message.textContent = "Choose a Cue that contains at least one Action.";
+        message.className = "message warn";
+      }
+      return;
+    }
+    for (const action of source.actions) {
+      addActionEditor({
+        ...action,
+        action_id: "",
+        parameters: action.parameters ? JSON.parse(JSON.stringify(action.parameters)) : {},
+        timeout_policy: action.timeout_policy ? JSON.parse(JSON.stringify(action.timeout_policy)) : {},
+        error_policy: action.error_policy ? JSON.parse(JSON.stringify(action.error_policy)) : {},
+      });
+    }
+    if (message) {
+      message.textContent = `Imported ${source.actions.length} Action(s) from ${source.display_label || ""} ${source.name}. Save this Cue to create independent Action IDs.`;
+      message.className = "message success";
+    }
+    if (select) select.value = "";
+  });
 }
 
 openCueEditor = function f002OpenCueEditor(cue) {
