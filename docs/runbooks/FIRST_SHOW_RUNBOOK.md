@@ -312,6 +312,34 @@ Before relying on the camera in a Cue:
 
 For the first rehearsal, keep the control topology simple.
 
+### Visual MIDI Cue authoring
+
+StageCore's guided Cue Action editor can author the Companion `midi.send` capability without raw JSON.
+
+For a Cue Action:
+
+1. choose the Mac/Companion Machine Role as the target;
+2. choose **Send MIDI message**;
+3. choose the CoreMIDI destination index used by the Ableton input path;
+4. choose Note On, Note Off, Control Change or Program Change;
+5. choose MIDI channel 1–16;
+6. set Note/Controller/Program and Velocity/Value;
+7. save the Cue and publish a fresh Runtime Snapshot.
+
+The UI compiles the visual fields to the existing Companion MIDI transport. For example, MIDI channel 1 Note On 60 velocity 127 becomes:
+
+```json
+{
+  "destination_index": 0,
+  "bytes": [144, 60, 127]
+}
+```
+
+In Ableton Live, map the chosen Note or Control Change to the scene, clip, transport or control needed for the rehearsal.
+
+Treat the CoreMIDI destination index as part of rehearsal preflight: verify it after Mac reboot, audio/MIDI device changes, or IAC/virtual-port changes before SHOW.
+
+
 Recommended initial direction:
 
 ```text
