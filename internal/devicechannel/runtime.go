@@ -358,6 +358,12 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	if readiness == "" {
 		readiness = deviceexperience.ReadinessUnknown
 	}
+	// A project-independent v2 socket has inventory authority only until the
+	// Hub-owned assignment/scope handshake completes. Client-provided READY
+	// in device.hello can never promote it to runtime authority.
+	if isV2 {
+		readiness = deviceexperience.ReadinessBlocker
+	}
 	if same, err := r.observeCurrentDevice(ctx, current, deviceexperience.RuntimeObservation{
 		DeviceID:      device.ID,
 		Connection:    deviceexperience.ConnectionOnline,
@@ -661,6 +667,7 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				epoch := current.activeAssignmentEpoch
 				r.mu.Unlock()
 				if !authorized {
+					observation.Readiness = deviceexperience.ReadinessBlocker
 					if same, err := r.observeCurrentDevice(ctx, current, observation, network); err != nil || !same {
 						return
 					}
