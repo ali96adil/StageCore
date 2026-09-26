@@ -18,6 +18,7 @@ const (
 	maxSnapshotItems            = 512
 	maxSnapshotNotesBytes       = 8192
 	maxSnapshotItemNotesBytes   = 4096
+	maxSnapshotItemMetadataBytes = 48 << 10
 )
 
 type SnapshotCaptureStatus string
@@ -93,6 +94,7 @@ type SnapshotItem struct {
 	ContentHash string                    `json:"content_hash,omitempty"`
 	SizeBytes   *int64                    `json:"size_bytes,omitempty"`
 	Notes       string                    `json:"notes,omitempty"`
+	Metadata    json.RawMessage           `json:"metadata,omitempty"`
 }
 
 func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
@@ -173,6 +175,29 @@ func normalizeSnapshotItem(item *SnapshotItem) error {
 	}
 	if err := validateText("snapshot_item.notes", item.Notes, maxSnapshotItemNotesBytes, false); err != nil {
 		return err
+	}
+	if len(item.Metadata) > 0 {
+		if len(item.Metadata) > maxSnapshotItemMetadataBytes {
+			return fmt.Errorf("snapshot item %q metadata exceeds maximum of %d bytes", item.Key, maxSnapshotItemMetadataBytes)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(item.Metadata))
+		decoder.UseNumber()
+		var metadata map[string]any
+		if err := decoder.Decode(&metadata); err != nil || metadata == nil {
+			return fmt.Errorf("snapshot item %q metadata must be a JSON object", item.Key)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return fmt.Errorf("snapshot item %q metadata contains trailing JSON data", item.Key)
+		}
+		canonical, err := canonicaljson.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("snapshot item %q metadata canonicalization failed: %w", item.Key, err)
+		}
+		if len(canonical) > maxSnapshotItemMetadataBytes {
+			return fmt.Errorf("snapshot item %q canonical metadata exceeds maximum of %d bytes", item.Key, maxSnapshotItemMetadataBytes)
+		}
+		item.Metadata = json.RawMessage(canonical)
 	}
 	switch item.Portability {
 	case SnapshotContentBound:
