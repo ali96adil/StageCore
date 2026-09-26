@@ -37,7 +37,8 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	}
 	// Command authority is always Hub-owned. Legacy v1 devices still use the
 	// legacy project row plus LEGACY sidecar. Project-independent v2 Tablet
-	// Players use only an ACTIVE sidecar with the exact Project + Snapshot.
+	// Players and Lighting Nodes use only an ACTIVE sidecar with the exact
+	// Hub-owned Project + Runtime Snapshot.
 	if !device.Enabled {
 		return DeviceCommand{}, false, fmt.Errorf("%w: device is disabled", ErrInvalidDevice)
 	}
@@ -54,13 +55,15 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 			return DeviceCommand{}, false, fmt.Errorf("%w: legacy commands fenced by assignment state", ErrInvalidState)
 		}
 	case ProtocolVersion2:
-		if device.ProjectID != "" || device.Kind != DeviceTabletPlayer ||
-			device.ProfileID != TabletPlayerProfileID ||
+		profileAuthorized := (device.Kind == DeviceTabletPlayer &&
+			device.ProfileID == TabletPlayerProfileID) ||
+			device.ProfileID == "stagecore.esp32-dmx-lighting-node"
+		if device.ProjectID != "" || !profileAuthorized ||
 			assignment.State != "ACTIVE" ||
 			assignment.ProjectID != input.ProjectID ||
 			assignment.RuntimeSnapshotID == "" ||
 			assignment.RuntimeSnapshotID != input.RuntimeSnapshotID {
-			return DeviceCommand{}, false, fmt.Errorf("%w: v2 Tablet Player is not ACTIVE for this Project/Runtime Snapshot", ErrInvalidState)
+			return DeviceCommand{}, false, fmt.Errorf("%w: v2 Stage Device is not ACTIVE for this Project/Runtime Snapshot", ErrInvalidState)
 		}
 	default:
 		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported Stage Device protocol", ErrInvalidState)
