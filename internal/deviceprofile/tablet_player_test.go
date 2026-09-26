@@ -14,11 +14,16 @@ func TestBuiltinCatalogIncludesTabletPlayer(t *testing.T) {
 	if len(profile.Capabilities) < 10 {
 		t.Fatalf("tablet profile capabilities = %d, want >= 10", len(profile.Capabilities))
 	}
-	matches := catalog.Match(Observation{Attributes: map[string]string{
-		"device_kind":      "TABLET_PLAYER",
-		"protocol_version": "stagecore.device/1",
-	}})
-	if len(matches) == 0 || matches[0].ProfileID != "stagecore.tablet-player" {
-		t.Fatalf("tablet observation did not resolve to official tablet profile: %#v", matches)
+	for _, protocol := range []string{"stagecore.device/1", "stagecore.device/2"} {
+		matches := catalog.Match(Observation{Attributes: map[string]string{
+			"device_kind":      "TABLET_PLAYER",
+			"protocol_version": protocol,
+		}})
+		if len(matches) == 0 || matches[0].ProfileID != "stagecore.tablet-player" {
+			t.Fatalf("tablet observation %s did not resolve to official tablet profile: %#v", protocol, matches)
+		}
+	}
+	if len(profile.TestedProtocolVersions) != 2 {
+		t.Fatalf("tested protocol versions=%v", profile.TestedProtocolVersions)
 	}
 }

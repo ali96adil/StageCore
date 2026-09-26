@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -186,6 +187,11 @@ func WithOperatorTabletController(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
+			normalizedPayload, payloadErr := normalizeTabletCommandPayload(input.CommandType, input.Payload)
+			if payloadErr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_PAYLOAD_INVALID", "detail": payloadErr.Error()})
+				return
+			}
 			all, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "TABLET_LIST_FAILED", "detail": err.Error()})
@@ -225,7 +231,7 @@ func WithOperatorTabletController(
 					results = append(results, result{DeviceID: tablet.ID, DisplayName: tablet.DisplayName, Error: scopeErr.Error()})
 					continue
 				}
-				payload := mergeTabletManifestScope(input.Payload, scope.TabletManifestID)
+				payload := mergeTabletManifestScope(normalizedPayload, scope.TabletManifestID)
 				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         strings.TrimSpace(input.SessionID),
@@ -267,6 +273,11 @@ func WithOperatorTabletController(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
+			normalizedPayload, payloadErr := normalizeTabletCommandPayload(input.CommandType, input.Payload)
+			if payloadErr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_PAYLOAD_INVALID", "detail": payloadErr.Error()})
+				return
+			}
 			if len(input.DeviceIDs) == 0 {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_TARGET_EMPTY"})
 				return
@@ -304,7 +315,7 @@ func WithOperatorTabletController(
 					CapabilityKey: capability,
 					ExecutionMode: defaultTabletExecutionMode(input.ExecutionMode),
 					Priority:      defaultTabletPriority(input.Priority),
-					Parameters:    normalizeRawObject(input.Payload),
+					Parameters:    normalizedPayload,
 				})
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
@@ -456,6 +467,45 @@ func defaultTabletPriority(value string) string {
 	default:
 		return "P1"
 	}
+}
+
+func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (json.RawMessage, error) {
+	if strings.TrimSpace(commandType) != deviceexperience.CommandTabletLiveShow {
+		return normalizeRawObject(raw), nil
+	}
+	var object map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil {
+		return nil, fmt.Errorf("live source requires exactly one of media_key or url")
+	}
+	for key := range object {
+		if key != "media_key" && key != "url" {
+			return nil, fmt.Errorf("unsupported live source field %q", key)
+		}
+	}
+	mediaKey, _ := object["media_key"].(string)
+	directURL, _ := object["url"].(string)
+	mediaKey = strings.TrimSpace(mediaKey)
+	directURL = strings.TrimSpace(directURL)
+	if (mediaKey == "") == (directURL == "") {
+		return nil, fmt.Errorf("live source requires exactly one of media_key or url")
+	}
+	if mediaKey != "" {
+		if len(mediaKey) > 256 {
+			return nil, fmt.Errorf("live media_key is too long")
+		}
+		encoded, _ := json.Marshal(map[string]string{"media_key": mediaKey})
+		return encoded, nil
+	}
+	if len(directURL) > 2048 {
+		return nil, fmt.Errorf("live URL is too long")
+	}
+	parsed, err := url.Parse(directURL)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+		return nil, fmt.Errorf("live URL must be absolute HTTP(S) without embedded credentials")
+	}
+	encoded, _ := json.Marshal(map[string]string{"url": directURL})
+	return encoded, nil
 }
 
 func normalizeRawObject(raw json.RawMessage) json.RawMessage {
