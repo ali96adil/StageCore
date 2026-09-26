@@ -203,7 +203,8 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_TRANSFER_STATUS_UNAVAILABLE"})
 				return
 			}
-			generation, online := runtime.CurrentV2Generation(deviceID)
+			scope, online := runtime.CurrentV2Scope(deviceID)
+			generation := scope.Generation
 			reported := false
 			var ack *deviceexperience.BlockedEpochAck
 			if assignment.State == "BLOCKED" {
@@ -216,6 +217,11 @@ func WithOperatorStageDevices(
 					return
 				}
 			}
+			liveActive := assignment.State == "ACTIVE" && online &&
+				scope.ProjectID == assignment.ProjectID &&
+				scope.RuntimeSnapshotID == assignment.RuntimeSnapshotID &&
+				scope.AssignmentEpoch == assignment.Epoch &&
+				scope.CommandsEnabled
 			status := "NOT_ELIGIBLE_FOR_V2_TRANSFER"
 			switch assignment.State {
 			case "UNASSIGNED":
@@ -225,15 +231,26 @@ func WithOperatorStageDevices(
 				if reported {
 					status = "CURRENT_SOFTWARE_ZERO_REPORTED_BLOCKED"
 				}
+			case "ACTIVE":
+				status = "ACTIVE_AWAITING_CURRENT_SCOPE_ACK"
+				if liveActive {
+					status = "ACTIVE_CURRENT_SCOPE_READY"
+				}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"assignment": assignment,
 				"epoch_ack": ack,
 				"connection_online": online,
 				"software_zero_report_current_connection": reported,
+				"live_scope": func() any {
+					if !online {
+						return nil
+					}
+					return scope
+				}(),
 				"status": status,
-				"commands_enabled": false,
-				"snapshot_active": false,
+				"commands_enabled": liveActive,
+				"snapshot_active": assignment.State == "ACTIVE" && assignment.RuntimeSnapshotID != "",
 				"physical_blackout_verified": false,
 				"note": "DEVICE_REPORT_ONLY_NO_INDEPENDENT_PHYSICAL_DMX_PROOF",
 			})
