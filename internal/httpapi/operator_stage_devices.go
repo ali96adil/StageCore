@@ -50,6 +50,59 @@ func WithOperatorStageDevices(
 		// Device provisioning inventory is not scoped to any Project yet.
 		// Only an operator authorized for pairing may discover unassigned v2
 		// identities. This endpoint grants NO Assign/Transfer authority.
+		// Global v2 physical-device inventory. This is intentionally not scoped
+		// to the opened Project: an operator with pairing authority can see the
+		// reusable device identity, its Hub-owned assignment, and the current
+		// authenticated runtime scope. Read-only; it grants no transfer or
+		// command authority.
+		s.mux.HandleFunc("GET /api/v1/stage-devices/inventory", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			items, err := devices.ListDevices(r.Context(), "")
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
+				return
+			}
+			type inventoryDevice struct {
+				DeviceID      string                           `json:"device_id"`
+				DisplayName   string                           `json:"display_name"`
+				DeviceKind    deviceexperience.DeviceKind      `json:"device_kind"`
+				ProfileID     string                           `json:"profile_id,omitempty"`
+				ClientVersion string                           `json:"client_version,omitempty"`
+				Capabilities  []string                         `json:"capabilities,omitempty"`
+				Assignment    deviceexperience.AssignmentRecord `json:"assignment"`
+				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
+				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
+				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
+			}
+			out := make([]inventoryDevice, 0)
+			for _, item := range items {
+				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+					continue
+				}
+				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
+					return
+				}
+				view := inventoryDevice{
+					DeviceID: item.ID, DisplayName: item.DisplayName,
+					DeviceKind: item.Kind, ProfileID: item.ProfileID,
+					ClientVersion: item.ClientVersion,
+					Capabilities: append([]string(nil), item.Capabilities...),
+					Assignment: assignment,
+				}
+				if item.Runtime != nil {
+					view.Connection = item.Runtime.Connection
+					view.Readiness = item.Runtime.Readiness
+				}
+				if scope, ok := runtime.CurrentV2Scope(item.ID); ok {
+					copy := scope
+					view.LiveScope = &copy
+				}
+				out = append(out, view)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+		}))
+
 		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
