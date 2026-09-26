@@ -2,11 +2,19 @@
   display: none !important;
 }
 
-/* Phase 4 workspaces are injected after the original F-017 page registry.
-   Keep those feature-owned navigation entries visible when F-017 reapplies a
-   legacy profile; Phase 4 owns their availability until they are explicitly
-   added to the profile contract. */
-#workspaceNav [data-phase4-nav="true"].f017-profile-hidden {
+/* Feature-owned workspaces are injected after the original F-017 page registry.
+   A legacy profile must not hide them when the project/profile is selected.
+   Their availability and authenticated actions remain feature-owned until
+   explicitly added to the F-017 profile contract. */
+#workspaceNav :is(
+  [data-phase4-nav="true"],
+  [data-tablet-controller-nav="true"],
+  [data-tablet-scenes-nav="true"],
+  [data-lighting-cues-nav="true"],
+  [data-lighting-setup-nav="true"],
+  [data-visual-engine-nav="true"],
+  [data-assistant-nav="true"]
+).f017-profile-hidden {
   display: block !important;
 }
 
