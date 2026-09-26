@@ -244,6 +244,41 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	if r == nil || r.repository == nil {
 		return deviceexperience.DeviceCommand{}, fmt.Errorf("stage device runtime unavailable")
 	}
+	requiredCapability := deviceexperience.RequiredCapability(strings.TrimSpace(input.CommandType))
+	deviceID := strings.TrimSpace(input.DeviceID)
+
+	// For v2, persisted capabilities are inventory metadata only. The current
+	// authenticated socket must independently advertise the required
+	// capability for the exact active Project/Runtime Snapshot before a
+	// durable command is even created.
+	r.mu.Lock()
+	preCurrent := r.connections[deviceID]
+	preTransition := r.assignmentTransitions[deviceID]
+	preV2 := preCurrent != nil &&
+		preCurrent.protocolVersion == deviceexperience.ProtocolVersion2
+	preScopeReady := true
+	preCapabilityReady := true
+	if preV2 {
+		preScopeReady = preCurrent.commandsEnabled &&
+			preCurrent.activeProjectID == strings.TrimSpace(input.ProjectID) &&
+			preCurrent.activeRuntimeSnapshotID == strings.TrimSpace(input.RuntimeSnapshotID) &&
+			preCurrent.activeAssignmentEpoch > 0
+		preCapabilityReady = requiredCapability != "" &&
+			containsCapability(preCurrent.advertisedCapabilities, requiredCapability)
+	}
+	r.mu.Unlock()
+	if preV2 {
+		if preTransition {
+			return deviceexperience.DeviceCommand{}, fmt.Errorf("%w: Stage Device assignment is changing", deviceexperience.ErrInvalidState)
+		}
+		if !preScopeReady {
+			return deviceexperience.DeviceCommand{}, fmt.Errorf("%w: Stage Device has not acknowledged the active Project/Runtime Snapshot", deviceexperience.ErrInvalidState)
+		}
+		if !preCapabilityReady {
+			return deviceexperience.DeviceCommand{}, fmt.Errorf("%w: %s", deviceexperience.ErrCapabilityMissing, requiredCapability)
+		}
+	}
+
 	command, duplicate, err := r.repository.CreateCommand(ctx, input)
 	if err != nil {
 		return deviceexperience.DeviceCommand{}, err
@@ -258,14 +293,17 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	transition := r.assignmentTransitions[command.DeviceID]
 	schemaVersion := runtimeSchemaVersion
 	scopeReady := true
+	capabilityReady := true
 	if current != nil && current.protocolVersion == deviceexperience.ProtocolVersion2 {
 		schemaVersion = 2
 		scopeReady = current.commandsEnabled &&
 			current.activeProjectID == command.Envelope.ProjectID &&
 			current.activeRuntimeSnapshotID == command.Envelope.RuntimeSnapshotID &&
 			current.activeAssignmentEpoch > 0
+		capabilityReady = requiredCapability != "" &&
+			containsCapability(current.advertisedCapabilities, requiredCapability)
 	}
-	if !closed && current != nil && !transition && scopeReady {
+	if !closed && current != nil && !transition && scopeReady && capabilityReady {
 		r.inflight[command.Envelope.CommandID] = current
 	}
 	r.mu.Unlock()
@@ -277,6 +315,9 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	}
 	if !scopeReady {
 		return r.failCommand(ctx, command, "DEVICE_SCOPE_NOT_READY", "Stage Device has not acknowledged the active Project/Runtime Snapshot")
+	}
+	if !capabilityReady {
+		return r.failCommand(ctx, command, "DEVICE_CAPABILITY_MISSING", "Current authenticated Stage Device socket did not advertise the required capability")
 	}
 	message := executeMessage{
 		Type:          "command.execute",
