@@ -146,6 +146,102 @@ final class VDMXOperationTests: XCTestCase {
         })
     }
 
+    func testCaptureSnapshotIncludesPublishedLocalOSCQueryNamespace() async throws {
+        let root = try temporaryDirectory()
+        let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
+        let workspace = root.appendingPathComponent("Show.vdmx6", isDirectory: false)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try Data("workspace".utf8).write(to: workspace)
+
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [application],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in
+                if url.query == "HOST_INFO" {
+                    return Data(#"{"NAME":"VDMX","EXTENSIONS":{"VALUE":true,"RANGE":true}}"#.utf8)
+                }
+                return Data(#"{"FULL_PATH":"/","CONTENTS":{"fader":{"FULL_PATH":"/fader","TYPE":"f","VALUE":[0.5],"RANGE":[{"MIN":0,"MAX":1}],"ACCESS":3}}}"#.utf8)
+            }
+        )
+        var configured = manifest(launch: .asset(workspace.path))
+        configured["bindings"] = .array([
+            .object([
+                "key": .string("oscquery"),
+                "kind": .string("NETWORK"),
+                "external_ref": .string("http://127.0.0.1:8080/"),
+            ])
+        ])
+
+        let outcome = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+
+        XCTAssertEqual(outcome.status, .completed)
+        let snapshot = try XCTUnwrap(outcome.snapshot)
+        guard case .array(let items) = snapshot["items"] else {
+            return XCTFail("snapshot items missing")
+        }
+        let oscQuery = try XCTUnwrap(items.compactMap { item -> [String: JSONValue]? in
+            guard case .object(let value) = item,
+                  value["key"] == .string("vdmx-oscquery")
+            else { return nil }
+            return value
+        }.first)
+        XCTAssertEqual(oscQuery["kind"], .string("CONTROL_NAMESPACE"))
+        XCTAssertEqual(oscQuery["provenance"], .string("OSCQUERY"))
+        XCTAssertEqual(oscQuery["capture_status"], .string("OBSERVED"))
+        guard case .object(let metadata) = oscQuery["metadata"] else {
+            return XCTFail("OSCQuery metadata missing")
+        }
+        XCTAssertEqual(metadata["endpoint"], .string("http://127.0.0.1:8080/"))
+        XCTAssertEqual(metadata["published_node_count"], .int(2))
+        guard case .object(let namespace) = metadata["namespace"] else {
+            return XCTFail("OSCQuery namespace missing")
+        }
+        XCTAssertEqual(namespace["FULL_PATH"], .string("/"))
+        guard case .object(let hostInfo) = metadata["host_info"] else {
+            return XCTFail("OSCQuery HOST_INFO missing")
+        }
+        XCTAssertEqual(hostInfo["NAME"], .string("VDMX"))
+    }
+
+    func testCaptureSnapshotRefusesNonLoopbackOSCQueryEndpoint() async throws {
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { _ in
+                XCTFail("non-loopback OSCQuery endpoint must never be fetched")
+                return Data()
+            }
+        )
+        var configured = manifest(launch: .locator("/tmp/show.vdmx6"))
+        configured["bindings"] = .array([
+            .object([
+                "key": .string("oscquery"),
+                "kind": .string("NETWORK"),
+                "external_ref": .string("http://192.168.3.50:8080/"),
+            ])
+        ])
+
+        let outcome = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+
+        let snapshot = try XCTUnwrap(outcome.snapshot)
+        guard case .array(let items) = snapshot["items"] else {
+            return XCTFail("snapshot items missing")
+        }
+        XCTAssertTrue(items.contains { item in
+            guard case .object(let value) = item else { return false }
+            return value["key"] == .string("vdmx-oscquery")
+                && value["capture_status"] == .string("UNSUPPORTED")
+        })
+    }
+
     func testReconnectRemainsUnsupportedAndInvalidManifestFailsClosed() async {
         let provider = VDMXOperationProvider(applicationCandidates: [], opener: { _, _ in true })
         XCTAssertFalse(provider.supportedOperations.contains(.reconnect))

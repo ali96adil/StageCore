@@ -51,7 +51,8 @@ v1 records only facts the provider can safely establish without claiming complet
 - whether the VDMX application bundle is safely present;
 - whether the declared launch target is safely present in place;
 - the launch target as `REFERENCE_ONLY` metadata when inspectable;
-- an explicit `UNSUPPORTED` item for complete VDMX internal workspace / plug-in / FX / published-control state capture.
+- an explicit `UNSUPPORTED` item for complete VDMX internal workspace / plug-in / FX state capture.
+- when the Manifest declares a local NETWORK binding with key `oscquery` (or `vdmx-oscquery`), the adapter may perform a **read-only localhost OSCQuery capture** and record the namespace VDMX itself publishes, including supported path/type/value/range/access metadata.
 
 The snapshot is bound exactly to:
 
@@ -61,7 +62,9 @@ The snapshot is bound exactly to:
 
 The provider never claims new `CONTENT_BOUND` bytes. Existing StageCore Vault capture remains the authority for managed content bytes.
 
-A `PARTIAL` snapshot is reconstruction guidance, not a claim that StageCore can reproduce every internal VDMX state bit.
+OSCQuery collection is deliberately constrained to `http://127.0.0.1:<port>/`, `http://localhost:<port>/`, or loopback IPv6. StageCore never follows a Manifest OSCQuery binding to another LAN host. Namespace JSON is size-bounded and persisted as structured snapshot-item metadata with provenance `OSCQUERY`; optional `HOST_INFO` is recorded when available. A missing, invalid, oversized, or unavailable endpoint is reported explicitly rather than truncated or guessed.
+
+A `PARTIAL` snapshot is reconstruction guidance, not a claim that StageCore can reproduce every internal VDMX state bit. VDMX project/workspace presets remain the authoritative complete persistence surface when a savable project is available.
 
 ## Operator runtime endpoint
 
@@ -113,6 +116,8 @@ v1 explicitly does not add:
 - shell/command execution;
 - AppleScript/JXA automation;
 - private or undocumented VDMX APIs;
+- VDMX save/license restriction bypass;
+- non-loopback OSCQuery scraping;
 - browser-selected executable paths;
 - VDMX-specific top-level Core schema;
 - a second Companion transport;

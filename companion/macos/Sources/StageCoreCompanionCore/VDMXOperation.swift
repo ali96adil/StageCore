@@ -1,9 +1,13 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 #if os(macOS)
 import AppKit
 #endif
 
 public typealias VDMXOpenHandler = @Sendable (_ target: URL, _ application: URL) async -> Bool
+typealias VDMXOSCQueryFetcher = @Sendable (_ url: URL) async throws -> Data
 
 public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     public let adapterKey = "stagecore.adapter.vdmx"
@@ -11,6 +15,10 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
 
     private let applicationCandidates: [URL]
     private let opener: VDMXOpenHandler
+    private let oscQueryFetcher: VDMXOSCQueryFetcher
+
+    private static let maxOSCQueryNamespaceBytes = 40 * 1024
+    private static let maxOSCQueryHostInfoBytes = 4 * 1024
 
     public init(
         applicationCandidates: [URL],
@@ -18,6 +26,19 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     ) {
         self.applicationCandidates = applicationCandidates
         self.opener = opener
+        self.oscQueryFetcher = { url in
+            try await Self.fetchOSCQuery(url)
+        }
+    }
+
+    init(
+        applicationCandidates: [URL],
+        opener: @escaping VDMXOpenHandler,
+        oscQueryFetcher: @escaping VDMXOSCQueryFetcher
+    ) {
+        self.applicationCandidates = applicationCandidates
+        self.opener = opener
+        self.oscQueryFetcher = oscQueryFetcher
     }
 
     #if os(macOS)
@@ -54,7 +75,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             case .open:
                 return await performOpen(manifest: decoded)
             case .captureSnapshot:
-                return captureSnapshot(manifest: decoded, sourceManifestSHA256: sourceManifestSHA256.lowercased())
+                return await captureSnapshot(manifest: decoded, sourceManifestSHA256: sourceManifestSHA256.lowercased())
             case .reconnect:
                 return .init(
                     status: .unsupported,
@@ -93,7 +114,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     private func captureSnapshot(
         manifest: VDMXOperationManifest,
         sourceManifestSHA256: String
-    ) -> ExecutionEnvironmentProviderOutcome {
+    ) async -> ExecutionEnvironmentProviderOutcome {
         let application = locateApplication()
         var items: [[String: JSONValue]] = []
 
@@ -139,6 +160,10 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             items.append(unsupportedLaunchItem())
         }
 
+        if let oscQuery = await captureOSCQuery(manifest: manifest) {
+            items.append(oscQuery)
+        }
+
         items.append([
             "key": .string("vdmx-internal-state"),
             "name": .string("VDMX internal workspace and published-control state"),
@@ -163,6 +188,130 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             responseSummary: "VDMX partial execution-environment snapshot captured",
             snapshot: snapshot
         )
+    }
+
+    private func captureOSCQuery(manifest: VDMXOperationManifest) async -> [String: JSONValue]? {
+        guard let binding = manifest.bindings.first(where: {
+            ($0.key == "oscquery" || $0.key == "vdmx-oscquery") && $0.kind == "NETWORK"
+        }) else {
+            return nil
+        }
+
+        guard let endpoint = validatedLocalOSCQueryEndpoint(binding.externalRef) else {
+            return oscQueryItem(
+                capture: "UNSUPPORTED",
+                notes: "Declared OSCQuery endpoint is not a supported loopback HTTP URL."
+            )
+        }
+
+        do {
+            let namespaceData = try await oscQueryFetcher(endpoint)
+            guard namespaceData.count <= Self.maxOSCQueryNamespaceBytes,
+                  let namespace = try decodeJSONObject(namespaceData)
+            else {
+                return oscQueryItem(
+                    capture: "UNSUPPORTED",
+                    notes: "OSCQuery namespace exceeded the bounded capture size or was not a JSON object."
+                )
+            }
+
+            var metadata: [String: JSONValue] = [
+                "endpoint": .string(endpoint.absoluteString),
+                "namespace": .object(namespace),
+                "published_node_count": .int(countOSCQueryNodes(namespace)),
+            ]
+
+            if let hostInfoURL = hostInfoURL(endpoint) {
+                do {
+                    let hostInfoData = try await oscQueryFetcher(hostInfoURL)
+                    if hostInfoData.count <= Self.maxOSCQueryHostInfoBytes,
+                       let hostInfo = try decodeJSONObject(hostInfoData) {
+                        metadata["host_info"] = .object(hostInfo)
+                    }
+                } catch {
+                    // Namespace capture remains useful and truthful without optional HOST_INFO.
+                }
+            }
+
+            return [
+                "key": .string("vdmx-oscquery"),
+                "name": .string("VDMX published OSCQuery namespace"),
+                "kind": .string("CONTROL_NAMESPACE"),
+                "provenance": .string("OSCQUERY"),
+                "capture_status": .string("OBSERVED"),
+                "portability": .string("DESCRIPTIVE_ONLY"),
+                "notes": .string("Read-only localhost OSCQuery namespace published by VDMX. This covers only controls VDMX exposes through OSCQuery."),
+                "metadata": .object(metadata),
+            ]
+        } catch {
+            return oscQueryItem(
+                capture: "MISSING",
+                notes: "Declared local VDMX OSCQuery endpoint was unavailable at capture time."
+            )
+        }
+    }
+
+    private func oscQueryItem(capture: String, notes: String) -> [String: JSONValue] {
+        [
+            "key": .string("vdmx-oscquery"),
+            "name": .string("VDMX published OSCQuery namespace"),
+            "kind": .string("CONTROL_NAMESPACE"),
+            "provenance": .string("OSCQUERY"),
+            "capture_status": .string(capture),
+            "portability": .string("DESCRIPTIVE_ONLY"),
+            "notes": .string(notes),
+        ]
+    }
+
+    private func validatedLocalOSCQueryEndpoint(_ raw: String) -> URL? {
+        guard let url = URL(string: raw),
+              url.scheme?.lowercased() == "http",
+              let host = url.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1",
+              url.user == nil,
+              url.password == nil,
+              url.fragment == nil,
+              url.query == nil
+        else {
+            return nil
+        }
+        return url
+    }
+
+    private func hostInfoURL(_ endpoint: URL) -> URL? {
+        guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.query = "HOST_INFO"
+        return components.url
+    }
+
+    private func decodeJSONObject(_ data: Data) throws -> [String: JSONValue]? {
+        try JSONDecoder().decode([String: JSONValue].self, from: data)
+    }
+
+    private func countOSCQueryNodes(_ object: [String: JSONValue]) -> Int {
+        var total = object["FULL_PATH"] == nil ? 0 : 1
+        if case .object(let contents)? = object["CONTENTS"] {
+            for value in contents.values {
+                if case .object(let child) = value {
+                    total += countOSCQueryNodes(child)
+                }
+            }
+        }
+        return total
+    }
+
+    private static func fetchOSCQuery(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 1.5
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        return data
     }
 
     private func unsupportedLaunchItem() -> [String: JSONValue] {
@@ -259,6 +408,7 @@ private struct VDMXOperationManifest: Decodable {
     let adapterKey: String
     let application: VDMXOperationApplication
     let assets: [VDMXOperationAsset]
+    let bindings: [VDMXOperationBinding]
     let launch: VDMXOperationLaunch?
 
     enum CodingKeys: String, CodingKey {
@@ -267,6 +417,7 @@ private struct VDMXOperationManifest: Decodable {
         case adapterKey = "adapter_key"
         case application
         case assets
+        case bindings
         case launch
     }
 
@@ -277,6 +428,7 @@ private struct VDMXOperationManifest: Decodable {
         adapterKey = try container.decode(String.self, forKey: .adapterKey)
         application = try container.decode(VDMXOperationApplication.self, forKey: .application)
         assets = try container.decodeIfPresent([VDMXOperationAsset].self, forKey: .assets) ?? []
+        bindings = try container.decodeIfPresent([VDMXOperationBinding].self, forKey: .bindings) ?? []
         launch = try container.decodeIfPresent(VDMXOperationLaunch.self, forKey: .launch)
     }
 }
@@ -298,6 +450,18 @@ private struct VDMXOperationAsset: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         key = try container.decode(String.self, forKey: .key)
         locator = try container.decodeIfPresent(String.self, forKey: .locator) ?? ""
+    }
+}
+
+private struct VDMXOperationBinding: Decodable {
+    let key: String
+    let kind: String
+    let externalRef: String
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case kind
+        case externalRef = "external_ref"
     }
 }
 
