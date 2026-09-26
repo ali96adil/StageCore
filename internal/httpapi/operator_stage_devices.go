@@ -338,8 +338,10 @@ func WithOperatorStageDevices(
 			commandProjectID := device.ProjectID
 			commandSnapshotID := strings.TrimSpace(input.RuntimeSnapshotID)
 			if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
-				if device.Kind != deviceexperience.DeviceTabletPlayer ||
-					device.ProfileID != deviceexperience.TabletPlayerProfileID ||
+				profileAuthorized := (device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID) ||
+					device.ProfileID == lightingnode.ProfileID
+				if !profileAuthorized ||
 					device.Assignment == nil || device.Assignment.State != "ACTIVE" ||
 					device.Assignment.ProjectID == "" || device.Assignment.RuntimeSnapshotID == "" {
 					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
