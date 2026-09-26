@@ -619,3 +619,104 @@ func TestExperimentalSoftwareTransferRequiresFlagCSRFPairingAndExplicitConsent(t
 		t.Fatalf("unassigned status incorrectly claims authority or physical zero: %+v", status)
 	}
 }
+
+
+func TestOperatorGlobalV2InventoryKeepsAssignedReusableDeviceVisible(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	projectA, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Show A", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Show B", CreatedBy: "owner"}); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "reusable-v2-global-inventory"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Reusable Lighting", ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ClientVersion: "0.3.0-active",
+		Capabilities: lightingnode.CapabilityKeys(),
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=?, assignment_epoch=2, assignment_state='ACTIVE',
+		    runtime_snapshot_id='snapshot-show-a', updated_at_us=updated_at_us+1
+		WHERE device_id=? AND assignment_state='UNASSIGNED'
+	`, projectA.ID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stage-devices/inventory", nil)
+	req.RemoteAddr = "127.0.0.1:19301"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("global inventory status=%d body=%s", res.Code, res.Body.String())
+	}
+	var inventory struct {
+		Devices []struct {
+			DeviceID string `json:"device_id"`
+			ClientVersion string `json:"client_version"`
+			Capabilities []string `json:"capabilities"`
+			Assignment deviceexperience.AssignmentRecord `json:"assignment"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Devices) != 1 || inventory.Devices[0].DeviceID != deviceID ||
+		inventory.Devices[0].Assignment.State != "ACTIVE" ||
+		inventory.Devices[0].Assignment.ProjectID != projectA.ID ||
+		inventory.Devices[0].Assignment.RuntimeSnapshotID != "snapshot-show-a" ||
+		inventory.Devices[0].Assignment.Epoch != 2 {
+		t.Fatalf("global reusable v2 inventory=%+v", inventory.Devices)
+	}
+	if inventory.Devices[0].ClientVersion != "0.3.0-active" ||
+		len(inventory.Devices[0].Capabilities) == 0 {
+		t.Fatalf("global inventory lost current software metadata: %+v", inventory.Devices[0])
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet,
+		"/api/v1/stage-devices/"+deviceID+"/assignment/transfer-status", nil)
+	statusReq.RemoteAddr = "127.0.0.1:19302"
+	statusReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	statusRes := httptest.NewRecorder()
+	handler.ServeHTTP(statusRes, statusReq)
+	if statusRes.Code != http.StatusOK {
+		t.Fatalf("ACTIVE transfer status=%d body=%s", statusRes.Code, statusRes.Body.String())
+	}
+	var status struct {
+		Status string `json:"status"`
+		ConnectionOnline bool `json:"connection_online"`
+		CommandsEnabled bool `json:"commands_enabled"`
+		SnapshotActive bool `json:"snapshot_active"`
+		PhysicalBlackoutVerified bool `json:"physical_blackout_verified"`
+	}
+	if err := json.Unmarshal(statusRes.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "ACTIVE_AWAITING_CURRENT_SCOPE_ACK" ||
+		status.ConnectionOnline || status.CommandsEnabled ||
+		!status.SnapshotActive || status.PhysicalBlackoutVerified {
+		t.Fatalf("offline ACTIVE status overclaimed runtime/physical authority: %+v", status)
+	}
+}
