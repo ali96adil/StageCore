@@ -142,7 +142,7 @@ func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testi
 	}
 	if len(listing.Companions) != 1 || listing.Companions[0].ID != companion.ID ||
 		listing.Companions[0].TrustState != domain.CompanionTrusted ||
-		!containsString(listing.Companions[0].Capabilities, "midi.send") {
+		!machineRoleTestContains(listing.Companions[0].Capabilities, "midi.send") {
 		t.Fatalf("unexpected companion options: %+v", listing.Companions)
 	}
 }
@@ -251,7 +251,7 @@ func TestOperatorMachineRoleRuntimeRequirementUsesPublishedProjectSnapshot(t *te
 }
 
 
-func containsString(values []string, wanted string) bool {
+func machineRoleTestContains(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
 			return true
