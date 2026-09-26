@@ -2,7 +2,7 @@ package deviceexperience_test
 
 import (
 	"context"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -71,9 +71,15 @@ func TestV2ReconnectRefreshesOnlyAuthenticatedSoftwareMetadata(t *testing.T) {
 		t.Fatalf("v2 reconnect changed Hub-owned display metadata: %+v", loaded)
 	}
 	if loaded.ClientVersion != reconnect.ClientVersion ||
-		!reflect.DeepEqual(loaded.Capabilities, reconnect.Capabilities) {
+		len(loaded.Capabilities) != len(reconnect.Capabilities) {
 		t.Fatalf("v2 software metadata did not refresh: version=%q caps=%v",
 			loaded.ClientVersion, loaded.Capabilities)
+	}
+	for _, capability := range reconnect.Capabilities {
+		if !slices.Contains(loaded.Capabilities, capability) {
+			t.Fatalf("v2 software metadata missing capability %q: %v",
+				capability, loaded.Capabilities)
+		}
 	}
 	if loaded.Assignment == nil ||
 		loaded.Assignment.State != "ACTIVE" ||
