@@ -49,8 +49,9 @@ type Runtime struct {
 	pendingBlackouts        map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
 	latestV2SoftwareLevels  map[string]V2SoftwareLevels
-	pendingTabletAssignments map[string]*pendingTabletAssignment
-	assignmentTransitions    map[string]bool
+	pendingTabletAssignments   map[string]*pendingTabletAssignment
+	pendingLightingActivations map[string]*pendingLightingActivation
+	assignmentTransitions      map[string]bool
 	autoProbeV2              bool
 	nextGeneration           int64
 	closed                   bool
@@ -101,6 +102,8 @@ type inboundMessage struct {
 	ProjectID              string                     `json:"project_id,omitempty"`
 	RuntimeSnapshotID      string                     `json:"runtime_snapshot_id,omitempty"`
 	AssignmentID           string                     `json:"assignment_id,omitempty"`
+	ActivationID           string                     `json:"activation_id,omitempty"`
+	ConfigurationHash      string                     `json:"configuration_hash,omitempty"`
 	CommandID              string                     `json:"command_id,omitempty"`
 	TransferID             string                     `json:"transfer_id,omitempty"`
 	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
@@ -144,8 +147,9 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		pendingBlackouts:          make(map[string]*pendingBlackout),
 		pendingV2LightingProbes:   make(map[string]*pendingV2LightingProbe),
 		latestV2SoftwareLevels:    make(map[string]V2SoftwareLevels),
-		pendingTabletAssignments:  make(map[string]*pendingTabletAssignment),
-		assignmentTransitions:     make(map[string]bool),
+		pendingTabletAssignments:   make(map[string]*pendingTabletAssignment),
+		pendingLightingActivations: make(map[string]*pendingLightingActivation),
+		assignmentTransitions:      make(map[string]bool),
 		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
 	for _, option := range options {
@@ -422,9 +426,10 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		case "BLOCKED":
 			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID == ""
 		case "ACTIVE":
-			valid = device.Kind == deviceexperience.DeviceTabletPlayer &&
-				device.ProfileID == deviceexperience.TabletPlayerProfileID &&
-				assignment.ProjectID != "" && assignment.RuntimeSnapshotID != ""
+			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID != "" &&
+				((device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID) ||
+					device.ProfileID == "stagecore.esp32-dmx-lighting-node")
 		}
 		if !valid {
 			return
@@ -451,6 +456,15 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			response["runtime_snapshot_id"] = assignment.RuntimeSnapshotID
 			response["scope_ack_required"] = true
 			response["safe_media_required"] = false
+			if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
+				scope, err := r.repository.ResolveLightingScope(
+					ctx, device.ID, assignment.ProjectID, assignment.RuntimeSnapshotID)
+				if err != nil {
+					return
+				}
+				response["configuration_hash"] = scope.ConfigurationHash
+				response["blackout_required"] = true
+			}
 		}
 		if err := current.send(response); err != nil {
 			return
@@ -497,6 +511,26 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "lighting.assignment.activate_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverLightingActivationAck(current, message) {
+				return
+			}
+		case "lighting.assignment.scope_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.activateLightingScope(ctx, current, message) {
+				return
+			}
 		case "tablet.assignment.safe_ack":
 			if !isV2 {
 				return
@@ -673,8 +707,14 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 					}
 					continue
 				}
-				if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
-					return
+				if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
+					if _, err := r.repository.ObserveAuthorizedV2Lighting(ctx, observation, projectID, snapshotID, epoch); err != nil {
+						return
+					}
+				} else {
+					if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
+						return
+					}
 				}
 				_, _ = r.repository.RecordNetworkObservation(ctx, network)
 			} else if same, err := r.observeCurrentDevice(ctx, current, observation, network); err != nil || !same {
