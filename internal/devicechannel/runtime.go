@@ -194,6 +194,44 @@ func (r *Runtime) IsConnected(deviceID string) bool {
 // CurrentV2Generation identifies the currently registered authenticated v2
 // socket. The Hub issues a new generation for each successful reconnect.
 // This is not a physical blackout proof, project transfer or readiness grant.
+type V2RuntimeScope struct {
+	Generation        int64
+	ProjectID         string
+	RuntimeSnapshotID string
+	AssignmentEpoch   int64
+	CommandsEnabled   bool
+	Capabilities      []string
+}
+
+func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
+	if r == nil {
+		return V2RuntimeScope{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return V2RuntimeScope{}, false
+	}
+	current := r.connections[strings.TrimSpace(deviceID)]
+	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 {
+		return V2RuntimeScope{}, false
+	}
+	select {
+	case <-current.closed:
+		return V2RuntimeScope{}, false
+	default:
+	}
+	return V2RuntimeScope{
+		Generation: current.generation,
+		ProjectID: current.activeProjectID,
+		RuntimeSnapshotID: current.activeRuntimeSnapshotID,
+		AssignmentEpoch: current.activeAssignmentEpoch,
+		CommandsEnabled: current.commandsEnabled,
+		Capabilities: append([]string(nil), current.advertisedCapabilities...),
+	}, true
+}
+
 func (r *Runtime) CurrentV2Generation(deviceID string) (int64, bool) {
 	if r == nil {
 		return 0, false
