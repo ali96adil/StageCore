@@ -255,6 +255,7 @@ async function renderConfiguration() {
           json: {
             logical_name: roleKey,
             logical_type: "machine_role",
+            target_ref: roleKey,
             configuration: { machine_role_id: roleID },
           },
         });
