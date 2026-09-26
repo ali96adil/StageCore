@@ -271,6 +271,31 @@ The tested path has already demonstrated:
 
 This does **not** replace one-tablet-then-four-tablet Android playback qualification.
 
+### Android MJPEG trial APK
+
+The Tablet Player MJPEG Live layer is maintained in StageCore-TabletPlayer PR #27 until physical Android qualification completes.
+
+Its Android workflow uploads the debug artifact:
+
+```text
+stagecore-player-debug-apk
+```
+
+The debug build uses application ID suffix:
+
+```text
+.mjpegtrial
+```
+
+so it can be installed beside the existing RC3 application without uninstalling RC3.
+
+The trial APK also includes the merged project-independent v2 Tablet bootstrap, so the first physical test must exercise both:
+
+- Hub-owned reusable Tablet assignment; and
+- MJPEG Live playback from the Pi relay.
+
+Do not replace the known RC3 installation before the trial build passes on one real tablet.
+
 ### Camera rehearsal gate
 
 Before relying on the camera in a Cue:
