@@ -27,8 +27,8 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 		t.Fatal(err)
 	}
 
-	const firstSnapshot = "tablet-snapshot-project-one"
-	const secondSnapshot = "tablet-snapshot-project-two"
+	const firstSnapshot = "11111111-2222-4333-8444-555555555551"
+	const secondSnapshot = "11111111-2222-4333-8444-555555555552"
 	for _, row := range []struct {
 		projectID, revisionID, snapshotID string
 	}{
@@ -145,7 +145,7 @@ func TestTabletAssignmentPreflightRejectsActiveShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const snapshotID = "tablet-snapshot-show-lock"
+	const snapshotID = "11111111-2222-4333-8444-555555555553"
 	if _, err := handle.DB.ExecContext(ctx, `
 		INSERT INTO runtime_snapshots
 		(runtime_snapshot_id, project_id, revision_id, snapshot_version,
@@ -159,7 +159,7 @@ func TestTabletAssignmentPreflightRejectsActiveShow(t *testing.T) {
 		INSERT INTO sessions
 		(session_id, project_id, runtime_snapshot_id, session_type, name,
 		 started_at_us, status)
-		VALUES ('tablet-show-lock-session', ?, ?, 'SHOW', 'Active show', ?, 'ACTIVE')
+		VALUES ('11111111-2222-4333-8444-555555555554', ?, ?, 'SHOW', 'Active show', ?, 'ACTIVE')
 	`, projectID, snapshotID, phase4Time.UnixMicro()); err != nil {
 		t.Fatal(err)
 	}
