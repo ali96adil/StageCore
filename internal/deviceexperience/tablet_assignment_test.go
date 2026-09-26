@@ -137,6 +137,134 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 	}
 }
 
+func TestTabletV2ActiveAssignmentMovesSafelyToAnotherProject(t *testing.T) {
+	ctx := context.Background()
+	repo, handle, firstProjectID := newRepository(t)
+	stageStore := store.New(handle.DB, clock.Fixed{Time: phase4Time})
+	firstProject, err := stageStore.GetProject(ctx, firstProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProject, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Second Tablet Show", CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const firstSnapshot = "21111111-2222-4333-8444-555555555551"
+	const secondSnapshot = "21111111-2222-4333-8444-555555555552"
+	for _, row := range []struct {
+		projectID, revisionID, snapshotID string
+	}{
+		{firstProject.ID, firstProject.CurrentRevisionID, firstSnapshot},
+		{secondProject.ID, secondProject.CurrentRevisionID, secondSnapshot},
+	} {
+		if _, err := handle.DB.ExecContext(ctx, `
+			INSERT INTO runtime_snapshots
+			(runtime_snapshot_id, project_id, revision_id, snapshot_version,
+			 created_at_us, created_by, content_hash, manifest_json, status)
+			VALUES (?, ?, ?, 1, ?, 'test', ?, '{}', 'PUBLISHED')
+		`, row.snapshotID, row.projectID, row.revisionID, phase4Time.UnixMicro(),
+			strings.Repeat("b", 64)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const deviceID = "tablet-v2-cross-project-01"
+	if _, err := repo.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID,
+		Kind: deviceexperience.DeviceTabletPlayer,
+		ProfileID: deviceexperience.TabletPlayerProfileID,
+		DisplayName: "Reusable Tablet",
+		Platform: "android",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: []string{"tablet.media.play"},
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	challengeA := strings.Repeat("1a", 32)
+	firstCommit, err := repo.CommitTabletSafeAssignment(ctx, deviceexperience.VerifiedTabletAssignmentInput{
+		AssignmentID: "21111111-1111-4111-8111-111111111111",
+		DeviceID: deviceID,
+		TargetProjectID: firstProject.ID,
+		TargetRuntimeSnapshotID: firstSnapshot,
+		ExpectedEpoch: 1,
+		ConnectionGeneration: 10,
+		Challenge: challengeA,
+		AckDeviceID: deviceID,
+		AckEpoch: 1,
+		AckGeneration: 10,
+		AckChallenge: challengeA,
+		AckSafeState: true,
+		ActorID: "owner",
+	})
+	if err != nil || firstCommit.NextState != "ACTIVE" || firstCommit.ToEpoch != 2 {
+		t.Fatalf("first assignment=%+v err=%v", firstCommit, err)
+	}
+
+	move := deviceexperience.TabletAssignmentInput{
+		DeviceID: deviceID,
+		ExpectedProjectID: firstProject.ID,
+		ExpectedRuntimeSnapshotID: firstSnapshot,
+		TargetProjectID: secondProject.ID,
+		TargetRuntimeSnapshotID: secondSnapshot,
+		ExpectedEpoch: 2,
+	}
+	preflight, err := repo.PreflightTabletAssignment(ctx, move)
+	if err != nil || preflight.AssignmentState != "ACTIVE" ||
+		preflight.NextState != "ACTIVE" ||
+		preflight.FromProjectID != firstProject.ID ||
+		preflight.ToProjectID != secondProject.ID ||
+		preflight.RequiredAction != "AUTHENTICATED_TABLET_SAFE_MEDIA_ACK" {
+		t.Fatalf("cross-project tablet preflight=%+v err=%v", preflight, err)
+	}
+
+	challengeB := strings.Repeat("2b", 32)
+	secondCommit, err := repo.CommitTabletSafeAssignment(ctx, deviceexperience.VerifiedTabletAssignmentInput{
+		AssignmentID: "21111111-1111-4111-8111-111111111112",
+		DeviceID: deviceID,
+		ExpectedProjectID: firstProject.ID,
+		ExpectedRuntimeSnapshotID: firstSnapshot,
+		TargetProjectID: secondProject.ID,
+		TargetRuntimeSnapshotID: secondSnapshot,
+		ExpectedEpoch: 2,
+		ConnectionGeneration: 11,
+		Challenge: challengeB,
+		AckDeviceID: deviceID,
+		AckEpoch: 2,
+		AckGeneration: 11,
+		AckChallenge: challengeB,
+		AckSafeState: true,
+		ActorID: "owner",
+	})
+	if err != nil || secondCommit.NextState != "ACTIVE" ||
+		secondCommit.FromEpoch != 2 || secondCommit.ToEpoch != 3 {
+		t.Fatalf("cross-project tablet commit=%+v err=%v", secondCommit, err)
+	}
+
+	record, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || record.State != "ACTIVE" ||
+		record.ProjectID != secondProject.ID ||
+		record.RuntimeSnapshotID != secondSnapshot ||
+		record.Epoch != 3 {
+		t.Fatalf("tablet remained locked to old project: %+v err=%v", record, err)
+	}
+
+	if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: firstProject.ID,
+		RuntimeSnapshotID: firstSnapshot,
+		DeviceID: deviceID,
+		CommandType: "TABLET_PLAY",
+		Issuer: "operator:test",
+		Payload: json.RawMessage(`{"media_number":1}`),
+	}); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("old Project retained tablet command authority after move: %v", err)
+	}
+}
+
 func TestTabletAssignmentPreflightRejectsActiveShow(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, projectID := newRepository(t)

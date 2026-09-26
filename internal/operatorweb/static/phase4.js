@@ -30,8 +30,9 @@
       v2NoCurrentSoftwareZero: "No current-connection zero report",
       v2NoControls: "Read-only commissioning view; no Project transfer or output controls available.",
       v2AssignTablet: "Assign tablet to this Project",
-      v2AssigningTablet: "Assigning tablet and entering safe media state…",
-      v2TabletAssigned: "Tablet assigned. Waiting for its authenticated reconnect.",
+      v2MoveTablet: "Move tablet to this Project",
+      v2AssigningTablet: "Moving tablet through safe media state…",
+      v2TabletAssigned: "Tablet assignment changed. Waiting for its authenticated reconnect.",
       v2TabletNoSnapshot: "Publish a Runtime Snapshot before assigning this tablet.",
       v2TabletActive: "Hub-owned tablet assignment is active",
       v2TabletScope: "Runtime Snapshot",
@@ -133,8 +134,9 @@
       v2NoCurrentSoftwareZero: "ماكو تقرير صفر للاتصال الحالي",
       v2NoControls: "عرض متابعة فقط؛ نقل المشروع والتحكم بالإضاءة غير متاحين هنا.",
       v2AssignTablet: "خصّص التابلت لهذا المشروع",
-      v2AssigningTablet: "جاري تخصيص التابلت وإدخاله بالحالة الآمنة…",
-      v2TabletAssigned: "تم تخصيص التابلت. ننتظر إعادة اتصاله الموثقة.",
+      v2MoveTablet: "انقل التابلت لهذا المشروع",
+      v2AssigningTablet: "جاري نقل التابلت عبر الحالة الآمنة…",
+      v2TabletAssigned: "تم تغيير تخصيص التابلت. ننتظر إعادة اتصاله الموثقة.",
       v2TabletNoSnapshot: "انشر Runtime Snapshot قبل تخصيص هذا التابلت.",
       v2TabletActive: "تخصيص التابلت من الـHub فعّال",
       v2TabletScope: "Runtime Snapshot",
@@ -446,8 +448,11 @@
       const assignedSnapshot = assignment.runtime_snapshot_id || "";
       const tablet = device.device_kind === "TABLET_PLAYER" &&
         device.profile_id === "stagecore.tablet-player";
-      const unassigned = assignmentState === "UNASSIGNED" && !assignedProject;
-      const canAssignTablet = tablet && unassigned &&
+      const unassigned = assignmentState === "UNASSIGNED" && !assignedProject && !assignedSnapshot;
+      const activeElsewhere = assignmentState === "ACTIVE" &&
+        Boolean(assignedProject) && Boolean(assignedSnapshot) && assignedProject !== projectID;
+      const reusableTablet = tablet && (unassigned || activeElsewhere);
+      const canAssignTablet = reusableTablet &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
       return `
         <article class="phase4-card">
@@ -462,13 +467,15 @@
             ${assignedSnapshot ? `<div><dt>${esc(t("v2AssignedSnapshot"))}</dt><dd class="mono">${esc(assignedSnapshot)}</dd></div>` : ""}
           </dl>
           <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
-          ${tablet && unassigned ? `
+          ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
               <button class="button primary" data-assign-tablet="${esc(device.device_id)}"
                 data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
+                data-expected-project="${esc(assignedProject)}"
+                data-expected-snapshot="${esc(assignedSnapshot)}"
                 type="button" ${canAssignTablet ? "" : "disabled"}>
-                ${esc(t("v2AssignTablet"))}
+                ${esc(t(activeElsewhere ? "v2MoveTablet" : "v2AssignTablet"))}
               </button>
             </div>` : `
             <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
@@ -499,8 +506,8 @@
           await api(`/api/v1/projects/${encodeURIComponent(projectID)}/tablet-controller/devices/${encodeURIComponent(deviceID)}/assign`, {
             method: "POST",
             body: JSON.stringify({
-              expected_project_id: "",
-              expected_runtime_snapshot_id: "",
+              expected_project_id: button.dataset.expectedProject || "",
+              expected_runtime_snapshot_id: button.dataset.expectedSnapshot || "",
               expected_assignment_epoch: epoch,
               runtime_snapshot_id: assignmentSnapshotID,
             }),
