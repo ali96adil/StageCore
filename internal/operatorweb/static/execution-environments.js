@@ -13,7 +13,11 @@ const f025Strings = {
   "f025.name": {"en":"Environment name","ar-IQ":"اسم البيئة"},
   "f025.version": {"en":"VDMX version requirement","ar-IQ":"متطلب إصدار VDMX"},
   "f025.architecture": {"en":"Mac architecture","ar-IQ":"معمارية الـ Mac"},
-  "f025.workspace_locator": {"en":"VDMX workspace path","ar-IQ":"مسار مشروع VDMX"},
+  "f025.workspace_locator": {"en":"VDMX workspace path (optional)","ar-IQ":"مسار مشروع VDMX (اختياري)"},
+  "f025.workspace_demo_hint": {"en":"Leave the workspace path blank for VDMX Demo / an unsaved workspace. StageCore can still open VDMX and capture the controls VDMX publishes through OSCQuery.","ar-IQ":"اترك مسار المشروع فارغاً لنسخة VDMX Demo أو لمشروع غير محفوظ. يبقى StageCore قادراً على فتح VDMX والتقاط عناصر التحكم التي ينشرها عبر OSCQuery."},
+  "f025.oscquery_url": {"en":"VDMX OSCQuery URL","ar-IQ":"عنوان VDMX OSCQuery"},
+  "f025.oscquery_hint": {"en":"Enable VDMX OSCQuery locally, then StageCore records the published control namespace and current observable values. This is a partial reconstruction snapshot, not a saved VDMX project.","ar-IQ":"فعّل OSCQuery محلياً داخل VDMX، ثم يسجل StageCore مساحة التحكم المنشورة والقيم الحالية القابلة للرصد. هذا Snapshot جزئي لإعادة البناء وليس ملف مشروع VDMX محفوظاً."},
+  "f025.osc_go_hint": {"en":"Show GO control: send OSC /stagecore/go to 127.0.0.1:9010 on the Mac running StageCore Companion.","ar-IQ":"للتحكم GO أثناء العرض: أرسل OSC بالمسار /stagecore/go إلى 127.0.0.1:9010 على الماك الذي يشغل StageCore Companion."},
   "f025.capture_policy": {"en":"Asset policy","ar-IQ":"سياسة الملف"},
   "f025.reference_only": {"en":"Reference only — verify location, bytes are not backed up","ar-IQ":"مرجع فقط — تحقق من الموقع، والبايتات غير محفوظة كنسخة احتياطية"},
   "f025.content_bound": {"en":"Content bound — exact hash and size are already known","ar-IQ":"محتوى مرتبط — الهاش والحجم الدقيقان معروفان مسبقاً"},
@@ -107,24 +111,8 @@ function f025EnvironmentCard(environment, roles, editable) {
 function f025GuidedManifest() {
   const policy = document.getElementById("f025CapturePolicy").value;
   const locator = document.getElementById("f025WorkspaceLocator").value.trim();
-  const asset = {
-    key: "workspace",
-    kind: "PROJECT_FILE",
-    name: "VDMX workspace",
-    capture_policy: policy,
-    locator,
-  };
-  if (policy === "CONTENT_BOUND") {
-    const contentHash = document.getElementById("f025ContentHash").value.trim().toLowerCase();
-    const sizeText = document.getElementById("f025SizeBytes").value.trim();
-    const sizeBytes = Number(sizeText);
-    if (!/^[a-f0-9]{64}$/.test(contentHash) || sizeText === "" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
-      throw new Error(f025T("f025.invalid_content_bound"));
-    }
-    asset.content_hash = contentHash;
-    asset.size_bytes = sizeBytes;
-  }
-  return {
+  const oscQueryURL = document.getElementById("f025OSCQueryURL").value.trim();
+  const manifest = {
     schema_version: 1,
     environment_key: document.getElementById("f025EnvironmentKey").value.trim(),
     name: document.getElementById("f025EnvironmentName").value.trim(),
@@ -136,9 +124,40 @@ function f025GuidedManifest() {
       version_constraint: document.getElementById("f025Version").value.trim(),
       hosts: [{os: "darwin", architecture: document.getElementById("f025Architecture").value}],
     },
-    assets: [asset],
-    launch: {kind: "ASSET", asset_key: "workspace"},
   };
+
+  if (locator) {
+    const asset = {
+      key: "workspace",
+      kind: "PROJECT_FILE",
+      name: "VDMX workspace",
+      capture_policy: policy,
+      locator,
+    };
+    if (policy === "CONTENT_BOUND") {
+      const contentHash = document.getElementById("f025ContentHash").value.trim().toLowerCase();
+      const sizeText = document.getElementById("f025SizeBytes").value.trim();
+      const sizeBytes = Number(sizeText);
+      if (!/^[a-f0-9]{64}$/.test(contentHash) || sizeText === "" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+        throw new Error(f025T("f025.invalid_content_bound"));
+      }
+      asset.content_hash = contentHash;
+      asset.size_bytes = sizeBytes;
+    }
+    manifest.assets = [asset];
+    manifest.launch = {kind: "ASSET", asset_key: "workspace"};
+  }
+
+  if (oscQueryURL) {
+    manifest.bindings = [{
+      key: "oscquery",
+      kind: "NETWORK",
+      name: "VDMX OSCQuery",
+      external_ref: oscQueryURL,
+      required: false,
+    }];
+  }
+  return manifest;
 }
 
 function f025AdvancedTemplate() {
@@ -160,6 +179,13 @@ function f025AdvancedTemplate() {
       name: "VDMX workspace",
       capture_policy: "REFERENCE_ONLY",
       locator: "/Users/show/Secondary.vdmx5",
+    }],
+    bindings: [{
+      key: "oscquery",
+      kind: "NETWORK",
+      name: "VDMX OSCQuery",
+      external_ref: "http://127.0.0.1:8080/",
+      required: false,
     }],
     launch: {kind: "ASSET", asset_key: "workspace"},
   }, null, 2);
@@ -199,13 +225,13 @@ async function renderExecutionEnvironments(message = "") {
             <label>${esc(f025T("f025.name"))}<input id="f025EnvironmentName" value="Main video workstation" ${disabled} required></label>
             <label>${esc(f025T("f025.version"))}<input id="f025Version" value="8.x-tested" ${disabled} required></label>
             <label>${esc(f025T("f025.architecture"))}<select id="f025Architecture" ${disabled}><option value="arm64">Apple Silicon · arm64</option><option value="amd64">Intel · amd64</option></select></label>
-            <label>${esc(f025T("f025.workspace_locator"))}<input id="f025WorkspaceLocator" placeholder="/Users/show/Stage.vdmx5" ${disabled} required></label>
+            <label>${esc(f025T("f025.workspace_locator"))}<input id="f025WorkspaceLocator" placeholder="/Users/show/Stage.vdmx5" ${disabled}><span class="muted">${esc(f025T("f025.workspace_demo_hint"))}</span></label>\n            <label>${esc(f025T("f025.oscquery_url"))}<input id="f025OSCQueryURL" value="http://127.0.0.1:8080/" inputmode="url" dir="ltr" ${disabled}><span class="muted">${esc(f025T("f025.oscquery_hint"))}</span></label>
             <label>${esc(f025T("f025.capture_policy"))}<select id="f025CapturePolicy" ${disabled}><option value="REFERENCE_ONLY">${esc(f025T("f025.reference_only"))}</option><option value="CONTENT_BOUND">${esc(f025T("f025.content_bound"))}</option></select></label>
             <label id="f025ContentHashLabel" class="hidden">${esc(f025T("f025.content_hash"))}<input id="f025ContentHash" class="mono" maxlength="64" ${disabled}></label>
             <label id="f025SizeBytesLabel" class="hidden">${esc(f025T("f025.size_bytes"))}<input id="f025SizeBytes" type="number" min="0" step="1" ${disabled}></label>
             <label>${esc(f025T("f025.machine_role"))}<select id="f025GuidedRole" ${disabled}>${f025RoleOptions(model.machine_roles || [])}</select></label>
           </div>
-          <button class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button>
+          <div class="message">${esc(f025T("f025.osc_go_hint"))}</div>\n          <button class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button>
         </form>
       </article>
 

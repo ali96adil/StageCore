@@ -7,6 +7,7 @@ import AppKit
 #endif
 
 public typealias VDMXOpenHandler = @Sendable (_ target: URL, _ application: URL) async -> Bool
+typealias VDMXApplicationOpenHandler = @Sendable (_ application: URL) async -> Bool
 typealias VDMXOSCQueryFetcher = @Sendable (_ url: URL) async throws -> Data
 
 public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
@@ -15,6 +16,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
 
     private let applicationCandidates: [URL]
     private let opener: VDMXOpenHandler
+    private let applicationOpener: VDMXApplicationOpenHandler
     private let oscQueryFetcher: VDMXOSCQueryFetcher
 
     private static let maxOSCQueryNamespaceBytes = 40 * 1024
@@ -26,6 +28,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     ) {
         self.applicationCandidates = applicationCandidates
         self.opener = opener
+        self.applicationOpener = { _ in false }
         self.oscQueryFetcher = { url in
             try await Self.fetchOSCQuery(url)
         }
@@ -34,10 +37,12 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     init(
         applicationCandidates: [URL],
         opener: @escaping VDMXOpenHandler,
+        applicationOpener: @escaping VDMXApplicationOpenHandler = { _ in false },
         oscQueryFetcher: @escaping VDMXOSCQueryFetcher
     ) {
         self.applicationCandidates = applicationCandidates
         self.opener = opener
+        self.applicationOpener = applicationOpener
         self.oscQueryFetcher = oscQueryFetcher
     }
 
@@ -93,6 +98,18 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     private func performOpen(manifest: VDMXOperationManifest) async -> ExecutionEnvironmentProviderOutcome {
         guard let application = locateApplication() else {
             return failure(code: "VDMX_APPLICATION_NOT_FOUND", summary: "VDMX application bundle was not found at a safe known location")
+        }
+        if manifest.launch == nil {
+            if Task.isCancelled {
+                return failure(code: "VDMX_OPERATION_CANCELLED", summary: "VDMX operation was cancelled")
+            }
+            guard await applicationOpener(application) else {
+                return failure(code: "VDMX_OPEN_FAILED", summary: "macOS could not open VDMX")
+            }
+            return .init(
+                status: .completed,
+                responseSummary: "VDMX opened without a saved workspace target"
+            )
         }
         guard let target = resolveLaunchTarget(manifest),
               safeExistingURL(target) != nil
@@ -386,6 +403,19 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     }
 
     #if os(macOS)
+    @MainActor
+    private static func openApplicationWithNSWorkspace(application: URL) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let configuration = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.openApplication(
+                at: application,
+                configuration: configuration
+            ) { runningApplication, error in
+                continuation.resume(returning: runningApplication != nil && error == nil)
+            }
+        }
+    }
+
     @MainActor
     private static func openWithNSWorkspace(target: URL, application: URL) async -> Bool {
         await withCheckedContinuation { continuation in

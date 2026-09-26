@@ -66,6 +66,30 @@ OSCQuery collection is deliberately constrained to `http://127.0.0.1:<port>/`, `
 
 A `PARTIAL` snapshot is reconstruction guidance, not a claim that StageCore can reproduce every internal VDMX state bit. VDMX project/workspace presets remain the authoritative complete persistence surface when a savable project is available.
 
+## Demo / unsaved first-show workflow
+
+VDMX Demo or an otherwise unsaved VDMX workspace is a supported **partial reconstruction** workflow.
+
+The guided Operator setup may leave the VDMX workspace path blank. In that mode:
+
+- no fake project-file asset or launch target is invented;
+- OPEN launches the known local VDMX application bundle without a workspace file;
+- CAPTURE_SNAPSHOT still records the application observation plus any VDMX OSCQuery namespace explicitly published on localhost;
+- the guided form defaults the OSCQuery binding to `http://127.0.0.1:8080/`;
+- the result remains `PARTIAL` and `DESCRIPTIVE_ONLY` for VDMX internal state.
+
+For show control, the macOS Companion exposes a local OSC control surface by default on UDP `127.0.0.1:9010`. VDMX, Ableton, or another application on the same Mac may send:
+
+```text
+/stagecore/go
+```
+
+with no arguments, or integer `1`. The Companion forwards that event over its authenticated runtime channel. The Hub—not VDMX—resolves the active Machine Role, Project, Session, Runtime Snapshot and next Cue. The local OSC sender never supplies Project IDs or Cue IDs.
+
+A local OSC listener bind failure is isolated from the authenticated Companion runtime: it disables that local control surface for the process lifetime but does not disconnect the Companion from StageCore.
+
+This workflow does **not** bypass VDMX save/licensing restrictions. It does not claim to recover unpublished layer graphs, plug-in state, FX state, media-bin organization, or any state VDMX does not expose through supported surfaces. When a real savable VDMX project becomes available, that project remains the authoritative complete persistence artifact and the OSCQuery snapshot remains recovery/reconstruction metadata.
+
 ## Operator runtime endpoint
 
 The existing Execution Environments UI extends its current environment card with bounded runtime controls.

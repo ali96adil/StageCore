@@ -147,7 +147,9 @@ public actor WebSocketCompanionAgent {
                 } catch is CancellationError {
                     // Normal connection teardown.
                 } catch {
-                    socket.cancel(with: .goingAway, reason: nil)
+                    // Local control is an optional operator surface. A port
+                    // conflict or listener failure must never tear down the
+                    // authenticated Companion runtime channel.
                 }
             }
         } else {
