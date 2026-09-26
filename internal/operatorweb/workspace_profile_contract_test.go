@@ -141,3 +141,17 @@ func TestWorkspaceProfileLeavesFeatureNavigationVisible(t *testing.T) {
 		t.Fatal("legacy profile must skip unknown feature pages before toggling navigation visibility")
 	}
 }
+
+
+func TestOperatorSidebarScrollsWithExpandedFeatureNavigation(t *testing.T) {
+	appCSS := string(mustReadOperatorContractFile(t, "static/app.css"))
+
+	for _, marker := range []string{
+		"overflow-y: auto;",
+		"overscroll-behavior: contain;",
+	} {
+		if !strings.Contains(appCSS, marker) {
+			t.Fatalf("operator sidebar missing scroll contract marker %q", marker)
+		}
+	}
+}
