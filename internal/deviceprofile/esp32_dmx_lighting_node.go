@@ -11,7 +11,7 @@ func esp32DMXLightingNodeProfile() Profile {
 	channelMapSchema := json.RawMessage(`{"type":"object","minProperties":1,"additionalProperties":{"type":"number","minimum":0,"maximum":100}}`)
 	return Profile{
 		ID:      lightingnode.ProfileID,
-		Version: "1.0.0",
+		Version: "1.1.0",
 		Source:  SourceOfficial,
 		Kind:    KindDevice,
 		Name: LocalizedText{
@@ -24,7 +24,7 @@ func esp32DMXLightingNodeProfile() Profile {
 		},
 		DiscoveryHints: []DiscoveryHint{
 			{Attribute: "profile_id", Mode: MatchExact, Value: lightingnode.ProfileID, Weight: 100, Required: true},
-			{Attribute: "protocol_version", Mode: MatchExact, Value: "stagecore.device/1", Weight: 80, Required: true},
+			{Attribute: "protocol_version", Mode: MatchPrefix, Value: "stagecore.device/", Weight: 80, Required: true},
 		},
 		ConnectionFields: []ConnectionField{
 			{
@@ -97,7 +97,7 @@ func esp32DMXLightingNodeProfile() Profile {
 			{ID: "dmx", Type: "OBSERVATION", Name: LocalizedText{EN: "DMX output health", ArIQ: "سلامة خرج DMX"}, TimeoutMS: 15000},
 			{ID: "failsafe", Type: "OBSERVATION", Name: LocalizedText{EN: "Lighting fail-safe readiness", ArIQ: "جاهزية أمان الإضاءة"}, TimeoutMS: 15000},
 		},
-		TestedProtocolVersions: []string{"stagecore.device/1"},
+		TestedProtocolVersions: []string{"stagecore.device/1", "stagecore.device/2"},
 		Tags:                   []string{"lighting", "dmx", "esp32", "stage-device", "official"},
 		Target: &TargetTemplate{
 			LogicalType: devicechannel.StageDeviceLogicalType,

@@ -21,12 +21,17 @@ func TestBuiltinCatalogIncludesESP32DMXLightingNode(t *testing.T) {
 		t.Fatalf("lighting capabilities=%d want=%d", len(profile.Capabilities), len(lightingnode.CapabilityKeys()))
 	}
 
-	matches := catalog.Match(Observation{Attributes: map[string]string{
-		"profile_id":       lightingnode.ProfileID,
-		"protocol_version": "stagecore.device/1",
-	}})
-	if len(matches) == 0 || matches[0].ProfileID != lightingnode.ProfileID {
-		t.Fatalf("lighting observation did not resolve to official profile: %#v", matches)
+	for _, protocol := range []string{"stagecore.device/1", "stagecore.device/2"} {
+		matches := catalog.Match(Observation{Attributes: map[string]string{
+			"profile_id":       lightingnode.ProfileID,
+			"protocol_version": protocol,
+		}})
+		if len(matches) == 0 || matches[0].ProfileID != lightingnode.ProfileID {
+			t.Fatalf("lighting observation %s did not resolve to official profile: %#v", protocol, matches)
+		}
+	}
+	if len(profile.TestedProtocolVersions) != 2 {
+		t.Fatalf("tested protocol versions=%v", profile.TestedProtocolVersions)
 	}
 
 	target, err := catalog.Materialize(lightingnode.ProfileID, map[string]any{"device_id": "lighting-01"})
