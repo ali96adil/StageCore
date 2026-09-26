@@ -364,21 +364,25 @@ async function loadCues() {
 
 async function renderCues(message = "") {
   const payload = await loadCues();
+  const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
-  try { validation = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/validation`); }
-  catch (_) { validation = null; }
+  if (hasDraft) {
+    try { validation = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/validation`); }
+    catch (_) { validation = null; }
+  }
   state.validation = validation;
   const canModify = canEdit();
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">CUE WORKSPACE</p><h1>Cues</h1><p>Revision r${esc(payload.revision.revision_number)} · ${esc(payload.revision.status)}</p></div>
       <div class="toolbar">
-        <button id="validateButton" class="button" type="button">Validate</button>
-        ${canModify ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
+        ${hasDraft ? `<button id="validateButton" class="button" type="button">Validate</button>` : ""}
+        ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
+        ${canModify && !hasDraft ? `<button id="createDraftButton" class="button primary" type="button">Create Draft</button>` : ""}
       </div>
     </div>
     ${message ? `<div class="message success">${esc(message)}</div>` : ""}
-    ${renderValidation(validation)}
+    ${hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
     <div class="table-wrap" style="margin-top:14px">
       <table>
         <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
@@ -404,15 +408,25 @@ async function renderCues(message = "") {
       </table>
     </div>`;
 
-  el("validateButton").addEventListener("click", validateDraft);
+  el("validateButton")?.addEventListener("click", validateDraft);
   el("createCueButton")?.addEventListener("click", () => openCueEditor(null));
   el("publishButton")?.addEventListener("click", publishDraft);
+  el("createDraftButton")?.addEventListener("click", createCueDraft);
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
   content.querySelectorAll(".cue-duplicate").forEach((button) => button.addEventListener("click", () => duplicateCue(button.dataset.id)));
   content.querySelectorAll(".cue-delete").forEach((button) => button.addEventListener("click", () => deleteCue(button.dataset.id)));
   content.querySelectorAll(".cue-up").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, -1)));
   content.querySelectorAll(".cue-down").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, 1)));
+}
+
+function renderNoDraftState(canModify) {
+  return `<section class="card">
+    <div class="section-title-row">
+      <div><h3>No unpublished Draft</h3><p class="muted">${canModify ? "Create a Draft to make Cue changes. The published Runtime Snapshot stays unchanged." : "This Project currently has no unpublished Cue changes."}</p></div>
+      ${pill("PUBLISHED", "neutral")}
+    </div>
+  </section>`;
 }
 
 function renderValidation(report) {
@@ -584,6 +598,15 @@ async function moveCue(id, delta) {
     });
     await renderCues("Cue order updated.");
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+}
+
+async function createCueDraft() {
+  try {
+    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/configuration/draft`, { method: "POST" });
+    await renderCues("New Draft created. Published Runtime remains unchanged.");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
 }
 
 async function validateDraft() {

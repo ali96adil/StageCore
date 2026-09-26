@@ -153,3 +153,27 @@ func TestOperatorSidebarKeepsInjectedNavigationScrollable(t *testing.T) {
 		t.Fatal("operator sidebar must contain wheel/touch overscroll")
 	}
 }
+
+func TestOperatorCuesDistinguishesNoDraftFromValidationFailure(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	req.RemoteAddr = "127.0.0.1:17011"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("app.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	js := res.Body.String()
+	for _, contract := range []string{
+		`const hasDraft = payload.revision?.status === "DRAFT";`,
+		`No unpublished Draft`,
+		`createDraftButton`,
+		`/configuration/draft`,
+		`Create a Draft to make Cue changes.`,
+	} {
+		if !strings.Contains(js, contract) {
+			t.Errorf("Cue workspace missing no-Draft UX contract %q", contract)
+		}
+	}
+}
