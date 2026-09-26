@@ -28,6 +28,12 @@ func TestExecutionEnvironmentManagerContract(t *testing.T) {
 		"/configuration/draft",
 		"f025.portability_warning",
 		"f025.readiness_note",
+		"f025.workspace_demo_hint",
+		"f025OSCQueryURL",
+		"http://127.0.0.1:8080/",
+		"/stagecore/go",
+		"127.0.0.1:9010",
+		"manifest.bindings",
 	} {
 		if !strings.Contains(manager, token) {
 			t.Errorf("F-025 manager missing contract token %q", token)
@@ -47,5 +53,8 @@ func TestExecutionEnvironmentManagerContract(t *testing.T) {
 
 	if strings.Contains(manager, "shell") || strings.Contains(manager, "exec(") {
 		t.Fatal("F-025 Operator manager must not introduce shell/process execution")
+	}
+	if strings.Contains(manager, `id="f025WorkspaceLocator" placeholder="/Users/show/Stage.vdmx5" ${disabled} required`) {
+		t.Fatal("VDMX guided setup must not require a saved workspace path")
 	}
 }
