@@ -17,8 +17,8 @@ const ProtocolVersion2 = "stagecore.device/2"
 //
 // New identities always bootstrap UNASSIGNED. Existing v2 identities may
 // reconnect only in a Hub-owned state that is valid for their stored profile.
-// Lighting remains UNASSIGNED/BLOCKED; Tablet Players may also reconnect ACTIVE
-// with a published Runtime Snapshot already stored by the Hub. The client never
+// Lighting and Tablet Players may reconnect ACTIVE only when the Hub already
+// owns a non-empty Project + published Runtime Snapshot sidecar. The client never
 // supplies Project authority in device.hello.
 func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (Device, error) {
 	device.ID = strings.TrimSpace(device.ID)
@@ -69,9 +69,10 @@ func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (D
 		case "BLOCKED":
 			validAssignment = assignedProject != "" && assignedSnapshot == ""
 		case "ACTIVE":
-			validAssignment = kind == string(DeviceTabletPlayer) &&
-				storedProfile == TabletPlayerProfileID &&
-				assignedProject != "" && assignedSnapshot != ""
+			validAssignment = assignedProject != "" && assignedSnapshot != "" &&
+				((kind == string(DeviceTabletPlayer) &&
+					storedProfile == TabletPlayerProfileID) ||
+					storedProfile == "stagecore.esp32-dmx-lighting-node")
 		}
 		if protocol != ProtocolVersion2 || kind != string(device.Kind) ||
 			storedProfile != device.ProfileID || legacyProject != "" ||
