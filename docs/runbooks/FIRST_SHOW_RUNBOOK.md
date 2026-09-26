@@ -371,6 +371,28 @@ Until this gate passes, do not enable Lighting ACTIVE merely to complete a rehea
 
 ---
 
+## 9A. Build mixed Cues without JSON
+
+For the first show, keep subsystem authoring visual and reuse the canonical translators already built into StageCore.
+
+Recommended composition workflow:
+
+1. Build a **Tablet Scene** in the Tablet Scenes workspace.
+2. Build a **Lighting Cue** in the Lighting Cues workspace.
+3. Open the general **Cues** workspace and create the final show Cue.
+4. Under **Compose from existing Cues**, choose the Tablet Scene and select **Import actions**.
+5. Import the Lighting Cue the same way.
+6. Add one or more **Send OSC message** Actions from the visual Action Builder for VDMX and/or Ableton.
+7. Review action execution modes/order.
+8. Save the mixed Cue.
+9. Validate and Publish a new Runtime Snapshot before rehearsal.
+
+Import copies the source Actions into the mixed Cue. It does not link them dynamically and it does not reuse their Action IDs. Later changes to the source Tablet/Lighting Cue do not silently change an already-composed mixed Cue; re-import or edit deliberately.
+
+This keeps the final Cue auditable while avoiding manual capability names, target references, and JSON for the common first-show path.
+
+---
+
 ## 10. Create the first integrated REHEARSAL session
 
 Before starting:
