@@ -19,7 +19,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     private let applicationOpener: VDMXApplicationOpenHandler
     private let oscQueryFetcher: VDMXOSCQueryFetcher
 
-    private static let maxOSCQueryNamespaceBytes = 256 * 1024
+    private static let maxOSCQueryNamespaceBytes = 40 * 1024
     private static let maxOSCQueryHostInfoBytes = 4 * 1024
 
     public init(
