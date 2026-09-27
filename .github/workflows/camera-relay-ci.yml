@@ -42,7 +42,18 @@ jobs:
           go-version: '1.26.x'
           cache: true
       - name: Compile portable camera smoke probe
-        run: python3 -m py_compile tools/camera-relay-smoke.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import py_compile
+          py_compile.compile(
+              "tools/camera-relay-smoke.py",
+              cfile=os.path.join(os.environ["RUNNER_TEMP"], "camera-relay-smoke.pyc"),
+              doraise=True,
+          )
+          PY
       - name: Exercise portable smoke probe with fake HTTP relay
         run: python3 -m unittest discover -s tools -p 'test_camera_relay_smoke.py' -v
       - name: Test camera relay
