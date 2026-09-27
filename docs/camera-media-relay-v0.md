@@ -90,3 +90,21 @@ Never aim this four-reader probe directly at the ESP32-CAM: the camera
 firmware permits a single upstream connection. Never port-forward or expose
 plaintext unauthenticated relay HTTP to untrusted networks. Do not modify
 production Hub or systemd services for this trial.
+
+
+## Stable camera addressing for reconnects
+
+The relay reconnect loop re-dials the configured source URL after a source failure. A literal DHCP address therefore only remains valid while the camera keeps that lease.
+
+For a camera firmware that advertises a stable `.local` hostname, the relay now resolves that hostname with a bounded IPv4 mDNS query on every new upstream dial. This is intentionally implemented inside the relay rather than relying on libc/NSS so the Linux ARM64 `CGO_ENABLED=0` build keeps the same static build shape.
+
+Example:
+
+    ./stagecore-camera-relay \
+      -source http://stagecam-d44a4c.local:81/api/v0/stream \
+      -listen 192.168.3.130:9081 \
+      -allow-lan
+
+The mDNS lookup uses a unicast-response query from an ephemeral UDP port and has a bounded timeout. A lookup failure keeps the relay in reconnecting state; it does not fall back to public DNS, an unrelated host, or a stale remembered IP.
+
+This source-only change requires a separate attended physical qualification against the real ESP32-CAM and show LAN before replacing the already qualified literal-IP C3 binary.

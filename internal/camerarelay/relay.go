@@ -66,7 +66,7 @@ func New(cfg Config, log *slog.Logger) (*Relay, error) {
  if log == nil { log = slog.Default() }
  transport := &http.Transport{
   Proxy: nil, // Never route a show-LAN camera via an HTTP proxy.
-  DialContext: (&net.Dialer{Timeout:3*time.Second, KeepAlive:20*time.Second}).DialContext,
+  DialContext: sourceDialContext,
   DisableCompression:true, DisableKeepAlives:true, MaxConnsPerHost:1,
   ResponseHeaderTimeout:cfg.HeaderTimeout,
  }
