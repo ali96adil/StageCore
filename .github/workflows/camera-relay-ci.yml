@@ -82,7 +82,10 @@ jobs:
           go build -buildvcs=true -trimpath \
             -o "$OUT/stagecore-camera-relay" \
             ./cmd/stagecore-camera-relay
-          sha256sum "$OUT/stagecore-camera-relay" > "$OUT/SHA256SUMS"
+          (
+            cd "$OUT"
+            sha256sum stagecore-camera-relay > SHA256SUMS
+          )
           go version -m "$OUT/stagecore-camera-relay" | tee "$OUT/BUILDINFO"
           grep -F "vcs.revision=$EXPECTED_SHA" "$OUT/BUILDINFO"
           grep -F "vcs.modified=false" "$OUT/BUILDINFO"

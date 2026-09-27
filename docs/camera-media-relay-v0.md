@@ -108,3 +108,30 @@ Example:
 The mDNS lookup uses a unicast-response query from an ephemeral UDP port and has a bounded timeout. A lookup failure keeps the relay in reconnecting state; it does not fall back to public DNS, an unrelated host, or a stale remembered IP.
 
 This source-only change requires a separate attended physical qualification against the real ESP32-CAM and show LAN before replacing the already qualified literal-IP C3 binary.
+
+
+## First-show service deployment (prepared, not automatically installed)
+
+The relay should not depend on an interactive shell or `nohup` for the final show. A hardened systemd unit and environment-file example are provided under:
+
+- `deploy/systemd/stagecore-camera-relay.service`
+- `deploy/systemd/camera-relay.env.example`
+
+The unit is intentionally **not installed by CI**. Promotion remains an attended deployment step after the exact relay binary and source URL have passed physical qualification.
+
+Recommended deployment shape:
+
+1. install the qualified ARM64 binary at `/opt/stagecore/bin/stagecore-camera-relay`;
+2. copy the example environment file to `/etc/stagecore/camera-relay.env`;
+3. set the source to the qualified camera URL;
+4. set the listen address to the show-LAN Pi address and reserve that Pi address in DHCP before relying on Tablet Direct Live URLs;
+5. copy the unit to `/etc/systemd/system/`, run `systemctl daemon-reload`, then enable/start it;
+6. verify `/api/v0/health` is ready and frame count advances before any tablet command is authored against the relay.
+
+The current relay HTTP surface is unauthenticated by design and must stay on the isolated/trusted show LAN. Do not expose TCP/9081 through port forwarding or a public reverse proxy.
+
+A camera `.local` source is appropriate only after the relay-side mDNS resolver has passed the attended DHCP-address-change qualification. Until then, retain the previously qualified literal-IP binary/source as rollback evidence.
+
+### Restart expectations
+
+The systemd service uses `Restart=on-failure`; camera-source loss itself does **not** terminate the relay process because the relay retries upstream internally. A Pi reboot or unexpected relay process failure therefore restores the service without requiring an operator shell, while ordinary camera reconnects remain within the same relay process.
