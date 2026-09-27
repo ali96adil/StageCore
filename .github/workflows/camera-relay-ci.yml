@@ -24,8 +24,19 @@ permissions:
 jobs:
   isolated-tests-and-arm64:
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify exact clean source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
@@ -40,19 +51,35 @@ jobs:
         run: go test -race -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
       - name: Vet camera relay
         run: go vet ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Verify tests left source tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - name: Build Linux ARM64 trial binary
         env:
           GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: '0'
+        shell: bash
         run: |
-          mkdir -p dist
-          go build -trimpath -o dist/stagecore-camera-relay ./cmd/stagecore-camera-relay
-          sha256sum dist/stagecore-camera-relay > dist/SHA256SUMS
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/camera-relay-dist"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          go build -buildvcs=true -trimpath \
+            -o "$OUT/stagecore-camera-relay" \
+            ./cmd/stagecore-camera-relay
+          sha256sum "$OUT/stagecore-camera-relay" > "$OUT/SHA256SUMS"
+          go version -m "$OUT/stagecore-camera-relay" | tee "$OUT/BUILDINFO"
+          grep -F "vcs.revision=$EXPECTED_SHA" "$OUT/BUILDINFO"
+          grep -F "vcs.modified=false" "$OUT/BUILDINFO"
+          test -z "$(git status --porcelain --untracked-files=all)"
       - name: Publish unqualified trial artifact
         uses: actions/upload-artifact@v4
         with:
           name: camera-relay-linux-arm64-unqualified
-          path: dist/
+          path: ${{ runner.temp }}/camera-relay-dist/
           retention-days: 7
           if-no-files-found: error
