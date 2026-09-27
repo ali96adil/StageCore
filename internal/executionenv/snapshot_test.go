@@ -38,6 +38,80 @@ func TestSnapshotCanonicalIdentityIsDeterministic(t *testing.T) {
 	if _, err := DecodeCanonicalSnapshot(leftBytes); err != nil { t.Fatalf("decode canonical: %v", err) }
 }
 
+func TestSnapshotRebuildMetadataIsCanonicalAndPreserved(t *testing.T) {
+	snapshot := validSnapshot()
+	snapshot.RebuildPlanVersion = SnapshotRebuildPlanVersion
+	snapshot.ReconstructionFingerprint = strings.Repeat("C", 64)
+	snapshot.RebuildPlan = []SnapshotRebuildStep{
+		{
+			Step: 1, Action: "OPEN_VDMX_APPLICATION", Status: "SUPPORTED",
+			ProvenanceClass: SnapshotProvenanceObserved,
+			Notes: "Open the observed application.",
+		},
+		{
+			Step: 2, Action: "CREATE_UNSAVED_WORKSPACE", Status: "MANUAL",
+			ProvenanceClass: SnapshotProvenanceUserDeclared,
+		},
+	}
+	snapshot.Items[1].ProvenanceClass = SnapshotProvenanceObserved
+
+	canonical, err := SnapshotCanonicalBytes(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalSnapshot(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RebuildPlanVersion != SnapshotRebuildPlanVersion ||
+		decoded.ReconstructionFingerprint != strings.Repeat("c", 64) ||
+		len(decoded.RebuildPlan) != 2 ||
+		decoded.RebuildPlan[1].ProvenanceClass != SnapshotProvenanceUserDeclared ||
+		decoded.Items[1].ProvenanceClass != SnapshotProvenanceObserved {
+		t.Fatalf("decoded=%+v", decoded)
+	}
+}
+
+func TestSnapshotRejectsInvalidRebuildMetadata(t *testing.T) {
+	cases := []func(*Snapshot){
+		func(s *Snapshot) {
+			s.RebuildPlanVersion = SnapshotRebuildPlanVersion
+			s.ReconstructionFingerprint = strings.Repeat("a", 64)
+		},
+		func(s *Snapshot) {
+			s.RebuildPlanVersion = SnapshotRebuildPlanVersion
+			s.ReconstructionFingerprint = "not-a-digest"
+			s.RebuildPlan = []SnapshotRebuildStep{{
+				Step: 1, Action: "OPEN", Status: "SUPPORTED",
+				ProvenanceClass: SnapshotProvenanceObserved,
+			}}
+		},
+		func(s *Snapshot) {
+			s.RebuildPlanVersion = SnapshotRebuildPlanVersion
+			s.ReconstructionFingerprint = strings.Repeat("a", 64)
+			s.RebuildPlan = []SnapshotRebuildStep{{
+				Step: 2, Action: "OPEN", Status: "SUPPORTED",
+				ProvenanceClass: SnapshotProvenanceObserved,
+			}}
+		},
+		func(s *Snapshot) {
+			s.RebuildPlanVersion = SnapshotRebuildPlanVersion
+			s.ReconstructionFingerprint = strings.Repeat("a", 64)
+			s.RebuildPlan = []SnapshotRebuildStep{{
+				Step: 1, Action: "OPEN", Status: "SUPPORTED",
+				ProvenanceClass: "INVENTED",
+			}}
+		},
+	}
+	for i, mutate := range cases {
+		snapshot := validSnapshot()
+		mutate(&snapshot)
+		if _, err := NormalizeSnapshot(snapshot); err == nil {
+			t.Fatalf("case %d unexpectedly accepted", i)
+		}
+	}
+}
+
 func TestSnapshotRejectsFalseContentBoundClaims(t *testing.T) {
 	snapshot := validSnapshot()
 	snapshot.Items[0].Capture = ItemObserved
