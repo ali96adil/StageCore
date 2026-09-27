@@ -284,7 +284,7 @@ final class VDMXOperationTests: XCTestCase {
         }
         XCTAssertEqual(metadata["endpoint"], .string("http://127.0.0.1:8080/"))
         XCTAssertEqual(metadata["published_node_count"], .int(2))
-        XCTAssertEqual(metadata["capture_limit_bytes"], .int(256 * 1024))
+        XCTAssertEqual(metadata["capture_limit_bytes"], .int(40 * 1024))
         guard case .object(let namespace) = metadata["namespace"] else {
             return XCTFail("OSCQuery namespace missing")
         }
@@ -356,7 +356,7 @@ final class VDMXOperationTests: XCTestCase {
         XCTAssertEqual(metadata["bundle_identifier"], .string("com.vidvox.VDMX6"))
     }
 
-    func testOSCQueryCaptureAcceptsBoundedNamespaceLargerThanLegacyLimit() async throws {
+    func testOSCQueryCaptureRejectsNamespaceBeyondRuntimeSafeBound() async throws {
         let root = try temporaryDirectory()
         let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
         try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
@@ -365,7 +365,6 @@ final class VDMXOperationTests: XCTestCase {
             ("{\"FULL_PATH\":\"/\",\"DESCRIPTION\":\"" + description + "\"}").utf8
         )
         XCTAssertGreaterThan(payload.count, 40 * 1024)
-        XCTAssertLessThan(payload.count, 256 * 1024)
 
         let provider = VDMXOperationProvider(
             applicationCandidates: [application],
@@ -400,7 +399,7 @@ final class VDMXOperationTests: XCTestCase {
         XCTAssertTrue(items.contains { item in
             guard case .object(let value) = item else { return false }
             return value["key"] == .string("vdmx-oscquery")
-                && value["capture_status"] == .string("OBSERVED")
+                && value["capture_status"] == .string("UNSUPPORTED")
         })
     }
 
