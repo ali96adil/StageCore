@@ -256,6 +256,16 @@ final class VDMXOperationTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .completed)
         let snapshot = try XCTUnwrap(outcome.snapshot)
+        XCTAssertEqual(snapshot["rebuild_plan_version"], .int(1))
+        guard case .string(let fingerprint)? = snapshot["reconstruction_fingerprint"] else {
+            return XCTFail("reconstruction fingerprint missing")
+        }
+        XCTAssertEqual(fingerprint.count, 64)
+        XCTAssertTrue(fingerprint.allSatisfy(\.isHexDigit))
+        guard case .array(let plan)? = snapshot["rebuild_plan"] else {
+            return XCTFail("rebuild plan missing")
+        }
+        XCTAssertEqual(plan.count, 5)
         guard case .array(let items) = snapshot["items"] else {
             return XCTFail("snapshot items missing")
         }
@@ -267,12 +277,14 @@ final class VDMXOperationTests: XCTestCase {
         }.first)
         XCTAssertEqual(oscQuery["kind"], .string("CONTROL_NAMESPACE"))
         XCTAssertEqual(oscQuery["provenance"], .string("OSCQUERY"))
+        XCTAssertEqual(oscQuery["provenance_class"], .string("OBSERVED"))
         XCTAssertEqual(oscQuery["capture_status"], .string("OBSERVED"))
         guard case .object(let metadata) = oscQuery["metadata"] else {
             return XCTFail("OSCQuery metadata missing")
         }
         XCTAssertEqual(metadata["endpoint"], .string("http://127.0.0.1:8080/"))
         XCTAssertEqual(metadata["published_node_count"], .int(2))
+        XCTAssertEqual(metadata["capture_limit_bytes"], .int(256 * 1024))
         guard case .object(let namespace) = metadata["namespace"] else {
             return XCTFail("OSCQuery namespace missing")
         }
@@ -281,6 +293,115 @@ final class VDMXOperationTests: XCTestCase {
             return XCTFail("OSCQuery HOST_INFO missing")
         }
         XCTAssertEqual(hostInfo["NAME"], .string("VDMX"))
+    }
+
+    func testCaptureSnapshotRecordsVDMXBundleVersionBuildAndStableFingerprint() async throws {
+        let root = try temporaryDirectory()
+        let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
+        let contents = application.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist: [String: Any] = [
+            "CFBundleShortVersionString": "6.2.1",
+            "CFBundleVersion": "6201",
+            "CFBundleIdentifier": "com.vidvox.VDMX6",
+        ]
+        let plistData = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        try plistData.write(to: contents.appendingPathComponent("Info.plist"))
+
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [application],
+            opener: { _, _ in false },
+            oscQueryFetcher: { _ in Data(#"{"FULL_PATH":"/"}"#.utf8) }
+        )
+        var configured = manifest(launch: .locator("/tmp/unused.vdmx6"))
+        configured.removeValue(forKey: "launch")
+        configured["assets"] = .array([])
+
+        let first = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+        let second = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+
+        let firstSnapshot = try XCTUnwrap(first.snapshot)
+        let secondSnapshot = try XCTUnwrap(second.snapshot)
+        XCTAssertEqual(
+            firstSnapshot["reconstruction_fingerprint"],
+            secondSnapshot["reconstruction_fingerprint"]
+        )
+
+        guard case .array(let items)? = firstSnapshot["items"],
+              let appItem = items.compactMap({ item -> [String: JSONValue]? in
+                  guard case .object(let value) = item,
+                        value["key"] == .string("vdmx-application")
+                  else { return nil }
+                  return value
+              }).first,
+              case .object(let metadata)? = appItem["metadata"]
+        else {
+            return XCTFail("VDMX application metadata missing")
+        }
+        XCTAssertEqual(appItem["provenance_class"], .string("OBSERVED"))
+        XCTAssertEqual(metadata["version"], .string("6.2.1"))
+        XCTAssertEqual(metadata["build"], .string("6201"))
+        XCTAssertEqual(metadata["bundle_identifier"], .string("com.vidvox.VDMX6"))
+    }
+
+    func testOSCQueryCaptureAcceptsBoundedNamespaceLargerThanLegacyLimit() async throws {
+        let root = try temporaryDirectory()
+        let application = root.appendingPathComponent("VDMX6 Plus.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        let description = String(repeating: "x", count: 48 * 1024)
+        let payload = Data(
+            ("{\"FULL_PATH\":\"/\",\"DESCRIPTION\":\"" + description + "\"}").utf8
+        )
+        XCTAssertGreaterThan(payload.count, 40 * 1024)
+        XCTAssertLessThan(payload.count, 256 * 1024)
+
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [application],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in
+                if url.query == "HOST_INFO" {
+                    return Data(#"{"NAME":"VDMX"}"#.utf8)
+                }
+                return payload
+            }
+        )
+        var configured = manifest(launch: .locator("/tmp/unused.vdmx6"))
+        configured.removeValue(forKey: "launch")
+        configured["assets"] = .array([])
+        configured["bindings"] = .array([
+            .object([
+                "key": .string("oscquery"),
+                "kind": .string("NETWORK"),
+                "external_ref": .string("http://127.0.0.1:8080/"),
+            ])
+        ])
+
+        let outcome = await provider.perform(
+            kind: .captureSnapshot,
+            manifest: configured,
+            sourceManifestSHA256: manifestHash
+        )
+        let snapshot = try XCTUnwrap(outcome.snapshot)
+        guard case .array(let items)? = snapshot["items"] else {
+            return XCTFail("snapshot items missing")
+        }
+        XCTAssertTrue(items.contains { item in
+            guard case .object(let value) = item else { return false }
+            return value["key"] == .string("vdmx-oscquery")
+                && value["capture_status"] == .string("OBSERVED")
+        })
     }
 
     func testCaptureSnapshotRefusesNonLoopbackOSCQueryEndpoint() async throws {
