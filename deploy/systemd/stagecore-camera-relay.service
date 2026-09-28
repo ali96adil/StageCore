@@ -1,0 +1,28 @@
+[Unit]
+Description=StageCore Camera Relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stagecore
+Group=stagecore
+EnvironmentFile=/etc/stagecore/camera-relay.env
+ExecStart=/opt/stagecore/bin/stagecore-camera-relay -source ${STAGECORE_CAMERA_RELAY_SOURCE} -listen ${STAGECORE_CAMERA_RELAY_LISTEN} -allow-lan
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=8s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
