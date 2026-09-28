@@ -168,6 +168,24 @@ func (s *Store) AuthorizeCompanionUploadTicket(
 		}
 		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket expired", domain.ErrConflict)
 	}
+	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket)
+	if err != nil {
+		return CompanionUploadTicket{}, err
+	}
+	if !current {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE companion_upload_tickets
+			SET status = 'CANCELLED', terminal_at_us = ?
+			WHERE upload_ticket_id = ? AND status = 'ACTIVE'`,
+			clock.UnixMicros(now), ticket.ID,
+		); err != nil {
+			return CompanionUploadTicket{}, fmt.Errorf("cancel stale Companion upload ticket: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return CompanionUploadTicket{}, fmt.Errorf("commit stale Companion upload ticket cancellation: %w", err)
+		}
+		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket authority is no longer current", domain.ErrConflict)
+	}
 	if err := tx.Commit(); err != nil {
 		return CompanionUploadTicket{}, fmt.Errorf("commit Companion upload ticket authorization: %w", err)
 	}
@@ -211,6 +229,24 @@ func (s *Store) CompleteCompanionUploadTicket(
 			return CompanionUploadTicket{}, fmt.Errorf("commit expired Companion upload ticket: %w", err)
 		}
 		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket expired", domain.ErrConflict)
+	}
+	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket)
+	if err != nil {
+		return CompanionUploadTicket{}, err
+	}
+	if !current {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE companion_upload_tickets
+			SET status = 'CANCELLED', terminal_at_us = ?
+			WHERE upload_ticket_id = ? AND status = 'ACTIVE'`,
+			clock.UnixMicros(now), ticket.ID,
+		); err != nil {
+			return CompanionUploadTicket{}, fmt.Errorf("cancel stale Companion upload ticket: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return CompanionUploadTicket{}, fmt.Errorf("commit stale Companion upload ticket cancellation: %w", err)
+		}
+		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket authority is no longer current", domain.ErrConflict)
 	}
 	if ticket.ExpectedContentHash != actualContentHash || ticket.ExpectedSizeBytes != actualSizeBytes {
 		return CompanionUploadTicket{}, fmt.Errorf("%w: verified upload identity does not match ticket", domain.ErrConflict)
@@ -299,6 +335,46 @@ func scanCompanionUploadTicket(row rowScanner) (CompanionUploadTicket, error) {
 		ticket.TerminalAt = &value
 	}
 	return ticket, nil
+}
+
+func companionUploadTicketScopeCurrent(
+	ctx context.Context,
+	q queryer,
+	ticket CompanionUploadTicket,
+) (bool, error) {
+	var current int
+	err := q.QueryRowContext(ctx, `
+		SELECT CASE WHEN EXISTS (
+			SELECT 1
+			FROM execution_environment_manifests eem
+			JOIN project_revisions pr
+			  ON pr.revision_id = eem.revision_id
+			JOIN machine_roles mr
+			  ON mr.machine_role_id = ?
+			 AND mr.project_id = pr.project_id
+			 AND mr.required_runtime_snapshot_id = ?
+			JOIN runtime_snapshots rs
+			  ON rs.runtime_snapshot_id = ?
+			 AND rs.project_id = pr.project_id
+			JOIN companions c
+			  ON c.companion_id = ?
+			 AND c.trust_state = 'TRUSTED'
+			JOIN role_assignments ra
+			  ON ra.machine_role_id = mr.machine_role_id
+			 AND ra.companion_id = c.companion_id
+			 AND ra.state <> 'RELEASED'
+			WHERE eem.environment_manifest_id = ?
+		) THEN 1 ELSE 0 END`,
+		ticket.MachineRoleID,
+		ticket.RuntimeSnapshotID,
+		ticket.RuntimeSnapshotID,
+		ticket.CompanionID,
+		ticket.EnvironmentManifestID,
+	).Scan(&current)
+	if err != nil {
+		return false, fmt.Errorf("revalidate Companion upload ticket authority: %w", err)
+	}
+	return current == 1, nil
 }
 
 func newCompanionUploadCredential() (string, string, error) {

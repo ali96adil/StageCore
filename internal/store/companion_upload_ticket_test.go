@@ -91,6 +91,30 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 	if _, err := s.AuthorizeCompanionUploadTicket(ctx, grant.Credential); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("completed ticket authorize err=%v", err)
 	}
+
+	staleGrant, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
+		CompanionID: companion.ID,
+		OperationID: "capture-op-authority-loss",
+		EnvironmentManifestID: environment.ID,
+		MachineRoleID: role.ID,
+		RuntimeSnapshotID: runtimeSnapshot.ID,
+		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash: strings.Repeat("f", 64),
+		ExpectedSizeBytes: 32,
+		ExpiresAt: fixedTime.Add(10 * time.Minute),
+	})
+	if err != nil { t.Fatal(err) }
+	assignment, err := s.GetActiveRoleAssignment(ctx, role.ID)
+	if err != nil { t.Fatal(err) }
+	if err := s.ReleaseRoleAssignment(ctx, assignment.ID); err != nil { t.Fatal(err) }
+	if _, err := s.AuthorizeCompanionUploadTicket(ctx, staleGrant.Credential); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("stale authority authorize err=%v", err)
+	}
+	stale, err := s.GetCompanionUploadTicket(ctx, staleGrant.Ticket.ID)
+	if err != nil { t.Fatal(err) }
+	if stale.Status != store.CompanionUploadTicketCancelled || stale.TerminalAt == nil {
+		t.Fatalf("stale authority ticket=%+v", stale)
+	}
 }
 
 func TestCompanionUploadTicketExpiresAndRejectsCrossProjectAuthority(t *testing.T) {
