@@ -501,7 +501,8 @@ final class VDMXOperationTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_LIVE_SURFACE_CHANGED")
-        XCTAssertTrue(await sender.records().isEmpty)
+        let sends = await sender.records()
+        XCTAssertTrue(sends.isEmpty)
     }
 
     func testRestoreObservableStateFailsClosedOnMissingCapturedPath() async throws {
@@ -528,7 +529,8 @@ final class VDMXOperationTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_LIVE_SURFACE_UNSAFE")
-        XCTAssertTrue(await sender.records().isEmpty)
+        let sends = await sender.records()
+        XCTAssertTrue(sends.isEmpty)
     }
 
     func testRestoreObservableStateRequiresReadbackConfirmation() async throws {
@@ -558,7 +560,8 @@ final class VDMXOperationTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_VERIFICATION_FAILED")
-        XCTAssertEqual(await sender.records().count, 1)
+        let sends = await sender.records()
+        XCTAssertEqual(sends.count, 1)
     }
 
     func testRestoreObservableStateRejectsSnapshotIdentityMismatchBeforeLiveRead() async throws {
@@ -585,8 +588,10 @@ final class VDMXOperationTests: XCTestCase {
 
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_SNAPSHOT_INVALID")
-        XCTAssertEqual(await sequence.namespaceFetchCount(), 0)
-        XCTAssertTrue(await sender.records().isEmpty)
+        let reads = await sequence.namespaceFetchCount()
+        let sends = await sender.records()
+        XCTAssertEqual(reads, 0)
+        XCTAssertTrue(sends.isEmpty)
     }
 
     func testReconnectRemainsUnsupportedAndInvalidManifestFailsClosed() async {
