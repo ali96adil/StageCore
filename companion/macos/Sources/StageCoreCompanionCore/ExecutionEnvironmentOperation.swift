@@ -43,6 +43,21 @@ public protocol ExecutionEnvironmentOperationProvider: Sendable {
     ) async -> ExecutionEnvironmentProviderOutcome
 }
 
+public extension ExecutionEnvironmentOperationProvider {
+    func perform(
+        kind: ExecutionEnvironmentOperationKind,
+        manifest: [String: JSONValue],
+        sourceManifestSHA256: String
+    ) async -> ExecutionEnvironmentProviderOutcome {
+        await perform(
+            kind: kind,
+            manifest: manifest,
+            sourceManifestSHA256: sourceManifestSHA256,
+            snapshot: nil
+        )
+    }
+}
+
 public enum ExecutionEnvironmentOperationExecutorError: Error, Equatable {
     case invalidAdapterKey
     case duplicateAdapterKey(String)
