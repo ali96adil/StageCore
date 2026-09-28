@@ -66,7 +66,8 @@ final class CaptureUploadTests: XCTestCase {
             request?.value(forHTTPHeaderField: "Content-Length"),
             "123456"
         )
-        XCTAssertEqual(await transport.callCount(), 1)
+        let uploadCallCount = await transport.callCount()
+        XCTAssertEqual(uploadCallCount, 1)
     }
 
     func testUploaderRejectsRuntimeSessionRotationBeforeHTTP() async throws {
@@ -102,7 +103,8 @@ final class CaptureUploadTests: XCTestCase {
         XCTAssertEqual(outcome.status, .failed)
         XCTAssertEqual(outcome.ackLevel, .none)
         XCTAssertEqual(outcome.errorCode, "CAPTURE_UPLOAD_SESSION_MISMATCH")
-        XCTAssertEqual(await transport.callCount(), 0)
+        let uploadCallCount = await transport.callCount()
+        XCTAssertEqual(uploadCallCount, 0)
     }
 
     func testDirectorySourceRequiresExactHashNamedRegularFileAndSize() async throws {
