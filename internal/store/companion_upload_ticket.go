@@ -32,6 +32,7 @@ const (
 type CompanionUploadTicket struct {
 	ID                    string
 	CompanionID           string
+	RuntimeSessionID      string
 	OperationID           string
 	EnvironmentManifestID string
 	MachineRoleID         string
@@ -52,6 +53,7 @@ type CompanionUploadTicketGrant struct {
 
 type CreateCompanionUploadTicketParams struct {
 	CompanionID           string
+	RuntimeSessionID      string
 	OperationID           string
 	EnvironmentManifestID string
 	MachineRoleID         string
@@ -67,13 +69,14 @@ func (s *Store) CreateCompanionUploadTicket(
 	p CreateCompanionUploadTicketParams,
 ) (CompanionUploadTicketGrant, error) {
 	p.CompanionID = strings.TrimSpace(p.CompanionID)
+	p.RuntimeSessionID = strings.TrimSpace(p.RuntimeSessionID)
 	p.OperationID = strings.TrimSpace(p.OperationID)
 	p.EnvironmentManifestID = strings.TrimSpace(p.EnvironmentManifestID)
 	p.MachineRoleID = strings.TrimSpace(p.MachineRoleID)
 	p.RuntimeSnapshotID = strings.TrimSpace(p.RuntimeSnapshotID)
 	p.ExpectedContentHash = strings.ToLower(strings.TrimSpace(p.ExpectedContentHash))
 
-	if p.CompanionID == "" || p.EnvironmentManifestID == "" ||
+	if p.CompanionID == "" || p.RuntimeSessionID == "" || p.EnvironmentManifestID == "" ||
 		p.MachineRoleID == "" || p.RuntimeSnapshotID == "" ||
 		p.OperationID == "" || len(p.OperationID) > 128 {
 		return CompanionUploadTicketGrant{}, fmt.Errorf("%w: bounded upload ticket scope is required", domain.ErrInvalidInput)
@@ -105,12 +108,12 @@ func (s *Store) CreateCompanionUploadTicket(
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO companion_upload_tickets (
-			upload_ticket_id, credential_hash, companion_id, operation_id,
+			upload_ticket_id, credential_hash, companion_id, runtime_session_id, operation_id,
 			environment_manifest_id, machine_role_id, runtime_snapshot_id,
 			purpose, expected_content_hash, expected_size_bytes, status,
 			created_at_us, expires_at_us, terminal_at_us
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, NULL)`,
-		ticketID, credentialHash, p.CompanionID, p.OperationID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, NULL)`,
+		ticketID, credentialHash, p.CompanionID, p.RuntimeSessionID, p.OperationID,
 		p.EnvironmentManifestID, p.MachineRoleID, p.RuntimeSnapshotID,
 		p.Purpose, p.ExpectedContentHash, p.ExpectedSizeBytes,
 		clock.UnixMicros(now), clock.UnixMicros(expiresAt),
@@ -168,7 +171,7 @@ func (s *Store) AuthorizeCompanionUploadTicket(
 		}
 		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket expired", domain.ErrConflict)
 	}
-	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket)
+	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket, now)
 	if err != nil {
 		return CompanionUploadTicket{}, err
 	}
@@ -230,7 +233,7 @@ func (s *Store) CompleteCompanionUploadTicket(
 		}
 		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket expired", domain.ErrConflict)
 	}
-	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket)
+	current, err := companionUploadTicketScopeCurrent(ctx, tx, ticket, now)
 	if err != nil {
 		return CompanionUploadTicket{}, err
 	}
@@ -306,7 +309,7 @@ func (s *Store) ExpireCompanionUploadTickets(ctx context.Context) (int64, error)
 }
 
 const companionUploadTicketSelect = `
-	SELECT upload_ticket_id, companion_id, operation_id, environment_manifest_id,
+	SELECT upload_ticket_id, companion_id, runtime_session_id, operation_id, environment_manifest_id,
 	       machine_role_id, runtime_snapshot_id, purpose, expected_content_hash,
 	       expected_size_bytes, status, created_at_us, expires_at_us, terminal_at_us
 	FROM companion_upload_tickets`
@@ -317,7 +320,7 @@ func scanCompanionUploadTicket(row rowScanner) (CompanionUploadTicket, error) {
 	var createdUS, expiresUS int64
 	var terminalUS sql.NullInt64
 	if err := row.Scan(
-		&ticket.ID, &ticket.CompanionID, &ticket.OperationID, &ticket.EnvironmentManifestID,
+		&ticket.ID, &ticket.CompanionID, &ticket.RuntimeSessionID, &ticket.OperationID, &ticket.EnvironmentManifestID,
 		&ticket.MachineRoleID, &ticket.RuntimeSnapshotID, &purpose, &ticket.ExpectedContentHash,
 		&ticket.ExpectedSizeBytes, &status, &createdUS, &expiresUS, &terminalUS,
 	); err != nil {
@@ -341,6 +344,7 @@ func companionUploadTicketScopeCurrent(
 	ctx context.Context,
 	q queryer,
 	ticket CompanionUploadTicket,
+	now time.Time,
 ) (bool, error) {
 	var current int
 	err := q.QueryRowContext(ctx, `
@@ -363,12 +367,19 @@ func companionUploadTicketScopeCurrent(
 			  ON ra.machine_role_id = mr.machine_role_id
 			 AND ra.companion_id = c.companion_id
 			 AND ra.state <> 'RELEASED'
+			JOIN companion_runtime_sessions crs
+			  ON crs.runtime_session_id = ?
+			 AND crs.companion_id = c.companion_id
+			 AND crs.revoked_at_us IS NULL
+			 AND crs.expires_at_us > ?
 			WHERE eem.environment_manifest_id = ?
 		) THEN 1 ELSE 0 END`,
 		ticket.MachineRoleID,
 		ticket.RuntimeSnapshotID,
 		ticket.RuntimeSnapshotID,
 		ticket.CompanionID,
+		ticket.RuntimeSessionID,
+		clock.UnixMicros(now.UTC()),
 		ticket.EnvironmentManifestID,
 	).Scan(&current)
 	if err != nil {

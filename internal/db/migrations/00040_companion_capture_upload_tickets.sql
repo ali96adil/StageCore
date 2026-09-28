@@ -3,6 +3,7 @@ CREATE TABLE companion_upload_tickets (
     upload_ticket_id TEXT PRIMARY KEY CHECK(length(upload_ticket_id) = 36),
     credential_hash TEXT NOT NULL UNIQUE CHECK(length(credential_hash) = 64),
     companion_id TEXT NOT NULL,
+    runtime_session_id TEXT NOT NULL,
     operation_id TEXT NOT NULL CHECK(length(operation_id) BETWEEN 1 AND 128),
     environment_manifest_id TEXT NOT NULL,
     machine_role_id TEXT NOT NULL,
@@ -19,6 +20,7 @@ CREATE TABLE companion_upload_tickets (
         OR (status <> 'ACTIVE' AND terminal_at_us IS NOT NULL)
     ),
     FOREIGN KEY (companion_id) REFERENCES companions(companion_id) ON DELETE RESTRICT,
+    FOREIGN KEY (runtime_session_id) REFERENCES companion_runtime_sessions(runtime_session_id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_manifest_id) REFERENCES execution_environment_manifests(environment_manifest_id) ON DELETE RESTRICT,
     FOREIGN KEY (machine_role_id) REFERENCES machine_roles(machine_role_id) ON DELETE RESTRICT,
     FOREIGN KEY (runtime_snapshot_id) REFERENCES runtime_snapshots(runtime_snapshot_id) ON DELETE RESTRICT
@@ -56,6 +58,11 @@ WHEN NOT EXISTS (
       ON ra.machine_role_id = mr.machine_role_id
      AND ra.companion_id = c.companion_id
      AND ra.state <> 'RELEASED'
+    JOIN companion_runtime_sessions crs
+      ON crs.runtime_session_id = NEW.runtime_session_id
+     AND crs.companion_id = c.companion_id
+     AND crs.revoked_at_us IS NULL
+     AND crs.expires_at_us > NEW.created_at_us
     WHERE eem.environment_manifest_id = NEW.environment_manifest_id
       AND mr.required_runtime_snapshot_id = rs.runtime_snapshot_id
 )
@@ -66,7 +73,7 @@ END;
 
 -- +goose StatementBegin
 CREATE TRIGGER companion_upload_ticket_scope_update
-BEFORE UPDATE OF companion_id, environment_manifest_id, machine_role_id, runtime_snapshot_id
+BEFORE UPDATE OF companion_id, runtime_session_id, environment_manifest_id, machine_role_id, runtime_snapshot_id
 ON companion_upload_tickets
 WHEN NOT EXISTS (
     SELECT 1

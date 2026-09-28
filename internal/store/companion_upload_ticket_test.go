@@ -29,6 +29,10 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	companion := registerTrustedCompanion(t, ctx, s, "Upload Mac")
 	if _, err := s.AssignMachineRole(ctx, role.ID, companion.ID); err != nil { t.Fatal(err) }
+	runtimeSession, err := s.CreateCompanionRuntimeSession(
+		ctx, companion.ID, strings.Repeat("1", 64), fixedTime.Add(30*time.Minute),
+	)
+	if err != nil { t.Fatal(err) }
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
 	runtimeSnapshot, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "test")
 	if err != nil { t.Fatal(err) }
@@ -36,6 +40,7 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 	expectedHash := strings.Repeat("a", 64)
 	grant, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
 		CompanionID: companion.ID,
+		RuntimeSessionID: runtimeSession.ID,
 		OperationID: "capture-op-1",
 		EnvironmentManifestID: environment.ID,
 		MachineRoleID: role.ID,
@@ -49,6 +54,7 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 	if grant.Credential == "" ||
 		grant.Ticket.Status != store.CompanionUploadTicketActive ||
 		grant.Ticket.CompanionID != companion.ID ||
+		grant.Ticket.RuntimeSessionID != runtimeSession.ID ||
 		grant.Ticket.EnvironmentManifestID != environment.ID ||
 		grant.Ticket.RuntimeSnapshotID != runtimeSnapshot.ID {
 		t.Fatalf("grant=%+v", grant)
@@ -94,6 +100,7 @@ func TestCompanionUploadTicketAuthorityAndLifecycle(t *testing.T) {
 
 	staleGrant, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
 		CompanionID: companion.ID,
+		RuntimeSessionID: runtimeSession.ID,
 		OperationID: "capture-op-authority-loss",
 		EnvironmentManifestID: environment.ID,
 		MachineRoleID: role.ID,
@@ -131,12 +138,17 @@ func TestCompanionUploadTicketExpiresAndRejectsCrossProjectAuthority(t *testing.
 	if err != nil { t.Fatal(err) }
 	companion := registerTrustedCompanion(t, ctx, s, "Upload Mac A")
 	if _, err := s.AssignMachineRole(ctx, role.ID, companion.ID); err != nil { t.Fatal(err) }
+	runtimeSession, err := s.CreateCompanionRuntimeSession(
+		ctx, companion.ID, strings.Repeat("2", 64), fixedTime.Add(30*time.Minute),
+	)
+	if err != nil { t.Fatal(err) }
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
 	runtimeSnapshot, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "test")
 	if err != nil { t.Fatal(err) }
 
 	expiring, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
 		CompanionID: companion.ID,
+		RuntimeSessionID: runtimeSession.ID,
 		OperationID: "capture-expiring",
 		EnvironmentManifestID: environment.ID,
 		MachineRoleID: role.ID,
@@ -168,6 +180,7 @@ func TestCompanionUploadTicketExpiresAndRejectsCrossProjectAuthority(t *testing.
 
 	_, err = s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
 		CompanionID: companion.ID,
+		RuntimeSessionID: runtimeSession.ID,
 		OperationID: "capture-cross-project",
 		EnvironmentManifestID: environment.ID,
 		MachineRoleID: roleB.ID,
@@ -179,6 +192,26 @@ func TestCompanionUploadTicketExpiresAndRejectsCrossProjectAuthority(t *testing.
 	})
 	if !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("cross-project ticket err=%v", err)
+	}
+
+	expiredSession, err := s.CreateCompanionRuntimeSession(
+		ctx, companion.ID, strings.Repeat("4", 64), fixedTime.Add(-time.Minute),
+	)
+	if err != nil { t.Fatal(err) }
+	_, err = s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
+		CompanionID: companion.ID,
+		RuntimeSessionID: expiredSession.ID,
+		OperationID: "capture-expired-session",
+		EnvironmentManifestID: environment.ID,
+		MachineRoleID: role.ID,
+		RuntimeSnapshotID: runtimeSnapshot.ID,
+		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash: strings.Repeat("9", 64),
+		ExpectedSizeBytes: 32,
+		ExpiresAt: fixedTime.Add(10 * time.Minute),
+	})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("expired runtime session ticket err=%v", err)
 	}
 }
 
@@ -196,6 +229,10 @@ func TestCompanionUploadTicketCancelAndBulkExpiry(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	companion := registerTrustedCompanion(t, ctx, s, "Upload Mac C")
 	if _, err := s.AssignMachineRole(ctx, role.ID, companion.ID); err != nil { t.Fatal(err) }
+	runtimeSession, err := s.CreateCompanionRuntimeSession(
+		ctx, companion.ID, strings.Repeat("3", 64), fixedTime.Add(30*time.Minute),
+	)
+	if err != nil { t.Fatal(err) }
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
 	runtimeSnapshot, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "test")
 	if err != nil { t.Fatal(err) }
