@@ -90,15 +90,32 @@ enum StageCoreCompanionMain {
                 return existing
             }
             let hubs = try await BonjourHubDiscovery().discover(timeout: .seconds(2))
-            let discovered = try HubDiscoverySelection.remembered(binding, from: hubs)
-            _ = try await HubIdentityVerifier().verify(discovered)
-            var refreshed = existing
-            refreshed.hubAPIBaseURL = discovered.apiBaseURL
-            refreshed.hubRuntimeURL = discovered.runtimeURL
-            if refreshed != existing {
+            do {
+                let discovered = try HubDiscoverySelection.remembered(binding, from: hubs)
+                _ = try await HubIdentityVerifier().verify(discovered)
+                var refreshed = existing
+                refreshed.hubAPIBaseURL = discovered.apiBaseURL
+                refreshed.hubRuntimeURL = discovered.runtimeURL
+                if refreshed != existing {
+                    try store.save(refreshed)
+                }
+                return refreshed
+            } catch {
+                guard options.rotateHubTLSPin else { throw error }
+
+                let candidate = try HubDiscoverySelection.tlsPinRotationCandidate(binding, from: hubs)
+                _ = try await HubIdentityVerifier().verify(candidate)
+                let rotatedBinding = try binding.rotatingTLSCertificate(to: candidate)
+
+                var refreshed = existing
+                refreshed.hubAPIBaseURL = candidate.apiBaseURL
+                refreshed.hubRuntimeURL = candidate.runtimeURL
+                refreshed.hubBinding = rotatedBinding
                 try store.save(refreshed)
+                emit("Verified remembered Hub identity; replaced only its TLS certificate pin.")
+                emit("StageCore Hub TLS pin rotated for \(rotatedBinding.hubID)")
+                return refreshed
             }
-            return refreshed
         }
 
         guard !options.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -142,6 +159,11 @@ enum StageCoreCompanionMain {
         var index = 0
         while index < arguments.count {
             let value = arguments[index]
+            if value == "--rotate-hub-tls-pin" {
+                options.rotateHubTLSPin = true
+                index += 1
+                continue
+            }
             guard index + 1 < arguments.count else { throw BootstrapCLIError.invalidArguments }
             let argument = arguments[index + 1]
             switch value {
@@ -228,6 +250,7 @@ private struct CLIOptions {
     var oscHost: String?
     var oscPort: Int?
     var oscControlPort: Int?
+    var rotateHubTLSPin = false
 }
 
 private enum BootstrapCLIError: Error {

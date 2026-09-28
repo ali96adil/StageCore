@@ -17,5 +17,7 @@ Security boundary:
 - Normal Companion configuration contains only non-secret Hub URLs, display name, version and config identity.
 - Pairing is an explicit, expiring request approved through the Hub-local `stagecore-pairing` boundary. Reconnect uses a signed challenge and a short-lived in-memory runtime session credential.
 - Product transport requires authenticated `wss://`/`https://`; insecure transport is limited to explicit loopback tests.
+- A remembered Hub normally requires an exact Hub ID + durable fingerprint + TLS leaf SHA-256 match. Certificate rotation is never accepted silently.
+- When the Hub keeps the same durable identity but intentionally rotates its TLS leaf certificate, the local operator may start the Companion once with `--rotate-hub-tls-pin`. Recovery selects exactly one Bonjour candidate with the remembered Hub ID + fingerprint and a changed valid pin, verifies `/api/v1/hub/identity` over a session pinned to that new certificate, then replaces only the remembered TLS pin and refreshed Hub endpoints. Keychain device identity/pairing material is preserved.
 
-There is no polished SwiftUI/status window in this slice. Hub identity pinning UI, background launch packaging, real OSC/local adapters, media sync, signing and notarization remain later M4.2 work.
+There is no polished SwiftUI/status window in this slice. Background launch packaging, signing and notarization remain later work.

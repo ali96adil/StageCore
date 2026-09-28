@@ -76,6 +76,69 @@ func rememberedHubCannotBeSubstitutedBySameName() throws {
     }
 }
 
+@Test("remembered Hub TLS pin rotation preserves durable identity")
+func rememberedHubTLSPinRotationPreservesIdentity() throws {
+    let oldHub = try DiscoveredHub(txt: validTXT)
+    var rotatedTXT = validTXT
+    rotatedTXT["tls_sha256"] = String(repeating: "b", count: 64)
+    let rotatedHub = try DiscoveredHub(txt: rotatedTXT)
+
+    let candidate = try HubDiscoverySelection.tlsPinRotationCandidate(
+        oldHub.binding,
+        from: [rotatedHub]
+    )
+    let rotatedBinding = try oldHub.binding.rotatingTLSCertificate(to: candidate)
+
+    #expect(rotatedBinding.hubID == oldHub.binding.hubID)
+    #expect(rotatedBinding.fingerprint == oldHub.binding.fingerprint)
+    #expect(rotatedBinding.tlsCertificateSHA256 == String(repeating: "b", count: 64))
+}
+
+@Test("TLS pin rotation rejects identity or fingerprint substitution")
+func tlsPinRotationRejectsIdentitySubstitution() throws {
+    let oldHub = try DiscoveredHub(txt: validTXT)
+
+    var wrongFingerprintTXT = validTXT
+    wrongFingerprintTXT["hub_fp"] = "SHA256:other"
+    wrongFingerprintTXT["tls_sha256"] = String(repeating: "b", count: 64)
+    let wrongFingerprint = try DiscoveredHub(txt: wrongFingerprintTXT)
+
+    var wrongIDTXT = validTXT
+    wrongIDTXT["hub_id"] = "01a047ff-b945-79bb-a1f0-9bb528b7dabd"
+    wrongIDTXT["host"] = "stagecore-01a047ffb945.local"
+    wrongIDTXT["tls_sha256"] = String(repeating: "c", count: 64)
+    let wrongID = try DiscoveredHub(txt: wrongIDTXT)
+
+    #expect(throws: HubDiscoveryError.tlsPinRotationUnavailable) {
+        _ = try HubDiscoverySelection.tlsPinRotationCandidate(
+            oldHub.binding,
+            from: [wrongFingerprint, wrongID]
+        )
+    }
+    #expect(throws: HubDiscoveryError.hubIdentityMismatch) {
+        _ = try oldHub.binding.rotatingTLSCertificate(to: wrongFingerprint)
+    }
+}
+
+@Test("TLS pin rotation refuses ambiguous replacement pins")
+func tlsPinRotationRefusesAmbiguousReplacementPins() throws {
+    let oldHub = try DiscoveredHub(txt: validTXT)
+    var firstTXT = validTXT
+    firstTXT["tls_sha256"] = String(repeating: "b", count: 64)
+    var secondTXT = validTXT
+    secondTXT["tls_sha256"] = String(repeating: "c", count: 64)
+
+    #expect(throws: HubDiscoveryError.tlsPinRotationAmbiguous) {
+        _ = try HubDiscoverySelection.tlsPinRotationCandidate(
+            oldHub.binding,
+            from: [
+                try DiscoveredHub(txt: firstTXT),
+                try DiscoveredHub(txt: secondTXT),
+            ]
+        )
+    }
+}
+
 @Test("public Hub identity must match discovered identity")
 func publicHubIdentityMustMatchDiscovery() throws {
     let hub = try DiscoveredHub(txt: validTXT)

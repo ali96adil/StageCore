@@ -11,6 +11,8 @@ public enum HubDiscoveryError: Error, Equatable {
     case rememberedHubUnavailable
     case hubIdentityMismatch
     case verificationFailed
+    case tlsPinRotationUnavailable
+    case tlsPinRotationAmbiguous
 }
 
 public struct CompanionHubBinding: Codable, Sendable, Equatable {
@@ -28,6 +30,23 @@ public struct CompanionHubBinding: Codable, Sendable, Equatable {
         hubID == hub.hubID.lowercased()
             && fingerprint == hub.fingerprint
             && tlsCertificateSHA256 == hub.tlsCertificateSHA256.lowercased()
+    }
+
+    public func rotatingTLSCertificate(to hub: DiscoveredHub) throws -> CompanionHubBinding {
+        guard hubID == hub.hubID.lowercased(),
+              fingerprint == hub.fingerprint
+        else {
+            throw HubDiscoveryError.hubIdentityMismatch
+        }
+        let nextPin = hub.tlsCertificateSHA256.lowercased()
+        guard nextPin != tlsCertificateSHA256 else {
+            throw HubDiscoveryError.tlsPinRotationUnavailable
+        }
+        return CompanionHubBinding(
+            hubID: hubID,
+            fingerprint: fingerprint,
+            tlsCertificateSHA256: nextPin
+        )
     }
 }
 
@@ -237,5 +256,24 @@ public enum HubDiscoverySelection {
             throw HubDiscoveryError.rememberedHubUnavailable
         }
         return matches[0]
+    }
+
+    public static func tlsPinRotationCandidate(
+        _ binding: CompanionHubBinding,
+        from hubs: [DiscoveredHub]
+    ) throws -> DiscoveredHub {
+        let candidates = hubs.filter { hub in
+            binding.hubID == hub.hubID.lowercased()
+                && binding.fingerprint == hub.fingerprint
+                && binding.tlsCertificateSHA256 != hub.tlsCertificateSHA256.lowercased()
+        }
+        switch candidates.count {
+        case 1:
+            return candidates[0]
+        case 0:
+            throw HubDiscoveryError.tlsPinRotationUnavailable
+        default:
+            throw HubDiscoveryError.tlsPinRotationAmbiguous
+        }
     }
 }
