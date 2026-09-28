@@ -41,6 +41,7 @@ func WithOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store
 		}
 		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore)
 		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore)
+		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore)
 	}
 }
 
