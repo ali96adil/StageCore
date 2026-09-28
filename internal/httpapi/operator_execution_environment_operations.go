@@ -30,6 +30,7 @@ type executionEnvironmentOperationView struct {
 	ErrorCode       string                                      `json:"error_code,omitempty"`
 	ResponseSummary string                                      `json:"response_summary,omitempty"`
 	Snapshot        *executionenv.Snapshot                      `json:"snapshot,omitempty"`
+	CaptureObject   *companionchannel.EnvironmentCaptureObjectDescriptor `json:"capture_object,omitempty"`
 }
 
 // WithOperatorExecutionEnvironmentOperations exposes only the bounded F-025
@@ -98,6 +99,7 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			ErrorCode: result.ErrorCode,
 			ResponseSummary: result.ResponseSummary,
 			Snapshot: result.Snapshot,
+			CaptureObject: result.CaptureObject,
 		})
 	}))
 }

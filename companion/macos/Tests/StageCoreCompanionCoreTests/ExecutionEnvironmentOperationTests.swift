@@ -30,6 +30,27 @@ final class ExecutionEnvironmentOperationTests: XCTestCase {
         }
         XCTAssertEqual(snapshot["environment_key"], .string("video-main"))
         XCTAssertEqual(snapshot["capture_status"], .string("PARTIAL"))
+        guard case .object(let captureObject)? = outcome.output["capture_object"] else {
+            return XCTFail("expected typed capture_object output")
+        }
+        XCTAssertEqual(captureObject["purpose"], .string("EXECUTION_ENVIRONMENT_CAPTURE"))
+        XCTAssertEqual(captureObject["content_hash"], .string(String(repeating: "d", count: 64)))
+        XCTAssertEqual(captureObject["size_bytes"], .int(123456))
+    }
+
+    func testInvalidCaptureObjectDescriptorFailsBeforeWireOutput() async throws {
+        let executor = try ExecutionEnvironmentOperationExecutor(
+            providers: [InvalidCaptureObjectProvider()]
+        )
+        var parameters = validParameters(kind: "CAPTURE_SNAPSHOT")
+        parameters["adapter_key"] = .string("test.invalid-capture")
+
+        let outcome = await executor.execute(parameters: parameters)
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.ackLevel, .none)
+        XCTAssertEqual(outcome.errorCode, "ENVIRONMENT_CAPTURE_OBJECT_INVALID")
+        XCTAssertTrue(outcome.output.isEmpty)
     }
 
     func testRestoreRequiresHubSelectedSnapshotAndReturnsNoSnapshotOutput() async throws {
@@ -167,7 +188,36 @@ private struct FixedEnvironmentOperationProvider: ExecutionEnvironmentOperationP
                 "source_manifest_sha256": .string(sourceManifestSHA256),
                 "capture_status": .string("PARTIAL"),
                 "notes": .string("test snapshot"),
-            ]
+            ],
+            captureObject: .init(
+                contentHash: String(repeating: "d", count: 64),
+                sizeBytes: 123456
+            )
+        )
+    }
+}
+
+private struct InvalidCaptureObjectProvider: ExecutionEnvironmentOperationProvider {
+    let adapterKey = "test.invalid-capture"
+    let supportedOperations: Set<ExecutionEnvironmentOperationKind> = [.captureSnapshot]
+
+    func perform(
+        kind: ExecutionEnvironmentOperationKind,
+        manifest: [String: JSONValue],
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]?
+    ) async -> ExecutionEnvironmentProviderOutcome {
+        .init(
+            status: .completed,
+            responseSummary: "invalid capture descriptor fixture",
+            snapshot: [
+                "schema_version": .int(1),
+                "environment_key": manifest["environment_key"] ?? .string("unknown"),
+                "adapter_key": .string(adapterKey),
+                "source_manifest_sha256": .string(sourceManifestSHA256),
+                "capture_status": .string("PARTIAL"),
+            ],
+            captureObject: .init(contentHash: "not-a-sha256", sizeBytes: 12)
         )
     }
 }

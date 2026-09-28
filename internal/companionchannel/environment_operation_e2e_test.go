@@ -59,7 +59,13 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		TimeoutMS: 500,
 	}
 	first := runtime.OperateExecutionEnvironment(ctx, capture)
-	if first.Status != companionchannel.EnvironmentOperationCompleted || first.Snapshot == nil || first.Snapshot.EnvironmentKey != manifest.Manifest.EnvironmentKey {
+	if first.Status != companionchannel.EnvironmentOperationCompleted ||
+		first.Snapshot == nil ||
+		first.Snapshot.EnvironmentKey != manifest.Manifest.EnvironmentKey ||
+		first.CaptureObject == nil ||
+		first.CaptureObject.Purpose != companionchannel.EnvironmentCaptureObjectPurposeExecutionEnvironment ||
+		first.CaptureObject.ContentHash != strings.Repeat("d", 64) ||
+		first.CaptureObject.SizeBytes != 123456 {
 		t.Fatalf("capture=%#v", first)
 	}
 	if got := executions.Load(); got != 1 {
@@ -102,6 +108,17 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("mismatch=%#v", mismatch)
 	}
 
+	invalidDescriptor := runtime.OperateExecutionEnvironment(ctx, companionchannel.EnvironmentOperationRequest{
+		OperationID: "env-op-invalid-capture-object",
+		EnvironmentManifestID: manifest.ID,
+		Kind: companionchannel.EnvironmentOperationCaptureSnapshot,
+		TimeoutMS: 500,
+	})
+	if invalidDescriptor.Status != companionchannel.EnvironmentOperationFailed ||
+		invalidDescriptor.ErrorCode != "ENVIRONMENT_CAPTURE_OBJECT_INVALID" {
+		t.Fatalf("invalid descriptor=%#v", invalidDescriptor)
+	}
+
 	unsupported := runtime.OperateExecutionEnvironment(ctx, companionchannel.EnvironmentOperationRequest{
 		OperationID: "env-op-unsupported",
 		EnvironmentManifestID: manifest.ID,
@@ -112,8 +129,8 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("unsupported=%#v", unsupported)
 	}
 
-	if executions.Load() != 4 {
-		t.Fatalf("wire execution count=%d want 4 (capture, restore, mismatch, unsupported)", executions.Load())
+	if executions.Load() != 5 {
+		t.Fatalf("wire execution count=%d want 5 (capture, restore, mismatch, invalid descriptor, unsupported)", executions.Load())
 	}
 	if role.ID == "" {
 		t.Fatal("environment operation role was not created")
@@ -289,6 +306,11 @@ func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID stri
 		switch request.ExecutionID {
 		case "env-op-capture":
 			output := result["output"].(map[string]any)
+			output["capture_object"] = map[string]any{
+				"purpose": companionchannel.EnvironmentCaptureObjectPurposeExecutionEnvironment,
+				"content_hash": strings.Repeat("d", 64),
+				"size_bytes": int64(123456),
+			}
 			output["snapshot"] = map[string]any{
 				"schema_version": executionenv.SnapshotSchemaVersion,
 				"environment_key": "video-env",
@@ -313,6 +335,28 @@ func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID stri
 			}
 		case "env-op-mismatch":
 			result["output"].(map[string]any)["adapter_key"] = "wrong.adapter"
+		case "env-op-invalid-capture-object":
+			output := result["output"].(map[string]any)
+			output["capture_object"] = map[string]any{
+				"purpose": companionchannel.EnvironmentCaptureObjectPurposeExecutionEnvironment,
+				"content_hash": "not-a-sha256",
+				"size_bytes": int64(123456),
+			}
+			output["snapshot"] = map[string]any{
+				"schema_version": executionenv.SnapshotSchemaVersion,
+				"environment_key": "video-env",
+				"adapter_key": parameters.AdapterKey,
+				"source_manifest_sha256": parameters.SourceManifestSHA256,
+				"capture_status": "PARTIAL",
+				"items": []any{map[string]any{
+					"key": "published-state",
+					"name": "Published state",
+					"kind": "CONTROL_STATE",
+					"provenance": "ADAPTER_OBSERVATION",
+					"capture_status": "OBSERVED",
+					"portability": "DESCRIPTIVE_ONLY",
+				}},
+			}
 		case "env-op-unsupported":
 			result["status"] = "REJECTED"
 			result["ack_level"] = "NONE"
