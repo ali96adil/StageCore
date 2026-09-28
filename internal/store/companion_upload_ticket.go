@@ -133,6 +133,29 @@ func (s *Store) GetCompanionUploadTicket(ctx context.Context, ticketID string) (
 		strings.TrimSpace(ticketID)))
 }
 
+func (s *Store) GetLatestCompanionUploadTicketForOperation(
+	ctx context.Context,
+	companionID, operationID string,
+	purpose CompanionUploadPurpose,
+) (CompanionUploadTicket, error) {
+	companionID = strings.TrimSpace(companionID)
+	operationID = strings.TrimSpace(operationID)
+	if companionID == "" || operationID == "" || len(operationID) > 128 {
+		return CompanionUploadTicket{}, fmt.Errorf("%w: Companion and bounded operation id are required", domain.ErrInvalidInput)
+	}
+	if purpose != CompanionUploadExecutionEnvironmentCapture {
+		return CompanionUploadTicket{}, fmt.Errorf("%w: unsupported upload purpose %q", domain.ErrInvalidInput, purpose)
+	}
+	return scanCompanionUploadTicket(s.db.QueryRowContext(
+		ctx,
+		companionUploadTicketSelect+`
+			WHERE companion_id = ? AND operation_id = ? AND purpose = ?
+			ORDER BY created_at_us DESC
+			LIMIT 1`,
+		companionID, operationID, purpose,
+	))
+}
+
 func (s *Store) AuthorizeCompanionUploadTicket(
 	ctx context.Context,
 	credential string,
