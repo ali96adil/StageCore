@@ -49,6 +49,9 @@ func TestShowPausesRunningBulkAndBlocksNewSoftware(t *testing.T) {
 	if _, err := manager.Begin(context.Background(), bulk.KindSoftwareDownload, 50); !errors.Is(err, bulk.ErrShowBlocked) {
 		t.Fatalf("new software download in SHOW error=%v", err)
 	}
+	if _, err := manager.Begin(context.Background(), bulk.KindCaptureUpload, 50); !errors.Is(err, bulk.ErrShowBlocked) {
+		t.Fatalf("new capture upload in SHOW error=%v", err)
+	}
 
 	current.Store(0)
 	select {
@@ -69,6 +72,9 @@ func TestRehearsalAllowsRequiredMediaButDefersBackup(t *testing.T) {
 	manager := bulk.New(func(context.Context) (bulk.Mode, error) { return bulk.ModeRehearsal, nil })
 	if _, err := manager.Begin(context.Background(), bulk.KindMediaSync, 1); err != nil {
 		t.Fatalf("required media in rehearsal: %v", err)
+	}
+	if _, err := manager.Begin(context.Background(), bulk.KindCaptureUpload, 1); err != nil {
+		t.Fatalf("capture upload in rehearsal: %v", err)
 	}
 	if _, err := manager.Begin(context.Background(), bulk.KindBackup, 1); !errors.Is(err, bulk.ErrShowBlocked) {
 		t.Fatalf("backup in rehearsal error=%v", err)
