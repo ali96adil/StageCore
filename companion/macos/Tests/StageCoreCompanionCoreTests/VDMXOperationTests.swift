@@ -468,9 +468,10 @@ final class VDMXOperationTests: XCTestCase {
         XCTAssertNil(outcome.errorCode)
         let sends = await sender.records()
         XCTAssertEqual(sends.count, 1)
-        XCTAssertEqual(sends.first?.endpoint, OSCEndpoint(host: "127.0.0.1", port: 9002))
-        XCTAssertEqual(oscAddress(sends[0].packet), "/opacity")
-        XCTAssertNotEqual(oscAddress(sends[0].packet), "/OSCQUERY/Control Surface/StageCore_Test")
+        let send = try XCTUnwrap(sends.first)
+        XCTAssertEqual(send.endpoint, OSCEndpoint(host: "127.0.0.1", port: 9002))
+        XCTAssertEqual(oscAddress(send.packet), "/opacity")
+        XCTAssertNotEqual(oscAddress(send.packet), "/OSCQUERY/Control Surface/StageCore_Test")
     }
 
     func testRestoreObservableStateAbortsOnLiveRaceBeforeAnyWrite() async throws {
