@@ -1,0 +1,99 @@
+name: Camera Relay CI
+
+on:
+  pull_request:
+    paths:
+      - 'internal/camerarelay/**'
+      - 'cmd/stagecore-camera-relay/**'
+      - 'docs/camera-media-relay-v0.md'
+      - 'tools/camera-relay-smoke.py'
+      - 'tools/test_camera_relay_smoke.py'
+      - '.github/workflows/camera-relay-ci.yml'
+  push:
+    branches: [main, 'feat/camera-media-relay-v0']
+    paths:
+      - 'internal/camerarelay/**'
+      - 'cmd/stagecore-camera-relay/**'
+      - 'docs/camera-media-relay-v0.md'
+      - '.github/workflows/camera-relay-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-tests-and-arm64:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - name: Verify exact clean source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Compile portable camera smoke probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import py_compile
+          py_compile.compile(
+              "tools/camera-relay-smoke.py",
+              cfile=os.path.join(os.environ["RUNNER_TEMP"], "camera-relay-smoke.pyc"),
+              doraise=True,
+          )
+          PY
+      - name: Exercise portable smoke probe with fake HTTP relay
+        run: python3 -m unittest discover -s tools -p 'test_camera_relay_smoke.py' -v
+      - name: Test camera relay
+        run: go test -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Race test camera relay
+        run: go test -race -count=1 -timeout=90s ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Vet camera relay
+        run: go vet ./internal/camerarelay ./cmd/stagecore-camera-relay
+      - name: Verify tests left source tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Build Linux ARM64 trial binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/camera-relay-dist"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          go build -buildvcs=true -trimpath \
+            -o "$OUT/stagecore-camera-relay" \
+            ./cmd/stagecore-camera-relay
+          (
+            cd "$OUT"
+            sha256sum stagecore-camera-relay > SHA256SUMS
+          )
+          go version -m "$OUT/stagecore-camera-relay" | tee "$OUT/BUILDINFO"
+          grep -F "vcs.revision=$EXPECTED_SHA" "$OUT/BUILDINFO"
+          grep -F "vcs.modified=false" "$OUT/BUILDINFO"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Publish unqualified trial artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: camera-relay-linux-arm64-unqualified
+          path: ${{ runner.temp }}/camera-relay-dist/
+          retention-days: 7
+          if-no-files-found: error
