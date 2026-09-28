@@ -55,7 +55,14 @@ const f025Strings = {
   "f025.diff_top_level": {"en":"Snapshot fields","ar-IQ":"حقول الـSnapshot"},
   "f025.diff_added": {"en":"Added items","ar-IQ":"عناصر مضافة"},
   "f025.diff_removed": {"en":"Removed items","ar-IQ":"عناصر محذوفة"},
-  "f025.diff_items": {"en":"Changed items","ar-IQ":"عناصر متغيرة"}
+  "f025.diff_items": {"en":"Changed items","ar-IQ":"عناصر متغيرة"},
+  "f025.rebuild_plan": {"en":"Assisted rebuild plan","ar-IQ":"خطة إعادة البناء المساعدة"},
+  "f025.view_rebuild_plan": {"en":"View rebuild plan","ar-IQ":"عرض خطة إعادة البناء"},
+  "f025.rebuild_plan_empty": {"en":"This capture has no assisted rebuild plan.","ar-IQ":"هذه اللقطة لا تحتوي على خطة إعادة بناء مساعدة."},
+  "f025.rebuild_fingerprint": {"en":"Reconstruction fingerprint","ar-IQ":"بصمة إعادة البناء"},
+  "f025.rebuild_step": {"en":"Step","ar-IQ":"الخطوة"},
+  "f025.rebuild_status": {"en":"Status","ar-IQ":"الحالة"},
+  "f025.rebuild_provenance": {"en":"Provenance","ar-IQ":"المصدر"}
 };
 
 function f025T(key) {
@@ -115,6 +122,41 @@ function f025SnapshotDiffMarkup(diff) {
   return `<div class="message warn"><strong>${esc(f025T("f025.diff_changed"))}</strong>${sections.join("")}</div>`;
 }
 
+function f025RebuildPlanMarkup(snapshot) {
+  const plan = snapshot?.rebuild_plan || [];
+  if (!plan.length) {
+    return `<div class="message">${esc(f025T("f025.rebuild_plan_empty"))}</div>`;
+  }
+  const fingerprint = snapshot.reconstruction_fingerprint || "—";
+  const rows = plan.map((step) => `
+    <li>
+      <strong>${esc(f025T("f025.rebuild_step"))} ${esc(step.step)} · ${esc(step.action)}</strong><br>
+      <span class="muted">${esc(f025T("f025.rebuild_status"))}: ${esc(step.status)} · ${esc(f025T("f025.rebuild_provenance"))}: ${esc(step.provenance_class)}</span>
+      ${step.notes ? `<br><span class="muted">${esc(step.notes)}</span>` : ""}
+    </li>`).join("");
+  return `
+    <div class="message">
+      <strong>${esc(f025T("f025.rebuild_plan"))}</strong><br>
+      <span class="mono muted">${esc(f025T("f025.rebuild_fingerprint"))}: ${esc(fingerprint)}</span>
+      <ol class="validation-list" style="margin-top:10px">${rows}</ol>
+    </div>`;
+}
+
+async function f025LoadRebuildPlan(card, environmentID) {
+  const select = card.querySelector(".f025-rebuild-snapshot");
+  const result = card.querySelector(".f025-rebuild-plan-result");
+  const snapshotID = select?.value || "";
+  if (!snapshotID || !result) return;
+  try {
+    const payload = await api(
+      `${f025SnapshotCollectionPath(environmentID)}/${encodeURIComponent(snapshotID)}`
+    );
+    result.innerHTML = f025RebuildPlanMarkup(payload.snapshot);
+  } catch (error) {
+    result.innerHTML = `<div class="message error">${esc(errorMessage(error))}</div>`;
+  }
+}
+
 async function f025CompareSnapshots(card, environmentID) {
   const before = card.querySelector(".f025-snapshot-before")?.value || "";
   const after = card.querySelector(".f025-snapshot-after")?.value || "";
@@ -144,27 +186,44 @@ async function f025HydrateSnapshotDiffs() {
         card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><p class="muted">${esc(f025T("f025.snapshots_empty"))}</p>`;
         return;
       }
-      if (snapshots.length < 2) {
-        card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><p class="muted">${esc(f025T("f025.snapshots_need_two"))}</p>`;
-        return;
-      }
+
       const options = (selectedID) => snapshots.map((snapshot) =>
         `<option value="${esc(snapshot.snapshot_id)}" ${snapshot.snapshot_id === selectedID ? "selected" : ""}>${esc(f025SnapshotLabel(snapshot))}</option>`
       ).join("");
-      const before = snapshots[snapshots.length - 2];
-      const after = snapshots[snapshots.length - 1];
+      const latest = snapshots[snapshots.length - 1];
+      let compare = `<p class="muted">${esc(f025T("f025.snapshots_need_two"))}</p>`;
+      if (snapshots.length >= 2) {
+        const before = snapshots[snapshots.length - 2];
+        compare = `
+          <div class="form-grid two">
+            <label>${esc(f025T("f025.before"))}<select class="f025-snapshot-before">${options(before.snapshot_id)}</select></label>
+            <label>${esc(f025T("f025.after"))}<select class="f025-snapshot-after">${options(latest.snapshot_id)}</select></label>
+          </div>
+          <div class="toolbar" style="margin-top:10px">
+            <button class="button f025-snapshot-compare" type="button">${esc(f025T("f025.compare"))}</button>
+          </div>
+          <div class="f025-snapshot-diff-result" style="margin-top:10px"></div>`;
+      }
+
       card.innerHTML = `
         <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
-        <div class="form-grid two">
-          <label>${esc(f025T("f025.before"))}<select class="f025-snapshot-before">${options(before.snapshot_id)}</select></label>
-          <label>${esc(f025T("f025.after"))}<select class="f025-snapshot-after">${options(after.snapshot_id)}</select></label>
-        </div>
-        <div class="toolbar" style="margin-top:10px">
-          <button class="button f025-snapshot-compare" type="button">${esc(f025T("f025.compare"))}</button>
-        </div>
-        <div class="f025-snapshot-diff-result" style="margin-top:10px"></div>`;
+        ${compare}
+        <details style="margin-top:12px">
+          <summary>${esc(f025T("f025.rebuild_plan"))}</summary>
+          <div class="form-grid two" style="margin-top:10px">
+            <label>${esc(f025T("f025.snapshots"))}<select class="f025-rebuild-snapshot">${options(latest.snapshot_id)}</select></label>
+          </div>
+          <div class="toolbar" style="margin-top:10px">
+            <button class="button f025-rebuild-plan-load" type="button">${esc(f025T("f025.view_rebuild_plan"))}</button>
+          </div>
+          <div class="f025-rebuild-plan-result" style="margin-top:10px"></div>
+        </details>`;
+
       card.querySelector(".f025-snapshot-compare")?.addEventListener("click", () =>
         f025CompareSnapshots(card, environmentID)
+      );
+      card.querySelector(".f025-rebuild-plan-load")?.addEventListener("click", () =>
+        f025LoadRebuildPlan(card, environmentID)
       );
     } catch (error) {
       card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><div class="message error">${esc(errorMessage(error))}</div>`;

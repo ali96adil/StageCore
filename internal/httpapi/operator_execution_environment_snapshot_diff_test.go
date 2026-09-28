@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -45,11 +46,20 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 			t.Fatal(err)
 		}
 		return executionenv.Snapshot{
-			SchemaVersion:        executionenv.SnapshotSchemaVersion,
-			EnvironmentKey:       environment.Manifest.EnvironmentKey,
-			AdapterKey:           environment.Manifest.AdapterKey,
-			SourceManifestSHA256: environment.ContentSHA256,
-			CaptureStatus:        executionenv.SnapshotPartial,
+			SchemaVersion:              executionenv.SnapshotSchemaVersion,
+			EnvironmentKey:             environment.Manifest.EnvironmentKey,
+			AdapterKey:                 environment.Manifest.AdapterKey,
+			SourceManifestSHA256:       environment.ContentSHA256,
+			CaptureStatus:              executionenv.SnapshotPartial,
+			RebuildPlanVersion:         executionenv.SnapshotRebuildPlanVersion,
+			ReconstructionFingerprint: strings.Repeat("c", 64),
+			RebuildPlan: []executionenv.SnapshotRebuildStep{{
+				Step:            1,
+				Action:          "Open VDMX and verify the observed control namespace",
+				Status:          "OBSERVED",
+				ProvenanceClass: executionenv.SnapshotProvenanceObserved,
+				Notes:           "Read-only assisted rebuild guidance",
+			}},
 			Items: []executionenv.SnapshotItem{{
 				Key:             "vdmx-oscquery",
 				Name:            "VDMX OSCQuery",
@@ -103,6 +113,28 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 		listed.Snapshots[0].CaptureStatus != executionenv.SnapshotPartial ||
 		listed.Snapshots[0].ContentSHA256 == "" {
 		t.Fatalf("snapshot summaries=%+v", listed.Snapshots)
+	}
+
+	detailReq := authenticatedExecutionEnvironmentRequest(
+		t, owner.Token, owner.CSRFToken, http.MethodGet, listPath+"/"+after.ID, nil,
+	)
+	detailRes := httptest.NewRecorder()
+	handler.ServeHTTP(detailRes, detailReq)
+	if detailRes.Code != http.StatusOK {
+		t.Fatalf("snapshot detail status=%d body=%s", detailRes.Code, detailRes.Body.String())
+	}
+	var detail executionEnvironmentSnapshotDetailView
+	if err := json.Unmarshal(detailRes.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.ExecutionEnvironmentID != environment.ID ||
+		detail.SnapshotID != after.ID ||
+		detail.ContentSHA256 != after.ContentSHA256 ||
+		detail.Snapshot.RebuildPlanVersion != executionenv.SnapshotRebuildPlanVersion ||
+		len(detail.Snapshot.RebuildPlan) != 1 ||
+		detail.Snapshot.RebuildPlan[0].Action != "Open VDMX and verify the observed control namespace" ||
+		detail.Snapshot.RebuildPlan[0].ProvenanceClass != executionenv.SnapshotProvenanceObserved {
+		t.Fatalf("snapshot detail=%+v", detail)
 	}
 
 	base := "/api/v1/projects/" + project.ID +
@@ -182,5 +214,16 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 	handler.ServeHTTP(crossRes, crossReq)
 	if crossRes.Code != http.StatusNotFound {
 		t.Fatalf("cross-environment status=%d body=%s", crossRes.Code, crossRes.Body.String())
+	}
+
+	crossDetailReq := authenticatedExecutionEnvironmentRequest(
+		t, owner.Token, owner.CSRFToken, http.MethodGet,
+		listPath+"/"+cross.ID,
+		nil,
+	)
+	crossDetailRes := httptest.NewRecorder()
+	handler.ServeHTTP(crossDetailRes, crossDetailReq)
+	if crossDetailRes.Code != http.StatusNotFound {
+		t.Fatalf("cross-environment detail status=%d body=%s", crossDetailRes.Code, crossDetailRes.Body.String())
 	}
 }
