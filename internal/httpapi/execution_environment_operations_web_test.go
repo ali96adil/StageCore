@@ -20,8 +20,10 @@ func TestOperatorExecutionEnvironmentBundleIncludesRuntimeOperations(t *testing.
 	for _, token := range []string{
 		"f025OperationPath",
 		"CAPTURE_SNAPSHOT",
+		"RESTORE_OBSERVABLE_STATE",
 		"Open environment",
 		"التقاط Snapshot",
+		"استعادة الحالة المرصودة الآمنة",
 	} {
 		if !strings.Contains(body, token) {
 			t.Errorf("execution environments bundle missing operation token %q", token)
