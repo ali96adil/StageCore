@@ -4,6 +4,7 @@ public enum ExecutionEnvironmentOperationKind: String, Codable, Sendable, Hashab
     case open = "OPEN"
     case reconnect = "RECONNECT"
     case captureSnapshot = "CAPTURE_SNAPSHOT"
+    case restoreObservableState = "RESTORE_OBSERVABLE_STATE"
 }
 
 public enum ExecutionEnvironmentProviderStatus: Sendable, Equatable {
@@ -37,8 +38,24 @@ public protocol ExecutionEnvironmentOperationProvider: Sendable {
     func perform(
         kind: ExecutionEnvironmentOperationKind,
         manifest: [String: JSONValue],
-        sourceManifestSHA256: String
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]?
     ) async -> ExecutionEnvironmentProviderOutcome
+}
+
+public extension ExecutionEnvironmentOperationProvider {
+    func perform(
+        kind: ExecutionEnvironmentOperationKind,
+        manifest: [String: JSONValue],
+        sourceManifestSHA256: String
+    ) async -> ExecutionEnvironmentProviderOutcome {
+        await perform(
+            kind: kind,
+            manifest: manifest,
+            sourceManifestSHA256: sourceManifestSHA256,
+            snapshot: nil
+        )
+    }
 }
 
 public enum ExecutionEnvironmentOperationExecutorError: Error, Equatable {
@@ -84,6 +101,37 @@ public actor ExecutionEnvironmentOperationRouter {
         else {
             return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_INVALID", responseSummary: "typed execution-environment operation parameters are invalid")
         }
+        let snapshot: [String: JSONValue]?
+        switch parameters["snapshot"] {
+        case .none:
+            snapshot = nil
+        case .some(.object(let value)):
+            snapshot = value
+        default:
+            return .init(
+                status: .failed,
+                ackLevel: .none,
+                errorCode: "ENVIRONMENT_OPERATION_INVALID",
+                responseSummary: "execution-environment snapshot parameters are invalid"
+            )
+        }
+        if kind == .restoreObservableState && snapshot == nil {
+            return .init(
+                status: .failed,
+                ackLevel: .none,
+                errorCode: "ENVIRONMENT_RESTORE_SNAPSHOT_REQUIRED",
+                responseSummary: "observable-state restore requires a Hub-selected execution-environment snapshot"
+            )
+        }
+        if kind != .restoreObservableState && snapshot != nil {
+            return .init(
+                status: .failed,
+                ackLevel: .none,
+                errorCode: "ENVIRONMENT_OPERATION_INVALID",
+                responseSummary: "snapshot input is only valid for observable-state restore"
+            )
+        }
+
         guard let provider = providers[adapterKey] else {
             return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_ADAPTER_UNSUPPORTED", responseSummary: "no execution-environment operation provider is registered for adapter_key")
         }
@@ -91,7 +139,12 @@ public actor ExecutionEnvironmentOperationRouter {
             return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_UNSUPPORTED", responseSummary: "adapter does not support the requested execution-environment operation")
         }
 
-        let outcome = await provider.perform(kind: kind, manifest: manifest, sourceManifestSHA256: sourceManifestSHA256)
+        let outcome = await provider.perform(
+            kind: kind,
+            manifest: manifest,
+            sourceManifestSHA256: sourceManifestSHA256,
+            snapshot: snapshot
+        )
         switch outcome.status {
         case .unsupported:
             return .init(status: .failed, ackLevel: .none, errorCode: outcome.errorCode ?? "ENVIRONMENT_OPERATION_UNSUPPORTED", responseSummary: outcome.responseSummary)
@@ -102,7 +155,7 @@ public actor ExecutionEnvironmentOperationRouter {
                 return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_SNAPSHOT_RESULT_MISSING", responseSummary: "snapshot provider completed without snapshot metadata")
             }
             if kind != .captureSnapshot && outcome.snapshot != nil {
-                return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_RESULT_INVALID", responseSummary: "OPEN/RECONNECT provider returned an unexpected snapshot payload")
+                return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_RESULT_INVALID", responseSummary: "non-capture provider returned an unexpected snapshot payload")
             }
             var output: [String: JSONValue] = [
                 "operation_kind": .string(kind.rawValue),

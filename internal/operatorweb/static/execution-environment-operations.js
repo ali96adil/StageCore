@@ -4,6 +4,8 @@ Object.assign(f025Strings, {
   "f025.operations": {"en":"Runtime operations","ar-IQ":"عمليات التشغيل"},
   "f025.open_environment": {"en":"Open environment","ar-IQ":"فتح بيئة التشغيل"},
   "f025.capture_snapshot": {"en":"Capture snapshot","ar-IQ":"التقاط Snapshot"},
+  "f025.restore_observable_state": {"en":"Restore safe observed state","ar-IQ":"استعادة الحالة المرصودة الآمنة"},
+  "f025.restore_confirm": {"en":"Restore only stateful published controls from the latest validated snapshot? Event/button controls will not be replayed.","ar-IQ":"استعادة عناصر التحكم المنشورة ذات الحالة فقط من آخر Snapshot متحقق؟ لن تتم إعادة تشغيل الأزرار أو أحداث GO."},
   "f025.operation_unbound": {"en":"Bind this environment to a Machine Role before runtime operations.","ar-IQ":"اربط بيئة التشغيل بدور جهاز قبل تنفيذ عمليات التشغيل."},
   "f025.operation_running": {"en":"Running execution-environment operation…","ar-IQ":"جارٍ تنفيذ عملية بيئة التشغيل…"},
   "f025.operation_completed": {"en":"Operation completed.","ar-IQ":"اكتملت العملية."},
@@ -43,6 +45,7 @@ function f025OperationMarkup(environment) {
     <div class="toolbar">
       <button class="button primary f025-operation" data-kind="OPEN" type="button" ${bound ? "" : "disabled"}>${esc(f025T("f025.open_environment"))}</button>
       <button class="button f025-operation" data-kind="CAPTURE_SNAPSHOT" type="button" ${bound ? "" : "disabled"}>${esc(f025T("f025.capture_snapshot"))}</button>
+      <button class="button f025-operation" data-kind="RESTORE_OBSERVABLE_STATE" type="button" ${bound ? "" : "disabled"}>${esc(f025T("f025.restore_observable_state"))}</button>
     </div>
     ${f025OperationResultMarkup(environment.execution_environment_id)}
   </div>`;
@@ -82,6 +85,8 @@ function f025BindOperationControls() {
     button.addEventListener("click", async () => {
       const card = button.closest("[data-f025-operation-card]");
       if (!card?.dataset.environmentId) return;
+      if (button.dataset.kind === "RESTORE_OBSERVABLE_STATE"
+          && !window.confirm(f025T("f025.restore_confirm"))) return;
       await f025RunOperation(card.dataset.environmentId, button.dataset.kind, button);
     });
   });

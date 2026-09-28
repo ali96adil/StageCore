@@ -9,7 +9,7 @@
 This slice extends the existing F-025 Execution Environment Manifest with two engine-neutral capabilities:
 
 1. a truthful, canonical **Execution Environment Snapshot** that records reconstruction aids without claiming unsupported third-party project portability; and
-2. bounded, typed **adapter operations** for `OPEN`, `RECONNECT`, and `CAPTURE_SNAPSHOT` over the existing authenticated Companion execution channel.
+2. bounded, typed **adapter operations** for `OPEN`, `RECONNECT`, `CAPTURE_SNAPSHOT`, and `RESTORE_OBSERVABLE_STATE` over the existing authenticated Companion execution channel.
 
 It does not add arbitrary command or shell execution and does not add application-specific state to Core.
 
@@ -37,8 +37,11 @@ v1 supports only:
 - `OPEN`
 - `RECONNECT`
 - `CAPTURE_SNAPSHOT`
+- `RESTORE_OBSERVABLE_STATE`
 
 The operation payload carries the canonical manifest, its `adapter_key`, and the source manifest SHA-256. Adapter providers receive typed input; Core never sends an arbitrary shell command.
+
+For `RESTORE_OBSERVABLE_STATE`, the browser/operator request still supplies only the operation kind and identity. The Hub selects the **latest validated snapshot for that exact Execution Environment Manifest**, binds that snapshot content identity into operation idempotency, and forwards its canonical snapshot through the authenticated Companion channel. The operator cannot inject an arbitrary snapshot or OSC payload. Inline restore parameters are bounded below the Companion runtime message ceiling; oversized state fails explicitly rather than being truncated.
 
 Adapters are explicitly registered. Missing adapters or unsupported operations return truthful `UNSUPPORTED` results. There is no generic fallback that fabricates success.
 
@@ -147,6 +150,27 @@ Persistence enforces:
 
 When a validated revision is forked into a successor DRAFT, environment manifests and their snapshots are cloned to the new environment records with preserved canonical content identity and new audit creation metadata.
 
+## Observable-state restore
+
+Observable restore is deliberately narrower than project/workspace restore.
+
+The current VDMX adapter may restore only OSCQuery-published controls that pass a fresh live safety comparison. Before the first write it:
+
+1. validates snapshot Environment/Adapter/source-manifest identity;
+2. extracts exactly one observed OSCQuery namespace from the Hub-selected snapshot;
+3. fetches the current loopback OSCQuery namespace and current `HOST_INFO`;
+4. requires the live OSC UDP port from `HOST_INFO`;
+5. classifies captured vs live state by exact OSC path, type, write access, value shape, and current range;
+6. permits only continuous floating-point (`f`/`d`) state by default;
+7. treats integer, boolean, string, button, trigger, and event-like controls as unsafe and does not replay them;
+8. performs a second identical live read immediately before the first OSC write, aborting on any race;
+9. sends only bounded differing stateful controls; and
+10. re-reads OSCQuery after transport send and requires every written path to report the captured value before returning success.
+
+A transport-level UDP send is never called application-state proof. Missing/incompatible/read-only captured state fails before any write. A post-write verification failure requires fresh inspection before retry. The operation has no rollback claim and is therefore operator-confirmed rather than an automatic reconnect action.
+
+This does **not** restore unpublished VDMX layers, FX graphs, media-bin internals, plugins, licenses, or unsaved project structure. It does not replay StageCore GO/button controls.
+
 ## Assisted rebuild plan
 
 Manifest + latest Snapshot can produce deterministic reconstruction guidance containing:
@@ -159,7 +183,7 @@ Manifest + latest Snapshot can produce deterministic reconstruction guidance con
 
 The rebuild plan is guidance, not destination readiness. It always states that a fresh execution-environment inspection is required before StageCore may treat the destination as ready.
 
-No installer execution, license bypass, or automatic restoration is implemented by this plan.
+No installer execution or license bypass is implemented by this plan. The separate observable-state restore operation above is limited to verified OSCQuery-published state and does not turn rebuild guidance into a complete project restore.
 
 ## Companion implementation boundary
 
@@ -196,7 +220,7 @@ This slice does **not** implement Capsule export, import, restore, signing, or t
 
 - real VDMX operation/capture provider;
 - real QLab/Ableton/TouchDesigner providers;
-- destination restore/application-install workflows;
+- complete destination project/workspace restore and application-install workflows;
 - license or entitlement handling beyond truthful manual requirements;
 - F-019 Show Capsule packaging/restore;
 - automatic readiness declaration without a fresh inspection.

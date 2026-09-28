@@ -15,6 +15,7 @@ import (
 const (
 	ExecutionEnvironmentOperationCapability = "execution.environment.operation"
 	maxEnvironmentOperationBindings = 1024
+	maxInlineEnvironmentRestoreParameters = 48 << 10
 )
 
 type EnvironmentOperationKind string
@@ -23,6 +24,7 @@ const (
 	EnvironmentOperationOpen            EnvironmentOperationKind = "OPEN"
 	EnvironmentOperationReconnect       EnvironmentOperationKind = "RECONNECT"
 	EnvironmentOperationCaptureSnapshot EnvironmentOperationKind = "CAPTURE_SNAPSHOT"
+	EnvironmentOperationRestoreObservableState EnvironmentOperationKind = "RESTORE_OBSERVABLE_STATE"
 )
 
 type EnvironmentOperationStatus string
@@ -61,6 +63,7 @@ type environmentOperationParameters struct {
 	AdapterKey string `json:"adapter_key"`
 	SourceManifestSHA256 string `json:"source_manifest_sha256"`
 	Manifest json.RawMessage `json:"manifest"`
+	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 
 type environmentOperationOutput struct {
@@ -77,7 +80,8 @@ func (c *RuntimeChannel) OperateExecutionEnvironment(ctx context.Context, reques
 		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_INVALID", "operation_id and environment_manifest_id are required")
 	}
 	switch request.Kind {
-	case EnvironmentOperationOpen, EnvironmentOperationReconnect, EnvironmentOperationCaptureSnapshot:
+	case EnvironmentOperationOpen, EnvironmentOperationReconnect, EnvironmentOperationCaptureSnapshot,
+		EnvironmentOperationRestoreObservableState:
 	default:
 		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_INVALID", "operation kind is unsupported")
 	}
@@ -120,16 +124,59 @@ func (c *RuntimeChannel) OperateExecutionEnvironment(ctx context.Context, reques
 	if err != nil {
 		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_MANIFEST_INVALID", err.Error())
 	}
+	var restoreSnapshot json.RawMessage
+	restoreSnapshotIdentity := ""
+	if request.Kind == EnvironmentOperationRestoreObservableState {
+		latest, err := c.store.GetLatestExecutionEnvironmentSnapshot(ctx, manifestRecord.ID)
+		if err != nil {
+			return environmentOperationFailure(
+				request,
+				EnvironmentOperationFailed,
+				"ENVIRONMENT_RESTORE_SNAPSHOT_UNAVAILABLE",
+				"observable-state restore requires a latest validated snapshot for this exact execution environment",
+			)
+		}
+		restoreSnapshot, err = executionenv.SnapshotCanonicalBytes(latest.Snapshot)
+		if err != nil || latest.Snapshot.EnvironmentKey != manifestRecord.Manifest.EnvironmentKey ||
+			latest.Snapshot.AdapterKey != manifestRecord.Manifest.AdapterKey ||
+			!strings.EqualFold(latest.Snapshot.SourceManifestSHA256, manifestRecord.ContentSHA256) {
+			return environmentOperationFailure(
+				request,
+				EnvironmentOperationFailed,
+				"ENVIRONMENT_RESTORE_SNAPSHOT_INVALID",
+				"latest execution-environment snapshot does not match the current manifest identity",
+			)
+		}
+		restoreSnapshotIdentity = latest.ContentSHA256
+	}
+
 	parameters, err := json.Marshal(environmentOperationParameters{
 		OperationKind: request.Kind,
 		AdapterKey: manifestRecord.Manifest.AdapterKey,
 		SourceManifestSHA256: manifestRecord.ContentSHA256,
 		Manifest: canonicalManifest,
+		Snapshot: restoreSnapshot,
 	})
 	if err != nil {
 		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_INVALID", "operation parameters could not be encoded")
 	}
-	identityHash := environmentOperationIdentityHash(request, manifestRecord.ContentSHA256, role.ID, *role.RequiredRuntimeSnapshotID, assignment.CompanionID)
+	if request.Kind == EnvironmentOperationRestoreObservableState &&
+		len(parameters) > maxInlineEnvironmentRestoreParameters {
+		return environmentOperationFailure(
+			request,
+			EnvironmentOperationFailed,
+			"ENVIRONMENT_RESTORE_INLINE_LIMIT",
+			"latest execution-environment snapshot is too large for bounded inline restore; capture transport must remain explicit",
+		)
+	}
+	identityHash := environmentOperationIdentityHash(
+		request,
+		manifestRecord.ContentSHA256,
+		restoreSnapshotIdentity,
+		role.ID,
+		*role.RequiredRuntimeSnapshotID,
+		assignment.CompanionID,
+	)
 	executionKey := executionKey(assignment.CompanionID, request.OperationID)
 	if err := c.bindEnvironmentOperation(request.OperationID, identityHash, executionKey); err != nil {
 		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_ID_CONFLICT", err.Error())
@@ -173,13 +220,13 @@ func (c *RuntimeChannel) OperateExecutionEnvironment(ctx context.Context, reques
 		}
 		result.Snapshot = &normalized
 	} else if len(output.Snapshot) > 0 && string(output.Snapshot) != "null" {
-		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_RESULT_INVALID", "OPEN/RECONNECT result must not include snapshot payload")
+		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_RESULT_INVALID", "non-capture operation result must not include snapshot payload")
 	}
 	return result
 }
 
-func environmentOperationIdentityHash(request EnvironmentOperationRequest, manifestHash, roleID, runtimeSnapshotID, companionID string) string {
-	payload := strings.Join([]string{request.OperationID, request.EnvironmentManifestID, string(request.Kind), manifestHash, roleID, runtimeSnapshotID, companionID}, "\x00")
+func environmentOperationIdentityHash(request EnvironmentOperationRequest, manifestHash, restoreSnapshotHash, roleID, runtimeSnapshotID, companionID string) string {
+	payload := strings.Join([]string{request.OperationID, request.EnvironmentManifestID, string(request.Kind), manifestHash, restoreSnapshotHash, roleID, runtimeSnapshotID, companionID}, "\x00")
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
