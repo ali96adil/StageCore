@@ -85,6 +85,22 @@ func (v *Vault) ImportVerifiedObject(
 		if !info.Mode().IsRegular() || info.Size() != expectedSizeBytes {
 			return store.VaultObject{}, fmt.Errorf("existing verified Vault object conflicts with content identity")
 		}
+		existing, err := os.Open(objectPath)
+		if err != nil {
+			return store.VaultObject{}, fmt.Errorf("open existing verified Vault object: %w", err)
+		}
+		existingHasher := sha256.New()
+		_, copyErr := io.Copy(existingHasher, existing)
+		closeErr := existing.Close()
+		if copyErr != nil {
+			return store.VaultObject{}, fmt.Errorf("hash existing verified Vault object: %w", copyErr)
+		}
+		if closeErr != nil {
+			return store.VaultObject{}, fmt.Errorf("close existing verified Vault object: %w", closeErr)
+		}
+		if hex.EncodeToString(existingHasher.Sum(nil)) != expectedContentHash {
+			return store.VaultObject{}, fmt.Errorf("existing verified Vault object bytes do not match content identity")
+		}
 	} else if !os.IsNotExist(statErr) {
 		return store.VaultObject{}, fmt.Errorf("inspect verified Vault object: %w", statErr)
 	} else if err := os.Link(stagedPath, objectPath); err != nil {

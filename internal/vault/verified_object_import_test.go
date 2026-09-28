@@ -84,6 +84,42 @@ func TestImportVerifiedObjectRejectsHashMismatchWithoutPromotion(t *testing.T) {
 	assertVerifiedStagingEmpty(t, v)
 }
 
+func TestImportVerifiedObjectRejectsCorruptExistingObjectAtIdentityPath(t *testing.T) {
+	ctx := context.Background()
+	v, s, _ := newVault(t)
+	payload := []byte("verified capture payload")
+	expectedHash := sha256Hex(payload)
+	path, err := v.ObjectPath(expectedHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := bytes.Repeat([]byte{'x'}, len(payload))
+	if bytes.Equal(corrupt, payload) {
+		t.Fatal("corrupt fixture unexpectedly matches payload")
+	}
+	if err := os.WriteFile(path, corrupt, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := v.ImportVerifiedObject(ctx, expectedHash, int64(len(payload)), bytes.NewReader(payload)); err == nil {
+		t.Fatal("expected corrupt existing object rejection")
+	}
+	if _, err := s.GetVaultObject(ctx, expectedHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("corrupt existing object registered metadata err=%v", err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, corrupt) {
+		t.Fatal("verified import silently replaced corrupt existing object")
+	}
+	assertVerifiedStagingEmpty(t, v)
+}
+
 func TestImportVerifiedObjectRejectsSizeMismatchWithoutPromotion(t *testing.T) {
 	ctx := context.Background()
 	v, s, _ := newVault(t)
