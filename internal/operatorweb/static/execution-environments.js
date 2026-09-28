@@ -225,15 +225,19 @@ function f025MarkRetainedStepUserDeclared(row) {
   );
 }
 
+function f025BindRetainedStepRow(row, target) {
+  row.querySelectorAll(".f025-retained-action, .f025-retained-status, .f025-retained-notes").forEach((input) => {
+    input.addEventListener("input", () => f025MarkRetainedStepUserDeclared(row));
+  });
+  row.querySelector(".f025-retained-remove-step")?.addEventListener("click", () => {
+    row.remove();
+    f025RenumberRetainedSteps(target);
+  });
+}
+
 function f025BindRetainedStepEditor(target) {
   target.querySelectorAll(".f025-retained-step").forEach((row) => {
-    row.querySelectorAll(".f025-retained-action, .f025-retained-status, .f025-retained-notes").forEach((input) => {
-      input.addEventListener("input", () => f025MarkRetainedStepUserDeclared(row));
-    });
-    row.querySelector(".f025-retained-remove-step")?.addEventListener("click", () => {
-      row.remove();
-      f025RenumberRetainedSteps(target);
-    });
+    f025BindRetainedStepRow(row, target);
   });
 }
 
@@ -312,7 +316,7 @@ async function f025HydrateRetainedPlan(card, environmentID, snapshots, editable)
       const row = stepsTarget.lastElementChild;
       if (row) {
         row.dataset.provenanceClass = "USER_DECLARED";
-        f025BindRetainedStepEditor(row.parentElement);
+        f025BindRetainedStepRow(row, target);
         row.querySelector(".f025-retained-action")?.focus();
       }
       f025RenumberRetainedSteps(target);
