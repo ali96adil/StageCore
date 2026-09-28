@@ -213,8 +213,12 @@ public enum VDMXObservableRestorePlanner {
         liveRange: JSONValue?
     ) -> Bool {
         guard case .array(let values)? = value else { return false }
-        guard let liveRange else { return true }
-        guard case .array(let ranges) = liveRange else { return false }
+        // Automatic restore requires an explicit current live RANGE for every
+        // numeric argument. Missing bounds are UNKNOWN, never permission to
+        // write a captured value back into VDMX.
+        guard let liveRange,
+              case .array(let ranges) = liveRange
+        else { return false }
 
         // OSCQuery permits RANGE metadata per argument. Missing entries do not
         // prove safety, so require each captured argument to have a usable

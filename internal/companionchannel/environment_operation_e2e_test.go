@@ -71,10 +71,24 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("duplicate=%#v count=%d", duplicate, executions.Load())
 	}
 
+	restore := runtime.OperateExecutionEnvironment(ctx, companionchannel.EnvironmentOperationRequest{
+		OperationID: "env-op-restore",
+		EnvironmentManifestID: manifest.ID,
+		Kind: companionchannel.EnvironmentOperationRestoreObservableState,
+		TimeoutMS: 500,
+	})
+	if restore.Status != companionchannel.EnvironmentOperationCompleted ||
+		restore.Kind != companionchannel.EnvironmentOperationRestoreObservableState {
+		t.Fatalf("restore=%#v", restore)
+	}
+	if got := executions.Load(); got != 2 {
+		t.Fatalf("restore execution count=%d want 2", got)
+	}
+
 	conflict := capture
 	conflict.Kind = companionchannel.EnvironmentOperationOpen
 	conflicted := runtime.OperateExecutionEnvironment(ctx, conflict)
-	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 1 {
+	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 2 {
 		t.Fatalf("conflict=%#v count=%d", conflicted, executions.Load())
 	}
 
@@ -98,8 +112,8 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("unsupported=%#v", unsupported)
 	}
 
-	if executions.Load() != 3 {
-		t.Fatalf("wire execution count=%d want 3 (capture, mismatch, unsupported)", executions.Load())
+	if executions.Load() != 4 {
+		t.Fatalf("wire execution count=%d want 4 (capture, restore, mismatch, unsupported)", executions.Load())
 	}
 	if role.ID == "" {
 		t.Fatal("environment operation role was not created")
@@ -155,6 +169,27 @@ func runtimeEnvironmentOperationFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = s.CreateExecutionEnvironmentSnapshot(ctx, manifest.ID, executionenv.Snapshot{
+		SchemaVersion: executionenv.SnapshotSchemaVersion,
+		EnvironmentKey: manifest.Manifest.EnvironmentKey,
+		AdapterKey: manifest.Manifest.AdapterKey,
+		SourceManifestSHA256: manifest.ContentSHA256,
+		CaptureStatus: executionenv.SnapshotPartial,
+		Items: []executionenv.SnapshotItem{{
+			Key: "vdmx-oscquery",
+			Name: "Published controls",
+			Kind: executionenv.SnapshotControlNamespace,
+			Provenance: executionenv.ProvenanceOSCQuery,
+			ProvenanceClass: executionenv.SnapshotProvenanceObserved,
+			Capture: executionenv.ItemObserved,
+			Portability: executionenv.SnapshotDescriptiveOnly,
+			Metadata: json.RawMessage(`{"namespace":{"FULL_PATH":"/"}}`),
+		}},
+	}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +260,7 @@ func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID stri
 			OperationKind string `json:"operation_kind"`
 			AdapterKey string `json:"adapter_key"`
 			SourceManifestSHA256 string `json:"source_manifest_sha256"`
+			Snapshot json.RawMessage `json:"snapshot"`
 		}
 		if err := json.Unmarshal(request.Parameters, &parameters); err != nil {
 			return err
@@ -267,6 +303,13 @@ func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID stri
 					"capture_status": "OBSERVED",
 					"portability": "DESCRIPTIVE_ONLY",
 				}},
+			}
+		case "env-op-restore":
+			if len(parameters.Snapshot) == 0 || string(parameters.Snapshot) == "null" {
+				result["status"] = "REJECTED"
+				result["ack_level"] = "NONE"
+				result["error_code"] = "ENVIRONMENT_RESTORE_SNAPSHOT_REQUIRED"
+				result["response_summary"] = "Hub-selected restore snapshot missing"
 			}
 		case "env-op-mismatch":
 			result["output"].(map[string]any)["adapter_key"] = "wrong.adapter"

@@ -438,6 +438,163 @@ final class VDMXOperationTests: XCTestCase {
         })
     }
 
+    func testRestoreObservableStateWritesOnlyStatefulControlsAndVerifiesReadback() async throws {
+        let captured = restoreNamespace(opacity: 0.75, button: 1)
+        let liveBefore = restoreNamespace(opacity: 0.20, button: 0)
+        let liveAfter = restoreNamespace(opacity: 0.75, button: 0)
+        let sequence = VDMXOSCQuerySequence(
+            namespaces: [liveBefore, liveBefore, liveAfter],
+            oscPort: 9002
+        )
+        let sender = VDMXOSCSendRecorder()
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in try await sequence.fetch(url) },
+            oscSender: { packet, endpoint in
+                await sender.record(packet: packet, endpoint: endpoint)
+                return packet.count
+            }
+        )
+
+        let outcome = await provider.perform(
+            kind: .restoreObservableState,
+            manifest: restoreManifest(),
+            sourceManifestSHA256: manifestHash,
+            snapshot: restoreSnapshot(namespace: captured)
+        )
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertNil(outcome.errorCode)
+        let sends = await sender.records()
+        XCTAssertEqual(sends.count, 1)
+        let send = try XCTUnwrap(sends.first)
+        XCTAssertEqual(send.endpoint, OSCEndpoint(host: "127.0.0.1", port: 9002))
+        XCTAssertEqual(oscAddress(send.packet), "/opacity")
+        XCTAssertNotEqual(oscAddress(send.packet), "/OSCQUERY/Control Surface/StageCore_Test")
+    }
+
+    func testRestoreObservableStateAbortsOnLiveRaceBeforeAnyWrite() async throws {
+        let captured = restoreNamespace(opacity: 0.75, button: 1)
+        let first = restoreNamespace(opacity: 0.20, button: 0)
+        let changed = restoreNamespace(opacity: 0.30, button: 0)
+        let sequence = VDMXOSCQuerySequence(
+            namespaces: [first, changed],
+            oscPort: 9002
+        )
+        let sender = VDMXOSCSendRecorder()
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in try await sequence.fetch(url) },
+            oscSender: { packet, endpoint in
+                await sender.record(packet: packet, endpoint: endpoint)
+                return packet.count
+            }
+        )
+
+        let outcome = await provider.perform(
+            kind: .restoreObservableState,
+            manifest: restoreManifest(),
+            sourceManifestSHA256: manifestHash,
+            snapshot: restoreSnapshot(namespace: captured)
+        )
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_LIVE_SURFACE_CHANGED")
+        let sends = await sender.records()
+        XCTAssertTrue(sends.isEmpty)
+    }
+
+    func testRestoreObservableStateFailsClosedOnMissingCapturedPath() async throws {
+        let captured = restoreNamespace(opacity: 0.75, button: 1)
+        let live = namespaceWithOnlyButton(button: 0)
+        let sequence = VDMXOSCQuerySequence(namespaces: [live], oscPort: 9002)
+        let sender = VDMXOSCSendRecorder()
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in try await sequence.fetch(url) },
+            oscSender: { packet, endpoint in
+                await sender.record(packet: packet, endpoint: endpoint)
+                return packet.count
+            }
+        )
+
+        let outcome = await provider.perform(
+            kind: .restoreObservableState,
+            manifest: restoreManifest(),
+            sourceManifestSHA256: manifestHash,
+            snapshot: restoreSnapshot(namespace: captured)
+        )
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_LIVE_SURFACE_UNSAFE")
+        let sends = await sender.records()
+        XCTAssertTrue(sends.isEmpty)
+    }
+
+    func testRestoreObservableStateRequiresReadbackConfirmation() async throws {
+        let captured = restoreNamespace(opacity: 0.75, button: 1)
+        let live = restoreNamespace(opacity: 0.20, button: 0)
+        let sequence = VDMXOSCQuerySequence(
+            namespaces: [live, live, live],
+            oscPort: 9002
+        )
+        let sender = VDMXOSCSendRecorder()
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in try await sequence.fetch(url) },
+            oscSender: { packet, endpoint in
+                await sender.record(packet: packet, endpoint: endpoint)
+                return packet.count
+            }
+        )
+
+        let outcome = await provider.perform(
+            kind: .restoreObservableState,
+            manifest: restoreManifest(),
+            sourceManifestSHA256: manifestHash,
+            snapshot: restoreSnapshot(namespace: captured)
+        )
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_VERIFICATION_FAILED")
+        let sends = await sender.records()
+        XCTAssertEqual(sends.count, 1)
+    }
+
+    func testRestoreObservableStateRejectsSnapshotIdentityMismatchBeforeLiveRead() async throws {
+        let sequence = VDMXOSCQuerySequence(namespaces: [], oscPort: 9002)
+        let sender = VDMXOSCSendRecorder()
+        let provider = VDMXOperationProvider(
+            applicationCandidates: [],
+            opener: { _, _ in false },
+            oscQueryFetcher: { url in try await sequence.fetch(url) },
+            oscSender: { packet, endpoint in
+                await sender.record(packet: packet, endpoint: endpoint)
+                return packet.count
+            }
+        )
+        var snapshot = restoreSnapshot(namespace: restoreNamespace(opacity: 0.75, button: 1))
+        snapshot["source_manifest_sha256"] = .string(String(repeating: "b", count: 64))
+
+        let outcome = await provider.perform(
+            kind: .restoreObservableState,
+            manifest: restoreManifest(),
+            sourceManifestSHA256: manifestHash,
+            snapshot: snapshot
+        )
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "VDMX_RESTORE_SNAPSHOT_INVALID")
+        let reads = await sequence.namespaceFetchCount()
+        let sends = await sender.records()
+        XCTAssertEqual(reads, 0)
+        XCTAssertTrue(sends.isEmpty)
+    }
+
     func testReconnectRemainsUnsupportedAndInvalidManifestFailsClosed() async {
         let provider = VDMXOperationProvider(applicationCandidates: [], opener: { _, _ in true })
         XCTAssertFalse(provider.supportedOperations.contains(.reconnect))
@@ -483,11 +640,148 @@ final class VDMXOperationTests: XCTestCase {
         ]
     }
 
+    private func restoreManifest() -> [String: JSONValue] {
+        var configured = manifest(launch: .locator("/tmp/show.vdmx6"))
+        configured["bindings"] = .array([
+            .object([
+                "key": .string("oscquery"),
+                "kind": .string("NETWORK"),
+                "external_ref": .string("http://127.0.0.1:8080/"),
+            ])
+        ])
+        return configured
+    }
+
+    private func restoreSnapshot(
+        namespace: [String: JSONValue]
+    ) -> [String: JSONValue] {
+        [
+            "schema_version": .int(1),
+            "environment_key": .string("video-main"),
+            "adapter_key": .string("stagecore.adapter.vdmx"),
+            "source_manifest_sha256": .string(manifestHash),
+            "capture_status": .string("PARTIAL"),
+            "items": .array([
+                .object([
+                    "key": .string("vdmx-oscquery"),
+                    "name": .string("VDMX published OSCQuery namespace"),
+                    "kind": .string("CONTROL_NAMESPACE"),
+                    "provenance": .string("OSCQUERY"),
+                    "provenance_class": .string("OBSERVED"),
+                    "capture_status": .string("OBSERVED"),
+                    "portability": .string("DESCRIPTIVE_ONLY"),
+                    "metadata": .object([
+                        "namespace": .object(namespace),
+                    ]),
+                ])
+            ]),
+        ]
+    }
+
+    private func restoreNamespace(
+        opacity: Double,
+        button: Int
+    ) -> [String: JSONValue] {
+        [
+            "FULL_PATH": .string("/"),
+            "CONTENTS": .object([
+                "opacity": .object([
+                    "FULL_PATH": .string("/opacity"),
+                    "TYPE": .string("f"),
+                    "VALUE": .array([.double(opacity)]),
+                    "RANGE": .array([
+                        .object(["MIN": .double(0), "MAX": .double(1)])
+                    ]),
+                    "ACCESS": .int(3),
+                ]),
+                "go": .object([
+                    "FULL_PATH": .string("/OSCQUERY/Control Surface/StageCore_Test"),
+                    "TYPE": .string("i"),
+                    "VALUE": .array([.int(button)]),
+                    "RANGE": .array([
+                        .object(["MIN": .int(0), "MAX": .int(1)])
+                    ]),
+                    "ACCESS": .int(3),
+                ]),
+            ]),
+        ]
+    }
+
+    private func namespaceWithOnlyButton(button: Int) -> [String: JSONValue] {
+        [
+            "FULL_PATH": .string("/"),
+            "CONTENTS": .object([
+                "go": .object([
+                    "FULL_PATH": .string("/OSCQUERY/Control Surface/StageCore_Test"),
+                    "TYPE": .string("i"),
+                    "VALUE": .array([.int(button)]),
+                    "RANGE": .array([
+                        .object(["MIN": .int(0), "MAX": .int(1)])
+                    ]),
+                    "ACCESS": .int(3),
+                ]),
+            ]),
+        ]
+    }
+
+    private func oscAddress(_ packet: Data) -> String {
+        let bytes = [UInt8](packet)
+        let end = bytes.firstIndex(of: 0) ?? bytes.count
+        return String(decoding: bytes[..<end], as: UTF8.self)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         return url
+    }
+}
+
+private actor VDMXOSCQuerySequence {
+    private var namespaces: [[String: JSONValue]]
+    private let oscPort: Int
+    private var namespaceReads = 0
+
+    init(namespaces: [[String: JSONValue]], oscPort: Int) {
+        self.namespaces = namespaces
+        self.oscPort = oscPort
+    }
+
+    func fetch(_ url: URL) throws -> Data {
+        if url.query == "HOST_INFO" {
+            return try JSONEncoder().encode([
+                "NAME": JSONValue.string("VDMX"),
+                "OSC_PORT": JSONValue.int(oscPort),
+            ])
+        }
+        guard namespaceReads < namespaces.count else {
+            throw URLError(.resourceUnavailable)
+        }
+        let value = namespaces[namespaceReads]
+        namespaceReads += 1
+        return try JSONEncoder().encode(value)
+    }
+
+    func namespaceFetchCount() -> Int {
+        namespaceReads
+    }
+}
+
+private actor VDMXOSCSendRecorder {
+    struct Record: Sendable {
+        let packet: Data
+        let endpoint: OSCEndpoint
+    }
+
+    private var values: [Record] = []
+
+    func record(packet: Data, endpoint: OSCEndpoint) {
+        values.append(Record(packet: packet, endpoint: endpoint))
+    }
+
+    func records() -> [Record] {
+        values
     }
 }
 

@@ -35,6 +35,31 @@ final class OSCSendExecutorTests: XCTestCase {
         )
     }
 
+    func testExecutorEncodesFloat64OSCArgument() async throws {
+        let sender = RecordingOSCSender()
+        let executor = try OSCSendExecutor(
+            endpoint: OSCEndpoint(host: "127.0.0.1", port: 9000),
+            sender: sender
+        )
+
+        let outcome = await executor.execute(parameters: [
+            "address": .string("/d"),
+            "arguments": .array([
+                .object(["type": .string("float64"), "value": .double(1.5)]),
+            ]),
+        ])
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertEqual(
+            sender.packet,
+            Data([
+                0x2f, 0x64, 0x00, 0x00,
+                0x2c, 0x64, 0x00, 0x00,
+                0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ])
+        )
+    }
+
     func testInvalidOSCParametersFailWithoutSending() async throws {
         let sender = RecordingOSCSender()
         let executor = try OSCSendExecutor(

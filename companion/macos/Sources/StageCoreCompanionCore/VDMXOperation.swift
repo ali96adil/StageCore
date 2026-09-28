@@ -9,18 +9,21 @@ import AppKit
 public typealias VDMXOpenHandler = @Sendable (_ target: URL, _ application: URL) async -> Bool
 typealias VDMXApplicationOpenHandler = @Sendable (_ application: URL) async -> Bool
 typealias VDMXOSCQueryFetcher = @Sendable (_ url: URL) async throws -> Data
+typealias VDMXOSCDatagramSender = @Sendable (_ packet: Data, _ endpoint: OSCEndpoint) async throws -> Int
 
 public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     public let adapterKey = "stagecore.adapter.vdmx"
-    public let supportedOperations: Set<ExecutionEnvironmentOperationKind> = [.open, .captureSnapshot]
+    public let supportedOperations: Set<ExecutionEnvironmentOperationKind> = [.open, .captureSnapshot, .restoreObservableState]
 
     private let applicationCandidates: [URL]
     private let opener: VDMXOpenHandler
     private let applicationOpener: VDMXApplicationOpenHandler
     private let oscQueryFetcher: VDMXOSCQueryFetcher
+    private let oscSender: VDMXOSCDatagramSender
 
     private static let maxOSCQueryNamespaceBytes = 40 * 1024
     private static let maxOSCQueryHostInfoBytes = 4 * 1024
+    private static let maxObservableRestoreWrites = 128
 
     public init(
         applicationCandidates: [URL],
@@ -32,18 +35,25 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
         self.oscQueryFetcher = { url in
             try await Self.fetchOSCQuery(url)
         }
+        self.oscSender = { packet, endpoint in
+            try POSIXOSCDatagramSender().send(packet, to: endpoint)
+        }
     }
 
     init(
         applicationCandidates: [URL],
         opener: @escaping VDMXOpenHandler,
         applicationOpener: @escaping VDMXApplicationOpenHandler = { _ in false },
-        oscQueryFetcher: @escaping VDMXOSCQueryFetcher
+        oscQueryFetcher: @escaping VDMXOSCQueryFetcher,
+        oscSender: @escaping VDMXOSCDatagramSender = { packet, endpoint in
+            try POSIXOSCDatagramSender().send(packet, to: endpoint)
+        }
     ) {
         self.applicationCandidates = applicationCandidates
         self.opener = opener
         self.applicationOpener = applicationOpener
         self.oscQueryFetcher = oscQueryFetcher
+        self.oscSender = oscSender
     }
 
     #if os(macOS)
@@ -60,7 +70,8 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
     public func perform(
         kind: ExecutionEnvironmentOperationKind,
         manifest: [String: JSONValue],
-        sourceManifestSHA256: String
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]?
     ) async -> ExecutionEnvironmentProviderOutcome {
         do {
             try Task.checkCancellation()
@@ -81,6 +92,18 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
                 return await performOpen(manifest: decoded)
             case .captureSnapshot:
                 return await captureSnapshot(manifest: decoded, sourceManifestSHA256: sourceManifestSHA256.lowercased())
+            case .restoreObservableState:
+                guard let snapshot else {
+                    return failure(
+                        code: "VDMX_RESTORE_SNAPSHOT_REQUIRED",
+                        summary: "VDMX observable-state restore requires a Hub-selected snapshot"
+                    )
+                }
+                return await restoreObservableState(
+                    manifest: decoded,
+                    sourceManifestSHA256: sourceManifestSHA256.lowercased(),
+                    snapshot: snapshot
+                )
             case .reconnect:
                 return .init(
                     status: .unsupported,
@@ -126,6 +149,289 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             status: .completed,
             responseSummary: "VDMX opened the declared execution-environment launch target"
         )
+    }
+
+    private func restoreObservableState(
+        manifest: VDMXOperationManifest,
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]
+    ) async -> ExecutionEnvironmentProviderOutcome {
+        guard let capturedNamespace = capturedOSCQueryNamespace(
+            snapshot: snapshot,
+            manifest: manifest,
+            sourceManifestSHA256: sourceManifestSHA256
+        ) else {
+            return failure(
+                code: "VDMX_RESTORE_SNAPSHOT_INVALID",
+                summary: "snapshot does not contain a matching observed VDMX OSCQuery namespace"
+            )
+        }
+
+        do {
+            let first = try await readLiveOSCQuery(manifest: manifest)
+            let firstPreview = VDMXObservableRestorePlanner.preview(
+                capturedNamespace: capturedNamespace,
+                liveNamespace: first.namespace
+            )
+            if let reason = restorePreviewBlocker(firstPreview) {
+                return failure(
+                    code: "VDMX_RESTORE_LIVE_SURFACE_UNSAFE",
+                    summary: reason
+                )
+            }
+
+            let candidates = firstPreview.entries.filter {
+                $0.classification == .restorable
+            }
+            guard candidates.count <= Self.maxObservableRestoreWrites else {
+                return failure(
+                    code: "VDMX_RESTORE_TOO_MANY_WRITES",
+                    summary: "observable-state restore exceeds the bounded write count"
+                )
+            }
+            if candidates.isEmpty {
+                return .init(
+                    status: .completed,
+                    responseSummary: "VDMX observable state already matches or contains only controls excluded from automatic restore"
+                )
+            }
+
+            // Race fence: read the live namespace again immediately before the
+            // first datagram. Any classification/value change aborts before
+            // mutating VDMX.
+            let second = try await readLiveOSCQuery(manifest: manifest)
+            guard first.oscEndpoint == second.oscEndpoint else {
+                return failure(
+                    code: "VDMX_RESTORE_LIVE_SURFACE_CHANGED",
+                    summary: "VDMX OSC endpoint changed during restore preflight"
+                )
+            }
+            let secondPreview = VDMXObservableRestorePlanner.preview(
+                capturedNamespace: capturedNamespace,
+                liveNamespace: second.namespace
+            )
+            guard firstPreview.entries == secondPreview.entries else {
+                return failure(
+                    code: "VDMX_RESTORE_LIVE_SURFACE_CHANGED",
+                    summary: "VDMX published state changed during restore preflight"
+                )
+            }
+
+            let capturedNodes = flattenOSCQueryNodes(capturedNamespace)
+            for candidate in candidates.sorted(by: { $0.path < $1.path }) {
+                try Task.checkCancellation()
+                guard let node = capturedNodes[candidate.path] else {
+                    return failure(
+                        code: "VDMX_RESTORE_SNAPSHOT_INVALID",
+                        summary: "captured restore path disappeared from snapshot state"
+                    )
+                }
+                let packet = try encodeRestorePacket(path: candidate.path, node: node)
+                let sent = try await oscSender(packet, first.oscEndpoint)
+                guard sent == packet.count else {
+                    return failure(
+                        code: "VDMX_RESTORE_SEND_FAILED",
+                        summary: "VDMX OSC restore datagram was not fully sent; re-inspect state before retry"
+                    )
+                }
+            }
+
+            // Transport send is not proof of application state. Re-read VDMX
+            // and require every path we actually wrote to report the captured
+            // value before calling the operation completed.
+            let verification = try await readLiveOSCQuery(manifest: manifest)
+            let verificationPreview = VDMXObservableRestorePlanner.preview(
+                capturedNamespace: capturedNamespace,
+                liveNamespace: verification.namespace
+            )
+            let verificationByPath = Dictionary(
+                uniqueKeysWithValues: verificationPreview.entries.map { ($0.path, $0) }
+            )
+            for candidate in candidates {
+                guard verificationByPath[candidate.path]?.classification == .alreadyMatching else {
+                    return failure(
+                        code: "VDMX_RESTORE_VERIFICATION_FAILED",
+                        summary: "VDMX did not report the requested observable state after restore; re-inspect before retry"
+                    )
+                }
+            }
+
+            return .init(
+                status: .completed,
+                responseSummary: "VDMX restored and re-verified \(candidates.count) stateful published control(s); discrete/event controls were not replayed"
+            )
+        } catch is CancellationError {
+            return failure(
+                code: "VDMX_OPERATION_CANCELLED",
+                summary: "VDMX observable-state restore was cancelled; re-inspect state before retry"
+            )
+        } catch {
+            return failure(
+                code: "VDMX_RESTORE_FAILED",
+                summary: "VDMX observable-state restore failed; re-inspect state before retry"
+            )
+        }
+    }
+
+    private func capturedOSCQueryNamespace(
+        snapshot: [String: JSONValue],
+        manifest: VDMXOperationManifest,
+        sourceManifestSHA256: String
+    ) -> [String: JSONValue]? {
+        guard snapshot["schema_version"] == .int(1),
+              snapshot["environment_key"] == .string(manifest.environmentKey),
+              snapshot["adapter_key"] == .string(adapterKey),
+              case .string(let sourceHash)? = snapshot["source_manifest_sha256"],
+              sourceHash.lowercased() == sourceManifestSHA256,
+              case .array(let items)? = snapshot["items"]
+        else {
+            return nil
+        }
+
+        var matches: [[String: JSONValue]] = []
+        for item in items {
+            guard case .object(let object) = item,
+                  object["key"] == .string("vdmx-oscquery")
+            else { continue }
+            matches.append(object)
+        }
+        guard matches.count == 1 else { return nil }
+        let item = matches[0]
+        guard item["kind"] == .string("CONTROL_NAMESPACE"),
+              item["provenance"] == .string("OSCQUERY"),
+              item["provenance_class"] == .string("OBSERVED"),
+              item["capture_status"] == .string("OBSERVED"),
+              item["portability"] == .string("DESCRIPTIVE_ONLY"),
+              case .object(let metadata)? = item["metadata"],
+              case .object(let namespace)? = metadata["namespace"]
+        else {
+            return nil
+        }
+        return namespace
+    }
+
+    private struct LiveOSCQueryState {
+        let namespace: [String: JSONValue]
+        let oscEndpoint: OSCEndpoint
+    }
+
+    private func readLiveOSCQuery(
+        manifest: VDMXOperationManifest
+    ) async throws -> LiveOSCQueryState {
+        guard let binding = manifest.bindings.first(where: {
+            ($0.key == "oscquery" || $0.key == "vdmx-oscquery") && $0.kind == "NETWORK"
+        }),
+        let endpoint = validatedLocalOSCQueryEndpoint(binding.externalRef)
+        else {
+            throw VDMXRestoreError.invalidEndpoint
+        }
+
+        let namespaceData = try await oscQueryFetcher(endpoint)
+        guard namespaceData.count <= Self.maxOSCQueryNamespaceBytes,
+              let namespace = try decodeJSONObject(namespaceData)
+        else {
+            throw VDMXRestoreError.invalidNamespace
+        }
+
+        guard let hostURL = hostInfoURL(endpoint) else {
+            throw VDMXRestoreError.invalidHostInfo
+        }
+        let hostData = try await oscQueryFetcher(hostURL)
+        guard hostData.count <= Self.maxOSCQueryHostInfoBytes,
+              let hostInfo = try decodeJSONObject(hostData),
+              let port = oscPort(hostInfo),
+              (1...65535).contains(port)
+        else {
+            throw VDMXRestoreError.invalidHostInfo
+        }
+
+        return LiveOSCQueryState(
+            namespace: namespace,
+            oscEndpoint: OSCEndpoint(host: "127.0.0.1", port: port)
+        )
+    }
+
+    private func restorePreviewBlocker(
+        _ preview: VDMXObservableRestorePreview
+    ) -> String? {
+        if preview.missingCount > 0 {
+            return "captured VDMX OSC paths are missing from the current published namespace"
+        }
+        if preview.incompatibleCount > 0 {
+            return "captured VDMX OSC types, values, or ranges are incompatible with the current published namespace"
+        }
+        if preview.readOnlyCount > 0 {
+            return "one or more captured VDMX stateful controls are currently read-only"
+        }
+        return nil
+    }
+
+    private func flattenOSCQueryNodes(
+        _ root: [String: JSONValue]
+    ) -> [String: [String: JSONValue]] {
+        var nodes: [String: [String: JSONValue]] = [:]
+        func visit(_ node: [String: JSONValue]) {
+            if case .string(let path)? = node["FULL_PATH"], path.hasPrefix("/") {
+                nodes[path] = node
+            }
+            guard case .object(let contents)? = node["CONTENTS"] else { return }
+            for key in contents.keys.sorted() {
+                if case .object(let child)? = contents[key] {
+                    visit(child)
+                }
+            }
+        }
+        visit(root)
+        return nodes
+    }
+
+    private func encodeRestorePacket(
+        path: String,
+        node: [String: JSONValue]
+    ) throws -> Data {
+        guard case .string(let type)? = node["TYPE"],
+              case .array(let values)? = node["VALUE"],
+              type.count == values.count,
+              type.allSatisfy({ $0 == "f" || $0 == "d" })
+        else {
+            throw VDMXRestoreError.unsupportedType
+        }
+
+        var arguments: [JSONValue] = []
+        for (tag, value) in zip(type, values) {
+            switch (tag, value) {
+            case ("f", .double(let number)):
+                arguments.append(.object(["type": .string("float32"), "value": .double(number)]))
+            case ("f", .int(let number)):
+                arguments.append(.object(["type": .string("float32"), "value": .int(number)]))
+            case ("d", .double(let number)):
+                arguments.append(.object(["type": .string("float64"), "value": .double(number)]))
+            case ("d", .int(let number)):
+                arguments.append(.object(["type": .string("float64"), "value": .int(number)]))
+            default:
+                throw VDMXRestoreError.unsupportedType
+            }
+        }
+
+        return try OSCPacketEncoder.encode(parameters: [
+            "address": .string(path),
+            "arguments": .array(arguments),
+        ])
+    }
+
+    private func oscPort(_ hostInfo: [String: JSONValue]) -> Int? {
+        switch hostInfo["OSC_PORT"] {
+        case .some(.int(let port)):
+            return port
+        case .some(.double(let port))
+            where port.isFinite
+                && port.rounded(.towardZero) == port
+                && port >= 1
+                && port <= 65535:
+            return Int(port)
+        default:
+            return nil
+        }
     }
 
     private func captureSnapshot(
@@ -558,6 +864,13 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
         }
     }
     #endif
+}
+
+private enum VDMXRestoreError: Error {
+    case invalidEndpoint
+    case invalidNamespace
+    case invalidHostInfo
+    case unsupportedType
 }
 
 private struct VDMXOperationManifest: Decodable {

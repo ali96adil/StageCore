@@ -109,6 +109,33 @@ func invalidLiveControlsFailClosed() {
     #expect(preview.restorableCount == 0)
 }
 
+@Test("numeric control without current live range is incompatible")
+func numericControlWithoutRangeFailsClosed() {
+    let captured = namespace([
+        "opacity": node(
+            path: "/opacity",
+            type: "f",
+            value: [.double(0.75)],
+            range: [numericRange(0, 1)]
+        )
+    ])
+    let live = namespace([
+        "opacity": node(
+            path: "/opacity",
+            type: "f",
+            value: [.double(0.25)]
+        )
+    ])
+
+    let preview = VDMXObservableRestorePlanner.preview(
+        capturedNamespace: captured,
+        liveNamespace: live
+    )
+
+    #expect(preview.incompatibleCount == 1)
+    #expect(preview.restorableCount == 0)
+}
+
 @Test("StageCore GO style integer button is unsafe by default even when values match")
 func integerButtonIsUnsafeByDefault() {
     let path = "/OSCQUERY/Control Surface/StageCore_Test"

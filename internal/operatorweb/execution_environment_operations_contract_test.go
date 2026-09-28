@@ -14,11 +14,14 @@ func TestExecutionEnvironmentOperationContract(t *testing.T) {
 		"timeout_ms: 10000",
 		`data-kind="OPEN"`,
 		`data-kind="CAPTURE_SNAPSHOT"`,
+		`data-kind="RESTORE_OBSERVABLE_STATE"`,
 		"canRuntime()",
 		"f025.operation_unbound",
 		"f025.snapshot_partial",
 		"فتح بيئة التشغيل",
 		"التقاط Snapshot",
+		"استعادة الحالة المرصودة الآمنة",
+		"Event/button controls will not be replayed",
 	} {
 		if !strings.Contains(operations, token) {
 			t.Errorf("F-025 operation UI missing contract token %q", token)
