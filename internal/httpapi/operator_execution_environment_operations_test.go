@@ -132,6 +132,25 @@ func TestOperatorExecutionEnvironmentOperationIsRuntimeControlledAndBounded(t *t
 	if response.Status != companionchannel.EnvironmentOperationCompleted || response.Kind != companionchannel.EnvironmentOperationOpen || response.ResponseSummary == "" {
 		t.Fatalf("operation response=%+v", response)
 	}
+
+	restoreReq := authenticatedExecutionEnvironmentRequest(
+		t,
+		owner.Token,
+		owner.CSRFToken,
+		http.MethodPost,
+		path,
+		[]byte(`{"operation_id":"operation-restore-1","kind":"RESTORE_OBSERVABLE_STATE","timeout_ms":5000}`),
+	)
+	restoreRes := httptest.NewRecorder()
+	handler.ServeHTTP(restoreRes, restoreReq)
+	if restoreRes.Code != http.StatusOK {
+		t.Fatalf("restore operation status=%d body=%s", restoreRes.Code, restoreRes.Body.String())
+	}
+	if runtime.calls != 2 ||
+		runtime.request.OperationID != "operation-restore-1" ||
+		runtime.request.Kind != companionchannel.EnvironmentOperationRestoreObservableState {
+		t.Fatalf("restore runtime calls=%d request=%+v", runtime.calls, runtime.request)
+	}
 }
 
 func TestOperatorExecutionEnvironmentOperationScopesEnvironmentAndReturnsSnapshot(t *testing.T) {
