@@ -24,6 +24,14 @@ func TestExecutionEnvironmentSnapshotDiffUIContract(t *testing.T) {
 		"reconstruction_fingerprint",
 		"View rebuild plan",
 		"عرض خطة إعادة البناء",
+		"f025HydrateRetainedPlan",
+		"f025CollectRetainedPlan",
+		"f025MarkRetainedStepUserDeclared",
+		"USER_DECLARED",
+		"/rebuild-plan",
+		"seed?replace=true",
+		"Retained editable rebuild plan",
+		"خطة إعادة البناء المحفوظة القابلة للتعديل",
 	} {
 		if !strings.Contains(ui, token) {
 			t.Errorf("F-025 snapshot diff UI missing contract token %q", token)

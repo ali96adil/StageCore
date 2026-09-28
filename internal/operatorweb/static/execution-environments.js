@@ -62,7 +62,25 @@ const f025Strings = {
   "f025.rebuild_fingerprint": {"en":"Reconstruction fingerprint","ar-IQ":"بصمة إعادة البناء"},
   "f025.rebuild_step": {"en":"Step","ar-IQ":"الخطوة"},
   "f025.rebuild_status": {"en":"Status","ar-IQ":"الحالة"},
-  "f025.rebuild_provenance": {"en":"Provenance","ar-IQ":"المصدر"}
+  "f025.rebuild_provenance": {"en":"Provenance","ar-IQ":"المصدر"},
+  "f025.retained_plan": {"en":"Retained editable rebuild plan","ar-IQ":"خطة إعادة البناء المحفوظة القابلة للتعديل"},
+  "f025.retained_loading": {"en":"Loading retained rebuild plan…","ar-IQ":"جارٍ تحميل خطة إعادة البناء المحفوظة…"},
+  "f025.retained_none": {"en":"No retained editable plan yet.","ar-IQ":"لا توجد خطة محفوظة قابلة للتعديل بعد."},
+  "f025.seed_plan": {"en":"Seed editable plan from capture","ar-IQ":"إنشاء خطة قابلة للتعديل من Snapshot"},
+  "f025.reseed_plan": {"en":"Reseed from capture","ar-IQ":"إعادة إنشاء الخطة من Snapshot"},
+  "f025.reseed_confirm": {"en":"Replace the retained plan with a fresh copy from this capture? Existing manual edits will be discarded.","ar-IQ":"استبدال الخطة المحفوظة بنسخة جديدة من هذه اللقطة؟ سيتم حذف التعديلات اليدوية الحالية."},
+  "f025.save_plan": {"en":"Save retained plan","ar-IQ":"حفظ الخطة"},
+  "f025.add_step": {"en":"Add manual step","ar-IQ":"إضافة خطوة يدوية"},
+  "f025.remove_step": {"en":"Remove step","ar-IQ":"حذف الخطوة"},
+  "f025.delete_plan": {"en":"Delete retained plan","ar-IQ":"حذف الخطة المحفوظة"},
+  "f025.delete_plan_confirm": {"en":"Delete the retained editable rebuild plan? The immutable captured Snapshot will not be changed.","ar-IQ":"حذف خطة إعادة البناء المحفوظة؟ لن يتم تغيير الـSnapshot الأصلية المحفوظة."},
+  "f025.plan_action": {"en":"Action","ar-IQ":"الإجراء"},
+  "f025.plan_notes": {"en":"Notes","ar-IQ":"الملاحظات"},
+  "f025.plan_source": {"en":"Source capture","ar-IQ":"اللقطة المصدر"},
+  "f025.plan_saved": {"en":"Retained rebuild plan saved.","ar-IQ":"تم حفظ خطة إعادة البناء."},
+  "f025.plan_seeded": {"en":"Editable rebuild plan created from capture.","ar-IQ":"تم إنشاء خطة قابلة للتعديل من الـSnapshot."},
+  "f025.plan_deleted": {"en":"Retained rebuild plan deleted.","ar-IQ":"تم حذف خطة إعادة البناء المحفوظة."},
+  "f025.plan_required": {"en":"Every rebuild step needs an action and status.","ar-IQ":"كل خطوة في خطة إعادة البناء تحتاج إجراءً وحالة."}
 };
 
 function f025T(key) {
@@ -92,6 +110,10 @@ async function f025LoadModel() {
 
 function f025SnapshotCollectionPath(environmentID) {
   return `${f025CollectionPath()}/${encodeURIComponent(environmentID)}/snapshots`;
+}
+
+function f025RebuildPlanPath(environmentID) {
+  return `${f025CollectionPath()}/${encodeURIComponent(environmentID)}/rebuild-plan`;
 }
 
 function f025SnapshotLabel(snapshot) {
@@ -157,6 +179,208 @@ async function f025LoadRebuildPlan(card, environmentID) {
   }
 }
 
+function f025RetainedStepMarkup(step, editable) {
+  const sourceStep = step.source_step == null ? "" : String(step.source_step);
+  const provenance = step.provenance_class || "USER_DECLARED";
+  if (!editable) {
+    return `
+      <li>
+        <strong>${esc(f025T("f025.rebuild_step"))} ${esc(step.step)} · ${esc(step.action)}</strong><br>
+        <span class="muted">${esc(f025T("f025.rebuild_status"))}: ${esc(step.status)} · ${esc(f025T("f025.rebuild_provenance"))}: ${esc(provenance)}</span>
+        ${step.notes ? `<br><span class="muted">${esc(step.notes)}</span>` : ""}
+      </li>`;
+  }
+  return `
+    <div class="card f025-retained-step"
+         data-source-step="${esc(sourceStep)}"
+         data-provenance-class="${esc(provenance)}"
+         style="margin-top:10px">
+      <div class="section-title-row">
+        <strong class="f025-retained-step-label">${esc(f025T("f025.rebuild_step"))} ${esc(step.step)}</strong>
+        <span class="mono muted f025-retained-provenance">${esc(provenance)}</span>
+      </div>
+      <div class="form-grid two">
+        <label>${esc(f025T("f025.plan_action"))}<input class="f025-retained-action" value="${esc(step.action || "")}" required></label>
+        <label>${esc(f025T("f025.rebuild_status"))}<input class="f025-retained-status" value="${esc(step.status || "")}" required></label>
+      </div>
+      <label>${esc(f025T("f025.plan_notes"))}<textarea class="f025-retained-notes" rows="2">${esc(step.notes || "")}</textarea></label>
+      <div class="toolbar" style="margin-top:8px">
+        <button class="button danger f025-retained-remove-step" type="button">${esc(f025T("f025.remove_step"))}</button>
+      </div>
+    </div>`;
+}
+
+function f025RenumberRetainedSteps(target) {
+  [...target.querySelectorAll(".f025-retained-step")].forEach((row, index) => {
+    row.querySelector(".f025-retained-step-label")?.replaceChildren(
+      document.createTextNode(`${f025T("f025.rebuild_step")} ${index + 1}`)
+    );
+  });
+}
+
+function f025MarkRetainedStepUserDeclared(row) {
+  row.dataset.provenanceClass = "USER_DECLARED";
+  row.querySelector(".f025-retained-provenance")?.replaceChildren(
+    document.createTextNode("USER_DECLARED")
+  );
+}
+
+function f025BindRetainedStepEditor(target) {
+  target.querySelectorAll(".f025-retained-step").forEach((row) => {
+    row.querySelectorAll(".f025-retained-action, .f025-retained-status, .f025-retained-notes").forEach((input) => {
+      input.addEventListener("input", () => f025MarkRetainedStepUserDeclared(row));
+    });
+    row.querySelector(".f025-retained-remove-step")?.addEventListener("click", () => {
+      row.remove();
+      f025RenumberRetainedSteps(target);
+    });
+  });
+}
+
+function f025CollectRetainedPlan(target, sourcePlan) {
+  const rows = [...target.querySelectorAll(".f025-retained-step")];
+  if (!rows.length) throw new Error(f025T("f025.plan_required"));
+  const steps = rows.map((row, index) => {
+    const action = row.querySelector(".f025-retained-action")?.value.trim() || "";
+    const status = row.querySelector(".f025-retained-status")?.value.trim() || "";
+    const notes = row.querySelector(".f025-retained-notes")?.value.trim() || "";
+    if (!action || !status) throw new Error(f025T("f025.plan_required"));
+    const sourceText = row.dataset.sourceStep || "";
+    const step = {
+      step: index + 1,
+      action,
+      status,
+      provenance_class: row.dataset.provenanceClass || "USER_DECLARED",
+    };
+    if (sourceText) step.source_step = Number(sourceText);
+    if (notes) step.notes = notes;
+    return step;
+  });
+  return {
+    schema_version: sourcePlan.schema_version,
+    source_snapshot_sha256: sourcePlan.source_snapshot_sha256,
+    source_reconstruction_fingerprint: sourcePlan.source_reconstruction_fingerprint,
+    steps,
+  };
+}
+
+async function f025HydrateRetainedPlan(card, environmentID, snapshots, editable) {
+  const target = card.querySelector(".f025-retained-plan");
+  if (!target) return;
+  const path = f025RebuildPlanPath(environmentID);
+  const options = (selectedID) => snapshots.map((snapshot) =>
+    `<option value="${esc(snapshot.snapshot_id)}" ${snapshot.snapshot_id === selectedID ? "selected" : ""}>${esc(f025SnapshotLabel(snapshot))}</option>`
+  ).join("");
+  try {
+    const payload = await api(path);
+    const plan = payload.plan || {};
+    const steps = plan.steps || [];
+    if (!editable) {
+      target.innerHTML = `
+        <p class="muted">${esc(f025T("f025.plan_source"))}: <span class="mono">${esc(payload.source_snapshot_id || "—")}</span></p>
+        <ol class="validation-list">${steps.map((step) => f025RetainedStepMarkup(step, false)).join("")}</ol>`;
+      return;
+    }
+
+    target.innerHTML = `
+      <p class="muted">${esc(f025T("f025.plan_source"))}: <span class="mono">${esc(payload.source_snapshot_id || "—")}</span></p>
+      <div class="f025-retained-steps">${steps.map((step) => f025RetainedStepMarkup(step, true)).join("")}</div>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="button f025-retained-add-step" type="button">${esc(f025T("f025.add_step"))}</button>
+        <button class="button primary f025-retained-save" type="button">${esc(f025T("f025.save_plan"))}</button>
+      </div>
+      <div class="form-grid two" style="margin-top:12px">
+        <label>${esc(f025T("f025.plan_source"))}<select class="f025-retained-reseed-snapshot">${options(payload.source_snapshot_id)}</select></label>
+      </div>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="button f025-retained-reseed" type="button">${esc(f025T("f025.reseed_plan"))}</button>
+        <button class="button danger f025-retained-delete" type="button">${esc(f025T("f025.delete_plan"))}</button>
+      </div>`;
+
+    f025BindRetainedStepEditor(target);
+
+    target.querySelector(".f025-retained-add-step")?.addEventListener("click", () => {
+      const stepsTarget = target.querySelector(".f025-retained-steps");
+      if (!stepsTarget) return;
+      const next = stepsTarget.querySelectorAll(".f025-retained-step").length + 1;
+      stepsTarget.insertAdjacentHTML("beforeend", f025RetainedStepMarkup({
+        step: next,
+        action: "",
+        status: "MANUAL",
+        provenance_class: "USER_DECLARED",
+      }, true));
+      const row = stepsTarget.lastElementChild;
+      if (row) {
+        row.dataset.provenanceClass = "USER_DECLARED";
+        f025BindRetainedStepEditor(row.parentElement);
+        row.querySelector(".f025-retained-action")?.focus();
+      }
+      f025RenumberRetainedSteps(target);
+    });
+
+    target.querySelector(".f025-retained-save")?.addEventListener("click", async () => {
+      try {
+        const editedPlan = f025CollectRetainedPlan(target, plan);
+        await api(path, {
+          method: "PUT",
+          json: {source_snapshot_id: payload.source_snapshot_id, plan: editedPlan},
+        });
+        await renderExecutionEnvironments(f025T("f025.plan_saved"));
+      } catch (error) { f025Error(error); }
+    });
+
+    target.querySelector(".f025-retained-reseed")?.addEventListener("click", async () => {
+      if (!confirm(f025T("f025.reseed_confirm"))) return;
+      const sourceSnapshotID = target.querySelector(".f025-retained-reseed-snapshot")?.value || "";
+      if (!sourceSnapshotID) return;
+      try {
+        await api(`${path}/seed?replace=true`, {
+          method: "POST",
+          json: {source_snapshot_id: sourceSnapshotID},
+        });
+        await renderExecutionEnvironments(f025T("f025.plan_seeded"));
+      } catch (error) { f025Error(error); }
+    });
+
+    target.querySelector(".f025-retained-delete")?.addEventListener("click", async () => {
+      if (!confirm(f025T("f025.delete_plan_confirm"))) return;
+      try {
+        await api(`${path}?confirm=true`, {method: "DELETE"});
+        await renderExecutionEnvironments(f025T("f025.plan_deleted"));
+      } catch (error) { f025Error(error); }
+    });
+  } catch (error) {
+    if (error.status !== 404) {
+      target.innerHTML = `<div class="message error">${esc(errorMessage(error))}</div>`;
+      return;
+    }
+    if (!editable) {
+      target.innerHTML = `<p class="muted">${esc(f025T("f025.retained_none"))}</p>`;
+      return;
+    }
+    const latest = snapshots[snapshots.length - 1];
+    target.innerHTML = `
+      <p class="muted">${esc(f025T("f025.retained_none"))}</p>
+      <div class="form-grid two">
+        <label>${esc(f025T("f025.plan_source"))}<select class="f025-retained-seed-snapshot">${options(latest?.snapshot_id || "")}</select></label>
+      </div>
+      <div class="toolbar" style="margin-top:10px">
+        <button class="button primary f025-retained-seed" type="button">${esc(f025T("f025.seed_plan"))}</button>
+      </div>`;
+    target.querySelector(".f025-retained-seed")?.addEventListener("click", async () => {
+      const sourceSnapshotID = target.querySelector(".f025-retained-seed-snapshot")?.value || "";
+      if (!sourceSnapshotID) return;
+      try {
+        await api(`${path}/seed`, {
+          method: "POST",
+          json: {source_snapshot_id: sourceSnapshotID},
+        });
+        await renderExecutionEnvironments(f025T("f025.plan_seeded"));
+      } catch (seedError) { f025Error(seedError); }
+    });
+  }
+}
+
 async function f025CompareSnapshots(card, environmentID) {
   const before = card.querySelector(".f025-snapshot-before")?.value || "";
   const after = card.querySelector(".f025-snapshot-after")?.value || "";
@@ -174,7 +398,7 @@ async function f025CompareSnapshots(card, environmentID) {
   }
 }
 
-async function f025HydrateSnapshotDiffs() {
+async function f025HydrateSnapshotDiffs(editable) {
   const cards = [...content.querySelectorAll("[data-f025-snapshot-diff]")];
   await Promise.all(cards.map(async (card) => {
     const environmentID = card.dataset.environmentId;
@@ -217,6 +441,12 @@ async function f025HydrateSnapshotDiffs() {
             <button class="button f025-rebuild-plan-load" type="button">${esc(f025T("f025.view_rebuild_plan"))}</button>
           </div>
           <div class="f025-rebuild-plan-result" style="margin-top:10px"></div>
+        </details>
+        <details style="margin-top:12px">
+          <summary>${esc(f025T("f025.retained_plan"))}</summary>
+          <div class="f025-retained-plan" style="margin-top:10px">
+            <p class="muted">${esc(f025T("f025.retained_loading"))}</p>
+          </div>
         </details>`;
 
       card.querySelector(".f025-snapshot-compare")?.addEventListener("click", () =>
@@ -225,6 +455,7 @@ async function f025HydrateSnapshotDiffs() {
       card.querySelector(".f025-rebuild-plan-load")?.addEventListener("click", () =>
         f025LoadRebuildPlan(card, environmentID)
       );
+      await f025HydrateRetainedPlan(card, environmentID, snapshots, editable);
     } catch (error) {
       card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><div class="message error">${esc(errorMessage(error))}</div>`;
     }
@@ -417,7 +648,7 @@ async function renderExecutionEnvironments(message = "") {
   document.querySelector('[data-page="environments"]')?.replaceChildren(document.createTextNode(f025T("f025.nav")));
   document.getElementById("f025Refresh")?.addEventListener("click", () => renderExecutionEnvironments().catch(f025Error));
   document.getElementById("f025StartEdit")?.addEventListener("click", f025StartEdit);
-  await f025HydrateSnapshotDiffs();
+  await f025HydrateSnapshotDiffs(editable);
   if (!editable) return;
 
   const policy = document.getElementById("f025CapturePolicy");
