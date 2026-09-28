@@ -84,6 +84,29 @@ func TestImportVerifiedObjectRejectsHashMismatchWithoutPromotion(t *testing.T) {
 	assertVerifiedStagingEmpty(t, v)
 }
 
+func TestImportVerifiedObjectInterruptedInputNeverPromotes(t *testing.T) {
+	ctx := context.Background()
+	v, s, _ := newVault(t)
+	payload := []byte("interrupted verified capture")
+	expectedHash := sha256Hex(payload)
+	reader := &failAfterReader{reader: bytes.NewReader(payload)}
+
+	if _, err := v.ImportVerifiedObject(ctx, expectedHash, int64(len(payload)), reader); err == nil {
+		t.Fatal("expected interrupted verified import failure")
+	}
+	if _, err := s.GetVaultObject(ctx, expectedHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("interrupted verified object metadata err=%v", err)
+	}
+	path, err := v.ObjectPath(expectedHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("interrupted verified object promoted, stat err=%v", err)
+	}
+	assertVerifiedStagingEmpty(t, v)
+}
+
 func TestImportVerifiedObjectRejectsCorruptExistingObjectAtIdentityPath(t *testing.T) {
 	ctx := context.Background()
 	v, s, _ := newVault(t)
