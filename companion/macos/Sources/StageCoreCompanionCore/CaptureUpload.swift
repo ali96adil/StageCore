@@ -107,7 +107,6 @@ public struct CompanionCaptureUploadExecutor: CompanionCapabilityExecutor {
     private let authenticator: any CompanionRuntimeAuthenticator
     private let source: any CompanionCaptureObjectSource
     private let transport: any CompanionCaptureUploadTransport
-    private let decoder = JSONDecoder()
 
     public init(
         apiBaseURL: URL,
@@ -232,7 +231,7 @@ public struct CompanionCaptureUploadExecutor: CompanionCapabilityExecutor {
         }
 
         guard response.statusCode == 201 else {
-            let failureResponse = try? decoder.decode(
+            let failureResponse = try? JSONDecoder().decode(
                 CaptureUploadFailureResponse.self,
                 from: response.body
             )
@@ -242,7 +241,7 @@ public struct CompanionCaptureUploadExecutor: CompanionCapabilityExecutor {
             )
         }
 
-        guard let receipt = try? decoder.decode(
+        guard let receipt = try? JSONDecoder().decode(
             CaptureUploadSuccessResponse.self,
             from: response.body
         ),
