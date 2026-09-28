@@ -103,6 +103,20 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		t.Fatalf("seeded=%+v", seeded)
 	}
 
+	duplicateSeedReq := authenticatedExecutionEnvironmentRequest(
+		t, owner.Token, owner.CSRFToken, http.MethodPost, path+"/seed", seedBody,
+	)
+	duplicateSeedRes := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateSeedRes, duplicateSeedReq)
+	if duplicateSeedRes.Code != http.StatusConflict {
+		t.Fatalf("duplicate seed status=%d body=%s", duplicateSeedRes.Code, duplicateSeedRes.Body.String())
+	}
+	var duplicateSeedError map[string]any
+	if err := json.Unmarshal(duplicateSeedRes.Body.Bytes(), &duplicateSeedError); err != nil { t.Fatal(err) }
+	if duplicateSeedError["error_code"] != "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS" {
+		t.Fatalf("duplicate seed error=%v", duplicateSeedError)
+	}
+
 	getReq := authenticatedExecutionEnvironmentRequest(
 		t, owner.Token, owner.CSRFToken, http.MethodGet, path, nil,
 	)

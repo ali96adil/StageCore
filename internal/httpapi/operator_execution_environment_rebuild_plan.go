@@ -76,6 +76,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		}
 		source, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), sourceID)
 		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
+				})
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
@@ -85,6 +91,19 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			})
 			return
 		}
+		if existing, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err == nil {
+			if r.URL.Query().Get("replace") != "true" {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error_code": "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",
+					"rebuild_plan_id": existing.ID,
+				})
+				return
+			}
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
+			return
+		}
+
 		seeded, err := executionenv.SeedAssistedRebuildPlan(source.Snapshot)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
