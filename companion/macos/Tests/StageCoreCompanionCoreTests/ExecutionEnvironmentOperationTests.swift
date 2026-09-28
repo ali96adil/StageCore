@@ -32,6 +32,41 @@ final class ExecutionEnvironmentOperationTests: XCTestCase {
         XCTAssertEqual(snapshot["capture_status"], .string("PARTIAL"))
     }
 
+    func testRestoreRequiresHubSelectedSnapshotAndReturnsNoSnapshotOutput() async throws {
+        let executor = try ExecutionEnvironmentOperationExecutor(
+            providers: [RestoreEnvironmentOperationProvider()]
+        )
+        var parameters = validParameters(kind: "RESTORE_OBSERVABLE_STATE")
+        parameters["adapter_key"] = .string("test.restore")
+        parameters["snapshot"] = .object([
+            "schema_version": .int(1),
+            "environment_key": .string("video-main"),
+            "adapter_key": .string("test.restore"),
+            "source_manifest_sha256": .string(String(repeating: "a", count: 64)),
+            "capture_status": .string("PARTIAL"),
+        ])
+
+        let outcome = await executor.execute(parameters: parameters)
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertEqual(outcome.ackLevel, .accepted)
+        XCTAssertEqual(outcome.output["operation_kind"], .string("RESTORE_OBSERVABLE_STATE"))
+        XCTAssertNil(outcome.output["snapshot"])
+    }
+
+    func testRestoreWithoutSnapshotFailsBeforeProvider() async throws {
+        let executor = try ExecutionEnvironmentOperationExecutor(
+            providers: [RestoreEnvironmentOperationProvider()]
+        )
+        var parameters = validParameters(kind: "RESTORE_OBSERVABLE_STATE")
+        parameters["adapter_key"] = .string("test.restore")
+
+        let outcome = await executor.execute(parameters: parameters)
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "ENVIRONMENT_RESTORE_SNAPSHOT_REQUIRED")
+    }
+
     func testUnknownAdapterFailsTruthfully() async throws {
         let executor = try ExecutionEnvironmentOperationExecutor()
         let outcome = await executor.execute(parameters: validParameters(kind: "OPEN"))
@@ -76,6 +111,32 @@ final class ExecutionEnvironmentOperationTests: XCTestCase {
                 "adapter_key": .string("test.environment"),
             ]),
         ]
+    }
+}
+
+private struct RestoreEnvironmentOperationProvider: ExecutionEnvironmentOperationProvider {
+    let adapterKey = "test.restore"
+    let supportedOperations: Set<ExecutionEnvironmentOperationKind> = [.restoreObservableState]
+
+    func perform(
+        kind: ExecutionEnvironmentOperationKind,
+        manifest: [String: JSONValue],
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]?
+    ) async -> ExecutionEnvironmentProviderOutcome {
+        guard kind == .restoreObservableState,
+              snapshot != nil
+        else {
+            return .init(
+                status: .failed,
+                errorCode: "TEST_RESTORE_INVALID",
+                responseSummary: "restore input missing"
+            )
+        }
+        return .init(
+            status: .completed,
+            responseSummary: "test restore completed"
+        )
     }
 }
 
