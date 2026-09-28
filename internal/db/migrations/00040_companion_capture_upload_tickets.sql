@@ -93,6 +93,11 @@ WHEN NOT EXISTS (
       ON ra.machine_role_id = mr.machine_role_id
      AND ra.companion_id = c.companion_id
      AND ra.state <> 'RELEASED'
+    JOIN companion_runtime_sessions crs
+      ON crs.runtime_session_id = NEW.runtime_session_id
+     AND crs.companion_id = c.companion_id
+     AND crs.revoked_at_us IS NULL
+     AND crs.expires_at_us > NEW.created_at_us
     WHERE eem.environment_manifest_id = NEW.environment_manifest_id
       AND mr.required_runtime_snapshot_id = rs.runtime_snapshot_id
 )

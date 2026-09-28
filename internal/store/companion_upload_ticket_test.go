@@ -241,6 +241,7 @@ func TestCompanionUploadTicketCancelAndBulkExpiry(t *testing.T) {
 		t.Helper()
 		grant, err := s.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
 			CompanionID: companion.ID,
+			RuntimeSessionID: runtimeSession.ID,
 			OperationID: operation,
 			EnvironmentManifestID: environment.ID,
 			MachineRoleID: role.ID,
