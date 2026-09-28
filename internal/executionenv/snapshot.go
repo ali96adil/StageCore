@@ -14,11 +14,15 @@ import (
 )
 
 const (
-	SnapshotSchemaVersion       = 1
-	maxSnapshotItems            = 512
-	maxSnapshotNotesBytes       = 8192
-	maxSnapshotItemNotesBytes   = 4096
+	SnapshotSchemaVersion        = 1
+	SnapshotRebuildPlanVersion   = 1
+	maxSnapshotItems             = 512
+	maxSnapshotNotesBytes        = 8192
+	maxSnapshotItemNotesBytes    = 4096
 	maxSnapshotItemMetadataBytes = 48 << 10
+	maxSnapshotRebuildSteps      = 32
+	maxSnapshotRebuildActionBytes = 128
+	maxSnapshotRebuildStatusBytes = 64
 )
 
 type SnapshotCaptureStatus string
@@ -73,22 +77,43 @@ const (
 	SnapshotDescriptiveOnly SnapshotPortability = "DESCRIPTIVE_ONLY"
 )
 
+type SnapshotProvenanceClass string
+
+const (
+	SnapshotProvenanceObserved      SnapshotProvenanceClass = "OBSERVED"
+	SnapshotProvenanceUserDeclared  SnapshotProvenanceClass = "USER_DECLARED"
+	SnapshotProvenanceReferenceOnly SnapshotProvenanceClass = "REFERENCE_ONLY"
+	SnapshotProvenanceUnsupported   SnapshotProvenanceClass = "UNSUPPORTED"
+)
+
+type SnapshotRebuildStep struct {
+	Step            int                     `json:"step"`
+	Action          string                  `json:"action"`
+	Status          string                  `json:"status"`
+	ProvenanceClass SnapshotProvenanceClass `json:"provenance_class"`
+	Notes           string                  `json:"notes,omitempty"`
+}
+
 type Snapshot struct {
 	SchemaVersion        int                   `json:"schema_version"`
 	EnvironmentKey       string                `json:"environment_key"`
 	AdapterKey           string                `json:"adapter_key"`
 	SourceManifestSHA256 string                `json:"source_manifest_sha256"`
-	CaptureStatus        SnapshotCaptureStatus `json:"capture_status"`
-	Items                []SnapshotItem        `json:"items,omitempty"`
-	Notes                string                `json:"notes,omitempty"`
+	CaptureStatus             SnapshotCaptureStatus `json:"capture_status"`
+	RebuildPlanVersion        int                   `json:"rebuild_plan_version,omitempty"`
+	ReconstructionFingerprint string                `json:"reconstruction_fingerprint,omitempty"`
+	RebuildPlan               []SnapshotRebuildStep `json:"rebuild_plan,omitempty"`
+	Items                     []SnapshotItem        `json:"items,omitempty"`
+	Notes                     string                `json:"notes,omitempty"`
 }
 
 type SnapshotItem struct {
 	Key         string                    `json:"key"`
 	Name        string                    `json:"name"`
 	Kind        SnapshotItemKind          `json:"kind"`
-	Provenance  SnapshotItemProvenance    `json:"provenance"`
-	Capture     SnapshotItemCaptureStatus `json:"capture_status"`
+	Provenance      SnapshotItemProvenance `json:"provenance"`
+	ProvenanceClass SnapshotProvenanceClass `json:"provenance_class,omitempty"`
+	Capture         SnapshotItemCaptureStatus `json:"capture_status"`
 	Portability SnapshotPortability       `json:"portability"`
 	Locator     string                    `json:"locator,omitempty"`
 	ContentHash string                    `json:"content_hash,omitempty"`
@@ -100,6 +125,7 @@ type SnapshotItem struct {
 func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	normalized := snapshot
 	normalized.Items = append([]SnapshotItem(nil), snapshot.Items...)
+	normalized.RebuildPlan = append([]SnapshotRebuildStep(nil), snapshot.RebuildPlan...)
 	if normalized.SchemaVersion != SnapshotSchemaVersion {
 		return Snapshot{}, fmt.Errorf("schema_version must be %d", SnapshotSchemaVersion)
 	}
@@ -119,6 +145,9 @@ func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("unsupported capture_status %q", normalized.CaptureStatus)
 	}
 	if err := validateText("notes", normalized.Notes, maxSnapshotNotesBytes, false); err != nil {
+		return Snapshot{}, err
+	}
+	if err := normalizeRebuildPlan(&normalized); err != nil {
 		return Snapshot{}, err
 	}
 	if len(normalized.Items) > maxSnapshotItems {
@@ -148,6 +177,54 @@ func NormalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 	return normalized, nil
 }
 
+func normalizeRebuildPlan(snapshot *Snapshot) error {
+	hasRebuild := snapshot.RebuildPlanVersion != 0 ||
+		snapshot.ReconstructionFingerprint != "" ||
+		len(snapshot.RebuildPlan) != 0
+	if !hasRebuild {
+		return nil
+	}
+	if snapshot.RebuildPlanVersion != SnapshotRebuildPlanVersion {
+		return fmt.Errorf("rebuild_plan_version must be %d when rebuild metadata is present", SnapshotRebuildPlanVersion)
+	}
+	if !isSHA256(snapshot.ReconstructionFingerprint) {
+		return fmt.Errorf("reconstruction_fingerprint must be a 64-character SHA-256 hex digest")
+	}
+	snapshot.ReconstructionFingerprint = strings.ToLower(snapshot.ReconstructionFingerprint)
+	if len(snapshot.RebuildPlan) == 0 || len(snapshot.RebuildPlan) > maxSnapshotRebuildSteps {
+		return fmt.Errorf("rebuild_plan must contain between 1 and %d steps", maxSnapshotRebuildSteps)
+	}
+	for i := range snapshot.RebuildPlan {
+		step := &snapshot.RebuildPlan[i]
+		if step.Step != i+1 {
+			return fmt.Errorf("rebuild_plan[%d].step must be %d", i, i+1)
+		}
+		if err := validateText("rebuild_plan.action", step.Action, maxSnapshotRebuildActionBytes, true); err != nil {
+			return err
+		}
+		if err := validateText("rebuild_plan.status", step.Status, maxSnapshotRebuildStatusBytes, true); err != nil {
+			return err
+		}
+		if !validSnapshotProvenanceClass(step.ProvenanceClass) {
+			return fmt.Errorf("rebuild_plan[%d] has unsupported provenance_class %q", i, step.ProvenanceClass)
+		}
+		if err := validateText("rebuild_plan.notes", step.Notes, maxSnapshotItemNotesBytes, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validSnapshotProvenanceClass(value SnapshotProvenanceClass) bool {
+	switch value {
+	case SnapshotProvenanceObserved, SnapshotProvenanceUserDeclared,
+		SnapshotProvenanceReferenceOnly, SnapshotProvenanceUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeSnapshotItem(item *SnapshotItem) error {
 	if err := validateKey("snapshot_item.key", item.Key); err != nil {
 		return err
@@ -167,6 +244,9 @@ func normalizeSnapshotItem(item *SnapshotItem) error {
 		ProvenanceOSCQuery, ProvenanceOperatorReference, ProvenanceOther:
 	default:
 		return fmt.Errorf("snapshot item %q has unsupported provenance %q", item.Key, item.Provenance)
+	}
+	if item.ProvenanceClass != "" && !validSnapshotProvenanceClass(item.ProvenanceClass) {
+		return fmt.Errorf("snapshot item %q has unsupported provenance_class %q", item.Key, item.ProvenanceClass)
 	}
 	switch item.Capture {
 	case ItemCaptured, ItemObserved, ItemMissing, ItemUnsupported:

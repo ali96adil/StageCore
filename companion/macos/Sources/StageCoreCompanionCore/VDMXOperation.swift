@@ -135,17 +135,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
         let application = locateApplication()
         var items: [[String: JSONValue]] = []
 
-        items.append([
-            "key": .string("vdmx-application"),
-            "name": .string("VDMX application"),
-            "kind": .string("OTHER"),
-            "provenance": .string("ADAPTER_OBSERVATION"),
-            "capture_status": .string(application == nil ? "MISSING" : "OBSERVED"),
-            "portability": .string("DESCRIPTIVE_ONLY"),
-            "notes": .string(application == nil
-                ? "VDMX application bundle was not found at a safe known location."
-                : "VDMX application bundle was found; application installation remains destination-specific."),
-        ])
+        items.append(applicationCaptureItem(application))
 
         if let launch = launchLocator(manifest) {
             if let target = declaredFileURL(launch), safeExistingURL(target) != nil {
@@ -154,6 +144,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
                     "name": .string("Declared VDMX launch target"),
                     "kind": .string("REFERENCE_MATERIAL"),
                     "provenance": .string("ADAPTER_OBSERVATION"),
+                    "provenance_class": .string("REFERENCE_ONLY"),
                     "capture_status": .string("OBSERVED"),
                     "portability": .string("REFERENCE_ONLY"),
                     "locator": .string(launch),
@@ -165,6 +156,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
                     "name": .string("Declared VDMX launch target"),
                     "kind": .string("REFERENCE_MATERIAL"),
                     "provenance": .string("ADAPTER_OBSERVATION"),
+                    "provenance_class": .string("REFERENCE_ONLY"),
                     "capture_status": .string("MISSING"),
                     "portability": .string("REFERENCE_ONLY"),
                     "locator": .string(launch),
@@ -186,10 +178,19 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             "name": .string("VDMX internal workspace and published-control state"),
             "kind": .string("CONTROL_STATE"),
             "provenance": .string("ADAPTER_OBSERVATION"),
+            "provenance_class": .string("UNSUPPORTED"),
             "capture_status": .string("UNSUPPORTED"),
             "portability": .string("DESCRIPTIVE_ONLY"),
             "notes": .string("This provider does not claim complete VDMX internal workspace, plugin, FX, or published-control state capture."),
         ])
+
+        let itemValues = items.map(JSONValue.object)
+        let plan = rebuildPlan(
+            applicationPresent: application != nil,
+            savedLaunchObserved: itemHasStatus(items, key: "declared-launch-target", status: "OBSERVED"),
+            oscQueryObserved: itemHasStatus(items, key: "vdmx-oscquery", status: "OBSERVED")
+        )
+        let fingerprint = reconstructionFingerprint(items: itemValues, rebuildPlan: plan)
 
         let snapshot: [String: JSONValue] = [
             "schema_version": .int(1),
@@ -197,7 +198,10 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             "adapter_key": .string(adapterKey),
             "source_manifest_sha256": .string(sourceManifestSHA256),
             "capture_status": .string("PARTIAL"),
-            "items": .array(items.map(JSONValue.object)),
+            "rebuild_plan_version": .int(1),
+            "reconstruction_fingerprint": .string(fingerprint),
+            "rebuild_plan": .array(plan),
+            "items": .array(itemValues),
             "notes": .string("Truthful partial VDMX reconstruction snapshot. Managed content bytes remain authoritative in the StageCore Vault; destination readiness requires fresh inspection."),
         ]
         return .init(
@@ -236,6 +240,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
                 "endpoint": .string(endpoint.absoluteString),
                 "namespace": .object(namespace),
                 "published_node_count": .int(countOSCQueryNodes(namespace)),
+                "capture_limit_bytes": .int(Self.maxOSCQueryNamespaceBytes),
             ]
 
             if let hostInfoURL = hostInfoURL(endpoint) {
@@ -255,6 +260,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
                 "name": .string("VDMX published OSCQuery namespace"),
                 "kind": .string("CONTROL_NAMESPACE"),
                 "provenance": .string("OSCQUERY"),
+                "provenance_class": .string("OBSERVED"),
                 "capture_status": .string("OBSERVED"),
                 "portability": .string("DESCRIPTIVE_ONLY"),
                 "notes": .string("Read-only localhost OSCQuery namespace published by VDMX. This covers only controls VDMX exposes through OSCQuery."),
@@ -274,6 +280,7 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             "name": .string("VDMX published OSCQuery namespace"),
             "kind": .string("CONTROL_NAMESPACE"),
             "provenance": .string("OSCQUERY"),
+            "provenance_class": .string(capture == "OBSERVED" ? "OBSERVED" : "UNSUPPORTED"),
             "capture_status": .string(capture),
             "portability": .string("DESCRIPTIVE_ONLY"),
             "notes": .string(notes),
@@ -337,10 +344,131 @@ public struct VDMXOperationProvider: ExecutionEnvironmentOperationProvider {
             "name": .string("Declared VDMX launch target"),
             "kind": .string("REFERENCE_MATERIAL"),
             "provenance": .string("ADAPTER_OBSERVATION"),
+            "provenance_class": .string("UNSUPPORTED"),
             "capture_status": .string("UNSUPPORTED"),
             "portability": .string("DESCRIPTIVE_ONLY"),
             "notes": .string("The declared launch target is not a safely inspectable local absolute path or file URL."),
         ]
+    }
+
+    private func applicationCaptureItem(_ application: URL?) -> [String: JSONValue] {
+        var item: [String: JSONValue] = [
+            "key": .string("vdmx-application"),
+            "name": .string("VDMX application"),
+            "kind": .string("OTHER"),
+            "provenance": .string("ADAPTER_OBSERVATION"),
+            "provenance_class": .string("OBSERVED"),
+            "capture_status": .string(application == nil ? "MISSING" : "OBSERVED"),
+            "portability": .string("DESCRIPTIVE_ONLY"),
+            "notes": .string(application == nil
+                ? "VDMX application bundle was not found at a safe known location."
+                : "VDMX application bundle was found; application installation remains destination-specific."),
+        ]
+        guard let application else { return item }
+
+        var metadata: [String: JSONValue] = [
+            "bundle_path": .string(application.path),
+        ]
+        let infoURL = application
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Info.plist", isDirectory: false)
+        if safeExistingURL(infoURL) != nil,
+           let data = try? Data(contentsOf: infoURL),
+           let plist = try? PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+           ) as? [String: Any] {
+            if let version = plist["CFBundleShortVersionString"] as? String,
+               !version.isEmpty {
+                metadata["version"] = .string(version)
+            }
+            if let build = plist["CFBundleVersion"] as? String,
+               !build.isEmpty {
+                metadata["build"] = .string(build)
+            }
+            if let bundleID = plist["CFBundleIdentifier"] as? String,
+               !bundleID.isEmpty {
+                metadata["bundle_identifier"] = .string(bundleID)
+            }
+        }
+        item["metadata"] = .object(metadata)
+        return item
+    }
+
+    private func itemHasStatus(
+        _ items: [[String: JSONValue]],
+        key: String,
+        status: String
+    ) -> Bool {
+        items.contains { item in
+            guard case .string(let itemKey)? = item["key"],
+                  case .string(let itemStatus)? = item["capture_status"]
+            else { return false }
+            return itemKey == key && itemStatus == status
+        }
+    }
+
+    private func rebuildPlan(
+        applicationPresent: Bool,
+        savedLaunchObserved: Bool,
+        oscQueryObserved: Bool
+    ) -> [JSONValue] {
+        var steps: [JSONValue] = [
+            .object([
+                "step": .int(1),
+                "action": .string("OPEN_VDMX_APPLICATION"),
+                "status": .string(applicationPresent ? "SUPPORTED" : "MISSING"),
+                "provenance_class": .string("OBSERVED"),
+                "notes": .string("Launch only the observed VDMX application; do not infer a different edition or version."),
+            ]),
+            .object([
+                "step": .int(2),
+                "action": .string(savedLaunchObserved ? "OPEN_DECLARED_WORKSPACE" : "CREATE_UNSAVED_WORKSPACE"),
+                "status": .string(savedLaunchObserved ? "REFERENCE_ONLY" : "MANUAL"),
+                "provenance_class": .string(savedLaunchObserved ? "REFERENCE_ONLY" : "USER_DECLARED"),
+                "notes": .string(savedLaunchObserved
+                    ? "Use the declared saved workspace reference when it is available; snapshot metadata does not replace its bytes."
+                    : "No safe saved workspace was observed. Recreate the unsaved/Demo workspace manually."),
+            ]),
+        ]
+
+        steps.append(.object([
+            "step": .int(3),
+            "action": .string("VERIFY_PUBLISHED_OSCQUERY_NAMESPACE"),
+            "status": .string(oscQueryObserved ? "OBSERVED" : "MANUAL"),
+            "provenance_class": .string(oscQueryObserved ? "OBSERVED" : "UNSUPPORTED"),
+            "notes": .string("Compare exact published OSC paths/types/ranges against the captured namespace before any state restore."),
+        ]))
+        steps.append(.object([
+            "step": .int(4),
+            "action": .string("RESTORE_STATEFUL_PUBLISHED_VALUES"),
+            "status": .string("NOT_APPLIED"),
+            "provenance_class": .string("OBSERVED"),
+            "notes": .string("Only stateful controls may be considered later. Event/button/trigger controls are never replayed by this capture operation."),
+        ]))
+        steps.append(.object([
+            "step": .int(5),
+            "action": .string("REVIEW_UNSUPPORTED_INTERNAL_STATE"),
+            "status": .string("MANUAL"),
+            "provenance_class": .string("UNSUPPORTED"),
+            "notes": .string("Unpublished layers, FX graphs, plugin internals and media-bin organization remain manual/unsupported unless a real saved VDMX project is available."),
+        ]))
+        return steps
+    }
+
+    private func reconstructionFingerprint(
+        items: [JSONValue],
+        rebuildPlan: [JSONValue]
+    ) -> String {
+        let value = JSONValue.object([
+            "items": .array(items),
+            "rebuild_plan": .array(rebuildPlan),
+        ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = (try? encoder.encode(value)) ?? Data()
+        return StageCoreSHA256.hexDigest(data)
     }
 
     private func locateApplication() -> URL? {
