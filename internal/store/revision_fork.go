@@ -63,6 +63,19 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		executionEnvironmentSnapshots[environment.ID] = snapshots
 	}
 
+	executionEnvironmentRebuildPlans := make(map[string]*ExecutionEnvironmentRebuildPlan, len(executionEnvironments))
+	for _, environment := range executionEnvironments {
+		plan, err := s.GetExecutionEnvironmentRebuildPlan(ctx, environment.ID)
+		if err != nil {
+			if err == domain.ErrNotFound {
+				continue
+			}
+			return domain.ProjectRevision{}, err
+		}
+		copy := plan
+		executionEnvironmentRebuildPlans[environment.ID] = &copy
+	}
+
 	newRevisionID, err := stageid.New()
 	if err != nil {
 		return domain.ProjectRevision{}, err
@@ -122,11 +135,13 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment: %w", err)
 		}
+		snapshotIDMap := make(map[string]string, len(executionEnvironmentSnapshots[environment.ID]))
 		for _, environmentSnapshot := range executionEnvironmentSnapshots[environment.ID] {
 			newEnvironmentSnapshotID, err := stageid.New()
 			if err != nil {
 				return domain.ProjectRevision{}, err
 			}
+			snapshotIDMap[environmentSnapshot.ID] = newEnvironmentSnapshotID
 			snapshotCanonical, err := executionenv.SnapshotCanonicalBytes(environmentSnapshot.Snapshot)
 			if err != nil {
 				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot canonical data: %w", err)
@@ -141,6 +156,43 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 				environmentSnapshot.ContentSHA256, createdBy, nowUS,
 			); err != nil {
 				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot: %w", err)
+			}
+		}
+
+		if sourcePlan := executionEnvironmentRebuildPlans[environment.ID]; sourcePlan != nil {
+			newSourceSnapshotID, ok := snapshotIDMap[sourcePlan.SourceSnapshotID]
+			if !ok {
+				return domain.ProjectRevision{}, fmt.Errorf("%w: assisted rebuild plan source snapshot missing during draft fork", domain.ErrConflict)
+			}
+			var matchedSnapshot *ExecutionEnvironmentSnapshot
+			for i := range executionEnvironmentSnapshots[environment.ID] {
+				if executionEnvironmentSnapshots[environment.ID][i].ID == sourcePlan.SourceSnapshotID {
+					matchedSnapshot = &executionEnvironmentSnapshots[environment.ID][i]
+					break
+				}
+			}
+			if matchedSnapshot == nil {
+				return domain.ProjectRevision{}, fmt.Errorf("%w: assisted rebuild plan source snapshot unavailable during draft fork", domain.ErrConflict)
+			}
+			planCanonical, err := executionenv.AssistedRebuildPlanCanonicalBytes(sourcePlan.Plan, matchedSnapshot.Snapshot)
+			if err != nil {
+				return domain.ProjectRevision{}, fmt.Errorf("clone assisted rebuild plan canonical data: %w", err)
+			}
+			newPlanID, err := stageid.New()
+			if err != nil {
+				return domain.ProjectRevision{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO execution_environment_rebuild_plans (
+					rebuild_plan_id, environment_manifest_id, revision_id, source_snapshot_id,
+					source_snapshot_sha256, plan_json, content_sha256,
+					created_by, created_at_us, updated_by, updated_at_us
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				newPlanID, newEnvironmentID, newRevisionID, newSourceSnapshotID,
+				sourcePlan.Plan.SourceSnapshotSHA256, string(planCanonical), sourcePlan.ContentSHA256,
+				createdBy, nowUS, createdBy, nowUS,
+			); err != nil {
+				return domain.ProjectRevision{}, fmt.Errorf("clone assisted rebuild plan: %w", err)
 			}
 		}
 	}

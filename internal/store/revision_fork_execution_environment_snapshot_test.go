@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -19,7 +20,19 @@ func TestEnsureProjectDraftClonesExecutionEnvironmentSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := s.CreateExecutionEnvironmentSnapshot(ctx, environment.ID, executionEnvironmentSnapshotFixture(environment), "test.operator")
+	snapshot, err := s.CreateExecutionEnvironmentSnapshot(ctx, environment.ID, executionEnvironmentSnapshotWithRebuild(environment), "test.operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := executionenv.SeedAssistedRebuildPlan(snapshot.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Steps = append(plan.Steps, executionenv.AssistedRebuildStep{
+		Step: 3, Action: "Manual projector check", Status: "MANUAL",
+		ProvenanceClass: executionenv.SnapshotProvenanceUserDeclared,
+	})
+	storedPlan, err := s.UpsertExecutionEnvironmentRebuildPlan(ctx, environment.ID, snapshot.ID, plan, "test.operator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,5 +63,17 @@ func TestEnsureProjectDraftClonesExecutionEnvironmentSnapshots(t *testing.T) {
 	}
 	if snapshots[0].CreatedBy != "fork.operator" {
 		t.Fatalf("cloned snapshot actor=%q", snapshots[0].CreatedBy)
+	}
+	clonedPlan, err := s.GetExecutionEnvironmentRebuildPlan(ctx, environments[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clonedPlan.ID == storedPlan.ID ||
+		clonedPlan.SourceSnapshotID != snapshots[0].ID ||
+		clonedPlan.ContentSHA256 != storedPlan.ContentSHA256 ||
+		clonedPlan.CreatedBy != "fork.operator" ||
+		clonedPlan.UpdatedBy != "fork.operator" ||
+		len(clonedPlan.Plan.Steps) != len(storedPlan.Plan.Steps) {
+		t.Fatalf("cloned plan=%+v source=%+v", clonedPlan, storedPlan)
 	}
 }
