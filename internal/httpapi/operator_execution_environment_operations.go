@@ -74,7 +74,8 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 		switch body.Kind {
 		case companionchannel.EnvironmentOperationOpen,
 			companionchannel.EnvironmentOperationReconnect,
-			companionchannel.EnvironmentOperationCaptureSnapshot:
+			companionchannel.EnvironmentOperationCaptureSnapshot,
+			companionchannel.EnvironmentOperationRestoreObservableState:
 		default:
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_OPERATION_KIND_INVALID"})
 			return
