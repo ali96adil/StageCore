@@ -28,6 +28,15 @@ type executionEnvironmentSnapshotDiffView struct {
 	Diff                   executionenv.SnapshotDiff `json:"diff"`
 }
 
+type executionEnvironmentSnapshotDetailView struct {
+	ExecutionEnvironmentID string                `json:"execution_environment_id"`
+	SnapshotID              string                `json:"snapshot_id"`
+	ContentSHA256           string                `json:"content_sha256"`
+	CreatedBy               string                `json:"created_by"`
+	CreatedAt               time.Time             `json:"created_at"`
+	Snapshot                executionenv.Snapshot `json:"snapshot"`
+}
+
 func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 	mux *http.ServeMux,
 	auth *userauth.Service,
@@ -78,6 +87,54 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		writeJSON(w, http.StatusOK, map[string]any{
 			"execution_environment_id": environment.ID,
 			"snapshots":                views,
+		})
+	}))
+
+	detail := collection + "/{snapshot_id}"
+	mux.HandleFunc("GET "+detail, withPermission(auth, userauth.PermissionProjectRead, func(
+		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+	) {
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+		if !ok {
+			return
+		}
+		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
+		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
+		if err != nil {
+			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_UNAVAILABLE")
+			return
+		}
+		if environment.RevisionID != revision.ID {
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND",
+			})
+			return
+		}
+		snapshotID := strings.TrimSpace(r.PathValue("snapshot_id"))
+		if snapshotID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_ID_REQUIRED",
+			})
+			return
+		}
+		item, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), snapshotID)
+		if err != nil {
+			writeExecutionEnvironmentSnapshotLookupError(w, err)
+			return
+		}
+		if item.EnvironmentManifestID != environment.ID || item.RevisionID != revision.ID {
+			writeJSON(w, http.StatusNotFound, map[string]any{
+				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, executionEnvironmentSnapshotDetailView{
+			ExecutionEnvironmentID: environment.ID,
+			SnapshotID:              item.ID,
+			ContentSHA256:           item.ContentSHA256,
+			CreatedBy:               item.CreatedBy,
+			CreatedAt:               item.CreatedAt,
+			Snapshot:                item.Snapshot,
 		})
 	}))
 

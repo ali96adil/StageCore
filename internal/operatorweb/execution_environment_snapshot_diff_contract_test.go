@@ -18,6 +18,12 @@ func TestExecutionEnvironmentSnapshotDiffUIContract(t *testing.T) {
 		"Compare captures",
 		"مقارنة اللقطات",
 		"No observable differences between these captures.",
+		"f025LoadRebuildPlan",
+		"f025RebuildPlanMarkup",
+		"rebuild_plan",
+		"reconstruction_fingerprint",
+		"View rebuild plan",
+		"عرض خطة إعادة البناء",
 	} {
 		if !strings.Contains(ui, token) {
 			t.Errorf("F-025 snapshot diff UI missing contract token %q", token)
