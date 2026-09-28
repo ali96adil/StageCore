@@ -86,7 +86,8 @@ private struct FixedEnvironmentOperationProvider: ExecutionEnvironmentOperationP
     func perform(
         kind: ExecutionEnvironmentOperationKind,
         manifest: [String: JSONValue],
-        sourceManifestSHA256: String
+        sourceManifestSHA256: String,
+        snapshot: [String: JSONValue]?
     ) async -> ExecutionEnvironmentProviderOutcome {
         guard kind == .captureSnapshot else {
             return .init(
