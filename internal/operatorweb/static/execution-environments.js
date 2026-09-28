@@ -42,7 +42,20 @@ const f025Strings = {
   "f025.identity": {"en":"Canonical identity","ar-IQ":"الهوية المعيارية"},
   "f025.reference_badge": {"en":"REFERENCE ONLY","ar-IQ":"مرجع فقط"},
   "f025.content_badge": {"en":"CONTENT BOUND","ar-IQ":"محتوى مرتبط"},
-  "f025.readiness_note": {"en":"SHOW Preflight inspects the bound Companion through the authenticated read-only F-025 transport.","ar-IQ":"يفحص SHOW Preflight الجهاز المرافق المرتبط عبر مسار F-025 الموثق والمخصص للقراءة فقط."}
+  "f025.readiness_note": {"en":"SHOW Preflight inspects the bound Companion through the authenticated read-only F-025 transport.","ar-IQ":"يفحص SHOW Preflight الجهاز المرافق المرتبط عبر مسار F-025 الموثق والمخصص للقراءة فقط."},
+  "f025.snapshots": {"en":"Capture history","ar-IQ":"سجل اللقطات"},
+  "f025.snapshots_loading": {"en":"Loading captured snapshots…","ar-IQ":"جارٍ تحميل اللقطات المسجلة…"},
+  "f025.snapshots_empty": {"en":"No captured snapshots yet.","ar-IQ":"لا توجد لقطات مسجلة بعد."},
+  "f025.snapshots_need_two": {"en":"Capture at least two snapshots to compare changes.","ar-IQ":"التقط Snapshotين على الأقل لمقارنة التغييرات."},
+  "f025.compare": {"en":"Compare captures","ar-IQ":"مقارنة اللقطات"},
+  "f025.before": {"en":"Before","ar-IQ":"قبل"},
+  "f025.after": {"en":"After","ar-IQ":"بعد"},
+  "f025.diff_identical": {"en":"No observable differences between these captures.","ar-IQ":"لا توجد فروقات مرصودة بين هاتين اللقطتين."},
+  "f025.diff_changed": {"en":"Observable changes found.","ar-IQ":"تم العثور على تغييرات مرصودة."},
+  "f025.diff_top_level": {"en":"Snapshot fields","ar-IQ":"حقول الـSnapshot"},
+  "f025.diff_added": {"en":"Added items","ar-IQ":"عناصر مضافة"},
+  "f025.diff_removed": {"en":"Removed items","ar-IQ":"عناصر محذوفة"},
+  "f025.diff_items": {"en":"Changed items","ar-IQ":"عناصر متغيرة"}
 };
 
 function f025T(key) {
@@ -68,6 +81,95 @@ async function f025LoadModel() {
   const revisionID = f025CurrentRevisionID();
   if (!revisionID) throw new Error("Current revision is unavailable.");
   return api(f025CollectionPath(revisionID));
+}
+
+function f025SnapshotCollectionPath(environmentID) {
+  return `${f025CollectionPath()}/${encodeURIComponent(environmentID)}/snapshots`;
+}
+
+function f025SnapshotLabel(snapshot) {
+  const shortID = String(snapshot.snapshot_id || "").slice(0, 8);
+  return `${fmtDate(snapshot.created_at)} · ${snapshot.capture_status || "UNKNOWN"} · ${shortID}`;
+}
+
+function f025SnapshotDiffMarkup(diff) {
+  if (diff?.identical) {
+    return `<div class="message success">${esc(f025T("f025.diff_identical"))}</div>`;
+  }
+  const sections = [];
+  if (diff?.top_level_fields?.length) {
+    sections.push(`<p><strong>${esc(f025T("f025.diff_top_level"))}:</strong> ${esc(diff.top_level_fields.join(", "))}</p>`);
+  }
+  if (diff?.added_items?.length) {
+    sections.push(`<p><strong>${esc(f025T("f025.diff_added"))}:</strong> ${esc(diff.added_items.join(", "))}</p>`);
+  }
+  if (diff?.removed_items?.length) {
+    sections.push(`<p><strong>${esc(f025T("f025.diff_removed"))}:</strong> ${esc(diff.removed_items.join(", "))}</p>`);
+  }
+  if (diff?.changed_items?.length) {
+    const changed = diff.changed_items.map((item) =>
+      `${esc(item.key)} [${esc((item.changed_fields || []).join(", "))}]`
+    ).join("<br>");
+    sections.push(`<p><strong>${esc(f025T("f025.diff_items"))}:</strong><br>${changed}</p>`);
+  }
+  return `<div class="message warn"><strong>${esc(f025T("f025.diff_changed"))}</strong>${sections.join("")}</div>`;
+}
+
+async function f025CompareSnapshots(card, environmentID) {
+  const before = card.querySelector(".f025-snapshot-before")?.value || "";
+  const after = card.querySelector(".f025-snapshot-after")?.value || "";
+  const result = card.querySelector(".f025-snapshot-diff-result");
+  if (!before || !after || !result) return;
+  try {
+    const query = new URLSearchParams({
+      before_snapshot_id: before,
+      after_snapshot_id: after,
+    });
+    const payload = await api(`${f025SnapshotCollectionPath(environmentID)}/diff?${query}`);
+    result.innerHTML = f025SnapshotDiffMarkup(payload.diff);
+  } catch (error) {
+    result.innerHTML = `<div class="message error">${esc(errorMessage(error))}</div>`;
+  }
+}
+
+async function f025HydrateSnapshotDiffs() {
+  const cards = [...content.querySelectorAll("[data-f025-snapshot-diff]")];
+  await Promise.all(cards.map(async (card) => {
+    const environmentID = card.dataset.environmentId;
+    if (!environmentID) return;
+    try {
+      const payload = await api(f025SnapshotCollectionPath(environmentID));
+      const snapshots = payload.snapshots || [];
+      if (!snapshots.length) {
+        card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><p class="muted">${esc(f025T("f025.snapshots_empty"))}</p>`;
+        return;
+      }
+      if (snapshots.length < 2) {
+        card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><p class="muted">${esc(f025T("f025.snapshots_need_two"))}</p>`;
+        return;
+      }
+      const options = (selectedID) => snapshots.map((snapshot) =>
+        `<option value="${esc(snapshot.snapshot_id)}" ${snapshot.snapshot_id === selectedID ? "selected" : ""}>${esc(f025SnapshotLabel(snapshot))}</option>`
+      ).join("");
+      const before = snapshots[snapshots.length - 2];
+      const after = snapshots[snapshots.length - 1];
+      card.innerHTML = `
+        <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
+        <div class="form-grid two">
+          <label>${esc(f025T("f025.before"))}<select class="f025-snapshot-before">${options(before.snapshot_id)}</select></label>
+          <label>${esc(f025T("f025.after"))}<select class="f025-snapshot-after">${options(after.snapshot_id)}</select></label>
+        </div>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="button f025-snapshot-compare" type="button">${esc(f025T("f025.compare"))}</button>
+        </div>
+        <div class="f025-snapshot-diff-result" style="margin-top:10px"></div>`;
+      card.querySelector(".f025-snapshot-compare")?.addEventListener("click", () =>
+        f025CompareSnapshots(card, environmentID)
+      );
+    } catch (error) {
+      card.innerHTML = `<p class="eyebrow">${esc(f025T("f025.snapshots"))}</p><div class="message error">${esc(errorMessage(error))}</div>`;
+    }
+  }));
 }
 
 function f025HasReferenceOnly(environment) {
@@ -104,6 +206,10 @@ function f025EnvironmentCard(environment, roles, editable) {
       </div>
     </div>
     <details style="margin-top:12px"><summary>${esc(f025T("f025.manifest_json"))}</summary><pre class="mono muted">${esc(JSON.stringify(environment.manifest, null, 2))}</pre></details>
+    <div data-f025-snapshot-diff data-environment-id="${esc(environment.execution_environment_id)}" style="margin-top:14px">
+      <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
+      <p class="muted">${esc(f025T("f025.snapshots_loading"))}</p>
+    </div>
     ${editable ? `<div class="toolbar" style="margin-top:12px"><button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
   </article>`;
 }
@@ -252,6 +358,7 @@ async function renderExecutionEnvironments(message = "") {
   document.querySelector('[data-page="environments"]')?.replaceChildren(document.createTextNode(f025T("f025.nav")));
   document.getElementById("f025Refresh")?.addEventListener("click", () => renderExecutionEnvironments().catch(f025Error));
   document.getElementById("f025StartEdit")?.addEventListener("click", f025StartEdit);
+  await f025HydrateSnapshotDiffs();
   if (!editable) return;
 
   const policy = document.getElementById("f025CapturePolicy");

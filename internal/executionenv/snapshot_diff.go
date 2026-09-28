@@ -10,17 +10,17 @@ import (
 // SnapshotDiff is a deterministic, read-only comparison between two captures
 // of the exact same execution-environment manifest identity.
 type SnapshotDiff struct {
-	Identical          bool
-	TopLevelFields     []string
-	AddedItems         []string
-	RemovedItems       []string
-	ChangedItems       []SnapshotItemDiff
+	Identical      bool               `json:"identical"`
+	TopLevelFields []string           `json:"top_level_fields"`
+	AddedItems     []string           `json:"added_items"`
+	RemovedItems   []string           `json:"removed_items"`
+	ChangedItems   []SnapshotItemDiff `json:"changed_items"`
 }
 
 // SnapshotItemDiff reports only fields whose normalized values changed.
 type SnapshotItemDiff struct {
-	Key           string
-	ChangedFields []string
+	Key           string   `json:"key"`
+	ChangedFields []string `json:"changed_fields"`
 }
 
 // DiffSnapshots compares canonicalized snapshots from the same environment,
