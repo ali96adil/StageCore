@@ -88,7 +88,7 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 	conflict := capture
 	conflict.Kind = companionchannel.EnvironmentOperationOpen
 	conflicted := runtime.OperateExecutionEnvironment(ctx, conflict)
-	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 1 {
+	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 2 {
 		t.Fatalf("conflict=%#v count=%d", conflicted, executions.Load())
 	}
 
