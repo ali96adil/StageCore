@@ -46,7 +46,7 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 
 	credential := authenticateRuntimeCompanion(t, ctx, auth, companionID, privateKey)
 	var executions atomic.Int32
-	agent := startEnvironmentOperationAgent(t, runtimeURL, credential.Token, companionID, &executions)
+	agent := startEnvironmentOperationAgent(t, runtimeURL, credential.Token, companionID, s, &executions)
 	defer agent.close(t)
 	waitForRuntime(t, func() bool {
 		return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID)
@@ -65,15 +65,19 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		first.CaptureObject == nil ||
 		first.CaptureObject.Purpose != companionchannel.EnvironmentCaptureObjectPurposeExecutionEnvironment ||
 		first.CaptureObject.ContentHash != strings.Repeat("d", 64) ||
-		first.CaptureObject.SizeBytes != 123456 {
+		first.CaptureObject.SizeBytes != 123456 ||
+		first.CaptureUpload == nil ||
+		first.CaptureUpload.Status != string(store.CompanionUploadTicketCompleted) ||
+		first.CaptureUpload.ContentHash != strings.Repeat("d", 64) ||
+		first.CaptureUpload.SizeBytes != 123456 {
 		t.Fatalf("capture=%#v", first)
 	}
-	if got := executions.Load(); got != 1 {
-		t.Fatalf("capture execution count=%d want 1", got)
+	if got := executions.Load(); got != 2 {
+		t.Fatalf("capture execution count=%d want 2 (capture + separate upload command)", got)
 	}
 
 	duplicate := runtime.OperateExecutionEnvironment(ctx, capture)
-	if duplicate.Status != companionchannel.EnvironmentOperationCompleted || duplicate.Snapshot == nil || executions.Load() != 1 {
+	if duplicate.Status != companionchannel.EnvironmentOperationCompleted || duplicate.Snapshot == nil || duplicate.CaptureUpload == nil || executions.Load() != 2 {
 		t.Fatalf("duplicate=%#v count=%d", duplicate, executions.Load())
 	}
 
@@ -87,14 +91,14 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		restore.Kind != companionchannel.EnvironmentOperationRestoreObservableState {
 		t.Fatalf("restore=%#v", restore)
 	}
-	if got := executions.Load(); got != 2 {
-		t.Fatalf("restore execution count=%d want 2", got)
+	if got := executions.Load(); got != 3 {
+		t.Fatalf("restore execution count=%d want 3", got)
 	}
 
 	conflict := capture
 	conflict.Kind = companionchannel.EnvironmentOperationOpen
 	conflicted := runtime.OperateExecutionEnvironment(ctx, conflict)
-	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 2 {
+	if conflicted.Status != companionchannel.EnvironmentOperationFailed || conflicted.ErrorCode != "ENVIRONMENT_OPERATION_ID_CONFLICT" || executions.Load() != 3 {
 		t.Fatalf("conflict=%#v count=%d", conflicted, executions.Load())
 	}
 
@@ -129,8 +133,8 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("unsupported=%#v", unsupported)
 	}
 
-	if executions.Load() != 5 {
-		t.Fatalf("wire execution count=%d want 5 (capture, restore, mismatch, invalid descriptor, unsupported)", executions.Load())
+	if executions.Load() != 6 {
+		t.Fatalf("wire execution count=%d want 6 (capture, capture upload, restore, mismatch, invalid descriptor, unsupported)", executions.Load())
 	}
 	if role.ID == "" {
 		t.Fatal("environment operation role was not created")
@@ -226,6 +230,7 @@ func runtimeEnvironmentOperationFixture(
 func startEnvironmentOperationAgent(
 	t *testing.T,
 	runtimeURL, token, companionID string,
+	s *store.Store,
 	executions *atomic.Int32,
 ) *runtimeTestAgent {
 	t.Helper()
@@ -235,11 +240,11 @@ func startEnvironmentOperationAgent(
 	}
 	connection.MaxPayloadBytes = 64 << 10
 	agent := &runtimeTestAgent{connection: connection, done: make(chan error, 1)}
-	go func() { agent.done <- serveEnvironmentOperationAgent(connection, companionID, executions) }()
+	go func() { agent.done <- serveEnvironmentOperationAgent(connection, companionID, s, executions) }()
 	return agent
 }
 
-func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID string, executions *atomic.Int32) error {
+func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID string, s *store.Store, executions *atomic.Int32) error {
 	hello := runtimeEnvironmentOperationHello(companionID, nil, nil, "UNKNOWN")
 	if err := websocket.JSON.Send(connection, hello); err != nil {
 		return err
@@ -273,6 +278,63 @@ func serveEnvironmentOperationAgent(connection *websocket.Conn, companionID stri
 			return err
 		}
 		executions.Add(1)
+		if request.Capability == companionchannel.EnvironmentCaptureUploadCapability {
+			var upload struct {
+				TicketID string `json:"ticket_id"`
+				UploadCredential string `json:"upload_credential"`
+				RuntimeSessionID string `json:"runtime_session_id"`
+				Purpose string `json:"purpose"`
+				ContentHash string `json:"content_hash"`
+				SizeBytes int64 `json:"size_bytes"`
+			}
+			if err := json.Unmarshal(request.Parameters, &upload); err != nil {
+				return err
+			}
+			result := map[string]any{
+				"type": "execution.result",
+				"schema_version": 1,
+				"message_id": request.ExecutionID,
+				"execution_id": request.ExecutionID,
+				"status": "COMPLETED",
+				"ack_level": "ACCEPTED",
+				"error_code": nil,
+				"response_summary": "capture upload committed through simulated verified HTTP path",
+				"output": map[string]any{
+					"ticket_id": upload.TicketID,
+					"status": "COMPLETED",
+					"content_hash": upload.ContentHash,
+					"size_bytes": upload.SizeBytes,
+				},
+			}
+			ticket, err := s.AuthorizeCompanionUploadTicket(context.Background(), upload.UploadCredential)
+			if err != nil ||
+				ticket.ID != upload.TicketID ||
+				ticket.RuntimeSessionID != upload.RuntimeSessionID ||
+				string(ticket.Purpose) != upload.Purpose ||
+				!strings.EqualFold(ticket.ExpectedContentHash, upload.ContentHash) ||
+				ticket.ExpectedSizeBytes != upload.SizeBytes ||
+				request.MachineRoleID != ready.MachineRoleID ||
+				request.RuntimeSnapshotID != ready.RuntimeSnapshotID {
+				result["status"] = "FAILED"
+				result["ack_level"] = "NONE"
+				result["error_code"] = "CAPTURE_UPLOAD_SCOPE_MISMATCH"
+				result["response_summary"] = "capture upload scope mismatch"
+			} else if _, err := s.CompleteCompanionUploadTicket(
+				context.Background(),
+				ticket.ID,
+				upload.ContentHash,
+				upload.SizeBytes,
+			); err != nil {
+				result["status"] = "FAILED"
+				result["ack_level"] = "NONE"
+				result["error_code"] = "CAPTURE_UPLOAD_COMPLETION_REJECTED"
+				result["response_summary"] = "capture upload completion rejected"
+			}
+			if err := websocket.JSON.Send(connection, result); err != nil {
+				return err
+			}
+			continue
+		}
 		var parameters struct {
 			OperationKind string `json:"operation_kind"`
 			AdapterKey string `json:"adapter_key"`
@@ -380,7 +442,10 @@ func runtimeEnvironmentOperationHello(companionID string, roleID, snapshotID *st
 		"agent_version": "0.1.0",
 		"platform": "macos",
 		"architecture": "arm64",
-		"capabilities": []string{companionchannel.ExecutionEnvironmentOperationCapability},
+		"capabilities": []string{
+			companionchannel.ExecutionEnvironmentOperationCapability,
+			companionchannel.EnvironmentCaptureUploadCapability,
+		},
 		"machine_role_id": roleID,
 		"role_key": "VIDEO-ENV",
 		"applied_runtime_snapshot_id": snapshotID,

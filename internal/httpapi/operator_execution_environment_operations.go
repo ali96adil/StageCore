@@ -31,6 +31,7 @@ type executionEnvironmentOperationView struct {
 	ResponseSummary string                                      `json:"response_summary,omitempty"`
 	Snapshot        *executionenv.Snapshot                      `json:"snapshot,omitempty"`
 	CaptureObject   *companionchannel.EnvironmentCaptureObjectDescriptor `json:"capture_object,omitempty"`
+	CaptureUpload   *companionchannel.EnvironmentCaptureUploadReceipt `json:"capture_upload,omitempty"`
 }
 
 // WithOperatorExecutionEnvironmentOperations exposes only the bounded F-025
@@ -100,6 +101,7 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			ResponseSummary: result.ResponseSummary,
 			Snapshot: result.Snapshot,
 			CaptureObject: result.CaptureObject,
+			CaptureUpload: result.CaptureUpload,
 		})
 	}))
 }

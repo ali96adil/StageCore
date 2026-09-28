@@ -121,6 +121,7 @@ public actor CompanionBootstrap {
         let mediaSynchronizer: (any CompanionMediaSynchronizer)?
         let visualEngine: VisualEngine?
         let liveSourceEngine: LiveSourceEngine?
+        let captureObjectSource: (any CompanionCaptureObjectSource)?
         #if os(macOS)
         let cacheRoot = configuration.mediaCacheRoot ?? FileManager.default.urls(
             for: .cachesDirectory,
@@ -133,6 +134,11 @@ public actor CompanionBootstrap {
             session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
         )
         mediaSynchronizer = mediaCache
+        captureObjectSource = try DirectoryCompanionCaptureObjectSource(
+            rootURL: cacheRoot
+                .deletingLastPathComponent()
+                .appendingPathComponent("capture-objects", isDirectory: true)
+        )
         if configuration.nativeVisualEngineEnabled == true {
             let renderer = try NativeVisualRenderer()
             visualEngine = VisualEngine(
@@ -150,6 +156,7 @@ public actor CompanionBootstrap {
         mediaSynchronizer = nil
         visualEngine = nil
         liveSourceEngine = nil
+        captureObjectSource = nil
         #endif
         self.visualEngine = visualEngine
         self.liveSourceEngine = liveSourceEngine
@@ -174,7 +181,11 @@ public actor CompanionBootstrap {
         // explicit per adapter. Unknown adapters and unsupported operation
         // kinds fail truthfully; there is never a command/shell fallback.
         executors.append(try ExecutionEnvironmentOperationExecutor(providers: operationProviders))
-        let capabilities = executors.map(\.capabilityKey).sorted()
+        var capabilities = executors.map(\.capabilityKey)
+        if captureObjectSource != nil {
+            capabilities.append(CompanionCaptureUploadExecutor.capability)
+        }
+        capabilities.sort()
 
         let report = CompanionReportIdentity(
             displayName: configuration.displayName,
@@ -193,6 +204,18 @@ public actor CompanionBootstrap {
             session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
         )
         self.securityClient = securityClient
+
+        if let captureObjectSource {
+            executors.append(
+                try CompanionCaptureUploadExecutor(
+                    apiBaseURL: configuration.hubAPIBaseURL,
+                    securityPolicy: securityPolicy,
+                    authenticator: securityClient,
+                    source: captureObjectSource,
+                    session: HubTLS.makeSession(pinnedCertificateSHA256: certificatePin)
+                )
+            )
+        }
 
         let companionSession = CompanionSession(
             configuration: CompanionSessionConfiguration(
