@@ -23,6 +23,7 @@ type Kind string
 
 const (
 	KindMediaSync        Kind = "MEDIA_SYNC"
+	KindCaptureUpload    Kind = "CAPTURE_UPLOAD"
 	KindSoftwareDownload Kind = "SOFTWARE_DOWNLOAD"
 	KindPluginOperation  Kind = "PLUGIN_OPERATION"
 	KindBackup           Kind = "BACKUP"
