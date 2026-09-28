@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -111,16 +113,12 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 
 		before, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), beforeID)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{
-				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
-			})
+			writeExecutionEnvironmentSnapshotLookupError(w, err)
 			return
 		}
 		after, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), afterID)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{
-				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
-			})
+			writeExecutionEnvironmentSnapshotLookupError(w, err)
 			return
 		}
 		if before.EnvironmentManifestID != environment.ID ||
@@ -147,4 +145,17 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 			Diff:                   diff,
 		})
 	}))
+}
+
+
+func writeExecutionEnvironmentSnapshotLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, domain.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
+		})
+		return
+	}
+	writeExecutionEnvironmentStoreError(
+		w, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_UNAVAILABLE",
+	)
 }
