@@ -13,22 +13,41 @@ public enum ExecutionEnvironmentProviderStatus: Sendable, Equatable {
     case failed
 }
 
+public struct ExecutionEnvironmentCaptureObjectDescriptor: Sendable, Equatable {
+    public var purpose: String
+    public var contentHash: String
+    public var sizeBytes: Int64
+
+    public init(
+        purpose: String = "EXECUTION_ENVIRONMENT_CAPTURE",
+        contentHash: String,
+        sizeBytes: Int64
+    ) {
+        self.purpose = purpose
+        self.contentHash = contentHash
+        self.sizeBytes = sizeBytes
+    }
+}
+
 public struct ExecutionEnvironmentProviderOutcome: Sendable, Equatable {
     public var status: ExecutionEnvironmentProviderStatus
     public var errorCode: String?
     public var responseSummary: String
     public var snapshot: [String: JSONValue]?
+    public var captureObject: ExecutionEnvironmentCaptureObjectDescriptor?
 
     public init(
         status: ExecutionEnvironmentProviderStatus,
         errorCode: String? = nil,
         responseSummary: String,
-        snapshot: [String: JSONValue]? = nil
+        snapshot: [String: JSONValue]? = nil,
+        captureObject: ExecutionEnvironmentCaptureObjectDescriptor? = nil
     ) {
         self.status = status
         self.errorCode = errorCode
         self.responseSummary = responseSummary
         self.snapshot = snapshot
+        self.captureObject = captureObject
     }
 }
 
@@ -157,12 +176,39 @@ public actor ExecutionEnvironmentOperationRouter {
             if kind != .captureSnapshot && outcome.snapshot != nil {
                 return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_RESULT_INVALID", responseSummary: "non-capture provider returned an unexpected snapshot payload")
             }
+            if kind != .captureSnapshot && outcome.captureObject != nil {
+                return .init(status: .failed, ackLevel: .none, errorCode: "ENVIRONMENT_OPERATION_RESULT_INVALID", responseSummary: "capture_object is only valid for CAPTURE_SNAPSHOT")
+            }
+            if let captureObject = outcome.captureObject {
+                let normalizedHash = captureObject.contentHash.lowercased()
+                let validHash = normalizedHash.utf8.count == 64 && normalizedHash.utf8.allSatisfy { byte in
+                    (48...57).contains(byte) || (97...102).contains(byte)
+                }
+                guard captureObject.purpose == "EXECUTION_ENVIRONMENT_CAPTURE",
+                      validHash,
+                      captureObject.sizeBytes >= 0
+                else {
+                    return .init(
+                        status: .failed,
+                        ackLevel: .none,
+                        errorCode: "ENVIRONMENT_CAPTURE_OBJECT_INVALID",
+                        responseSummary: "capture object descriptor is invalid"
+                    )
+                }
+            }
             var output: [String: JSONValue] = [
                 "operation_kind": .string(kind.rawValue),
                 "adapter_key": .string(adapterKey),
                 "source_manifest_sha256": .string(sourceManifestSHA256),
             ]
             if let snapshot = outcome.snapshot { output["snapshot"] = .object(snapshot) }
+            if let captureObject = outcome.captureObject {
+                output["capture_object"] = .object([
+                    "purpose": .string(captureObject.purpose),
+                    "content_hash": .string(captureObject.contentHash.lowercased()),
+                    "size_bytes": .int(Int(captureObject.sizeBytes)),
+                ])
+            }
             return .init(status: .completed, ackLevel: .accepted, responseSummary: outcome.responseSummary, output: output)
         }
     }

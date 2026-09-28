@@ -44,6 +44,14 @@ type EnvironmentOperationRequest struct {
 	TimeoutMS int64
 }
 
+type EnvironmentCaptureObjectDescriptor struct {
+	Purpose     string `json:"purpose"`
+	ContentHash string `json:"content_hash"`
+	SizeBytes   int64  `json:"size_bytes"`
+}
+
+const EnvironmentCaptureObjectPurposeExecutionEnvironment = "EXECUTION_ENVIRONMENT_CAPTURE"
+
 type EnvironmentOperationResult struct {
 	OperationID string
 	Kind EnvironmentOperationKind
@@ -51,6 +59,7 @@ type EnvironmentOperationResult struct {
 	ErrorCode string
 	ResponseSummary string
 	Snapshot *executionenv.Snapshot
+	CaptureObject *EnvironmentCaptureObjectDescriptor
 }
 
 type environmentOperationBinding struct {
@@ -71,6 +80,7 @@ type environmentOperationOutput struct {
 	AdapterKey string `json:"adapter_key"`
 	SourceManifestSHA256 string `json:"source_manifest_sha256"`
 	Snapshot json.RawMessage `json:"snapshot,omitempty"`
+	CaptureObject *EnvironmentCaptureObjectDescriptor `json:"capture_object,omitempty"`
 }
 
 func (c *RuntimeChannel) OperateExecutionEnvironment(ctx context.Context, request EnvironmentOperationRequest) EnvironmentOperationResult {
@@ -219,10 +229,42 @@ func (c *RuntimeChannel) OperateExecutionEnvironment(ctx context.Context, reques
 			return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_SNAPSHOT_RESULT_MISMATCH", "snapshot capture result does not match source manifest identity")
 		}
 		result.Snapshot = &normalized
-	} else if len(output.Snapshot) > 0 && string(output.Snapshot) != "null" {
-		return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_RESULT_INVALID", "non-capture operation result must not include snapshot payload")
+		if output.CaptureObject != nil {
+			descriptor, err := normalizeEnvironmentCaptureObject(*output.CaptureObject)
+			if err != nil {
+				return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_CAPTURE_OBJECT_INVALID", err.Error())
+			}
+			result.CaptureObject = &descriptor
+		}
+	} else {
+		if len(output.Snapshot) > 0 && string(output.Snapshot) != "null" {
+			return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_RESULT_INVALID", "non-capture operation result must not include snapshot payload")
+		}
+		if output.CaptureObject != nil {
+			return environmentOperationFailure(request, EnvironmentOperationFailed, "ENVIRONMENT_OPERATION_RESULT_INVALID", "capture_object is only valid for CAPTURE_SNAPSHOT")
+		}
 	}
 	return result
+}
+
+func normalizeEnvironmentCaptureObject(input EnvironmentCaptureObjectDescriptor) (EnvironmentCaptureObjectDescriptor, error) {
+	normalized := input
+	normalized.Purpose = strings.TrimSpace(input.Purpose)
+	normalized.ContentHash = strings.ToLower(strings.TrimSpace(input.ContentHash))
+	if normalized.Purpose != EnvironmentCaptureObjectPurposeExecutionEnvironment {
+		return EnvironmentCaptureObjectDescriptor{}, fmt.Errorf("capture object purpose is unsupported")
+	}
+	if len(normalized.ContentHash) != sha256.Size*2 {
+		return EnvironmentCaptureObjectDescriptor{}, fmt.Errorf("capture object content_hash must be a SHA-256 hex digest")
+	}
+	decoded, err := hex.DecodeString(normalized.ContentHash)
+	if err != nil || len(decoded) != sha256.Size {
+		return EnvironmentCaptureObjectDescriptor{}, fmt.Errorf("capture object content_hash must be a SHA-256 hex digest")
+	}
+	if normalized.SizeBytes < 0 {
+		return EnvironmentCaptureObjectDescriptor{}, fmt.Errorf("capture object size_bytes cannot be negative")
+	}
+	return normalized, nil
 }
 
 func environmentOperationIdentityHash(request EnvironmentOperationRequest, manifestHash, restoreSnapshotHash, roleID, runtimeSnapshotID, companionID string) string {
