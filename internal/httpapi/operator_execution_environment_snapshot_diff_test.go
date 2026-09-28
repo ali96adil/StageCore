@@ -76,6 +76,35 @@ func TestOperatorExecutionEnvironmentSnapshotDiffIsReadOnlyAndScoped(t *testing.
 		t.Fatal(err)
 	}
 
+	listPath := "/api/v1/projects/" + project.ID +
+		"/revisions/" + revision.ID +
+		"/execution-environments/" + environment.ID +
+		"/snapshots"
+	listReq := authenticatedExecutionEnvironmentRequest(
+		t, owner.Token, owner.CSRFToken, http.MethodGet, listPath, nil,
+	)
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("snapshot list status=%d body=%s", listRes.Code, listRes.Body.String())
+	}
+	var listed struct {
+		ExecutionEnvironmentID string                                    `json:"execution_environment_id"`
+		Snapshots              []executionEnvironmentSnapshotSummaryView `json:"snapshots"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.ExecutionEnvironmentID != environment.ID || len(listed.Snapshots) != 2 {
+		t.Fatalf("snapshot list=%+v", listed)
+	}
+	if listed.Snapshots[0].SnapshotID != before.ID ||
+		listed.Snapshots[1].SnapshotID != after.ID ||
+		listed.Snapshots[0].CaptureStatus != executionenv.SnapshotPartial ||
+		listed.Snapshots[0].ContentSHA256 == "" {
+		t.Fatalf("snapshot summaries=%+v", listed.Snapshots)
+	}
+
 	base := "/api/v1/projects/" + project.ID +
 		"/revisions/" + revision.ID +
 		"/execution-environments/" + environment.ID +
