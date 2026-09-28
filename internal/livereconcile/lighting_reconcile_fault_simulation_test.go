@@ -17,7 +17,7 @@ func TestLightingReconcileSimulationExactSameCuePartialDriftCanReachFencedACK(t 
 	if got := pre.Observation.ChannelLevels[2]; got != 0 {
 		t.Fatalf("fixture observed slot 2=%d want 0", got)
 	}
-	if got := pre.Desired.ExpectedDMX[2]; got != 140 {
+	if got := pre.Desired.Channels[2]; got != 140 {
 		t.Fatalf("fixture desired slot 2=%d want 140", got)
 	}
 
