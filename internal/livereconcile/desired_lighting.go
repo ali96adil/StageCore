@@ -37,9 +37,38 @@ type Service struct{ sessions SessionStore }
 
 func NewService(sessions SessionStore) *Service { return &Service{sessions: sessions} }
 
+type DesiredLightingMode string
+
+const (
+	DesiredLightingChannelLevels DesiredLightingMode = "CHANNEL_LEVELS"
+	DesiredLightingBlackout      DesiredLightingMode = "BLACKOUT"
+)
+
+// DesiredLightingTarget preserves the exact logical target authored by the
+// current Cue alongside the pinned configuration's resulting DMX byte.
+// Keeping both prevents unsafe reverse conversion from an observed DMX byte
+// back to a logical percentage (which can be ambiguous after clamp/inversion/
+// quantization).
+type DesiredLightingTarget struct {
+	ChannelKey   string
+	LogicalLevel float64
+	DMXValue     uint8
+}
+
+// CueLightingProjection is the pure current-Cue lighting projection. Channels
+// remains the software-DMX comparison surface; Targets preserves the exact
+// logical values needed to materialize a later state correction without
+// replaying the historical Cue action.
+type CueLightingProjection struct {
+	Mode     DesiredLightingMode
+	Channels map[int]uint8
+	Targets  map[int]DesiredLightingTarget
+}
+
 // DesiredLighting is an immutable-by-convention read model. Channels holds
-// the logical level converted through the pinned snapshot's channel binding
-// to software DMX slots. It is NOT independently observed LED/decoder state.
+// the target converted through the pinned snapshot's channel binding to
+// software DMX slots. Targets retains exact authored logical channel values.
+// Neither is independently observed LED/decoder state.
 type DesiredLighting struct {
 	ProjectID      string
 	SessionID      string
@@ -47,7 +76,9 @@ type DesiredLighting struct {
 	SnapshotHash   string
 	CueID          string
 	CueExecutionID string
+	Mode           DesiredLightingMode
 	Channels       map[int]uint8
+	Targets        map[int]DesiredLightingTarget
 }
 
 // ReadCurrentLighting resolves only the current *completed* Cue and requires
@@ -107,7 +138,7 @@ func (s *Service) ReadCurrentLighting(ctx context.Context, projectID, deviceID s
 		manifest.ProjectID != projectID || manifest.RevisionID != pinned.RevisionID {
 		return fail("manifest does not match published Project and versioned snapshot")
 	}
-	channels, err := DeriveCueLighting(manifest, *session.CurrentCueID, deviceID)
+	projection, err := DeriveCueLightingProjection(manifest, *session.CurrentCueID, deviceID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -136,7 +167,8 @@ func (s *Service) ReadCurrentLighting(ctx context.Context, projectID, deviceID s
 	return DesiredLighting{
 		ProjectID: projectID, SessionID: session.ID, SnapshotID: pinned.ID,
 		SnapshotHash: pinned.ContentHash, CueID: *session.CurrentCueID,
-		CueExecutionID: latest.ID, Channels: channels,
+		CueExecutionID: latest.ID, Mode: projection.Mode,
+		Channels: projection.Channels, Targets: projection.Targets,
 	}, nil
 }
 
@@ -171,12 +203,32 @@ func sameCompletedSession(old, next domain.Session) bool {
 		!next.StateTruth.ManualConfirmationRequired
 }
 
-// DeriveCueLighting is a pure conservative projection of the current Cue;
-// it does not consult prior GO commands or invent default levels for slots
-// omitted from this Cue. A partial Cue is UNKNOWN, never optimistically MATCH.
+// DeriveCueLighting is the compatibility view used by existing read-only
+// comparison callers. The richer projection below is authoritative for any
+// future correction materialization.
 func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[int]uint8, error) {
-	fail := func(reason string) (map[int]uint8, error) {
-		return nil, fmt.Errorf("%w: %s", ErrDesiredUncertain, reason)
+	projection, err := DeriveCueLightingProjection(manifest, cueID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	return copyDMXChannels(projection.Channels), nil
+}
+
+// DeriveCueLightingProjection is a pure conservative projection of the current
+// Cue. It does not consult prior GO commands or invent defaults for slots
+// omitted from this Cue. A partial Cue is UNKNOWN, never optimistically MATCH.
+//
+// CHANNELS_SET and completed CHANNELS_FADE actions preserve the exact logical
+// target percentages. Historical fade timing is intentionally not preserved:
+// future reconciliation materializes current state, never replays the fade.
+// BLACKOUT is represented separately because physical DMX zero is not safely
+// reversible to logical channel level for inverted channels.
+func DeriveCueLightingProjection(
+	manifest snapshot.Manifest,
+	cueID, deviceID string,
+) (CueLightingProjection, error) {
+	fail := func(reason string) (CueLightingProjection, error) {
+		return CueLightingProjection{}, fmt.Errorf("%w: %s", ErrDesiredUncertain, reason)
 	}
 	if manifest.SchemaVersion != snapshot.ManifestSchemaVersion ||
 		strings.TrimSpace(manifest.ProjectID) == "" ||
@@ -204,6 +256,8 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 	if len(configured) == 0 {
 		return fail("device has no enabled lighting channels")
 	}
+	index := lightingnode.ChannelIndex(binding.Configuration)
+
 	var cue *snapshot.Cue
 	for i := range manifest.Cues {
 		if manifest.Cues[i].ID == cueID {
@@ -216,7 +270,10 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 	if cue == nil || !cue.Enabled {
 		return fail("current Cue not found or disabled in snapshot")
 	}
+
 	result := make(map[int]uint8)
+	targets := make(map[int]DesiredLightingTarget)
+	mode := DesiredLightingChannelLevels
 	blackout := false
 	for _, action := range cue.Actions {
 		if !action.Enabled {
@@ -224,8 +281,6 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 		}
 		target := manifest.ResolveTarget(action.TargetRef)
 		if target == nil {
-			// A missing lighting-capability target could be this very device:
-			// never guess its intended channels when authoring is malformed.
 			switch action.CapabilityKey {
 			case lightingnode.CapabilityChannelsSet, lightingnode.CapabilityChannelsFade,
 				lightingnode.CapabilityBlackout:
@@ -236,14 +291,18 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 		if target.LogicalType != "stage_device" {
 			continue
 		}
-		var address struct { DeviceID string `json:"device_id"` }
+		var address struct {
+			DeviceID string `json:"device_id"`
+		}
 		if err := json.Unmarshal(target.Configuration, &address); err != nil {
 			return fail("invalid Stage Device target configuration")
 		}
 		if strings.TrimSpace(address.DeviceID) != deviceID {
 			continue
 		}
-		var onError struct { OnError string `json:"on_error"` }
+		var onError struct {
+			OnError string `json:"on_error"`
+		}
 		if len(action.ErrorPolicy) != 0 {
 			if err := json.Unmarshal(action.ErrorPolicy, &onError); err != nil {
 				return fail("invalid lighting action error policy")
@@ -257,6 +316,7 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 			action.ExecutionMode != "PARALLEL_BARRIER" {
 			return fail("non-deterministic lighting action execution mode")
 		}
+
 		command := ""
 		switch action.CapabilityKey {
 		case lightingnode.CapabilityChannelsSet:
@@ -268,23 +328,32 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 		default:
 			return fail("Cue includes unsupported non-idempotent lighting action")
 		}
-		payload, err := lightingnode.ResolveCueCommandPayload(manifest.LightingNodes, deviceID, command, action.Parameters)
+		payload, err := lightingnode.ResolveCueCommandPayload(
+			manifest.LightingNodes, deviceID, command, action.Parameters,
+		)
 		if err != nil {
 			return fail("Cue lighting alias resolution failed: " + err.Error())
 		}
+
 		if command == lightingnode.CommandBlackout {
 			if len(result) != 0 || blackout {
 				return fail("combined blackout and per-channel actions are ambiguous")
 			}
 			blackout = true
-			for slot := range configured {
+			mode = DesiredLightingBlackout
+			for slot, channel := range configured {
 				result[slot] = 0 // physical failsafe zero; ignores inversion
+				targets[slot] = DesiredLightingTarget{
+					ChannelKey: channel.ChannelKey,
+					DMXValue:   0,
+				}
 			}
 			continue
 		}
 		if blackout {
 			return fail("Cue cannot mix blackout with other lighting output")
 		}
+
 		var normalized map[string]float64
 		if command == lightingnode.CommandChannelsSet {
 			var set lightingnode.ChannelsSetPayload
@@ -300,29 +369,58 @@ func DeriveCueLighting(manifest snapshot.Manifest, cueID, deviceID string) (map[
 			normalized = fade.Channels
 		}
 		for key, value := range normalized {
-			channel, exists := lightingnode.ChannelIndex(binding.Configuration)[key]
-			if !exists || !channel.Enabled {
+			channel, exists := index[key]
+			if !exists || !channel.Enabled || channel.Kind == lightingnode.ChannelUnused {
 				return fail("resolved channel not present in bound device")
 			}
 			if _, duplicate := result[channel.ChannelNumber]; duplicate {
 				return fail("multiple actions overwrite the same DMX slot")
 			}
-			slot, err := lightingnode.LevelToDMX(channel, value)
+			dmxValue, err := lightingnode.LevelToDMX(channel, value)
 			if err != nil {
 				return fail("invalid pinned channel conversion")
 			}
-			result[channel.ChannelNumber] = slot
+			result[channel.ChannelNumber] = dmxValue
+			targets[channel.ChannelNumber] = DesiredLightingTarget{
+				ChannelKey:   channel.ChannelKey,
+				LogicalLevel: value,
+				DMXValue:     dmxValue,
+			}
 		}
 	}
-	if len(result) != len(configured) {
+	if len(result) != len(configured) || len(targets) != len(configured) {
 		return fail("current Cue does not fully define all enabled channels; prior GO/override remains unknown")
 	}
 	for slot := range configured {
 		if _, found := result[slot]; !found {
 			return fail("one or more enabled channels have no current Cue value")
 		}
+		if _, found := targets[slot]; !found {
+			return fail("one or more enabled channels have no materializable current Cue target")
+		}
 	}
-	return result, nil
+
+	return CueLightingProjection{
+		Mode:     mode,
+		Channels: copyDMXChannels(result),
+		Targets:  copyDesiredTargets(targets),
+	}, nil
+}
+
+func copyDMXChannels(in map[int]uint8) map[int]uint8 {
+	out := make(map[int]uint8, len(in))
+	for slot, value := range in {
+		out[slot] = value
+	}
+	return out
+}
+
+func copyDesiredTargets(in map[int]DesiredLightingTarget) map[int]DesiredLightingTarget {
+	out := make(map[int]DesiredLightingTarget, len(in))
+	for slot, target := range in {
+		out[slot] = target
+	}
+	return out
 }
 
 // SortedChannels helps read-only UI display differences deterministically.
