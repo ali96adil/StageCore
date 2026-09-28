@@ -175,6 +175,7 @@ enum OSCPacketEncoder {
     private enum Argument {
         case int32(Int32)
         case float32(Float)
+        case float64(Double)
         case string(String)
         case bool(Bool)
 
@@ -182,6 +183,7 @@ enum OSCPacketEncoder {
             switch self {
             case .int32: return "i"
             case .float32: return "f"
+            case .float64: return "d"
             case .string: return "s"
             case .bool(let value): return value ? "T" : "F"
             }
@@ -209,6 +211,17 @@ enum OSCPacketEncoder {
                 return .float32(Float(value))
             case .some(.int(let value)):
                 return .float32(Float(value))
+            default:
+                throw OSCExecutorError.invalidParameters
+            }
+
+        case "float64":
+            switch object["value"] {
+            case .some(.double(let value)):
+                guard value.isFinite else { throw OSCExecutorError.invalidParameters }
+                return .float64(value)
+            case .some(.int(let value)):
+                return .float64(Double(value))
             default:
                 throw OSCExecutorError.invalidParameters
             }
@@ -252,6 +265,10 @@ enum OSCPacketEncoder {
             withUnsafeBytes(of: &bigEndian) { packet.append(contentsOf: $0) }
 
         case .float32(let value):
+            var bigEndian = value.bitPattern.bigEndian
+            withUnsafeBytes(of: &bigEndian) { packet.append(contentsOf: $0) }
+
+        case .float64(let value):
             var bigEndian = value.bitPattern.bigEndian
             withUnsafeBytes(of: &bigEndian) { packet.append(contentsOf: $0) }
 
