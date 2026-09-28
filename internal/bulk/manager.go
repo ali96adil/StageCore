@@ -200,6 +200,28 @@ func terminal(state State) bool {
 	return state == Completed || state == Failed || state == Cancelled
 }
 
+type GuardedReader struct {
+	ctx     context.Context
+	manager *Manager
+	jobID   string
+	source  io.Reader
+}
+
+func NewGuardedReader(ctx context.Context, manager *Manager, jobID string, source io.Reader) *GuardedReader {
+	return &GuardedReader{ctx: ctx, manager: manager, jobID: jobID, source: source}
+}
+
+func (r *GuardedReader) Read(p []byte) (int, error) {
+	if err := r.manager.WaitAllowed(r.ctx, r.jobID); err != nil {
+		return 0, err
+	}
+	n, err := r.source.Read(p)
+	if n > 0 {
+		r.manager.Advance(r.jobID, int64(n))
+	}
+	return n, err
+}
+
 type GuardedReadSeeker struct {
 	ctx     context.Context
 	manager *Manager
