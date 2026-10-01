@@ -194,7 +194,7 @@ func TestV2TabletScopeUsesHubAssignmentNotObservedProjectAuthority(t *testing.T)
 			Connection: deviceexperience.ConnectionOnline,
 			Readiness:  deviceexperience.ReadinessReady,
 			ObservedState: json.RawMessage(
-				`{"project_id":"project-client-wrong","runtime_snapshot_id":"snapshot-client-wrong","tablet_manifest_id":"manifest-local"}`,
+				`{"project_id":"project-client-wrong","runtime_snapshot_id":"snapshot-client-wrong","tablet_manifest_id":"manifest-local","health":{"battery_percent":73,"battery_charging":true,"power_save":false}}`,
 			),
 		},
 	}
