@@ -43,6 +43,7 @@ type Companion struct {
 	Architecture             string
 	Version                  string
 	Capabilities             []string
+	MIDIDestinations         []string
 	LastSeenAt               time.Time
 	TrustState               CompanionTrustState
 	Readiness                CompanionReadiness
@@ -61,6 +62,8 @@ type MachineRole struct {
 	RequiredRuntimeSnapshotID *string
 	RequiredConfigHash        string
 	Required                  bool
+	Retired                   bool
+	RetiredAt                 *time.Time
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 }

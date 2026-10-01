@@ -345,3 +345,33 @@ func TestTabletSettingsRemainOperatorOnlyNotCueBuilderCapabilities(t *testing.T)
 		}
 	}
 }
+
+
+func TestTabletRelayFlashControlURL(t *testing.T) {
+	tests := []struct {
+		name string
+		liveURL string
+		state string
+		want string
+		wantErr bool
+	}{
+		{name:"private relay normal live", liveURL:"http://192.168.3.135:9081/api/v0/stream", state:"auto", want:"http://192.168.3.135:9081/api/v0/flash?state=auto"},
+		{name:"private relay live with flash query", liveURL:"http://192.168.3.135:9081/api/v0/stream?flash=1", state:"off", want:"http://192.168.3.135:9081/api/v0/flash?state=off"},
+		{name:"public host rejected", liveURL:"http://8.8.8.8:9081/api/v0/stream", state:"on", wantErr:true},
+		{name:"wrong port rejected", liveURL:"http://192.168.3.135:9082/api/v0/stream", state:"on", wantErr:true},
+		{name:"wrong path rejected", liveURL:"http://192.168.3.135:9081/other", state:"on", wantErr:true},
+		{name:"credentials rejected", liveURL:"http://u:p@192.168.3.135:9081/api/v0/stream", state:"on", wantErr:true},
+		{name:"unsupported query rejected", liveURL:"http://192.168.3.135:9081/api/v0/stream?token=x", state:"on", wantErr:true},
+	}
+	for _,tc:=range tests{
+		t.Run(tc.name,func(t *testing.T){
+			got,err:=tabletRelayFlashControlURL(tc.liveURL,tc.state)
+			if tc.wantErr{
+				if err==nil{t.Fatalf("expected error, got %q",got)}
+				return
+			}
+			if err!=nil{t.Fatal(err)}
+			if got!=tc.want{t.Fatalf("got %q want %q",got,tc.want)}
+		})
+	}
+}

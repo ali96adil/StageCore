@@ -26,6 +26,10 @@ const f025Strings = {
   "f025.machine_role": {"en":"Machine Role binding","ar-IQ":"ربط دور الجهاز"},
   "f025.unbound_option": {"en":"Unbound — choose explicitly later","ar-IQ":"غير مربوط — اختر الدور لاحقاً بشكل صريح"},
   "f025.create": {"en":"Create environment","ar-IQ":"إنشاء بيئة التشغيل"},
+  "f025.edit": {"en":"Edit environment","ar-IQ":"تعديل بيئة التشغيل"},
+  "f025.update": {"en":"Update environment","ar-IQ":"تحديث بيئة التشغيل"},
+  "f025.cancel_edit": {"en":"Cancel edit","ar-IQ":"إلغاء التعديل"},
+  "f025.updated": {"en":"Execution environment updated.","ar-IQ":"تم تحديث بيئة التشغيل."},
   "f025.start_edit": {"en":"Start environment edit","ar-IQ":"بدء تعديل بيئات التشغيل"},
   "f025.refresh": {"en":"Refresh","ar-IQ":"تحديث"},
   "f025.unbound": {"en":"UNBOUND","ar-IQ":"غير مربوط"},
@@ -87,11 +91,22 @@ function f025T(key) {
   return f025Strings[key]?.[f025Locale] || f025Strings[key]?.en || key;
 }
 
+const f025OperationCapability = "execution.environment.operation";
+
+function f025RoleSupportsOperations(role) {
+  return (role?.required_capabilities || []).includes(f025OperationCapability);
+}
+
 function f025RoleOptions(roles, selected = "") {
-  return `<option value="">${esc(f025T("f025.unbound_option"))}</option>` + (roles || []).map((role) => {
+  const options = (roles || []).filter((role) =>
+    f025RoleSupportsOperations(role) || role.machine_role_id === selected
+  ).map((role) => {
     const label = role.display_name || role.role_key || role.machine_role_id;
-    return `<option value="${esc(role.machine_role_id)}" ${role.machine_role_id === selected ? "selected" : ""}>${esc(label)} · ${esc(role.role_key)}</option>`;
-  }).join("");
+    const compatible = f025RoleSupportsOperations(role);
+    const suffix = compatible ? "" : " · LEGACY / missing execution.environment.operation";
+    return `<option value="${esc(role.machine_role_id)}" ${role.machine_role_id === selected ? "selected" : ""}>${esc(label)} · ${esc(role.role_key)}${esc(suffix)}</option>`;
+  });
+  return `<option value="">${esc(f025T("f025.unbound_option"))}</option>` + options.join("");
 }
 
 function f025CurrentRevisionID() {
@@ -474,6 +489,7 @@ function f025EnvironmentCard(environment, roles, editable) {
   const roleID = environment.machine_role_id || "";
   const referenceOnly = f025HasReferenceOnly(environment);
   const policies = (environment.manifest?.assets || []).map((asset) => asset.capture_policy).filter(Boolean);
+  const guidedEditable = environment.adapter_key === "stagecore.adapter.vdmx" && environment.application_key === "vdmx";
   return `<article class="card">
     <div class="section-title-row">
       <div>
@@ -504,28 +520,32 @@ function f025EnvironmentCard(environment, roles, editable) {
       <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
       <p class="muted">${esc(f025T("f025.snapshots_loading"))}</p>
     </div>
-    ${editable ? `<div class="toolbar" style="margin-top:12px"><button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
+    ${editable ? `<div class="toolbar" style="margin-top:12px">${guidedEditable ? `<button class="button f025-edit" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.edit"))}</button>` : ""}<button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
   </article>`;
 }
 
-function f025GuidedManifest() {
+function f025GuidedManifest(baseManifest = null) {
   const policy = document.getElementById("f025CapturePolicy").value;
   const locator = document.getElementById("f025WorkspaceLocator").value.trim();
   const oscQueryURL = document.getElementById("f025OSCQueryURL").value.trim();
-  const manifest = {
-    schema_version: 1,
-    environment_key: document.getElementById("f025EnvironmentKey").value.trim(),
-    name: document.getElementById("f025EnvironmentName").value.trim(),
-    adapter_key: "stagecore.adapter.vdmx",
-    application: {
-      key: "vdmx",
-      name: "VDMX",
-      vendor: "VIDVOX",
-      version_constraint: document.getElementById("f025Version").value.trim(),
-      hosts: [{os: "darwin", architecture: document.getElementById("f025Architecture").value}],
-    },
+  const manifest = baseManifest ? JSON.parse(JSON.stringify(baseManifest)) : {};
+  manifest.schema_version = 1;
+  manifest.environment_key = document.getElementById("f025EnvironmentKey").value.trim();
+  manifest.name = document.getElementById("f025EnvironmentName").value.trim();
+  manifest.adapter_key = manifest.adapter_key || "stagecore.adapter.vdmx";
+
+  const application = manifest.application || {};
+  const otherHosts = (application.hosts || []).filter((host) => String(host.os || "").toLowerCase() !== "darwin");
+  manifest.application = {
+    ...application,
+    key: application.key || "vdmx",
+    name: application.name || "VDMX",
+    vendor: application.vendor || "VIDVOX",
+    version_constraint: document.getElementById("f025Version").value.trim(),
+    hosts: [...otherHosts, {os: "darwin", architecture: document.getElementById("f025Architecture").value}],
   };
 
+  const otherAssets = (manifest.assets || []).filter((asset) => asset.key !== "workspace");
   if (locator) {
     const asset = {
       key: "workspace",
@@ -544,18 +564,28 @@ function f025GuidedManifest() {
       asset.content_hash = contentHash;
       asset.size_bytes = sizeBytes;
     }
-    manifest.assets = [asset];
-    manifest.launch = {kind: "ASSET", asset_key: "workspace"};
+    manifest.assets = [...otherAssets, asset];
+    if (!baseManifest || !manifest.launch || manifest.launch.asset_key === "workspace") {
+      manifest.launch = {kind: "ASSET", asset_key: "workspace"};
+    }
+  } else {
+    manifest.assets = otherAssets;
+    if (!manifest.assets.length) delete manifest.assets;
+    if (manifest.launch?.asset_key === "workspace") delete manifest.launch;
   }
 
+  const otherBindings = (manifest.bindings || []).filter((binding) => binding.key !== "oscquery");
   if (oscQueryURL) {
-    manifest.bindings = [{
+    manifest.bindings = [...otherBindings, {
       key: "oscquery",
       kind: "NETWORK",
       name: "VDMX OSCQuery",
       external_ref: oscQueryURL,
       required: false,
     }];
+  } else {
+    manifest.bindings = otherBindings;
+    if (!manifest.bindings.length) delete manifest.bindings;
   }
   return manifest;
 }
@@ -601,6 +631,17 @@ async function f025Create(manifest, machineRoleID) {
   }
 }
 
+async function f025Update(environmentID, manifest, machineRoleID) {
+  await api(`${f025CollectionPath()}/${encodeURIComponent(environmentID)}`, {
+    method: "PUT",
+    json: {manifest},
+  });
+  await api(`${f025CollectionPath()}/${encodeURIComponent(environmentID)}/machine-role`, {
+    method: "PUT",
+    json: {machine_role_id: machineRoleID || null},
+  });
+}
+
 async function renderExecutionEnvironments(message = "") {
   const model = await f025LoadModel();
   const roleCanEdit = canEdit();
@@ -619,7 +660,7 @@ async function renderExecutionEnvironments(message = "") {
     ${roleCanEdit ? `<div class="grid cards" style="margin-top:14px">
       <article class="card">
         <p class="eyebrow">VDMX</p><h2>${esc(f025T("f025.guided"))}</h2>
-        <form id="f025GuidedForm" style="margin-top:14px">
+        <form id="f025GuidedForm" data-environment-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>${esc(f025T("f025.environment_key"))}<input id="f025EnvironmentKey" value="video-main" ${disabled} required></label>
             <label>${esc(f025T("f025.name"))}<input id="f025EnvironmentName" value="Main video workstation" ${disabled} required></label>
@@ -631,7 +672,7 @@ async function renderExecutionEnvironments(message = "") {
             <label id="f025SizeBytesLabel" class="hidden">${esc(f025T("f025.size_bytes"))}<input id="f025SizeBytes" type="number" min="0" step="1" ${disabled}></label>
             <label>${esc(f025T("f025.machine_role"))}<select id="f025GuidedRole" ${disabled}>${f025RoleOptions(model.machine_roles || [])}</select></label>
           </div>
-          <div class="message">${esc(f025T("f025.osc_go_hint"))}</div>\n          <button class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button>
+          <div class="message">${esc(f025T("f025.osc_go_hint"))}</div>\n          <div class="toolbar"><button id="f025GuidedSubmit" class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button><button id="f025GuidedCancel" class="button ghost hidden" type="button" ${disabled}>${esc(f025T("f025.cancel_edit"))}</button></div>
         </form>
       </article>
 
@@ -664,11 +705,52 @@ async function renderExecutionEnvironments(message = "") {
   policy?.addEventListener("change", syncPolicy);
   syncPolicy();
 
-  document.getElementById("f025GuidedForm")?.addEventListener("submit", async (event) => {
+  const guidedForm = document.getElementById("f025GuidedForm");
+  const guidedSubmit = document.getElementById("f025GuidedSubmit");
+  const guidedCancel = document.getElementById("f025GuidedCancel");
+
+  guidedCancel?.addEventListener("click", () => renderExecutionEnvironments().catch(f025Error));
+
+  content.querySelectorAll(".f025-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const environment = (model.execution_environments || []).find((item) => item.execution_environment_id === button.dataset.environmentId);
+      if (!environment || !guidedForm) return;
+      const manifest = environment.manifest || {};
+      const workspace = (manifest.assets || []).find((asset) => asset.key === "workspace") || {};
+      const oscquery = (manifest.bindings || []).find((binding) => binding.key === "oscquery") || {};
+      guidedForm.dataset.environmentId = environment.execution_environment_id;
+      document.getElementById("f025EnvironmentKey").value = manifest.environment_key || environment.environment_key || "";
+      document.getElementById("f025EnvironmentKey").disabled = true;
+      document.getElementById("f025EnvironmentName").value = manifest.name || environment.name || "";
+      document.getElementById("f025Version").value = manifest.application?.version_constraint || "";
+      document.getElementById("f025Architecture").value = manifest.application?.hosts?.find((host) => String(host.os || "").toLowerCase() === "darwin")?.architecture || "arm64";
+      document.getElementById("f025WorkspaceLocator").value = workspace.locator || "";
+      document.getElementById("f025OSCQueryURL").value = oscquery.external_ref || "";
+      document.getElementById("f025CapturePolicy").value = workspace.capture_policy || "REFERENCE_ONLY";
+      document.getElementById("f025ContentHash").value = workspace.content_hash || "";
+      document.getElementById("f025SizeBytes").value = workspace.size_bytes ?? "";
+      document.getElementById("f025GuidedRole").value = environment.machine_role_id || "";
+      if (guidedSubmit) guidedSubmit.textContent = f025T("f025.update");
+      guidedCancel?.classList.remove("hidden");
+      syncPolicy();
+      guidedForm.scrollIntoView({behavior: "smooth", block: "start"});
+    });
+  });
+
+  guidedForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await f025Create(f025GuidedManifest(), document.getElementById("f025GuidedRole").value);
-      await renderExecutionEnvironments(f025T("f025.created"));
+      const environmentID = guidedForm.dataset.environmentId || "";
+      const existing = (model.execution_environments || []).find((item) => item.execution_environment_id === environmentID);
+      const manifest = f025GuidedManifest(existing?.manifest || null);
+      const machineRoleID = document.getElementById("f025GuidedRole").value;
+      if (environmentID) {
+        await f025Update(environmentID, manifest, machineRoleID);
+        await renderExecutionEnvironments(f025T("f025.updated"));
+      } else {
+        await f025Create(manifest, machineRoleID);
+        await renderExecutionEnvironments(f025T("f025.created"));
+      }
     } catch (error) { f025Error(error); }
   });
   document.getElementById("f025AdvancedForm")?.addEventListener("submit", async (event) => {

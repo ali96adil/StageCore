@@ -10,7 +10,7 @@ import (
 func (s *Store) ListCompanions(ctx context.Context) ([]domain.Companion, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT companion_id, display_name, hostname, platform, architecture, version,
-		       capabilities_json, last_seen_at_us, trust_state, readiness,
+		       capabilities_json, midi_destinations_json, last_seen_at_us, trust_state, readiness,
 		       applied_runtime_snapshot_id, config_hash, created_at_us, updated_at_us
 		FROM companions
 		ORDER BY display_name, companion_id

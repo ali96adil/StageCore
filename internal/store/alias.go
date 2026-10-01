@@ -38,6 +38,51 @@ func (s *Store) CreateAlias(ctx context.Context, alias domain.ProjectDeviceAlias
 	return alias, nil
 }
 
+func (s *Store) UpdateAliasConfiguration(ctx context.Context, projectID, aliasID string, configuration json.RawMessage) (domain.ProjectDeviceAlias, error) {
+	projectID = strings.TrimSpace(projectID)
+	aliasID = strings.TrimSpace(aliasID)
+	if projectID == "" || aliasID == "" {
+		return domain.ProjectDeviceAlias{}, domain.ErrInvalidInput
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return domain.ProjectDeviceAlias{}, err
+	}
+	cfg, err := normalizeJSON(configuration, "{}")
+	if err != nil {
+		return domain.ProjectDeviceAlias{}, fmt.Errorf("alias project config: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_device_aliases
+		SET project_config_json = ?
+		WHERE project_id = ? AND alias_id = ?`,
+		cfg, projectID, aliasID)
+	if err != nil {
+		return domain.ProjectDeviceAlias{}, fmt.Errorf("update alias project config: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.ProjectDeviceAlias{}, fmt.Errorf("update alias rows affected: %w", err)
+	}
+	if rows != 1 {
+		return domain.ProjectDeviceAlias{}, domain.ErrNotFound
+	}
+
+	var alias domain.ProjectDeviceAlias
+	var raw string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT alias_id, project_id, logical_name, logical_type, target_ref, group_name, project_config_json
+		FROM project_device_aliases
+		WHERE project_id = ? AND alias_id = ?`,
+		projectID, aliasID).Scan(
+		&alias.ID, &alias.ProjectID, &alias.LogicalName, &alias.LogicalType,
+		&alias.TargetRef, &alias.GroupName, &raw,
+	); err != nil {
+		return domain.ProjectDeviceAlias{}, fmt.Errorf("read updated alias: %w", err)
+	}
+	alias.ProjectConfig = json.RawMessage(raw)
+	return alias, nil
+}
+
 func (s *Store) DeleteAlias(ctx context.Context, projectID, aliasID string) error {
 	projectID = strings.TrimSpace(projectID)
 	aliasID = strings.TrimSpace(aliasID)

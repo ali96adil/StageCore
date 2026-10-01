@@ -89,6 +89,11 @@ func ResolveManifestConfiguration(manifest snapshot.Manifest) (ManifestConfigura
 	if err != nil {
 		return ManifestConfiguration{}, err
 	}
+	if raw.Kind == SourceMTC {
+		if _, ok := rate.MTCCode(); !ok {
+			return ManifestConfiguration{}, fmt.Errorf("timecode MTC source rate %q cannot be represented by MTC quarter-frame messages", rate.Name)
+		}
+	}
 	startFrame := int64(0)
 	if strings.TrimSpace(raw.Start) != "" {
 		start, err := Parse(raw.Start, rate)

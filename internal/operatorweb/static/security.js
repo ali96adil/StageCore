@@ -23,12 +23,13 @@ function securityResultKind(result) {
 }
 
 async function securityLoad() {
-  const [secrets, users, permissions, audit, pairing] = await Promise.all([
+  const [secrets, users, permissions, audit, pairing, companions] = await Promise.all([
     api("/api/v1/security/secrets"),
     api("/api/v1/security/users"),
     api("/api/v1/security/plugins/permissions?plugin_id=stagecore.osc"),
     api("/api/v1/security/audit?limit=100"),
     api("/api/v1/security/companions/pairing/pending"),
+    api("/api/v1/security/companions"),
   ]);
   return {
     secrets: secrets.secrets || [],
@@ -36,6 +37,7 @@ async function securityLoad() {
     permissions: permissions.permissions || [],
     audit: audit.records || [],
     pendingPairing: pairing.requests || [],
+    companions: companions.companions || [],
   };
 }
 
@@ -127,10 +129,30 @@ async function renderSecurity() {
             </div>
           </div>`).join("") : `<div class="empty">No pending Companion pairing requests.</div>`}
       </div>
+      <div class="actions-editor" style="margin-top:14px">
+        ${model.companions.length ? model.companions.map((companion) => `
+          <div class="action-editor companion-inventory-row" data-companion-id="${esc(companion.companion_id)}">
+            <div class="section-title-row">
+              <div>
+                <strong>${esc(companion.display_name || companion.hostname || companion.companion_id)}</strong>
+                <p class="muted">${esc(companion.hostname || "—")} · ${esc(companion.platform || "unknown")} ${esc(companion.version || "")} · last seen ${esc(fmtDate(companion.last_seen_at))}</p>
+                <p class="muted mono">${esc(companion.companion_id)}</p>
+              </div>
+              <div class="toolbar">${pill(companion.trust_state || "UNKNOWN", companion.trust_state === "TRUSTED" ? "good" : companion.trust_state === "REVOKED" ? "bad" : "warn")}${pill(companion.readiness || "UNKNOWN", companion.readiness === "READY" ? "good" : companion.readiness === "OFFLINE" ? "bad" : "warn")}</div>
+            </div>
+            <p class="muted">Capabilities: ${esc((companion.capabilities || []).join(", ") || "—")}</p>
+            ${companion.machine_role ? `<p class="muted">Machine Role: <strong>${esc(companion.machine_role.display_name || companion.machine_role.role_key)}</strong> · ${esc(companion.machine_role.role_key)} · ${esc(companion.assignment?.state || "")}</p>` : '<p class="muted">Machine Role: unassigned</p>'}
+          </div>`).join("") : '<div class="empty">No Companion identities recorded.</div>'}
+      </div>
       <form id="companionRevokeForm" class="form-grid two" style="margin-top:14px">
-        <label>Companion ID<input id="revokeCompanionID" required></label>
+        <label>Companion
+          <select id="revokeCompanionID" required>
+            <option value="">Choose a Companion…</option>
+            ${model.companions.filter((companion) => companion.trust_state !== "REVOKED").map((companion) => `<option value="${esc(companion.companion_id)}">${esc(companion.display_name || companion.hostname || companion.companion_id)} · ${esc(companion.hostname || companion.companion_id)} · ${esc(companion.trust_state || "UNKNOWN")}</option>`).join("")}
+          </select>
+        </label>
         <label>Emergency reason<input id="revokeCompanionReason" required></label>
-        <button class="button ghost" type="submit">Emergency revoke Companion</button>
+        <button class="button ghost" type="submit" ${model.companions.some((companion) => companion.trust_state !== "REVOKED") ? "" : "disabled"}>Emergency revoke Companion</button>
       </form>
     </article>
 

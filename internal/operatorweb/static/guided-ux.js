@@ -232,12 +232,167 @@ function f002EnhanceConfiguration() {
   const routeForm = el("routeForm");
   if (routeForm && !routeForm.dataset.f002Advanced) {
     routeForm.dataset.f002Advanced = "true";
+
+    const builder = document.createElement("section");
+    builder.id = "f002RouteBuilder";
+    builder.className = "f002-builder";
+    builder.innerHTML = `
+      <div class="f002-builder-head">
+        <div><strong>Route behavior</strong><span>Common conditions and transforms without JSON.</span></div>
+      </div>
+      <div class="form-grid two">
+        <label>When input
+          <select id="f002RouteConditionKind">
+            <option value="always">Always</option>
+            <option value="equals">Equals</option>
+            <option value="not_equals">Does not equal</option>
+            <option value="greater_than">Greater than</option>
+            <option value="less_than">Less than</option>
+            <option value="range">Inside numeric range</option>
+            <option value="boolean_is">Boolean is</option>
+            <option value="advanced">Advanced JSON</option>
+          </select>
+        </label>
+        <label>Transform input
+          <select id="f002RouteTransformKind">
+            <option value="identity">Pass through unchanged</option>
+            <option value="constant">Replace with fixed value</option>
+            <option value="number">Scale / offset number</option>
+            <option value="advanced">Advanced JSON</option>
+          </select>
+        </label>
+      </div>
+      <div id="f002RouteConditionFields"></div>
+      <div id="f002RouteTransformFields"></div>
+      <label>Route action data
+        <select id="f002RouteActionData">
+          <option value="transformed">Use transformed input</option>
+          <option value="advanced">Advanced fixed parameters JSON</option>
+        </select>
+      </label>
+      <p class="muted">Delay and debounce use the Route fields above. Advanced values remain available below and are never rewritten unless their guided control is selected.</p>`;
+
     const details = f002CreateDetails("Advanced routing conditions and parameters");
     for (const id of ["routeCondition", "routeTransform", "routeParameters"]) {
       const label = el(id)?.closest("label");
       if (label) details.appendChild(label);
     }
+    routeForm.insertBefore(builder, routeForm.querySelector('button[type="submit"]'));
     routeForm.insertBefore(details, routeForm.querySelector('button[type="submit"]'));
+
+    const conditionKind = el("f002RouteConditionKind");
+    const transformKind = el("f002RouteTransformKind");
+    const actionData = el("f002RouteActionData");
+    const conditionFields = el("f002RouteConditionFields");
+    const transformFields = el("f002RouteTransformFields");
+    const disabled = el("routeName")?.disabled || false;
+    [conditionKind, transformKind, actionData].forEach((control) => { if (control) control.disabled = disabled; });
+
+    const scalarFields = (prefix, numericOnly = false) => `
+      <div class="form-grid two">
+        ${numericOnly ? "" : `<label>Value type<select id="${prefix}Type"><option value="string">Text</option><option value="number">Number</option><option value="boolean">Boolean</option></select></label>`}
+        <label>Value<input id="${prefix}Value" ${numericOnly ? 'type="number" step="any"' : 'placeholder="text, number, true or false"'} required></label>
+      </div>`;
+
+    const renderCondition = () => {
+      const kind = conditionKind.value;
+      if (kind === "always" || kind === "advanced") {
+        conditionFields.innerHTML = "";
+      } else if (kind === "range") {
+        conditionFields.innerHTML = '<div class="form-grid two"><label>Minimum<input id="f002RouteRangeMin" type="number" step="any" required></label><label>Maximum<input id="f002RouteRangeMax" type="number" step="any" required></label></div>';
+      } else if (kind === "boolean_is") {
+        conditionFields.innerHTML = '<label>Boolean value<select id="f002RouteBoolean"><option value="true">True</option><option value="false">False</option></select></label>';
+      } else {
+        conditionFields.innerHTML = scalarFields("f002RouteCondition", ["greater_than", "less_than"].includes(kind));
+      }
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    };
+
+    const renderTransform = () => {
+      const kind = transformKind.value;
+      if (kind === "identity" || kind === "advanced") {
+        transformFields.innerHTML = "";
+      } else if (kind === "constant") {
+        transformFields.innerHTML = scalarFields("f002RouteConstant");
+      } else {
+        transformFields.innerHTML = '<div class="form-grid two"><label>Factor<input id="f002RouteFactor" type="number" step="any" value="1" required></label><label>Offset<input id="f002RouteOffset" type="number" step="any" value="0" required></label></div>';
+      }
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    };
+
+    const readScalar = (prefix, numericOnly = false) => {
+      const raw = el(`${prefix}Value`)?.value ?? "";
+      if (numericOnly) {
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error("Route comparison value must be a number.");
+        return value;
+      }
+      const type = el(`${prefix}Type`)?.value || "string";
+      if (type === "number") {
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error("Route value must be a number.");
+        return value;
+      }
+      if (type === "boolean") {
+        const normalized = String(raw).trim().toLowerCase();
+        if (!["true", "false"].includes(normalized)) throw new Error("Route Boolean value must be true or false.");
+        return normalized === "true";
+      }
+      return String(raw);
+    };
+
+    conditionKind.addEventListener("change", renderCondition);
+    transformKind.addEventListener("change", renderTransform);
+    actionData.addEventListener("change", () => {
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    });
+    renderCondition();
+    renderTransform();
+
+    routeForm.addEventListener("submit", (event) => {
+      try {
+      if (conditionKind.value !== "advanced") {
+        let condition = null;
+        if (conditionKind.value === "range") {
+          const min = Number(el("f002RouteRangeMin")?.value);
+          const max = Number(el("f002RouteRangeMax")?.value);
+          if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) {
+            throw new Error("Route range requires numeric minimum ≤ maximum.");
+          }
+          condition = { operator: "range", min, max };
+        } else if (conditionKind.value === "boolean_is") {
+          condition = { operator: "boolean_is", value: el("f002RouteBoolean")?.value === "true" };
+        } else if (conditionKind.value !== "always") {
+          condition = {
+            operator: conditionKind.value,
+            value: readScalar("f002RouteCondition", ["greater_than", "less_than"].includes(conditionKind.value)),
+          };
+        }
+        el("routeCondition").value = JSON.stringify(condition, null, 2);
+      }
+
+      if (transformKind.value !== "advanced") {
+        let transform = null;
+        if (transformKind.value === "constant") {
+          transform = { type: "constant", value: readScalar("f002RouteConstant") };
+        } else if (transformKind.value === "number") {
+          const factor = Number(el("f002RouteFactor")?.value);
+          const offset = Number(el("f002RouteOffset")?.value);
+          if (!Number.isFinite(factor) || !Number.isFinite(offset)) {
+            throw new Error("Route numeric transform requires finite factor and offset.");
+          }
+          transform = { type: "number", factor, offset };
+        }
+        el("routeTransform").value = JSON.stringify(transform, null, 2);
+      }
+
+      if (actionData.value === "transformed") el("routeParameters").value = "null";
+      } catch (error) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        configurationError(error);
+      }
+    }, true);
   }
 
   const capability = el("outputCapability");
@@ -283,12 +438,17 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController] = await Promise.all([
+  const [configuration, tabletController, lightingController, machineRoles] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
+  state.f002Lighting = lightingController || { nodes: [] };
+  state.f002MachineRoles = machineRoles.roles || [];
+  state.f002Companions = machineRoles.companions || [];
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -299,6 +459,13 @@ function f002EnhanceCueDialog() {
     const details = f002CreateDetails("Advanced Cue policy");
     policyLabel.parentNode.insertBefore(details, policyLabel);
     details.appendChild(policyLabel);
+    if (!el("f002CuePolicyHint")) {
+      const hint = document.createElement("p");
+      hint.id = "f002CuePolicyHint";
+      hint.className = "muted";
+      hint.textContent = "Execution order is configured per Action with SEQUENTIAL, PARALLEL, or PARALLEL_BARRIER. Cue policy JSON remains available for advanced/compatibility values.";
+      details.insertBefore(hint, policyLabel);
+    }
   }
   f002InstallCueComposer();
 }
@@ -333,13 +500,128 @@ function f002TabletPayload(command, raw) {
   return payload;
 }
 
+function f002NormalizeLiveURL(value) {
+  let text = String(value || "").trim();
+  const markdown = text.match(/^\[(https?:\/\/[^\]]+)\]\((https?:\/\/[^)]+)\)$/i);
+  if (markdown && markdown[1] === markdown[2]) text = markdown[1];
+  let parsed;
+  try { parsed = new URL(text); }
+  catch (_) { throw new Error("Enter an absolute HTTP(S) Live URL."); }
+  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) {
+    throw new Error("Enter an absolute HTTP(S) Live URL without credentials.");
+  }
+  return text;
+}
+
+function f002RenderTabletParameterFields(composer) {
+  const host = composer.querySelector("#f002TabletVisualParameters");
+  const command = composer.querySelector("#f002TabletCommand")?.value || "";
+  if (!host) return;
+  if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Content
+          <select id="f002TabletContentMode">
+            <option value="media">Media number</option>
+            <option value="cue">Tablet Cue ID</option>
+          </select>
+        </label>
+        <label id="f002TabletMediaWrap">Media number<input id="f002TabletMediaNumber" type="number" min="1" step="1" value="1"></label>
+        <label id="f002TabletCueWrap" class="hidden">Tablet Cue ID<input id="f002TabletCueID" dir="ltr" placeholder="tablet-cue-id"></label>
+      </div>`;
+    const mode = host.querySelector("#f002TabletContentMode");
+    mode?.addEventListener("change", () => {
+      const cue = mode.value === "cue";
+      host.querySelector("#f002TabletMediaWrap")?.classList.toggle("hidden", cue);
+      host.querySelector("#f002TabletCueWrap")?.classList.toggle("hidden", !cue);
+    });
+    return;
+  }
+  if (command === "TABLET_OVERLAY_PLAY") {
+    host.innerHTML = `<div class="form-grid two"><label>Overlay media number<input id="f002TabletOverlayMedia" type="number" min="1" step="1" value="1"></label></div>`;
+    return;
+  }
+  if (command === "TABLET_OVERLAY_CLEAR") {
+    host.innerHTML = `<div class="form-grid two"><label>Dissolve (ms)<input id="f002TabletDissolve" type="number" min="0" max="10000" step="1" value="0"></label></div>`;
+    return;
+  }
+  if (command === "TABLET_LIVE_SHOW") {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Live source type
+          <select id="f002TabletLiveMode">
+            <option value="key">Media key</option>
+            <option value="url">Direct URL</option>
+          </select>
+        </label>
+        <label id="f002TabletLiveKeyWrap">Media key<input id="f002TabletLiveKey" dir="ltr" placeholder="camera-main"></label>
+        <label id="f002TabletLiveURLWrap" class="hidden">Live URL<input id="f002TabletLiveURL" dir="ltr" placeholder="Paste an absolute Live URL"></label>
+        <label id="f002TabletLiveFlashWrap" class="hidden"><input id="f002TabletLiveFlash" type="checkbox"> Use camera flash for this Live</label>
+      </div>`;
+    const mode = host.querySelector("#f002TabletLiveMode");
+    mode?.addEventListener("change", () => {
+      const direct = mode.value === "url";
+      host.querySelector("#f002TabletLiveKeyWrap")?.classList.toggle("hidden", direct);
+      host.querySelector("#f002TabletLiveURLWrap")?.classList.toggle("hidden", !direct);
+      host.querySelector("#f002TabletLiveFlashWrap")?.classList.toggle("hidden", !direct);
+    });
+    return;
+  }
+  host.innerHTML = `<p class="muted">This Tablet command does not require parameters.</p>`;
+}
+
+function f002TabletVisualPayload(composer, command) {
+  if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
+    const mode = composer.querySelector("#f002TabletContentMode")?.value || "media";
+    if (mode === "cue") {
+      const cueID = composer.querySelector("#f002TabletCueID")?.value.trim() || "";
+      if (!cueID) throw new Error("Enter a Tablet Cue ID.");
+      return { tablet_cue_id: cueID };
+    }
+    const mediaNumber = Number(composer.querySelector("#f002TabletMediaNumber")?.value || 0);
+    if (!Number.isInteger(mediaNumber) || mediaNumber < 1) throw new Error("Media number must be a positive whole number.");
+    return { media_number: mediaNumber };
+  }
+  if (command === "TABLET_OVERLAY_PLAY") {
+    const mediaNumber = Number(composer.querySelector("#f002TabletOverlayMedia")?.value || 0);
+    if (!Number.isInteger(mediaNumber) || mediaNumber < 1) throw new Error("Overlay media number must be a positive whole number.");
+    return { media_number: mediaNumber };
+  }
+  if (command === "TABLET_OVERLAY_CLEAR") {
+    const dissolve = Number(composer.querySelector("#f002TabletDissolve")?.value || 0);
+    if (!Number.isInteger(dissolve) || dissolve < 0 || dissolve > 10000) throw new Error("Dissolve must be 0–10000 ms.");
+    return { dissolve_ms: dissolve };
+  }
+  if (command === "TABLET_LIVE_SHOW") {
+    const mode = composer.querySelector("#f002TabletLiveMode")?.value || "key";
+    if (mode === "url") {
+      const rawURL = f002NormalizeLiveURL(composer.querySelector("#f002TabletLiveURL")?.value);
+      const parsed = new URL(rawURL);
+      if (composer.querySelector("#f002TabletLiveFlash")?.checked) parsed.searchParams.set("flash", "1");
+      else parsed.searchParams.delete("flash");
+      return { url: parsed.toString() };
+    }
+    const mediaKey = composer.querySelector("#f002TabletLiveKey")?.value.trim() || "";
+    if (!mediaKey) throw new Error("Enter a Live media key.");
+    return { media_key: mediaKey };
+  }
+  return {};
+}
+
+function f002TabletComposerPayload(composer, command) {
+  if (composer.querySelector("#f002TabletUseAdvanced")?.checked) {
+    return f002TabletPayload(command, composer.querySelector("#f002TabletParameters")?.value);
+  }
+  return f002TabletVisualPayload(composer, command);
+}
+
 async function f002AddTabletAction(composer) {
   const message = composer.querySelector("#f002TabletComposerMessage");
   try {
     const deviceID = composer.querySelector("#f002TabletDevice")?.value || "";
     const commandType = composer.querySelector("#f002TabletCommand")?.value || "";
     if (!deviceID || !commandType) throw new Error("Choose a Tablet Player and command.");
-    const payload = f002TabletPayload(commandType, composer.querySelector("#f002TabletParameters")?.value);
+    const payload = f002TabletComposerPayload(composer, commandType);
     const projectID = encodeURIComponent(state.project.project_id);
     const result = await api(`/api/v1/projects/${projectID}/tablet-controller/cue-actions`, {
       method: "POST",
@@ -369,6 +651,113 @@ async function f002AddTabletAction(composer) {
         ? `Added ${result.actions.length} Tablet Action(s). Save the Cue to persist them.`
         : "No Tablet Action was returned.";
       message.className = (result.actions || []).length ? "message success" : "message warn";
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = errorMessage(error);
+      message.className = "message error";
+    }
+  }
+}
+
+function f002LightingNodes() {
+  return (state.f002Lighting?.nodes || []).filter((node) => node.enabled !== false);
+}
+
+function f002LightingChannels() {
+  return f002LightingNodes().flatMap((node) => (node.channels || [])
+    .filter((channel) => channel.alias)
+    .map((channel) => ({ ...channel, node_id: node.device_id, node_name: node.display_name || node.device_id })));
+}
+
+function f002LightingCommandOptions() {
+  return [
+    ["LIGHTING_CHANNELS_FADE", "Fade channel"],
+    ["LIGHTING_CHANNELS_SET", "Set channel immediately"],
+    ["LIGHTING_BLACKOUT", "Blackout lighting node(s)"],
+  ];
+}
+
+function f002RenderLightingFields(composer) {
+  const host = composer.querySelector("#f002LightingParameters");
+  const command = composer.querySelector("#f002LightingCommand")?.value || "LIGHTING_CHANNELS_FADE";
+  if (!host) return;
+  if (command === "LIGHTING_BLACKOUT") {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Lighting node
+          <select id="f002LightingNode">
+            <option value="__all__">All configured lighting nodes</option>
+            ${f002LightingNodes().map((node) => `<option value="${esc(node.device_id)}">${esc(node.display_name || node.device_id)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Fade to blackout (ms)<input id="f002LightingFade" type="number" min="0" max="600000" step="1" value="0"></label>
+      </div>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="form-grid three">
+      <label>Logical channel
+        <select id="f002LightingChannel">
+          <option value="">Choose a channel…</option>
+          ${f002LightingChannels().map((channel) => `<option value="${esc(channel.alias)}">${esc(channel.alias)} · ${esc(channel.display_name || channel.channel_key)} · ${esc(channel.node_name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Level %<input id="f002LightingLevel" type="number" min="0" max="100" step="1" value="0"></label>
+      ${command === "LIGHTING_CHANNELS_FADE" ? `<label>Fade (ms)<input id="f002LightingFade" type="number" min="1" max="600000" step="1" value="1200"></label>` : ""}
+    </div>`;
+}
+
+function f002LightingRequest(composer) {
+  const command = composer.querySelector("#f002LightingCommand")?.value || "";
+  if (command === "LIGHTING_BLACKOUT") {
+    const selected = composer.querySelector("#f002LightingNode")?.value || "";
+    const deviceIDs = selected === "__all__" ? f002LightingNodes().map((node) => node.device_id) : [selected].filter(Boolean);
+    if (!deviceIDs.length) throw new Error("Choose at least one Lighting node.");
+    const fadeMS = Number(composer.querySelector("#f002LightingFade")?.value || 0);
+    if (!Number.isInteger(fadeMS) || fadeMS < 0 || fadeMS > 600000) throw new Error("Lighting blackout fade must be 0–600000 ms.");
+    return { command_type: command, device_ids: deviceIDs, fade_ms: fadeMS };
+  }
+  const alias = composer.querySelector("#f002LightingChannel")?.value || "";
+  if (!alias) throw new Error("Choose a logical Lighting channel.");
+  const level = Number(composer.querySelector("#f002LightingLevel")?.value);
+  if (!Number.isFinite(level) || level < 0 || level > 100) throw new Error("Lighting level must be 0–100%.");
+  const request = { command_type: command, levels: { [alias]: level }, fade_ms: 0 };
+  if (command === "LIGHTING_CHANNELS_FADE") {
+    const fadeMS = Number(composer.querySelector("#f002LightingFade")?.value || 0);
+    if (!Number.isInteger(fadeMS) || fadeMS < 1 || fadeMS > 600000) throw new Error("Lighting fade must be 1–600000 ms.");
+    request.fade_ms = fadeMS;
+  }
+  return request;
+}
+
+async function f002AddLightingAction(composer) {
+  const message = composer.querySelector("#f002LightingComposerMessage");
+  try {
+    const request = f002LightingRequest(composer);
+    const projectID = encodeURIComponent(state.project.project_id);
+    const result = await api(`/api/v1/projects/${projectID}/lighting-controller/cue-actions`, {
+      method: "POST",
+      json: { ...request, execution_mode: "PARALLEL_BARRIER" },
+    });
+    const actions = result.actions || [];
+    if (!actions.length) throw new Error("No Lighting Action was returned.");
+    for (const action of actions) {
+      addActionEditor({
+        action_id: "",
+        target_ref: action.target_ref,
+        capability_key: action.capability_key,
+        execution_mode: action.execution_mode,
+        priority_class: action.priority,
+        parameters: action.parameters || {},
+        timeout_policy: action.timeout_policy || {},
+        error_policy: {},
+        enabled: true,
+      });
+    }
+    if (message) {
+      message.textContent = `Added ${actions.length} Lighting Action(s). Save the Cue to persist them.`;
+      message.className = "message success";
     }
   } catch (error) {
     if (message) {
@@ -429,14 +818,40 @@ function f002InstallCueComposer() {
         </select>
       </label>
     </div>
-    <label>Tablet parameters (JSON)
-      <textarea id="f002TabletParameters" class="mono" rows="3">{}</textarea>
-    </label>
+    <div id="f002TabletVisualParameters"></div>
+    <details>
+      <summary>Advanced Tablet parameters</summary>
+      <label class="check-row"><input id="f002TabletUseAdvanced" type="checkbox"> Use JSON override</label>
+      <label>Parameters JSON
+        <textarea id="f002TabletParameters" class="mono" rows="3">{}</textarea>
+      </label>
+    </details>
     <div class="toolbar">
       <button id="f002AddTabletAction" class="button" type="button" ${(state.f002Tablets || []).length ? "" : "disabled"}>+ Tablet Action</button>
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
-    <p class="muted">For LIVE SHOW paste the relay address as a raw URL. Markdown-wrapped links are normalized before the Action is created.</p>
+    <p class="muted">Common Tablet actions are visual. Advanced JSON is optional and only used when explicitly enabled.</p>
+
+    <hr>
+    <div class="f002-builder-head">
+      <div>
+        <strong>Lighting Action</strong>
+        <span>Add a canonical Lighting Action directly to this mixed Cue without creating a separate Lighting Cue first.</span>
+      </div>
+    </div>
+    <div class="form-grid two">
+      <label>Lighting command
+        <select id="f002LightingCommand">
+          ${f002LightingCommandOptions().map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div id="f002LightingParameters"></div>
+    <div class="toolbar">
+      <button id="f002AddLightingAction" class="button" type="button" ${f002LightingNodes().length ? "" : "disabled"}>+ Lighting Action</button>
+    </div>
+    <div id="f002LightingComposerMessage" class="message hidden"></div>
+    <p class="muted">${f002LightingNodes().length ? "Uses the configured logical channel aliases and Lighting Node mapping." : "Configure a Lighting Node and logical channel aliases first."}</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
@@ -467,7 +882,12 @@ function f002InstallCueComposer() {
     if (select) select.value = "";
   });
 
+  composer.querySelector("#f002TabletCommand")?.addEventListener("change", () => f002RenderTabletParameterFields(composer));
+  f002RenderTabletParameterFields(composer);
   composer.querySelector("#f002AddTabletAction")?.addEventListener("click", () => f002AddTabletAction(composer));
+  composer.querySelector("#f002LightingCommand")?.addEventListener("change", () => f002RenderLightingFields(composer));
+  f002RenderLightingFields(composer);
+  composer.querySelector("#f002AddLightingAction")?.addEventListener("click", () => f002AddLightingAction(composer));
 }
 
 openCueEditor = function f002OpenCueEditor(cue) {
@@ -492,7 +912,9 @@ function f002ParseMIDIParameters(raw) {
   let parsed;
   try { parsed = JSON.parse(raw || "{}"); }
   catch (_) { return null; }
-  if (!Number.isInteger(parsed?.destination_index) || parsed.destination_index < 0 || !Array.isArray(parsed?.bytes)) return null;
+  const hasName = typeof parsed?.destination_name === "string" && parsed.destination_name.trim() !== "";
+  const hasIndex = Number.isInteger(parsed?.destination_index) && parsed.destination_index >= 0;
+  if (hasName === hasIndex || !Array.isArray(parsed?.bytes)) return null;
   const bytes = parsed.bytes;
   if (![2, 3].includes(bytes.length) || bytes.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
   const status = bytes[0];
@@ -505,12 +927,32 @@ function f002ParseMIDIParameters(raw) {
   else if (family === 0xC0 && bytes.length === 2) message = "program_change";
   else return null;
   return {
-    destinationIndex: parsed.destination_index,
+    destinationMode: hasName ? "name" : "index",
+    destinationName: hasName ? parsed.destination_name.trim() : "",
+    destinationIndex: hasIndex ? parsed.destination_index : 0,
     message,
     channel: (status & 0x0F) + 1,
     data1: bytes[1],
     data2: bytes.length === 3 ? bytes[2] : 0,
   };
+}
+
+function f002MIDIDestinationsForTarget(targetRef) {
+  const target = (state.f002Targets || []).find((item) => item.logical_name === targetRef);
+  if (!target || String(target.logical_type || "").toUpperCase() !== "MACHINE_ROLE") return [];
+  let roleID = "";
+  try {
+    const cfg = typeof target.configuration === "string"
+      ? JSON.parse(target.configuration || "{}")
+      : (target.configuration || {});
+    roleID = String(cfg.machine_role_id || "").trim();
+  } catch (_) {
+    return [];
+  }
+  const role = (state.f002MachineRoles || []).find((item) => item.machine_role_id === roleID);
+  const companionID = role?.assignment?.companion_id || "";
+  const companion = (state.f002Companions || []).find((item) => item.companion_id === companionID);
+  return Array.isArray(companion?.midi_destinations) ? companion.midi_destinations : [];
 }
 
 function f002MIDIStatus(message, channel) {
@@ -522,6 +964,38 @@ function f002MIDIStatus(message, channel) {
     case "program_change": return 0xC0 + offset;
     default: return 0x90 + offset;
   }
+}
+
+function f002ParsePolicyObject(raw) {
+  try {
+    const value = JSON.parse(String(raw || "{}"));
+    if (!value || Array.isArray(value) || typeof value !== "object") return null;
+    return value;
+  } catch (_) {
+    return null;
+  }
+}
+
+function f002ParseTimeoutPolicy(raw) {
+  const policy = f002ParsePolicyObject(raw);
+  if (!policy) return null;
+  const keys = Object.keys(policy);
+  if (keys.length === 0) return { timeoutMS: 0 };
+  if (keys.length !== 1 || keys[0] !== "timeout_ms") return null;
+  const timeoutMS = policy.timeout_ms;
+  if (!Number.isInteger(timeoutMS) || timeoutMS < 0) return null;
+  return { timeoutMS };
+}
+
+function f002ParseErrorPolicy(raw) {
+  const policy = f002ParsePolicyObject(raw);
+  if (!policy) return null;
+  const keys = Object.keys(policy);
+  if (keys.length === 0) return { onError: "FAIL_CUE" };
+  if (keys.length !== 1 || keys[0] !== "on_error" || typeof policy.on_error !== "string") return null;
+  const onError = policy.on_error.trim().toUpperCase();
+  if (!["FAIL_CUE", "CONTINUE"].includes(onError)) return null;
+  return { onError };
 }
 
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
@@ -580,7 +1054,9 @@ function f002EnhanceActionCard(card) {
   const capability = card.querySelector(".action-capability");
   const params = card.querySelector(".action-parameters");
   const target = card.querySelector(".action-target");
-  if (!capability || !params || !target) return;
+  const timeout = card.querySelector(".action-timeout");
+  const errorPolicy = card.querySelector(".action-error");
+  if (!capability || !params || !target || !timeout || !errorPolicy) return;
 
   target.setAttribute("list", "f002TargetList");
   f002EnsureCapabilityDatalist();
@@ -592,9 +1068,11 @@ function f002EnhanceActionCard(card) {
     : null;
   const parsedMIDI = capability.value === "midi.send"
     ? (f002ParseMIDIParameters(params.value) || (["", "{}"].includes(rawParameters)
-      ? { destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
+      ? { destinationMode: "name", destinationName: "", destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
       : null))
     : null;
+  const parsedTimeout = f002ParseTimeoutPolicy(timeout.value);
+  const parsedErrorPolicy = f002ParseErrorPolicy(errorPolicy.value);
   const builder = document.createElement("section");
   builder.className = "f002-builder f002-action-builder";
   builder.innerHTML = `
@@ -608,7 +1086,12 @@ function f002EnhanceActionCard(card) {
     </div>
     <div class="f002-midi-action hidden">
       <div class="form-grid two">
-        <label>MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
+        <label>Destination addressing<select class="f002-midi-destination-mode">
+          <option value="name">Stable destination name</option>
+          <option value="index">Legacy numeric index</option>
+        </select></label>
+        <label class="f002-midi-destination-name-field">MIDI destination name<input class="f002-midi-destination-name" placeholder="IAC Driver Bus 1" autocomplete="off"><datalist class="f002-midi-destination-list"></datalist><small class="muted f002-midi-destination-hint"></small></label>
+        <label class="f002-midi-destination-index-field hidden">MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
         <label>Message type<select class="f002-midi-message">
           <option value="note_on">Note On</option>
           <option value="note_off">Note Off</option>
@@ -619,8 +1102,36 @@ function f002EnhanceActionCard(card) {
         <label><span class="f002-midi-data1-label">Note (0–127)</span><input class="f002-midi-data1" type="number" min="0" max="127" step="1" value="60"></label>
         <label class="f002-midi-data2-field"><span class="f002-midi-data2-label">Velocity (0–127)</span><input class="f002-midi-data2" type="number" min="0" max="127" step="1" value="127"></label>
       </div>
-      <p class="muted">Ableton Live: use MIDI Map mode to bind this Note or Control Change to the scene, clip, transport or control you want StageCore to trigger.</p>
-    </div>`;
+      <p class="muted">Ableton Live: use MIDI Map mode and target the exact CoreMIDI/IAC destination name. Name addressing stays stable if CoreMIDI device ordering changes; legacy numeric index remains available for old Cues.</p>
+    </div>
+    <hr>
+    <div class="f002-builder-head">
+      <div><strong>Reliability</strong><span>Common Cue-engine timeout and failure behavior without JSON.</span></div>
+    </div>
+    <div class="form-grid two f002-reliability">
+      <label>Timeout
+        <select class="f002-timeout-kind">
+          <option value="none">No timeout</option>
+          <option value="1000">1 second</option>
+          <option value="2000">2 seconds</option>
+          <option value="5000">5 seconds</option>
+          <option value="10000">10 seconds</option>
+          <option value="custom">Custom milliseconds</option>
+          <option value="advanced">Advanced JSON</option>
+        </select>
+      </label>
+      <label class="f002-timeout-custom hidden">Custom timeout (ms)
+        <input class="f002-timeout-ms" type="number" min="0" step="1" value="1000">
+      </label>
+      <label>On action failure
+        <select class="f002-error-kind">
+          <option value="FAIL_CUE">Fail Cue / stop following sequential work</option>
+          <option value="CONTINUE">Continue Cue</option>
+          <option value="advanced">Advanced JSON</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted">FAIL_CUE is the Cue engine default. Advanced JSON is preserved unchanged when the policy contains fields this guided editor does not understand.</p>`;
   params.closest("label").parentNode.insertBefore(builder, params.closest("label"));
 
   const advanced = f002CreateDetails("Advanced action settings");
@@ -640,6 +1151,12 @@ function f002EnhanceActionCard(card) {
   const midiPanel = builder.querySelector(".f002-midi-action");
   const address = builder.querySelector(".f002-osc-address");
   const argumentsNode = builder.querySelector(".f002-arguments");
+  const midiDestinationMode = builder.querySelector(".f002-midi-destination-mode");
+  const midiDestinationNameField = builder.querySelector(".f002-midi-destination-name-field");
+  const midiDestinationIndexField = builder.querySelector(".f002-midi-destination-index-field");
+  const midiDestinationName = builder.querySelector(".f002-midi-destination-name");
+  const midiDestinationList = builder.querySelector(".f002-midi-destination-list");
+  const midiDestinationHint = builder.querySelector(".f002-midi-destination-hint");
   const midiDestination = builder.querySelector(".f002-midi-destination");
   const midiMessage = builder.querySelector(".f002-midi-message");
   const midiChannel = builder.querySelector(".f002-midi-channel");
@@ -648,6 +1165,10 @@ function f002EnhanceActionCard(card) {
   const midiData1Label = builder.querySelector(".f002-midi-data1-label");
   const midiData2Label = builder.querySelector(".f002-midi-data2-label");
   const midiData2Field = builder.querySelector(".f002-midi-data2-field");
+  const timeoutKind = builder.querySelector(".f002-timeout-kind");
+  const timeoutCustom = builder.querySelector(".f002-timeout-custom");
+  const timeoutMS = builder.querySelector(".f002-timeout-ms");
+  const errorKind = builder.querySelector(".f002-error-kind");
 
   kind.value = parsedOSC ? "osc" : parsedMIDI ? "midi" : "advanced";
   if (parsedOSC) {
@@ -655,21 +1176,62 @@ function f002EnhanceActionCard(card) {
     parsedOSC.arguments.forEach((argument) => argumentsNode.appendChild(f002ArgumentRow(argument)));
   }
   if (parsedMIDI) {
-    midiDestination.value = String(parsedMIDI.destinationIndex);
+    midiDestinationMode.value = parsedMIDI.destinationMode || "name";
+    midiDestinationName.value = parsedMIDI.destinationName || "";
+    midiDestination.value = String(parsedMIDI.destinationIndex || 0);
     midiMessage.value = parsedMIDI.message;
     midiChannel.value = String(parsedMIDI.channel);
     midiData1.value = String(parsedMIDI.data1);
     midiData2.value = String(parsedMIDI.data2);
   }
 
+  if (!parsedTimeout) {
+    timeoutKind.value = "advanced";
+  } else if (parsedTimeout.timeoutMS === 0) {
+    timeoutKind.value = "none";
+  } else if ([1000, 2000, 5000, 10000].includes(parsedTimeout.timeoutMS)) {
+    timeoutKind.value = String(parsedTimeout.timeoutMS);
+    timeoutMS.value = String(parsedTimeout.timeoutMS);
+  } else {
+    timeoutKind.value = "custom";
+    timeoutMS.value = String(parsedTimeout.timeoutMS);
+  }
+  errorKind.value = parsedErrorPolicy?.onError || "advanced";
+
+  const refreshMIDIDestinations = () => {
+    const names = f002MIDIDestinationsForTarget(target.value);
+    const listID = midiDestinationList.id || `f002-midi-dest-${Math.random().toString(36).slice(2)}`;
+    midiDestinationList.id = listID;
+    midiDestinationName.setAttribute("list", listID);
+    midiDestinationList.innerHTML = names.map((name) => `<option value="${esc(name)}"></option>`).join("");
+    if (midiDestinationHint) {
+      midiDestinationHint.textContent = names.length
+        ? `${names.length} destination(s) reported by the assigned Companion.`
+        : "No MIDI destination inventory is currently reported for this target; you may type the exact CoreMIDI/IAC name.";
+    }
+  };
+
   const renderMIDIFields = () => {
+    refreshMIDIDestinations();
     const message = midiMessage.value;
     const program = message === "program_change";
     const control = message === "control_change";
+    const nameMode = midiDestinationMode.value === "name";
+    midiDestinationNameField.classList.toggle("hidden", !nameMode);
+    midiDestinationIndexField.classList.toggle("hidden", nameMode);
+    midiDestinationName.required = nameMode && kind.value === "midi";
+    midiDestination.required = !nameMode && kind.value === "midi";
     midiData1Label.textContent = program ? "Program (0–127)" : control ? "Controller (0–127)" : "Note (0–127)";
     midiData2Label.textContent = control ? "Value (0–127)" : "Velocity (0–127)";
     midiData2Field.classList.toggle("hidden", program);
     midiData2.required = !program && kind.value === "midi";
+  };
+
+  const renderReliabilityFields = () => {
+    const custom = timeoutKind.value === "custom";
+    timeoutCustom.classList.toggle("hidden", !custom);
+    timeoutMS.required = custom;
+    if (timeoutKind.value === "advanced" || errorKind.value === "advanced") advanced.open = true;
   };
 
   const applyKind = () => {
@@ -677,24 +1239,47 @@ function f002EnhanceActionCard(card) {
     const midi = kind.value === "midi";
     oscPanel.classList.toggle("hidden", !osc);
     midiPanel.classList.toggle("hidden", !midi);
-    advanced.open = !(osc || midi);
+    advanced.open = !(osc || midi) || timeoutKind.value === "advanced" || errorKind.value === "advanced";
     address.required = osc;
-    midiDestination.required = midi;
     midiMessage.required = midi;
     midiChannel.required = midi;
     midiData1.required = midi;
     if (osc) capability.value = "osc.send";
     if (midi) capability.value = "midi.send";
     renderMIDIFields();
+    renderReliabilityFields();
   };
   kind.addEventListener("change", applyKind);
+  target.addEventListener("change", renderMIDIFields);
+  target.addEventListener("input", renderMIDIFields);
+  midiDestinationMode.addEventListener("change", renderMIDIFields);
   midiMessage.addEventListener("change", renderMIDIFields);
+  timeoutKind.addEventListener("change", applyKind);
+  errorKind.addEventListener("change", applyKind);
   builder.querySelector(".f002-add-argument").addEventListener("click", () => argumentsNode.appendChild(f002ArgumentRow()));
   applyKind();
 }
 
 function f002SyncActionCard(card) {
   if (!card?.dataset.f002Enhanced) return;
+  const timeout = card.querySelector(".action-timeout");
+  const errorPolicy = card.querySelector(".action-error");
+  const timeoutKind = card.querySelector(".f002-timeout-kind");
+  const errorKind = card.querySelector(".f002-error-kind");
+  if (timeout && timeoutKind && timeoutKind.value !== "advanced") {
+    if (timeoutKind.value === "none") {
+      timeout.value = "{}";
+    } else {
+      const timeoutMS = timeoutKind.value === "custom"
+        ? Number.parseInt(card.querySelector(".f002-timeout-ms")?.value || "", 10)
+        : Number.parseInt(timeoutKind.value, 10);
+      timeout.value = JSON.stringify({ timeout_ms: timeoutMS }, null, 2);
+    }
+  }
+  if (errorPolicy && errorKind && errorKind.value !== "advanced") {
+    errorPolicy.value = JSON.stringify({ on_error: errorKind.value }, null, 2);
+  }
+
   const kind = card.querySelector(".f002-action-kind");
   if (!kind || kind.value === "advanced") return;
   const capability = card.querySelector(".action-capability");
@@ -707,6 +1292,8 @@ function f002SyncActionCard(card) {
     return;
   }
   if (kind.value === "midi") {
+    const destinationMode = card.querySelector(".f002-midi-destination-mode").value;
+    const destinationName = card.querySelector(".f002-midi-destination-name").value.trim();
     const destinationIndex = Number.parseInt(card.querySelector(".f002-midi-destination").value, 10);
     const message = card.querySelector(".f002-midi-message").value;
     const channel = Number.parseInt(card.querySelector(".f002-midi-channel").value, 10);
@@ -715,7 +1302,9 @@ function f002SyncActionCard(card) {
     const bytes = [f002MIDIStatus(message, channel), data1];
     if (message !== "program_change") bytes.push(data2);
     capability.value = "midi.send";
-    params.value = JSON.stringify({ destination_index: destinationIndex, bytes }, null, 2);
+    params.value = JSON.stringify(destinationMode === "name"
+      ? { destination_name: destinationName, bytes }
+      : { destination_index: destinationIndex, bytes }, null, 2);
   }
 }
 

@@ -21,6 +21,36 @@ final class MIDISendExecutorTests: XCTestCase {
         XCTAssertEqual(sender.sendCount, 1)
     }
 
+    func testExecutorAcceptsStableDestinationName() async {
+        let sender = RecordingMIDISender()
+        let executor = MIDISendExecutor(sender: sender)
+
+        let outcome = await executor.execute(parameters: [
+            "destination_name": .string("IAC Driver Bus 1"),
+            "bytes": .array([.int(0xB0), .int(7), .int(100)]),
+        ])
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertEqual(outcome.ackLevel, .transportOnly)
+        XCTAssertEqual(sender.destination, MIDIDestination(name: "IAC Driver Bus 1"))
+        XCTAssertEqual(sender.bytes, [0xB0, 7, 100])
+    }
+
+    func testDestinationRejectsNameAndIndexTogether() async {
+        let sender = RecordingMIDISender()
+        let executor = MIDISendExecutor(sender: sender)
+
+        let outcome = await executor.execute(parameters: [
+            "destination_name": .string("IAC Driver Bus 1"),
+            "destination_index": .int(0),
+            "bytes": .array([.int(0x90), .int(60), .int(100)]),
+        ])
+
+        XCTAssertEqual(outcome.status, .failed)
+        XCTAssertEqual(outcome.errorCode, "MIDI_INVALID_PARAMETERS")
+        XCTAssertEqual(sender.sendCount, 0)
+    }
+
     func testInvalidMIDIParametersFailWithoutSending() async {
         let sender = RecordingMIDISender()
         let executor = MIDISendExecutor(sender: sender)

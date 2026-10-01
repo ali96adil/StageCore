@@ -206,6 +206,7 @@ func (s *Store) DuplicateDraftCue(ctx context.Context, revisionID, cueID, displa
 	}
 	copyCue := source
 	copyCue.ID = ""
+	copyCue.ExecutionPolicy = executionPolicyForDuplicatedCue(source.ExecutionPolicy)
 	copyCue.DisplayLabel = displayLabel
 	copyCue.Name = strings.TrimSpace(name)
 	copyCue.OrderIndex = orderIndex
@@ -219,4 +220,29 @@ func (s *Store) DuplicateDraftCue(ctx context.Context, revisionID, cueID, displa
 		actions[i].CueID = ""
 	}
 	return s.CreateCueWithActions(ctx, copyCue, actions)
+}
+
+func executionPolicyForDuplicatedCue(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var policy map[string]any
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return raw
+	}
+	timecodeValue, ok := policy["timecode"]
+	if !ok {
+		return raw
+	}
+	timecodePolicy, ok := timecodeValue.(map[string]any)
+	if !ok {
+		return raw
+	}
+	delete(timecodePolicy, "binding_id")
+	policy["timecode"] = timecodePolicy
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }

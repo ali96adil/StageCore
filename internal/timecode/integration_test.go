@@ -237,7 +237,7 @@ func TestMTCPreflightTracksLiveHealth(t *testing.T) {
 	}
 }
 
-func TestPreflightBlocksUnrepresentableMTCRate(t *testing.T) {
+func TestPreflightBlocksLegacySnapshotWithUnrepresentableMTCRate(t *testing.T) {
 	ctx := context.Background()
 	stageStore, _ := newIntegrationStore(t)
 	project, runtimeSnapshot := createTimecodeSnapshot(t, ctx, stageStore, SourceMTC, "23.976", "mtc-film")
@@ -249,7 +249,7 @@ func TestPreflightBlocksUnrepresentableMTCRate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != preflight.Block || checkStatus(report, "timecode.source.mtc.rate") != preflight.Block {
+	if report.Status != preflight.Block || checkStatus(report, "timecode.configuration") != preflight.Block {
 		t.Fatalf("unrepresentable MTC preflight=%#v", report)
 	}
 }

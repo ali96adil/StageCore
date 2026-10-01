@@ -46,9 +46,23 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 	for _, required := range []string{
 		"RECOMMENDED NEXT STEP",
 		"Quick target setup",
+		"Route behavior",
+		"f002RouteConditionKind",
+		"f002RouteTransformKind",
+		"Use transformed input",
+		"Inside numeric range",
+		"Scale / offset number",
+		"Advanced routing conditions and parameters",
 		"Send OSC message",
 		"Send MIDI message",
 		"midi.send",
+		"MIDI destination name",
+		"Stable destination name",
+		"Legacy numeric index",
+		"destination_name",
+		"f002MIDIDestinationsForTarget",
+		"midi_destinations",
+		"destination(s) reported by the assigned Companion",
 		"MIDI destination index",
 		"Note On",
 		"Control Change",
@@ -57,6 +71,14 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		"f002MIDIStatus",
 		"Ableton Live",
 		"MIDI Map mode",
+		"Reliability",
+		"f002ParseTimeoutPolicy",
+		"f002ParseErrorPolicy",
+		"FAIL_CUE",
+		"CONTINUE",
+		"Custom timeout (ms)",
+		"Advanced Cue policy",
+		"SEQUENTIAL, PARALLEL, or PARALLEL_BARRIER",
 		"Advanced action settings",
 		"dataset.i18n",
 	} {
@@ -66,6 +88,34 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 	}
 	if strings.Contains(js, "https://") || strings.Contains(js, "http://") {
 		t.Fatal("guided UX must not depend on remote assets or services")
+	}
+
+	appReq := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	appReq.RemoteAddr = "127.0.0.1:17105"
+	appRes := httptest.NewRecorder()
+	handler.ServeHTTP(appRes, appReq)
+	if appRes.Code != http.StatusOK {
+		t.Fatalf("app.js status=%d", appRes.Code)
+	}
+	app := appRes.Body.String()
+	for _, required := range []string{
+		"/preflight",
+		"Preflight:",
+		"showBlocked",
+		"runtimeOpenPreflight",
+		"Client readiness display cannot bypass Preflight",
+		"/runtime/emergency-blackout",
+		"EMERGENCY BLACKOUT",
+		"CLEAR MANAGED BLACKOUT",
+		"STOP CUE is not a blackout",
+		"Audio and external VDMX/OSC",
+		"managed_output_blackout",
+		"BLACKOUT",
+		"CLEAR",
+	} {
+		if !strings.Contains(app, required) {
+			t.Fatalf("app.js missing Runtime Preflight UX contract %q", required)
+		}
 	}
 
 	cssReq := httptest.NewRequest(http.MethodGet, "/guided-ux.css", nil)

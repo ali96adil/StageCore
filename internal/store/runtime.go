@@ -180,6 +180,57 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	return session, nil
 }
 
+func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID string, enabled bool, updatedBy string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	updatedBy = strings.TrimSpace(updatedBy)
+	if sessionID == "" || updatedBy == "" {
+		return fmt.Errorf("%w: session and safety-state actor are required", domain.ErrInvalidInput)
+	}
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session.Status != domain.SessionActive {
+		return fmt.Errorf("%w: runtime safety state requires an active session", domain.ErrConflict)
+	}
+	value := 0
+	if enabled {
+		value = 1
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			managed_output_blackout = excluded.managed_output_blackout,
+			updated_by = excluded.updated_by,
+			updated_at_us = excluded.updated_at_us
+	`, session.ID, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("set session managed-output blackout: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SessionManagedOutputBlackout(ctx context.Context, sessionID string) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false, fmt.Errorf("%w: session is required", domain.ErrInvalidInput)
+	}
+	var value int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT managed_output_blackout
+		FROM runtime_safety_state
+		WHERE session_id = ?
+	`, sessionID).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read session managed-output blackout: %w", err)
+	}
+	return value == 1, nil
+}
+
 func (s *Store) SetSessionCurrentCue(ctx context.Context, sessionID, cueID string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sessions

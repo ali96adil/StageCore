@@ -25,7 +25,7 @@ func TestEmbeddedConfigurationClientUsesOperatorAPIOnly(t *testing.T) {
 		t.Fatalf("configuration.js status=%d", jsRes.Code)
 	}
 	client := jsRes.Body.String()
-	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes"} {
+	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes", "Routing & Machine Roles", "jumpMachineRoles", "machineRolesCard", "machineRoleNativeVisual", "machineRoleEnvironment", "execution.environment.operation", "missingRoleCapabilities", "Trusted Companions missing required capabilities", "output-edit", "outputCancelEdit", "Save output", "method: outputID ? \"PUT\" : \"POST\"", "input-edit", "input-remove", "inputCancelEdit", "Save input", "method: inputID ? \"PUT\" : \"POST\"", "route-edit", "route-toggle", "route-remove", "routeCancelEdit", "Save route", "method: routeID ? \"PUT\" : \"POST\"", "setExistingRouteAdvancedMode", "routeDelay", "routeDebounce", "delay_ms", "debounce_ms", "video.source.open", "visual.play", "visual.transition", "visual.layer.crop", "visual.layer.mask", "visual.layer.effect", "external VDMX cue control use OSC send"} {
 		if !strings.Contains(client, required) {
 			t.Fatalf("configuration client missing %q", required)
 		}

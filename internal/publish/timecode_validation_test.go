@@ -20,6 +20,7 @@ func TestValidateTimecodeDraftUsesRuntimeDropFrameRules(t *testing.T) {
 		at      string
 		wantErr bool
 	}{
+		{name: "unrepresentable MTC rate", rate: "23.976", start: "00:00:00:00", at: "00:00:05:00", wantErr: true},
 		{name: "drop-frame delimiter mismatch", rate: "29.97 DF", start: "00:00:00;00", at: "00:00:05:00", wantErr: true},
 		{name: "dropped frame number", rate: "29.97 DF", start: "00:00:00;00", at: "00:01:00;00", wantErr: true},
 		{name: "first legal frame after drop", rate: "29.97 DF", start: "00:00:00;00", at: "00:01:00;02", wantErr: false},

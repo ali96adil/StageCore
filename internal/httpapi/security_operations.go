@@ -67,6 +67,7 @@ func (s *securityOperations) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/enabled", withPermission(s.users, userauth.PermissionUserManage, s.handleUserEnabled))
 	mux.HandleFunc("POST /api/v1/security/users/{user_id}/revoke-sessions", withPermission(s.users, userauth.PermissionUserManage, s.handleUserSessionRevoke))
 
+	mux.HandleFunc("GET /api/v1/security/companions", withPermission(s.users, userauth.PermissionCompanionRevoke, s.handleCompanionInventory))
 	mux.HandleFunc("GET /api/v1/security/companions/pairing/pending", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingPending))
 	mux.HandleFunc("POST /api/v1/security/companions/pairing/approve", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingApprove))
 	mux.HandleFunc("POST /api/v1/security/companions/{companion_id}/revoke", withPermission(s.users, userauth.PermissionCompanionRevoke, s.handleCompanionRevoke))
@@ -316,6 +317,49 @@ func (s *securityOperations) handleUserSessionRevoke(w http.ResponseWriter, r *h
 type companionPairingApproveRequest struct {
 	RequestID   string `json:"request_id"`
 	PairingCode string `json:"pairing_code"`
+}
+
+func (s *securityOperations) handleCompanionInventory(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	companions, err := s.store.ListCompanions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_INVENTORY_UNAVAILABLE"})
+		return
+	}
+	items := make([]map[string]any, 0, len(companions))
+	for _, companion := range companions {
+		item := map[string]any{
+			"companion_id": companion.ID,
+			"display_name": companion.DisplayName,
+			"hostname": companion.Hostname,
+			"platform": companion.Platform,
+			"architecture": companion.Architecture,
+			"version": companion.Version,
+			"capabilities": append([]string(nil), companion.Capabilities...),
+			"trust_state": companion.TrustState,
+			"readiness": companion.Readiness,
+			"last_seen_at": companion.LastSeenAt,
+		}
+		if assignment, err := s.store.GetActiveRoleAssignmentForCompanion(r.Context(), companion.ID); err == nil {
+			item["assignment"] = map[string]any{
+				"role_assignment_id": assignment.ID,
+				"machine_role_id": assignment.MachineRoleID,
+				"state": assignment.State,
+			}
+			if role, roleErr := s.store.GetMachineRole(r.Context(), assignment.MachineRoleID); roleErr == nil {
+				item["machine_role"] = map[string]any{
+					"machine_role_id": role.ID,
+					"project_id": role.ProjectID,
+					"role_key": role.RoleKey,
+					"display_name": role.DisplayName,
+				}
+			}
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_INVENTORY_UNAVAILABLE"})
+			return
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"companions": items})
 }
 
 func (s *securityOperations) handleCompanionPairingPending(w http.ResponseWriter, r *http.Request, _ userauth.Session) {

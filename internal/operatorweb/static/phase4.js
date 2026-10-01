@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const liveSourceExecutionCapabilities = ["video.source.open", "video.source.route"];
+
   const copy = {
     en: {
       devices: "Stage Devices",
@@ -12,7 +14,7 @@
       callboardTitle: "Stage Display / Callboard",
       callboardSub: "Send messages, countdowns and alerts to one display, a group, or every display.",
       videoTitle: "Live Video Sources",
-      videoSub: "Define camera/capture/stream sources and assign execution to a capable Render Node when needed.",
+      videoSub: "Define camera/capture/stream sources and assign execution to a capable Render Node or StageCore Native Visual Machine Role.",
       networkTitle: "Stage Network Cockpit",
       networkSub: "Latest bounded observations for Hub, Companion, Stage Devices, live sources and endpoints.",
       refresh: "Refresh",
@@ -89,6 +91,22 @@
       required: "Required for show",
       enabled: "Enabled",
       saveSource: "Save source",
+      updateSource: "Update source",
+      editSource: "Edit",
+      cancelEdit: "Cancel edit",
+      enableSource: "Enable",
+      disableSource: "Disable",
+      executionPlacement: "Execution placement",
+      relayHealth: "Open relay health",
+      relayReadStatus: "Read relay status",
+      relayLoading: "Reading relay status…",
+      relayUnavailable: "Relay status unavailable.",
+      relayViewerSlots: "Viewer slots",
+      relayFrameAge: "Frame age",
+      relayFlash: "Flash",
+      relayFlashRequesting: "flash-requesting viewers",
+      machineRole: "Machine Role",
+      stageDevice: "Stage Device",
       localCamera: "Local camera",
       usbCapture: "USB capture",
       networkStream: "Network stream",
@@ -112,6 +130,10 @@
       decommissionConfirm: "Decommission this stale OFFLINE Tablet identity? History is preserved and this identity will no longer receive commands.",
       decommissionReason: "Clean reinstall / stale Tablet identity",
       decommissioned: "Tablet identity decommissioned. History was preserved.",
+      openTabletController: "Open Tablet Controller",
+      openTabletScenes: "Open Tablet Scenes",
+      openLightingSetup: "Open Lighting Setup",
+      openLightingCues: "Open Lighting Cues",
       unknown: "Unknown",
       none: "None",
     },
@@ -202,6 +224,22 @@
       required: "مطلوب للعرض",
       enabled: "مفعّل",
       saveSource: "حفظ المصدر",
+      updateSource: "تحديث المصدر",
+      editSource: "تعديل",
+      cancelEdit: "إلغاء التعديل",
+      enableSource: "تفعيل",
+      disableSource: "تعطيل",
+      executionPlacement: "مكان التنفيذ",
+      relayHealth: "فتح حالة الـRelay",
+      relayReadStatus: "قراءة حالة الـRelay",
+      relayLoading: "جاري قراءة حالة الـRelay…",
+      relayUnavailable: "حالة الـRelay غير متاحة.",
+      relayViewerSlots: "أماكن المشاهدين",
+      relayFrameAge: "عمر آخر فريم",
+      relayFlash: "الفلاش",
+      relayFlashRequesting: "مشاهدين يطلبون الفلاش",
+      machineRole: "Machine Role",
+      stageDevice: "Stage Device",
       localCamera: "كاميرا محلية",
       usbCapture: "كرت التقاط USB",
       networkStream: "بث شبكي",
@@ -225,6 +263,10 @@
       decommissionConfirm: "تريد تخرج هوية هذا التابلت القديم وهو OFFLINE؟ التاريخ يبقى محفوظ وهذه الهوية ما تستقبل أوامر بعد.",
       decommissionReason: "تنصيب نظيف / هوية تابلت قديمة",
       decommissioned: "تم إخراج هوية التابلت القديمة مع الاحتفاظ بالتاريخ.",
+      openTabletController: "فتح تحكم التابلت",
+      openTabletScenes: "فتح مشاهد التابلت",
+      openLightingSetup: "فتح إعداد الإضاءة",
+      openLightingCues: "فتح كيوهات الإضاءة",
       unknown: "غير معروف",
       none: "لا يوجد",
     },
@@ -396,6 +438,16 @@
           <div class="phase4-actions">
             <button class="button danger" data-decommission-tablet="${esc(device.device_id)}" type="button">${esc(t("decommissionTablet"))}</button>
           </div>` : ""}
+        ${device.device_kind === "TABLET_PLAYER" ? `
+          <div class="phase4-actions">
+            <button class="button ghost" data-open-workspace="tablet-controller" type="button">${esc(t("openTabletController"))}</button>
+            <button class="button ghost" data-open-workspace="tablet-scenes" type="button">${esc(t("openTabletScenes"))}</button>
+          </div>` : ""}
+        ${device.profile_id === "stagecore.esp32-dmx-lighting-node" ? `
+          <div class="phase4-actions">
+            <button class="button ghost" data-open-workspace="lighting-setup" type="button">${esc(t("openLightingSetup"))}</button>
+            <button class="button ghost" data-open-workspace="lighting-cues" type="button">${esc(t("openLightingCues"))}</button>
+          </div>` : ""}
         ${tabletControls(device)}
       </article>`;
   }
@@ -536,6 +588,15 @@
           ? `<div class="phase4-grid">${inventory.map(inventoryCard).join("")}</div>`
           : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
+
+    body.querySelectorAll("[data-open-workspace]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const page = button.dataset.openWorkspace || "";
+        const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
+        if (navButton) navButton.click();
+        else navigate(page);
+      });
+    });
 
     body.querySelectorAll("[data-decommission-tablet]").forEach((button) => {
       button.addEventListener("click", async () => {
@@ -698,37 +759,118 @@
     });
   }
 
-  function sourceCard(source) {
+  function sourceRelayHealthURL(source) {
+    const value = String(source?.endpoint_ref || "").trim();
+    if (!value) return "";
+    try {
+      const parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return "";
+      if (parsed.pathname !== "/api/v0/stream") return "";
+      parsed.pathname = "/api/v0/health";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function relayHealthMarkup(health) {
+    if (!health || health.service !== "stagecore-camera-relay") {
+      return `<div class="message warn">${esc(t("relayUnavailable"))}</div>`;
+    }
+    const viewers = Number(health.viewers);
+    const maxClients = Number(health.max_clients);
+    const frameAge = Number(health.last_frame_age_ms);
+    const flashMode = String(health.flash_mode || "auto").toUpperCase();
+    const flashApplied = health.flash_applied_known
+      ? (health.flash_applied_on ? "ON" : "OFF")
+      : "UNKNOWN";
+    const flashError = String(health.flash_last_error || health.flash_error || "").trim();
     return `
-      <article class="phase4-card">
+      <div class="phase4-lighting-diagnostic-info">
+        <div class="phase4-status-row">${pulse(String(health.state || "UNKNOWN").toUpperCase())}
+          <strong>${esc(health.upstream_connected ? "upstream connected" : "upstream disconnected")}</strong>
+        </div>
+        <dl class="phase4-kv">
+          <div><dt>${esc(t("relayViewerSlots"))}</dt><dd>${Number.isFinite(viewers) ? esc(viewers) : "—"} / ${Number.isFinite(maxClients) ? esc(maxClients) : "—"}</dd></div>
+          <div><dt>${esc(t("relayFrameAge"))}</dt><dd>${Number.isFinite(frameAge) && frameAge >= 0 ? `${esc(frameAge)} ms` : "—"}</dd></div>
+          <div><dt>${esc(t("relayFlash"))}</dt><dd>${esc(flashMode)} · ${esc(flashApplied)}</dd></div>
+          <div><dt>${esc(t("relayFlashRequesting"))}</dt><dd>${esc(Number(health.flash_requesting_viewers || 0))}</dd></div>
+        </dl>
+        ${flashError ? `<p class="message warn">${esc(flashError)}</p>` : ""}
+      </div>`;
+  }
+
+  function sourcePlacementLabel(source, roles, devices) {
+    if (source.execution_machine_role_id) {
+      const role = roles.find((item) => item.machine_role_id === source.execution_machine_role_id);
+      return `${t("machineRole")}: ${role?.display_name || role?.role_key || source.execution_machine_role_id}`;
+    }
+    if (source.execution_device_id) {
+      const device = devices.find((item) => item.device_id === source.execution_device_id);
+      return `${t("stageDevice")}: ${device?.display_name || source.execution_device_id}`;
+    }
+    return t("none");
+  }
+
+  function sourceCard(source, editable, roles, devices) {
+    return `
+      <article class="phase4-card" data-live-source-id="${esc(source.source_id)}">
         <div class="phase4-card-head">
           <div><p class="eyebrow">${esc(source.source_class)}</p><h3>${esc(source.name)}</h3></div>
           ${pulse(source.readiness || "UNKNOWN")}
         </div>
         <dl class="phase4-kv">
           <div><dt>${esc(t("endpoint"))}</dt><dd class="mono">${esc(source.endpoint_ref || "—")}</dd></div>
-          <div><dt>${esc(t("renderNode"))}</dt><dd class="mono">${esc(source.execution_device_id || "—")}</dd></div>
+          <div><dt>${esc(t("executionPlacement"))}</dt><dd>${esc(sourcePlacementLabel(source, roles, devices))}</dd></div>
           <div><dt>${esc(t("required"))}</dt><dd>${source.required ? "✓" : "—"}</dd></div>
           <div><dt>${esc(t("enabled"))}</dt><dd>${source.desired_enabled ? "✓" : "—"}</dd></div>
           <div><dt>ID</dt><dd class="mono">${esc(source.source_id)}</dd></div>
           <div><dt>${esc(t("observed"))}</dt><dd>${when(source.last_observed_at)}</dd></div>
         </dl>
+        ${sourceRelayHealthURL(source) ? `
+          <section class="phase4-relay-health" data-relay-health-url="${esc(sourceRelayHealthURL(source))}">
+            <div class="row-actions">
+              <button class="button ghost live-source-relay-status" type="button">${esc(t("relayReadStatus"))}</button>
+              <a class="button ghost" href="${esc(sourceRelayHealthURL(source))}" target="_blank" rel="noopener noreferrer">${esc(t("relayHealth"))}</a>
+            </div>
+            <div class="live-source-relay-result" role="status" aria-live="polite"></div>
+          </section>` : ""}
+        ${editable ? `<div class="row-actions">
+          <button class="button live-source-edit" type="button">${esc(t("editSource"))}</button>
+          <button class="button ghost live-source-toggle" type="button">${esc(t(source.desired_enabled ? "disableSource" : "enableSource"))}</button>
+        </div>` : ""}
       </article>`;
   }
 
   async function renderLiveVideo() {
     pageHeader(t("videoTitle"), t("videoSub"), renderLiveVideo);
     const projectID = currentProjectID();
-    const [sourcesPayload, devicesPayload] = await Promise.all([
+    const editable = canEdit();
+    const [sourcesPayload, devicesPayload, rolesPayload] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources`),
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`),
+      editable
+        ? api(`/api/v1/projects/${encodeURIComponent(projectID)}/machine-roles`).catch(() => ({ roles: [] }))
+        : Promise.resolve({ roles: [] }),
     ]);
     const sources = sourcesPayload.sources || [];
-    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
+    const devices = devicesPayload.devices || [];
+    const renderNodes = devices.filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
+    const roles = rolesPayload.roles || [];
+    const liveSourceRoles = roles.filter((role) => {
+    const required = new Set(role.required_capabilities || []);
+    return liveSourceExecutionCapabilities.every((capability) => required.has(capability));
+  });
     const body = document.getElementById("phase4Body");
-    const editable = canEdit();
+    const placementOptions = [
+      `<option value="">${esc(t("none"))}</option>`,
+      ...renderNodes.map((device) => `<option value="device:${esc(device.device_id)}">${esc(t("stageDevice"))}: ${esc(device.display_name || device.device_id)}</option>`),
+      ...liveSourceRoles.map((role) => `<option value="role:${esc(role.machine_role_id)}">${esc(t("machineRole"))}: ${esc(role.display_name || role.role_key || role.machine_role_id)}</option>`),
+    ].join("");
     body.innerHTML = `
-      ${editable ? `<form id="liveSourceForm" class="phase4-form">
+      ${editable ? `<form id="liveSourceForm" class="phase4-form" data-source-id="">
         <div class="phase4-form-grid">
           <label>${esc(t("sourceName"))}<input id="liveSourceName" required></label>
           <label>${esc(t("sourceClass"))}
@@ -739,30 +881,111 @@
             </select>
           </label>
           <label>${esc(t("endpoint"))}<input id="liveSourceEndpoint" dir="ltr" placeholder="camera://main or rtsp://…"></label>
-          <label>${esc(t("renderNode"))}
-            <select id="liveSourceNode"><option value="">${esc(t("none"))}</option>${renderNodes.map((device) => `<option value="${esc(device.device_id)}">${esc(device.display_name || device.device_id)}</option>`).join("")}</select>
-          </label>
+          <label>${esc(t("executionPlacement"))}<select id="liveSourcePlacement">${placementOptions}</select></label>
           <label class="check-row"><input id="liveSourceRequired" type="checkbox"> ${esc(t("required"))}</label>
           <label class="check-row"><input id="liveSourceEnabled" type="checkbox" checked> ${esc(t("enabled"))}</label>
         </div>
-        <div><button class="button primary" type="submit">${esc(t("saveSource"))}</button></div>
+        <div class="row-actions">
+          <button id="liveSourceSave" class="button primary" type="submit">${esc(t("saveSource"))}</button>
+          <button id="liveSourceCancelEdit" class="button ghost hidden" type="button">${esc(t("cancelEdit"))}</button>
+        </div>
       </form>` : ""}
-      ${sources.length ? `<div class="phase4-grid">${sources.map(sourceCard).join("")}</div>` : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}`;
+      ${sources.length ? `<div class="phase4-grid">${sources.map((source) => sourceCard(source, editable, roles, devices)).join("")}</div>` : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}`;
 
-    document.getElementById("liveSourceForm")?.addEventListener("submit", async (event) => {
+    const form = document.getElementById("liveSourceForm");
+    const resetEditor = () => {
+      if (!form) return;
+      form.dataset.sourceId = "";
+      form.reset();
+      const enabled = document.getElementById("liveSourceEnabled");
+      if (enabled) enabled.checked = true;
+      document.getElementById("liveSourceSave").textContent = t("saveSource");
+      document.getElementById("liveSourceCancelEdit")?.classList.add("hidden");
+    };
+    const editSource = (source) => {
+      if (!form) return;
+      form.dataset.sourceId = source.source_id;
+      document.getElementById("liveSourceName").value = source.name || "";
+      document.getElementById("liveSourceClass").value = source.source_class || "NETWORK_STREAM";
+      document.getElementById("liveSourceEndpoint").value = source.endpoint_ref || "";
+      document.getElementById("liveSourceRequired").checked = !!source.required;
+      document.getElementById("liveSourceEnabled").checked = source.desired_enabled !== false;
+      const placement = source.execution_machine_role_id
+        ? `role:${source.execution_machine_role_id}`
+        : source.execution_device_id ? `device:${source.execution_device_id}` : "";
+      document.getElementById("liveSourcePlacement").value = placement;
+      document.getElementById("liveSourceSave").textContent = t("updateSource");
+      document.getElementById("liveSourceCancelEdit")?.classList.remove("hidden");
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    document.getElementById("liveSourceCancelEdit")?.addEventListener("click", resetEditor);
+    document.querySelectorAll(".phase4-card[data-live-source-id]").forEach((card) => {
+      const source = sources.find((item) => item.source_id === card.dataset.liveSourceId);
+      card.querySelector(".live-source-relay-status")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const section = button.closest(".phase4-relay-health");
+        const target = section?.querySelector(".live-source-relay-result");
+        const healthURL = section?.dataset.relayHealthUrl || "";
+        if (!target || !healthURL) return;
+        button.disabled = true;
+        target.textContent = t("relayLoading");
+        try {
+          const response = await fetch(healthURL, {
+            method: "GET",
+            cache: "no-store",
+            credentials: "omit",
+            mode: "cors",
+            referrerPolicy: "no-referrer",
+          });
+          const health = await response.json();
+          if (!target.isConnected) return;
+          target.innerHTML = relayHealthMarkup(health);
+        } catch (_) {
+          if (target.isConnected) target.innerHTML = `<div class="message warn">${esc(t("relayUnavailable"))}</div>`;
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+      card.querySelector(".live-source-edit")?.addEventListener("click", () => source && editSource(source));
+      card.querySelector(".live-source-toggle")?.addEventListener("click", async (event) => {
+        if (!source) return;
+        event.currentTarget.disabled = true;
+        try {
+          await api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources/${encodeURIComponent(source.source_id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ ...source, desired_enabled: !source.desired_enabled }),
+          });
+          await renderLiveVideo();
+          phase4Message(t("sourceSaved"), "success");
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (event.currentTarget.isConnected) event.currentTarget.disabled = false;
+        }
+      });
+    });
+
+    form?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const sourceID = globalThis.crypto?.randomUUID ? crypto.randomUUID() : `source-${Date.now()}`;
+      const existingID = form.dataset.sourceId || "";
+      const existing = sources.find((item) => item.source_id === existingID);
+      const sourceID = existingID || (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `source-${Date.now()}`);
+      const placement = document.getElementById("liveSourcePlacement").value || "";
+      const executionDeviceID = placement.startsWith("device:") ? placement.slice(7) : "";
+      const executionMachineRoleID = placement.startsWith("role:") ? placement.slice(5) : "";
       const source = {
+        ...(existing || {}),
         source_id: sourceID,
         name: document.getElementById("liveSourceName").value.trim(),
         source_class: document.getElementById("liveSourceClass").value,
         endpoint_ref: document.getElementById("liveSourceEndpoint").value.trim(),
-        execution_device_id: document.getElementById("liveSourceNode").value,
-        capabilities: [],
-        config: {},
+        execution_device_id: executionDeviceID,
+        execution_machine_role_id: executionMachineRoleID,
+        capabilities: existing?.capabilities?.length ? existing.capabilities : [...liveSourceExecutionCapabilities],
+        config: existing?.config || {},
         required: document.getElementById("liveSourceRequired").checked,
         desired_enabled: document.getElementById("liveSourceEnabled").checked,
-        readiness: "UNKNOWN",
+        readiness: existing?.readiness || "UNKNOWN",
       };
       try {
         await api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources/${encodeURIComponent(sourceID)}`, {
@@ -840,6 +1063,7 @@
       button.addEventListener("click", () => renderPhase4Page(page));
       nav.insertBefore(button, before);
     });
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   async function injectDraftDiscard() {

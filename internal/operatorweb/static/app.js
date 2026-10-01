@@ -631,12 +631,20 @@ async function publishDraft() {
 }
 
 async function renderRuntime(startPolling = false) {
-  const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+  const projectID = encodeURIComponent(state.project.project_id);
+  const [runtime, preflight] = await Promise.all([
+    api(`/api/v1/projects/${projectID}/runtime`),
+    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
+  ]);
   const active = runtime.session;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
+  const emergencyBlackout = !!runtime.managed_output_blackout;
+  const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
+  const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
+  const showBlocked = preflight?.status === "BLOCK";
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
@@ -653,19 +661,25 @@ async function renderRuntime(startPolling = false) {
       <section class="runtime-controls">
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
+          <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
+            <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
+            <span> · ${esc(blockers)} blocker(s) · ${esc(warnings)} warning(s)</span>
+            <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
+          </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot ? "disabled" : ""} type="button">Enter SHOW</button>
-          <small class="muted">SHOW remains blocked until the S3 Preflight gate passes.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
+          <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
               <option value="">Select published Cue…</option>
               ${(runtime.cues || []).map((cue) => `<option value="${esc(cue.cue_id)}">${esc(cue.display_label)} · ${esc(cue.name)}</option>`).join("")}
             </select>
           </label>
-          <button id="jumpButton" class="button warn" ${!canControl ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>`}
+          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE only interrupts the current Cue. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -677,10 +691,12 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>`;
 
+  el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
   el("goButton")?.addEventListener("click", goRuntime);
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
+  el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
   el("jumpButton")?.addEventListener("click", jumpRuntime);
   el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
   if (startPolling) startRuntimePolling();
@@ -710,13 +726,51 @@ async function goRuntime() {
 }
 
 async function stopCueRuntime() {
-  if (!confirm("Request STOP for the currently running Cue/interruptible Actions?")) return;
+  if (!confirm("STOP CUE only interrupts the currently running Cue/interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
     });
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
+}
+
+function emergencyDomainSummary(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const domains = [
+    ["Lighting", payload.lighting],
+    ["Tablets", payload.tablets],
+    ["Native Visual", payload.native_visual],
+    ["Audio", payload.audio],
+    ["External", payload.external_adapters],
+  ];
+  return domains
+    .filter(([, value]) => value && typeof value === "object")
+    .map(([name, value]) => `${name}: ${value.status || "UNKNOWN"}${Number.isFinite(value.completed) && Number.isFinite(value.attempted) ? ` ${value.completed}/${value.attempted}` : ""}`)
+    .join(" · ");
+}
+
+async function setEmergencyBlackoutRuntime(enabled) {
+  const warning = enabled
+    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt the active Cue and command managed Lighting, Tablet and Native Visual outputs to blackout. Audio and external VDMX/OSC will NOT be stopped."
+    : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting will intentionally remain dark until you run an explicit Lighting Cue or operator action. GO will only unlock after the managed clear succeeds.";
+  if (!confirm(warning)) return;
+  try {
+    const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/emergency-blackout`, {
+      method: "POST",
+      json: {
+        request_id: requestID(),
+        enabled,
+        confirm: enabled ? "BLACKOUT" : "CLEAR",
+      },
+    });
+    const summary = emergencyDomainSummary(payload.result?.payload);
+    setMessage(globalMessage, `${enabled ? "Emergency Blackout applied." : "Managed blackout cleared."}${summary ? " " + summary : ""}`, enabled ? "warn" : "success");
+    await renderRuntime(true);
+  } catch (error) {
+    try { await renderRuntime(true); } catch (_) {}
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
 }
 
 async function jumpRuntime() {

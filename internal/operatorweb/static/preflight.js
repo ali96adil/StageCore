@@ -28,6 +28,41 @@ async function loadPreflight() {
   return api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/preflight`);
 }
 
+function preflightDestination(category) {
+  switch (String(category || "").toLowerCase()) {
+    case "stage_device": return { page: "devices", label: "Open Stage Devices" };
+    case "network": return { page: "network", label: "Open Network Cockpit" };
+    case "live_video": return { page: "video", label: "Open Live Video" };
+    case "companion": return { page: "configuration", anchor: "machineRolesCard", label: "Open Machine Roles" };
+    case "media": return { page: "environments", label: "Open Environments" };
+    case "snapshot": return { page: "cues", label: "Open Cues / Publish" };
+    case "adapter":
+    case "capability": return { page: "configuration", label: "Open Configuration" };
+    default: return null;
+  }
+}
+
+function preflightFixButton(category) {
+  const destination = preflightDestination(category);
+  if (!destination) return "";
+  return `<button class="button ghost preflight-fix" type="button" data-page="${esc(destination.page)}" data-anchor="${esc(destination.anchor || "")}">${esc(destination.label)}</button>`;
+}
+
+function openPreflightDestination(page, anchor = "") {
+  const button = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
+  if (button) button.click();
+  else navigate(page);
+  if (anchor) {
+    window.setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+  }
+}
+
+function bindPreflightFixButtons() {
+  document.querySelectorAll(".preflight-fix").forEach((button) => {
+    button.addEventListener("click", () => openPreflightDestination(button.dataset.page || "", button.dataset.anchor || ""));
+  });
+}
+
 function preflightCheckRows(report) {
   if (!report.checks?.length) return `<div class="empty">No Preflight checks were returned.</div>`;
   return report.checks.map((check) => `
@@ -41,6 +76,7 @@ function preflightCheckRows(report) {
       </div>
       ${check.detail ? `<p class="muted" style="margin-top:10px">${esc(check.detail)}</p>` : ""}
       ${check.entity_id ? `<p class="mono muted" style="margin-top:8px">${esc(check.entity_id)}</p>` : ""}
+      ${check.status === "PASS" ? "" : `<div class="row-actions" style="margin-top:10px">${preflightFixButton(check.category)}</div>`}
     </article>`).join("");
 }
 
@@ -60,6 +96,7 @@ function preflightRoleRows(report) {
       <p class="muted" style="margin-top:10px">${esc(role.summary || "")}</p>
       ${role.companion_name ? `<p style="margin-top:8px">Companion: <strong>${esc(role.companion_name)}</strong></p>` : ""}
       ${role.applied_runtime_snapshot_id ? `<p class="mono muted">Applied ${esc(role.applied_runtime_snapshot_id)}</p>` : ""}
+      ${role.status === "PASS" ? "" : `<div class="row-actions" style="margin-top:10px">${preflightFixButton("companion")}</div>`}
     </article>`).join("");
 }
 
@@ -74,6 +111,7 @@ function preflightMediaRows(report) {
       <p class="muted" style="margin-top:10px">${esc(media.summary || "")}</p>
       <div class="meta" style="margin-top:8px"><span>${esc(bytesLabel(media.size_bytes))}</span><span>${media.required ? "Required" : "Optional"}</span></div>
       <p class="mono muted" style="margin-top:8px">SHA-256 ${esc(media.content_hash || "—")}</p>
+      ${media.status === "PASS" ? "" : `<div class="row-actions" style="margin-top:10px">${preflightFixButton("media")}</div>`}
     </article>`).join("");
 }
 
@@ -120,6 +158,7 @@ async function renderPreflight() {
     <div class="grid cards">${preflightMediaRows(report)}</div>
     <div class="section-title-row" style="margin-top:20px"><div><p class="eyebrow">STORAGE</p><h2>Runtime reserve</h2></div></div>
     ${storageCard(report)}`;
+  bindPreflightFixButtons();
   el("refreshPreflight").addEventListener("click", async () => {
     try { await renderPreflight(); }
     catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }

@@ -86,6 +86,15 @@ func TestSecurityAdministrationShowGateAndEmergencyRevocation(t *testing.T) {
 	}
 
 	companionID := pairSecurityTestCompanion(t, ctx, companions)
+	inventory := securityRequest(t, handler, owner, http.MethodGet, "/api/v1/security/companions", "")
+	if inventory.Code != http.StatusOK {
+		t.Fatalf("Companion inventory=%d %s", inventory.Code, inventory.Body.String())
+	}
+	for _, required := range []string{companionID, "Security Mac", "TRUSTED"} {
+		if !strings.Contains(inventory.Body.String(), required) {
+			t.Fatalf("Companion inventory missing %q: %s", required, inventory.Body.String())
+		}
+	}
 	startShowSession(t, ctx, stageStore)
 
 	blockedSecret := securityRequest(t, handler, owner, http.MethodPut, "/api/v1/security/secrets/projector-token", `{"value":"beta-secret"}`)

@@ -287,7 +287,64 @@ function f017SetActiveProfile(profileID) {
 }
 
 function f017PageLabel(page) {
-  return f017Text(`workspace.page.${page}`);
+  const key = `workspace.page.${page}`;
+  if (f017Strings[key]) return f017Text(key);
+  const button = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
+  return button?.textContent?.trim() || page;
+}
+
+function f017InsertAfter(values, page, after = "") {
+  const clean = (Array.isArray(values) ? values : []).filter((item) => item !== page);
+  const anchor = after ? clean.indexOf(after) : -1;
+  clean.splice(anchor >= 0 ? anchor + 1 : clean.length, 0, page);
+  return clean;
+}
+
+function f017RegisterFeaturePage(page, options = {}) {
+  const value = String(page || "").trim();
+  if (!value) return false;
+  const newlyKnown = !F017_PAGES.includes(value);
+  if (newlyKnown) F017_PAGES.push(value);
+
+  const label = options.label;
+  if (label && typeof label === "object") {
+    f017Strings[`workspace.page.${value}`] = label;
+  }
+
+  const visiblePresets = Array.isArray(options.visible_presets)
+    ? new Set(options.visible_presets)
+    : null;
+  for (const [presetID, preset] of Object.entries(F017_PRESETS)) {
+    preset.page_order = f017InsertAfter(preset.page_order, value, options.after || "");
+    const visible = visiblePresets == null || visiblePresets.has(presetID);
+    if (visible && !preset.visible_pages.includes(value)) {
+      preset.visible_pages = f017InsertAfter(preset.visible_pages, value, options.after || "");
+    } else if (!visible) {
+      preset.visible_pages = preset.visible_pages.filter((item) => item !== value);
+      if (preset.default_page === value) preset.default_page = preset.visible_pages[0] || "dashboard";
+    }
+  }
+
+  // Existing custom profiles predate feature-page registration. Those pages
+  // were previously always visible because F-017 did not own them, so migrate
+  // them as visible by default rather than silently hiding working tools.
+  let customChanged = false;
+  for (const profile of f017Container.custom_profiles) {
+    if (!profile.page_order.includes(value)) {
+      profile.page_order = f017InsertAfter(profile.page_order, value, options.after || "");
+      customChanged = true;
+    }
+    if (!profile.visible_pages.includes(value)) {
+      profile.visible_pages = f017InsertAfter(profile.visible_pages, value, options.after || "");
+      customChanged = true;
+    }
+  }
+  if (customChanged) f017WriteContainer();
+  return newlyKnown || customChanged;
+}
+
+function f017FeatureNavigationChanged() {
+  f017ApplyProfile({ navigateIfNeeded: false });
 }
 
 function f017ApplyProfile({ navigateIfNeeded = false } = {}) {
@@ -304,9 +361,9 @@ function f017ApplyProfile({ navigateIfNeeded = false } = {}) {
       if (button) nav.appendChild(button);
     }
     for (const [page, button] of buttons.entries()) {
-      // F-017 profiles own only the original pages. Feature workspaces such as
-      // Lighting Cues/Setup and Tablet Scenes own their own navigation entries;
-      // hiding unknown pages here leaves working tools reachable only via JS.
+      // Registered feature workspaces participate in the same presentation-only
+      // visibility contract. Truly unknown pages stay visible as a fail-safe so
+      // a future feature cannot become unreachable before it registers itself.
       if (!F017_PAGES.includes(page)) continue;
       button.classList.toggle("f017-profile-hidden", !profile.visible_pages.includes(page));
     }

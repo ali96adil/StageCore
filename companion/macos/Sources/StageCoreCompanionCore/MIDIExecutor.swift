@@ -4,14 +4,24 @@ import CoreMIDI
 #endif
 
 public struct MIDIDestination: Codable, Sendable, Equatable {
-    public var index: Int
+    public var index: Int?
+    public var name: String?
 
     public init(index: Int) {
         self.index = index
+        self.name = nil
+    }
+
+    public init(name: String) {
+        self.index = nil
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public var isValid: Bool {
-        index >= 0
+        if let index {
+            return index >= 0
+        }
+        return !(name ?? "").isEmpty
     }
 }
 
@@ -22,19 +32,86 @@ public enum MIDIExecutorError: Error, Equatable {
     case sendFailed
 }
 
+enum MIDIDestinationInventory {
+    static func currentNames() -> [String] {
+        #if os(macOS)
+        var names: [String] = []
+        let count = MIDIGetNumberOfDestinations()
+        for index in 0..<count {
+            let endpoint = MIDIGetDestination(index)
+            guard endpoint != 0 else { continue }
+            var value: Unmanaged<CFString>?
+            var name = ""
+            if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &value) == noErr,
+               let value {
+                name = value.takeRetainedValue() as String
+            } else {
+                value = nil
+                if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &value) == noErr,
+                   let value {
+                    name = value.takeRetainedValue() as String
+                }
+            }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                names.append(name)
+            }
+        }
+        return names.sorted()
+        #else
+        return []
+        #endif
+    }
+}
+
 protocol MIDISending: Sendable {
     func send(_ bytes: [UInt8], to destination: MIDIDestination) throws -> Int
 }
 
 #if os(macOS)
 struct CoreMIDISender: MIDISending {
-    func send(_ bytes: [UInt8], to destination: MIDIDestination) throws -> Int {
+    private func endpointName(_ endpoint: MIDIEndpointRef) -> String {
+        var value: Unmanaged<CFString>?
+        if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &value) == noErr,
+           let value {
+            return (value.takeRetainedValue() as String).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        value = nil
+        if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &value) == noErr,
+           let value {
+            return (value.takeRetainedValue() as String).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+
+    private func resolve(_ destination: MIDIDestination) throws -> MIDIEndpointRef {
         guard destination.isValid else { throw MIDIExecutorError.invalidDestination }
-        guard destination.index < MIDIGetNumberOfDestinations() else {
+        if let name = destination.name {
+            let count = MIDIGetNumberOfDestinations()
+            var match: MIDIEndpointRef = 0
+            var matches = 0
+            for index in 0..<count {
+                let endpoint = MIDIGetDestination(index)
+                if endpoint != 0 && endpointName(endpoint) == name {
+                    match = endpoint
+                    matches += 1
+                }
+            }
+            guard matches == 1 && match != 0 else {
+                throw MIDIExecutorError.destinationUnavailable
+            }
+            return match
+        }
+        guard let index = destination.index, index >= 0, index < MIDIGetNumberOfDestinations() else {
             throw MIDIExecutorError.destinationUnavailable
         }
-        let endpoint = MIDIGetDestination(destination.index)
+        let endpoint = MIDIGetDestination(index)
         guard endpoint != 0 else { throw MIDIExecutorError.destinationUnavailable }
+        return endpoint
+    }
+
+    func send(_ bytes: [UInt8], to destination: MIDIDestination) throws -> Int {
+        let endpoint = try resolve(destination)
 
         var client = MIDIClientRef()
         guard MIDIClientCreate("StageCore Companion" as CFString, nil, nil, &client) == 0 else {
@@ -138,10 +215,19 @@ public struct MIDISendExecutor: CompanionCapabilityExecutor {
 
 enum MIDIMessageEncoder {
     static func destination(parameters: [String: JSONValue]) throws -> MIDIDestination {
-        guard case .int(let index)? = parameters["destination_index"] else {
+        let hasName = parameters["destination_name"] != nil
+        let hasIndex = parameters["destination_index"] != nil
+        guard hasName != hasIndex else {
             throw MIDIExecutorError.invalidDestination
         }
-        let destination = MIDIDestination(index: index)
+        let destination: MIDIDestination
+        if case .string(let rawName)? = parameters["destination_name"] {
+            destination = MIDIDestination(name: rawName)
+        } else if case .int(let index)? = parameters["destination_index"] {
+            destination = MIDIDestination(index: index)
+        } else {
+            throw MIDIExecutorError.invalidDestination
+        }
         guard destination.isValid else { throw MIDIExecutorError.invalidDestination }
         return destination
     }

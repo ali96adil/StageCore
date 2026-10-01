@@ -66,6 +66,7 @@ public struct CompanionHello: Codable, Sendable, Equatable {
     public let platform: String
     public let architecture: String
     public let capabilities: [String]
+    public let midiDestinations: [String]
     public let machineRoleID: String?
     public let roleKey: String?
     public let appliedRuntimeSnapshotID: String?
@@ -83,6 +84,7 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         case platform
         case architecture
         case capabilities
+        case midiDestinations = "midi_destinations"
         case machineRoleID = "machine_role_id"
         case roleKey = "role_key"
         case appliedRuntimeSnapshotID = "applied_runtime_snapshot_id"
@@ -100,6 +102,7 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         platform: String,
         architecture: String,
         capabilities: [String],
+        midiDestinations: [String] = [],
         machineRoleID: String? = nil,
         roleKey: String? = nil,
         appliedRuntimeSnapshotID: String?,
@@ -116,6 +119,7 @@ public struct CompanionHello: Codable, Sendable, Equatable {
         self.platform = platform
         self.architecture = architecture
         self.capabilities = capabilities
+        self.midiDestinations = midiDestinations
         self.machineRoleID = machineRoleID
         self.roleKey = roleKey
         self.appliedRuntimeSnapshotID = appliedRuntimeSnapshotID
