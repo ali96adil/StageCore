@@ -66,6 +66,11 @@ func TestPhase4LiveVideoUXSupportsEditingAndMachineRolePlacement(t *testing.T) {
 		"tablet-scenes",
 		"lighting-setup",
 		"lighting-cues",
+		"live-source-relay-status",
+		"relayHealthMarkup",
+		"stagecore-camera-relay",
+		"credentials: \"omit\"",
+		"referrerPolicy: \"no-referrer\"",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("phase4.js missing Live Video UX contract %q", required)
