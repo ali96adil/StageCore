@@ -523,24 +523,28 @@ function f025EnvironmentCard(environment, roles, editable) {
   </article>`;
 }
 
-function f025GuidedManifest() {
+function f025GuidedManifest(baseManifest = null) {
   const policy = document.getElementById("f025CapturePolicy").value;
   const locator = document.getElementById("f025WorkspaceLocator").value.trim();
   const oscQueryURL = document.getElementById("f025OSCQueryURL").value.trim();
-  const manifest = {
-    schema_version: 1,
-    environment_key: document.getElementById("f025EnvironmentKey").value.trim(),
-    name: document.getElementById("f025EnvironmentName").value.trim(),
-    adapter_key: "stagecore.adapter.vdmx",
-    application: {
-      key: "vdmx",
-      name: "VDMX",
-      vendor: "VIDVOX",
-      version_constraint: document.getElementById("f025Version").value.trim(),
-      hosts: [{os: "darwin", architecture: document.getElementById("f025Architecture").value}],
-    },
+  const manifest = baseManifest ? JSON.parse(JSON.stringify(baseManifest)) : {};
+  manifest.schema_version = 1;
+  manifest.environment_key = document.getElementById("f025EnvironmentKey").value.trim();
+  manifest.name = document.getElementById("f025EnvironmentName").value.trim();
+  manifest.adapter_key = manifest.adapter_key || "stagecore.adapter.vdmx";
+
+  const application = manifest.application || {};
+  const otherHosts = (application.hosts || []).filter((host) => String(host.os || "").toLowerCase() !== "darwin");
+  manifest.application = {
+    ...application,
+    key: application.key || "vdmx",
+    name: application.name || "VDMX",
+    vendor: application.vendor || "VIDVOX",
+    version_constraint: document.getElementById("f025Version").value.trim(),
+    hosts: [...otherHosts, {os: "darwin", architecture: document.getElementById("f025Architecture").value}],
   };
 
+  const otherAssets = (manifest.assets || []).filter((asset) => asset.key !== "workspace");
   if (locator) {
     const asset = {
       key: "workspace",
@@ -559,18 +563,28 @@ function f025GuidedManifest() {
       asset.content_hash = contentHash;
       asset.size_bytes = sizeBytes;
     }
-    manifest.assets = [asset];
-    manifest.launch = {kind: "ASSET", asset_key: "workspace"};
+    manifest.assets = [...otherAssets, asset];
+    if (!baseManifest || !manifest.launch || manifest.launch.asset_key === "workspace") {
+      manifest.launch = {kind: "ASSET", asset_key: "workspace"};
+    }
+  } else {
+    manifest.assets = otherAssets;
+    if (!manifest.assets.length) delete manifest.assets;
+    if (manifest.launch?.asset_key === "workspace") delete manifest.launch;
   }
 
+  const otherBindings = (manifest.bindings || []).filter((binding) => binding.key !== "oscquery");
   if (oscQueryURL) {
-    manifest.bindings = [{
+    manifest.bindings = [...otherBindings, {
       key: "oscquery",
       kind: "NETWORK",
       name: "VDMX OSCQuery",
       external_ref: oscQueryURL,
       required: false,
     }];
+  } else {
+    manifest.bindings = otherBindings;
+    if (!manifest.bindings.length) delete manifest.bindings;
   }
   return manifest;
 }
