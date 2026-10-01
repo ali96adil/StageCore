@@ -84,3 +84,54 @@ func TestReplaceDraftCueRegeneratesStaleActionIDAfterRevisionFork(t *testing.T) 
 		t.Fatalf("published source mutated: %#v", source.Actions)
 	}
 }
+
+
+func TestDuplicateDraftCueRegeneratesExplicitTimecodeBindingID(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	_, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Duplicate timecode cue", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID:   revision.ID,
+		DisplayLabel: "1",
+		Name:         "Timed Cue",
+		OrderIndex:   1,
+		Enabled:      true,
+		ExecutionPolicy: json.RawMessage(`{
+			"hold":{"mode":"manual"},
+			"timecode":{
+				"binding_id":"explicit-binding",
+				"at":"00:00:10:00",
+				"expiry_frames":3,
+				"enabled":true
+			}
+		}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	duplicated, err := s.DuplicateDraftCue(ctx, revision.ID, created.ID, "2", "Timed Cue Copy", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policy map[string]any
+	if err := json.Unmarshal(duplicated.ExecutionPolicy, &policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := policy["hold"]; !ok {
+		t.Fatalf("non-timecode execution policy was not preserved: %s", duplicated.ExecutionPolicy)
+	}
+	timecodePolicy, ok := policy["timecode"].(map[string]any)
+	if !ok {
+		t.Fatalf("timecode policy missing after duplicate: %s", duplicated.ExecutionPolicy)
+	}
+	if _, cloned := timecodePolicy["binding_id"]; cloned {
+		t.Fatalf("duplicate retained explicit timecode binding_id: %s", duplicated.ExecutionPolicy)
+	}
+	if timecodePolicy["at"] != "00:00:10:00" || timecodePolicy["expiry_frames"] != float64(3) || timecodePolicy["enabled"] != true {
+		t.Fatalf("duplicate changed timecode schedule: %#v", timecodePolicy)
+	}
+}
