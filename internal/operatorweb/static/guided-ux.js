@@ -301,6 +301,13 @@ function f002EnhanceCueDialog() {
     const details = f002CreateDetails("Advanced Cue policy");
     policyLabel.parentNode.insertBefore(details, policyLabel);
     details.appendChild(policyLabel);
+    if (!el("f002CuePolicyHint")) {
+      const hint = document.createElement("p");
+      hint.id = "f002CuePolicyHint";
+      hint.className = "muted";
+      hint.textContent = "Execution order is configured per Action with SEQUENTIAL, PARALLEL, or PARALLEL_BARRIER. Cue policy JSON remains available for advanced/compatibility values.";
+      details.insertBefore(hint, policyLabel);
+    }
   }
   f002InstallCueComposer();
 }
@@ -779,6 +786,38 @@ function f002MIDIStatus(message, channel) {
   }
 }
 
+function f002ParsePolicyObject(raw) {
+  try {
+    const value = JSON.parse(String(raw || "{}"));
+    if (!value || Array.isArray(value) || typeof value !== "object") return null;
+    return value;
+  } catch (_) {
+    return null;
+  }
+}
+
+function f002ParseTimeoutPolicy(raw) {
+  const policy = f002ParsePolicyObject(raw);
+  if (!policy) return null;
+  const keys = Object.keys(policy);
+  if (keys.length === 0) return { timeoutMS: 0 };
+  if (keys.length !== 1 || keys[0] !== "timeout_ms") return null;
+  const timeoutMS = policy.timeout_ms;
+  if (!Number.isInteger(timeoutMS) || timeoutMS < 0) return null;
+  return { timeoutMS };
+}
+
+function f002ParseErrorPolicy(raw) {
+  const policy = f002ParsePolicyObject(raw);
+  if (!policy) return null;
+  const keys = Object.keys(policy);
+  if (keys.length === 0) return { onError: "FAIL_CUE" };
+  if (keys.length !== 1 || keys[0] !== "on_error" || typeof policy.on_error !== "string") return null;
+  const onError = policy.on_error.trim().toUpperCase();
+  if (!["FAIL_CUE", "CONTINUE"].includes(onError)) return null;
+  return { onError };
+}
+
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
   const row = document.createElement("div");
   row.className = "f002-argument-row";
@@ -835,7 +874,9 @@ function f002EnhanceActionCard(card) {
   const capability = card.querySelector(".action-capability");
   const params = card.querySelector(".action-parameters");
   const target = card.querySelector(".action-target");
-  if (!capability || !params || !target) return;
+  const timeout = card.querySelector(".action-timeout");
+  const errorPolicy = card.querySelector(".action-error");
+  if (!capability || !params || !target || !timeout || !errorPolicy) return;
 
   target.setAttribute("list", "f002TargetList");
   f002EnsureCapabilityDatalist();
@@ -850,6 +891,8 @@ function f002EnhanceActionCard(card) {
       ? { destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
       : null))
     : null;
+  const parsedTimeout = f002ParseTimeoutPolicy(timeout.value);
+  const parsedErrorPolicy = f002ParseErrorPolicy(errorPolicy.value);
   const builder = document.createElement("section");
   builder.className = "f002-builder f002-action-builder";
   builder.innerHTML = `
@@ -875,7 +918,35 @@ function f002EnhanceActionCard(card) {
         <label class="f002-midi-data2-field"><span class="f002-midi-data2-label">Velocity (0–127)</span><input class="f002-midi-data2" type="number" min="0" max="127" step="1" value="127"></label>
       </div>
       <p class="muted">Ableton Live: use MIDI Map mode to bind this Note or Control Change to the scene, clip, transport or control you want StageCore to trigger.</p>
-    </div>`;
+    </div>
+    <hr>
+    <div class="f002-builder-head">
+      <div><strong>Reliability</strong><span>Common Cue-engine timeout and failure behavior without JSON.</span></div>
+    </div>
+    <div class="form-grid two f002-reliability">
+      <label>Timeout
+        <select class="f002-timeout-kind">
+          <option value="none">No timeout</option>
+          <option value="1000">1 second</option>
+          <option value="2000">2 seconds</option>
+          <option value="5000">5 seconds</option>
+          <option value="10000">10 seconds</option>
+          <option value="custom">Custom milliseconds</option>
+          <option value="advanced">Advanced JSON</option>
+        </select>
+      </label>
+      <label class="f002-timeout-custom hidden">Custom timeout (ms)
+        <input class="f002-timeout-ms" type="number" min="0" step="1" value="1000">
+      </label>
+      <label>On action failure
+        <select class="f002-error-kind">
+          <option value="FAIL_CUE">Fail Cue / stop following sequential work</option>
+          <option value="CONTINUE">Continue Cue</option>
+          <option value="advanced">Advanced JSON</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted">FAIL_CUE is the Cue engine default. Advanced JSON is preserved unchanged when the policy contains fields this guided editor does not understand.</p>`;
   params.closest("label").parentNode.insertBefore(builder, params.closest("label"));
 
   const advanced = f002CreateDetails("Advanced action settings");
@@ -903,6 +974,10 @@ function f002EnhanceActionCard(card) {
   const midiData1Label = builder.querySelector(".f002-midi-data1-label");
   const midiData2Label = builder.querySelector(".f002-midi-data2-label");
   const midiData2Field = builder.querySelector(".f002-midi-data2-field");
+  const timeoutKind = builder.querySelector(".f002-timeout-kind");
+  const timeoutCustom = builder.querySelector(".f002-timeout-custom");
+  const timeoutMS = builder.querySelector(".f002-timeout-ms");
+  const errorKind = builder.querySelector(".f002-error-kind");
 
   kind.value = parsedOSC ? "osc" : parsedMIDI ? "midi" : "advanced";
   if (parsedOSC) {
@@ -917,6 +992,19 @@ function f002EnhanceActionCard(card) {
     midiData2.value = String(parsedMIDI.data2);
   }
 
+  if (!parsedTimeout) {
+    timeoutKind.value = "advanced";
+  } else if (parsedTimeout.timeoutMS === 0) {
+    timeoutKind.value = "none";
+  } else if ([1000, 2000, 5000, 10000].includes(parsedTimeout.timeoutMS)) {
+    timeoutKind.value = String(parsedTimeout.timeoutMS);
+    timeoutMS.value = String(parsedTimeout.timeoutMS);
+  } else {
+    timeoutKind.value = "custom";
+    timeoutMS.value = String(parsedTimeout.timeoutMS);
+  }
+  errorKind.value = parsedErrorPolicy?.onError || "advanced";
+
   const renderMIDIFields = () => {
     const message = midiMessage.value;
     const program = message === "program_change";
@@ -927,12 +1015,19 @@ function f002EnhanceActionCard(card) {
     midiData2.required = !program && kind.value === "midi";
   };
 
+  const renderReliabilityFields = () => {
+    const custom = timeoutKind.value === "custom";
+    timeoutCustom.classList.toggle("hidden", !custom);
+    timeoutMS.required = custom;
+    if (timeoutKind.value === "advanced" || errorKind.value === "advanced") advanced.open = true;
+  };
+
   const applyKind = () => {
     const osc = kind.value === "osc";
     const midi = kind.value === "midi";
     oscPanel.classList.toggle("hidden", !osc);
     midiPanel.classList.toggle("hidden", !midi);
-    advanced.open = !(osc || midi);
+    advanced.open = !(osc || midi) || timeoutKind.value === "advanced" || errorKind.value === "advanced";
     address.required = osc;
     midiDestination.required = midi;
     midiMessage.required = midi;
@@ -941,15 +1036,36 @@ function f002EnhanceActionCard(card) {
     if (osc) capability.value = "osc.send";
     if (midi) capability.value = "midi.send";
     renderMIDIFields();
+    renderReliabilityFields();
   };
   kind.addEventListener("change", applyKind);
   midiMessage.addEventListener("change", renderMIDIFields);
+  timeoutKind.addEventListener("change", applyKind);
+  errorKind.addEventListener("change", applyKind);
   builder.querySelector(".f002-add-argument").addEventListener("click", () => argumentsNode.appendChild(f002ArgumentRow()));
   applyKind();
 }
 
 function f002SyncActionCard(card) {
   if (!card?.dataset.f002Enhanced) return;
+  const timeout = card.querySelector(".action-timeout");
+  const errorPolicy = card.querySelector(".action-error");
+  const timeoutKind = card.querySelector(".f002-timeout-kind");
+  const errorKind = card.querySelector(".f002-error-kind");
+  if (timeout && timeoutKind && timeoutKind.value !== "advanced") {
+    if (timeoutKind.value === "none") {
+      timeout.value = "{}";
+    } else {
+      const timeoutMS = timeoutKind.value === "custom"
+        ? Number.parseInt(card.querySelector(".f002-timeout-ms")?.value || "", 10)
+        : Number.parseInt(timeoutKind.value, 10);
+      timeout.value = JSON.stringify({ timeout_ms: timeoutMS }, null, 2);
+    }
+  }
+  if (errorPolicy && errorKind && errorKind.value !== "advanced") {
+    errorPolicy.value = JSON.stringify({ on_error: errorKind.value }, null, 2);
+  }
+
   const kind = card.querySelector(".f002-action-kind");
   if (!kind || kind.value === "advanced") return;
   const capability = card.querySelector(".action-capability");
