@@ -176,6 +176,12 @@ func TestConfigRejectsInvalidURLAndLimits(t *testing.T){
  for _,n:=range []int{-1,17}{
   if _,err:=New(Config{SourceURL:"http://camera/stream",MaxClients:n},nil);err==nil{t.Fatal(fmt.Sprintf("accepted client limit %d",n))}
  }
+ if _,err:=New(Config{SourceURL:"http://camera/stream",FlashURL:"http://other/api/v0/flash"},nil);err==nil{
+  t.Fatal("accepted flash control on a different host")
+ }
+ if _,err:=New(Config{SourceURL:"http://camera/stream",FlashURL:"http://camera/wrong"},nil);err==nil{
+  t.Fatal("accepted unexpected flash control path")
+ }
 }
 
 func TestHealthWhenNoSource(t *testing.T){
