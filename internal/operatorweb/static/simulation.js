@@ -291,6 +291,7 @@
     });
     const runtimeButton = nav.querySelector('[data-page="runtime"]');
     runtimeButton?.insertAdjacentElement("afterend", button);
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   installNavigation();
