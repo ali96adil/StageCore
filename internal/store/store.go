@@ -50,6 +50,7 @@ func (s *Store) entityBelongsToRevisionTx(ctx context.Context, q queryer, table,
 	allowed := map[string]string{
 		"input_definitions":  "input_id",
 		"output_definitions": "output_id",
+		"routes":             "route_id",
 		"cues":               "cue_id",
 	}
 	if allowed[table] != idColumn {
