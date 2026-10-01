@@ -23,6 +23,12 @@ import (
 
 const boundary = "stagecore-relay-frame"
 
+const (
+ FlashModeAuto = "auto"
+ FlashModeOn   = "on"
+ FlashModeOff  = "off"
+)
+
 type Config struct {
  SourceURL string
  FlashURL string
@@ -35,6 +41,11 @@ type Config struct {
  FlashTimeout time.Duration
 }
 
+type subscriber struct {
+ frames chan []byte
+ flashRequested bool
+}
+
 type Relay struct {
  cfg Config
  log *slog.Logger
@@ -42,13 +53,17 @@ type Relay struct {
  controlClient *http.Client
  started atomic.Bool
  mu sync.Mutex
- subscribers map[uint64]chan []byte
+ subscribers map[uint64]subscriber
  nextID uint64
  closed bool
  connected bool
  received uint64
  lastFrame time.Time
+
+ // flashMu serializes desired/applied reconciliation and manual override mode.
+ // AUTO follows only viewers that explicitly requested flash. ON/OFF override it.
  flashMu sync.Mutex
+ flashMode string
  flashKnown bool
  flashApplied bool
  flashError string
@@ -84,6 +99,7 @@ func New(cfg Config, log *slog.Logger) (*Relay, error) {
     cfg.FlashTimeout < 250*time.Millisecond || cfg.FlashTimeout > 10*time.Second {
   return nil, errors.New("relay resource limit is out of bounds")
  }
+
  var flashURL *url.URL
  if strings.TrimSpace(cfg.FlashURL) != "" {
   flashURL, err = url.Parse(cfg.FlashURL)
@@ -96,9 +112,10 @@ func New(cfg Config, log *slog.Logger) (*Relay, error) {
    return nil, errors.New("flash URL host must match camera source host")
   }
  }
+
  if log == nil { log = slog.Default() }
  transport := &http.Transport{
-  Proxy: nil, // Never route a show-LAN camera via an HTTP proxy.
+  Proxy: nil,
   DialContext: sourceDialContext,
   DisableCompression:true, DisableKeepAlives:true, MaxConnsPerHost:1,
   ResponseHeaderTimeout:cfg.HeaderTimeout,
@@ -106,6 +123,7 @@ func New(cfg Config, log *slog.Logger) (*Relay, error) {
  client := &http.Client{Transport:transport, CheckRedirect:func(*http.Request,[]*http.Request)error{
   return errors.New("camera redirects are not allowed")
  }}
+
  var controlClient *http.Client
  if flashURL != nil {
   controlTransport := &http.Transport{
@@ -118,10 +136,34 @@ func New(cfg Config, log *slog.Logger) (*Relay, error) {
    CheckRedirect:func(*http.Request,[]*http.Request)error{return errors.New("camera redirects are not allowed")},
   }
  }
+
  return &Relay{
   cfg:cfg, log:log, client:client, controlClient:controlClient,
-  subscribers:make(map[uint64]chan []byte),
+  subscribers:make(map[uint64]subscriber),
+  flashMode:FlashModeAuto,
  }, nil
+}
+
+func (r *Relay) flashRequestingViewersLocked() int {
+ count:=0
+ for _,sub:=range r.subscribers {
+  if sub.flashRequested { count++ }
+ }
+ return count
+}
+
+func (r *Relay) desiredFlashLocked() bool {
+ switch r.flashMode {
+ case FlashModeOn:
+  return true
+ case FlashModeOff:
+  return false
+ default:
+  r.mu.Lock()
+  desired:=r.flashRequestingViewersLocked()>0 && !r.closed
+  r.mu.Unlock()
+  return desired
+ }
 }
 
 func (r *Relay) reconcileFlash() {
@@ -130,17 +172,14 @@ func (r *Relay) reconcileFlash() {
  defer r.flashMu.Unlock()
 
  for {
-  r.mu.Lock()
-  desired := len(r.subscribers) > 0 && !r.closed
-  r.mu.Unlock()
-
+  desired:=r.desiredFlashLocked()
   if r.flashKnown && r.flashApplied == desired {
    r.flashError = ""
    return
   }
 
-  state := "off"
-  if desired { state = "on" }
+  state := FlashModeOff
+  if desired { state = FlashModeOn }
   req, err := http.NewRequest(http.MethodPost, r.cfg.FlashURL+"?state="+state, nil)
   if err == nil {
    var resp *http.Response
@@ -156,7 +195,7 @@ func (r *Relay) reconcileFlash() {
   if err != nil {
    r.flashKnown = false
    r.flashError = err.Error()
-   r.log.Warn("camera flash control failed", "desired_on", desired, "error", err)
+   r.log.Warn("camera flash control failed", "mode", r.flashMode, "desired_on", desired, "error", err)
    return
   }
 
@@ -164,27 +203,50 @@ func (r *Relay) reconcileFlash() {
   r.flashApplied = desired
   r.flashError = ""
 
-  r.mu.Lock()
-  currentDesired := len(r.subscribers) > 0 && !r.closed
-  r.mu.Unlock()
-  if currentDesired == desired { return }
-  // Viewer state changed during the bounded HTTP request. Loop once more to
-  // reconcile the newest desired state without allowing stale ON/OFF writes.
+  if r.desiredFlashLocked() == desired { return }
+  // Viewer requests or manual mode changed while the bounded camera request
+  // was in flight. Reconcile the newest desired state before returning.
  }
+}
+
+func (r *Relay) setFlashMode(mode string) error {
+ mode=strings.ToLower(strings.TrimSpace(mode))
+ if mode!=FlashModeAuto && mode!=FlashModeOn && mode!=FlashModeOff {
+  return errors.New("flash state must be auto, on or off")
+ }
+ if r.controlClient == nil {
+  return errors.New("camera flash control is disabled")
+ }
+ r.flashMu.Lock()
+ r.flashMode=mode
+ r.flashKnown=false
+ r.flashMu.Unlock()
+ r.reconcileFlash()
+ return nil
 }
 
 // Run is the sole upstream owner. Subscriber connections never contact the camera.
 func (r *Relay) Run(ctx context.Context) error {
  if !r.started.CompareAndSwap(false,true) { return errors.New("relay already started") }
- // A relay process restart must not inherit a stale camera light from an older
- // viewer set. Reconcile the initial zero-viewer state before serving frames.
+ // Startup always begins AUTO with zero viewers, which reconciles camera flash OFF.
  r.reconcileFlash()
  defer func(){
   r.mu.Lock()
-  r.connected=false; r.closed=true
-  for id,ch := range r.subscribers { delete(r.subscribers,id); close(ch) }
+  r.connected=false
+  r.closed=true
+  for id,sub := range r.subscribers {
+   delete(r.subscribers,id)
+   close(sub.frames)
+  }
   r.mu.Unlock()
+
+  // Shutdown must fail safe to OFF regardless of a manual ON override.
+  r.flashMu.Lock()
+  r.flashMode=FlashModeOff
+  r.flashKnown=false
+  r.flashMu.Unlock()
   r.reconcileFlash()
+
   r.client.CloseIdleConnections()
   if r.controlClient != nil { r.controlClient.CloseIdleConnections() }
  }()
@@ -237,7 +299,8 @@ func (r *Relay) ingest(ctx context.Context) error {
 func (r *Relay) publish(frame []byte) {
  r.mu.Lock();defer r.mu.Unlock()
  r.received++;r.lastFrame=time.Now()
- for _,ch:=range r.subscribers {
+ for _,sub:=range r.subscribers {
+  ch:=sub.frames
   select {
   case ch<-frame:
   default:
@@ -248,38 +311,65 @@ func (r *Relay) publish(frame []byte) {
  }
 }
 
-func (r *Relay) subscribe()(uint64,<-chan []byte,bool){
+func (r *Relay) subscribe(flashRequested bool)(uint64,<-chan []byte,bool){
  r.mu.Lock();defer r.mu.Unlock()
  if r.closed||len(r.subscribers)>=r.cfg.MaxClients{return 0,nil,false}
  r.nextID++
  id:=r.nextID
  ch:=make(chan []byte,1)
- r.subscribers[id]=ch
+ r.subscribers[id]=subscriber{frames:ch,flashRequested:flashRequested}
  return id,ch,true
 }
+
 func (r *Relay) unsubscribe(id uint64){
  r.mu.Lock()
- if ch,ok:=r.subscribers[id];ok{delete(r.subscribers,id);close(ch)}
+ if sub,ok:=r.subscribers[id];ok{
+  delete(r.subscribers,id)
+  close(sub.frames)
+ }
  r.mu.Unlock()
  r.reconcileFlash()
 }
 
-// Handler serves read-only health and a bounded number of JPEG stream viewers.
+func parseFlashRequest(req *http.Request)(bool,error){
+ value:=strings.ToLower(strings.TrimSpace(req.URL.Query().Get("flash")))
+ switch value {
+ case "", "0", "false", "off", "no":
+  return false,nil
+ case "1", "true", "on", "yes":
+  return true,nil
+ default:
+  return false,errors.New("flash query must be 0/1 or false/true")
+ }
+}
+
+// Handler serves health, bounded streams, and optional trusted-show-LAN flash control.
 func(r *Relay) Handler()http.Handler{
  mux:=http.NewServeMux()
  mux.HandleFunc("GET /api/v0/health",r.health)
  mux.HandleFunc("GET /api/v0/stream",r.stream)
+ mux.HandleFunc("POST /api/v0/flash",r.flashControl)
  return mux
 }
 
 func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
  r.mu.Lock()
  up,last,received,viewers:=r.connected,r.lastFrame,r.received,len(r.subscribers)
+ flashRequesting:=r.flashRequestingViewersLocked()
  r.mu.Unlock()
+
  r.flashMu.Lock()
  flashEnabled:=r.controlClient!=nil
- flashKnown,flashApplied,flashError:=r.flashKnown,r.flashApplied,r.flashError
+ flashMode,flashKnown,flashApplied,flashError:=r.flashMode,r.flashKnown,r.flashApplied,r.flashError
+ desired:=false
+ switch flashMode {
+ case FlashModeOn:
+  desired=true
+ case FlashModeAuto:
+  desired=flashRequesting>0
+ }
  r.flashMu.Unlock()
+
  age:=int64(-1)
  if !last.IsZero(){age=time.Since(last).Milliseconds()}
  state:="reconnecting"
@@ -292,18 +382,58 @@ func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
   "state":state,"upstream_connected":up,"frames_received":received,
   "viewers":viewers,"last_frame_age_ms":age,"max_clients":r.cfg.MaxClients,
   "flash_control_enabled":flashEnabled,
-  "flash_desired_on":flashEnabled && viewers>0,
+  "flash_mode":flashMode,
+  "flash_requesting_viewers":flashRequesting,
+  "flash_desired_on":flashEnabled && desired,
   "flash_applied_known":flashKnown,
   "flash_applied_on":flashKnown && flashApplied,
   "flash_last_error":flashError,
  })
 }
 
+func(r *Relay) flashControl(w http.ResponseWriter,req *http.Request){
+ if r.controlClient==nil {
+  http.Error(w,"camera flash control disabled",http.StatusServiceUnavailable)
+  return
+ }
+ state:=strings.ToLower(strings.TrimSpace(req.URL.Query().Get("state")))
+ if err:=r.setFlashMode(state);err!=nil{
+  http.Error(w,err.Error(),http.StatusBadRequest)
+  return
+ }
+
+ r.flashMu.Lock()
+ mode,known,applied,lastErr:=r.flashMode,r.flashKnown,r.flashApplied,r.flashError
+ r.flashMu.Unlock()
+ code:=http.StatusOK
+ if lastErr!="" { code=http.StatusBadGateway }
+ w.Header().Set("Content-Type","application/json")
+ w.Header().Set("Cache-Control","no-store")
+ w.WriteHeader(code)
+ _=json.NewEncoder(w).Encode(map[string]any{
+  "flash_mode":mode,
+  "flash_applied_known":known,
+  "flash_applied_on":known&&applied,
+  "flash_last_error":lastErr,
+ })
+}
+
 func(r *Relay) stream(w http.ResponseWriter,req *http.Request){
- id,frames,ok:=r.subscribe()
+ flashRequested,err:=parseFlashRequest(req)
+ if err!=nil{
+  http.Error(w,err.Error(),http.StatusBadRequest)
+  return
+ }
+ if flashRequested && r.controlClient==nil{
+  http.Error(w,"camera flash control unavailable",http.StatusServiceUnavailable)
+  return
+ }
+
+ id,frames,ok:=r.subscribe(flashRequested)
  if !ok{http.Error(w,"relay viewer limit reached",http.StatusServiceUnavailable);return}
  r.reconcileFlash()
  defer r.unsubscribe(id)
+
  w.Header().Set("Content-Type","multipart/x-mixed-replace;boundary="+boundary)
  w.Header().Set("Cache-Control","no-store")
  w.Header().Set("X-Content-Type-Options","nosniff")
@@ -313,7 +443,7 @@ func(r *Relay) stream(w http.ResponseWriter,req *http.Request){
  for {
   select {
   case <-req.Context().Done():return
-  case <-idle.C:return // release viewer slot if source stopped producing frames
+  case <-idle.C:return
   case frame,open:=<-frames:
    if !open{return}
    if err:=ctl.SetWriteDeadline(time.Now().Add(r.cfg.WriteTimeout));err!=nil{return}
