@@ -253,6 +253,7 @@
     button.addEventListener("click", () => renderLightingSetup().catch(showGlobalError));
     const cues = nav.querySelector('[data-lighting-cues-nav="true"]');
     if (cues) nav.insertBefore(button, cues); else nav.appendChild(button);
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   window.renderLightingSetup = renderLightingSetup;
