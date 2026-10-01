@@ -39,7 +39,50 @@ const f018Copy = {
   "timecode.jump": { en: "Jump", "ar-IQ": "قفزة" },
   "timecode.discontinuity": { en: "Discontinuity", "ar-IQ": "انقطاع" },
   "timecode.drift": { en: "Drift", "ar-IQ": "انحراف" },
+  "timecode.authoring_title": { en: "Draft source setup", "ar-IQ": "إعداد مصدر المسودة" },
+  "timecode.authoring_hint": { en: "Configure the single Timecode source for the next publish without raw JSON.", "ar-IQ": "اضبط مصدر التايم كود الوحيد للنشر القادم من دون JSON يدوي." },
+  "timecode.target_name": { en: "Target name", "ar-IQ": "اسم الهدف" },
+  "timecode.source_id": { en: "Source ID", "ar-IQ": "معرف المصدر" },
+  "timecode.start": { en: "Start timecode", "ar-IQ": "تايم كود البداية" },
+  "timecode.save_source": { en: "Save source", "ar-IQ": "حفظ المصدر" },
+  "timecode.validate": { en: "Validate Draft", "ar-IQ": "فحص المسودة" },
+  "timecode.validation": { en: "Draft validation", "ar-IQ": "فحص المسودة" },
+  "timecode.validation_hint": { en: "Validation uses the same Hub rules that gate Publish.", "ar-IQ": "الفحص يستخدم نفس قواعد الـHub التي تمنع Publish عند وجود مشكلة." },
+  "timecode.multiple_sources": { en: "Multiple TIMECODE_SOURCE targets exist. Resolve them in Routing & Machine Roles before publishing.", "ar-IQ": "يوجد أكثر من TIMECODE_SOURCE. عالجها من Routing & Machine Roles قبل النشر." },
+  "timecode.no_source": { en: "No Draft Timecode source yet.", "ar-IQ": "لا يوجد مصدر Timecode في المسودة بعد." },
+  "timecode.cue_authoring": { en: "Timecode Cue binding", "ar-IQ": "ربط الكيو بالتايم كود" },
+  "timecode.binding_mode": { en: "Binding mode", "ar-IQ": "وضع الربط" },
+  "timecode.none_mode": { en: "No binding", "ar-IQ": "بدون ربط" },
+  "timecode.binding_id_hint": { en: "Binding ID (optional)", "ar-IQ": "معرف الربط (اختياري)" },
+  "timecode.at": { en: "Fire at", "ar-IQ": "التشغيل عند" },
+  "timecode.expiry_frames": { en: "Expiry frames", "ar-IQ": "إطارات انتهاء الصلاحية" },
+  "timecode.advanced_policy": { en: "Raw execution policy stays under Advanced; these fields update only execution_policy.timecode.", "ar-IQ": "يبقى Execution policy الخام ضمن Advanced؛ هذه الحقول تعدّل execution_policy.timecode فقط." },
+  "timecode.source_saved": { en: "Draft Timecode source saved.", "ar-IQ": "تم حفظ مصدر التايم كود للمسودة." },
 };
+
+const f018AllRateNames = ["23.976", "24", "25", "29.97", "29.97 DF", "30", "59.94", "59.94 DF", "60"];
+const f018MTCRateNames = ["24", "25", "29.97 DF", "30"];
+
+function f018SourceTargets(configuration) {
+  return (configuration?.targets || []).filter((target) =>
+    String(target.logical_type || "").toUpperCase() === "TIMECODE_SOURCE");
+}
+
+function f018SourceConfig(target) {
+  const raw = target?.configuration;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw;
+}
+
+function f018RateNamesForKind(kind) {
+  return String(kind || "").toUpperCase() === "MTC" ? f018MTCRateNames : f018AllRateNames;
+}
+
+function f018RateOptions(kind, selected) {
+  const values = f018RateNamesForKind(kind);
+  const normalized = String(selected || "");
+  return values.map((value) => `<option value="${esc(value)}" ${value === normalized ? "selected" : ""}>${esc(value)}</option>`).join("");
+}
 
 function f018Locale() {
   if (el("languageSelect")?.value === "en") return "en";
