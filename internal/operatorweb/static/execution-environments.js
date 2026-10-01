@@ -489,6 +489,7 @@ function f025EnvironmentCard(environment, roles, editable) {
   const roleID = environment.machine_role_id || "";
   const referenceOnly = f025HasReferenceOnly(environment);
   const policies = (environment.manifest?.assets || []).map((asset) => asset.capture_policy).filter(Boolean);
+  const guidedEditable = environment.adapter_key === "stagecore.adapter.vdmx" && environment.application_key === "vdmx";
   return `<article class="card">
     <div class="section-title-row">
       <div>
@@ -519,7 +520,7 @@ function f025EnvironmentCard(environment, roles, editable) {
       <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
       <p class="muted">${esc(f025T("f025.snapshots_loading"))}</p>
     </div>
-    ${editable ? `<div class="toolbar" style="margin-top:12px"><button class="button f025-edit" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.edit"))}</button><button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
+    ${editable ? `<div class="toolbar" style="margin-top:12px">${guidedEditable ? `<button class="button f025-edit" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.edit"))}</button>` : ""}<button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
   </article>`;
 }
 
