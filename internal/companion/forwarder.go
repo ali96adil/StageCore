@@ -56,6 +56,9 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	if strings.TrimSpace(req.Target.Ref) != role.RoleKey {
 		return forwardFailure("MACHINE_ROLE_TARGET_MISMATCH", "Snapshot target reference does not match Machine Role key")
 	}
+	if role.Retired {
+		return forwardFailure("MACHINE_ROLE_RETIRED", "Machine Role is retired and cannot execute")
+	}
 
 	runtimeSnapshot, err := f.store.GetRuntimeSnapshot(ctx, req.RuntimeSnapshotID)
 	if err != nil || runtimeSnapshot.Status != domain.SnapshotPublished {
