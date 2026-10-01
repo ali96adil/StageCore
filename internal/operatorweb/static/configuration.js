@@ -32,10 +32,14 @@ async function loadConfiguration() {
   };
 }
 
+function missingRoleCapabilities(companion, role) {
+  const available = new Set(companion?.capabilities || []);
+  return (role?.required_capabilities || []).filter((capability) => !available.has(capability));
+}
+
 function companionSupportsRole(companion, role) {
   if (!companion || companion.trust_state !== "TRUSTED") return false;
-  const available = new Set(companion.capabilities || []);
-  return (role.required_capabilities || []).every((capability) => available.has(capability));
+  return missingRoleCapabilities(companion, role).length === 0;
 }
 
 function machineRoleTarget(role, targets) {
@@ -156,6 +160,9 @@ async function renderConfiguration() {
             const assigned = role.assignment?.companion_id || "";
             const assignedCompanion = (model.companions || []).find((item) => item.companion_id === assigned);
             const candidates = (model.companions || []).filter((item) => companionSupportsRole(item, role));
+            const incompatibleTrusted = (model.companions || []).filter((item) =>
+              item.trust_state === "TRUSTED" && !companionSupportsRole(item, role)
+            );
             return `
             <div class="action-editor machine-role-row" data-role-id="${esc(role.machine_role_id)}">
               <div class="section-title-row">
@@ -177,6 +184,16 @@ async function renderConfiguration() {
                 </div>
               </div>
               ${!candidates.length ? `<p class="muted">No TRUSTED Companion currently advertises every required capability.</p>` : ""}
+              ${incompatibleTrusted.length ? `
+                <details style="margin-top:10px">
+                  <summary>Trusted Companions missing required capabilities</summary>
+                  <div class="actions-editor" style="margin-top:8px">
+                    ${incompatibleTrusted.map((item) => {
+                      const missing = missingRoleCapabilities(item, role);
+                      return `<div class="action-editor"><strong>${esc(item.display_name || item.hostname || item.companion_id)}</strong><p class="muted">Missing: ${esc(missing.join(", "))}</p><p class="mono muted">${esc(item.companion_id)}</p></div>`;
+                    }).join("")}
+                  </div>
+                </details>` : ""}
             </div>`;
           }).join("") : `<div class="empty">No Machine Roles yet.</div>`}
         </div>
