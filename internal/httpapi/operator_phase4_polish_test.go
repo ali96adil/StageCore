@@ -34,3 +34,30 @@ func TestPhase4OperatorPolishExposesGuidedCallboardPresentationControls(t *testi
 		}
 	}
 }
+
+
+func TestPhase4LiveVideoUXSupportsEditingAndMachineRolePlacement(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	req.RemoteAddr = "127.0.0.1:19107"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("phase4.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, required := range []string{
+		"liveSourcePlacement",
+		"execution_machine_role_id",
+		"machine-roles",
+		"live-source-edit",
+		"live-source-toggle",
+		"Update source",
+		"Disable",
+		"Enable",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("phase4.js missing Live Video UX contract %q", required)
+		}
+	}
+}
