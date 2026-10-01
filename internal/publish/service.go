@@ -253,6 +253,9 @@ func (s *Service) Publish(ctx context.Context, projectID, revisionID, createdBy 
 	}
 	created, _, err := s.builder.Create(ctx, revisionID, createdBy)
 	if err != nil {
+		if recoverErr := s.store.ReopenCurrentValidatedRevisionIfUnpublished(ctx, projectID, revisionID); recoverErr != nil {
+			return domain.RuntimeSnapshot{}, report, fmt.Errorf("create immutable Runtime Snapshot: %v; restore Draft after failed publish: %w", err, recoverErr)
+		}
 		return domain.RuntimeSnapshot{}, report, fmt.Errorf("create immutable Runtime Snapshot: %w", err)
 	}
 	return created, report, nil
