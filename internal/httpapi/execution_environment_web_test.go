@@ -35,6 +35,10 @@ func TestEmbeddedExecutionEnvironmentManagerBundle(t *testing.T) {
 		"f025.capture_file",
 		`"vault-status"`,
 		"body: file",
+		"f025-edit",
+		"f025Update",
+		"Update environment",
+		"existing?.manifest || null",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("F-025 bundle is missing token %q", token)
