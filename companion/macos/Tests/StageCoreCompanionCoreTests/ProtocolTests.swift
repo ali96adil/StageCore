@@ -3,6 +3,27 @@ import XCTest
 @testable import StageCoreCompanionCore
 
 final class ProtocolTests: XCTestCase {
+    func testHelloRoundTripsMIDIDestinationInventory() throws {
+        let hello = CompanionHello(
+            messageID: "00000000-0000-4000-8000-000000000099",
+            companionID: "11111111-1111-4111-8111-111111111111",
+            displayName: "Audio Mac",
+            hostname: "audio-mac.local",
+            agentVersion: "0.1.0",
+            platform: "macos",
+            architecture: "arm64",
+            capabilities: ["midi.send"],
+            midiDestinations: ["IAC Driver Bus 1", "IAC Driver Bus 2"],
+            appliedRuntimeSnapshotID: nil,
+            configHash: "",
+            readiness: "READY"
+        )
+        let data = try JSONEncoder().encode(hello)
+        let decoded = try JSONDecoder().decode(CompanionHello.self, from: data)
+        XCTAssertEqual(decoded, hello)
+        XCTAssertEqual(decoded.midiDestinations, ["IAC Driver Bus 1", "IAC Driver Bus 2"])
+    }
+
     func testExecutionRequestRoundTripsNestedJSON() throws {
         let request = CompanionExecutionRequest(
             messageID: "00000000-0000-4000-8000-000000000001",
