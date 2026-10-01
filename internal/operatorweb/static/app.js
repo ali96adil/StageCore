@@ -735,6 +735,44 @@ async function stopCueRuntime() {
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
 
+function emergencyDomainSummary(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  const domains = [
+    ["Lighting", payload.lighting],
+    ["Tablets", payload.tablets],
+    ["Native Visual", payload.native_visual],
+    ["Audio", payload.audio],
+    ["External", payload.external_adapters],
+  ];
+  return domains
+    .filter(([, value]) => value && typeof value === "object")
+    .map(([name, value]) => `${name}: ${value.status || "UNKNOWN"}${Number.isFinite(value.completed) && Number.isFinite(value.attempted) ? ` ${value.completed}/${value.attempted}` : ""}`)
+    .join(" · ");
+}
+
+async function setEmergencyBlackoutRuntime(enabled) {
+  const warning = enabled
+    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt the active Cue and command managed Lighting, Tablet and Native Visual outputs to blackout. Audio and external VDMX/OSC will NOT be stopped."
+    : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting will intentionally remain dark until you run an explicit Lighting Cue or operator action. GO will only unlock after the managed clear succeeds.";
+  if (!confirm(warning)) return;
+  try {
+    const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/emergency-blackout`, {
+      method: "POST",
+      json: {
+        request_id: requestID(),
+        enabled,
+        confirm: enabled ? "BLACKOUT" : "CLEAR",
+      },
+    });
+    const summary = emergencyDomainSummary(payload.result?.payload);
+    setMessage(globalMessage, `${enabled ? "Emergency Blackout applied." : "Managed blackout cleared."}${summary ? " " + summary : ""}`, enabled ? "warn" : "success");
+    await renderRuntime(true);
+  } catch (error) {
+    try { await renderRuntime(true); } catch (_) {}
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
+}
+
 async function jumpRuntime() {
   const cueID = el("jumpCueSelect")?.value;
   if (!cueID) {
