@@ -137,27 +137,47 @@ A camera `.local` source is appropriate only after the relay-side mDNS resolver 
 The systemd service uses `Restart=on-failure`; camera-source loss itself does **not** terminate the relay process because the relay retries upstream internally. A Pi reboot or unexpected relay process failure therefore restores the service without requiring an operator shell, while ordinary camera reconnects remain within the same relay process.
 
 
-## Viewer-driven camera flash candidate
+## Selective camera flash candidate
 
-The relay can optionally drive the ESP32-CAM built-in flash LED from **downstream viewer count**. This is intentionally not derived from the camera's MJPEG `stream_active` field because the relay owns a permanent single upstream connection even when `viewers=0`.
-
-Enable only after the matching camera firmware endpoint has been physically qualified:
+The relay can optionally expose camera flash control while keeping **normal Live dark by default**. Enable the capability only after the matching ESP32-CAM firmware endpoint is physically qualified:
 
 ```text
-STAGECORE_CAMERA_RELAY_FLASH_WITH_VIEWERS=true
+STAGECORE_CAMERA_RELAY_FLASH_CONTROL=true
 ```
 
-With the systemd unit from this candidate, the behavior is:
+When enabled, the relay starts in `AUTO` mode:
 
-- relay startup / zero viewers -> request flash OFF;
-- first accepted viewer (0 -> 1) -> request flash ON before serving Live frames;
-- additional viewers keep the light ON without repeated ON writes;
-- final viewer leaving (1 -> 0) -> request flash OFF;
-- relay shutdown -> request flash OFF;
-- camera flash-control failure is logged and exposed in relay health but does not break MJPEG fan-out.
+- `GET /api/v0/stream` -> normal Live; does **not** request camera flash.
+- `GET /api/v0/stream?flash=1` -> this viewer requests camera flash.
+- In `AUTO`, the first flash-requesting viewer turns the light ON.
+- Additional normal or flash-requesting viewers do not flicker/retrigger the light.
+- In `AUTO`, the last flash-requesting viewer leaving turns the light OFF even if normal viewers remain.
+- `POST /api/v0/flash?state=on` -> force ON.
+- `POST /api/v0/flash?state=off` -> force OFF.
+- `POST /api/v0/flash?state=auto` -> return to per-viewer automatic behavior.
+- Relay shutdown forces OFF regardless of the previous override.
 
-The relay derives the control endpoint from the source camera hostname and always targets HTTP port 80 at `/api/v0/flash`. It rejects a configured flash endpoint on a different camera host. Flash control uses a separate bounded HTTP transport so it cannot contend with the single long-lived MJPEG upstream connection.
+The Operator Tablet Controller adds a per-Live **Use camera flash** option for direct Relay URLs. It encodes the intent as the `flash=1` query parameter, so Cue actions can preserve the choice without adding a second tablet command vocabulary. Manual AUTO / Force ON / Force OFF controls use a bounded authenticated StageCore Operator endpoint that accepts only private/loopback IPv4 Relay URLs on TCP/9081 with the exact `/api/v0/stream` path, then proxies the fixed relay flash-control path. This avoids browser CORS shortcuts and prevents arbitrary public-URL control.
 
-Relay health adds truthful diagnostic fields: `flash_control_enabled`, `flash_desired_on`, `flash_applied_known`, `flash_applied_on`, and `flash_last_error`.
+Flash failures remain visible and do not terminate ordinary video fan-out. A Live+Flash request is rejected when relay flash control is disabled rather than silently showing a dark camera.
 
-This remains source/CI evidence until the exact camera firmware and relay binary are deployed together and the real LED is observed across 0 -> 1 -> 4 -> 3 -> 0 viewer transitions.
+Relay health reports:
+- `flash_control_enabled`
+- `flash_mode`
+- `flash_requesting_viewers`
+- `flash_desired_on`
+- `flash_applied_known`
+- `flash_applied_on`
+- `flash_last_error`
+
+The physical acceptance sequence is:
+1. zero viewers + AUTO -> OFF;
+2. normal Live -> stays OFF;
+3. Live+Flash -> ON;
+4. add normal viewers through four total -> stays ON without flicker;
+5. remove the flash-requesting viewer while normal viewers remain -> OFF;
+6. Force ON -> ON with zero viewers;
+7. Force OFF -> OFF even with a flash-requesting viewer;
+8. AUTO -> resumes per-viewer behavior;
+9. relay restart/shutdown -> no stuck ON state;
+10. repeat four-tablet stream soak and confirm video quality remains acceptable.
