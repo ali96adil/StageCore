@@ -25,7 +25,7 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"f002AddTabletAction",
 		"/tablet-controller/cue-actions",
 		"TABLET_LIVE_SHOW",
-		"Markdown links are normalized",
+		"Markdown-wrapped links are normalized",
 	} {
 		if !strings.Contains(source, marker) {
 			t.Fatalf("mixed Cue composer missing contract marker %q", marker)
