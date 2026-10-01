@@ -10,7 +10,6 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/contracts"
-	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -151,7 +150,7 @@ func setTabletBlackout(
 			continue
 		}
 		if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
-			if device.Assignment == nil || device.Assignment.State != deviceexperience.AssignmentActive ||
+			if device.Assignment == nil || device.Assignment.State != "ACTIVE" ||
 				device.Assignment.ProjectID != session.ProjectID ||
 				device.Assignment.RuntimeSnapshotID != session.RuntimeSnapshotID {
 				continue
@@ -191,7 +190,7 @@ func setTabletBlackout(
 		pending[dispatched.Envelope.CommandID] = device.ID
 	}
 	if len(report.Details) > 0 {
-		return report, fmt.Errorf(strings.Join(report.Details, "; "))
+		return report, fmt.Errorf("%s", strings.Join(report.Details, "; "))
 	}
 	if err := waitEmergencyDeviceCommands(ctx, devices, pending, deadline, &report); err != nil {
 		report.Status = "FAILED"
@@ -225,7 +224,7 @@ func waitEmergencyDeviceCommands(
 			case contracts.CommandRejected, contracts.CommandFailed, contracts.CommandTimedOut, contracts.CommandCancelled:
 				detail := fmt.Sprintf("%s ended with %s", deviceID, current.Status)
 				report.Details = append(report.Details, detail)
-				return fmt.Errorf(detail)
+				return fmt.Errorf("%s", detail)
 			default:
 				detail := fmt.Sprintf("%s has invalid status %s", deviceID, current.Status)
 				report.Details = append(report.Details, detail)
@@ -322,4 +321,3 @@ func hasCapability(values []string, wanted string) bool {
 	return false
 }
 
-var _ = devicechannel.StageDeviceLogicalType
