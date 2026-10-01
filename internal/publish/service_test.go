@@ -230,3 +230,48 @@ func hasFinding(report Report, code string) bool {
 	}
 	return false
 }
+
+func TestPublishRestoresDraftWhenSnapshotCommitFails(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	s := store.New(h.DB, clock.Real{})
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Publish rollback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.DB.ExecContext(ctx, `
+		CREATE TRIGGER fail_runtime_snapshot_insert
+		BEFORE INSERT ON runtime_snapshots
+		BEGIN
+			SELECT RAISE(ABORT, 'forced snapshot failure');
+		END;
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(s, capability.NewRegistry())
+	created, report, err := service.Publish(ctx, project.ID, revision.ID, "owner")
+	if err == nil {
+		t.Fatal("expected forced snapshot failure")
+	}
+	if created.ID != "" {
+		t.Fatalf("unexpected snapshot: %+v", created)
+	}
+	if !report.Valid {
+		t.Fatalf("validation should pass before forced snapshot failure: %#v", report)
+	}
+
+	recovered, err := s.GetRevision(ctx, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Status != domain.RevisionDraft {
+		t.Fatalf("failed publish stranded revision in %s, want DRAFT", recovered.Status)
+	}
+}
