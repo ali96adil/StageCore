@@ -28,6 +28,8 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"f002TabletVisualPayload",
 		"f002TabletContentMode",
 		"f002TabletLiveMode",
+		"f002TabletLiveFlash",
+		"parsed.searchParams.set(\"flash\", \"1\")",
 		"Use JSON override",
 		"Lighting Action",
 		"f002AddLightingAction",
