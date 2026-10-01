@@ -17,6 +17,7 @@ const (
 	mtcQuarterFrameStatus   = byte(0xF1)
 	defaultMTCResolvePeriod = 250 * time.Millisecond
 	defaultMTCRetryPeriod   = 500 * time.Millisecond
+	defaultMTCWarningReminder = 30 * time.Second
 )
 
 type midiQuarterFrameParser struct {
@@ -51,6 +52,9 @@ type MTCInput struct {
 	sourceID      string
 	resolvePeriod time.Duration
 	retryPeriod   time.Duration
+	warningReminder time.Duration
+	lastUnavailableWarn time.Time
+	now func() time.Time
 }
 
 func NewMTCInput(stageStore *store.Store, runtime *RuntimeService, devicePath, sourceID string) (*MTCInput, error) {
@@ -69,6 +73,8 @@ func NewMTCInput(stageStore *store.Store, runtime *RuntimeService, devicePath, s
 		sourceID:      sourceID,
 		resolvePeriod: defaultMTCResolvePeriod,
 		retryPeriod:   defaultMTCRetryPeriod,
+		warningReminder: defaultMTCWarningReminder,
+		now: func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -82,13 +88,16 @@ func (i *MTCInput) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		device, err := os.Open(i.devicePath)
 		if err != nil {
-			slog.Warn("StageCore MTC input device unavailable", "device", i.devicePath, "source_id", i.sourceID, "error", err)
+			if i.shouldWarnUnavailable() {
+				slog.Warn("StageCore MTC input device unavailable", "device", i.devicePath, "source_id", i.sourceID, "error", err)
+			}
 			if !waitForMTCInput(ctx, i.retryPeriod) {
 				return
 			}
 			continue
 		}
 
+		i.resetUnavailableWarning()
 		slog.Info("StageCore MTC input connected", "device", i.devicePath, "source_id", i.sourceID)
 		err = i.consume(ctx, device)
 		_ = device.Close()
@@ -180,6 +189,32 @@ func (i *MTCInput) activeSession(ctx context.Context) (string, error) {
 		matched = session.ID
 	}
 	return matched, nil
+}
+
+func (i *MTCInput) shouldWarnUnavailable() bool {
+	if i == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	if i.now != nil {
+		now = i.now().UTC()
+	}
+	reminder := i.warningReminder
+	if reminder <= 0 {
+		reminder = defaultMTCWarningReminder
+	}
+	if i.lastUnavailableWarn.IsZero() || now.Sub(i.lastUnavailableWarn) >= reminder {
+		i.lastUnavailableWarn = now
+		return true
+	}
+	return false
+}
+
+func (i *MTCInput) resetUnavailableWarning() {
+	if i == nil {
+		return
+	}
+	i.lastUnavailableWarn = time.Time{}
 }
 
 func waitForMTCInput(ctx context.Context, d time.Duration) bool {
