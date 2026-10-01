@@ -34,6 +34,10 @@ func TestExecutionEnvironmentManagerContract(t *testing.T) {
 		"/stagecore/go",
 		"127.0.0.1:9010",
 		"manifest.bindings",
+		"f025OperationCapability",
+		"execution.environment.operation",
+		"f025RoleSupportsOperations",
+		"LEGACY / missing execution.environment.operation",
 	} {
 		if !strings.Contains(manager, token) {
 			t.Errorf("F-025 manager missing contract token %q", token)
