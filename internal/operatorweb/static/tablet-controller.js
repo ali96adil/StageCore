@@ -655,6 +655,7 @@
     button.addEventListener("click", () => renderTabletController().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
     const before = nav.querySelector('[data-page="devices"]') || nav.querySelector('[data-page="cues"]');
     nav.insertBefore(button, before);
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   // Compatibility shim for the older Stage Devices quick controls. It prevents
