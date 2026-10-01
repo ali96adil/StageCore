@@ -62,6 +62,8 @@ type MachineRole struct {
 	RequiredRuntimeSnapshotID *string
 	RequiredConfigHash        string
 	Required                  bool
+	Retired                   bool
+	RetiredAt                 *time.Time
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
 }
