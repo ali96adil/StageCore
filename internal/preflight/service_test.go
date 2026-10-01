@@ -154,6 +154,37 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 	}
 }
 
+func TestPreflightBlocksRetiredMachineRoleReferencedBySnapshot(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	stageStore := store.New(handle.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Retired Role Preflight", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
+		RoleKey: "VIDEO-OLD", DisplayName: "Old Video", RequiredCapabilities: []string{"osc.send"}, Required: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.SetMachineRoleRetired(ctx, project.ID, role.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	service := New(stageStore, nil, nil)
+	report := Report{Status: Pass, Checks: []Check{}, Roles: []RoleStatus{}}
+	service.evaluateRole(ctx, &report, &roleDependency{
+		roleID: role.ID, roleKey: role.RoleKey, required: true, capabilities: map[string]struct{}{"osc.send": {}},
+	}, domain.RuntimeSnapshot{ID: "snapshot-retired-role", ProjectID: project.ID})
+	if report.Status != Block || len(report.Roles) != 1 || report.Roles[0].Summary != "Machine Role is retired" {
+		t.Fatalf("retired role preflight=%+v roles=%+v", report.Status, report.Roles)
+	}
+}
+
 func TestPreflightStorageWarningCriticalAndMissingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
