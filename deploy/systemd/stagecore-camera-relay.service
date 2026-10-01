@@ -7,8 +7,9 @@ Wants=network-online.target
 Type=simple
 User=stagecore
 Group=stagecore
+Environment=STAGECORE_CAMERA_RELAY_FLASH_WITH_VIEWERS=false
 EnvironmentFile=/etc/stagecore/camera-relay.env
-ExecStart=/opt/stagecore/bin/stagecore-camera-relay -source ${STAGECORE_CAMERA_RELAY_SOURCE} -listen ${STAGECORE_CAMERA_RELAY_LISTEN} -allow-lan
+ExecStart=/opt/stagecore/bin/stagecore-camera-relay -source ${STAGECORE_CAMERA_RELAY_SOURCE} -listen ${STAGECORE_CAMERA_RELAY_LISTEN} -flash-with-viewers=${STAGECORE_CAMERA_RELAY_FLASH_WITH_VIEWERS} -allow-lan
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=8s
