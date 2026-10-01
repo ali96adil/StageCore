@@ -75,6 +75,29 @@ func TestExecutionEnvironmentManifestPersistenceIntegrityAndDraftRules(t *testin
 		t.Fatalf("duplicate environment err=%v", err)
 	}
 
+	editedManifest := manifest
+	editedManifest.Name = "Main video workstation · edited"
+	editedManifest.Application.VersionConstraint = "8.8-tested"
+	editedManifest.Application.Hosts = []executionenv.HostRequirement{{OS: "darwin", Architecture: "amd64"}}
+	editedManifest.Assets = append([]executionenv.AssetRequirement(nil), manifest.Assets...)
+	editedManifest.Assets[0].Locator = "/Users/show/Edited.vdmx5"
+	updated, err := s.UpdateExecutionEnvironmentManifest(ctx, created.ID, editedManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != created.ID || updated.Manifest.Name != editedManifest.Name ||
+		updated.Manifest.Application.VersionConstraint != "8.8-tested" ||
+		updated.Manifest.Application.Hosts[0].Architecture != "amd64" ||
+		updated.Manifest.Assets[0].Locator != "/Users/show/Edited.vdmx5" ||
+		updated.ContentSHA256 == created.ContentSHA256 {
+		t.Fatalf("updated=%+v created=%+v", updated, created)
+	}
+	identityChange := editedManifest
+	identityChange.EnvironmentKey = "video-renamed"
+	if _, err := s.UpdateExecutionEnvironmentManifest(ctx, created.ID, identityChange); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("identity-changing update err=%v", err)
+	}
+
 	secondManifest := executionEnvironmentFixture("video-secondary")
 	second, err := s.CreateExecutionEnvironmentManifest(ctx, revision.ID, secondManifest, "test.operator")
 	if err != nil {
@@ -144,6 +167,11 @@ func TestExecutionEnvironmentManifestSHOWLockAllowsReadsAndRejectsMutation(t *te
 	newManifest := executionEnvironmentFixture("video-new")
 	if _, err := s.CreateExecutionEnvironmentManifest(ctx, runtimeSnapshot.RevisionID, newManifest, "test.operator"); !errors.Is(err, domain.ErrShowConfigurationLocked) {
 		t.Fatalf("SHOW store create err=%v", err)
+	}
+	edited := manifest
+	edited.Name = "Blocked during SHOW"
+	if _, err := s.UpdateExecutionEnvironmentManifest(ctx, manifestID, edited); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+		t.Fatalf("SHOW store update err=%v", err)
 	}
 	if err := s.DeleteExecutionEnvironmentManifest(ctx, manifestID); !errors.Is(err, domain.ErrShowConfigurationLocked) {
 		t.Fatalf("SHOW store delete err=%v", err)
