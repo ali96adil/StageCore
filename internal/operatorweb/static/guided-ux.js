@@ -436,7 +436,7 @@ function f002InstallCueComposer() {
       <button id="f002AddTabletAction" class="button" type="button" ${(state.f002Tablets || []).length ? "" : "disabled"}>+ Tablet Action</button>
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
-    <p class="muted">For LIVE SHOW use a raw URL, for example: {"url":"http://192.168.3.135:9081/api/v0/stream?flash=1"}. Markdown links are normalized before the Action is created.</p>
+    <p class="muted">For LIVE SHOW paste the relay address as a raw URL. Markdown-wrapped links are normalized before the Action is created.</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
