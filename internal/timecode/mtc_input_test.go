@@ -98,3 +98,50 @@ func TestWaitForMTCInputHonorsCancellation(t *testing.T) {
 		t.Fatal("cancelled wait did not return promptly")
 	}
 }
+
+
+func TestMTCUnavailableWarningIsImmediateThenRateLimited(t *testing.T) {
+	stageStore, _ := newIntegrationStore(t)
+	runtime := NewRuntimeService(stageStore, nil)
+	input, err := NewMTCInput(stageStore, runtime, "/dev/snd/missing", "mtc-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	input.warningReminder = 30 * time.Second
+	input.now = func() time.Time { return now }
+
+	if !input.shouldWarnUnavailable() {
+		t.Fatal("first missing-device attempt must warn immediately")
+	}
+	if input.shouldWarnUnavailable() {
+		t.Fatal("identical warning was not suppressed")
+	}
+	now = now.Add(29 * time.Second)
+	if input.shouldWarnUnavailable() {
+		t.Fatal("warning repeated before reminder interval")
+	}
+	now = now.Add(time.Second)
+	if !input.shouldWarnUnavailable() {
+		t.Fatal("warning reminder was not emitted at the bound")
+	}
+}
+
+func TestMTCUnavailableWarningResetsAfterSuccessfulOpen(t *testing.T) {
+	stageStore, _ := newIntegrationStore(t)
+	runtime := NewRuntimeService(stageStore, nil)
+	input, err := NewMTCInput(stageStore, runtime, "/dev/snd/missing", "mtc-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	input.now = func() time.Time { return now }
+
+	if !input.shouldWarnUnavailable() {
+		t.Fatal("first missing-device attempt must warn")
+	}
+	input.resetUnavailableWarning()
+	if !input.shouldWarnUnavailable() {
+		t.Fatal("first failure after a successful open must warn immediately")
+	}
+}
