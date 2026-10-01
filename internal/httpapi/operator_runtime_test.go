@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -25,7 +26,14 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := runtimecontrol.New(projectStore, registry)
+	runtime := runtimecontrol.New(projectStore, registry,
+		runtimecontrol.WithEmergencySafety(func(_ context.Context, _ domain.Session, command contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+			if command.Priority != "P0" {
+				t.Fatalf("Emergency Blackout priority=%s", command.Priority)
+			}
+			return json.RawMessage(`{"enabled":` + map[bool]string{true: "true", false: "false"}[enabled] + `,"lighting":{"status":"NOT_CONFIGURED"},"tablets":{"status":"NOT_CONFIGURED"},"native_visual":{"status":"NOT_CONFIGURED"},"audio":{"status":"UNCHANGED_BY_DESIGN"},"external_adapters":{"status":"UNCHANGED_BY_DESIGN"}}`), nil
+		}),
+	)
 	handler := New(WithOperatorRuntime(h.auth, projectStore, runtime)).Handler()
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil {
@@ -133,6 +141,52 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	}
 	if status.NextCue == nil || status.NextCue.ID != second.ID || status.LatestExecution == nil || status.LatestExecution.Result != domain.ExecutionCompleted {
 		t.Fatalf("runtime did not expose next/latest result: %+v", status)
+	}
+
+	badEmergencyBody, _ := json.Marshal(runtimeEmergencyBlackoutRequest{
+		RequestID: "00000000-0000-7000-8000-000000000408", Enabled: true, Confirm: "",
+	})
+	badEmergencyReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/emergency-blackout", badEmergencyBody, owner.Token, owner.CSRFToken)
+	badEmergencyRes := httptest.NewRecorder()
+	handler.ServeHTTP(badEmergencyRes, badEmergencyReq)
+	if badEmergencyRes.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed Emergency Blackout status=%d body=%s", badEmergencyRes.Code, badEmergencyRes.Body.String())
+	}
+
+	emergencyBody, _ := json.Marshal(runtimeEmergencyBlackoutRequest{
+		RequestID: "00000000-0000-7000-8000-000000000409", Enabled: true, Confirm: "BLACKOUT",
+	})
+	emergencyReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/emergency-blackout", emergencyBody, owner.Token, owner.CSRFToken)
+	emergencyRes := httptest.NewRecorder()
+	handler.ServeHTTP(emergencyRes, emergencyReq)
+	if emergencyRes.Code != http.StatusOK {
+		t.Fatalf("Emergency Blackout status=%d body=%s", emergencyRes.Code, emergencyRes.Body.String())
+	}
+
+	blackoutStatusReq := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/runtime", owner.Token)
+	blackoutStatusRes := httptest.NewRecorder()
+	handler.ServeHTTP(blackoutStatusRes, blackoutStatusReq)
+	var blackoutStatus runtimeStatusView
+	if blackoutStatusRes.Code != http.StatusOK || json.Unmarshal(blackoutStatusRes.Body.Bytes(), &blackoutStatus) != nil || !blackoutStatus.ManagedOutputBlackout {
+		t.Fatalf("Runtime did not expose active Emergency Blackout: %d %s", blackoutStatusRes.Code, blackoutStatusRes.Body.String())
+	}
+
+	blockedGoBody, _ := json.Marshal(runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000410"})
+	blockedGoReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/go", blockedGoBody, owner.Token, owner.CSRFToken)
+	blockedGoRes := httptest.NewRecorder()
+	handler.ServeHTTP(blockedGoRes, blockedGoReq)
+	if blockedGoRes.Code != http.StatusConflict || !strings.Contains(blockedGoRes.Body.String(), "EMERGENCY_BLACKOUT_ACTIVE") {
+		t.Fatalf("GO during Emergency Blackout=%d %s", blockedGoRes.Code, blockedGoRes.Body.String())
+	}
+
+	clearBody, _ := json.Marshal(runtimeEmergencyBlackoutRequest{
+		RequestID: "00000000-0000-7000-8000-000000000411", Enabled: false, Confirm: "CLEAR",
+	})
+	clearReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/emergency-blackout", clearBody, owner.Token, owner.CSRFToken)
+	clearRes := httptest.NewRecorder()
+	handler.ServeHTTP(clearRes, clearReq)
+	if clearRes.Code != http.StatusOK {
+		t.Fatalf("clear Emergency Blackout=%d %s", clearRes.Code, clearRes.Body.String())
 	}
 
 	unconfirmedPayload, _ := json.Marshal(runtimeJumpRequest{
