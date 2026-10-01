@@ -89,6 +89,14 @@
       required: "Required for show",
       enabled: "Enabled",
       saveSource: "Save source",
+      updateSource: "Update source",
+      editSource: "Edit",
+      cancelEdit: "Cancel edit",
+      enableSource: "Enable",
+      disableSource: "Disable",
+      executionPlacement: "Execution placement",
+      machineRole: "Machine Role",
+      stageDevice: "Stage Device",
       localCamera: "Local camera",
       usbCapture: "USB capture",
       networkStream: "Network stream",
@@ -202,6 +210,14 @@
       required: "مطلوب للعرض",
       enabled: "مفعّل",
       saveSource: "حفظ المصدر",
+      updateSource: "تحديث المصدر",
+      editSource: "تعديل",
+      cancelEdit: "إلغاء التعديل",
+      enableSource: "تفعيل",
+      disableSource: "تعطيل",
+      executionPlacement: "مكان التنفيذ",
+      machineRole: "Machine Role",
+      stageDevice: "Stage Device",
       localCamera: "كاميرا محلية",
       usbCapture: "كرت التقاط USB",
       networkStream: "بث شبكي",
@@ -698,37 +714,63 @@
     });
   }
 
-  function sourceCard(source) {
+  function sourcePlacementLabel(source, roles, devices) {
+    if (source.execution_machine_role_id) {
+      const role = roles.find((item) => item.machine_role_id === source.execution_machine_role_id);
+      return `${t("machineRole")}: ${role?.display_name || role?.role_key || source.execution_machine_role_id}`;
+    }
+    if (source.execution_device_id) {
+      const device = devices.find((item) => item.device_id === source.execution_device_id);
+      return `${t("stageDevice")}: ${device?.display_name || source.execution_device_id}`;
+    }
+    return t("none");
+  }
+
+  function sourceCard(source, editable, roles, devices) {
     return `
-      <article class="phase4-card">
+      <article class="phase4-card" data-live-source-id="${esc(source.source_id)}">
         <div class="phase4-card-head">
           <div><p class="eyebrow">${esc(source.source_class)}</p><h3>${esc(source.name)}</h3></div>
           ${pulse(source.readiness || "UNKNOWN")}
         </div>
         <dl class="phase4-kv">
           <div><dt>${esc(t("endpoint"))}</dt><dd class="mono">${esc(source.endpoint_ref || "—")}</dd></div>
-          <div><dt>${esc(t("renderNode"))}</dt><dd class="mono">${esc(source.execution_device_id || "—")}</dd></div>
+          <div><dt>${esc(t("executionPlacement"))}</dt><dd>${esc(sourcePlacementLabel(source, roles, devices))}</dd></div>
           <div><dt>${esc(t("required"))}</dt><dd>${source.required ? "✓" : "—"}</dd></div>
           <div><dt>${esc(t("enabled"))}</dt><dd>${source.desired_enabled ? "✓" : "—"}</dd></div>
           <div><dt>ID</dt><dd class="mono">${esc(source.source_id)}</dd></div>
           <div><dt>${esc(t("observed"))}</dt><dd>${when(source.last_observed_at)}</dd></div>
         </dl>
+        ${editable ? `<div class="row-actions">
+          <button class="button live-source-edit" type="button">${esc(t("editSource"))}</button>
+          <button class="button ghost live-source-toggle" type="button">${esc(t(source.desired_enabled ? "disableSource" : "enableSource"))}</button>
+        </div>` : ""}
       </article>`;
   }
 
   async function renderLiveVideo() {
     pageHeader(t("videoTitle"), t("videoSub"), renderLiveVideo);
     const projectID = currentProjectID();
-    const [sourcesPayload, devicesPayload] = await Promise.all([
+    const editable = canEdit();
+    const [sourcesPayload, devicesPayload, rolesPayload] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources`),
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices`),
+      editable
+        ? api(`/api/v1/projects/${encodeURIComponent(projectID)}/machine-roles`).catch(() => ({ roles: [] }))
+        : Promise.resolve({ roles: [] }),
     ]);
     const sources = sourcesPayload.sources || [];
-    const renderNodes = (devicesPayload.devices || []).filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
+    const devices = devicesPayload.devices || [];
+    const renderNodes = devices.filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
+    const roles = rolesPayload.roles || [];
     const body = document.getElementById("phase4Body");
-    const editable = canEdit();
+    const placementOptions = [
+      `<option value="">${esc(t("none"))}</option>`,
+      ...renderNodes.map((device) => `<option value="device:${esc(device.device_id)}">${esc(t("stageDevice"))}: ${esc(device.display_name || device.device_id)}</option>`),
+      ...roles.map((role) => `<option value="role:${esc(role.machine_role_id)}">${esc(t("machineRole"))}: ${esc(role.display_name || role.role_key || role.machine_role_id)}</option>`),
+    ].join("");
     body.innerHTML = `
-      ${editable ? `<form id="liveSourceForm" class="phase4-form">
+      ${editable ? `<form id="liveSourceForm" class="phase4-form" data-source-id="">
         <div class="phase4-form-grid">
           <label>${esc(t("sourceName"))}<input id="liveSourceName" required></label>
           <label>${esc(t("sourceClass"))}
@@ -739,30 +781,86 @@
             </select>
           </label>
           <label>${esc(t("endpoint"))}<input id="liveSourceEndpoint" dir="ltr" placeholder="camera://main or rtsp://…"></label>
-          <label>${esc(t("renderNode"))}
-            <select id="liveSourceNode"><option value="">${esc(t("none"))}</option>${renderNodes.map((device) => `<option value="${esc(device.device_id)}">${esc(device.display_name || device.device_id)}</option>`).join("")}</select>
-          </label>
+          <label>${esc(t("executionPlacement"))}<select id="liveSourcePlacement">${placementOptions}</select></label>
           <label class="check-row"><input id="liveSourceRequired" type="checkbox"> ${esc(t("required"))}</label>
           <label class="check-row"><input id="liveSourceEnabled" type="checkbox" checked> ${esc(t("enabled"))}</label>
         </div>
-        <div><button class="button primary" type="submit">${esc(t("saveSource"))}</button></div>
+        <div class="row-actions">
+          <button id="liveSourceSave" class="button primary" type="submit">${esc(t("saveSource"))}</button>
+          <button id="liveSourceCancelEdit" class="button ghost hidden" type="button">${esc(t("cancelEdit"))}</button>
+        </div>
       </form>` : ""}
-      ${sources.length ? `<div class="phase4-grid">${sources.map(sourceCard).join("")}</div>` : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}`;
+      ${sources.length ? `<div class="phase4-grid">${sources.map((source) => sourceCard(source, editable, roles, devices)).join("")}</div>` : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}`;
 
-    document.getElementById("liveSourceForm")?.addEventListener("submit", async (event) => {
+    const form = document.getElementById("liveSourceForm");
+    const resetEditor = () => {
+      if (!form) return;
+      form.dataset.sourceId = "";
+      form.reset();
+      const enabled = document.getElementById("liveSourceEnabled");
+      if (enabled) enabled.checked = true;
+      document.getElementById("liveSourceSave").textContent = t("saveSource");
+      document.getElementById("liveSourceCancelEdit")?.classList.add("hidden");
+    };
+    const editSource = (source) => {
+      if (!form) return;
+      form.dataset.sourceId = source.source_id;
+      document.getElementById("liveSourceName").value = source.name || "";
+      document.getElementById("liveSourceClass").value = source.source_class || "NETWORK_STREAM";
+      document.getElementById("liveSourceEndpoint").value = source.endpoint_ref || "";
+      document.getElementById("liveSourceRequired").checked = !!source.required;
+      document.getElementById("liveSourceEnabled").checked = source.desired_enabled !== false;
+      const placement = source.execution_machine_role_id
+        ? `role:${source.execution_machine_role_id}`
+        : source.execution_device_id ? `device:${source.execution_device_id}` : "";
+      document.getElementById("liveSourcePlacement").value = placement;
+      document.getElementById("liveSourceSave").textContent = t("updateSource");
+      document.getElementById("liveSourceCancelEdit")?.classList.remove("hidden");
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    document.getElementById("liveSourceCancelEdit")?.addEventListener("click", resetEditor);
+    document.querySelectorAll(".phase4-card[data-live-source-id]").forEach((card) => {
+      const source = sources.find((item) => item.source_id === card.dataset.liveSourceId);
+      card.querySelector(".live-source-edit")?.addEventListener("click", () => source && editSource(source));
+      card.querySelector(".live-source-toggle")?.addEventListener("click", async (event) => {
+        if (!source) return;
+        event.currentTarget.disabled = true;
+        try {
+          await api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources/${encodeURIComponent(source.source_id)}`, {
+            method: "PUT",
+            body: JSON.stringify({ ...source, desired_enabled: !source.desired_enabled }),
+          });
+          await renderLiveVideo();
+          phase4Message(t("sourceSaved"), "success");
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (event.currentTarget.isConnected) event.currentTarget.disabled = false;
+        }
+      });
+    });
+
+    form?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const sourceID = globalThis.crypto?.randomUUID ? crypto.randomUUID() : `source-${Date.now()}`;
+      const existingID = form.dataset.sourceId || "";
+      const existing = sources.find((item) => item.source_id === existingID);
+      const sourceID = existingID || (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `source-${Date.now()}`);
+      const placement = document.getElementById("liveSourcePlacement").value || "";
+      const executionDeviceID = placement.startsWith("device:") ? placement.slice(7) : "";
+      const executionMachineRoleID = placement.startsWith("role:") ? placement.slice(5) : "";
       const source = {
+        ...(existing || {}),
         source_id: sourceID,
         name: document.getElementById("liveSourceName").value.trim(),
         source_class: document.getElementById("liveSourceClass").value,
         endpoint_ref: document.getElementById("liveSourceEndpoint").value.trim(),
-        execution_device_id: document.getElementById("liveSourceNode").value,
-        capabilities: [],
-        config: {},
+        execution_device_id: executionDeviceID,
+        execution_machine_role_id: executionMachineRoleID,
+        capabilities: existing?.capabilities || [],
+        config: existing?.config || {},
         required: document.getElementById("liveSourceRequired").checked,
         desired_enabled: document.getElementById("liveSourceEnabled").checked,
-        readiness: "UNKNOWN",
+        readiness: existing?.readiness || "UNKNOWN",
       };
       try {
         await api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources/${encodeURIComponent(sourceID)}`, {
