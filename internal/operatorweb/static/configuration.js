@@ -47,8 +47,8 @@ async function renderConfiguration() {
   const startEdit = roleCanEdit && !editable ? `<button id="startRoutingEdit" class="button primary" type="button">Start routing edit</button>` : "";
   content.innerHTML = `
     <div class="page-head">
-      <div><p class="eyebrow">PROJECT CONFIGURATION</p><h1>Targets and Routing</h1><p>Build the Draft routing graph through the supported Operator interface. Published Runtime Snapshots remain immutable.</p></div>
-      <div class="toolbar">${pill(model.revision.status, model.revision.status === "DRAFT" ? "warn" : "good")}${startEdit}<button id="refreshConfiguration" class="button" type="button">Refresh</button></div>
+      <div><p class="eyebrow">PROJECT CONFIGURATION</p><h1>Routing & Machine Roles</h1><p>Build the Draft routing graph and assign stable Companion roles such as AUDIO-ABLETON or VIDEO-VDMX. Published Runtime Snapshots remain immutable.</p></div>
+      <div class="toolbar">${pill(model.revision.status, model.revision.status === "DRAFT" ? "warn" : "good")}${startEdit}${roleCanEdit ? `<button id="jumpMachineRoles" class="button ghost" type="button">Machine Roles</button>` : ""}<button id="refreshConfiguration" class="button" type="button">Refresh</button></div>
     </div>
     ${roleCanEdit && !editable ? `<div class="message warn">This revision backs a published Runtime Snapshot. Start a routing edit to fork a new Draft and refresh all revision-bound IDs before changing configuration.</div>` : ""}
 
@@ -120,7 +120,7 @@ async function renderConfiguration() {
       </article>
 
       ${roleCanEdit ? `
-      <article class="card">
+      <article id="machineRolesCard" class="card">
         <p class="eyebrow">COMPANION MACHINE ROLES</p><h2>Mac / Companion roles</h2>
         <p class="muted">Create stable show roles such as AUDIO-ABLETON or VIDEO-VDMX. Cues target the Role, not a Mac hostname.</p>
         <form id="machineRoleForm" style="margin-top:14px">
@@ -171,6 +171,7 @@ async function renderConfiguration() {
     </div>`;
 
   el("refreshConfiguration").addEventListener("click", () => renderConfiguration().catch(configurationError));
+  el("jumpMachineRoles")?.addEventListener("click", () => document.getElementById("machineRolesCard")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   const startButton = el("startRoutingEdit");
   if (startButton) {
     startButton.addEventListener("click", async () => {
