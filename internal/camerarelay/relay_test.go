@@ -185,3 +185,71 @@ func TestHealthWhenNoSource(t *testing.T){
  relay.Handler().ServeHTTP(recorder,httptest.NewRequest("GET","/api/v0/health",nil))
  if recorder.Code!=503 || !strings.Contains(recorder.Body.String(),"reconnecting"){t.Fatalf("unexpected health: %d %s",recorder.Code,recorder.Body.String())}
 }
+
+
+func TestFlashTracksViewerTransitionsAndFailsSafeOff(t *testing.T){
+ var flash atomic.Bool
+ var calls atomic.Int32
+ control:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,req *http.Request){
+  if req.Method!=http.MethodPost || req.URL.Path!="/api/v0/flash"{http.NotFound(w,req);return}
+  body,err:=io.ReadAll(io.LimitReader(req.Body,64))
+  if err!=nil{t.Fatal(err)}
+  switch string(body){
+  case "{\"on\":true}":flash.Store(true)
+  case "{\"on\":false}":flash.Store(false)
+  default:http.Error(w,"bad payload",400);return
+  }
+  calls.Add(1)
+  w.Header().Set("Content-Type","application/json")
+  _,_=io.WriteString(w,fmt.Sprintf("{\"flash_on\":%t}",flash.Load()))
+ }))
+ defer control.Close()
+
+ relay,err:=New(Config{
+  SourceURL:"http://127.0.0.1:1/api/v0/stream",
+  FlashControlURL:control.URL+"/api/v0/flash",
+  ReconnectDelay:100*time.Millisecond,
+  FlashTimeout:time.Second,
+ },nil)
+ if err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithCancel(context.Background())
+ done:=make(chan error,1)
+ go func(){done<-relay.Run(ctx)}()
+
+ id,_,ok:=relay.subscribe()
+ if !ok{t.Fatal("viewer rejected")}
+ eventually(t,func()bool{return flash.Load()})
+
+ relay.unsubscribe(id)
+ eventually(t,func()bool{return !flash.Load() && calls.Load()>=2})
+
+ cancel()
+ if err:=<-done;err!=nil{t.Fatal(err)}
+ if flash.Load(){t.Fatal("flash remained on after relay shutdown")}
+}
+
+func TestFlashFailureDoesNotRejectViewer(t *testing.T){
+ control:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,_ *http.Request){
+  http.Error(w,"flash unavailable",http.StatusServiceUnavailable)
+ }))
+ defer control.Close()
+ relay,err:=New(Config{
+  SourceURL:"http://127.0.0.1:1/api/v0/stream",
+  FlashControlURL:control.URL,
+  ReconnectDelay:100*time.Millisecond,
+  FlashTimeout:time.Second,
+ },nil)
+ if err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithCancel(context.Background())
+ done:=make(chan error,1)
+ go func(){done<-relay.Run(ctx)}()
+ id,_,ok:=relay.subscribe()
+ if !ok{t.Fatal("flash control failure rejected viewer")}
+ eventually(t,func()bool{
+  relay.mu.Lock();defer relay.mu.Unlock()
+  return relay.flashDesired && relay.flashError!=""
+ })
+ relay.unsubscribe(id)
+ cancel()
+ <-done
+}

@@ -27,10 +27,11 @@ func localOnly(address string) bool {
 }
 
 func main() {
- var source,listen string
+ var source,listen,flashControl string
  var allowLAN bool
  flag.StringVar(&source,"source","","camera MJPEG HTTP URL (required)")
  flag.StringVar(&listen,"listen","127.0.0.1:9081","relay HTTP listen address (local-only default)")
+ flag.StringVar(&flashControl,"flash-control","","optional camera flash control HTTP URL")
  flag.BoolVar(&allowLAN,"allow-lan",false,"explicitly permit unauthenticated LAN HTTP; use show-network isolation")
  flag.Parse()
  if source=="" || (!localOnly(listen)&&!allowLAN) {
@@ -38,7 +39,7 @@ func main() {
   os.Exit(2)
  }
  logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil))
- relay,err:=camerarelay.New(camerarelay.Config{SourceURL:source},logger)
+ relay,err:=camerarelay.New(camerarelay.Config{SourceURL:source,FlashControlURL:flashControl},logger)
  if err!=nil {logger.Error("invalid relay configuration","error",err);os.Exit(2)}
  listener,err:=net.Listen("tcp",listen)
  if err!=nil{logger.Error("cannot listen","error",err);os.Exit(1)}
