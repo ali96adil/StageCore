@@ -162,7 +162,7 @@ func setTabletBlackout(
 	capabilityKey := deviceexperience.RequiredCapability(commandType)
 	targets := make([]deviceexperience.Device, 0)
 	for _, device := range all {
-		if !device.Enabled || device.Kind != deviceexperience.DeviceTabletPlayer || !hasCapability(device.Capabilities, capabilityKey) {
+		if !device.Enabled || device.Kind != deviceexperience.DeviceTabletPlayer {
 			continue
 		}
 		if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
@@ -174,11 +174,19 @@ func setTabletBlackout(
 		} else if device.ProjectID != session.ProjectID {
 			continue
 		}
+		report.Attempted++
+		if !hasCapability(device.Capabilities, capabilityKey) {
+			report.Details = append(report.Details, device.ID+": required "+capabilityKey+" capability is unavailable")
+			continue
+		}
 		targets = append(targets, device)
 	}
-	report.Attempted = len(targets)
-	if len(targets) == 0 {
+	if report.Attempted == 0 {
 		return report, nil
+	}
+	if len(report.Details) > 0 {
+		report.Status = "FAILED"
+		return report, fmt.Errorf("%s", strings.Join(report.Details, "; "))
 	}
 
 	deadline := time.Now().UTC().Add(emergencyWait)
@@ -283,7 +291,7 @@ func setNativeVisualBlackout(
 			continue
 		}
 		role, err := stageStore.GetMachineRole(ctx, strings.TrimSpace(cfg.MachineRoleID))
-		if err != nil || !hasCapability(role.RequiredCapabilities, visualengine.CapabilityBlackout) {
+		if err != nil || !nativeVisualTargetManaged(manifest, target, role) {
 			continue
 		}
 		report.Attempted++
@@ -326,6 +334,30 @@ func setNativeVisualBlackout(
 	}
 	report.Status = "COMPLETED"
 	return report, nil
+}
+
+func nativeVisualTargetManaged(manifest snapshot.Manifest, target snapshot.Target, role domain.MachineRole) bool {
+	for _, capabilityKey := range role.RequiredCapabilities {
+		if visualengine.IsCapability(capabilityKey) {
+			return true
+		}
+	}
+	for _, cue := range manifest.Cues {
+		if !cue.Enabled {
+			continue
+		}
+		for _, action := range cue.Actions {
+			if action.Enabled && action.TargetRef == target.TargetRef && visualengine.IsCapability(action.CapabilityKey) {
+				return true
+			}
+		}
+	}
+	for _, output := range manifest.Outputs {
+		if output.TargetRef == target.TargetRef && visualengine.IsCapability(output.CapabilityKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasCapability(values []string, wanted string) bool {
