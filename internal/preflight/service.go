@@ -448,6 +448,13 @@ func (s *Service) evaluateRole(ctx context.Context, report *Report, dependency *
 		report.add(Block, "role.identity."+role.ID, "companion", roleView.Summary, role.RoleKey, role.ID)
 		return
 	}
+	if role.Retired {
+		roleView.Status = severityForRequired(dependency.required)
+		roleView.Summary = "Machine Role is retired"
+		report.Roles = append(report.Roles, roleView)
+		report.add(roleView.Status, "role.retired."+role.ID, "companion", roleView.Summary, role.RoleKey, role.ID)
+		return
+	}
 	assignment, err := s.store.GetActiveRoleAssignment(ctx, role.ID)
 	if err != nil {
 		roleView.Status = severityForRequired(dependency.required)
