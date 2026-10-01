@@ -67,6 +67,7 @@ func (s *securityOperations) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/enabled", withPermission(s.users, userauth.PermissionUserManage, s.handleUserEnabled))
 	mux.HandleFunc("POST /api/v1/security/users/{user_id}/revoke-sessions", withPermission(s.users, userauth.PermissionUserManage, s.handleUserSessionRevoke))
 
+	mux.HandleFunc("GET /api/v1/security/companions/pairing/pending", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingPending))
 	mux.HandleFunc("POST /api/v1/security/companions/pairing/approve", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingApprove))
 	mux.HandleFunc("POST /api/v1/security/companions/{companion_id}/revoke", withPermission(s.users, userauth.PermissionCompanionRevoke, s.handleCompanionRevoke))
 }
@@ -315,6 +316,34 @@ func (s *securityOperations) handleUserSessionRevoke(w http.ResponseWriter, r *h
 type companionPairingApproveRequest struct {
 	RequestID   string `json:"request_id"`
 	PairingCode string `json:"pairing_code"`
+}
+
+func (s *securityOperations) handleCompanionPairingPending(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	requests, err := s.store.ListPendingCompanionPairingRequests(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_PAIRING_REQUESTS_UNAVAILABLE"})
+		return
+	}
+	items := make([]map[string]any, 0, len(requests))
+	for _, request := range requests {
+		companion, err := s.store.GetCompanion(r.Context(), request.CompanionID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_PAIRING_REQUESTS_UNAVAILABLE"})
+			return
+		}
+		items = append(items, map[string]any{
+			"request_id": request.ID,
+			"companion_id": request.CompanionID,
+			"display_name": companion.DisplayName,
+			"hostname": companion.Hostname,
+			"platform": companion.Platform,
+			"architecture": companion.Architecture,
+			"version": companion.Version,
+			"requested_at": request.RequestedAt,
+			"expires_at": request.ExpiresAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": items})
 }
 
 func (s *securityOperations) handleCompanionPairingApprove(w http.ResponseWriter, r *http.Request, session userauth.Session) {
