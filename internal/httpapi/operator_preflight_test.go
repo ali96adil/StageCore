@@ -95,3 +95,29 @@ func containsAll(value string, parts ...string) bool {
 	}
 	return true
 }
+
+
+func TestPreflightOperatorUXLinksBlockingChecksToRelevantWorkspace(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/preflight.js", nil)
+	req.RemoteAddr = "127.0.0.1:18002"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("preflight.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, required := range []string{
+		"preflightDestination",
+		"Open Stage Devices",
+		"Open Live Video",
+		"Open Machine Roles",
+		"Open Environments",
+		"Open Cues / Publish",
+		"bindPreflightFixButtons",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("preflight UX missing %q", required)
+		}
+	}
+}
