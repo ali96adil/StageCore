@@ -66,6 +66,18 @@ func TestOperatorCanDecommissionOfflineV2TabletWithExplicitOwnerConfirmation(t *
 	if auditCount != 1 {
 		t.Fatalf("decommission audit count=%d", auditCount)
 	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/stage-devices/unassigned", nil)
+	listReq.RemoteAddr = "127.0.0.1:19143"
+	listReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("unassigned list status=%d body=%s", listRes.Code, listRes.Body.String())
+	}
+	if bytes.Contains(listRes.Body.Bytes(), []byte(device.ID)) {
+		t.Fatalf("decommissioned Tablet leaked into active unassigned inventory: %s", listRes.Body.String())
+	}
 }
 
 func TestOperatorTabletDecommissionRequiresExactConfirmation(t *testing.T) {
