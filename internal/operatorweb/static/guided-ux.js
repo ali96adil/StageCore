@@ -438,14 +438,17 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController, lightingController] = await Promise.all([
+  const [configuration, tabletController, lightingController, machineRoles] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
   state.f002Lighting = lightingController || { nodes: [] };
+  state.f002MachineRoles = machineRoles.roles || [];
+  state.f002Companions = machineRoles.companions || [];
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -934,6 +937,24 @@ function f002ParseMIDIParameters(raw) {
   };
 }
 
+function f002MIDIDestinationsForTarget(targetRef) {
+  const target = (state.f002Targets || []).find((item) => item.logical_name === targetRef);
+  if (!target || String(target.logical_type || "").toUpperCase() !== "MACHINE_ROLE") return [];
+  let roleID = "";
+  try {
+    const cfg = typeof target.configuration === "string"
+      ? JSON.parse(target.configuration || "{}")
+      : (target.configuration || {});
+    roleID = String(cfg.machine_role_id || "").trim();
+  } catch (_) {
+    return [];
+  }
+  const role = (state.f002MachineRoles || []).find((item) => item.machine_role_id === roleID);
+  const companionID = role?.assignment?.companion_id || "";
+  const companion = (state.f002Companions || []).find((item) => item.companion_id === companionID);
+  return Array.isArray(companion?.midi_destinations) ? companion.midi_destinations : [];
+}
+
 function f002MIDIStatus(message, channel) {
   const offset = Math.max(0, Math.min(15, Number(channel) - 1));
   switch (message) {
@@ -1069,7 +1090,7 @@ function f002EnhanceActionCard(card) {
           <option value="name">Stable destination name</option>
           <option value="index">Legacy numeric index</option>
         </select></label>
-        <label class="f002-midi-destination-name-field">MIDI destination name<input class="f002-midi-destination-name" placeholder="IAC Driver Bus 1" autocomplete="off"></label>
+        <label class="f002-midi-destination-name-field">MIDI destination name<input class="f002-midi-destination-name" placeholder="IAC Driver Bus 1" autocomplete="off"><datalist class="f002-midi-destination-list"></datalist><small class="muted f002-midi-destination-hint"></small></label>
         <label class="f002-midi-destination-index-field hidden">MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
         <label>Message type<select class="f002-midi-message">
           <option value="note_on">Note On</option>
@@ -1134,6 +1155,8 @@ function f002EnhanceActionCard(card) {
   const midiDestinationNameField = builder.querySelector(".f002-midi-destination-name-field");
   const midiDestinationIndexField = builder.querySelector(".f002-midi-destination-index-field");
   const midiDestinationName = builder.querySelector(".f002-midi-destination-name");
+  const midiDestinationList = builder.querySelector(".f002-midi-destination-list");
+  const midiDestinationHint = builder.querySelector(".f002-midi-destination-hint");
   const midiDestination = builder.querySelector(".f002-midi-destination");
   const midiMessage = builder.querySelector(".f002-midi-message");
   const midiChannel = builder.querySelector(".f002-midi-channel");
@@ -1175,7 +1198,21 @@ function f002EnhanceActionCard(card) {
   }
   errorKind.value = parsedErrorPolicy?.onError || "advanced";
 
+  const refreshMIDIDestinations = () => {
+    const names = f002MIDIDestinationsForTarget(target.value);
+    const listID = midiDestinationList.id || `f002-midi-dest-${Math.random().toString(36).slice(2)}`;
+    midiDestinationList.id = listID;
+    midiDestinationName.setAttribute("list", listID);
+    midiDestinationList.innerHTML = names.map((name) => `<option value="${esc(name)}"></option>`).join("");
+    if (midiDestinationHint) {
+      midiDestinationHint.textContent = names.length
+        ? `${names.length} destination(s) reported by the assigned Companion.`
+        : "No MIDI destination inventory is currently reported for this target; you may type the exact CoreMIDI/IAC name.";
+    }
+  };
+
   const renderMIDIFields = () => {
+    refreshMIDIDestinations();
     const message = midiMessage.value;
     const program = message === "program_change";
     const control = message === "control_change";
@@ -1213,6 +1250,8 @@ function f002EnhanceActionCard(card) {
     renderReliabilityFields();
   };
   kind.addEventListener("change", applyKind);
+  target.addEventListener("change", renderMIDIFields);
+  target.addEventListener("input", renderMIDIFields);
   midiDestinationMode.addEventListener("change", renderMIDIFields);
   midiMessage.addEventListener("change", renderMIDIFields);
   timeoutKind.addEventListener("change", applyKind);
