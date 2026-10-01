@@ -145,7 +145,7 @@ async function renderConfiguration() {
       <article id="machineRolesCard" class="card">
         <p class="eyebrow">COMPANION MACHINE ROLES</p><h2>Mac / Companion roles</h2>
         <p class="muted">Create stable show roles such as AUDIO-ABLETON or VIDEO-VDMX. Cues target the Role, not a Mac hostname.</p>
-        <form id="machineRoleForm" style="margin-top:14px">
+        <form id="machineRoleForm" data-role-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>Role key<input id="machineRoleKey" placeholder="AUDIO-ABLETON" required></label>
             <label>Display name<input id="machineRoleName" placeholder="Ableton Audio"></label>
@@ -159,7 +159,11 @@ async function renderConfiguration() {
             <label class="check-row"><input id="machineRoleRequired" type="checkbox" checked> Required for show readiness</label>
           </div>
           <p class="muted">For external VDMX cue control use OSC send; add VDMX / execution-environment operations when StageCore must open, capture or restore the VDMX environment. Native Visual + Live Source is only for a Companion running StageCore\'s native visual engine.</p>
-          <button class="button primary" type="submit">Create Machine Role</button>
+          <div class="row-actions">
+            <button id="machineRoleSubmit" class="button primary" type="submit">Create Machine Role</button>
+            <button id="machineRoleCancelEdit" class="button ghost hidden" type="button">Cancel edit</button>
+          </div>
+          <p class="muted">Role key is the stable runtime identity and cannot be renamed after creation. Edit changes display name, capability requirements and readiness requirement only.</p>
           ${!editable ? `<p class="muted">Role assignment is available now. To add a new Role as a Cue target, start a routing Draft.</p>` : ""}
         </form>
         <div class="actions-editor" style="margin-top:14px">
