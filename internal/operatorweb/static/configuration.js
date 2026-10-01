@@ -99,7 +99,7 @@ async function renderConfiguration() {
 
       <article class="card">
         <p class="eyebrow">OUTPUTS</p><h2>Capability outputs</h2>
-        <form id="outputForm" style="margin-top:14px">
+        <form id="outputForm" data-output-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>Name<input id="outputName" placeholder="Main projector OSC" ${disabled} required></label>
             <label>Target<select id="outputTarget" ${disabled} required>${optionList(model.targets || [], "logical_name", (item) => `${item.logical_name} · ${item.logical_type}`)}</select></label>
@@ -107,10 +107,16 @@ async function renderConfiguration() {
             <label>Criticality<select id="outputCriticality" ${disabled}><option value="NORMAL">NORMAL</option><option value="CRITICAL">CRITICAL</option></select></label>
           </div>
           <label>Value schema JSON<textarea id="outputSchema" class="mono" rows="3" ${disabled}>{}</textarea></label>
-          <button class="button primary" type="submit" ${disabled}>Add output</button>
+          <div class="row-actions">
+            <button id="outputSubmit" class="button primary" type="submit" ${disabled}>Add output</button>
+            <button id="outputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button>
+          </div>
         </form>
         <div class="actions-editor" style="margin-top:14px">${(model.outputs || []).length ? model.outputs.map((output) => `
-          <div class="action-editor"><strong>${esc(output.name)}</strong><p class="muted">${esc(output.target_ref)} · ${esc(output.capability_key)}</p><p class="mono muted">${esc(output.output_id)}</p></div>`).join("") : `<div class="empty">No outputs yet.</div>`}</div>
+          <div class="action-editor">
+            <div class="section-title-row"><strong>${esc(output.name)}</strong>${editable ? `<button class="button ghost output-edit" type="button" data-output-id="${esc(output.output_id)}">Edit</button>` : ""}</div>
+            <p class="muted">${esc(output.target_ref)} · ${esc(output.capability_key)}</p><p class="mono muted">${esc(output.output_id)}</p>
+          </div>`).join("") : `<div class="empty">No outputs yet.</div>`}</div>
       </article>
 
       <article class="card">
@@ -324,10 +330,46 @@ async function renderConfiguration() {
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
   });
-  el("outputForm").addEventListener("submit", async (event) => {
+  const outputForm = el("outputForm");
+  const resetOutputEditor = () => {
+    outputForm.dataset.outputId = "";
+    outputForm.reset();
+    el("outputCapability").value = "osc.send";
+    el("outputCriticality").value = "NORMAL";
+    el("outputSchema").value = "{}";
+    el("outputSubmit").textContent = "Add output";
+    el("outputCancelEdit").classList.add("hidden");
+  };
+  document.querySelectorAll(".output-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const output = (model.outputs || []).find((item) => item.output_id === button.dataset.outputId);
+      if (!output) return;
+      outputForm.dataset.outputId = output.output_id;
+      el("outputName").value = output.name || "";
+      el("outputTarget").value = output.target_ref || "";
+      el("outputCapability").value = output.capability_key || "";
+      el("outputCriticality").value = output.criticality || "NORMAL";
+      el("outputSchema").value = jsonText(output.value_schema || {});
+      el("outputSubmit").textContent = "Save output";
+      el("outputCancelEdit").classList.remove("hidden");
+      outputForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+  el("outputCancelEdit").addEventListener("click", resetOutputEditor);
+  outputForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const outputID = outputForm.dataset.outputId || "";
     try {
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/outputs`, { method: "POST", json: { name: el("outputName").value.trim(), target_ref: el("outputTarget").value, capability_key: el("outputCapability").value.trim(), value_schema: parseJSONField(el("outputSchema").value, "Output schema"), criticality: el("outputCriticality").value } });
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/outputs${outputID ? `/${encodeURIComponent(outputID)}` : ""}`, {
+        method: outputID ? "PUT" : "POST",
+        json: {
+          name: el("outputName").value.trim(),
+          target_ref: el("outputTarget").value,
+          capability_key: el("outputCapability").value.trim(),
+          value_schema: parseJSONField(el("outputSchema").value, "Output schema"),
+          criticality: el("outputCriticality").value,
+        },
+      });
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
   });
