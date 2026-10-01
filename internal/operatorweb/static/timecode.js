@@ -305,6 +305,116 @@ async function renderTimecodeWorkspace() {
   el("f018OpenCues")?.addEventListener("click", () => navigate("cues"));
   el("timecodeRefresh")?.addEventListener("click", renderTimecodeWorkspace);
 }
+
+function f018CuePolicyObject(cue) {
+  const raw = cue?.execution_policy;
+  if (!raw) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return JSON.parse(JSON.stringify(raw));
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function f018EnsureCueAuthoring() {
+  if (el("f018CueTimecode")) return;
+  const rawPolicy = el("cueExecutionPolicy");
+  const rawLabel = rawPolicy?.closest("label");
+  if (!rawLabel?.parentNode) return;
+
+  const panel = document.createElement("section");
+  panel.id = "f018CueTimecode";
+  panel.className = "card";
+  panel.style.margin = "12px 0";
+  panel.innerHTML = `
+    <div class="section-title-row">
+      <div><p class="eyebrow">TIMECODE</p><h3>${esc(f018T("timecode.cue_authoring"))}</h3><p class="muted">${esc(f018T("timecode.advanced_policy"))}</p></div>
+    </div>
+    <div class="form-grid two">
+      <label>${esc(f018T("timecode.binding_mode"))}
+        <select id="f018CueTimecodeMode">
+          <option value="NONE">${esc(f018T("timecode.none_mode"))}</option>
+          <option value="ENABLED">${esc(f018T("timecode.enabled"))}</option>
+          <option value="DISABLED">${esc(f018T("timecode.disabled"))}</option>
+        </select>
+      </label>
+      <label>${esc(f018T("timecode.binding_id_hint"))}<input id="f018CueBindingID" placeholder="Defaults to cue:<cue id>"></label>
+      <label>${esc(f018T("timecode.at"))}<input id="f018CueAt" class="mono" placeholder="00:01:12:10"></label>
+      <label>${esc(f018T("timecode.expiry_frames"))}<input id="f018CueExpiry" type="number" min="0" step="1" value="0"></label>
+    </div>
+    <p class="muted">Use HH:MM:SS:FF for non-drop and HH:MM:SS;FF for drop-frame. The Hub validates the configured source rate before Publish.</p>
+  `;
+  rawLabel.parentNode.insertBefore(panel, rawLabel);
+  el("f018CueTimecodeMode")?.addEventListener("change", f018SyncCueBindingEnabled);
+}
+
+function f018SyncCueBindingEnabled() {
+  const enabled = el("f018CueTimecodeMode")?.value !== "NONE";
+  for (const id of ["f018CueBindingID", "f018CueAt", "f018CueExpiry"]) {
+    const control = el(id);
+    if (control) control.disabled = !enabled;
+  }
+}
+
+function f018PopulateCueTimecode(cue) {
+  f018EnsureCueAuthoring();
+  const policy = f018CuePolicyObject(cue);
+  const binding = policy.timecode && typeof policy.timecode === "object" ? policy.timecode : null;
+  el("f018CueTimecodeMode").value = !binding ? "NONE" : binding.enabled === false ? "DISABLED" : "ENABLED";
+  el("f018CueBindingID").value = binding?.binding_id || "";
+  el("f018CueAt").value = binding?.at || "";
+  el("f018CueExpiry").value = Number.isSafeInteger(binding?.expiry_frames) ? binding.expiry_frames : 0;
+  f018SyncCueBindingEnabled();
+}
+
+function f018SyncCueTimecodePolicy(event) {
+  try {
+    f018EnsureCueAuthoring();
+    const mode = el("f018CueTimecodeMode")?.value || "NONE";
+    const policy = parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy");
+    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+      throw new Error("Cue execution policy must be a JSON object.");
+    }
+    if (mode === "NONE") {
+      delete policy.timecode;
+    } else {
+      const at = el("f018CueAt").value.trim();
+      const expiryFrames = Number.parseInt(el("f018CueExpiry").value || "0", 10);
+      const bindingID = el("f018CueBindingID").value.trim();
+      if (!/^\d{2}:\d{2}:\d{2}[:;]\d{2}$/.test(at)) {
+        throw new Error("Timecode Cue binding must use HH:MM:SS:FF or HH:MM:SS;FF.");
+      }
+      if (!Number.isSafeInteger(expiryFrames) || expiryFrames < 0) {
+        throw new Error("Timecode expiry frames must be a non-negative integer.");
+      }
+      policy.timecode = {
+        ...(bindingID ? { binding_id: bindingID } : {}),
+        at,
+        expiry_frames: expiryFrames,
+        enabled: mode === "ENABLED",
+      };
+    }
+    el("cueExecutionPolicy").value = JSON.stringify(policy, null, 2);
+  } catch (error) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setMessage(globalMessage, error.message || errorMessage(error), "error");
+  }
+}
+
+const f018BaseOpenCueEditor = openCueEditor;
+openCueEditor = function f018OpenCueEditor(cue) {
+  f018BaseOpenCueEditor(cue);
+  f018PopulateCueTimecode(cue);
+};
+
+f018EnsureCueAuthoring();
+cueForm.addEventListener("submit", f018SyncCueTimecodePolicy, true);
+
 const timecodeNav = document.querySelector('[data-page="timecode"]');
 timecodeNav?.addEventListener("click", (event) => {
   event.preventDefault();
