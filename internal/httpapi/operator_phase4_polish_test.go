@@ -61,6 +61,11 @@ func TestPhase4LiveVideoUXSupportsEditingAndMachineRolePlacement(t *testing.T) {
 		"Update source",
 		"Disable",
 		"Enable",
+		"data-open-workspace",
+		"tablet-controller",
+		"tablet-scenes",
+		"lighting-setup",
+		"lighting-cues",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("phase4.js missing Live Video UX contract %q", required)
