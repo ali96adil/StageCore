@@ -56,6 +56,32 @@ func (s *Store) GetCompanionPairingRequest(ctx context.Context, requestID string
 	return scanCompanionPairingRequest(row)
 }
 
+func (s *Store) ListPendingCompanionPairingRequests(ctx context.Context) ([]domain.CompanionPairingRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT pairing_request_id, companion_id, public_key_algorithm, public_key_base64,
+		       public_key_fingerprint, client_nonce_hash, pairing_code_hash, status,
+		       requested_at_us, expires_at_us, approved_at_us, approved_by
+		FROM companion_pairing_requests
+		WHERE status = 'PENDING' AND expires_at_us > ?
+		ORDER BY requested_at_us DESC`, clock.UnixMicros(s.clock.Now().UTC()))
+	if err != nil {
+		return nil, fmt.Errorf("list pending Companion pairing requests: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.CompanionPairingRequest, 0)
+	for rows.Next() {
+		item, err := scanCompanionPairingRequest(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending Companion pairing requests: %w", err)
+	}
+	return items, nil
+}
+
 func (s *Store) MarkCompanionPairingExpired(ctx context.Context, requestID string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE companion_pairing_requests SET status = 'EXPIRED'
