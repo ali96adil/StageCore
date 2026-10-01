@@ -87,11 +87,22 @@ function f025T(key) {
   return f025Strings[key]?.[f025Locale] || f025Strings[key]?.en || key;
 }
 
+const f025OperationCapability = "execution.environment.operation";
+
+function f025RoleSupportsOperations(role) {
+  return (role?.required_capabilities || []).includes(f025OperationCapability);
+}
+
 function f025RoleOptions(roles, selected = "") {
-  return `<option value="">${esc(f025T("f025.unbound_option"))}</option>` + (roles || []).map((role) => {
+  const options = (roles || []).filter((role) =>
+    f025RoleSupportsOperations(role) || role.machine_role_id === selected
+  ).map((role) => {
     const label = role.display_name || role.role_key || role.machine_role_id;
-    return `<option value="${esc(role.machine_role_id)}" ${role.machine_role_id === selected ? "selected" : ""}>${esc(label)} · ${esc(role.role_key)}</option>`;
-  }).join("");
+    const compatible = f025RoleSupportsOperations(role);
+    const suffix = compatible ? "" : " · LEGACY / missing execution.environment.operation";
+    return `<option value="${esc(role.machine_role_id)}" ${role.machine_role_id === selected ? "selected" : ""}>${esc(label)} · ${esc(role.role_key)}${esc(suffix)}</option>`;
+  });
+  return `<option value="">${esc(f025T("f025.unbound_option"))}</option>` + options.join("");
 }
 
 function f025CurrentRevisionID() {
