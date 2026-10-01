@@ -234,6 +234,47 @@ async function renderConfiguration() {
   }
   const machineRoleForm = el("machineRoleForm");
   if (machineRoleForm) {
+    const resetMachineRoleEditor = () => {
+      machineRoleForm.dataset.roleId = "";
+      machineRoleForm.dataset.extraCapabilities = "[]";
+      machineRoleForm.reset();
+      el("machineRoleKey").disabled = false;
+      el("machineRoleMIDI").checked = true;
+      el("machineRoleOSC").checked = false;
+      el("machineRoleEnvironment").checked = false;
+      el("machineRoleEcho").checked = false;
+      el("machineRoleNativeVisual").checked = false;
+      el("machineRoleRequired").checked = true;
+      el("machineRoleSubmit").textContent = "Create Machine Role";
+      el("machineRoleCancelEdit").classList.add("hidden");
+    };
+    const editMachineRole = (role) => {
+      const capabilities = new Set(role.required_capabilities || []);
+      const fullNativePreset = nativeVisualRoleCapabilities.every((key) => capabilities.has(key));
+      const scalarKnown = new Set(["midi.send", "osc.send", executionEnvironmentOperationCapability, "local.echo"]);
+      const extras = [...capabilities].filter((key) => !scalarKnown.has(key) && !(fullNativePreset && nativeVisualRoleCapabilities.includes(key)));
+      machineRoleForm.dataset.roleId = role.machine_role_id;
+      machineRoleForm.dataset.extraCapabilities = JSON.stringify(extras);
+      el("machineRoleKey").value = role.role_key || "";
+      el("machineRoleKey").disabled = true;
+      el("machineRoleName").value = role.display_name || "";
+      el("machineRoleMIDI").checked = capabilities.has("midi.send");
+      el("machineRoleOSC").checked = capabilities.has("osc.send");
+      el("machineRoleEnvironment").checked = capabilities.has(executionEnvironmentOperationCapability);
+      el("machineRoleEcho").checked = capabilities.has("local.echo");
+      el("machineRoleNativeVisual").checked = fullNativePreset;
+      el("machineRoleRequired").checked = !!role.required;
+      el("machineRoleSubmit").textContent = "Save Machine Role";
+      el("machineRoleCancelEdit").classList.remove("hidden");
+      machineRoleForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    document.querySelectorAll(".machine-role-edit").forEach((button) => {
+      button.addEventListener("click", () => {
+        const role = (model.machine_roles || []).find((item) => item.machine_role_id === button.dataset.roleId);
+        if (role) editMachineRole(role);
+      });
+    });
+    el("machineRoleCancelEdit").addEventListener("click", resetMachineRoleEditor);
     machineRoleForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const requiredCapabilities = [];
@@ -242,25 +283,71 @@ async function renderConfiguration() {
       if (el("machineRoleEnvironment").checked) requiredCapabilities.push(executionEnvironmentOperationCapability);
       if (el("machineRoleEcho").checked) requiredCapabilities.push("local.echo");
       if (el("machineRoleNativeVisual").checked) requiredCapabilities.push(...nativeVisualRoleCapabilities);
-      if (!requiredCapabilities.length) {
+      try {
+        const extras = JSON.parse(machineRoleForm.dataset.extraCapabilities || "[]");
+        if (Array.isArray(extras)) requiredCapabilities.push(...extras);
+      } catch (_) {}
+      const uniqueCapabilities = [...new Set(requiredCapabilities.filter(Boolean))];
+      if (!uniqueCapabilities.length) {
         configurationError(new Error("Choose at least one Machine Role capability."));
         return;
       }
+      const roleID = machineRoleForm.dataset.roleId || "";
       try {
-        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles`, {
-          method: "POST",
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles${roleID ? `/${encodeURIComponent(roleID)}` : ""}`, {
+          method: roleID ? "PUT" : "POST",
           json: {
-            role_key: el("machineRoleKey").value.trim(),
+            ...(roleID ? {} : { role_key: el("machineRoleKey").value.trim() }),
             display_name: el("machineRoleName").value.trim(),
-            required_capabilities: requiredCapabilities,
+            required_capabilities: uniqueCapabilities,
             required: el("machineRoleRequired").checked,
           },
         });
         await renderConfiguration();
-        setMessage(globalMessage, "Machine Role created. Add it as a Cue target from the Role card when a routing Draft is open.", "good");
+        setMessage(globalMessage, roleID ? "Machine Role updated. Stable role key and historical references were preserved." : "Machine Role created. Add it as a Cue target from the Role card when a routing Draft is open.", "good");
       } catch (error) { configurationError(error); }
     });
   }
+
+  document.querySelectorAll(".machine-role-retire").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const roleID = button.dataset.roleId || "";
+      const role = (model.machine_roles || []).find((item) => item.machine_role_id === roleID);
+      if (!roleID || !window.confirm(`Retire Machine Role “${role?.role_key || roleID}”? It will remain in history but cannot be assigned or executed until restored.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles/${encodeURIComponent(roleID)}/retire`, {
+          method: "POST", json: { confirm: "RETIRE" },
+        });
+        await renderConfiguration();
+        setMessage(globalMessage, "Machine Role retired.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
+
+  document.querySelectorAll(".machine-role-restore").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const roleID = button.dataset.roleId || "";
+      if (!roleID) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles/${encodeURIComponent(roleID)}/restore`, { method: "POST" });
+        await renderConfiguration();
+        setMessage(globalMessage, "Machine Role restored. Reassign and re-run Preflight before SHOW.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
+
+  document.querySelectorAll(".machine-role-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const roleID = button.dataset.roleId || "";
+      const role = (model.machine_roles || []).find((item) => item.machine_role_id === roleID);
+      if (!roleID || !window.confirm(`Permanently remove retired Machine Role “${role?.role_key || roleID}”? This succeeds only when no assignment history, target, environment, live source, media requirement or Runtime Snapshot references it.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/machine-roles/${encodeURIComponent(roleID)}?confirm=true`, { method: "DELETE" });
+        await renderConfiguration();
+        setMessage(globalMessage, "Unreferenced retired Machine Role removed.", "good");
+      } catch (error) { configurationError(error); }
+    });
+  });
 
   document.querySelectorAll(".machine-role-assign").forEach((button) => {
     button.addEventListener("click", async () => {
