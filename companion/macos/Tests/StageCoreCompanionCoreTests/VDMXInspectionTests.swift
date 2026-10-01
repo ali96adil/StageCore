@@ -115,7 +115,7 @@ final class VDMXInspectionTests: XCTestCase {
         XCTAssertEqual(asset?.contentHash, "")
     }
 
-    func testUnsupportedVDMXExtensionOrBindingScopeFailsExplicitly() async throws {
+    func testUninspectableVDMXDependenciesCompleteWithConservativeAbsenceObservations() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appendingPathComponent("VDMX6.app", isDirectory: true)
@@ -130,22 +130,27 @@ final class VDMXInspectionTests: XCTestCase {
             "required": .bool(true),
         ])])
         let extensionOutcome = await provider.inspect(manifest: withExtension)
-        XCTAssertEqual(extensionOutcome.status, .failed)
-        XCTAssertEqual(extensionOutcome.errorCode, "VDMX_INSPECTION_SCOPE_UNSUPPORTED")
-        XCTAssertNil(extensionOutcome.observation)
+        XCTAssertEqual(extensionOutcome.status, .completed)
+        XCTAssertNil(extensionOutcome.errorCode)
+        let extensionObservation = try XCTUnwrap(extensionOutcome.observation?.extensions.first)
+        XCTAssertEqual(extensionObservation.key, "isf-pack")
+        XCTAssertFalse(extensionObservation.present)
+        XCTAssertNil(extensionObservation.versionConstraintSatisfied)
 
         var withBinding = manifest(versionConstraint: "6.x-tested")
         withBinding["bindings"] = .array([.object([
-            "key": .string("main-output"),
-            "kind": .string("DISPLAY"),
-            "name": .string("Main output"),
-            "external_ref": .string("display:main"),
-            "required": .bool(true),
+            "key": .string("oscquery"),
+            "kind": .string("NETWORK"),
+            "name": .string("VDMX OSCQuery"),
+            "external_ref": .string("http://127.0.0.1:2345/"),
+            "required": .bool(false),
         ])])
         let bindingOutcome = await provider.inspect(manifest: withBinding)
-        XCTAssertEqual(bindingOutcome.status, .failed)
-        XCTAssertEqual(bindingOutcome.errorCode, "VDMX_INSPECTION_SCOPE_UNSUPPORTED")
-        XCTAssertNil(bindingOutcome.observation)
+        XCTAssertEqual(bindingOutcome.status, .completed)
+        XCTAssertNil(bindingOutcome.errorCode)
+        let binding = try XCTUnwrap(bindingOutcome.observation?.bindings.first)
+        XCTAssertEqual(binding.key, "oscquery")
+        XCTAssertFalse(binding.present)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

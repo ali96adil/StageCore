@@ -27,14 +27,6 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
                     responseSummary: "manifest is not a VDMX execution environment"
                 )
             }
-            if !decoded.externalExtensions.isEmpty || !decoded.bindings.isEmpty {
-                return .init(
-                    status: .failed,
-                    errorCode: "VDMX_INSPECTION_SCOPE_UNSUPPORTED",
-                    responseSummary: "VDMX extension and binding inspection is not implemented by this provider"
-                )
-            }
-
             let application = inspectApplication(constraint: decoded.application.versionConstraint)
             var assets: [CompanionInspectionAssetObservation] = []
             assets.reserveCapacity(decoded.assets.count)
@@ -43,14 +35,25 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
                 assets.append(try await inspectAsset(asset))
             }
 
+            let extensions = decoded.externalExtensions.map {
+                CompanionInspectionExtensionObservation(key: $0.key, present: false)
+            }
+            let bindings = decoded.bindings.map {
+                CompanionInspectionBindingObservation(key: $0.key, present: false)
+            }
+            let unsupportedDependencies = !extensions.isEmpty || !bindings.isEmpty
             return .init(
                 status: .completed,
-                responseSummary: "VDMX application and declared asset inspection completed",
+                responseSummary: unsupportedDependencies
+                    ? "VDMX application and declared assets inspected; extension and binding presence remains unverified"
+                    : "VDMX application and declared asset inspection completed",
                 observation: CompanionInspectionObservation(
                     os: "darwin",
                     architecture: architecture,
                     application: application,
-                    assets: assets
+                    assets: assets,
+                    extensions: extensions,
+                    bindings: bindings
                 )
             )
         } catch is CancellationError {
@@ -323,6 +326,11 @@ private struct VDMXAssetRequirement: Decodable {
     }
 }
 
-private struct VDMXExtensionRequirement: Decodable {}
-private struct VDMXBindingRequirement: Decodable {}
+private struct VDMXExtensionRequirement: Decodable {
+    let key: String
+}
+
+private struct VDMXBindingRequirement: Decodable {
+    let key: String
+}
 #endif
