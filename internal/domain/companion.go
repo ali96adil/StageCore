@@ -43,6 +43,7 @@ type Companion struct {
 	Architecture             string
 	Version                  string
 	Capabilities             []string
+	MIDIDestinations         []string
 	LastSeenAt               time.Time
 	TrustState               CompanionTrustState
 	Readiness                CompanionReadiness
