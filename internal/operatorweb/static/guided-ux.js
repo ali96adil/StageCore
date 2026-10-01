@@ -232,12 +232,152 @@ function f002EnhanceConfiguration() {
   const routeForm = el("routeForm");
   if (routeForm && !routeForm.dataset.f002Advanced) {
     routeForm.dataset.f002Advanced = "true";
+
+    const builder = document.createElement("section");
+    builder.id = "f002RouteBuilder";
+    builder.className = "f002-builder";
+    builder.innerHTML = `
+      <div class="f002-builder-head">
+        <div><strong>Route behavior</strong><span>Common conditions and transforms without JSON.</span></div>
+      </div>
+      <div class="form-grid two">
+        <label>When input
+          <select id="f002RouteConditionKind">
+            <option value="always">Always</option>
+            <option value="equals">Equals</option>
+            <option value="not_equals">Does not equal</option>
+            <option value="greater_than">Greater than</option>
+            <option value="less_than">Less than</option>
+            <option value="range">Inside numeric range</option>
+            <option value="boolean_is">Boolean is</option>
+            <option value="advanced">Advanced JSON</option>
+          </select>
+        </label>
+        <label>Transform input
+          <select id="f002RouteTransformKind">
+            <option value="identity">Pass through unchanged</option>
+            <option value="constant">Replace with fixed value</option>
+            <option value="number">Scale / offset number</option>
+            <option value="advanced">Advanced JSON</option>
+          </select>
+        </label>
+      </div>
+      <div id="f002RouteConditionFields"></div>
+      <div id="f002RouteTransformFields"></div>
+      <label>Route action data
+        <select id="f002RouteActionData">
+          <option value="transformed">Use transformed input</option>
+          <option value="advanced">Advanced fixed parameters JSON</option>
+        </select>
+      </label>
+      <p class="muted">Delay and debounce use the Route fields above. Advanced values remain available below and are never rewritten unless their guided control is selected.</p>`;
+
     const details = f002CreateDetails("Advanced routing conditions and parameters");
     for (const id of ["routeCondition", "routeTransform", "routeParameters"]) {
       const label = el(id)?.closest("label");
       if (label) details.appendChild(label);
     }
+    routeForm.insertBefore(builder, routeForm.querySelector('button[type="submit"]'));
     routeForm.insertBefore(details, routeForm.querySelector('button[type="submit"]'));
+
+    const conditionKind = el("f002RouteConditionKind");
+    const transformKind = el("f002RouteTransformKind");
+    const actionData = el("f002RouteActionData");
+    const conditionFields = el("f002RouteConditionFields");
+    const transformFields = el("f002RouteTransformFields");
+    const disabled = el("routeName")?.disabled || false;
+    [conditionKind, transformKind, actionData].forEach((control) => { if (control) control.disabled = disabled; });
+
+    const scalarFields = (prefix, numericOnly = false) => `
+      <div class="form-grid two">
+        ${numericOnly ? "" : `<label>Value type<select id="${prefix}Type"><option value="string">Text</option><option value="number">Number</option><option value="boolean">Boolean</option></select></label>`}
+        <label>Value<input id="${prefix}Value" ${numericOnly ? 'type="number" step="any"' : ""}></label>
+      </div>`;
+
+    const renderCondition = () => {
+      const kind = conditionKind.value;
+      if (kind === "always" || kind === "advanced") {
+        conditionFields.innerHTML = "";
+      } else if (kind === "range") {
+        conditionFields.innerHTML = '<div class="form-grid two"><label>Minimum<input id="f002RouteRangeMin" type="number" step="any" required></label><label>Maximum<input id="f002RouteRangeMax" type="number" step="any" required></label></div>';
+      } else if (kind === "boolean_is") {
+        conditionFields.innerHTML = '<label>Boolean value<select id="f002RouteBoolean"><option value="true">True</option><option value="false">False</option></select></label>';
+      } else {
+        conditionFields.innerHTML = scalarFields("f002RouteCondition", ["greater_than", "less_than"].includes(kind));
+      }
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    };
+
+    const renderTransform = () => {
+      const kind = transformKind.value;
+      if (kind === "identity" || kind === "advanced") {
+        transformFields.innerHTML = "";
+      } else if (kind === "constant") {
+        transformFields.innerHTML = scalarFields("f002RouteConstant");
+      } else {
+        transformFields.innerHTML = '<div class="form-grid two"><label>Factor<input id="f002RouteFactor" type="number" step="any" value="1" required></label><label>Offset<input id="f002RouteOffset" type="number" step="any" value="0" required></label></div>';
+      }
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    };
+
+    const readScalar = (prefix, numericOnly = false) => {
+      const raw = el(`${prefix}Value`)?.value ?? "";
+      if (numericOnly) {
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error("Route comparison value must be a number.");
+        return value;
+      }
+      const type = el(`${prefix}Type`)?.value || "string";
+      if (type === "number") {
+        const value = Number(raw);
+        if (!Number.isFinite(value)) throw new Error("Route value must be a number.");
+        return value;
+      }
+      if (type === "boolean") return String(raw).toLowerCase() === "true";
+      return String(raw);
+    };
+
+    conditionKind.addEventListener("change", renderCondition);
+    transformKind.addEventListener("change", renderTransform);
+    actionData.addEventListener("change", () => {
+      details.open = conditionKind.value === "advanced" || transformKind.value === "advanced" || actionData.value === "advanced";
+    });
+    renderCondition();
+    renderTransform();
+
+    routeForm.addEventListener("submit", () => {
+      if (conditionKind.value !== "advanced") {
+        let condition = null;
+        if (conditionKind.value === "range") {
+          const min = Number(el("f002RouteRangeMin")?.value);
+          const max = Number(el("f002RouteRangeMax")?.value);
+          if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
+          condition = { operator: "range", min, max };
+        } else if (conditionKind.value === "boolean_is") {
+          condition = { operator: "boolean_is", value: el("f002RouteBoolean")?.value === "true" };
+        } else if (conditionKind.value !== "always") {
+          condition = {
+            operator: conditionKind.value,
+            value: readScalar("f002RouteCondition", ["greater_than", "less_than"].includes(conditionKind.value)),
+          };
+        }
+        el("routeCondition").value = JSON.stringify(condition, null, 2);
+      }
+
+      if (transformKind.value !== "advanced") {
+        let transform = null;
+        if (transformKind.value === "constant") {
+          transform = { type: "constant", value: readScalar("f002RouteConstant") };
+        } else if (transformKind.value === "number") {
+          const factor = Number(el("f002RouteFactor")?.value);
+          const offset = Number(el("f002RouteOffset")?.value);
+          if (Number.isFinite(factor) && Number.isFinite(offset)) transform = { type: "number", factor, offset };
+        }
+        el("routeTransform").value = JSON.stringify(transform, null, 2);
+      }
+
+      if (actionData.value === "transformed") el("routeParameters").value = "null";
+    }, true);
   }
 
   const capability = el("outputCapability");
