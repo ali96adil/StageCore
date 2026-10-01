@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -173,6 +176,63 @@ func WithOperatorTabletController(
 				"reconnect_required": true,
 				"safe_media_acknowledged": true,
 			})
+		}))
+
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/live-flash", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			var input struct {
+				URL   string `json:"url"`
+				State string `json:"state"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			state := strings.ToLower(strings.TrimSpace(input.State))
+			if state != "auto" && state != "on" && state != "off" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_LIVE_FLASH_STATE_INVALID"})
+				return
+			}
+			controlURL, err := tabletRelayFlashControlURL(input.URL, state)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_LIVE_FLASH_URL_INVALID", "detail": err.Error()})
+				return
+			}
+			request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, controlURL, nil)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_LIVE_FLASH_REQUEST_INVALID"})
+				return
+			}
+			client := &http.Client{
+				Timeout: 3 * time.Second,
+				Transport: &http.Transport{Proxy: nil},
+				CheckRedirect: func(*http.Request, []*http.Request) error {
+					return fmt.Errorf("relay redirects are not allowed")
+				},
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_UNAVAILABLE", "detail": err.Error()})
+				return
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(io.LimitReader(response.Body, 8<<10))
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				return
+			}
+			if response.StatusCode < 200 || response.StatusCode >= 300 {
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error": "TABLET_LIVE_FLASH_RELAY_REJECTED",
+					"relay_status": response.StatusCode,
+					"detail": strings.TrimSpace(string(body)),
+				})
+				return
+			}
+			var relayState map[string]any
+			if len(body) != 0 && json.Unmarshal(body, &relayState) != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"state": state, "relay": relayState})
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -467,6 +527,38 @@ func defaultTabletPriority(value string) string {
 	default:
 		return "P1"
 	}
+}
+
+func tabletRelayFlashControlURL(rawLiveURL, state string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawLiveURL))
+	if err != nil || parsed == nil || !strings.EqualFold(parsed.Scheme, "http") ||
+		parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("relay Live URL must be absolute HTTP without credentials or fragment")
+	}
+	if parsed.Path != "/api/v0/stream" {
+		return "", fmt.Errorf("relay Live URL path must be /api/v0/stream")
+	}
+	if parsed.Port() != "9081" {
+		return "", fmt.Errorf("relay Live URL must use port 9081")
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
+		return "", fmt.Errorf("relay Live URL host must be a private or loopback IP")
+	}
+	for key := range parsed.Query() {
+		if key != "flash" {
+			return "", fmt.Errorf("relay Live URL contains unsupported query field %q", key)
+		}
+	}
+	control := &url.URL{
+		Scheme: "http",
+		Host:   parsed.Host,
+		Path:   "/api/v0/flash",
+	}
+	query := control.Query()
+	query.Set("state", state)
+	control.RawQuery = query.Encode()
+	return control.String(), nil
 }
 
 func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (json.RawMessage, error) {
