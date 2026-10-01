@@ -123,6 +123,10 @@
       decommissionConfirm: "Decommission this stale OFFLINE Tablet identity? History is preserved and this identity will no longer receive commands.",
       decommissionReason: "Clean reinstall / stale Tablet identity",
       decommissioned: "Tablet identity decommissioned. History was preserved.",
+      openTabletController: "Open Tablet Controller",
+      openTabletScenes: "Open Tablet Scenes",
+      openLightingSetup: "Open Lighting Setup",
+      openLightingCues: "Open Lighting Cues",
       unknown: "Unknown",
       none: "None",
     },
@@ -245,6 +249,10 @@
       decommissionConfirm: "تريد تخرج هوية هذا التابلت القديم وهو OFFLINE؟ التاريخ يبقى محفوظ وهذه الهوية ما تستقبل أوامر بعد.",
       decommissionReason: "تنصيب نظيف / هوية تابلت قديمة",
       decommissioned: "تم إخراج هوية التابلت القديمة مع الاحتفاظ بالتاريخ.",
+      openTabletController: "فتح تحكم التابلت",
+      openTabletScenes: "فتح مشاهد التابلت",
+      openLightingSetup: "فتح إعداد الإضاءة",
+      openLightingCues: "فتح كيوهات الإضاءة",
       unknown: "غير معروف",
       none: "لا يوجد",
     },
@@ -416,6 +424,16 @@
           <div class="phase4-actions">
             <button class="button danger" data-decommission-tablet="${esc(device.device_id)}" type="button">${esc(t("decommissionTablet"))}</button>
           </div>` : ""}
+        ${device.device_kind === "TABLET_PLAYER" ? `
+          <div class="phase4-actions">
+            <button class="button ghost" data-open-workspace="tablet-controller" type="button">${esc(t("openTabletController"))}</button>
+            <button class="button ghost" data-open-workspace="tablet-scenes" type="button">${esc(t("openTabletScenes"))}</button>
+          </div>` : ""}
+        ${device.profile_id === "stagecore.esp32-dmx-lighting-node" ? `
+          <div class="phase4-actions">
+            <button class="button ghost" data-open-workspace="lighting-setup" type="button">${esc(t("openLightingSetup"))}</button>
+            <button class="button ghost" data-open-workspace="lighting-cues" type="button">${esc(t("openLightingCues"))}</button>
+          </div>` : ""}
         ${tabletControls(device)}
       </article>`;
   }
@@ -556,6 +574,15 @@
           ? `<div class="phase4-grid">${inventory.map(inventoryCard).join("")}</div>`
           : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
+
+    body.querySelectorAll("[data-open-workspace]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const page = button.dataset.openWorkspace || "";
+        const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
+        if (navButton) navButton.click();
+        else navigate(page);
+      });
+    });
 
     body.querySelectorAll("[data-decommission-tablet]").forEach((button) => {
       button.addEventListener("click", async () => {
