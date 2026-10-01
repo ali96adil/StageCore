@@ -79,15 +79,16 @@ func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (D
 			enabled != 1 || !validAssignment {
 			return Device{}, fmt.Errorf("%w: v2 enrollment conflicts with existing device authority", ErrInvalidDevice)
 		}
-		// Authenticated reconnect may refresh only software telemetry used
-		// for capability routing/UI. It cannot alter identity, display metadata,
-		// enabled state, Project, profile, kind or the Hub-owned assignment.
+		// Authenticated reconnect may refresh software telemetry plus the
+		// operator-visible display name supplied by the same stable device ID.
+		// It cannot alter identity, enabled state, Project, profile, kind,
+		// group/location metadata or the Hub-owned assignment.
 		nowUS := r.now().UTC().UnixMicro()
 		result, err := tx.ExecContext(ctx, `
 			UPDATE stage_devices
-			SET client_version=?, capabilities_json=?, updated_at_us=?
+			SET display_name=?, client_version=?, capabilities_json=?, updated_at_us=?
 			WHERE device_id=? AND protocol_version=? AND enabled=1
-		`, device.ClientVersion, string(caps), nowUS, device.ID, ProtocolVersion2)
+		`, device.DisplayName, device.ClientVersion, string(caps), nowUS, device.ID, ProtocolVersion2)
 		if err != nil {
 			return Device{}, fmt.Errorf("refresh authenticated v2 runtime metadata: %w", err)
 		}
