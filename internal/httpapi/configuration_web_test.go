@@ -25,7 +25,7 @@ func TestEmbeddedConfigurationClientUsesOperatorAPIOnly(t *testing.T) {
 		t.Fatalf("configuration.js status=%d", jsRes.Code)
 	}
 	client := jsRes.Body.String()
-	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes", "Routing & Machine Roles", "jumpMachineRoles", "machineRolesCard"} {
+	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes", "Routing & Machine Roles", "jumpMachineRoles", "machineRolesCard", "machineRoleNativeVisual", "video.source.open", "visual.play", "For external VDMX use OSC send"} {
 		if !strings.Contains(client, required) {
 			t.Fatalf("configuration client missing %q", required)
 		}
