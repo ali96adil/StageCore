@@ -103,6 +103,12 @@ func main() {
 			application.DeviceExperience,
 			application.DeviceRuntime,
 		)),
+		runtimecontrol.WithEmergencySafety(sessionsafety.NewManagedOutputBlackout(
+			application.Store,
+			application.DeviceExperience,
+			application.DeviceRuntime,
+			application.Capabilities,
+		)),
 	)
 	application.CompanionRuntime.SetControlSurfaceHandler(func(ctx context.Context, request companionchannel.ControlSurfaceRequest) {
 		if request.Action != "GO" {
