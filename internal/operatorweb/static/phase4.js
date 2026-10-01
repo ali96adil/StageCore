@@ -98,6 +98,13 @@
       disableSource: "Disable",
       executionPlacement: "Execution placement",
       relayHealth: "Open relay health",
+      relayReadStatus: "Read relay status",
+      relayLoading: "Reading relay status…",
+      relayUnavailable: "Relay status unavailable.",
+      relayViewerSlots: "Viewer slots",
+      relayFrameAge: "Frame age",
+      relayFlash: "Flash",
+      relayFlashRequesting: "flash-requesting viewers",
       machineRole: "Machine Role",
       stageDevice: "Stage Device",
       localCamera: "Local camera",
@@ -224,6 +231,13 @@
       disableSource: "تعطيل",
       executionPlacement: "مكان التنفيذ",
       relayHealth: "فتح حالة الـRelay",
+      relayReadStatus: "قراءة حالة الـRelay",
+      relayLoading: "جاري قراءة حالة الـRelay…",
+      relayUnavailable: "حالة الـRelay غير متاحة.",
+      relayViewerSlots: "أماكن المشاهدين",
+      relayFrameAge: "عمر آخر فريم",
+      relayFlash: "الفلاش",
+      relayFlashRequesting: "مشاهدين يطلبون الفلاش",
       machineRole: "Machine Role",
       stageDevice: "Stage Device",
       localCamera: "كاميرا محلية",
@@ -761,6 +775,33 @@
     }
   }
 
+  function relayHealthMarkup(health) {
+    if (!health || health.service !== "stagecore-camera-relay") {
+      return `<div class="message warn">${esc(t("relayUnavailable"))}</div>`;
+    }
+    const viewers = Number(health.viewers);
+    const maxClients = Number(health.max_clients);
+    const frameAge = Number(health.last_frame_age_ms);
+    const flashMode = String(health.flash_mode || "auto").toUpperCase();
+    const flashApplied = health.flash_applied_known
+      ? (health.flash_applied_on ? "ON" : "OFF")
+      : "UNKNOWN";
+    const flashError = String(health.flash_last_error || health.flash_error || "").trim();
+    return `
+      <div class="phase4-lighting-diagnostic-info">
+        <div class="phase4-status-row">${pulse(String(health.state || "UNKNOWN").toUpperCase())}
+          <strong>${esc(health.upstream_connected ? "upstream connected" : "upstream disconnected")}</strong>
+        </div>
+        <dl class="phase4-kv">
+          <div><dt>${esc(t("relayViewerSlots"))}</dt><dd>${Number.isFinite(viewers) ? esc(viewers) : "—"} / ${Number.isFinite(maxClients) ? esc(maxClients) : "—"}</dd></div>
+          <div><dt>${esc(t("relayFrameAge"))}</dt><dd>${Number.isFinite(frameAge) && frameAge >= 0 ? `${esc(frameAge)} ms` : "—"}</dd></div>
+          <div><dt>${esc(t("relayFlash"))}</dt><dd>${esc(flashMode)} · ${esc(flashApplied)}</dd></div>
+          <div><dt>${esc(t("relayFlashRequesting"))}</dt><dd>${esc(Number(health.flash_requesting_viewers || 0))}</dd></div>
+        </dl>
+        ${flashError ? `<p class="message warn">${esc(flashError)}</p>` : ""}
+      </div>`;
+  }
+
   function sourcePlacementLabel(source, roles, devices) {
     if (source.execution_machine_role_id) {
       const role = roles.find((item) => item.machine_role_id === source.execution_machine_role_id);
@@ -788,7 +829,14 @@
           <div><dt>ID</dt><dd class="mono">${esc(source.source_id)}</dd></div>
           <div><dt>${esc(t("observed"))}</dt><dd>${when(source.last_observed_at)}</dd></div>
         </dl>
-        ${sourceRelayHealthURL(source) ? `<div class="row-actions"><a class="button ghost" href="${esc(sourceRelayHealthURL(source))}" target="_blank" rel="noopener noreferrer">${esc(t("relayHealth"))}</a></div>` : ""}
+        ${sourceRelayHealthURL(source) ? `
+          <section class="phase4-relay-health" data-relay-health-url="${esc(sourceRelayHealthURL(source))}">
+            <div class="row-actions">
+              <button class="button ghost live-source-relay-status" type="button">${esc(t("relayReadStatus"))}</button>
+              <a class="button ghost" href="${esc(sourceRelayHealthURL(source))}" target="_blank" rel="noopener noreferrer">${esc(t("relayHealth"))}</a>
+            </div>
+            <div class="live-source-relay-result" role="status" aria-live="polite"></div>
+          </section>` : ""}
         ${editable ? `<div class="row-actions">
           <button class="button live-source-edit" type="button">${esc(t("editSource"))}</button>
           <button class="button ghost live-source-toggle" type="button">${esc(t(source.desired_enabled ? "disableSource" : "enableSource"))}</button>
@@ -874,6 +922,31 @@
     document.getElementById("liveSourceCancelEdit")?.addEventListener("click", resetEditor);
     document.querySelectorAll(".phase4-card[data-live-source-id]").forEach((card) => {
       const source = sources.find((item) => item.source_id === card.dataset.liveSourceId);
+      card.querySelector(".live-source-relay-status")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const section = button.closest(".phase4-relay-health");
+        const target = section?.querySelector(".live-source-relay-result");
+        const healthURL = section?.dataset.relayHealthUrl || "";
+        if (!target || !healthURL) return;
+        button.disabled = true;
+        target.textContent = t("relayLoading");
+        try {
+          const response = await fetch(healthURL, {
+            method: "GET",
+            cache: "no-store",
+            credentials: "omit",
+            mode: "cors",
+            referrerPolicy: "no-referrer",
+          });
+          const health = await response.json();
+          if (!target.isConnected) return;
+          target.innerHTML = relayHealthMarkup(health);
+        } catch (_) {
+          if (target.isConnected) target.innerHTML = `<div class="message warn">${esc(t("relayUnavailable"))}</div>`;
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
       card.querySelector(".live-source-edit")?.addEventListener("click", () => source && editSource(source));
       card.querySelector(".live-source-toggle")?.addEventListener("click", async (event) => {
         if (!source) return;
