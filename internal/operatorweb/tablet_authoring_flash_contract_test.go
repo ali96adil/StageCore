@@ -33,7 +33,7 @@ func TestTabletAuthoringOrdersScenesAcrossAllRevisionCues(t *testing.T) {
 	for _, marker := range []string{
 		`let allCueModel = { cues: [] };`,
 		`[tabletModel, sceneModel, allCueModel] = await Promise.all([`,
-		`api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`)`,
+		"api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`)",
 		`return (allCueModel.cues || []).reduce(`,
 	} {
 		if !strings.Contains(js, marker) {
