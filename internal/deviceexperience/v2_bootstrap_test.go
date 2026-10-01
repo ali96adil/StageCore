@@ -65,10 +65,12 @@ func TestV2ReconnectRefreshesOnlyAuthenticatedSoftwareMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if loaded.DisplayName != device.DisplayName ||
-		loaded.GroupName != device.GroupName ||
+	if loaded.DisplayName != reconnect.DisplayName {
+		t.Fatalf("v2 reconnect did not refresh authenticated display name: %+v", loaded)
+	}
+	if loaded.GroupName != device.GroupName ||
 		loaded.LocationName != device.LocationName {
-		t.Fatalf("v2 reconnect changed Hub-owned display metadata: %+v", loaded)
+		t.Fatalf("v2 reconnect changed Hub-owned group/location metadata: %+v", loaded)
 	}
 	if loaded.ClientVersion != reconnect.ClientVersion ||
 		len(loaded.Capabilities) != len(reconnect.Capabilities) {
