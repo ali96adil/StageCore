@@ -218,6 +218,49 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		writeJSON(w, http.StatusCreated, inputView(created))
 	}))
 
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		var body inputCreateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if len(body.ValueSchema) == 0 {
+			body.ValueSchema = json.RawMessage(`{}`)
+		}
+		updated, err := stageStore.UpdateInput(r.Context(), domain.InputDefinition{
+			ID: strings.TrimSpace(r.PathValue("input_id")), RevisionID: revision.ID,
+			Name: strings.TrimSpace(body.Name), SourceRef: strings.TrimSpace(body.SourceRef),
+			EventType: strings.TrimSpace(body.EventType), ValueSchema: body.ValueSchema, Enabled: body.Enabled,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "INPUT_UPDATE_FAILED"})
+			return
+		}
+		writeJSON(w, http.StatusOK, inputView(updated))
+	}))
+
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		revision, err := stageStore.EnsureProjectDraft(r.Context(), strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		if err := stageStore.DeleteInput(r.Context(), revision.ID, strings.TrimSpace(r.PathValue("input_id"))); err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/outputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
@@ -309,6 +352,67 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			return
 		}
 		writeJSON(w, http.StatusCreated, routeView(created))
+	}))
+
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/routes/{route_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		var body routeCreateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if len(body.ConditionDefinition) == 0 {
+			body.ConditionDefinition = json.RawMessage(`null`)
+		}
+		if len(body.TransformDefinition) == 0 {
+			body.TransformDefinition = json.RawMessage(`null`)
+		}
+		if len(body.ErrorPolicy) == 0 {
+			body.ErrorPolicy = json.RawMessage(`{}`)
+		}
+		actions := make([]domain.RouteAction, 0, len(body.Actions))
+		for index, action := range body.Actions {
+			params := action.Parameters
+			if len(params) == 0 {
+				params = json.RawMessage(`{}`)
+			}
+			actions = append(actions, domain.RouteAction{
+				OrderIndex: index, OutputID: action.OutputID, CueID: action.CueID, Parameters: params,
+			})
+		}
+		updated, err := stageStore.UpdateRouteWithActions(r.Context(), domain.Route{
+			ID: strings.TrimSpace(r.PathValue("route_id")), RevisionID: revision.ID,
+			Name: strings.TrimSpace(body.Name), InputID: strings.TrimSpace(body.InputID),
+			ConditionDefinition: body.ConditionDefinition, TransformDefinition: body.TransformDefinition,
+			DelayMS: body.DelayMS, DebounceMS: body.DebounceMS, PriorityClass: body.PriorityClass,
+			ErrorPolicy: body.ErrorPolicy, Enabled: body.Enabled,
+		}, actions)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ROUTE_UPDATE_FAILED"})
+			return
+		}
+		writeJSON(w, http.StatusOK, routeView(updated))
+	}))
+
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/routes/{route_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		revision, err := stageStore.EnsureProjectDraft(r.Context(), strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		if err := stageStore.DeleteRoute(r.Context(), revision.ID, strings.TrimSpace(r.PathValue("route_id"))); err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 }
 
