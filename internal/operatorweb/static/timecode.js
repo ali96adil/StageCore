@@ -292,6 +292,7 @@ async function renderTimecodeWorkspace() {
       start_timecode: startValue,
     };
     try {
+      await api(`/api/v1/projects/${projectID}/configuration/draft`, { method: "POST" });
       const aliasID = el("f018SourceForm").dataset.aliasId || "";
       if (aliasID) {
         await api(`/api/v1/projects/${projectID}/targets/${encodeURIComponent(aliasID)}/configuration`, {
