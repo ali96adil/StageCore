@@ -220,6 +220,7 @@ func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
 		ID:              "tablet-active",
 		Kind:            deviceexperience.DeviceTabletPlayer,
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled:         true,
 		Assignment: &deviceexperience.AssignmentRecord{
 			ProjectID: "project-1", RuntimeSnapshotID: "snapshot-1",
 			Epoch: 2, State: "ACTIVE",
