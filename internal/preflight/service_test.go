@@ -212,6 +212,100 @@ func TestPreflightStorageWarningCriticalAndMissingSnapshot(t *testing.T) {
 	}
 }
 
+func TestPreflightMIDIDestinationInventory(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	stageStore := store.New(handle.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "MIDI Preflight", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
+		RoleKey: "AUDIO-ABLETON", DisplayName: "Ableton", RequiredCapabilities: []string{"midi.send"}, Required: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companionState, err := stageStore.RegisterCompanion(ctx, store.RegisterCompanionParams{
+		DisplayName: "Audio Mac", Platform: "macos", Architecture: "arm64", Capabilities: []string{"midi.send"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.UpdateCompanionReport(ctx, companionState.ID, store.CompanionReportParams{
+		DisplayName: "Audio Mac", Platform: "macos", Architecture: "arm64", Version: "0.1",
+		Capabilities: []string{"midi.send"}, MIDIDestinations: []string{"IAC Driver Bus 1"},
+		Readiness: domain.CompanionReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	roleConfig, _ := json.Marshal(map[string]string{"machine_role_id": role.ID})
+	baseManifest := snapshot.Manifest{
+		Targets: []snapshot.Target{{
+			TargetRef: role.RoleKey, LogicalType: companion.MachineRoleLogicalType, Configuration: roleConfig,
+		}},
+		Cues: []snapshot.Cue{{
+			ID: "cue-midi", Enabled: true,
+			Actions: []snapshot.Action{{
+				ID: "action-midi", Enabled: true, TargetRef: role.RoleKey, CapabilityKey: "midi.send",
+				Parameters: json.RawMessage(`{"destination_name":"IAC Driver Bus 1","bytes":[144,60,127]}`),
+			}},
+		}},
+	}
+	service := New(stageStore, nil, nil)
+
+	report := Report{
+		Status: Pass,
+		Checks: []Check{},
+		Roles: []RoleStatus{{MachineRoleID: role.ID, CompanionID: companionState.ID}},
+	}
+	targets := map[string]snapshot.Target{role.RoleKey: baseManifest.Targets[0]}
+	service.evaluateMIDIDestinations(ctx, &report, baseManifest, targets)
+	if len(report.Checks) != 1 || report.Checks[0].Status != Pass {
+		t.Fatalf("named destination report=%+v", report.Checks)
+	}
+
+	legacy := baseManifest
+	legacy.Cues = append([]snapshot.Cue(nil), baseManifest.Cues...)
+	legacy.Cues[0].Actions = append([]snapshot.Action(nil), baseManifest.Cues[0].Actions...)
+	legacy.Cues[0].Actions[0].Parameters = json.RawMessage(`{"destination_index":0,"bytes":[144,60,127]}`)
+	legacyReport := Report{Status: Pass, Checks: []Check{}, Roles: report.Roles}
+	service.evaluateMIDIDestinations(ctx, &legacyReport, legacy, targets)
+	if len(legacyReport.Checks) != 1 || legacyReport.Checks[0].Status != Warn {
+		t.Fatalf("legacy destination report=%+v", legacyReport.Checks)
+	}
+
+	if _, err := stageStore.UpdateCompanionReport(ctx, companionState.ID, store.CompanionReportParams{
+		DisplayName: "Audio Mac", Platform: "macos", Architecture: "arm64", Version: "0.1",
+		Capabilities: []string{"midi.send"}, MIDIDestinations: []string{"IAC Driver Bus 1", "IAC Driver Bus 1"},
+		Readiness: domain.CompanionReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ambiguousReport := Report{Status: Pass, Checks: []Check{}, Roles: report.Roles}
+	service.evaluateMIDIDestinations(ctx, &ambiguousReport, baseManifest, targets)
+	if len(ambiguousReport.Checks) != 1 || ambiguousReport.Checks[0].Status != Block {
+		t.Fatalf("ambiguous destination report=%+v", ambiguousReport.Checks)
+	}
+
+	if _, err := stageStore.UpdateCompanionReport(ctx, companionState.ID, store.CompanionReportParams{
+		DisplayName: "Audio Mac", Platform: "macos", Architecture: "arm64", Version: "0.1",
+		Capabilities: []string{"midi.send"}, MIDIDestinations: []string{"Other Bus"},
+		Readiness: domain.CompanionReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	missingReport := Report{Status: Pass, Checks: []Check{}, Roles: report.Roles}
+	service.evaluateMIDIDestinations(ctx, &missingReport, baseManifest, targets)
+	if len(missingReport.Checks) != 1 || missingReport.Checks[0].Status != Block {
+		t.Fatalf("missing destination report=%+v", missingReport.Checks)
+	}
+}
+
 func healthyMonitor(root string) *storagehealth.Monitor {
 	return monitorWithFree(root, 10_000, 5_000, 500, 15)
 }
