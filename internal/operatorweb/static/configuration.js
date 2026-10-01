@@ -83,7 +83,7 @@ async function renderConfiguration() {
 
       <article class="card">
         <p class="eyebrow">INPUTS</p><h2>Runtime input definitions</h2>
-        <form id="inputForm" style="margin-top:14px">
+        <form id="inputForm" data-input-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>Name<input id="inputName" placeholder="GO Button" ${disabled} required></label>
             <label>Source ref<input id="inputSource" placeholder="osc:/go" ${disabled} required></label>
@@ -91,10 +91,10 @@ async function renderConfiguration() {
             <label class="check-row"><input id="inputEnabled" type="checkbox" checked ${disabled}> Enabled</label>
           </div>
           <label>Value schema JSON<textarea id="inputSchema" class="mono" rows="3" ${disabled}>{}</textarea></label>
-          <button class="button primary" type="submit" ${disabled}>Add input</button>
+          <div class="row-actions"><button id="inputSubmit" class="button primary" type="submit" ${disabled}>Add input</button><button id="inputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
         <div class="actions-editor" style="margin-top:14px">${(model.inputs || []).length ? model.inputs.map((input) => `
-          <div class="action-editor"><strong>${esc(input.name)}</strong><p class="muted">${esc(input.source_ref)} · ${esc(input.event_type)} · ${input.enabled ? "ENABLED" : "DISABLED"}</p><p class="mono muted">${esc(input.input_id)}</p></div>`).join("") : `<div class="empty">No inputs yet.</div>`}</div>
+          <div class="action-editor"><div class="section-title-row"><strong>${esc(input.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost input-edit" type="button" data-input-id="${esc(input.input_id)}">Edit</button><button class="button danger input-remove" type="button" data-input-id="${esc(input.input_id)}">Remove</button></div>` : ""}</div><p class="muted">${esc(input.source_ref)} · ${esc(input.event_type)} · ${input.enabled ? "ENABLED" : "DISABLED"}</p><p class="mono muted">${esc(input.input_id)}</p></div>`).join("") : `<div class="empty">No inputs yet.</div>`}</div>
       </article>
 
       <article class="card">
@@ -121,7 +121,7 @@ async function renderConfiguration() {
 
       <article class="card">
         <p class="eyebrow">ROUTES</p><h2>Input → Cue/Output</h2>
-        <form id="routeForm" style="margin-top:14px">
+        <form id="routeForm" data-route-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>Name<input id="routeName" placeholder="GO to projector" ${disabled} required></label>
             <label>Input<select id="routeInput" ${disabled} required>${optionList(model.inputs || [], "input_id", (item) => `${item.name} · ${item.source_ref}`)}</select></label>
@@ -135,10 +135,10 @@ async function renderConfiguration() {
           <label>Condition JSON<textarea id="routeCondition" class="mono" rows="3" ${disabled}>null</textarea></label>
           <label>Transform JSON<textarea id="routeTransform" class="mono" rows="3" ${disabled}>null</textarea></label>
           <label>Action parameters JSON<textarea id="routeParameters" class="mono" rows="3" ${disabled}>{}</textarea></label>
-          <button class="button primary" type="submit" ${disabled}>Add route</button>
+          <div class="row-actions"><button id="routeSubmit" class="button primary" type="submit" ${disabled}>Add route</button><button id="routeCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
         <div class="actions-editor" style="margin-top:14px">${(model.routes || []).length ? model.routes.map((route) => `
-          <div class="action-editor"><div class="section-title-row"><strong>${esc(route.name)}</strong>${pill(route.enabled ? "ENABLED" : "DISABLED", route.enabled ? "good" : "neutral")}</div><p class="muted">Input ${esc(route.input_id)} · ${esc(route.priority_class)}</p><p class="mono muted">${esc(route.route_id)}</p></div>`).join("") : `<div class="empty">No routes yet.</div>`}</div>
+          <div class="action-editor"><div class="section-title-row"><strong>${esc(route.name)}</strong><div class="row-actions">${pill(route.enabled ? "ENABLED" : "DISABLED", route.enabled ? "good" : "neutral")}${editable && (route.actions || []).length === 1 ? `<button class="button ghost route-edit" type="button" data-route-id="${esc(route.route_id)}">Edit</button>` : ""}${editable ? `<button class="button ghost route-toggle" type="button" data-route-id="${esc(route.route_id)}">${route.enabled ? "Disable" : "Enable"}</button><button class="button danger route-remove" type="button" data-route-id="${esc(route.route_id)}">Remove</button>` : ""}</div></div><p class="muted">Input ${esc(route.input_id)} · ${esc(route.priority_class)} · ${(route.actions || []).length} action(s)</p><p class="mono muted">${esc(route.route_id)}</p></div>`).join("") : `<div class="empty">No routes yet.</div>`}</div>
       </article>
 
       ${roleCanEdit ? `
