@@ -390,7 +390,7 @@ function f002RenderTabletParameterFields(composer) {
           </select>
         </label>
         <label id="f002TabletLiveKeyWrap">Media key<input id="f002TabletLiveKey" dir="ltr" placeholder="camera-main"></label>
-        <label id="f002TabletLiveURLWrap" class="hidden">Live URL<input id="f002TabletLiveURL" dir="ltr" placeholder="http://stagecore-pi:9081/api/v0/stream"></label>
+        <label id="f002TabletLiveURLWrap" class="hidden">Live URL<input id="f002TabletLiveURL" dir="ltr" placeholder="Paste an absolute Live URL"></label>
       </div>`;
     const mode = host.querySelector("#f002TabletLiveMode");
     mode?.addEventListener("change", () => {
