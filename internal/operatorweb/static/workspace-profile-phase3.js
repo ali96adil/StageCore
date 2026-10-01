@@ -1,40 +1,96 @@
 "use strict";
 
-// Phase 3 workspace integration. F-017 owns presentation-only workspace
-// visibility; these pages were introduced after its original stable registry.
-// Extend the registry without changing runtime, Session, Snapshot, or SHOW
-// authority.
+// Feature-workspace integration for F-017. Registration is presentation-only:
+// it never changes Project, Runtime Snapshot, Session, Cue, or SHOW authority.
 (() => {
-  const phase3Pages = ["timecode", "timing"];
+  if (typeof f017RegisterFeaturePage !== "function") return;
 
-  for (const page of phase3Pages) {
-    if (!F017_PAGES.includes(page)) F017_PAGES.push(page);
+  const registrations = [
+    {
+      page: "timecode",
+      label: { en: "Timecode", "ar-IQ": "التايم كود" },
+      after: "runtime",
+      visible_presets: ["stage-manager"],
+    },
+    {
+      page: "timing",
+      label: { en: "Timing", "ar-IQ": "التوقيت" },
+      after: "timecode",
+      visible_presets: ["stage-manager", "rehearsal", "monitoring"],
+    },
+    {
+      page: "capsules",
+      label: { en: "Show Capsules", "ar-IQ": "حزم العرض" },
+      after: "notes",
+      visible_presets: ["stage-manager", "rehearsal"],
+    },
+    {
+      page: "devices",
+      label: { en: "Stage Devices", "ar-IQ": "أجهزة المسرح" },
+      after: "configuration",
+      visible_presets: ["stage-manager", "video", "lighting", "sound", "rehearsal", "monitoring"],
+    },
+    {
+      page: "tablet-controller",
+      label: { en: "Tablet Controller", "ar-IQ": "تحكم التابلت" },
+      after: "devices",
+      visible_presets: ["stage-manager", "video", "rehearsal"],
+    },
+    {
+      page: "tablet-scenes",
+      label: { en: "Tablet Scenes", "ar-IQ": "مشاهد التابلت" },
+      after: "tablet-controller",
+      visible_presets: ["stage-manager", "video", "rehearsal"],
+    },
+    {
+      page: "lighting-setup",
+      label: { en: "Lighting Setup", "ar-IQ": "إعداد الإضاءة" },
+      after: "tablet-scenes",
+      visible_presets: ["stage-manager", "lighting", "rehearsal"],
+    },
+    {
+      page: "lighting-cues",
+      label: { en: "Lighting Cues", "ar-IQ": "كيوهات الإضاءة" },
+      after: "lighting-setup",
+      visible_presets: ["stage-manager", "lighting", "rehearsal"],
+    },
+    {
+      page: "video",
+      label: { en: "Live Video", "ar-IQ": "الفيديو الحي" },
+      after: "lighting-cues",
+      visible_presets: ["stage-manager", "video", "rehearsal", "monitoring"],
+    },
+    {
+      page: "visual-engine",
+      label: { en: "Visual Engine", "ar-IQ": "المحرك المرئي" },
+      after: "video",
+      visible_presets: ["stage-manager", "video", "rehearsal"],
+    },
+    {
+      page: "callboard",
+      label: { en: "Callboard", "ar-IQ": "شاشة الكواليس" },
+      after: "visual-engine",
+      visible_presets: ["stage-manager", "rehearsal", "monitoring"],
+    },
+    {
+      page: "network",
+      label: { en: "Network Cockpit", "ar-IQ": "شبكة المسرح" },
+      after: "preflight",
+      visible_presets: ["stage-manager", "rehearsal", "monitoring"],
+    },
+    {
+      page: "simulation",
+      label: { en: "Simulation", "ar-IQ": "المحاكاة" },
+      after: "runtime",
+      visible_presets: ["stage-manager", "rehearsal"],
+    },
+  ];
+
+  for (const registration of registrations) {
+    f017RegisterFeaturePage(registration.page, registration);
   }
 
-  f017Strings["workspace.page.timecode"] = {
-    en: "Timecode",
-    "ar-IQ": "التايم كود",
-  };
-  f017Strings["workspace.page.timing"] = {
-    en: "Timing",
-    "ar-IQ": "التوقيت",
-  };
-
-  const stageManager = F017_PRESETS["stage-manager"];
-  if (stageManager) {
-    const insertAfterRuntime = (pages) => {
-      const withoutPhase3 = pages.filter((page) => !phase3Pages.includes(page));
-      const runtimeIndex = withoutPhase3.indexOf("runtime");
-      const insertion = runtimeIndex >= 0 ? runtimeIndex + 1 : withoutPhase3.length;
-      withoutPhase3.splice(insertion, 0, ...phase3Pages);
-      return withoutPhase3;
-    };
-
-    stageManager.visible_pages = insertAfterRuntime(stageManager.visible_pages);
-    stageManager.page_order = insertAfterRuntime(stageManager.page_order);
-  }
-
-  // Re-apply presentation only so an already-loaded default profile exposes
-  // the Phase 3 workspaces immediately. This performs no Hub mutation.
-  f017ApplyProfile({ navigateIfNeeded: false });
+  // Re-apply presentation only so already-present static navigation (for
+  // example Timecode/Capsules) follows the active profile immediately.
+  f017FeatureNavigationChanged();
 })();
