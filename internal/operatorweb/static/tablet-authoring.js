@@ -293,6 +293,7 @@
     button.addEventListener("click", () => renderTabletScenes().catch(showGlobalError));
     const controller = nav.querySelector('[data-tablet-controller-nav="true"]');
     if (controller?.nextSibling) nav.insertBefore(button, controller.nextSibling); else nav.appendChild(button);
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   window.renderTabletScenes = renderTabletScenes;
