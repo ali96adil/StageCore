@@ -291,7 +291,7 @@ function f002EnhanceConfiguration() {
     const scalarFields = (prefix, numericOnly = false) => `
       <div class="form-grid two">
         ${numericOnly ? "" : `<label>Value type<select id="${prefix}Type"><option value="string">Text</option><option value="number">Number</option><option value="boolean">Boolean</option></select></label>`}
-        <label>Value<input id="${prefix}Value" ${numericOnly ? 'type="number" step="any"' : ""}></label>
+        <label>Value<input id="${prefix}Value" ${numericOnly ? 'type="number" step="any"' : 'placeholder="text, number, true or false"'} required></label>
       </div>`;
 
     const renderCondition = () => {
@@ -333,7 +333,11 @@ function f002EnhanceConfiguration() {
         if (!Number.isFinite(value)) throw new Error("Route value must be a number.");
         return value;
       }
-      if (type === "boolean") return String(raw).toLowerCase() === "true";
+      if (type === "boolean") {
+        const normalized = String(raw).trim().toLowerCase();
+        if (!["true", "false"].includes(normalized)) throw new Error("Route Boolean value must be true or false.");
+        return normalized === "true";
+      }
       return String(raw);
     };
 
@@ -345,13 +349,16 @@ function f002EnhanceConfiguration() {
     renderCondition();
     renderTransform();
 
-    routeForm.addEventListener("submit", () => {
+    routeForm.addEventListener("submit", (event) => {
+      try {
       if (conditionKind.value !== "advanced") {
         let condition = null;
         if (conditionKind.value === "range") {
           const min = Number(el("f002RouteRangeMin")?.value);
           const max = Number(el("f002RouteRangeMax")?.value);
-          if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
+          if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) {
+            throw new Error("Route range requires numeric minimum ≤ maximum.");
+          }
           condition = { operator: "range", min, max };
         } else if (conditionKind.value === "boolean_is") {
           condition = { operator: "boolean_is", value: el("f002RouteBoolean")?.value === "true" };
@@ -371,12 +378,20 @@ function f002EnhanceConfiguration() {
         } else if (transformKind.value === "number") {
           const factor = Number(el("f002RouteFactor")?.value);
           const offset = Number(el("f002RouteOffset")?.value);
-          if (Number.isFinite(factor) && Number.isFinite(offset)) transform = { type: "number", factor, offset };
+          if (!Number.isFinite(factor) || !Number.isFinite(offset)) {
+            throw new Error("Route numeric transform requires finite factor and offset.");
+          }
+          transform = { type: "number", factor, offset };
         }
         el("routeTransform").value = JSON.stringify(transform, null, 2);
       }
 
       if (actionData.value === "transformed") el("routeParameters").value = "null";
+      } catch (error) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        configurationError(error);
+      }
     }, true);
   }
 
