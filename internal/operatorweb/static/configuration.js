@@ -325,10 +325,56 @@ async function renderConfiguration() {
       } catch (error) { configurationError(error); }
     });
   });
-  el("inputForm").addEventListener("submit", async (event) => {
+  const inputForm = el("inputForm");
+  const resetInputEditor = () => {
+    inputForm.dataset.inputId = "";
+    inputForm.reset();
+    el("inputEvent").value = "osc.message";
+    el("inputEnabled").checked = true;
+    el("inputSchema").value = "{}";
+    el("inputSubmit").textContent = "Add input";
+    el("inputCancelEdit").classList.add("hidden");
+  };
+  document.querySelectorAll(".input-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = (model.inputs || []).find((item) => item.input_id === button.dataset.inputId);
+      if (!input) return;
+      inputForm.dataset.inputId = input.input_id;
+      el("inputName").value = input.name || "";
+      el("inputSource").value = input.source_ref || "";
+      el("inputEvent").value = input.event_type || "";
+      el("inputEnabled").checked = !!input.enabled;
+      el("inputSchema").value = jsonText(input.value_schema || {});
+      el("inputSubmit").textContent = "Save input";
+      el("inputCancelEdit").classList.remove("hidden");
+      inputForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+  document.querySelectorAll(".input-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const input = (model.inputs || []).find((item) => item.input_id === button.dataset.inputId);
+      if (!input || !window.confirm(`Remove input "${input.name}"? Removal is blocked while any Route still references it.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/inputs/${encodeURIComponent(input.input_id)}?confirm=true`, { method: "DELETE" });
+        await refreshProjectAndConfiguration();
+      } catch (error) { configurationError(error); }
+    });
+  });
+  el("inputCancelEdit").addEventListener("click", resetInputEditor);
+  inputForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const inputID = inputForm.dataset.inputId || "";
     try {
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/inputs`, { method: "POST", json: { name: el("inputName").value.trim(), source_ref: el("inputSource").value.trim(), event_type: el("inputEvent").value.trim(), value_schema: parseJSONField(el("inputSchema").value, "Input schema"), enabled: el("inputEnabled").checked } });
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/inputs${inputID ? `/${encodeURIComponent(inputID)}` : ""}`, {
+        method: inputID ? "PUT" : "POST",
+        json: {
+          name: el("inputName").value.trim(),
+          source_ref: el("inputSource").value.trim(),
+          event_type: el("inputEvent").value.trim(),
+          value_schema: parseJSONField(el("inputSchema").value, "Input schema"),
+          enabled: el("inputEnabled").checked,
+        },
+      });
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
   });
@@ -375,7 +421,103 @@ async function renderConfiguration() {
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
   });
-  el("routeForm").addEventListener("submit", async (event) => {
+  const routeForm = el("routeForm");
+  const routePayload = (route, enabled = route.enabled) => ({
+    name: route.name,
+    input_id: route.input_id,
+    condition_definition: route.condition_definition ?? null,
+    transform_definition: route.transform_definition ?? null,
+    delay_ms: route.delay_ms ?? undefined,
+    debounce_ms: route.debounce_ms ?? undefined,
+    priority_class: route.priority_class || "P2",
+    error_policy: route.error_policy || {},
+    enabled: !!enabled,
+    actions: (route.actions || []).map((action) => ({
+      ...(action.output_id ? { output_id: action.output_id } : {}),
+      ...(action.cue_id ? { cue_id: action.cue_id } : {}),
+      parameters: action.parameters || {},
+    })),
+  });
+  const setExistingRouteAdvancedMode = () => {
+    const controls = [
+      ["f002RouteConditionKind", "advanced"],
+      ["f002RouteTransformKind", "advanced"],
+      ["f002RouteActionData", "advanced"],
+    ];
+    for (const [id, value] of controls) {
+      const control = el(id);
+      if (!control) continue;
+      control.value = value;
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+  const resetRouteEditor = () => {
+    routeForm.dataset.routeId = "";
+    routeForm.reset();
+    el("routePriority").value = "P2";
+    el("routeDelay").value = "0";
+    el("routeDebounce").value = "0";
+    el("routeEnabled").checked = true;
+    el("routeCondition").value = "null";
+    el("routeTransform").value = "null";
+    el("routeParameters").value = "{}";
+    el("routeSubmit").textContent = "Add route";
+    el("routeCancelEdit").classList.add("hidden");
+    for (const [id, value] of [["f002RouteConditionKind", "always"], ["f002RouteTransformKind", "identity"], ["f002RouteActionData", "transformed"]]) {
+      const control = el(id);
+      if (!control) continue;
+      control.value = value;
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+  document.querySelectorAll(".route-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const route = (model.routes || []).find((item) => item.route_id === button.dataset.routeId);
+      if (!route || (route.actions || []).length !== 1) return;
+      const action = route.actions[0];
+      routeForm.dataset.routeId = route.route_id;
+      el("routeName").value = route.name || "";
+      el("routeInput").value = route.input_id || "";
+      el("routeOutput").value = action.output_id || "";
+      el("routeCue").value = action.cue_id || "";
+      el("routePriority").value = route.priority_class || "P2";
+      el("routeDelay").value = route.delay_ms ?? 0;
+      el("routeDebounce").value = route.debounce_ms ?? 0;
+      el("routeEnabled").checked = !!route.enabled;
+      el("routeCondition").value = jsonText(route.condition_definition ?? null);
+      el("routeTransform").value = jsonText(route.transform_definition ?? null);
+      el("routeParameters").value = jsonText(action.parameters || {});
+      el("routeSubmit").textContent = "Save route";
+      el("routeCancelEdit").classList.remove("hidden");
+      setExistingRouteAdvancedMode();
+      routeForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+  document.querySelectorAll(".route-toggle").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const route = (model.routes || []).find((item) => item.route_id === button.dataset.routeId);
+      if (!route) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes/${encodeURIComponent(route.route_id)}`, {
+          method: "PUT",
+          json: routePayload(route, !route.enabled),
+        });
+        await refreshProjectAndConfiguration();
+      } catch (error) { configurationError(error); }
+    });
+  });
+  document.querySelectorAll(".route-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const route = (model.routes || []).find((item) => item.route_id === button.dataset.routeId);
+      if (!route || !window.confirm(`Remove Route "${route.name}" from this Draft?`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes/${encodeURIComponent(route.route_id)}?confirm=true`, { method: "DELETE" });
+        await refreshProjectAndConfiguration();
+      } catch (error) { configurationError(error); }
+    });
+  });
+  el("routeCancelEdit").addEventListener("click", resetRouteEditor);
+  routeForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const outputID = el("routeOutput").value;
     const cueID = el("routeCue").value;
@@ -386,11 +528,13 @@ async function renderConfiguration() {
     const action = { parameters: parseJSONField(el("routeParameters").value, "Route Action parameters") };
     if (outputID) action.output_id = outputID;
     if (cueID) action.cue_id = cueID;
+    const routeID = routeForm.dataset.routeId || "";
+    const existing = (model.routes || []).find((item) => item.route_id === routeID);
     try {
       const delayMS = Number.parseInt(el("routeDelay").value || "0", 10);
       const debounceMS = Number.parseInt(el("routeDebounce").value || "0", 10);
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes`, {
-        method: "POST",
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes${routeID ? `/${encodeURIComponent(routeID)}` : ""}`, {
+        method: routeID ? "PUT" : "POST",
         json: {
           name: el("routeName").value.trim(),
           input_id: el("routeInput").value,
@@ -399,7 +543,7 @@ async function renderConfiguration() {
           delay_ms: delayMS > 0 ? delayMS : undefined,
           debounce_ms: debounceMS > 0 ? debounceMS : undefined,
           priority_class: el("routePriority").value,
-          error_policy: {},
+          error_policy: existing?.error_policy || {},
           enabled: el("routeEnabled").checked,
           actions: [action],
         },
