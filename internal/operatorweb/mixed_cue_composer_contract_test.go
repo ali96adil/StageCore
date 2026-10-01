@@ -21,6 +21,11 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"Imported ${source.actions.length} Action(s)",
 		"source Cue stays unchanged",
 		"Send MIDI message",
+		"Tablet Player Action",
+		"f002AddTabletAction",
+		"/tablet-controller/cue-actions",
+		"TABLET_LIVE_SHOW",
+		"Markdown links are normalized",
 	} {
 		if !strings.Contains(source, marker) {
 			t.Fatalf("mixed Cue composer missing contract marker %q", marker)
