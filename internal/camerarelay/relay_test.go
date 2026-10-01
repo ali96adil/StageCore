@@ -110,9 +110,9 @@ func TestFourViewersOneUpstream(t *testing.T){
 func TestBoundedLatestFrameAndUnsubscribe(t *testing.T){
  relay,err:=New(Config{SourceURL:"http://127.0.0.1:1/",MaxClients:1},nil)
  if err!=nil{t.Fatal(err)}
- id,ch,ok:=relay.subscribe()
+ id,ch,ok:=relay.subscribe(false)
  if !ok{t.Fatal("first subscriber rejected")}
- if _,_,ok=relay.subscribe();ok{t.Fatal("second subscriber exceeded limit")}
+ if _,_,ok=relay.subscribe(false);ok{t.Fatal("second subscriber exceeded limit")}
  for i:=0;i<300;i++{relay.publish(testJPEG(byte(i)))}
  select{
  case got:=<-ch:
@@ -120,7 +120,7 @@ func TestBoundedLatestFrameAndUnsubscribe(t *testing.T){
  default:t.Fatal("subscriber received no frame")
  }
  relay.unsubscribe(id)
- if _,_,ok=relay.subscribe();!ok{t.Fatal("slot was not released")}
+ if _,_,ok=relay.subscribe(false);!ok{t.Fatal("slot was not released")}
 }
 
 func TestReconnectAfterTemporaryFailure(t *testing.T){
@@ -176,6 +176,12 @@ func TestConfigRejectsInvalidURLAndLimits(t *testing.T){
  for _,n:=range []int{-1,17}{
   if _,err:=New(Config{SourceURL:"http://camera/stream",MaxClients:n},nil);err==nil{t.Fatal(fmt.Sprintf("accepted client limit %d",n))}
  }
+ if _,err:=New(Config{SourceURL:"http://camera/stream",FlashControlURL:"http://other/api/v0/flash"},nil);err==nil{
+  t.Fatal("accepted flash control on a different camera host")
+ }
+ if _,err:=New(Config{SourceURL:"http://camera/stream",FlashControlURL:"http://camera/wrong"},nil);err==nil{
+  t.Fatal("accepted unexpected flash control path")
+ }
 }
 
 func TestHealthWhenNoSource(t *testing.T){
@@ -187,7 +193,7 @@ func TestHealthWhenNoSource(t *testing.T){
 }
 
 
-func TestFlashTracksViewerTransitionsAndFailsSafeOff(t *testing.T){
+func TestFlashFollowsExplicitViewerRequestManualOverrideAndFailsSafeOff(t *testing.T){
  var flash atomic.Bool
  var calls atomic.Int32
  control:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,req *http.Request){
@@ -216,16 +222,79 @@ func TestFlashTracksViewerTransitionsAndFailsSafeOff(t *testing.T){
  done:=make(chan error,1)
  go func(){done<-relay.Run(ctx)}()
 
- id,_,ok:=relay.subscribe()
- if !ok{t.Fatal("viewer rejected")}
+ // Startup AUTO with no flash-requesting viewers is fail-safe OFF.
+ eventually(t,func()bool{
+  relay.mu.Lock();defer relay.mu.Unlock()
+  return relay.flashAppliedKnown && !relay.flashApplied && !flash.Load()
+ })
+
+ normalID,_,ok:=relay.subscribe(false)
+ if !ok{t.Fatal("normal viewer rejected")}
+ time.Sleep(100*time.Millisecond)
+ if flash.Load(){t.Fatal("normal viewer unexpectedly enabled flash")}
+
+ flashID,_,ok:=relay.subscribe(true)
+ if !ok{t.Fatal("flash viewer rejected")}
  eventually(t,func()bool{return flash.Load()})
 
- relay.unsubscribe(id)
- eventually(t,func()bool{return !flash.Load() && calls.Load()>=2})
+ // Removing the only flash requester must turn OFF even while normal Live remains.
+ relay.unsubscribe(flashID)
+ eventually(t,func()bool{return !flash.Load()})
+
+ if err:=relay.setFlashMode(FlashModeOn);err!=nil{t.Fatal(err)}
+ if err:=relay.reconcileFlash(context.Background());err!=nil{t.Fatal(err)}
+ eventually(t,func()bool{return flash.Load()})
+
+ flashID,_,ok=relay.subscribe(true)
+ if !ok{t.Fatal("flash viewer rejected under manual ON")}
+
+ if err:=relay.setFlashMode(FlashModeOff);err!=nil{t.Fatal(err)}
+ if err:=relay.reconcileFlash(context.Background());err!=nil{t.Fatal(err)}
+ eventually(t,func()bool{return !flash.Load()})
+
+ if err:=relay.setFlashMode(FlashModeAuto);err!=nil{t.Fatal(err)}
+ if err:=relay.reconcileFlash(context.Background());err!=nil{t.Fatal(err)}
+ eventually(t,func()bool{return flash.Load()})
+
+ relay.unsubscribe(flashID)
+ relay.unsubscribe(normalID)
+ eventually(t,func()bool{return !flash.Load()})
+
+ recorder:=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(recorder,httptest.NewRequest(http.MethodGet,"/api/v0/health",nil))
+ var health map[string]any
+ if err:=json.Unmarshal(recorder.Body.Bytes(),&health);err!=nil{t.Fatal(err)}
+ if health["flash_mode"]!="auto" || health["flash_requesting_viewers"]!=float64(0){
+  t.Fatalf("unexpected flash health: %v",health)
+ }
 
  cancel()
  if err:=<-done;err!=nil{t.Fatal(err)}
  if flash.Load(){t.Fatal("flash remained on after relay shutdown")}
+ if calls.Load()<5{t.Fatalf("flash control calls=%d, expected startup/transitions/overrides",calls.Load())}
+}
+
+func TestFlashRequestQueryAndDisabledControl(t *testing.T){
+ relay,err:=New(Config{SourceURL:"http://127.0.0.1:1/api/v0/stream"},nil)
+ if err!=nil{t.Fatal(err)}
+
+ rec:=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(rec,httptest.NewRequest(http.MethodGet,"/api/v0/stream?flash=1",nil))
+ if rec.Code!=http.StatusServiceUnavailable{
+  t.Fatalf("flash viewer HTTP %d, want 503",rec.Code)
+ }
+
+ rec=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(rec,httptest.NewRequest(http.MethodGet,"/api/v0/stream?flash=banana",nil))
+ if rec.Code!=http.StatusBadRequest{
+  t.Fatalf("invalid flash query HTTP %d, want 400",rec.Code)
+ }
+
+ rec=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(rec,httptest.NewRequest(http.MethodPost,"/api/v0/flash?state=on",nil))
+ if rec.Code!=http.StatusServiceUnavailable{
+  t.Fatalf("manual flash HTTP %d, want 503",rec.Code)
+ }
 }
 
 func TestFlashFailureDoesNotRejectViewer(t *testing.T){
@@ -235,7 +304,7 @@ func TestFlashFailureDoesNotRejectViewer(t *testing.T){
  defer control.Close()
  relay,err:=New(Config{
   SourceURL:"http://127.0.0.1:1/api/v0/stream",
-  FlashControlURL:control.URL,
+  FlashControlURL:control.URL+"/api/v0/flash",
   ReconnectDelay:100*time.Millisecond,
   FlashTimeout:time.Second,
  },nil)
@@ -243,7 +312,7 @@ func TestFlashFailureDoesNotRejectViewer(t *testing.T){
  ctx,cancel:=context.WithCancel(context.Background())
  done:=make(chan error,1)
  go func(){done<-relay.Run(ctx)}()
- id,_,ok:=relay.subscribe()
+ id,_,ok:=relay.subscribe(true)
  if !ok{t.Fatal("flash control failure rejected viewer")}
  eventually(t,func()bool{
   relay.mu.Lock();defer relay.mu.Unlock()
