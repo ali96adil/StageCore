@@ -32,7 +32,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /show-capsules.js", serveOperatorAsset("show-capsules.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-capsules-nav.js", serveOperatorAsset("show-capsules-nav.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-templates.js", serveOperatorAsset("show-templates.js", "application/javascript; charset=utf-8", false))
-		s.mux.HandleFunc("GET /guided-ux.js", serveOperatorAssetBundle([]string{"guided-ux.js", "device-profiles.js"}, "application/javascript; charset=utf-8"))
+		s.mux.HandleFunc("GET /guided-ux.js", serveOperatorAssetBundle([]string{"guided-ux.js", "native-visual-authoring.js", "device-profiles.js"}, "application/javascript; charset=utf-8"))
 		s.mux.HandleFunc("GET /localization.js", serveOperatorAsset("localization.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /theme.js", serveOperatorAsset("theme.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /workspace-profile.js", serveOperatorAssetBundle([]string{"workspace-profile.js", "workspace-profile-phase3.js"}, "application/javascript; charset=utf-8"))
