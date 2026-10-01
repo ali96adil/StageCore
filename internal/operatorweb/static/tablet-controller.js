@@ -61,6 +61,11 @@
       needCueID: "Enter a Tablet Cue ID first.",
       group: "Group",
       all: "All",
+      assignCurrent: "Assign to current Snapshot",
+      assignmentCurrent: "Current Snapshot",
+      assignmentOld: "Old Snapshot",
+      assignmentUpdated: "Tablet assignment updated. The Tablet Player will reconnect with the current Snapshot.",
+      assignmentNone: "No published Runtime Snapshot is available.",
     },
     ar: {
       nav: "تحكم التابلت",
@@ -121,10 +126,16 @@
       needCueID: "دخل Tablet Cue ID أولاً.",
       group: "مجموعة",
       all: "الكل",
+      assignCurrent: "ربط بالـSnapshot الحالي",
+      assignmentCurrent: "Snapshot الحالي",
+      assignmentOld: "Snapshot قديم",
+      assignmentUpdated: "تم تحديث ربط التابلت. راح يعيد الاتصال على الـSnapshot الحالي.",
+      assignmentNone: "ماكو Runtime Snapshot منشور حالياً.",
     },
   };
 
   let model = null;
+  let runtimeModel = null;
   const selected = new Set();
   let healthRefreshTimer = null;
 
@@ -193,11 +204,20 @@
     if (!selected.size) devices.filter((device) => device.enabled !== false).forEach((device) => selected.add(device.device_id));
   }
 
+  function currentRuntimeSnapshotID() {
+    return runtimeModel?.runtime_snapshot?.runtime_snapshot_id || "";
+  }
+
   function deviceCard(device) {
     const runtime = device.runtime || {};
     const scope = observed(device);
+    const assignment = device.assignment || {};
     const online = runtime.connection_state === "ONLINE";
     const checked = selected.has(device.device_id) ? "checked" : "";
+    const currentSnapshotID = currentRuntimeSnapshotID();
+    const assignmentMatches = !!currentSnapshotID &&
+      assignment.project_id === projectID() &&
+      assignment.runtime_snapshot_id === currentSnapshotID;
     return `
       <label class="tablet-device-card ${online ? "online" : "offline"}" data-tablet-device-id="${esc(device.device_id)}">
         <div class="tablet-device-head">
@@ -207,10 +227,11 @@
         </div>
         <div class="tablet-device-meta">
           <span data-tablet-readiness>${esc(runtime.readiness || "UNKNOWN")}</span>
+          <span class="pill ${assignmentMatches ? "good" : "warn"}" data-tablet-assignment>${esc(assignmentMatches ? t("assignmentCurrent") : t("assignmentOld"))}</span>
+          <span>${esc(t("snapshot"))}: <span class="mono">${esc(shortID(assignment.runtime_snapshot_id || scope.runtime_snapshot_id))}</span></span>
           <span data-tablet-battery>${esc(batteryText(device))}</span>
           <span data-tablet-power>${esc(powerText(device))}</span>
           <span data-tablet-health-details>${esc(detailHealthText(device))}</span>
-          <span>${esc(t("snapshot"))}: <span class="mono">${esc(shortID(scope.runtime_snapshot_id))}</span></span>
           <span>${esc(t("manifest"))}: <span class="mono">${esc(shortID(scope.tablet_manifest_id))}</span></span>
         </div>
       </label>`;
@@ -234,13 +255,16 @@
     if (!state.project) return;
     setPage("tablet-controller");
     const pid = projectID();
-    model = await api(`/api/v1/projects/${encodeURIComponent(pid)}/tablet-controller`);
+    [model, runtimeModel] = await Promise.all([
+      api(`/api/v1/projects/${encodeURIComponent(pid)}/tablet-controller`),
+      api(`/api/v1/projects/${encodeURIComponent(pid)}/runtime`),
+    ]);
     const devices = model.devices || [];
     syncSelection(devices);
     content.innerHTML = `
       <div class="page-head tablet-controller-head">
         <div><p class="eyebrow">TABLET CONTROLLER</p><h1>${esc(t("title"))}</h1><p>${esc(t("sub"))}</p></div>
-        <div class="toolbar"><span id="tabletSelectionCount" class="pill neutral">${esc(selectionText())}</span><button id="tabletRefresh" class="button ghost" type="button">${esc(t("refresh"))}</button></div>
+        <div class="toolbar"><span id="tabletSelectionCount" class="pill neutral">${esc(selectionText())}</span>${canEdit() ? `<button id="tabletAssignCurrent" class="button" type="button">${esc(t("assignCurrent"))}</button>` : ""}<button id="tabletRefresh" class="button ghost" type="button">${esc(t("refresh"))}</button></div>
       </div>
       <div id="tabletControllerMessage" class="message ${message ? kind : "hidden"}">${message ? esc(message) : ""}</div>
       ${devices.length ? `
@@ -340,6 +364,7 @@
 
   function bindTabletController() {
     document.getElementById("tabletRefresh")?.addEventListener("click", () => renderTabletController());
+    document.getElementById("tabletAssignCurrent")?.addEventListener("click", assignSelectedToCurrentSnapshot);
     document.getElementById("tabletSelectAll")?.addEventListener("click", () => { (model.devices || []).forEach((device) => selected.add(device.device_id)); refreshSelectionUI(); });
     document.getElementById("tabletClearSelection")?.addEventListener("click", () => { selected.clear(); refreshSelectionUI(); });
     document.querySelectorAll(".tablet-group-select").forEach((button) => button.addEventListener("click", () => {
@@ -367,6 +392,43 @@
       finally { button.disabled = false; }
     }));
     document.getElementById("tabletAddCueAction")?.addEventListener("click", addTabletActionToCue);
+  }
+
+  async function assignSelectedToCurrentSnapshot() {
+    const snapshotID = currentRuntimeSnapshotID();
+    if (!snapshotID) {
+      setControllerMessage(t("assignmentNone"), "warn");
+      return;
+    }
+    const devices = selectedDevices().filter((device) => device.protocol_version === "stagecore.device/2");
+    if (!devices.length) {
+      setControllerMessage(t("chooseTablet"), "warn");
+      return;
+    }
+    const button = document.getElementById("tabletAssignCurrent");
+    if (button) button.disabled = true;
+    try {
+      let changed = 0;
+      for (const device of devices) {
+        const assignment = device.assignment || {};
+        if (assignment.project_id === projectID() && assignment.runtime_snapshot_id === snapshotID) continue;
+        await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/devices/${encodeURIComponent(device.device_id)}/assign`, {
+          method: "POST",
+          json: {
+            expected_project_id: assignment.project_id || "",
+            expected_runtime_snapshot_id: assignment.runtime_snapshot_id || "",
+            expected_assignment_epoch: Number(assignment.assignment_epoch || 0),
+            runtime_snapshot_id: snapshotID,
+          },
+        });
+        changed++;
+      }
+      await renderTabletController(changed ? t("assignmentUpdated") : t("assignmentCurrent"), "success");
+    } catch (error) {
+      setControllerMessage(errorMessage(error), "error");
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   function payloadFor(command) {

@@ -108,6 +108,10 @@
       discardConfirm: "Discard Draft {draft} and restore {parent}? The abandoned Draft will remain in history as SUPERSEDED.",
       discardReason: "Optional reason for discarding this Draft",
       draftDiscarded: "Draft discarded and validated revision restored.",
+      decommissionTablet: "Decommission offline tablet",
+      decommissionConfirm: "Decommission this stale OFFLINE Tablet identity? History is preserved and this identity will no longer receive commands.",
+      decommissionReason: "Clean reinstall / stale Tablet identity",
+      decommissioned: "Tablet identity decommissioned. History was preserved.",
       unknown: "Unknown",
       none: "None",
     },
@@ -217,6 +221,10 @@
       discardConfirm: "تلغي Draft {draft} وترجع {parent}؟ الـDraft الملغى يبقى محفوظاً بالتاريخ كـSUPERSEDED.",
       discardReason: "سبب الإلغاء (اختياري)",
       draftDiscarded: "تم إلغاء الـDraft وإرجاع النسخة المعتمدة.",
+      decommissionTablet: "إخراج هوية التابلت القديمة",
+      decommissionConfirm: "تريد تخرج هوية هذا التابلت القديم وهو OFFLINE؟ التاريخ يبقى محفوظ وهذه الهوية ما تستقبل أوامر بعد.",
+      decommissionReason: "تنصيب نظيف / هوية تابلت قديمة",
+      decommissioned: "تم إخراج هوية التابلت القديمة مع الاحتفاظ بالتاريخ.",
       unknown: "غير معروف",
       none: "لا يوجد",
     },
@@ -381,6 +389,13 @@
             <button class="button ghost" data-live-diagnostic-device="${esc(device.device_id)}" type="button">${esc(t("liveDiagnostic"))}</button>
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
+        ${device.protocol_version === "stagecore.device/2" &&
+          device.device_kind === "TABLET_PLAYER" &&
+          runtime.connection_state !== "ONLINE" &&
+          state.user?.role === "OWNER" ? `
+          <div class="phase4-actions">
+            <button class="button danger" data-decommission-tablet="${esc(device.device_id)}" type="button">${esc(t("decommissionTablet"))}</button>
+          </div>` : ""}
         ${tabletControls(device)}
       </article>`;
   }
@@ -465,7 +480,7 @@
       }
     }
     const inventory = globalInventory.filter((device) =>
-      (device.assignment?.project_id || "") !== projectID
+      device.enabled !== false && (device.assignment?.project_id || "") !== projectID
     );
     const assignmentSnapshotID = runtimeStatus?.runtime_snapshot?.runtime_snapshot_id || "";
     const assignmentLocked = runtimeStatus?.mode === "SHOW";
@@ -521,6 +536,27 @@
           ? `<div class="phase4-grid">${inventory.map(inventoryCard).join("")}</div>`
           : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
+
+    body.querySelectorAll("[data-decommission-tablet]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.decommissionTablet || "";
+        if (!deviceID || !window.confirm(t("decommissionConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/decommission`, {
+            method: "POST",
+            body: JSON.stringify({ confirm: "DECOMMISSION_OFFLINE_TABLET", reason: t("decommissionReason") }),
+          });
+          phase4Message(t("decommissioned"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
 
     body.querySelectorAll("[data-assign-tablet]").forEach((button) => {
       button.addEventListener("click", async () => {

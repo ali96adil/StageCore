@@ -184,6 +184,7 @@ func TestV2TabletScopeUsesHubAssignmentNotObservedProjectAuthority(t *testing.T)
 		Kind:            deviceexperience.DeviceTabletPlayer,
 		ProfileID:       deviceexperience.TabletPlayerProfileID,
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled:         true,
 		Assignment: &deviceexperience.AssignmentRecord{
 			ProjectID:         "project-hub",
 			RuntimeSnapshotID: "snapshot-hub",
@@ -219,6 +220,7 @@ func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
 		ID:              "tablet-active",
 		Kind:            deviceexperience.DeviceTabletPlayer,
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled:         true,
 		Assignment: &deviceexperience.AssignmentRecord{
 			ProjectID: "project-1", RuntimeSnapshotID: "snapshot-1",
 			Epoch: 2, State: "ACTIVE",
@@ -234,6 +236,7 @@ func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
 		ID:              "tablet-v1",
 		Kind:            deviceexperience.DeviceTabletPlayer,
 		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Enabled:         true,
 	}
 	got := tabletDevices([]deviceexperience.Device{unassigned, active, legacy})
 	if len(got) != 2 || got[0].ID != "tablet-active" || got[1].ID != "tablet-v1" {

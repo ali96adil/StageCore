@@ -159,12 +159,48 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	}); err != nil {
 		return internalFailure(command.CommandID, "CUE_RESULT_EVENT_FAILED", err)
 	}
-	resultPayload, _ := json.Marshal(map[string]any{
+	resultBody := map[string]any{
 		"cue_execution_id": cueExecution.ID,
 		"cue_id":           selected.ID,
 		"result":           cueResult,
-	})
-	return contracts.CommandResult{CommandID: command.CommandID, Status: commandStatus, Payload: resultPayload}
+	}
+	var commandError *contracts.ContractError
+	if cueResult != domain.ExecutionCompleted {
+		actionExecutions, listErr := e.store.ListActionExecutions(ctx, cueExecution.ID)
+		if listErr == nil {
+			for i := len(actionExecutions) - 1; i >= 0; i-- {
+				actionExecution := actionExecutions[i]
+				if actionExecution.Result == domain.ExecutionCompleted {
+					continue
+				}
+				errorCode := "CUE_ACTION_FAILED"
+				if actionExecution.ErrorCode != nil && strings.TrimSpace(*actionExecution.ErrorCode) != "" {
+					errorCode = strings.TrimSpace(*actionExecution.ErrorCode)
+				}
+				message := strings.TrimSpace(actionExecution.ResponseSummary)
+				if message == "" {
+					message = "Cue action failed"
+				}
+				resultBody["failed_action"] = map[string]any{
+					"action_execution_id": actionExecution.ID,
+					"action_id":           actionExecution.ActionID,
+					"result":              actionExecution.Result,
+					"error_code":          errorCode,
+					"response_summary":    message,
+				}
+				commandError = &contracts.ContractError{
+					ErrorCode:        errorCode,
+					Category:         "EXECUTION",
+					Message:          message,
+					Retryable:        false,
+					AffectedEntityID: actionExecution.ActionID,
+				}
+				break
+			}
+		}
+	}
+	resultPayload, _ := json.Marshal(resultBody)
+	return contracts.CommandResult{CommandID: command.CommandID, Status: commandStatus, Payload: resultPayload, Error: commandError}
 }
 
 func (e *Engine) executeActions(

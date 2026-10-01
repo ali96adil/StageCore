@@ -283,8 +283,12 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const configuration = await f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] });
+  const [configuration, tabletController] = await Promise.all([
+    f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
+  ]);
   state.f002Targets = configuration.targets || [];
+  state.f002Tablets = tabletController.devices || [];
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -297,6 +301,81 @@ function f002EnhanceCueDialog() {
     details.appendChild(policyLabel);
   }
   f002InstallCueComposer();
+}
+
+function f002TabletCommandOptions() {
+  return [
+    ["TABLET_PREPARE", "Prepare media"],
+    ["TABLET_PLAY", "Play"],
+    ["TABLET_PAUSE", "Pause"],
+    ["TABLET_STOP", "Stop"],
+    ["TABLET_OVERLAY_PLAY", "Play overlay"],
+    ["TABLET_OVERLAY_CLEAR", "Clear overlay"],
+    ["TABLET_LIVE_SHOW", "Show live"],
+    ["TABLET_LIVE_HIDE", "Hide live"],
+    ["TABLET_BLACKOUT", "Blackout"],
+    ["TABLET_BLACKOUT_CLEAR", "Clear blackout"],
+  ];
+}
+
+function f002TabletPayload(command, raw) {
+  const text = String(raw || "").trim();
+  if (!text) return {};
+  const payload = JSON.parse(text);
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+    throw new Error("Tablet parameters must be a JSON object.");
+  }
+  if (command === "TABLET_LIVE_SHOW" && typeof payload.url === "string") {
+    const value = payload.url.trim();
+    const markdown = value.match(/^\[(https?:\/\/[^\]]+)\]\((https?:\/\/[^)]+)\)$/i);
+    if (markdown && markdown[1] === markdown[2]) payload.url = markdown[1];
+  }
+  return payload;
+}
+
+async function f002AddTabletAction(composer) {
+  const message = composer.querySelector("#f002TabletComposerMessage");
+  try {
+    const deviceID = composer.querySelector("#f002TabletDevice")?.value || "";
+    const commandType = composer.querySelector("#f002TabletCommand")?.value || "";
+    if (!deviceID || !commandType) throw new Error("Choose a Tablet Player and command.");
+    const payload = f002TabletPayload(commandType, composer.querySelector("#f002TabletParameters")?.value);
+    const projectID = encodeURIComponent(state.project.project_id);
+    const result = await api(`/api/v1/projects/${projectID}/tablet-controller/cue-actions`, {
+      method: "POST",
+      json: {
+        device_ids: [deviceID],
+        command_type: commandType,
+        execution_mode: "PARALLEL_BARRIER",
+        priority: "P1",
+        payload,
+      },
+    });
+    for (const action of result.actions || []) {
+      addActionEditor({
+        action_id: "",
+        target_ref: action.target_ref,
+        capability_key: action.capability_key,
+        execution_mode: action.execution_mode,
+        priority_class: action.priority,
+        parameters: action.parameters || {},
+        timeout_policy: {},
+        error_policy: {},
+        enabled: true,
+      });
+    }
+    if (message) {
+      message.textContent = (result.actions || []).length
+        ? `Added ${result.actions.length} Tablet Action(s). Save the Cue to persist them.`
+        : "No Tablet Action was returned.";
+      message.className = (result.actions || []).length ? "message success" : "message warn";
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = errorMessage(error);
+      message.className = "message error";
+    }
+  }
 }
 
 function f002InstallCueComposer() {
@@ -329,6 +408,35 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002CueComposerMessage" class="message hidden"></div>
     <p class="muted">Imported Actions are independent copies. Action IDs are regenerated when this Cue is saved, so later edits to the source Cue do not silently alter this mixed Cue.</p>
+
+    <hr>
+    <div class="f002-builder-head">
+      <div>
+        <strong>Tablet Player Action</strong>
+        <span>Add a canonical Tablet Action without typing target refs or capability keys.</span>
+      </div>
+    </div>
+    <div class="form-grid two">
+      <label>Tablet
+        <select id="f002TabletDevice">
+          <option value="">Choose a Tablet…</option>
+          ${(state.f002Tablets || []).map((device) => `<option value="${esc(device.device_id)}">${esc(device.display_name || device.device_id)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Tablet command
+        <select id="f002TabletCommand">
+          ${f002TabletCommandOptions().map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <label>Tablet parameters (JSON)
+      <textarea id="f002TabletParameters" class="mono" rows="3">{}</textarea>
+    </label>
+    <div class="toolbar">
+      <button id="f002AddTabletAction" class="button" type="button" ${(state.f002Tablets || []).length ? "" : "disabled"}>+ Tablet Action</button>
+    </div>
+    <div id="f002TabletComposerMessage" class="message hidden"></div>
+    <p class="muted">For LIVE SHOW paste the relay address as a raw URL. Markdown-wrapped links are normalized before the Action is created.</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
@@ -358,6 +466,8 @@ function f002InstallCueComposer() {
     }
     if (select) select.value = "";
   });
+
+  composer.querySelector("#f002AddTabletAction")?.addEventListener("click", () => f002AddTabletAction(composer));
 }
 
 openCueEditor = function f002OpenCueEditor(cue) {

@@ -44,7 +44,13 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"devices": items})
+			active := make([]deviceexperience.Device, 0, len(items))
+			for _, item := range items {
+				if item.Enabled {
+					active = append(active, item)
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"devices": active})
 		}))
 
 		// Device provisioning inventory is not scoped to any Project yet.
@@ -72,6 +78,7 @@ func WithOperatorStageDevices(
 				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
 				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
 				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
+				Enabled       bool                             `json:"enabled"`
 			}
 			out := make([]inventoryDevice, 0)
 			for _, item := range items {
@@ -89,6 +96,7 @@ func WithOperatorStageDevices(
 					ClientVersion: item.ClientVersion,
 					Capabilities: append([]string(nil), item.Capabilities...),
 					Assignment: assignment,
+					Enabled: item.Enabled,
 				}
 				if item.Runtime != nil {
 					view.Connection = item.Runtime.Connection
@@ -120,7 +128,7 @@ func WithOperatorStageDevices(
 			}
 			out := make([]unassignedDevice, 0)
 			for _, item := range items {
-				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+				if !item.Enabled || item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
 					continue
 				}
 				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
@@ -143,6 +151,41 @@ func WithOperatorStageDevices(
 				out = append(out, view)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+		}))
+
+		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/decommission", withPermission(auth, userauth.PermissionCompanionRevoke, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if session.User.Role != userauth.RoleOwner {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "OWNER_REQUIRED"})
+				return
+			}
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			var input struct {
+				Confirm string `json:"confirm"`
+				Reason  string `json:"reason"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			if strings.TrimSpace(input.Confirm) != "DECOMMISSION_OFFLINE_TABLET" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_DECOMMISSION_CONFIRMATION_REQUIRED"})
+				return
+			}
+			record, err := devices.DecommissionOfflineTablet(r.Context(), deviceID, session.User.ID, input.Reason)
+			if err != nil {
+				status := http.StatusConflict
+				if errors.Is(err, sql.ErrNoRows) {
+					status = http.StatusNotFound
+				} else if errors.Is(err, deviceexperience.ErrInvalidDevice) {
+					status = http.StatusBadRequest
+				}
+				writeJSON(w, status, map[string]any{"error": "TABLET_DECOMMISSION_BLOCKED", "detail": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"decommission": record,
+				"active_inventory": false,
+				"history_preserved": true,
+			})
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {

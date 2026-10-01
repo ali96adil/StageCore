@@ -50,6 +50,19 @@ func TestCueGoSequentialSuccessPersistsTrace(t *testing.T) {
 func TestCueGoFailureStopsFollowingSequentialAction(t *testing.T) {
 	first := action("SEQUENTIAL", "FAIL", 0, "FAIL_CUE"); first.OrderIndex = 0; second := action("SEQUENTIAL", "COMPLETE", 0, ""); second.OrderIndex = 1; f := newFixture(t, []domain.Action{first, second})
 	result := cueengine.New(f.store).ExecuteCueGo(context.Background(), f.session.ID, commandFor(t, f)); if result.Status != contracts.CommandFailed { t.Fatalf("result=%#v", result) }
+	if result.Error == nil || result.Error.ErrorCode == "" || result.Error.Message == "" || result.Error.AffectedEntityID == "" { t.Fatalf("failed action detail missing from command result: %#v", result) }
+	var payload struct {
+		FailedAction struct {
+			ActionExecutionID string `json:"action_execution_id"`
+			ActionID string `json:"action_id"`
+			ErrorCode string `json:"error_code"`
+			ResponseSummary string `json:"response_summary"`
+		} `json:"failed_action"`
+	}
+	if err := json.Unmarshal(result.Payload, &payload); err != nil { t.Fatal(err) }
+	if payload.FailedAction.ActionExecutionID == "" || payload.FailedAction.ActionID == "" || payload.FailedAction.ErrorCode == "" || payload.FailedAction.ResponseSummary == "" {
+		t.Fatalf("failed action payload missing detail: %s", result.Payload)
+	}
 	cueExecutions, _ := f.store.ListCueExecutions(context.Background(), f.session.ID); actions, _ := f.store.ListActionExecutions(context.Background(), cueExecutions[0].ID); if len(actions) != 1 || actions[0].Result != domain.ExecutionFailed { t.Fatalf("actions=%#v", actions) }
 	events, _ := f.store.ListEvents(context.Background(), f.session.ID); assertEventTypes(t, events, []string{"cue.started", "action.started", "action.failed", "cue.failed"})
 }
