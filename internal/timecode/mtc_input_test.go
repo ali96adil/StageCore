@@ -98,3 +98,22 @@ func TestWaitForMTCInputHonorsCancellation(t *testing.T) {
 		t.Fatal("cancelled wait did not return promptly")
 	}
 }
+
+
+func TestMTCUnavailableWarningCadence(t *testing.T) {
+	for _, tc := range []struct {
+		attempt int
+		want    bool
+	}{
+		{attempt: 1, want: true},
+		{attempt: 2, want: false},
+		{attempt: 59, want: false},
+		{attempt: 60, want: true},
+		{attempt: 61, want: false},
+		{attempt: 120, want: true},
+	} {
+		if got := shouldLogMTCUnavailable(tc.attempt); got != tc.want {
+			t.Fatalf("attempt=%d got=%v want=%v", tc.attempt, got, tc.want)
+		}
+	}
+}
