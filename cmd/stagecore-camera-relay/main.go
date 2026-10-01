@@ -28,11 +28,11 @@ func localOnly(address string) bool {
 
 func main() {
  var source,listen string
- var allowLAN,flashWithViewers bool
+ var allowLAN,flashControl bool
  flag.StringVar(&source,"source","","camera MJPEG HTTP URL (required)")
  flag.StringVar(&listen,"listen","127.0.0.1:9081","relay HTTP listen address (local-only default)")
  flag.BoolVar(&allowLAN,"allow-lan",false,"explicitly permit unauthenticated LAN HTTP; use show-network isolation")
- flag.BoolVar(&flashWithViewers,"flash-with-viewers",false,"drive the camera flash from downstream viewer count")
+ flag.BoolVar(&flashControl,"flash-control",false,"enable camera flash control; AUTO follows only viewers that request flash")
  flag.Parse()
  if source=="" || (!localOnly(listen)&&!allowLAN) {
   fmt.Fprintln(os.Stderr,"required: -source; non-loopback -listen requires -allow-lan")
@@ -40,7 +40,7 @@ func main() {
  }
  logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil))
  cfg:=camerarelay.Config{SourceURL:source}
- if flashWithViewers {
+ if flashControl {
   flashURL,err:=camerarelay.FlashURLForSource(source)
   if err!=nil {logger.Error("cannot derive camera flash URL","error",err);os.Exit(2)}
   cfg.FlashURL=flashURL
@@ -60,7 +60,7 @@ func main() {
  errs:=make(chan error,2)
  go func(){errs<-relay.Run(ctx)}()
  go func(){errs<-server.Serve(listener)}()
- logger.Info("camera relay started","listen",listener.Addr().String(),"flash_with_viewers",flashWithViewers)
+ logger.Info("camera relay started","listen",listener.Addr().String(),"flash_control",flashControl)
  select {
  case err:=<-errs:
   if err!=nil && !errors.Is(err,http.ErrServerClosed) {
