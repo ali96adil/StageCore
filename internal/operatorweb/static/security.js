@@ -23,17 +23,19 @@ function securityResultKind(result) {
 }
 
 async function securityLoad() {
-  const [secrets, users, permissions, audit] = await Promise.all([
+  const [secrets, users, permissions, audit, pairing] = await Promise.all([
     api("/api/v1/security/secrets"),
     api("/api/v1/security/users"),
     api("/api/v1/security/plugins/permissions?plugin_id=stagecore.osc"),
     api("/api/v1/security/audit?limit=100"),
+    api("/api/v1/security/companions/pairing/pending"),
   ]);
   return {
     secrets: secrets.secrets || [],
     users: users.users || [],
     permissions: permissions.permissions || [],
     audit: audit.records || [],
+    pendingPairing: pairing.requests || [],
   };
 }
 
@@ -106,19 +108,30 @@ async function renderSecurity() {
     </article>
 
     <article class="card" style="margin-top:16px">
-      <p class="eyebrow">COMPANION TRUST</p><h2>Pair or emergency revoke</h2>
-      <div class="form-grid two" style="margin-top:14px">
-        <form id="pairingApproveForm">
-          <label>Pairing request ID<input id="pairingRequestID" required></label>
-          <label>Pairing code<input id="pairingCode" required></label>
-          <button class="button" type="submit">Approve pairing</button>
-        </form>
-        <form id="companionRevokeForm">
-          <label>Companion ID<input id="revokeCompanionID" required></label>
-          <label>Emergency reason<input id="revokeCompanionReason" required></label>
-          <button class="button ghost" type="submit">Emergency revoke Companion</button>
-        </form>
+      <p class="eyebrow">COMPANION TRUST</p><h2>Pending pairing and emergency revoke</h2>
+      <p class="muted">Pairing request IDs stay internal. Match the code shown on the physical device before approving trust.</p>
+      <div class="actions-editor" style="margin-top:14px">
+        ${model.pendingPairing.length ? model.pendingPairing.map((request) => `
+          <div class="action-editor pairing-request-row" data-pairing-request="${esc(request.request_id)}">
+            <div class="section-title-row">
+              <div>
+                <strong>${esc(request.display_name || request.companion_id)}</strong>
+                <p class="muted">${esc(request.platform || "unknown")} ${esc(request.version || "")} · expires ${esc(fmtDate(request.expires_at))}</p>
+                <p class="muted mono">${esc(request.companion_id)}</p>
+              </div>
+              ${pill("PENDING", "warn")}
+            </div>
+            <div class="form-grid two" style="margin-top:10px">
+              <label>Pairing code<input class="pairing-code" autocomplete="off" spellcheck="false" required></label>
+              <button class="button approve-pairing-request" type="button">Approve pairing</button>
+            </div>
+          </div>`).join("") : `<div class="empty">No pending Companion pairing requests.</div>`}
       </div>
+      <form id="companionRevokeForm" class="form-grid two" style="margin-top:14px">
+        <label>Companion ID<input id="revokeCompanionID" required></label>
+        <label>Emergency reason<input id="revokeCompanionReason" required></label>
+        <button class="button ghost" type="submit">Emergency revoke Companion</button>
+      </form>
     </article>
 
     <article class="card" style="margin-top:16px">
@@ -193,11 +206,23 @@ async function renderSecurity() {
     try { await api(`/api/v1/security/users/${encodeURIComponent(row.dataset.userId)}/revoke-sessions`, { method: "POST", json: { reason, confirm: "REVOKE" } }); await renderSecurity(); }
     catch (error) { securityError(error); }
   }));
-  el("pairingApproveForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api("/api/v1/security/companions/pairing/approve", { method: "POST", json: { request_id: el("pairingRequestID").value.trim(), pairing_code: el("pairingCode").value.trim() } }); await renderSecurity(); }
-    catch (error) { securityError(error); }
-  });
+  content.querySelectorAll(".approve-pairing-request").forEach((button) => button.addEventListener("click", async () => {
+    const row = button.closest(".pairing-request-row");
+    const requestID = row?.dataset.pairingRequest || "";
+    const code = row?.querySelector(".pairing-code")?.value.trim() || "";
+    if (!requestID || !code) {
+      setMessage(globalMessage, "Enter the pairing code shown on the physical device.", "warn");
+      return;
+    }
+    button.disabled = true;
+    try {
+      await api("/api/v1/security/companions/pairing/approve", { method: "POST", json: { request_id: requestID, pairing_code: code } });
+      await renderSecurity();
+    } catch (error) {
+      button.disabled = false;
+      securityError(error);
+    }
+  }));
   el("companionRevokeForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const companionID = el("revokeCompanionID").value.trim();
