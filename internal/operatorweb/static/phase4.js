@@ -990,6 +990,7 @@
       button.addEventListener("click", () => renderPhase4Page(page));
       nav.insertBefore(button, before);
     });
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   async function injectDraftDiscard() {
