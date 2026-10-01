@@ -166,6 +166,7 @@
 
   function powerText(device) {
     const value = health(device);
+    if (typeof value.power_save !== "boolean") return `${t("powerSave")}: —`;
     return `${t("powerSave")}: ${value.power_save ? t("on") : t("off")}`;
   }
 
