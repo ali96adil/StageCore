@@ -360,7 +360,9 @@ func WithOperatorTabletController(
 			}
 			input.CommandType = strings.TrimSpace(input.CommandType)
 			capability := deviceexperience.RequiredCapability(input.CommandType)
-			if capability == "" || !strings.HasPrefix(capability, "tablet.media.") {
+			cueable := strings.HasPrefix(capability, "tablet.media.") ||
+				capability == deviceexperience.CapabilityTabletBrightnessSet
+			if capability == "" || !cueable {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
