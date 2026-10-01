@@ -80,6 +80,38 @@ func TestOperatorExecutionEnvironmentLifecycleAndRevisionAuthority(t *testing.T)
 		t.Fatalf("created environment identity/binding=%+v", created)
 	}
 
+	updateManifest := testVDMXExecutionEnvironmentManifest("video-main")
+	updateManifest.Name = "Edited video workstation"
+	updateManifest.Application.VersionConstraint = "8.8-tested"
+	updateManifest.Assets[0].Locator = "/Users/show/Edited.vdmx5"
+	updateBody, _ := json.Marshal(map[string]any{"manifest": updateManifest})
+	updateReq := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPut, collection+"/"+created.ID, updateBody)
+	updateRes := httptest.NewRecorder()
+	handler.ServeHTTP(updateRes, updateReq)
+	if updateRes.Code != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", updateRes.Code, updateRes.Body.String())
+	}
+	var updated executionEnvironmentView
+	if err := json.Unmarshal(updateRes.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != created.ID || updated.Name != "Edited video workstation" ||
+		updated.Manifest.Application.VersionConstraint != "8.8-tested" ||
+		updated.Manifest.Assets[0].Locator != "/Users/show/Edited.vdmx5" ||
+		updated.ContentSHA256 == created.ContentSHA256 {
+		t.Fatalf("unexpected updated environment: %+v", updated)
+	}
+
+	renameManifest := updateManifest
+	renameManifest.EnvironmentKey = "video-renamed"
+	renameBody, _ := json.Marshal(map[string]any{"manifest": renameManifest})
+	renameReq := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPut, collection+"/"+created.ID, renameBody)
+	renameRes := httptest.NewRecorder()
+	handler.ServeHTTP(renameRes, renameReq)
+	if renameRes.Code != http.StatusConflict {
+		t.Fatalf("identity-changing update status=%d body=%s", renameRes.Code, renameRes.Body.String())
+	}
+
 	listReq := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodGet, collection, nil)
 	listRes := httptest.NewRecorder()
 	handler.ServeHTTP(listRes, listReq)
