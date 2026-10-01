@@ -82,6 +82,7 @@ type runtimeHello struct {
 	Platform                 string   `json:"platform"`
 	Architecture             string   `json:"architecture"`
 	Capabilities             []string `json:"capabilities"`
+	MIDIDestinations         []string `json:"midi_destinations"`
 	MachineRoleID            *string  `json:"machine_role_id"`
 	AppliedRuntimeSnapshotID *string  `json:"applied_runtime_snapshot_id"`
 	ConfigHash               string   `json:"config_hash"`
@@ -469,6 +470,7 @@ func (c *RuntimeChannel) updateHello(ctx context.Context, connection *runtimeCon
 	companion, err := c.store.UpdateCompanionReport(ctx, connection.companionID, store.CompanionReportParams{
 		DisplayName: hello.DisplayName, Hostname: hello.Hostname, Platform: hello.Platform,
 		Architecture: hello.Architecture, Version: hello.AgentVersion, Capabilities: hello.Capabilities,
+		MIDIDestinations: hello.MIDIDestinations,
 		Readiness: readiness, AppliedRuntimeSnapshotID: hello.AppliedRuntimeSnapshotID, ConfigHash: hello.ConfigHash,
 	})
 	if err != nil {
