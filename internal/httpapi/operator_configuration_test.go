@@ -97,6 +97,33 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if routeRes.Code != http.StatusCreated {
 		t.Fatalf("route status=%d body=%s", routeRes.Code, routeRes.Body.String())
 	}
+	var route struct{ ID string `json:"route_id"` }
+	if err := json.Unmarshal(routeRes.Body.Bytes(), &route); err != nil || route.ID == "" {
+		t.Fatalf("route decode=%v body=%s", err, routeRes.Body.String())
+	}
+
+	updateInputRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID, map[string]any{
+		"name": "GO Input", "source_ref": "osc:/go-updated", "event_type": "osc.message",
+		"value_schema": map[string]any{}, "enabled": false,
+	})
+	if updateInputRes.Code != http.StatusOK {
+		t.Fatalf("input update status=%d body=%s", updateInputRes.Code, updateInputRes.Body.String())
+	}
+
+	referencedDelete := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID+"?confirm=true", nil)
+	if referencedDelete.Code != http.StatusConflict {
+		t.Fatalf("referenced input delete status=%d body=%s", referencedDelete.Code, referencedDelete.Body.String())
+	}
+
+	updateRouteRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/routes/"+route.ID, map[string]any{
+		"name": "GO to Projector", "input_id": input.ID, "condition_definition": nil,
+		"transform_definition": nil, "priority_class": "P1", "error_policy": map[string]any{}, "enabled": false,
+		"delay_ms": 125, "debounce_ms": 80,
+		"actions": []map[string]any{{"output_id": output.ID, "parameters": map[string]any{"value": 2}}},
+	})
+	if updateRouteRes.Code != http.StatusOK {
+		t.Fatalf("route update status=%d body=%s", updateRouteRes.Code, updateRouteRes.Body.String())
+	}
 
 	configurationRes := request(http.MethodGet, "/api/v1/projects/"+project.ID+"/configuration", nil)
 	if configurationRes.Code != http.StatusOK {
@@ -111,8 +138,22 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if err := json.Unmarshal(configurationRes.Body.Bytes(), &model); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.Targets) != 1 || len(model.Inputs) != 1 || len(model.Outputs) != 1 || model.Outputs[0].CapabilityKey != "local.echo" || len(model.Routes) != 1 || len(model.Routes[0].Actions) != 1 {
+	if len(model.Targets) != 1 || len(model.Inputs) != 1 || len(model.Outputs) != 1 ||
+		model.Inputs[0].SourceRef != "osc:/go-updated" || model.Inputs[0].Enabled ||
+		model.Outputs[0].CapabilityKey != "local.echo" || len(model.Routes) != 1 ||
+		model.Routes[0].Enabled || model.Routes[0].PriorityClass != "P1" ||
+		model.Routes[0].DelayMS == nil || *model.Routes[0].DelayMS != 125 ||
+		len(model.Routes[0].Actions) != 1 {
 		t.Fatalf("configuration=%#v", model)
+	}
+
+	deleteRouteRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/routes/"+route.ID+"?confirm=true", nil)
+	if deleteRouteRes.Code != http.StatusNoContent {
+		t.Fatalf("route delete status=%d body=%s", deleteRouteRes.Code, deleteRouteRes.Body.String())
+	}
+	deleteInputRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID+"?confirm=true", nil)
+	if deleteInputRes.Code != http.StatusNoContent {
+		t.Fatalf("input delete status=%d body=%s", deleteInputRes.Code, deleteInputRes.Body.String())
 	}
 
 	if _, err := h.auth.CreateUser(ctx, "routing-viewer", "routing viewer password", userauth.RoleViewer); err != nil {
