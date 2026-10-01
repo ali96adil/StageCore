@@ -23,7 +23,7 @@ Default fresh-host layout:
 /var/lib/stagecore/vault/
 ```
 
-The installer verifies `SHA256SUMS` and the ELF architecture of all four required StageCore binaries before modifying the host.
+The installer verifies `SHA256SUMS` and the ELF architecture of the four required service/install binaries (`stagecore-hub`, `stagecore-osc-plugin`, `stagecore-pairing`, `stagecore-setup`) before modifying the host. The release bundle also carries the optional `stagecore` CLI binary.
 
 ## Preview without changing the host
 
@@ -89,7 +89,7 @@ dist/stagecore-linux-amd64.tar.gz
 dist/stagecore-linux-arm64.tar.gz
 ```
 
-Each unpacked directory contains the four product binaries, `SHA256SUMS`, `RELEASE_REVISION`, and the one-command `install.sh` wrapper.
+Each unpacked directory contains the four required service/install binaries plus the `stagecore` CLI, `SHA256SUMS`, `RELEASE_REVISION`, and the one-command `install.sh` wrapper.
 
 ## Boundaries
 
