@@ -1,5 +1,12 @@
 "use strict";
 
+const nativeVisualRoleCapabilities = [
+  "visual.preload", "visual.play", "visual.pause", "visual.stop", "visual.seek", "visual.loop",
+  "visual.blackout", "visual.layer.opacity", "visual.layer.transform", "visual.layer.order",
+  "visual.layer.output", "visual.output.configure", "visual.output.mapping", "visual.state.inspect",
+  "video.source.open", "video.source.close", "video.source.select", "video.source.route", "video.source.inspect",
+];
+
 const stagecoreConfigurationNavigateBase = navigate;
 
 function configurationEditable() {
@@ -132,8 +139,10 @@ async function renderConfiguration() {
             <label class="check-row"><input id="machineRoleMIDI" type="checkbox" checked> MIDI send</label>
             <label class="check-row"><input id="machineRoleOSC" type="checkbox"> OSC send</label>
             <label class="check-row"><input id="machineRoleEcho" type="checkbox"> Local echo / diagnostics</label>
+            <label class="check-row"><input id="machineRoleNativeVisual" type="checkbox"> StageCore Native Visual + Live Source</label>
             <label class="check-row"><input id="machineRoleRequired" type="checkbox" checked> Required for show readiness</label>
           </div>
+          <p class="muted">For external VDMX use OSC send. Native Visual + Live Source is only for a Companion running StageCore\'s native visual engine.</p>
           <button class="button primary" type="submit">Create Machine Role</button>
           ${!editable ? `<p class="muted">Role assignment is available now. To add a new Role as a Cue target, start a routing Draft.</p>` : ""}
         </form>
@@ -190,6 +199,7 @@ async function renderConfiguration() {
       if (el("machineRoleMIDI").checked) requiredCapabilities.push("midi.send");
       if (el("machineRoleOSC").checked) requiredCapabilities.push("osc.send");
       if (el("machineRoleEcho").checked) requiredCapabilities.push("local.echo");
+      if (el("machineRoleNativeVisual").checked) requiredCapabilities.push(...nativeVisualRoleCapabilities);
       if (!requiredCapabilities.length) {
         configurationError(new Error("Choose at least one Machine Role capability."));
         return;
