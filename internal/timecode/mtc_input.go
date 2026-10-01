@@ -79,16 +79,26 @@ func (i *MTCInput) Run(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	unavailableAttempts := 0
 	for ctx.Err() == nil {
 		device, err := os.Open(i.devicePath)
 		if err != nil {
-			slog.Warn("StageCore MTC input device unavailable", "device", i.devicePath, "source_id", i.sourceID, "error", err)
+			unavailableAttempts++
+			if shouldLogMTCUnavailable(unavailableAttempts) {
+				slog.Warn("StageCore MTC input device unavailable",
+					"device", i.devicePath, "source_id", i.sourceID,
+					"attempts", unavailableAttempts, "error", err)
+			}
 			if !waitForMTCInput(ctx, i.retryPeriod) {
 				return
 			}
 			continue
 		}
 
+		if unavailableAttempts > 1 {
+			slog.Info("StageCore MTC input recovered", "device", i.devicePath, "source_id", i.sourceID, "attempts", unavailableAttempts)
+		}
+		unavailableAttempts = 0
 		slog.Info("StageCore MTC input connected", "device", i.devicePath, "source_id", i.sourceID)
 		err = i.consume(ctx, device)
 		_ = device.Close()
@@ -194,4 +204,8 @@ func waitForMTCInput(ctx context.Context, d time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func shouldLogMTCUnavailable(attempt int) bool {
+	return attempt == 1 || (attempt > 0 && attempt%60 == 0)
 }
