@@ -333,13 +333,120 @@ function f002TabletPayload(command, raw) {
   return payload;
 }
 
+function f002NormalizeLiveURL(value) {
+  let text = String(value || "").trim();
+  const markdown = text.match(/^\[(https?:\/\/[^\]]+)\]\((https?:\/\/[^)]+)\)$/i);
+  if (markdown && markdown[1] === markdown[2]) text = markdown[1];
+  let parsed;
+  try { parsed = new URL(text); }
+  catch (_) { throw new Error("Enter an absolute HTTP(S) Live URL."); }
+  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) {
+    throw new Error("Enter an absolute HTTP(S) Live URL without credentials.");
+  }
+  return text;
+}
+
+function f002RenderTabletParameterFields(composer) {
+  const host = composer.querySelector("#f002TabletVisualParameters");
+  const command = composer.querySelector("#f002TabletCommand")?.value || "";
+  if (!host) return;
+  if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Content
+          <select id="f002TabletContentMode">
+            <option value="media">Media number</option>
+            <option value="cue">Tablet Cue ID</option>
+          </select>
+        </label>
+        <label id="f002TabletMediaWrap">Media number<input id="f002TabletMediaNumber" type="number" min="1" step="1" value="1"></label>
+        <label id="f002TabletCueWrap" class="hidden">Tablet Cue ID<input id="f002TabletCueID" dir="ltr" placeholder="tablet-cue-id"></label>
+      </div>`;
+    const mode = host.querySelector("#f002TabletContentMode");
+    mode?.addEventListener("change", () => {
+      const cue = mode.value === "cue";
+      host.querySelector("#f002TabletMediaWrap")?.classList.toggle("hidden", cue);
+      host.querySelector("#f002TabletCueWrap")?.classList.toggle("hidden", !cue);
+    });
+    return;
+  }
+  if (command === "TABLET_OVERLAY_PLAY") {
+    host.innerHTML = `<div class="form-grid two"><label>Overlay media number<input id="f002TabletOverlayMedia" type="number" min="1" step="1" value="1"></label></div>`;
+    return;
+  }
+  if (command === "TABLET_OVERLAY_CLEAR") {
+    host.innerHTML = `<div class="form-grid two"><label>Dissolve (ms)<input id="f002TabletDissolve" type="number" min="0" max="10000" step="1" value="0"></label></div>`;
+    return;
+  }
+  if (command === "TABLET_LIVE_SHOW") {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Live source type
+          <select id="f002TabletLiveMode">
+            <option value="key">Media key</option>
+            <option value="url">Direct URL</option>
+          </select>
+        </label>
+        <label id="f002TabletLiveKeyWrap">Media key<input id="f002TabletLiveKey" dir="ltr" placeholder="camera-main"></label>
+        <label id="f002TabletLiveURLWrap" class="hidden">Live URL<input id="f002TabletLiveURL" dir="ltr" placeholder="http://stagecore-pi:9081/api/v0/stream"></label>
+      </div>`;
+    const mode = host.querySelector("#f002TabletLiveMode");
+    mode?.addEventListener("change", () => {
+      const direct = mode.value === "url";
+      host.querySelector("#f002TabletLiveKeyWrap")?.classList.toggle("hidden", direct);
+      host.querySelector("#f002TabletLiveURLWrap")?.classList.toggle("hidden", !direct);
+    });
+    return;
+  }
+  host.innerHTML = `<p class="muted">This Tablet command does not require parameters.</p>`;
+}
+
+function f002TabletVisualPayload(composer, command) {
+  if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
+    const mode = composer.querySelector("#f002TabletContentMode")?.value || "media";
+    if (mode === "cue") {
+      const cueID = composer.querySelector("#f002TabletCueID")?.value.trim() || "";
+      if (!cueID) throw new Error("Enter a Tablet Cue ID.");
+      return { tablet_cue_id: cueID };
+    }
+    const mediaNumber = Number(composer.querySelector("#f002TabletMediaNumber")?.value || 0);
+    if (!Number.isInteger(mediaNumber) || mediaNumber < 1) throw new Error("Media number must be a positive whole number.");
+    return { media_number: mediaNumber };
+  }
+  if (command === "TABLET_OVERLAY_PLAY") {
+    const mediaNumber = Number(composer.querySelector("#f002TabletOverlayMedia")?.value || 0);
+    if (!Number.isInteger(mediaNumber) || mediaNumber < 1) throw new Error("Overlay media number must be a positive whole number.");
+    return { media_number: mediaNumber };
+  }
+  if (command === "TABLET_OVERLAY_CLEAR") {
+    const dissolve = Number(composer.querySelector("#f002TabletDissolve")?.value || 0);
+    if (!Number.isInteger(dissolve) || dissolve < 0 || dissolve > 10000) throw new Error("Dissolve must be 0–10000 ms.");
+    return { dissolve_ms: dissolve };
+  }
+  if (command === "TABLET_LIVE_SHOW") {
+    const mode = composer.querySelector("#f002TabletLiveMode")?.value || "key";
+    if (mode === "url") return { url: f002NormalizeLiveURL(composer.querySelector("#f002TabletLiveURL")?.value) };
+    const mediaKey = composer.querySelector("#f002TabletLiveKey")?.value.trim() || "";
+    if (!mediaKey) throw new Error("Enter a Live media key.");
+    return { media_key: mediaKey };
+  }
+  return {};
+}
+
+function f002TabletComposerPayload(composer, command) {
+  if (composer.querySelector("#f002TabletUseAdvanced")?.checked) {
+    return f002TabletPayload(command, composer.querySelector("#f002TabletParameters")?.value);
+  }
+  return f002TabletVisualPayload(composer, command);
+}
+
 async function f002AddTabletAction(composer) {
   const message = composer.querySelector("#f002TabletComposerMessage");
   try {
     const deviceID = composer.querySelector("#f002TabletDevice")?.value || "";
     const commandType = composer.querySelector("#f002TabletCommand")?.value || "";
     if (!deviceID || !commandType) throw new Error("Choose a Tablet Player and command.");
-    const payload = f002TabletPayload(commandType, composer.querySelector("#f002TabletParameters")?.value);
+    const payload = f002TabletComposerPayload(composer, commandType);
     const projectID = encodeURIComponent(state.project.project_id);
     const result = await api(`/api/v1/projects/${projectID}/tablet-controller/cue-actions`, {
       method: "POST",
@@ -429,14 +536,19 @@ function f002InstallCueComposer() {
         </select>
       </label>
     </div>
-    <label>Tablet parameters (JSON)
-      <textarea id="f002TabletParameters" class="mono" rows="3">{}</textarea>
-    </label>
+    <div id="f002TabletVisualParameters"></div>
+    <details>
+      <summary>Advanced Tablet parameters</summary>
+      <label class="check-row"><input id="f002TabletUseAdvanced" type="checkbox"> Use JSON override</label>
+      <label>Parameters JSON
+        <textarea id="f002TabletParameters" class="mono" rows="3">{}</textarea>
+      </label>
+    </details>
     <div class="toolbar">
       <button id="f002AddTabletAction" class="button" type="button" ${(state.f002Tablets || []).length ? "" : "disabled"}>+ Tablet Action</button>
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
-    <p class="muted">For LIVE SHOW paste the relay address as a raw URL. Markdown-wrapped links are normalized before the Action is created.</p>
+    <p class="muted">Common Tablet actions are visual. Advanced JSON is optional and only used when explicitly enabled.</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
@@ -467,6 +579,8 @@ function f002InstallCueComposer() {
     if (select) select.value = "";
   });
 
+  composer.querySelector("#f002TabletCommand")?.addEventListener("change", () => f002RenderTabletParameterFields(composer));
+  f002RenderTabletParameterFields(composer);
   composer.querySelector("#f002AddTabletAction")?.addEventListener("click", () => f002AddTabletAction(composer));
 }
 
