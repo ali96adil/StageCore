@@ -705,11 +705,52 @@ async function renderExecutionEnvironments(message = "") {
   policy?.addEventListener("change", syncPolicy);
   syncPolicy();
 
-  document.getElementById("f025GuidedForm")?.addEventListener("submit", async (event) => {
+  const guidedForm = document.getElementById("f025GuidedForm");
+  const guidedSubmit = document.getElementById("f025GuidedSubmit");
+  const guidedCancel = document.getElementById("f025GuidedCancel");
+
+  guidedCancel?.addEventListener("click", () => renderExecutionEnvironments().catch(f025Error));
+
+  content.querySelectorAll(".f025-edit").forEach((button) => {
+    button.addEventListener("click", () => {
+      const environment = (model.execution_environments || []).find((item) => item.execution_environment_id === button.dataset.environmentId);
+      if (!environment || !guidedForm) return;
+      const manifest = environment.manifest || {};
+      const workspace = (manifest.assets || []).find((asset) => asset.key === "workspace") || {};
+      const oscquery = (manifest.bindings || []).find((binding) => binding.key === "oscquery") || {};
+      guidedForm.dataset.environmentId = environment.execution_environment_id;
+      document.getElementById("f025EnvironmentKey").value = manifest.environment_key || environment.environment_key || "";
+      document.getElementById("f025EnvironmentKey").disabled = true;
+      document.getElementById("f025EnvironmentName").value = manifest.name || environment.name || "";
+      document.getElementById("f025Version").value = manifest.application?.version_constraint || "";
+      document.getElementById("f025Architecture").value = manifest.application?.hosts?.find((host) => String(host.os || "").toLowerCase() === "darwin")?.architecture || "arm64";
+      document.getElementById("f025WorkspaceLocator").value = workspace.locator || "";
+      document.getElementById("f025OSCQueryURL").value = oscquery.external_ref || "";
+      document.getElementById("f025CapturePolicy").value = workspace.capture_policy || "REFERENCE_ONLY";
+      document.getElementById("f025ContentHash").value = workspace.content_hash || "";
+      document.getElementById("f025SizeBytes").value = workspace.size_bytes ?? "";
+      document.getElementById("f025GuidedRole").value = environment.machine_role_id || "";
+      if (guidedSubmit) guidedSubmit.textContent = f025T("f025.update");
+      guidedCancel?.classList.remove("hidden");
+      syncPolicy();
+      guidedForm.scrollIntoView({behavior: "smooth", block: "start"});
+    });
+  });
+
+  guidedForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await f025Create(f025GuidedManifest(), document.getElementById("f025GuidedRole").value);
-      await renderExecutionEnvironments(f025T("f025.created"));
+      const environmentID = guidedForm.dataset.environmentId || "";
+      const existing = (model.execution_environments || []).find((item) => item.execution_environment_id === environmentID);
+      const manifest = f025GuidedManifest(existing?.manifest || null);
+      const machineRoleID = document.getElementById("f025GuidedRole").value;
+      if (environmentID) {
+        await f025Update(environmentID, manifest, machineRoleID);
+        await renderExecutionEnvironments(f025T("f025.updated"));
+      } else {
+        await f025Create(manifest, machineRoleID);
+        await renderExecutionEnvironments(f025T("f025.created"));
+      }
     } catch (error) { f025Error(error); }
   });
   document.getElementById("f025AdvancedForm")?.addEventListener("submit", async (event) => {
