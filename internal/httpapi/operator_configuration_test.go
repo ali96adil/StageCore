@@ -58,6 +58,24 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if targetRes.Code != http.StatusCreated {
 		t.Fatalf("target status=%d body=%s", targetRes.Code, targetRes.Body.String())
 	}
+	var target targetConfigurationView
+	if err := json.Unmarshal(targetRes.Body.Bytes(), &target); err != nil || target.ID == "" {
+		t.Fatalf("target decode=%v body=%s", err, targetRes.Body.String())
+	}
+	targetUpdateRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/targets/"+target.ID+"/configuration", map[string]any{
+		"configuration": map[string]any{"osc": map[string]any{"host": "127.0.0.1", "port": 9010}},
+	})
+	if targetUpdateRes.Code != http.StatusOK {
+		t.Fatalf("target configuration update status=%d body=%s", targetUpdateRes.Code, targetUpdateRes.Body.String())
+	}
+	var updatedTarget targetConfigurationView
+	if err := json.Unmarshal(targetUpdateRes.Body.Bytes(), &updatedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if updatedTarget.ID != target.ID || updatedTarget.LogicalName != target.LogicalName || updatedTarget.LogicalType != target.LogicalType ||
+		!strings.Contains(string(updatedTarget.Configuration), `"port":9010`) {
+		t.Fatalf("target identity/configuration changed unexpectedly: before=%+v after=%+v", target, updatedTarget)
+	}
 
 	inputRes := request(http.MethodPost, "/api/v1/projects/"+project.ID+"/inputs", map[string]any{
 		"name": "GO Input", "source_ref": "osc:/go", "event_type": "osc.message", "value_schema": map[string]any{}, "enabled": true,
