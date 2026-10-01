@@ -135,3 +135,29 @@ A camera `.local` source is appropriate only after the relay-side mDNS resolver 
 ### Restart expectations
 
 The systemd service uses `Restart=on-failure`; camera-source loss itself does **not** terminate the relay process because the relay retries upstream internally. A Pi reboot or unexpected relay process failure therefore restores the service without requiring an operator shell, while ordinary camera reconnects remain within the same relay process.
+
+
+## Viewer-driven camera flash candidate
+
+The relay can optionally drive the ESP32-CAM built-in flash LED from **downstream viewer count**. This is intentionally not derived from the camera's MJPEG `stream_active` field because the relay owns a permanent single upstream connection even when `viewers=0`.
+
+Enable only after the matching camera firmware endpoint has been physically qualified:
+
+```text
+STAGECORE_CAMERA_RELAY_FLASH_WITH_VIEWERS=true
+```
+
+With the systemd unit from this candidate, the behavior is:
+
+- relay startup / zero viewers -> request flash OFF;
+- first accepted viewer (0 -> 1) -> request flash ON before serving Live frames;
+- additional viewers keep the light ON without repeated ON writes;
+- final viewer leaving (1 -> 0) -> request flash OFF;
+- relay shutdown -> request flash OFF;
+- camera flash-control failure is logged and exposed in relay health but does not break MJPEG fan-out.
+
+The relay derives the control endpoint from the source camera hostname and always targets HTTP port 80 at `/api/v0/flash`. It rejects a configured flash endpoint on a different camera host. Flash control uses a separate bounded HTTP transport so it cannot contend with the single long-lived MJPEG upstream connection.
+
+Relay health adds truthful diagnostic fields: `flash_control_enabled`, `flash_desired_on`, `flash_applied_known`, `flash_applied_on`, and `flash_last_error`.
+
+This remains source/CI evidence until the exact camera firmware and relay binary are deployed together and the real LED is observed across 0 -> 1 -> 4 -> 3 -> 0 viewer transitions.
