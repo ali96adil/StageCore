@@ -104,6 +104,14 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		"showBlocked",
 		"runtimeOpenPreflight",
 		"Client readiness display cannot bypass Preflight",
+		"/runtime/emergency-blackout",
+		"EMERGENCY BLACKOUT",
+		"CLEAR MANAGED BLACKOUT",
+		"STOP CUE is not a blackout",
+		"Audio and external VDMX/OSC",
+		"managed_output_blackout",
+		"BLACKOUT",
+		"CLEAR",
 	} {
 		if !strings.Contains(app, required) {
 			t.Fatalf("app.js missing Runtime Preflight UX contract %q", required)
