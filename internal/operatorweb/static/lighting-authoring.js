@@ -276,6 +276,7 @@
     button.addEventListener("click", () => renderLightingCues().catch(showGlobalError));
     const tabletScenes = nav.querySelector('[data-tablet-scenes-nav="true"]');
     if (tabletScenes?.nextSibling) nav.insertBefore(button, tabletScenes.nextSibling); else nav.appendChild(button);
+    if (typeof f017FeatureNavigationChanged === "function") f017FeatureNavigationChanged();
   }
 
   window.renderLightingCues = renderLightingCues;
