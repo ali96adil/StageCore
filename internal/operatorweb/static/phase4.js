@@ -95,6 +95,7 @@
       enableSource: "Enable",
       disableSource: "Disable",
       executionPlacement: "Execution placement",
+      relayHealth: "Open relay health",
       machineRole: "Machine Role",
       stageDevice: "Stage Device",
       localCamera: "Local camera",
@@ -216,6 +217,7 @@
       enableSource: "تفعيل",
       disableSource: "تعطيل",
       executionPlacement: "مكان التنفيذ",
+      relayHealth: "فتح حالة الـRelay",
       machineRole: "Machine Role",
       stageDevice: "Stage Device",
       localCamera: "كاميرا محلية",
@@ -714,6 +716,22 @@
     });
   }
 
+  function sourceRelayHealthURL(source) {
+    const value = String(source?.endpoint_ref || "").trim();
+    if (!value) return "";
+    try {
+      const parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return "";
+      if (parsed.pathname !== "/api/v0/stream") return "";
+      parsed.pathname = "/api/v0/health";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch (_) {
+      return "";
+    }
+  }
+
   function sourcePlacementLabel(source, roles, devices) {
     if (source.execution_machine_role_id) {
       const role = roles.find((item) => item.machine_role_id === source.execution_machine_role_id);
@@ -741,6 +759,7 @@
           <div><dt>ID</dt><dd class="mono">${esc(source.source_id)}</dd></div>
           <div><dt>${esc(t("observed"))}</dt><dd>${when(source.last_observed_at)}</dd></div>
         </dl>
+        ${sourceRelayHealthURL(source) ? `<div class="row-actions"><a class="button ghost" href="${esc(sourceRelayHealthURL(source))}" target="_blank" rel="noopener noreferrer">${esc(t("relayHealth"))}</a></div>` : ""}
         ${editable ? `<div class="row-actions">
           <button class="button live-source-edit" type="button">${esc(t("editSource"))}</button>
           <button class="button ghost live-source-toggle" type="button">${esc(t(source.desired_enabled ? "disableSource" : "enableSource"))}</button>
