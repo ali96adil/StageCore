@@ -35,12 +35,18 @@ func TestEmbeddedSecurityOperatorClientIsLocalOnly(t *testing.T) {
 		"/api/v1/security/users",
 		"/api/v1/security/plugins/permissions",
 		"/api/v1/security/audit",
+		"/api/v1/security/companions/pairing/pending",
+		"/api/v1/security/companions/pairing/approve",
+		".approve-pairing-request",
 		"/api/v1/auth/renew",
 		"REVOKE",
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("security.js missing %q", required)
 		}
+	}
+	if strings.Contains(js, `id="pairingRequestID"`) || strings.Contains(js, "Pairing request ID<input") {
+		t.Fatal("Security operator client must not require a manually entered pairing request ID")
 	}
 	if strings.Contains(js, "https://") || strings.Contains(js, "http://") {
 		t.Fatal("Security operator client must not depend on WAN assets")
