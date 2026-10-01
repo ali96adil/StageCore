@@ -354,6 +354,80 @@ func (s *Service) evaluateCapabilitiesAndRoles(ctx context.Context, report *Repo
 	for _, id := range ids {
 		s.evaluateRole(ctx, report, dependencies[id], runtimeSnapshot)
 	}
+	s.evaluateMIDIDestinations(ctx, report, manifest, targetByRef)
+}
+
+func (s *Service) evaluateMIDIDestinations(ctx context.Context, report *Report, manifest snapshot.Manifest, targetByRef map[string]snapshot.Target) {
+	roleByID := make(map[string]RoleStatus, len(report.Roles))
+	for _, role := range report.Roles {
+		roleByID[role.MachineRoleID] = role
+	}
+
+	for _, cue := range manifest.Cues {
+		if !cue.Enabled {
+			continue
+		}
+		for _, action := range cue.Actions {
+			if !action.Enabled || strings.TrimSpace(action.CapabilityKey) != "midi.send" {
+				continue
+			}
+			var params struct {
+				DestinationName  string `json:"destination_name"`
+				DestinationIndex *int   `json:"destination_index"`
+			}
+			if err := json.Unmarshal(action.Parameters, &params); err != nil {
+				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination configuration is invalid", err.Error(), action.ID)
+				continue
+			}
+			name := strings.TrimSpace(params.DestinationName)
+			if name != "" && params.DestinationIndex != nil {
+				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination configuration is ambiguous", "Use exactly one of destination_name or destination_index.", action.ID)
+				continue
+			}
+			if name == "" {
+				if params.DestinationIndex != nil && *params.DestinationIndex >= 0 {
+					report.add(Warn, "midi.destination."+action.ID, "companion", "MIDI destination uses a legacy numeric CoreMIDI index", "CoreMIDI destination ordering can change. Re-author this Action with an exact destination name before relying on it for SHOW.", action.ID)
+				} else {
+					report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination is missing", "Use an exact CoreMIDI/IAC destination name.", action.ID)
+				}
+				continue
+			}
+
+			target, ok := targetByRef[action.TargetRef]
+			if !ok || !strings.EqualFold(strings.TrimSpace(target.LogicalType), companion.MachineRoleLogicalType) {
+				report.add(Warn, "midi.destination."+action.ID, "companion", "MIDI destination cannot be verified for this target", name, action.ID)
+				continue
+			}
+			var cfg struct {
+				MachineRoleID string `json:"machine_role_id"`
+			}
+			if err := json.Unmarshal(target.Configuration, &cfg); err != nil || strings.TrimSpace(cfg.MachineRoleID) == "" {
+				continue
+			}
+			roleStatus, ok := roleByID[strings.TrimSpace(cfg.MachineRoleID)]
+			if !ok || strings.TrimSpace(roleStatus.CompanionID) == "" {
+				continue
+			}
+			companionState, err := s.store.GetCompanion(ctx, roleStatus.CompanionID)
+			if err != nil {
+				continue
+			}
+			matches := 0
+			for _, candidate := range companionState.MIDIDestinations {
+				if candidate == name {
+					matches++
+				}
+			}
+			switch matches {
+			case 1:
+				report.add(Pass, "midi.destination."+action.ID, "companion", "MIDI destination is available on the assigned Companion", name, action.ID)
+			case 0:
+				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination is unavailable on the assigned Companion", name, action.ID)
+			default:
+				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination name is ambiguous on the assigned Companion", fmt.Sprintf("%s (%d matches)", name, matches), action.ID)
+			}
+		}
+	}
 }
 
 func (s *Service) evaluateRole(ctx context.Context, report *Report, dependency *roleDependency, runtimeSnapshot domain.RuntimeSnapshot) {
