@@ -38,6 +38,14 @@ func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := stageStore.UpdateCompanionReport(ctx, companion.ID, store.CompanionReportParams{
+		DisplayName: "Video Mac", Platform: "macos", Architecture: "arm64", Version: "0.1.0",
+		Capabilities: []string{"local.echo", "midi.send"},
+		MIDIDestinations: []string{"IAC Driver Bus 1"},
+		Readiness: domain.CompanionReadinessUnknown,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	roleBody, _ := json.Marshal(map[string]any{
 		"role_key": "VIDEO-MAIN", "display_name": "Main Video",
@@ -142,7 +150,9 @@ func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testi
 	}
 	if len(listing.Companions) != 1 || listing.Companions[0].ID != companion.ID ||
 		listing.Companions[0].TrustState != domain.CompanionTrusted ||
-		!machineRoleTestContains(listing.Companions[0].Capabilities, "midi.send") {
+		!machineRoleTestContains(listing.Companions[0].Capabilities, "midi.send") ||
+		len(listing.Companions[0].MIDIDestinations) != 1 ||
+		listing.Companions[0].MIDIDestinations[0] != "IAC Driver Bus 1" {
 		t.Fatalf("unexpected companion options: %+v", listing.Companions)
 	}
 }
