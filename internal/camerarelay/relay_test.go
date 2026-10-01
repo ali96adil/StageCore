@@ -190,6 +190,14 @@ func TestHealthWhenNoSource(t *testing.T){
  recorder:=httptest.NewRecorder()
  relay.Handler().ServeHTTP(recorder,httptest.NewRequest("GET","/api/v0/health",nil))
  if recorder.Code!=503 || !strings.Contains(recorder.Body.String(),"reconnecting"){t.Fatalf("unexpected health: %d %s",recorder.Code,recorder.Body.String())}
+ if recorder.Header().Get("Access-Control-Allow-Origin")!="*" {
+  t.Fatalf("health CORS=%q",recorder.Header().Get("Access-Control-Allow-Origin"))
+ }
+ var health map[string]any
+ if err:=json.Unmarshal(recorder.Body.Bytes(),&health);err!=nil{t.Fatal(err)}
+ if health["service"]!="stagecore-camera-relay" {
+  t.Fatalf("health service=%v",health["service"])
+ }
 }
 
 
