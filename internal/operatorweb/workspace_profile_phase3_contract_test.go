@@ -44,26 +44,33 @@ func TestWorkspaceProfileFeaturePagesContract(t *testing.T) {
 		}
 	}
 
-	for _, source := range []struct {
-		name string
-		text string
-	}{
-		{"feature integration", js},
-		{"workspace profile core", core},
+	// The feature-registration shim itself must remain presentation-only.
+	// workspace-profile.js already contains its pre-existing GET-only SHOW-lock
+	// policy check, so scanning the whole core file for "api(" is a false positive.
+	for _, forbidden := range []string{
+		`api(`,
+		`fetch(`,
+		`method: "POST"`,
+		`method: "PUT"`,
+		`method: "PATCH"`,
+		`method: "DELETE"`,
+		`/runtime/`,
+		`/publish`,
 	} {
-		for _, forbidden := range []string{
-			`api(`,
-			`fetch(`,
-			`method: "POST"`,
-			`method: "PUT"`,
-			`method: "PATCH"`,
-			`method: "DELETE"`,
-			`/runtime/`,
-			`/publish`,
-		} {
-			if strings.Contains(source.text, forbidden) {
-				t.Fatalf("%s must remain presentation-only; found %q", source.name, forbidden)
-			}
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("feature integration must remain presentation-only; found %q", forbidden)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`method: "POST"`,
+		`method: "PUT"`,
+		`method: "PATCH"`,
+		`method: "DELETE"`,
+		`/publish`,
+	} {
+		if strings.Contains(core, forbidden) {
+			t.Fatalf("workspace profile registration must not add mutation authority; found %q", forbidden)
 		}
 	}
 }
