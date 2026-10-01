@@ -126,6 +126,13 @@ function f037NestedShapeValid(capability, parsed) {
   return true;
 }
 
+function f037HasExplicitNull(value) {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.some(f037HasExplicitNull);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some(f037HasExplicitNull);
+}
+
 function f037ParseVisualParameters(capability, raw) {
   const allowed = f037AllowedKeys(capability);
   if (!allowed) return null;
@@ -133,6 +140,7 @@ function f037ParseVisualParameters(capability, raw) {
   try { parsed = JSON.parse(String(raw || "{}")); }
   catch (_) { return null; }
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || parsed.contract_version !== 1) return null;
+  if (f037HasExplicitNull(parsed)) return null;
   if (!Object.keys(parsed).every((key) => allowed.includes(key))) return null;
   if (!f037NestedShapeValid(capability, parsed)) return null;
   return parsed;
@@ -512,7 +520,9 @@ function f037EnhanceNativeVisual(card) {
 
   capabilitySelect.addEventListener("change", () => {
     capability.value = capabilitySelect.value;
+    target.value = "";
     f037RenderVisualPanel(card, null);
+    target.value = panel.querySelector(".f037-target")?.value || "";
   });
   panel.querySelector(".f037-target")?.addEventListener("change", () => {
     target.value = panel.querySelector(".f037-target").value;
