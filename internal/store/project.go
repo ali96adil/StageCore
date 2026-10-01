@@ -154,3 +154,79 @@ func (s *Store) SetRevisionStatus(ctx context.Context, revisionID string, next d
 	}
 	return nil
 }
+
+
+// ReopenCurrentValidatedRevisionIfUnpublished safely restores a current
+// VALIDATED revision to DRAFT only when no Runtime Snapshot was committed for
+// it. This is a narrow recovery path for Publish failures that occur after the
+// revision status transition but before immutable Snapshot commit.
+func (s *Store) ReopenCurrentValidatedRevisionIfUnpublished(ctx context.Context, projectID, revisionID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin revision publish recovery: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentRevisionID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT current_revision_id FROM projects WHERE project_id = ?`,
+		projectID,
+	).Scan(&currentRevisionID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("read current revision for publish recovery: %w", err)
+	}
+	if currentRevisionID != revisionID {
+		return domain.ErrConflict
+	}
+
+	var revisionProjectID, status string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT project_id, status FROM project_revisions WHERE revision_id = ?`,
+		revisionID,
+	).Scan(&revisionProjectID, &status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("read revision for publish recovery: %w", err)
+	}
+	if revisionProjectID != projectID || domain.RevisionStatus(status) != domain.RevisionValidated {
+		return domain.ErrConflict
+	}
+
+	var snapshotCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM runtime_snapshots WHERE revision_id = ?`,
+		revisionID,
+	).Scan(&snapshotCount); err != nil {
+		return fmt.Errorf("count revision snapshots for publish recovery: %w", err)
+	}
+	if snapshotCount != 0 {
+		return domain.ErrConflict
+	}
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE project_revisions
+		 SET status = 'DRAFT'
+		 WHERE revision_id = ? AND project_id = ? AND status = 'VALIDATED'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM runtime_snapshots WHERE revision_id = ?
+		   )`,
+		revisionID, projectID, revisionID,
+	)
+	if err != nil {
+		return fmt.Errorf("restore unpublished validated revision to draft: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("publish recovery rows affected: %w", err)
+	}
+	if affected != 1 {
+		return domain.ErrConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit revision publish recovery: %w", err)
+	}
+	return nil
+}
