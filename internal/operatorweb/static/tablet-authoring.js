@@ -9,7 +9,7 @@
       back: "Back", save: "Save scene", name: "Scene name", label: "Label", addAction: "Add tablet action", tablet: "Tablet", operation: "Layer / action",
       mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainPause: "Main · Pause", mainStop: "Main · Stop",
       overlayPlay: "Overlay · Play", overlayClear: "Overlay · Clear", liveShow: "Live · Show", liveHide: "Live · Hide",
-      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveMode: "Live source type", liveByKey: "Media key", liveByURL: "Direct URL", liveKey: "Live media key", liveURL: "Live URL", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", needLiveURL: "Enter an absolute HTTP(S) live URL.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
+      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveMode: "Live source type", liveByKey: "Media key", liveByURL: "Direct URL", liveKey: "Live media key", liveURL: "Live URL", liveFlash: "Use camera flash for this Live", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", needLiveURL: "Enter an absolute HTTP(S) live URL.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
     },
     ar: {
       nav: "مشاهد التابلت", title: "مشاهد التابلت / Playlist", sub: "ابنِ كيوهات التابلت المرتبة بصورة رسومية. تبقى مخزنة كـ Draft Cues عادية وتتنفذ من Cue Engine.",
@@ -18,7 +18,7 @@
       back: "رجوع", save: "حفظ المشهد", name: "اسم المشهد", label: "الرمز", addAction: "إضافة أمر تابلت", tablet: "التابلت", operation: "الطبقة / الأمر",
       mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
       overlayPlay: "Overlay · تشغيل", overlayClear: "Overlay · مسح", liveShow: "Live · إظهار", liveHide: "Live · إخفاء",
-      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveMode: "نوع مصدر البث", liveByKey: "Media key", liveByURL: "رابط مباشر", liveKey: "Live media key", liveURL: "رابط البث", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", needLiveURL: "دخل رابط HTTP(S) كامل للبث.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
+      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveMode: "نوع مصدر البث", liveByKey: "Media key", liveByURL: "رابط مباشر", liveKey: "Live media key", liveURL: "رابط البث", liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", needLiveURL: "دخل رابط HTTP(S) كامل للبث.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
     },
   };
 
@@ -31,6 +31,7 @@
 
   let sceneModel = { scenes: [] };
   let tabletModel = { devices: [] };
+  let allCueModel = { cues: [] };
   let filterDeviceID = "";
 
   function lang() { return document.documentElement.lang?.toLowerCase().startsWith("ar") ? "ar" : "en"; }
@@ -71,9 +72,10 @@
   }
 
   async function loadModels() {
-    [tabletModel, sceneModel] = await Promise.all([
+    [tabletModel, sceneModel, allCueModel] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(pid())}/tablet-controller`),
       api(`/api/v1/projects/${encodeURIComponent(pid())}/tablet-controller/scenes`),
+      api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`),
     ]);
     if (filterDeviceID && !devices().some((device) => device.device_id === filterDeviceID)) filterDeviceID = "";
   }
@@ -128,7 +130,7 @@
   }
 
   function nextOrderIndex() {
-    return (sceneModel.scenes || []).reduce((max, scene) => Math.max(max, Number(scene.order_index) || 0), -1) + 1;
+    return (allCueModel.cues || []).reduce((max, cue) => Math.max(max, Number(cue.order_index) || 0), -1) + 1;
   }
 
   function addActionRow(action) {
@@ -167,11 +169,22 @@
     }
     if (command === "TABLET_LIVE_SHOW") {
       const direct = !!params.url;
-      host.innerHTML = `<label>${esc(tx("liveMode"))}<select class="tablet-live-mode"><option value="key" ${direct ? "" : "selected"}>${esc(tx("liveByKey"))}</option><option value="url" ${direct ? "selected" : ""}>${esc(tx("liveByURL"))}</option></select></label><label class="tablet-live-key ${direct ? "hidden" : ""}">${esc(tx("liveKey"))}<input value="${esc(params.media_key || "")}" dir="ltr"></label><label class="tablet-live-url ${direct ? "" : "hidden"}">${esc(tx("liveURL"))}<input value="${esc(params.url || "")}" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>`;
+      let liveURL = params.url || "";
+      let flash = false;
+      if (direct) {
+        try {
+          const parsed = new URL(liveURL);
+          flash = ["1", "true", "on", "yes"].includes((parsed.searchParams.get("flash") || "").toLowerCase());
+          parsed.searchParams.delete("flash");
+          liveURL = parsed.toString();
+        } catch (_) {}
+      }
+      host.innerHTML = `<label>${esc(tx("liveMode"))}<select class="tablet-live-mode"><option value="key" ${direct ? "" : "selected"}>${esc(tx("liveByKey"))}</option><option value="url" ${direct ? "selected" : ""}>${esc(tx("liveByURL"))}</option></select></label><label class="tablet-live-key ${direct ? "hidden" : ""}">${esc(tx("liveKey"))}<input value="${esc(params.media_key || "")}" dir="ltr"></label><label class="tablet-live-url ${direct ? "" : "hidden"}">${esc(tx("liveURL"))}<input value="${esc(liveURL)}" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label><label class="tablet-live-flash ${direct ? "" : "hidden"}"><input type="checkbox" ${flash ? "checked" : ""}> ${esc(tx("liveFlash"))}</label>`;
       host.querySelector(".tablet-live-mode")?.addEventListener("change", (event) => {
         const urlMode = event.target.value === "url";
         host.querySelector(".tablet-live-key")?.classList.toggle("hidden", urlMode);
         host.querySelector(".tablet-live-url")?.classList.toggle("hidden", !urlMode);
+        host.querySelector(".tablet-live-flash")?.classList.toggle("hidden", !urlMode);
       });
       return;
     }
@@ -198,7 +211,9 @@
         if (!parsed || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
           throw new Error(tx("needLiveURL"));
         }
-        return { url: value };
+        if (params.querySelector(".tablet-live-flash input")?.checked) parsed.searchParams.set("flash", "1");
+        else parsed.searchParams.delete("flash");
+        return { url: parsed.toString() };
       }
       const mediaKey = params.querySelector(".tablet-live-key input")?.value.trim() || "";
       if (!mediaKey) throw new Error(tx("needLiveKey"));
