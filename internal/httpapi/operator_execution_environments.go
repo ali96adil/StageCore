@@ -16,6 +16,10 @@ type executionEnvironmentCreateRequest struct {
 	Manifest executionenv.Manifest `json:"manifest"`
 }
 
+type executionEnvironmentUpdateRequest struct {
+	Manifest executionenv.Manifest `json:"manifest"`
+}
+
 type executionEnvironmentBindingRequest struct {
 	MachineRoleID *string `json:"machine_role_id"`
 }
@@ -94,6 +98,33 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 			return
 		}
 		writeJSON(w, http.StatusCreated, makeExecutionEnvironmentView(created))
+	}))
+
+	mux.HandleFunc("PUT "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+		if !ok {
+			return
+		}
+		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
+		existing, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
+		if err != nil {
+			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_UPDATE_FAILED")
+			return
+		}
+		if existing.RevisionID != revision.ID {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
+			return
+		}
+		var body executionEnvironmentUpdateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		updated, err := stageStore.UpdateExecutionEnvironmentManifest(r.Context(), environmentID, body.Manifest)
+		if err != nil {
+			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_UPDATE_FAILED")
+			return
+		}
+		writeJSON(w, http.StatusOK, makeExecutionEnvironmentView(updated))
 	}))
 
 	mux.HandleFunc("PUT "+item+"/machine-role", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
