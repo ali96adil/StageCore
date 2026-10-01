@@ -669,7 +669,7 @@ async function renderRuntime(startPolling = false) {
           <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
           <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
               <option value="">Select published Cue…</option>
@@ -677,7 +677,7 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          <div class="message warn"><strong>STOP CUE is not a blackout.</strong> It only interrupts the current Cue/interruptible Actions. Stopping the Session runs configured Lighting blackout safety before ending the Session; Tablet, Native Visual, external VDMX and audio remain separate safe-state domains.</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -723,7 +723,7 @@ async function goRuntime() {
 }
 
 async function stopCueRuntime() {
-  if (!confirm("Request STOP for the currently running Cue/interruptible Actions?")) return;
+  if (!confirm("STOP CUE only interrupts the currently running Cue/interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
