@@ -54,6 +54,8 @@ func TestPhase4LiveVideoUXSupportsEditingAndMachineRolePlacement(t *testing.T) {
 		"video.source.open",
 		"video.source.route",
 		"liveSourceRoles",
+		"liveSourceExecutionCapabilities.every",
+		"required.has(capability)",
 		"live-source-edit",
 		"live-source-toggle",
 		"Update source",
