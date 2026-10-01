@@ -68,6 +68,26 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 		t.Fatal("guided UX must not depend on remote assets or services")
 	}
 
+	appReq := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	appReq.RemoteAddr = "127.0.0.1:17105"
+	appRes := httptest.NewRecorder()
+	handler.ServeHTTP(appRes, appReq)
+	if appRes.Code != http.StatusOK {
+		t.Fatalf("app.js status=%d", appRes.Code)
+	}
+	app := appRes.Body.String()
+	for _, required := range []string{
+		"/preflight",
+		"Preflight:",
+		"showBlocked",
+		"runtimeOpenPreflight",
+		"Client readiness display cannot bypass Preflight",
+	} {
+		if !strings.Contains(app, required) {
+			t.Fatalf("app.js missing Runtime Preflight UX contract %q", required)
+		}
+	}
+
 	cssReq := httptest.NewRequest(http.MethodGet, "/guided-ux.css", nil)
 	cssReq.RemoteAddr = "127.0.0.1:17104"
 	cssRes := httptest.NewRecorder()
