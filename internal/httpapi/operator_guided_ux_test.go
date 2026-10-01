@@ -46,6 +46,13 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 	for _, required := range []string{
 		"RECOMMENDED NEXT STEP",
 		"Quick target setup",
+		"Route behavior",
+		"f002RouteConditionKind",
+		"f002RouteTransformKind",
+		"Use transformed input",
+		"Inside numeric range",
+		"Scale / offset number",
+		"Advanced routing conditions and parameters",
 		"Send OSC message",
 		"Send MIDI message",
 		"midi.send",
