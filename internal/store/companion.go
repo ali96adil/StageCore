@@ -31,6 +31,7 @@ type CompanionReportParams struct {
 	Architecture             string
 	Version                  string
 	Capabilities             []string
+	MIDIDestinations         []string
 	Readiness                domain.CompanionReadiness
 	AppliedRuntimeSnapshotID *string
 	ConfigHash               string
@@ -84,7 +85,7 @@ func (s *Store) RegisterCompanion(ctx context.Context, p RegisterCompanionParams
 func (s *Store) GetCompanion(ctx context.Context, companionID string) (domain.Companion, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT companion_id, display_name, hostname, platform, architecture, version,
-		       capabilities_json, last_seen_at_us, trust_state, readiness,
+		       capabilities_json, midi_destinations_json, last_seen_at_us, trust_state, readiness,
 		       applied_runtime_snapshot_id, config_hash, created_at_us, updated_at_us
 		FROM companions WHERE companion_id = ?`, companionID)
 	return scanCompanion(row)
@@ -120,6 +121,10 @@ func (s *Store) UpdateCompanionReport(ctx context.Context, companionID string, p
 	if err != nil {
 		return domain.Companion{}, fmt.Errorf("encode companion capabilities: %w", err)
 	}
+	midiDestinationsJSON, err := json.Marshal(normalizeStringListPreserveDuplicates(p.MIDIDestinations))
+	if err != nil {
+		return domain.Companion{}, fmt.Errorf("encode companion MIDI destinations: %w", err)
+	}
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
 	var snapshot any
@@ -132,11 +137,11 @@ func (s *Store) UpdateCompanionReport(ctx context.Context, companionID string, p
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE companions
 		SET display_name = ?, hostname = ?, platform = ?, architecture = ?, version = ?,
-		    capabilities_json = ?, last_seen_at_us = ?, readiness = ?,
+		    capabilities_json = ?, midi_destinations_json = ?, last_seen_at_us = ?, readiness = ?,
 		    applied_runtime_snapshot_id = ?, config_hash = ?, updated_at_us = ?
 		WHERE companion_id = ? AND trust_state <> 'REVOKED'`,
 		strings.TrimSpace(p.DisplayName), strings.TrimSpace(p.Hostname), strings.TrimSpace(p.Platform),
-		strings.TrimSpace(p.Architecture), strings.TrimSpace(p.Version), string(capabilitiesJSON), nowUS,
+		strings.TrimSpace(p.Architecture), strings.TrimSpace(p.Version), string(capabilitiesJSON), string(midiDestinationsJSON), nowUS,
 		p.Readiness, snapshot, strings.TrimSpace(p.ConfigHash), nowUS, companionID,
 	)
 	if err != nil {
@@ -294,12 +299,13 @@ type rowScanner interface {
 func scanCompanion(row rowScanner) (domain.Companion, error) {
 	var c domain.Companion
 	var capabilitiesJSON string
+	var midiDestinationsJSON string
 	var lastSeenUS, createdUS, updatedUS int64
 	var trust, readiness string
 	var snapshot sql.NullString
 	if err := row.Scan(
 		&c.ID, &c.DisplayName, &c.Hostname, &c.Platform, &c.Architecture, &c.Version,
-		&capabilitiesJSON, &lastSeenUS, &trust, &readiness, &snapshot, &c.ConfigHash, &createdUS, &updatedUS,
+		&capabilitiesJSON, &midiDestinationsJSON, &lastSeenUS, &trust, &readiness, &snapshot, &c.ConfigHash, &createdUS, &updatedUS,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Companion{}, domain.ErrNotFound
@@ -308,6 +314,9 @@ func scanCompanion(row rowScanner) (domain.Companion, error) {
 	}
 	if err := json.Unmarshal([]byte(capabilitiesJSON), &c.Capabilities); err != nil {
 		return domain.Companion{}, fmt.Errorf("decode companion capabilities: %w", err)
+	}
+	if err := json.Unmarshal([]byte(midiDestinationsJSON), &c.MIDIDestinations); err != nil {
+		return domain.Companion{}, fmt.Errorf("decode companion MIDI destinations: %w", err)
 	}
 	c.LastSeenAt = clock.FromUnixMicros(lastSeenUS)
 	c.TrustState = domain.CompanionTrustState(trust)
@@ -391,6 +400,18 @@ func validCompanionReadiness(value domain.CompanionReadiness) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeStringListPreserveDuplicates(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func normalizeStringList(values []string) []string {
