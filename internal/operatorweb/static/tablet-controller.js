@@ -44,6 +44,13 @@
       runtimeScope: "Runtime scope",
       manifest: "Manifest",
       snapshot: "Snapshot",
+      battery: "Battery",
+      charging: "Charging",
+      powerSave: "Power save",
+      brightness: "Brightness",
+      orientation: "Orientation",
+      on: "ON",
+      off: "OFF",
       offline: "Offline",
       commandOK: "Tablet command dispatched.",
       commandPartial: "Command completed with one or more tablet errors.",
@@ -97,6 +104,13 @@
       runtimeScope: "Runtime scope",
       manifest: "Manifest",
       snapshot: "Snapshot",
+      battery: "البطارية",
+      charging: "يشحن",
+      powerSave: "توفير الطاقة",
+      brightness: "السطوع",
+      orientation: "الاتجاه",
+      on: "مفعّل",
+      off: "متوقف",
       offline: "غير متصل",
       commandOK: "تم إرسال أمر التابلت.",
       commandPartial: "تم التنفيذ لكن أكو خطأ بواحد أو أكثر من التابلتات.",
@@ -112,6 +126,7 @@
 
   let model = null;
   const selected = new Set();
+  let healthRefreshTimer = null;
 
   function lang() {
     return document.documentElement.lang?.toLowerCase().startsWith("ar") ? "ar" : "en";
@@ -137,6 +152,31 @@
       : {};
   }
 
+  function health(device) {
+    const value = observed(device).health;
+    return value && typeof value === "object" ? value : {};
+  }
+
+  function batteryText(device) {
+    const value = health(device);
+    const percent = Number(value.battery_percent);
+    if (!Number.isFinite(percent) || percent < 0) return `${t("battery")}: —`;
+    return `${t("battery")}: ${Math.round(percent)}%${value.battery_charging ? ` · ⚡ ${t("charging")}` : ""}`;
+  }
+
+  function powerText(device) {
+    const value = health(device);
+    return `${t("powerSave")}: ${value.power_save ? t("on") : t("off")}`;
+  }
+
+  function detailHealthText(device) {
+    const value = health(device);
+    const details = [];
+    if (Number.isFinite(Number(value.brightness_percent))) details.push(`${t("brightness")}: ${Math.round(Number(value.brightness_percent))}%`);
+    if (value.orientation_mode) details.push(`${t("orientation")}: ${String(value.orientation_mode)}`);
+    return details.join(" · ") || "—";
+  }
+
   function selectedDevices() {
     const devices = model?.devices || [];
     return devices.filter((device) => selected.has(device.device_id));
@@ -158,14 +198,17 @@
     const online = runtime.connection_state === "ONLINE";
     const checked = selected.has(device.device_id) ? "checked" : "";
     return `
-      <label class="tablet-device-card ${online ? "online" : "offline"}">
+      <label class="tablet-device-card ${online ? "online" : "offline"}" data-tablet-device-id="${esc(device.device_id)}">
         <div class="tablet-device-head">
           <input class="tablet-device-check" type="checkbox" data-device-id="${esc(device.device_id)}" ${checked}>
           <div><strong>${esc(device.display_name || device.device_id)}</strong><span>${esc(device.group_name || "—")}</span></div>
-          <span class="pill ${online ? "good" : "bad"}">${esc(runtime.connection_state || t("offline"))}</span>
+          <span class="pill ${online ? "good" : "bad"}" data-tablet-connection>${esc(runtime.connection_state || t("offline"))}</span>
         </div>
         <div class="tablet-device-meta">
-          <span>${esc(runtime.readiness || "UNKNOWN")}</span>
+          <span data-tablet-readiness>${esc(runtime.readiness || "UNKNOWN")}</span>
+          <span data-tablet-battery>${esc(batteryText(device))}</span>
+          <span data-tablet-power>${esc(powerText(device))}</span>
+          <span data-tablet-health-details>${esc(detailHealthText(device))}</span>
           <span>${esc(t("snapshot"))}: <span class="mono">${esc(shortID(scope.runtime_snapshot_id))}</span></span>
           <span>${esc(t("manifest"))}: <span class="mono">${esc(shortID(scope.tablet_manifest_id))}</span></span>
         </div>
@@ -242,6 +285,46 @@
       ` : `<div class="empty">${esc(t("noTablets"))}</div>`}`;
 
     bindTabletController();
+    scheduleTabletHealthRefresh();
+  }
+
+  function scheduleTabletHealthRefresh() {
+    if (healthRefreshTimer) window.clearTimeout(healthRefreshTimer);
+    healthRefreshTimer = window.setTimeout(refreshTabletHealth, 10000);
+  }
+
+  async function refreshTabletHealth() {
+    healthRefreshTimer = null;
+    if (state.page !== "tablet-controller" || !state.project) return;
+    try {
+      const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller`);
+      model = payload;
+      for (const device of payload.devices || []) {
+        const card = content.querySelector(`[data-tablet-device-id="${CSS.escape(device.device_id)}"]`);
+        if (!card) continue;
+        const runtime = device.runtime || {};
+        const online = runtime.connection_state === "ONLINE";
+        card.classList.toggle("online", online);
+        card.classList.toggle("offline", !online);
+        const connection = card.querySelector("[data-tablet-connection]");
+        if (connection) {
+          connection.textContent = runtime.connection_state || t("offline");
+          connection.className = `pill ${online ? "good" : "bad"}`;
+        }
+        const readiness = card.querySelector("[data-tablet-readiness]");
+        if (readiness) readiness.textContent = runtime.readiness || "UNKNOWN";
+        const battery = card.querySelector("[data-tablet-battery]");
+        if (battery) battery.textContent = batteryText(device);
+        const power = card.querySelector("[data-tablet-power]");
+        if (power) power.textContent = powerText(device);
+        const details = card.querySelector("[data-tablet-health-details]");
+        if (details) details.textContent = detailHealthText(device);
+      }
+    } catch (_) {
+      // Keep the last truthful values on-screen; normal controller errors remain operator-driven.
+    } finally {
+      if (state.page === "tablet-controller") scheduleTabletHealthRefresh();
+    }
   }
 
   function setControllerMessage(message, kind = "") {
