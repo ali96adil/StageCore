@@ -183,12 +183,12 @@ function f037FieldMarkup(capability, p = {}) {
     const t = p.transform || {};
     return `<div class="form-grid three">
       <label>Layer ID<input class="f037-layer" value="${layer}" required></label>
-      <label>X<input class="f037-x" type="number" step="any" value="${esc(t.x ?? 0)}" required></label>
-      <label>Y<input class="f037-y" type="number" step="any" value="${esc(t.y ?? 0)}" required></label>
-      <label>Scale X<input class="f037-scale-x" type="number" min="0.000001" step="any" value="${esc(t.scale_x ?? 1)}" required></label>
-      <label>Scale Y<input class="f037-scale-y" type="number" min="0.000001" step="any" value="${esc(t.scale_y ?? 1)}" required></label>
-      <label>Rotation  deg<input class="f037-rotation" type="number" step="any" value="${esc(t.rotation_degrees ?? 0)}" required></label>
-    </div>`;
+      <label>X (optional)<input class="f037-x" type="number" step="any" value="${esc(t.x ?? "")}"></label>
+      <label>Y (optional)<input class="f037-y" type="number" step="any" value="${esc(t.y ?? "")}"></label>
+      <label>Scale X (optional)<input class="f037-scale-x" type="number" min="0.000001" step="any" value="${esc(t.scale_x ?? "")}"></label>
+      <label>Scale Y (optional)<input class="f037-scale-y" type="number" min="0.000001" step="any" value="${esc(t.scale_y ?? "")}"></label>
+      <label>Rotation deg (optional)<input class="f037-rotation" type="number" step="any" value="${esc(t.rotation_degrees ?? "")}"></label>
+    </div><p class="muted">Set only the transform fields you want to change. At least one field is required.</p>`;
   }
   if (capability === "visual.transition") {
     return `<div class="form-grid three">
@@ -250,7 +250,7 @@ function f037FieldMarkup(capability, p = {}) {
       <label>Layer ID<input class="f037-layer" value="${layer}" required></label>
       <label>Content version ID<input class="f037-content-version" value="${esc(p.content_version_id || "")}" required></label>
       <label>Content SHA-256<input class="f037-content-hash mono" value="${esc(p.content_hash || "")}" pattern="[0-9a-f]{64}" required></label>
-      <label>Content mode<select class="f037-content-mode">${["FIT","FILL","CROP"].map((v) => `<option value="${v}" ${p.content_mode === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      <label>Content mode<select class="f037-content-mode"><option value="" ${p.content_mode ? "" : "selected"}>Default / unchanged</option>${["FIT","FILL","CROP"].map((v) => `<option value="${v}" ${p.content_mode === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <label>Opacity (optional 0-1)<input class="f037-opacity" type="number" min="0" max="1" step="0.01" value="${esc(p.opacity ?? "")}"></label>
       <label>Output ID (optional)<input class="f037-output" value="${esc(p.output_id || "")}"></label>
       <label>Z index (optional)<input class="f037-z" type="number" min="-4096" max="4096" step="1" value="${esc(p.z_index ?? "")}"></label>
@@ -300,7 +300,8 @@ function f037BuildVisualPayload(panel) {
       const hash = String(q(".f037-content-hash")?.value || "").trim();
       if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("Content SHA-256 must be 64 lowercase hexadecimal characters.");
       p.content_hash = hash;
-      p.content_mode = q(".f037-content-mode")?.value || "FIT";
+      const contentMode = q(".f037-content-mode")?.value || "";
+      if (contentMode) p.content_mode = contentMode;
       const opacity = f037OptionalNumber(panel, ".f037-opacity", "Opacity", 0, 1);
       if (opacity !== undefined) p.opacity = opacity;
       const outputID = String(q(".f037-output")?.value || "").trim();
@@ -342,16 +343,24 @@ function f037BuildVisualPayload(panel) {
       p.layer_id = layer();
       p.opacity = f037Number(q(".f037-opacity")?.value, "Opacity", 0, 1);
       break;
-    case "visual.layer.transform":
+    case "visual.layer.transform": {
       p.layer_id = layer();
-      p.transform = {
-        x: f037Number(q(".f037-x")?.value, "X"),
-        y: f037Number(q(".f037-y")?.value, "Y"),
-        scale_x: f037Number(q(".f037-scale-x")?.value, "Scale X", 0.000001),
-        scale_y: f037Number(q(".f037-scale-y")?.value, "Scale Y", 0.000001),
-        rotation_degrees: f037Number(q(".f037-rotation")?.value, "Rotation"),
-      };
+      const transform = {};
+      const fields = [
+        [".f037-x", "x", "X", -Number.MAX_VALUE],
+        [".f037-y", "y", "Y", -Number.MAX_VALUE],
+        [".f037-scale-x", "scale_x", "Scale X", 0.000001],
+        [".f037-scale-y", "scale_y", "Scale Y", 0.000001],
+        [".f037-rotation", "rotation_degrees", "Rotation", -Number.MAX_VALUE],
+      ];
+      for (const [selector, key, label, min] of fields) {
+        const value = f037OptionalNumber(panel, selector, label, min, Number.MAX_VALUE);
+        if (value !== undefined) transform[key] = value;
+      }
+      if (!Object.keys(transform).length) throw new Error("Layer transform requires at least one transform field.");
+      p.transform = transform;
       break;
+    }
     case "visual.transition": {
       const kind = q(".f037-transition-kind")?.value || "CUT";
       const from = f037Identifier(q(".f037-from-layer")?.value, "From layer");
@@ -439,7 +448,7 @@ function f037RenderVisualPanel(card, parsedParameters = null) {
   const capability = capabilitySelect.value;
   const targets = f037TargetsForCapability(capability, currentTarget);
   targetSelect.innerHTML = `<option value="">Choose compatible Native Visual role...</option>` + targets.map(({target, legacy}) =>
-    `<option value="${esc(target.logical_name)}" ${target.logical_name === currentTarget ? "selected" : ""}>${esc(target.logical_name)}${legacy ? " - legacy / capability mismatch" : ""}</option>`
+    `<option value="${esc(target.logical_name)}" ${target.logical_name === currentTarget ? "selected" : ""}>${esc(target.logical_name)}${legacy ? " - legacy / retired or capability mismatch" : ""}</option>`
   ).join("");
   if (!targetSelect.value && targets.length === 1) targetSelect.value = targets[0].target.logical_name;
   fields.innerHTML = f037FieldMarkup(capability, parsedParameters || {});
