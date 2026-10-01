@@ -631,12 +631,20 @@ async function publishDraft() {
 }
 
 async function renderRuntime(startPolling = false) {
-  const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+  const projectID = encodeURIComponent(state.project.project_id);
+  const [runtime, preflight] = await Promise.all([
+    api(`/api/v1/projects/${projectID}/runtime`),
+    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
+  ]);
   const active = runtime.session;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
+  const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
+  const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
+  const showBlocked = preflight?.status === "BLOCK";
+  const preflightKind = preflight?.status === "PASS" ? "good" : preflight?.status === "WARN" ? "warn" : preflight?.status === "BLOCK" ? "bad" : "neutral";
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
@@ -653,9 +661,14 @@ async function renderRuntime(startPolling = false) {
       <section class="runtime-controls">
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
+          <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
+            <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
+            <span> · ${esc(blockers)} blocker(s) · ${esc(warnings)} warning(s)</span>
+            <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
+          </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot ? "disabled" : ""} type="button">Enter SHOW</button>
-          <small class="muted">SHOW remains blocked until the S3 Preflight gate passes.</small>` : `
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
+          <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP</button>
           <label>Jump to Cue
@@ -677,6 +690,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>`;
 
+  el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
   el("goButton")?.addEventListener("click", goRuntime);
