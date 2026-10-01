@@ -33,6 +33,13 @@
       liveURL: "Live URL",
       liveShow: "Show live",
       liveHide: "Hide live",
+      liveFlash: "Use camera flash for this Live",
+      flashOverride: "Camera flash override",
+      flashAuto: "AUTO",
+      flashOn: "Force ON",
+      flashOff: "Force OFF",
+      flashControlOK: "Camera flash override updated.",
+      needRelayURL: "Enter the direct Camera Relay URL first.",
       blackout: "Screen safety",
       blackoutSub: "Blackout is P0. Clear blackout restores the player surface.",
       blackoutOn: "BLACKOUT",
@@ -107,6 +114,13 @@
       liveURL: "رابط البث",
       liveShow: "إظهار Live",
       liveHide: "إخفاء Live",
+      liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive",
+      flashOverride: "تحكم يدوي بفلاش الكاميرا",
+      flashAuto: "تلقائي AUTO",
+      flashOn: "تشغيل إجباري",
+      flashOff: "إطفاء إجباري",
+      flashControlOK: "تم تحديث تحكم فلاش الكاميرا.",
+      needRelayURL: "دخل رابط Camera Relay المباشر أولاً.",
       blackout: "أمان الشاشة",
       blackoutSub: "الـBlackout أولوية P0. الإلغاء يرجع سطح المشغل.",
       blackoutOn: "BLACKOUT",
@@ -317,8 +331,15 @@
               <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="key">${esc(t("liveByKey"))}</option><option value="url">${esc(t("liveByURL"))}</option></select></label>
               <label id="tabletLiveKeyWrap">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
               <label id="tabletLiveURLWrap" class="hidden">${esc(t("liveURL"))}<input id="tabletLiveURL" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
+              <label id="tabletLiveFlashWrap" class="hidden"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
             </div>
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
+            <div id="tabletFlashOverrideWrap" class="tablet-command-row hidden">
+              <span class="muted">${esc(t("flashOverride"))}</span>
+              <button class="button ghost" data-live-flash-state="auto" type="button">${esc(t("flashAuto"))}</button>
+              <button class="button ghost" data-live-flash-state="on" type="button">${esc(t("flashOn"))}</button>
+              <button class="button ghost" data-live-flash-state="off" type="button">${esc(t("flashOff"))}</button>
+            </div>
           </section>
           <section class="card tablet-control-panel">
             <div><p class="eyebrow">SETTINGS</p><h2>${esc(t("tabletSettings"))}</h2><p class="muted">${esc(t("tabletSettingsSub"))}</p></div>
@@ -431,10 +452,17 @@
       const direct = event.target.value === "url";
       document.getElementById("tabletLiveKeyWrap")?.classList.toggle("hidden", direct);
       document.getElementById("tabletLiveURLWrap")?.classList.toggle("hidden", !direct);
+      document.getElementById("tabletLiveFlashWrap")?.classList.toggle("hidden", !direct);
+      document.getElementById("tabletFlashOverrideWrap")?.classList.toggle("hidden", !direct);
     });
     document.querySelectorAll("[data-tablet-command]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
       try { await dispatchTabletCommand(button.dataset.tabletCommand); }
+      finally { button.disabled = false; }
+    }));
+    document.querySelectorAll("[data-live-flash-state]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try { await setLiveFlashOverride(button.dataset.liveFlashState); }
       finally { button.disabled = false; }
     }));
     document.getElementById("tabletBrightnessApply")?.addEventListener("click", async () => {
@@ -515,13 +543,35 @@
         if (!parsed || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
           throw new Error(t("needLiveURL"));
         }
-        return { url: value };
+        if (document.getElementById("tabletLiveFlash")?.checked) parsed.searchParams.set("flash", "1");
+        else parsed.searchParams.delete("flash");
+        return { url: parsed.toString() };
       }
       const key = document.getElementById("tabletLiveKey")?.value.trim() || "";
       if (!key) throw new Error(t("needLiveKey"));
       return { media_key: key };
     }
     return {};
+  }
+
+  async function setLiveFlashOverride(stateValue) {
+    const value = document.getElementById("tabletLiveURL")?.value.trim() || "";
+    let parsed = null;
+    try { parsed = new URL(value); } catch (_) {}
+    if (!parsed || parsed.protocol !== "http:" || parsed.username || parsed.password) {
+      setControllerMessage(t("needRelayURL"), "warn");
+      return;
+    }
+    parsed.searchParams.delete("flash");
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/live-flash`, {
+        method: "POST",
+        json: { url: parsed.toString(), state: stateValue },
+      });
+      setControllerMessage(t("flashControlOK"), "success");
+    } catch (error) {
+      setControllerMessage(errorMessage(error), "error");
+    }
   }
 
   async function dispatchTabletCommand(command, deviceIDs = null, payloadOverride = null) {
