@@ -209,6 +209,104 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 	}
 }
 
+func TestEmergencyBlackoutLatchesBlocksGoAndRequiresExplicitClear(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, startResult := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000701",
+	})
+	if startResult.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", startResult)
+	}
+
+	var calls []bool
+	h.service.emergencySafety = func(_ context.Context, got domain.Session, command contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if got.ID != session.ID || command.Priority != "P0" {
+			t.Fatalf("emergency authority session=%s priority=%s", got.ID, command.Priority)
+		}
+		calls = append(calls, enabled)
+		return json.RawMessage(`{"lighting":{"status":"COMPLETED"},"audio":{"status":"UNCHANGED_BY_DESIGN"}}`), nil
+	}
+
+	activated := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "owner", Enabled: true,
+		RequestID: "00000000-0000-7000-8000-000000000702",
+	})
+	if activated.Status != contracts.CommandCompleted {
+		t.Fatalf("activate blackout=%+v", activated)
+	}
+	latched, err := h.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || !latched {
+		t.Fatalf("blackout latch=%v err=%v", latched, err)
+	}
+
+	blocked := h.service.Go(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000703",
+	})
+	if blocked.Status != contracts.CommandRejected || blocked.Error == nil || blocked.Error.ErrorCode != "EMERGENCY_BLACKOUT_ACTIVE" {
+		t.Fatalf("GO during blackout=%+v", blocked)
+	}
+
+	cleared := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "owner", Enabled: false,
+		RequestID: "00000000-0000-7000-8000-000000000704",
+	})
+	if cleared.Status != contracts.CommandCompleted {
+		t.Fatalf("clear blackout=%+v", cleared)
+	}
+	latched, err = h.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || latched {
+		t.Fatalf("cleared blackout latch=%v err=%v", latched, err)
+	}
+	if len(calls) != 2 || !calls[0] || calls[1] {
+		t.Fatalf("emergency callbacks=%v", calls)
+	}
+
+	goResult := h.service.Go(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000705",
+	})
+	if goResult.Status != contracts.CommandCompleted {
+		t.Fatalf("GO after explicit clear=%+v", goResult)
+	}
+}
+
+func TestEmergencyBlackoutPartialFailureKeepsPersistentGoBlock(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, startResult := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000711",
+	})
+	if startResult.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", startResult)
+	}
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		return json.RawMessage(`{"lighting":{"status":"FAILED"}}`), fmt.Errorf("lighting blackout unconfirmed")
+	}
+
+	result := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "owner", Enabled: true,
+		RequestID: "00000000-0000-7000-8000-000000000712",
+	})
+	if result.Status != contracts.CommandFailed || result.Error == nil || result.Error.ErrorCode != "EMERGENCY_BLACKOUT_PARTIAL_FAILURE" {
+		t.Fatalf("partial emergency result=%+v", result)
+	}
+	latched, err := h.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || !latched {
+		t.Fatalf("partial failure released latch=%v err=%v", latched, err)
+	}
+	blocked := h.service.Go(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000713",
+	})
+	if blocked.Status != contracts.CommandRejected || blocked.Error == nil || blocked.Error.ErrorCode != "EMERGENCY_BLACKOUT_ACTIVE" {
+		t.Fatalf("GO after partial emergency=%+v", blocked)
+	}
+}
+
 func TestShowRemainsBlockedUntilPreflightGateIsInstalled(t *testing.T) {
 	h := newRuntimeHarness(t)
 	_, result := h.service.StartSession(context.Background(), StartRequest{
