@@ -46,3 +46,54 @@ func TestEventJournalSequencePersistsAcrossReopen(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if len(events) != 3 || string(events[2].TraceContext) != `{"trace_id":"abc"}` { t.Fatalf("events=%#v", events) }
 }
+
+
+func TestManagedOutputBlackoutPersistsAcrossHubRestart(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	h, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(h.DB, clock.Fixed{Time: fixedTime})
+	_, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Emergency Safety", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSnapshot, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionRehearsal, "blackout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSessionManagedOutputBlackout(ctx, session.ID, true, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := s.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("initial blackout active=%v err=%v", active, err)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err = db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s = store.New(h.DB, clock.Fixed{Time: fixedTime})
+	if active, err := s.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("reopened blackout active=%v err=%v", active, err)
+	}
+	if err := s.SetSessionManagedOutputBlackout(ctx, session.ID, false, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := s.SessionManagedOutputBlackout(ctx, session.ID); err != nil || active {
+		t.Fatalf("cleared blackout active=%v err=%v", active, err)
+	}
+}
