@@ -284,3 +284,48 @@ func TestNormalizeTabletLivePayload(t *testing.T) {
 		})
 	}
 }
+
+
+func TestNormalizeTabletSettingsPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		command string
+		raw string
+		want string
+		wantErr bool
+	}{
+		{name:"brightness", command:deviceexperience.CommandTabletBrightnessSet, raw:`{"brightness_percent":75}`, want:`{"brightness_percent":75}`},
+		{name:"brightness minimum", command:deviceexperience.CommandTabletBrightnessSet, raw:`{"brightness_percent":5}`, want:`{"brightness_percent":5}`},
+		{name:"brightness below minimum", command:deviceexperience.CommandTabletBrightnessSet, raw:`{"brightness_percent":4}`, wantErr:true},
+		{name:"brightness fraction", command:deviceexperience.CommandTabletBrightnessSet, raw:`{"brightness_percent":50.5}`, wantErr:true},
+		{name:"brightness extra field", command:deviceexperience.CommandTabletBrightnessSet, raw:`{"brightness_percent":50,"other":1}`, wantErr:true},
+		{name:"show on", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":true}`, want:`{"show_mode":true}`},
+		{name:"show off", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":false}`, want:`{"show_mode":false}`},
+		{name:"show wrong type", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":"true"}`, wantErr:true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeTabletCommandPayload(tc.command, json.RawMessage(tc.raw))
+			if tc.wantErr {
+				if err == nil { t.Fatalf("expected error, got %s", got) }
+				return
+			}
+			if err != nil { t.Fatal(err) }
+			if string(got) != tc.want { t.Fatalf("payload=%s want=%s", got, tc.want) }
+		})
+	}
+}
+
+func TestTabletSettingsCapabilityClassification(t *testing.T) {
+	if !tabletRuntimeCapability(deviceexperience.CapabilityTabletBrightnessSet) ||
+		!tabletRuntimeCapability(deviceexperience.CapabilityTabletShowModeSet) {
+		t.Fatal("authenticated Tablet settings capabilities were not accepted by runtime facade")
+	}
+	if !tabletSettingsCommand(deviceexperience.CommandTabletBrightnessSet) ||
+		!tabletSettingsCommand(deviceexperience.CommandTabletShowModeSet) {
+		t.Fatal("settings commands were not classified as guarded settings mutations")
+	}
+	if tabletSettingsCommand(deviceexperience.CommandTabletPlay) {
+		t.Fatal("media playback was incorrectly classified as a settings mutation")
+	}
+}
