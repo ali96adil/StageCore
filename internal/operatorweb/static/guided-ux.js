@@ -479,6 +479,7 @@ function f002TabletCommandOptions() {
     ["TABLET_LIVE_HIDE", "Hide live"],
     ["TABLET_BLACKOUT", "Blackout"],
     ["TABLET_BLACKOUT_CLEAR", "Clear blackout"],
+    ["TABLET_BRIGHTNESS_SET", "Set brightness"],
   ];
 }
 
@@ -542,6 +543,10 @@ function f002RenderTabletParameterFields(composer) {
     host.innerHTML = `<div class="form-grid two"><label>Dissolve (ms)<input id="f002TabletDissolve" type="number" min="0" max="10000" step="1" value="0"></label></div>`;
     return;
   }
+  if (command === "TABLET_BRIGHTNESS_SET") {
+    host.innerHTML = `<div class="form-grid two"><label>Brightness %<input id="f002TabletBrightness" type="number" min="5" max="100" step="1" value="100"></label></div>`;
+    return;
+  }
   if (command === "TABLET_LIVE_SHOW") {
     host.innerHTML = `
       <div class="form-grid two">
@@ -588,6 +593,11 @@ function f002TabletVisualPayload(composer, command) {
     const dissolve = Number(composer.querySelector("#f002TabletDissolve")?.value || 0);
     if (!Number.isInteger(dissolve) || dissolve < 0 || dissolve > 10000) throw new Error("Dissolve must be 0–10000 ms.");
     return { dissolve_ms: dissolve };
+  }
+  if (command === "TABLET_BRIGHTNESS_SET") {
+    const percent = Number(composer.querySelector("#f002TabletBrightness")?.value || 0);
+    if (!Number.isInteger(percent) || percent < 5 || percent > 100) throw new Error("Brightness must be between 5 and 100.");
+    return { brightness_percent: percent };
   }
   if (command === "TABLET_LIVE_SHOW") {
     const mode = composer.querySelector("#f002TabletLiveMode")?.value || "key";
