@@ -20,6 +20,16 @@ type machineRoleCreateRequest struct {
 	Required                  bool     `json:"required"`
 }
 
+type machineRoleDefinitionUpdateRequest struct {
+	DisplayName          string   `json:"display_name"`
+	RequiredCapabilities []string `json:"required_capabilities"`
+	Required             bool     `json:"required"`
+}
+
+type machineRoleLifecycleRequest struct {
+	Confirm string `json:"confirm"`
+}
+
 type roleAssignmentCreateRequest struct {
 	CompanionID string `json:"companion_id"`
 }
@@ -38,6 +48,8 @@ type machineRoleView struct {
 	RequiredRuntimeSnapshotID *string             `json:"required_runtime_snapshot_id,omitempty"`
 	RequiredConfigHash        string              `json:"required_config_hash"`
 	Required                  bool                `json:"required"`
+	Retired                   bool                `json:"retired"`
+	RetiredAt                 *time.Time          `json:"retired_at,omitempty"`
 	Assignment                *roleAssignmentView `json:"assignment,omitempty"`
 	CreatedAt                 time.Time           `json:"created_at"`
 	UpdatedAt                 time.Time           `json:"updated_at"`
@@ -145,6 +157,77 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 		writeJSON(w, http.StatusCreated, makeMachineRoleView(role))
 	}))
 
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/machine-roles/{machine_role_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		roleID := strings.TrimSpace(r.PathValue("machine_role_id"))
+		var body machineRoleDefinitionUpdateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		updated, err := stageStore.UpdateMachineRoleDefinition(r.Context(), projectID, roleID, store.UpdateMachineRoleDefinitionParams{
+			DisplayName: strings.TrimSpace(body.DisplayName),
+			RequiredCapabilities: body.RequiredCapabilities,
+			Required: body.Required,
+		})
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_UPDATE_FAILED")
+			return
+		}
+		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
+	}))
+
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/retire", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		var body machineRoleLifecycleRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Confirm) != "RETIRE" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		updated, err := stageStore.SetMachineRoleRetired(
+			r.Context(),
+			strings.TrimSpace(r.PathValue("project_id")),
+			strings.TrimSpace(r.PathValue("machine_role_id")),
+			true,
+		)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RETIRE_FAILED")
+			return
+		}
+		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
+	}))
+
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/restore", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		updated, err := stageStore.SetMachineRoleRetired(
+			r.Context(),
+			strings.TrimSpace(r.PathValue("project_id")),
+			strings.TrimSpace(r.PathValue("machine_role_id")),
+			false,
+		)
+		if err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RESTORE_FAILED")
+			return
+		}
+		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
+	}))
+
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/machine-roles/{machine_role_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		if err := stageStore.DeleteMachineRoleIfUnreferenced(
+			r.Context(),
+			strings.TrimSpace(r.PathValue("project_id")),
+			strings.TrimSpace(r.PathValue("machine_role_id")),
+		); err != nil {
+			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_DELETE_FAILED")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/machine-roles/{machine_role_id}/runtime-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		roleID := strings.TrimSpace(r.PathValue("machine_role_id"))
@@ -230,8 +313,8 @@ func writeMachineRoleStoreError(w http.ResponseWriter, err error, fallback strin
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "MACHINE_ROLE_INVALID"})
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "MACHINE_ROLE_NOT_FOUND"})
-	case errors.Is(err, domain.ErrConflict):
-		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "MACHINE_ROLE_CONFLICT"})
+	case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrShowConfigurationLocked):
+		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "MACHINE_ROLE_CONFLICT", "error": map[string]any{"message": err.Error()}})
 	default:
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": fallback})
 	}
@@ -243,6 +326,7 @@ func makeMachineRoleView(role domain.MachineRole) machineRoleView {
 		RequiredCapabilities: role.RequiredCapabilities,
 		RequiredRuntimeSnapshotID: role.RequiredRuntimeSnapshotID,
 		RequiredConfigHash: role.RequiredConfigHash, Required: role.Required,
+		Retired: role.Retired, RetiredAt: role.RetiredAt,
 		CreatedAt: role.CreatedAt, UpdatedAt: role.UpdatedAt,
 	}
 }
