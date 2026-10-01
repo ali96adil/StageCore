@@ -32,6 +32,38 @@ public enum MIDIExecutorError: Error, Equatable {
     case sendFailed
 }
 
+enum MIDIDestinationInventory {
+    static func currentNames() -> [String] {
+        #if os(macOS)
+        var names: [String] = []
+        let count = MIDIGetNumberOfDestinations()
+        for index in 0..<count {
+            let endpoint = MIDIGetDestination(index)
+            guard endpoint != 0 else { continue }
+            var value: Unmanaged<CFString>?
+            var name = ""
+            if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &value) == noErr,
+               let value {
+                name = value.takeRetainedValue() as String
+            } else {
+                value = nil
+                if MIDIObjectGetStringProperty(endpoint, kMIDIPropertyName, &value) == noErr,
+                   let value {
+                    name = value.takeRetainedValue() as String
+                }
+            }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                names.append(name)
+            }
+        }
+        return names.sorted()
+        #else
+        return []
+        #endif
+    }
+}
+
 protocol MIDISending: Sendable {
     func send(_ bytes: [UInt8], to destination: MIDIDestination) throws -> Int
 }
