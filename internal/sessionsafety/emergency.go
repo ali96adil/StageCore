@@ -41,6 +41,22 @@ type EmergencyReport struct {
 	ExternalAdapters EmergencyDomainReport `json:"external_adapters"`
 }
 
+func NewManagedOutputBlackout(
+	stageStore *store.Store,
+	devices emergencyDeviceRepository,
+	dispatcher lightingDispatcher,
+	executor capability.Executor,
+) func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+	return func(ctx context.Context, session domain.Session, command contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		report, err := SetManagedOutputBlackout(ctx, stageStore, devices, dispatcher, executor, session, command, enabled)
+		payload, marshalErr := json.Marshal(report)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode Emergency Blackout report: %w", marshalErr)
+		}
+		return payload, err
+	}
+}
+
 func SetManagedOutputBlackout(
 	ctx context.Context,
 	stageStore *store.Store,
