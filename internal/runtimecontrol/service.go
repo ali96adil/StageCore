@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	CommandCueStop        = "cue.stop"
-	CommandRehearsalStart = "rehearsal.start"
+	CommandCueStop           = "cue.stop"
+	CommandEmergencyBlackout = "runtime.emergency_blackout.set"
+	CommandRehearsalStart    = "rehearsal.start"
 	CommandRehearsalStop  = "rehearsal.stop"
 	CommandShowEnter      = "show.enter"
 	CommandShowExit       = "show.exit"
@@ -28,6 +29,7 @@ const (
 
 type ShowGate func(context.Context, string, string) (bool, string, error)
 type SessionStopSafety func(context.Context, domain.Session, contracts.CommandEnvelope) error
+type EmergencySafety func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error)
 
 type Option func(*Service)
 
@@ -39,12 +41,17 @@ func WithSessionStopSafety(safety SessionStopSafety) Option {
 	return func(s *Service) { s.stopSafety = safety }
 }
 
+func WithEmergencySafety(safety EmergencySafety) Option {
+	return func(s *Service) { s.emergencySafety = safety }
+}
+
 type Service struct {
 	store    *store.Store
 	engine   *cueengine.Engine
 	executor *stoppableExecutor
-	showGate   ShowGate
-	stopSafety SessionStopSafety
+	showGate        ShowGate
+	stopSafety      SessionStopSafety
+	emergencySafety EmergencySafety
 
 	mu     sync.Mutex
 	active map[string]activeRun
@@ -77,6 +84,13 @@ type StopRequest struct {
 	SessionID string
 	Issuer    string
 	RequestID string
+}
+
+type EmergencyRequest struct {
+	SessionID string
+	Issuer    string
+	RequestID string
+	Enabled   bool
 }
 
 func New(s *store.Store, executor capability.Executor, options ...Option) *Service {
@@ -242,6 +256,13 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
 	}
+	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil {
+		return failed(req.RequestID, "EMERGENCY_BLACKOUT_STATE_FAILED")
+	}
+	if blackout {
+		return rejected(req.RequestID, "EMERGENCY_BLACKOUT_ACTIVE", "managed-output Emergency Blackout is active; clear it explicitly before GO", session.ID)
+	}
 	payload, _ := json.Marshal(cueengine.CueGoPayload{
 		ExpectedCurrentCueID: req.ExpectedCurrentCueID,
 		RequestedNextCueID: req.RequestedCueID,
@@ -268,6 +289,113 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		s.mu.Unlock()
 	}()
 	return s.engine.ExecuteCueGo(ctx, session.ID, command)
+}
+
+func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) contracts.CommandResult {
+	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
+		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
+	}
+	session, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
+	}
+	payload, _ := json.Marshal(map[string]any{"enabled": req.Enabled})
+	command := commandEnvelope(req.RequestID, CommandEmergencyBlackout, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
+	command.Priority = "P0"
+	if existing, terminal, ok := s.reserve(ctx, command); !ok {
+		return existing
+	} else if terminal {
+		return existing
+	}
+	finish := func(result contracts.CommandResult) contracts.CommandResult {
+		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
+		}
+		return result
+	}
+	if session.Status != domain.SessionActive {
+		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
+	}
+	if s.emergencySafety == nil {
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID,
+			Status: contracts.CommandFailed,
+			Error: &contracts.ContractError{
+				ErrorCode: "EMERGENCY_BLACKOUT_UNAVAILABLE", Category: "SAFETY",
+				Message: "managed-output Emergency Blackout safety is not configured",
+				Retryable: false, AffectedEntityID: session.ID,
+			},
+		})
+	}
+
+	current, stateErr := s.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if stateErr != nil {
+		return finish(failed(command.CommandID, "EMERGENCY_BLACKOUT_STATE_FAILED"))
+	}
+	if !req.Enabled && !current {
+		return finish(rejected(command.CommandID, "EMERGENCY_BLACKOUT_NOT_ACTIVE", "managed-output Emergency Blackout is not active", session.ID))
+	}
+
+	// Activation is latched durably BEFORE cancelling the current Cue or touching
+	// outputs. Any partial failure therefore keeps GO blocked across Hub restart.
+	if req.Enabled {
+		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, req.Issuer); err != nil {
+			return finish(resultFromStoreError(command.CommandID, "EMERGENCY_BLACKOUT_LATCH_FAILED", err, session.ID))
+		}
+	}
+
+	var cueStopErr error
+	if req.Enabled {
+		cueStopErr = s.stopActiveCueForSession(ctx, session.ID)
+	}
+
+	report, safetyErr := s.emergencySafety(ctx, session, command, req.Enabled)
+	if !req.Enabled && safetyErr == nil {
+		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, false, req.Issuer); err != nil {
+			safetyErr = fmt.Errorf("clear emergency blackout latch: %w", err)
+		}
+	}
+
+	eventType := "runtime.emergency_blackout.cleared"
+	if req.Enabled {
+		eventType = "runtime.emergency_blackout.applied"
+	}
+	eventPayload := report
+	if len(eventPayload) == 0 {
+		eventPayload = json.RawMessage(`{}`)
+	}
+	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
+		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
+		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
+		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
+	})
+
+	if cueStopErr != nil || safetyErr != nil {
+		message := "managed-output Emergency Blackout completed with a partial failure"
+		if !req.Enabled {
+			message = "managed-output Emergency Blackout clear failed; safety latch remains active"
+		}
+		details := make([]string, 0, 2)
+		if cueStopErr != nil {
+			details = append(details, "Cue stop unconfirmed: "+cueStopErr.Error())
+		}
+		if safetyErr != nil {
+			details = append(details, safetyErr.Error())
+		}
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID, Status: contracts.CommandFailed, Payload: eventPayload,
+			Error: &contracts.ContractError{
+				ErrorCode: "EMERGENCY_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
+				Message: message + ": " + strings.Join(details, "; "),
+				Retryable: true, AffectedEntityID: session.ID,
+			},
+		})
+	}
+
+	return finish(contracts.CommandResult{
+		CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload,
+	})
 }
 
 func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.CommandResult {
