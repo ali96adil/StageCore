@@ -51,6 +51,7 @@ type companionRoleOptionView struct {
 	Architecture             string                    `json:"architecture"`
 	Version                  string                    `json:"version"`
 	Capabilities             []string                  `json:"capabilities"`
+	MIDIDestinations         []string                  `json:"midi_destinations"`
 	TrustState               domain.CompanionTrustState `json:"trust_state"`
 	Readiness                domain.CompanionReadiness  `json:"readiness"`
 	AppliedRuntimeSnapshotID *string                   `json:"applied_runtime_snapshot_id,omitempty"`
@@ -111,6 +112,7 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 				Architecture: companion.Architecture,
 				Version: companion.Version,
 				Capabilities: append([]string(nil), companion.Capabilities...),
+				MIDIDestinations: append([]string(nil), companion.MIDIDestinations...),
 				TrustState: companion.TrustState,
 				Readiness: companion.Readiness,
 				AppliedRuntimeSnapshotID: companion.AppliedRuntimeSnapshotID,
