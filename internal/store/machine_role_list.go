@@ -18,7 +18,8 @@ func (s *Store) ListMachineRoles(ctx context.Context, projectID string) ([]domai
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT machine_role_id, project_id, role_key, display_name, required_capabilities_json,
-		       required_runtime_snapshot_id, required_config_hash, required, created_at_us, updated_at_us
+		       required_runtime_snapshot_id, required_config_hash, required, retired, retired_at_us,
+		       created_at_us, updated_at_us
 		FROM machine_roles
 		WHERE project_id = ?
 		ORDER BY role_key, machine_role_id`, projectID)
