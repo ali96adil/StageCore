@@ -283,12 +283,14 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController] = await Promise.all([
+  const [configuration, tabletController, lightingController] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
+  state.f002Lighting = lightingController || { nodes: [] };
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -485,6 +487,113 @@ async function f002AddTabletAction(composer) {
   }
 }
 
+function f002LightingNodes() {
+  return (state.f002Lighting?.nodes || []).filter((node) => node.enabled !== false);
+}
+
+function f002LightingChannels() {
+  return f002LightingNodes().flatMap((node) => (node.channels || [])
+    .filter((channel) => channel.alias)
+    .map((channel) => ({ ...channel, node_id: node.device_id, node_name: node.display_name || node.device_id })));
+}
+
+function f002LightingCommandOptions() {
+  return [
+    ["LIGHTING_CHANNELS_FADE", "Fade channel"],
+    ["LIGHTING_CHANNELS_SET", "Set channel immediately"],
+    ["LIGHTING_BLACKOUT", "Blackout lighting node(s)"],
+  ];
+}
+
+function f002RenderLightingFields(composer) {
+  const host = composer.querySelector("#f002LightingParameters");
+  const command = composer.querySelector("#f002LightingCommand")?.value || "LIGHTING_CHANNELS_FADE";
+  if (!host) return;
+  if (command === "LIGHTING_BLACKOUT") {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Lighting node
+          <select id="f002LightingNode">
+            <option value="__all__">All configured lighting nodes</option>
+            ${f002LightingNodes().map((node) => `<option value="${esc(node.device_id)}">${esc(node.display_name || node.device_id)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Fade to blackout (ms)<input id="f002LightingFade" type="number" min="0" max="600000" step="1" value="0"></label>
+      </div>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="form-grid three">
+      <label>Logical channel
+        <select id="f002LightingChannel">
+          <option value="">Choose a channel…</option>
+          ${f002LightingChannels().map((channel) => `<option value="${esc(channel.alias)}">${esc(channel.alias)} · ${esc(channel.display_name || channel.channel_key)} · ${esc(channel.node_name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Level %<input id="f002LightingLevel" type="number" min="0" max="100" step="1" value="0"></label>
+      ${command === "LIGHTING_CHANNELS_FADE" ? `<label>Fade (ms)<input id="f002LightingFade" type="number" min="1" max="600000" step="1" value="1200"></label>` : ""}
+    </div>`;
+}
+
+function f002LightingRequest(composer) {
+  const command = composer.querySelector("#f002LightingCommand")?.value || "";
+  if (command === "LIGHTING_BLACKOUT") {
+    const selected = composer.querySelector("#f002LightingNode")?.value || "";
+    const deviceIDs = selected === "__all__" ? f002LightingNodes().map((node) => node.device_id) : [selected].filter(Boolean);
+    if (!deviceIDs.length) throw new Error("Choose at least one Lighting node.");
+    const fadeMS = Number(composer.querySelector("#f002LightingFade")?.value || 0);
+    if (!Number.isInteger(fadeMS) || fadeMS < 0 || fadeMS > 600000) throw new Error("Lighting blackout fade must be 0–600000 ms.");
+    return { command_type: command, device_ids: deviceIDs, fade_ms: fadeMS };
+  }
+  const alias = composer.querySelector("#f002LightingChannel")?.value || "";
+  if (!alias) throw new Error("Choose a logical Lighting channel.");
+  const level = Number(composer.querySelector("#f002LightingLevel")?.value);
+  if (!Number.isFinite(level) || level < 0 || level > 100) throw new Error("Lighting level must be 0–100%.");
+  const request = { command_type: command, levels: { [alias]: level }, fade_ms: 0 };
+  if (command === "LIGHTING_CHANNELS_FADE") {
+    const fadeMS = Number(composer.querySelector("#f002LightingFade")?.value || 0);
+    if (!Number.isInteger(fadeMS) || fadeMS < 1 || fadeMS > 600000) throw new Error("Lighting fade must be 1–600000 ms.");
+    request.fade_ms = fadeMS;
+  }
+  return request;
+}
+
+async function f002AddLightingAction(composer) {
+  const message = composer.querySelector("#f002LightingComposerMessage");
+  try {
+    const request = f002LightingRequest(composer);
+    const projectID = encodeURIComponent(state.project.project_id);
+    const result = await api(`/api/v1/projects/${projectID}/lighting-controller/cue-actions`, {
+      method: "POST",
+      json: { ...request, execution_mode: "PARALLEL_BARRIER" },
+    });
+    const actions = result.actions || [];
+    if (!actions.length) throw new Error("No Lighting Action was returned.");
+    for (const action of actions) {
+      addActionEditor({
+        action_id: "",
+        target_ref: action.target_ref,
+        capability_key: action.capability_key,
+        execution_mode: action.execution_mode,
+        priority_class: action.priority,
+        parameters: action.parameters || {},
+        timeout_policy: action.timeout_policy || {},
+        error_policy: {},
+        enabled: true,
+      });
+    }
+    if (message) {
+      message.textContent = `Added ${actions.length} Lighting Action(s). Save the Cue to persist them.`;
+      message.className = "message success";
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = errorMessage(error);
+      message.className = "message error";
+    }
+  }
+}
+
 function f002InstallCueComposer() {
   if (!actionsEditor) return;
   document.getElementById("f002CueComposer")?.remove();
@@ -549,6 +658,27 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
     <p class="muted">Common Tablet actions are visual. Advanced JSON is optional and only used when explicitly enabled.</p>
+
+    <hr>
+    <div class="f002-builder-head">
+      <div>
+        <strong>Lighting Action</strong>
+        <span>Add a canonical Lighting Action directly to this mixed Cue without creating a separate Lighting Cue first.</span>
+      </div>
+    </div>
+    <div class="form-grid two">
+      <label>Lighting command
+        <select id="f002LightingCommand">
+          ${f002LightingCommandOptions().map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div id="f002LightingParameters"></div>
+    <div class="toolbar">
+      <button id="f002AddLightingAction" class="button" type="button" ${f002LightingNodes().length ? "" : "disabled"}>+ Lighting Action</button>
+    </div>
+    <div id="f002LightingComposerMessage" class="message hidden"></div>
+    <p class="muted">${f002LightingNodes().length ? "Uses the configured logical channel aliases and Lighting Node mapping." : "Configure a Lighting Node and logical channel aliases first."}</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
@@ -582,6 +712,9 @@ function f002InstallCueComposer() {
   composer.querySelector("#f002TabletCommand")?.addEventListener("change", () => f002RenderTabletParameterFields(composer));
   f002RenderTabletParameterFields(composer);
   composer.querySelector("#f002AddTabletAction")?.addEventListener("click", () => f002AddTabletAction(composer));
+  composer.querySelector("#f002LightingCommand")?.addEventListener("change", () => f002RenderLightingFields(composer));
+  f002RenderLightingFields(composer);
+  composer.querySelector("#f002AddLightingAction")?.addEventListener("click", () => f002AddLightingAction(composer));
 }
 
 openCueEditor = function f002OpenCueEditor(cue) {
