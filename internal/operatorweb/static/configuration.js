@@ -179,11 +179,18 @@ async function renderConfiguration() {
             <div class="action-editor machine-role-row" data-role-id="${esc(role.machine_role_id)}">
               <div class="section-title-row">
                 <div><strong>${esc(role.role_key)}</strong><p class="muted">${esc(role.display_name || role.role_key)}</p></div>
-                ${pill(role.required ? "REQUIRED" : "OPTIONAL", role.required ? "warn" : "neutral")}
+                <div class="row-actions">
+                  ${pill(role.retired ? "RETIRED" : (role.required ? "REQUIRED" : "OPTIONAL"), role.retired ? "neutral" : (role.required ? "warn" : "neutral"))}
+                  <button class="button ghost machine-role-edit" type="button" data-role-id="${esc(role.machine_role_id)}">Edit</button>
+                  ${role.retired
+                    ? `<button class="button machine-role-restore" type="button" data-role-id="${esc(role.machine_role_id)}">Restore</button><button class="button danger machine-role-remove" type="button" data-role-id="${esc(role.machine_role_id)}">Remove permanently</button>`
+                    : `<button class="button ghost machine-role-retire" type="button" data-role-id="${esc(role.machine_role_id)}" ${assigned ? `disabled title="Release the assigned Companion first"` : ""}>Retire</button>`}
+                </div>
               </div>
               <p class="muted">Capabilities: ${esc((role.required_capabilities || []).join(", ") || "none")}</p>
               <p class="muted">Cue target: ${target ? `<strong>${esc(target.logical_name)}</strong>` : "not created yet"}</p>
-              ${!target && editable ? `<button class="button machine-role-target" type="button" data-role-id="${esc(role.machine_role_id)}" data-role-key="${esc(role.role_key)}">Add as Cue target</button>` : ""}
+              ${!role.retired && !target && editable ? `<button class="button machine-role-target" type="button" data-role-id="${esc(role.machine_role_id)}" data-role-key="${esc(role.role_key)}">Add as Cue target</button>` : ""}
+              ${role.retired ? `<div class="message warn">Retired roles stay in history and cannot be assigned or executed. Restore the Role before reuse.</div>` : `
               <div class="form-grid two" style="margin-top:10px">
                 <label>Assigned Companion
                   <select class="machine-role-companion">
@@ -196,6 +203,7 @@ async function renderConfiguration() {
                 </div>
               </div>
               ${!candidates.length ? `<p class="muted">No TRUSTED Companion currently advertises every required capability.</p>` : ""}
+              `}
               ${incompatibleTrusted.length ? `
                 <details style="margin-top:10px">
                   <summary>Trusted Companions missing required capabilities</summary>
