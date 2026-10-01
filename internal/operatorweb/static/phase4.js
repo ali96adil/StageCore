@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const liveSourceExecutionCapabilities = ["video.source.open", "video.source.route"];
+
   const copy = {
     en: {
       devices: "Stage Devices",
@@ -12,7 +14,7 @@
       callboardTitle: "Stage Display / Callboard",
       callboardSub: "Send messages, countdowns and alerts to one display, a group, or every display.",
       videoTitle: "Live Video Sources",
-      videoSub: "Define camera/capture/stream sources and assign execution to a capable Render Node when needed.",
+      videoSub: "Define camera/capture/stream sources and assign execution to a capable Render Node or StageCore Native Visual Machine Role.",
       networkTitle: "Stage Network Cockpit",
       networkSub: "Latest bounded observations for Hub, Companion, Stage Devices, live sources and endpoints.",
       refresh: "Refresh",
@@ -782,11 +784,12 @@
     const devices = devicesPayload.devices || [];
     const renderNodes = devices.filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
     const roles = rolesPayload.roles || [];
+    const liveSourceRoles = roles.filter((role) => (role.required_capabilities || []).includes("video.source.open"));
     const body = document.getElementById("phase4Body");
     const placementOptions = [
       `<option value="">${esc(t("none"))}</option>`,
       ...renderNodes.map((device) => `<option value="device:${esc(device.device_id)}">${esc(t("stageDevice"))}: ${esc(device.display_name || device.device_id)}</option>`),
-      ...roles.map((role) => `<option value="role:${esc(role.machine_role_id)}">${esc(t("machineRole"))}: ${esc(role.display_name || role.role_key || role.machine_role_id)}</option>`),
+      ...liveSourceRoles.map((role) => `<option value="role:${esc(role.machine_role_id)}">${esc(t("machineRole"))}: ${esc(role.display_name || role.role_key || role.machine_role_id)}</option>`),
     ].join("");
     body.innerHTML = `
       ${editable ? `<form id="liveSourceForm" class="phase4-form" data-source-id="">
@@ -875,7 +878,7 @@
         endpoint_ref: document.getElementById("liveSourceEndpoint").value.trim(),
         execution_device_id: executionDeviceID,
         execution_machine_role_id: executionMachineRoleID,
-        capabilities: existing?.capabilities || [],
+        capabilities: existing?.capabilities?.length ? existing.capabilities : [...liveSourceExecutionCapabilities],
         config: existing?.config || {},
         required: document.getElementById("liveSourceRequired").checked,
         desired_enabled: document.getElementById("liveSourceEnabled").checked,
