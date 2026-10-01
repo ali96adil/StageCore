@@ -66,6 +66,11 @@
       readiness: "Readiness",
       lastSeen: "Last seen",
       version: "Client",
+      battery: "Battery",
+      charging: "Charging",
+      powerSave: "Power save",
+      brightness: "Brightness",
+      orientation: "Orientation",
       capabilities: "Capabilities",
       target: "Target",
       allDisplays: "All displays",
@@ -170,6 +175,11 @@
       readiness: "الجاهزية",
       lastSeen: "آخر ظهور",
       version: "نسخة العميل",
+      battery: "البطارية",
+      charging: "يشحن",
+      powerSave: "توفير الطاقة",
+      brightness: "السطوع",
+      orientation: "الاتجاه",
       capabilities: "القدرات",
       target: "الهدف",
       allDisplays: "كل الشاشات",
@@ -310,6 +320,20 @@
 
   function deviceCard(device, v2Status = null) {
     const runtime = device.runtime || {};
+    const observed = runtime.observed_state && typeof runtime.observed_state === "object"
+      ? runtime.observed_state : {};
+    const health = observed.health && typeof observed.health === "object" ? observed.health : {};
+    const battery = Number(health.battery_percent);
+    const batteryLabel = Number.isFinite(battery) && battery >= 0
+      ? `${Math.round(battery)}%${health.battery_charging ? ` · ⚡ ${t("charging")}` : ""}`
+      : "—";
+    const powerSaveLabel = typeof health.power_save === "boolean"
+      ? (health.power_save ? "ON" : "OFF")
+      : "—";
+    const brightnessLabel = Number.isFinite(Number(health.brightness_percent))
+      ? `${Math.round(Number(health.brightness_percent))}%`
+      : "—";
+    const orientationLabel = health.orientation_mode ? String(health.orientation_mode) : "—";
     const caps = Array.isArray(device.capabilities) ? device.capabilities : [];
     return `
       <article class="phase4-card">
@@ -324,6 +348,12 @@
           <div><dt>${esc(t("group"))}</dt><dd>${esc(device.group_name || "—")}</dd></div>
           <div><dt>${esc(t("location"))}</dt><dd>${esc(device.location_name || "—")}</dd></div>
           <div><dt>${esc(t("version"))}</dt><dd>${esc(device.client_version || "—")}</dd></div>
+          ${device.device_kind === "TABLET_PLAYER" ? `
+            <div><dt>${esc(t("battery"))}</dt><dd>${esc(batteryLabel)}</dd></div>
+            <div><dt>${esc(t("powerSave"))}</dt><dd>${esc(powerSaveLabel)}</dd></div>
+            <div><dt>${esc(t("brightness"))}</dt><dd>${esc(brightnessLabel)}</dd></div>
+            <div><dt>${esc(t("orientation"))}</dt><dd>${esc(orientationLabel)}</dd></div>
+          ` : ""}
           <div><dt>${esc(t("lastSeen"))}</dt><dd>${when(runtime.last_seen_at)}</dd></div>
           <div><dt>ID</dt><dd class="mono">${esc(device.device_id)}</dd></div>
           <div><dt>Protocol</dt><dd class="mono">${esc(device.protocol_version || "—")}</dd></div>
