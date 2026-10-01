@@ -128,6 +128,8 @@ async function renderConfiguration() {
             <label>Action output<select id="routeOutput" ${disabled}>${optionList(model.outputs || [], "output_id", (item) => `${item.name} · ${item.capability_key}`)}</select></label>
             <label>Action Cue<select id="routeCue" ${disabled}>${optionList(model.cues || [], "cue_id", (item) => `${item.display_label} · ${item.name}`)}</select></label>
             <label>Priority<select id="routePriority" ${disabled}><option value="P2">P2</option><option value="P1">P1</option><option value="P0">P0</option><option value="P3">P3</option></select></label>
+            <label>Delay (ms)<input id="routeDelay" type="number" min="0" step="1" value="0" ${disabled}></label>
+            <label>Debounce (ms)<input id="routeDebounce" type="number" min="0" step="1" value="0" ${disabled}></label>
             <label class="check-row"><input id="routeEnabled" type="checkbox" checked ${disabled}> Enabled</label>
           </div>
           <label>Condition JSON<textarea id="routeCondition" class="mono" rows="3" ${disabled}>null</textarea></label>
@@ -385,7 +387,23 @@ async function renderConfiguration() {
     if (outputID) action.output_id = outputID;
     if (cueID) action.cue_id = cueID;
     try {
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes`, { method: "POST", json: { name: el("routeName").value.trim(), input_id: el("routeInput").value, condition_definition: parseJSONField(el("routeCondition").value, "Route condition"), transform_definition: parseJSONField(el("routeTransform").value, "Route transform"), priority_class: el("routePriority").value, error_policy: {}, enabled: el("routeEnabled").checked, actions: [action] } });
+      const delayMS = Number.parseInt(el("routeDelay").value || "0", 10);
+      const debounceMS = Number.parseInt(el("routeDebounce").value || "0", 10);
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/routes`, {
+        method: "POST",
+        json: {
+          name: el("routeName").value.trim(),
+          input_id: el("routeInput").value,
+          condition_definition: parseJSONField(el("routeCondition").value, "Route condition"),
+          transform_definition: parseJSONField(el("routeTransform").value, "Route transform"),
+          delay_ms: delayMS > 0 ? delayMS : undefined,
+          debounce_ms: debounceMS > 0 ? debounceMS : undefined,
+          priority_class: el("routePriority").value,
+          error_policy: {},
+          enabled: el("routeEnabled").checked,
+          actions: [action],
+        },
+      });
       await refreshProjectAndConfiguration();
     } catch (error) { configurationError(error); }
   });
