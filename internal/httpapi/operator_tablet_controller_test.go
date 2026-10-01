@@ -329,3 +329,18 @@ func TestTabletSettingsCapabilityClassification(t *testing.T) {
 		t.Fatal("media playback was incorrectly classified as a settings mutation")
 	}
 }
+
+
+func TestTabletSettingsRemainOperatorOnlyNotCueBuilderCapabilities(t *testing.T) {
+	for _, capability := range []string{
+		deviceexperience.CapabilityTabletBrightnessSet,
+		deviceexperience.CapabilityTabletShowModeSet,
+	} {
+		if strings.HasPrefix(capability, "tablet.media.") {
+			t.Fatalf("settings capability %q unexpectedly entered media Cue namespace", capability)
+		}
+		if !tabletRuntimeCapability(capability) {
+			t.Fatalf("settings capability %q unavailable to direct Tablet runtime", capability)
+		}
+	}
+}
