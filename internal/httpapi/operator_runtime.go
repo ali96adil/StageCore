@@ -24,6 +24,12 @@ type runtimeCommandRequest struct {
 	OperatorNote         *string `json:"operator_note"`
 }
 
+type runtimeEmergencyBlackoutRequest struct {
+	RequestID string `json:"request_id"`
+	Enabled   bool   `json:"enabled"`
+	Confirm   string `json:"confirm"`
+}
+
 type runtimeJumpRequest struct {
 	RequestID            string  `json:"request_id"`
 	CueID                string  `json:"cue_id"`
@@ -48,7 +54,8 @@ type runtimeStatusView struct {
 	Cues            []cueSummaryView      `json:"cues"`
 	CurrentCue      *cueSummaryView       `json:"current_cue"`
 	NextCue         *cueSummaryView       `json:"next_cue"`
-	LatestExecution *runtimeExecutionView `json:"latest_execution"`
+	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
+	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
 
 func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) Option {
@@ -151,6 +158,32 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
 	}))
 
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/emergency-blackout", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		var body runtimeEmergencyBlackoutRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		requiredConfirmation := "CLEAR"
+		if body.Enabled {
+			requiredConfirmation = "BLACKOUT"
+		}
+		if strings.TrimSpace(body.Confirm) != requiredConfirmation {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		active, ok := activeRuntimeSession(w, r, projectStore)
+		if !ok {
+			return
+		}
+		result := runtime.EmergencyBlackout(r.Context(), runtimecontrol.EmergencyRequest{
+			SessionID: active.ID,
+			Issuer: session.User.ID,
+			RequestID: strings.TrimSpace(body.RequestID),
+			Enabled: body.Enabled,
+		})
+		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"managed_output_blackout": body.Enabled})
+	}))
+
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/stop", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body runtimeCommandRequest
 		if !decodeBoundedJSON(w, r, &body) {
@@ -206,6 +239,10 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	view.Mode = string(active.Type)
 	sessionValue := makeSessionView(*active)
 	view.Session = &sessionValue
+	view.ManagedOutputBlackout, err = projectStore.SessionManagedOutputBlackout(r.Context(), active.ID)
+	if err != nil {
+		return runtimeStatusView{}, err
+	}
 	activeSnapshot, err := projectStore.GetRuntimeSnapshot(r.Context(), active.RuntimeSnapshotID)
 	if err != nil {
 		return runtimeStatusView{}, err
