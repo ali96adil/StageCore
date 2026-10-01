@@ -784,7 +784,10 @@
     const devices = devicesPayload.devices || [];
     const renderNodes = devices.filter((device) => device.device_kind === "RENDER_NODE" && device.protocol_version !== "stagecore.device/2");
     const roles = rolesPayload.roles || [];
-    const liveSourceRoles = roles.filter((role) => (role.required_capabilities || []).includes("video.source.open"));
+    const liveSourceRoles = roles.filter((role) => {
+    const required = new Set(role.required_capabilities || []);
+    return liveSourceExecutionCapabilities.every((capability) => required.has(capability));
+  });
     const body = document.getElementById("phase4Body");
     const placementOptions = [
       `<option value="">${esc(t("none"))}</option>`,
