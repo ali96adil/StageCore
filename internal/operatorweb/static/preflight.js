@@ -31,6 +31,7 @@ async function loadPreflight() {
 function preflightDestination(category) {
   switch (String(category || "").toLowerCase()) {
     case "stage_device": return { page: "devices", label: "Open Stage Devices" };
+    case "network": return { page: "network", label: "Open Network Cockpit" };
     case "live_video": return { page: "video", label: "Open Live Video" };
     case "companion": return { page: "configuration", anchor: "machineRolesCard", label: "Open Machine Roles" };
     case "media": return { page: "environments", label: "Open Environments" };
