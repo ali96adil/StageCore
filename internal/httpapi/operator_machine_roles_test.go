@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,4 +269,135 @@ func machineRoleTestContains(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+
+func TestOperatorMachineRoleLifecyclePreservesIdentityAndHistory(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	handler := New(WithOperatorMachineRoles(h.auth, stageStore)).Handler()
+
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Machine Role Lifecycle", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
+		RoleKey: "VIDEO-MAIN", DisplayName: "Old Video",
+		RequiredCapabilities: []string{"local.echo"}, Required: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path string, payload any) *httptest.ResponseRecorder {
+		var body []byte
+		if payload != nil {
+			body, _ = json.Marshal(payload)
+		}
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:13300"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		if method != http.MethodGet {
+			req.Header.Set(csrfHeader, owner.CSRFToken)
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+
+	base := "/api/v1/projects/" + project.ID + "/machine-roles/" + role.ID
+	update := request(http.MethodPut, base, map[string]any{
+		"display_name": "Main Video",
+		"required_capabilities": []string{"midi.send"},
+		"required": false,
+	})
+	if update.Code != http.StatusOK {
+		t.Fatalf("role update status=%d body=%s", update.Code, update.Body.String())
+	}
+	var updated machineRoleView
+	if err := json.Unmarshal(update.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != role.ID || updated.RoleKey != "VIDEO-MAIN" || updated.DisplayName != "Main Video" ||
+		updated.Required || len(updated.RequiredCapabilities) != 1 || updated.RequiredCapabilities[0] != "midi.send" {
+		t.Fatalf("updated role=%+v", updated)
+	}
+
+	companion, err := stageStore.RegisterCompanion(ctx, store.RegisterCompanionParams{
+		CompanionID: "22222222-2222-4222-8222-222222222222",
+		DisplayName: "Lifecycle Mac", Platform: "macos", Architecture: "arm64", Version: "1",
+		Capabilities: []string{"midi.send"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetCompanionTrustState(ctx, companion.ID, domain.CompanionTrusted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.AssignMachineRole(ctx, role.ID, companion.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	retireAssigned := request(http.MethodPost, base+"/retire", map[string]any{"confirm": "RETIRE"})
+	if retireAssigned.Code != http.StatusConflict {
+		t.Fatalf("retire assigned role status=%d body=%s", retireAssigned.Code, retireAssigned.Body.String())
+	}
+	release := request(http.MethodDelete, base+"/assignment", nil)
+	if release.Code != http.StatusNoContent {
+		t.Fatalf("release status=%d body=%s", release.Code, release.Body.String())
+	}
+	retire := request(http.MethodPost, base+"/retire", map[string]any{"confirm": "RETIRE"})
+	if retire.Code != http.StatusOK {
+		t.Fatalf("retire status=%d body=%s", retire.Code, retire.Body.String())
+	}
+	var retired machineRoleView
+	if err := json.Unmarshal(retire.Body.Bytes(), &retired); err != nil {
+		t.Fatal(err)
+	}
+	if !retired.Retired || retired.RetiredAt == nil || retired.RoleKey != role.RoleKey {
+		t.Fatalf("retired role=%+v", retired)
+	}
+
+	assignRetired := request(http.MethodPost, base+"/assignment", map[string]any{"companion_id": companion.ID})
+	if assignRetired.Code != http.StatusConflict {
+		t.Fatalf("assign retired role status=%d body=%s", assignRetired.Code, assignRetired.Body.String())
+	}
+	deleteHistorical := request(http.MethodDelete, base+"?confirm=true", nil)
+	if deleteHistorical.Code != http.StatusConflict {
+		t.Fatalf("delete role with assignment history status=%d body=%s", deleteHistorical.Code, deleteHistorical.Body.String())
+	}
+
+	restore := request(http.MethodPost, base+"/restore", nil)
+	if restore.Code != http.StatusOK {
+		t.Fatalf("restore status=%d body=%s", restore.Code, restore.Body.String())
+	}
+	var restored machineRoleView
+	if err := json.Unmarshal(restore.Body.Bytes(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Retired || restored.RetiredAt != nil || restored.RoleKey != role.RoleKey {
+		t.Fatalf("restored role=%+v", restored)
+	}
+
+	disposable, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
+		RoleKey: "DISPOSABLE", DisplayName: "Disposable",
+		RequiredCapabilities: []string{"local.echo"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disposableBase := "/api/v1/projects/" + project.ID + "/machine-roles/" + disposable.ID
+	if res := request(http.MethodPost, disposableBase+"/retire", map[string]any{"confirm": "RETIRE"}); res.Code != http.StatusOK {
+		t.Fatalf("retire disposable status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := request(http.MethodDelete, disposableBase+"?confirm=true", nil); res.Code != http.StatusNoContent {
+		t.Fatalf("delete disposable status=%d body=%s", res.Code, res.Body.String())
+	}
+	if _, err := stageStore.GetMachineRole(ctx, disposable.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("deleted role lookup err=%v", err)
+	}
 }
