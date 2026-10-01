@@ -909,7 +909,9 @@ function f002ParseMIDIParameters(raw) {
   let parsed;
   try { parsed = JSON.parse(raw || "{}"); }
   catch (_) { return null; }
-  if (!Number.isInteger(parsed?.destination_index) || parsed.destination_index < 0 || !Array.isArray(parsed?.bytes)) return null;
+  const hasName = typeof parsed?.destination_name === "string" && parsed.destination_name.trim() !== "";
+  const hasIndex = Number.isInteger(parsed?.destination_index) && parsed.destination_index >= 0;
+  if (hasName === hasIndex || !Array.isArray(parsed?.bytes)) return null;
   const bytes = parsed.bytes;
   if (![2, 3].includes(bytes.length) || bytes.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
   const status = bytes[0];
@@ -922,7 +924,9 @@ function f002ParseMIDIParameters(raw) {
   else if (family === 0xC0 && bytes.length === 2) message = "program_change";
   else return null;
   return {
-    destinationIndex: parsed.destination_index,
+    destinationMode: hasName ? "name" : "index",
+    destinationName: hasName ? parsed.destination_name.trim() : "",
+    destinationIndex: hasIndex ? parsed.destination_index : 0,
     message,
     channel: (status & 0x0F) + 1,
     data1: bytes[1],
@@ -1043,7 +1047,7 @@ function f002EnhanceActionCard(card) {
     : null;
   const parsedMIDI = capability.value === "midi.send"
     ? (f002ParseMIDIParameters(params.value) || (["", "{}"].includes(rawParameters)
-      ? { destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
+      ? { destinationMode: "name", destinationName: "", destinationIndex: 0, message: "note_on", channel: 1, data1: 60, data2: 127 }
       : null))
     : null;
   const parsedTimeout = f002ParseTimeoutPolicy(timeout.value);
@@ -1061,7 +1065,12 @@ function f002EnhanceActionCard(card) {
     </div>
     <div class="f002-midi-action hidden">
       <div class="form-grid two">
-        <label>MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
+        <label>Destination addressing<select class="f002-midi-destination-mode">
+          <option value="name">Stable destination name</option>
+          <option value="index">Legacy numeric index</option>
+        </select></label>
+        <label class="f002-midi-destination-name-field">MIDI destination name<input class="f002-midi-destination-name" placeholder="IAC Driver Bus 1" autocomplete="off"></label>
+        <label class="f002-midi-destination-index-field hidden">MIDI destination index<input class="f002-midi-destination" type="number" min="0" step="1" value="0"></label>
         <label>Message type<select class="f002-midi-message">
           <option value="note_on">Note On</option>
           <option value="note_off">Note Off</option>
@@ -1072,7 +1081,7 @@ function f002EnhanceActionCard(card) {
         <label><span class="f002-midi-data1-label">Note (0–127)</span><input class="f002-midi-data1" type="number" min="0" max="127" step="1" value="60"></label>
         <label class="f002-midi-data2-field"><span class="f002-midi-data2-label">Velocity (0–127)</span><input class="f002-midi-data2" type="number" min="0" max="127" step="1" value="127"></label>
       </div>
-      <p class="muted">Ableton Live: use MIDI Map mode to bind this Note or Control Change to the scene, clip, transport or control you want StageCore to trigger.</p>
+      <p class="muted">Ableton Live: use MIDI Map mode and target the exact CoreMIDI/IAC destination name. Name addressing stays stable if CoreMIDI device ordering changes; legacy numeric index remains available for old Cues.</p>
     </div>
     <hr>
     <div class="f002-builder-head">
@@ -1121,6 +1130,10 @@ function f002EnhanceActionCard(card) {
   const midiPanel = builder.querySelector(".f002-midi-action");
   const address = builder.querySelector(".f002-osc-address");
   const argumentsNode = builder.querySelector(".f002-arguments");
+  const midiDestinationMode = builder.querySelector(".f002-midi-destination-mode");
+  const midiDestinationNameField = builder.querySelector(".f002-midi-destination-name-field");
+  const midiDestinationIndexField = builder.querySelector(".f002-midi-destination-index-field");
+  const midiDestinationName = builder.querySelector(".f002-midi-destination-name");
   const midiDestination = builder.querySelector(".f002-midi-destination");
   const midiMessage = builder.querySelector(".f002-midi-message");
   const midiChannel = builder.querySelector(".f002-midi-channel");
@@ -1140,7 +1153,9 @@ function f002EnhanceActionCard(card) {
     parsedOSC.arguments.forEach((argument) => argumentsNode.appendChild(f002ArgumentRow(argument)));
   }
   if (parsedMIDI) {
-    midiDestination.value = String(parsedMIDI.destinationIndex);
+    midiDestinationMode.value = parsedMIDI.destinationMode || "name";
+    midiDestinationName.value = parsedMIDI.destinationName || "";
+    midiDestination.value = String(parsedMIDI.destinationIndex || 0);
     midiMessage.value = parsedMIDI.message;
     midiChannel.value = String(parsedMIDI.channel);
     midiData1.value = String(parsedMIDI.data1);
@@ -1164,6 +1179,11 @@ function f002EnhanceActionCard(card) {
     const message = midiMessage.value;
     const program = message === "program_change";
     const control = message === "control_change";
+    const nameMode = midiDestinationMode.value === "name";
+    midiDestinationNameField.classList.toggle("hidden", !nameMode);
+    midiDestinationIndexField.classList.toggle("hidden", nameMode);
+    midiDestinationName.required = nameMode && kind.value === "midi";
+    midiDestination.required = !nameMode && kind.value === "midi";
     midiData1Label.textContent = program ? "Program (0–127)" : control ? "Controller (0–127)" : "Note (0–127)";
     midiData2Label.textContent = control ? "Value (0–127)" : "Velocity (0–127)";
     midiData2Field.classList.toggle("hidden", program);
@@ -1184,7 +1204,6 @@ function f002EnhanceActionCard(card) {
     midiPanel.classList.toggle("hidden", !midi);
     advanced.open = !(osc || midi) || timeoutKind.value === "advanced" || errorKind.value === "advanced";
     address.required = osc;
-    midiDestination.required = midi;
     midiMessage.required = midi;
     midiChannel.required = midi;
     midiData1.required = midi;
@@ -1194,6 +1213,7 @@ function f002EnhanceActionCard(card) {
     renderReliabilityFields();
   };
   kind.addEventListener("change", applyKind);
+  midiDestinationMode.addEventListener("change", renderMIDIFields);
   midiMessage.addEventListener("change", renderMIDIFields);
   timeoutKind.addEventListener("change", applyKind);
   errorKind.addEventListener("change", applyKind);
@@ -1233,6 +1253,8 @@ function f002SyncActionCard(card) {
     return;
   }
   if (kind.value === "midi") {
+    const destinationMode = card.querySelector(".f002-midi-destination-mode").value;
+    const destinationName = card.querySelector(".f002-midi-destination-name").value.trim();
     const destinationIndex = Number.parseInt(card.querySelector(".f002-midi-destination").value, 10);
     const message = card.querySelector(".f002-midi-message").value;
     const channel = Number.parseInt(card.querySelector(".f002-midi-channel").value, 10);
@@ -1241,7 +1263,9 @@ function f002SyncActionCard(card) {
     const bytes = [f002MIDIStatus(message, channel), data1];
     if (message !== "program_change") bytes.push(data2);
     capability.value = "midi.send";
-    params.value = JSON.stringify({ destination_index: destinationIndex, bytes }, null, 2);
+    params.value = JSON.stringify(destinationMode === "name"
+      ? { destination_name: destinationName, bytes }
+      : { destination_index: destinationIndex, bytes }, null, 2);
   }
 }
 
