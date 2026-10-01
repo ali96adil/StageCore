@@ -326,7 +326,7 @@ func WithOperatorTabletController(
 func tabletDevices(all []deviceexperience.Device) []deviceexperience.Device {
 	out := make([]deviceexperience.Device, 0)
 	for _, device := range all {
-		if device.Kind != deviceexperience.DeviceTabletPlayer {
+		if !device.Enabled || device.Kind != deviceexperience.DeviceTabletPlayer {
 			continue
 		}
 		if device.ProtocolVersion == deviceexperience.ProtocolVersion1 {
