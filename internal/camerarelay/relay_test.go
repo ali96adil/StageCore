@@ -110,9 +110,9 @@ func TestFourViewersOneUpstream(t *testing.T){
 func TestBoundedLatestFrameAndUnsubscribe(t *testing.T){
  relay,err:=New(Config{SourceURL:"http://127.0.0.1:1/",MaxClients:1},nil)
  if err!=nil{t.Fatal(err)}
- id,ch,ok:=relay.subscribe()
+ id,ch,ok:=relay.subscribe(false)
  if !ok{t.Fatal("first subscriber rejected")}
- if _,_,ok=relay.subscribe();ok{t.Fatal("second subscriber exceeded limit")}
+ if _,_,ok=relay.subscribe(false);ok{t.Fatal("second subscriber exceeded limit")}
  for i:=0;i<300;i++{relay.publish(testJPEG(byte(i)))}
  select{
  case got:=<-ch:
@@ -120,7 +120,7 @@ func TestBoundedLatestFrameAndUnsubscribe(t *testing.T){
  default:t.Fatal("subscriber received no frame")
  }
  relay.unsubscribe(id)
- if _,_,ok=relay.subscribe();!ok{t.Fatal("slot was not released")}
+ if _,_,ok=relay.subscribe(false);!ok{t.Fatal("slot was not released")}
 }
 
 func TestReconnectAfterTemporaryFailure(t *testing.T){
@@ -201,7 +201,7 @@ func TestFlashURLForSource(t *testing.T) {
  }
 }
 
-func TestFlashFollowsViewerCount(t *testing.T){
+func TestFlashFollowsExplicitViewerRequestAndManualOverride(t *testing.T){
  var flashOn atomic.Bool
  var onCalls,offCalls atomic.Int32
  source:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,req *http.Request){
@@ -253,31 +253,79 @@ func TestFlashFollowsViewerCount(t *testing.T){
  done:=make(chan error,1)
  go func(){done<-relay.Run(ctx)}()
  downstream:=httptest.NewServer(relay.Handler())
- defer func(){
-  downstream.Close()
-  cancel()
-  <-done
- }()
+ defer func(){downstream.Close();cancel();<-done}()
 
  eventually(t,func()bool{return offCalls.Load()>=1&&!flashOn.Load()})
-
  client:=&http.Client{Timeout:5*time.Second}
- first,err:=client.Get(downstream.URL+"/api/v0/stream")
+
+ normal,err:=client.Get(downstream.URL+"/api/v0/stream")
  if err!=nil{t.Fatal(err)}
+ time.Sleep(100*time.Millisecond)
+ if flashOn.Load(){normal.Body.Close();t.Fatal("normal viewer unexpectedly enabled flash")}
+ if got:=onCalls.Load();got!=0{normal.Body.Close();t.Fatalf("normal viewer caused %d ON calls",got)}
+
+ lit,err:=client.Get(downstream.URL+"/api/v0/stream?flash=1")
+ if err!=nil{normal.Body.Close();t.Fatal(err)}
  eventually(t,func()bool{return flashOn.Load()&&onCalls.Load()==1})
 
- second,err:=client.Get(downstream.URL+"/api/v0/stream")
- if err!=nil{first.Body.Close();t.Fatal(err)}
  time.Sleep(100*time.Millisecond)
- if !flashOn.Load(){t.Fatal("flash turned off while viewers remain")}
  if got:=onCalls.Load();got!=1{t.Fatalf("flash ON calls=%d, want 1",got)}
 
- _=first.Body.Close()
- time.Sleep(100*time.Millisecond)
- if !flashOn.Load(){t.Fatal("flash turned off before final viewer left")}
+ _=lit.Body.Close()
+ eventually(t,func()bool{return !flashOn.Load()})
+ _=normal.Body.Close()
 
- _=second.Body.Close()
- eventually(t,func()bool{return !flashOn.Load()&&offCalls.Load()>=2})
+ req,_:=http.NewRequest(http.MethodPost,downstream.URL+"/api/v0/flash?state=on",nil)
+ resp,err:=client.Do(req)
+ if err!=nil{t.Fatal(err)}
+ resp.Body.Close()
+ if resp.StatusCode!=http.StatusOK{t.Fatalf("manual ON HTTP %d",resp.StatusCode)}
+ eventually(t,func()bool{return flashOn.Load()})
+
+ req,_=http.NewRequest(http.MethodPost,downstream.URL+"/api/v0/flash?state=off",nil)
+ resp,err=client.Do(req)
+ if err!=nil{t.Fatal(err)}
+ resp.Body.Close()
+ if resp.StatusCode!=http.StatusOK{t.Fatalf("manual OFF HTTP %d",resp.StatusCode)}
+ eventually(t,func()bool{return !flashOn.Load()})
+
+ forcedOffViewer,err:=client.Get(downstream.URL+"/api/v0/stream?flash=true")
+ if err!=nil{t.Fatal(err)}
+ time.Sleep(100*time.Millisecond)
+ if flashOn.Load(){forcedOffViewer.Body.Close();t.Fatal("manual OFF was bypassed by viewer request")}
+
+ req,_=http.NewRequest(http.MethodPost,downstream.URL+"/api/v0/flash?state=auto",nil)
+ resp,err=client.Do(req)
+ if err!=nil{forcedOffViewer.Body.Close();t.Fatal(err)}
+ resp.Body.Close()
+ if resp.StatusCode!=http.StatusOK{forcedOffViewer.Body.Close();t.Fatalf("manual AUTO HTTP %d",resp.StatusCode)}
+ eventually(t,func()bool{return flashOn.Load()})
+ _=forcedOffViewer.Body.Close()
+ eventually(t,func()bool{return !flashOn.Load()})
+
+ health,err:=client.Get(downstream.URL+"/api/v0/health")
+ if err!=nil{t.Fatal(err)}
+ defer health.Body.Close()
+ var data map[string]any
+ if err:=json.NewDecoder(health.Body).Decode(&data);err!=nil{t.Fatal(err)}
+ if data["flash_mode"]!="auto" || data["flash_requesting_viewers"]!=float64(0){
+  t.Fatalf("unexpected flash health: %v",data)
+ }
+}
+
+func TestFlashRequestRejectedWhenControlDisabled(t *testing.T){
+ relay,err:=New(Config{SourceURL:"http://127.0.0.1:1/"},nil)
+ if err!=nil{t.Fatal(err)}
+ rec:=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(rec,httptest.NewRequest(http.MethodGet,"/api/v0/stream?flash=1",nil))
+ if rec.Code!=http.StatusServiceUnavailable{
+  t.Fatalf("flash viewer HTTP %d, want 503",rec.Code)
+ }
+ rec=httptest.NewRecorder()
+ relay.Handler().ServeHTTP(rec,httptest.NewRequest(http.MethodGet,"/api/v0/stream?flash=banana",nil))
+ if rec.Code!=http.StatusBadRequest{
+  t.Fatalf("invalid flash query HTTP %d, want 400",rec.Code)
+ }
 }
 
 func TestFlashFailureDoesNotBlockVideo(t *testing.T){
@@ -297,7 +345,7 @@ func TestFlashFailureDoesNotBlockVideo(t *testing.T){
  downstream:=httptest.NewServer(relay.Handler())
  defer func(){downstream.Close();cancel();<-done}()
 
- resp,err:=(&http.Client{Timeout:5*time.Second}).Get(downstream.URL+"/api/v0/stream")
+ resp,err:=(&http.Client{Timeout:5*time.Second}).Get(downstream.URL+"/api/v0/stream?flash=1")
  if err!=nil{t.Fatal(err)}
  defer resp.Body.Close()
  if resp.StatusCode!=http.StatusOK{t.Fatalf("stream HTTP %d",resp.StatusCode)}
