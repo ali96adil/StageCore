@@ -185,3 +185,121 @@ func TestHealthWhenNoSource(t *testing.T){
  relay.Handler().ServeHTTP(recorder,httptest.NewRequest("GET","/api/v0/health",nil))
  if recorder.Code!=503 || !strings.Contains(recorder.Body.String(),"reconnecting"){t.Fatalf("unexpected health: %d %s",recorder.Code,recorder.Body.String())}
 }
+
+
+func TestFlashURLForSource(t *testing.T) {
+ got,err:=FlashURLForSource("http://stagecam-d44a4c.local:81/api/v0/stream")
+ if err!=nil{t.Fatal(err)}
+ if want:="http://stagecam-d44a4c.local:80/api/v0/flash";got!=want{
+  t.Fatalf("flash URL=%q, want %q",got,want)
+ }
+}
+
+func TestFlashFollowsViewerCount(t *testing.T){
+ var flashOn atomic.Bool
+ var onCalls,offCalls atomic.Int32
+ source:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,req *http.Request){
+  switch req.URL.Path {
+  case "/api/v0/flash":
+   if req.Method!=http.MethodPost{http.Error(w,"method",http.StatusMethodNotAllowed);return}
+   switch req.URL.Query().Get("state"){
+   case "on":
+    onCalls.Add(1);flashOn.Store(true)
+   case "off":
+    offCalls.Add(1);flashOn.Store(false)
+   default:
+    http.Error(w,"state",http.StatusBadRequest);return
+   }
+   w.Header().Set("Content-Type","application/json")
+   _,_=io.WriteString(w,"{}")
+  case "/stream":
+   writer:=multipart.NewWriter(w)
+   w.Header().Set("Content-Type","multipart/x-mixed-replace;boundary="+writer.Boundary())
+   w.WriteHeader(http.StatusOK)
+   ticker:=time.NewTicker(12*time.Millisecond)
+   defer ticker.Stop()
+   for i:=0;;i++{
+    select{
+    case <-req.Context().Done():return
+    case <-ticker.C:
+     hdr:=make(textproto.MIMEHeader)
+     hdr.Set("Content-Type","image/jpeg")
+     part,err:=writer.CreatePart(hdr)
+     if err!=nil{return}
+     if _,err=part.Write(testJPEG(byte(i)));err!=nil{return}
+     w.(http.Flusher).Flush()
+    }
+   }
+  default:
+   http.NotFound(w,req)
+  }
+ }))
+ defer source.Close()
+
+ relay,err:=New(Config{
+  SourceURL:source.URL+"/stream",
+  FlashURL:source.URL+"/api/v0/flash",
+  ReconnectDelay:100*time.Millisecond,
+  FlashTimeout:time.Second,
+ },nil)
+ if err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithCancel(context.Background())
+ done:=make(chan error,1)
+ go func(){done<-relay.Run(ctx)}()
+ downstream:=httptest.NewServer(relay.Handler())
+ defer func(){
+  downstream.Close()
+  cancel()
+  <-done
+ }()
+
+ eventually(t,func()bool{return offCalls.Load()>=1&&!flashOn.Load()})
+
+ client:=&http.Client{Timeout:5*time.Second}
+ first,err:=client.Get(downstream.URL+"/api/v0/stream")
+ if err!=nil{t.Fatal(err)}
+ eventually(t,func()bool{return flashOn.Load()&&onCalls.Load()==1})
+
+ second,err:=client.Get(downstream.URL+"/api/v0/stream")
+ if err!=nil{first.Body.Close();t.Fatal(err)}
+ time.Sleep(100*time.Millisecond)
+ if !flashOn.Load(){t.Fatal("flash turned off while viewers remain")}
+ if got:=onCalls.Load();got!=1{t.Fatalf("flash ON calls=%d, want 1",got)}
+
+ _=first.Body.Close()
+ time.Sleep(100*time.Millisecond)
+ if !flashOn.Load(){t.Fatal("flash turned off before final viewer left")}
+
+ _=second.Body.Close()
+ eventually(t,func()bool{return !flashOn.Load()&&offCalls.Load()>=2})
+}
+
+func TestFlashFailureDoesNotBlockVideo(t *testing.T){
+ var active,peak atomic.Int32
+ source:=fakeCamera(t,&active,&peak,false)
+ defer source.Close()
+ relay,err:=New(Config{
+  SourceURL:source.URL,
+  FlashURL:source.URL+"/api/v0/flash",
+  ReconnectDelay:100*time.Millisecond,
+  FlashTimeout:500*time.Millisecond,
+ },nil)
+ if err!=nil{t.Fatal(err)}
+ ctx,cancel:=context.WithCancel(context.Background())
+ done:=make(chan error,1)
+ go func(){done<-relay.Run(ctx)}()
+ downstream:=httptest.NewServer(relay.Handler())
+ defer func(){downstream.Close();cancel();<-done}()
+
+ resp,err:=(&http.Client{Timeout:5*time.Second}).Get(downstream.URL+"/api/v0/stream")
+ if err!=nil{t.Fatal(err)}
+ defer resp.Body.Close()
+ if resp.StatusCode!=http.StatusOK{t.Fatalf("stream HTTP %d",resp.StatusCode)}
+ typ,params,err:=mime.ParseMediaType(resp.Header.Get("Content-Type"))
+ if err!=nil||typ!="multipart/x-mixed-replace"{t.Fatalf("invalid content type: %q %v",typ,err)}
+ part,err:=multipart.NewReader(resp.Body,params["boundary"]).NextPart()
+ if err!=nil{t.Fatal(err)}
+ frame,err:=io.ReadAll(part)
+ if err!=nil{t.Fatal(err)}
+ if len(frame)<4{t.Fatal("no JPEG frame after flash-control failure")}
+}
