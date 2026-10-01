@@ -42,7 +42,7 @@ func TestExecutionEnvironmentManagerContract(t *testing.T) {
 		"f025Update",
 		"f025.updated",
 		"guidedForm.dataset.environmentId",
-		"f025EnvironmentKey").disabled = true",
+		`document.getElementById("f025EnvironmentKey").disabled = true`,
 		"existing?.manifest || null",
 	} {
 		if !strings.Contains(manager, token) {
