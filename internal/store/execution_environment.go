@@ -122,6 +122,59 @@ func (s *Store) ListExecutionEnvironmentManifests(ctx context.Context, revisionI
 	return items, nil
 }
 
+func (s *Store) UpdateExecutionEnvironmentManifest(ctx context.Context, manifestID string, manifest executionenv.Manifest) (ExecutionEnvironmentManifest, error) {
+	manifestID = strings.TrimSpace(manifestID)
+	if manifestID == "" {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment manifest is required", domain.ErrInvalidInput)
+	}
+	item, err := s.GetExecutionEnvironmentManifest(ctx, manifestID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	revision, err := s.GetRevision(ctx, item.RevisionID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, revision.ProjectID); err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	if err := s.ensureDraft(ctx, s.db, item.RevisionID); err != nil {
+		return ExecutionEnvironmentManifest{}, err
+	}
+	canonical, err := executionenv.CanonicalBytes(manifest)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment manifest: %v", domain.ErrInvalidInput, err)
+	}
+	normalized, err := executionenv.DecodeCanonical(canonical)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: canonical execution environment manifest: %v", domain.ErrInvalidInput, err)
+	}
+	if normalized.EnvironmentKey != item.Manifest.EnvironmentKey ||
+		normalized.AdapterKey != item.Manifest.AdapterKey ||
+		normalized.Application.Key != item.Manifest.Application.Key {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment identity fields cannot change in place", domain.ErrConflict)
+	}
+	contentHash, err := executionenv.ContentHash(normalized)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("hash execution environment manifest: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE execution_environment_manifests
+		SET manifest_json = ?, content_sha256 = ?
+		WHERE environment_manifest_id = ?`, string(canonical), contentHash, item.ID)
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, mapExecutionEnvironmentWriteError("update execution environment manifest", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("update execution environment manifest rows affected: %w", err)
+	}
+	if rows != 1 {
+		return ExecutionEnvironmentManifest{}, domain.ErrNotFound
+	}
+	return s.GetExecutionEnvironmentManifest(ctx, item.ID)
+}
+
 func (s *Store) SetExecutionEnvironmentMachineRole(ctx context.Context, manifestID string, machineRoleID *string) (ExecutionEnvironmentManifest, error) {
 	manifestID = strings.TrimSpace(manifestID)
 	if manifestID == "" {
