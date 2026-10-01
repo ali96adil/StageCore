@@ -46,6 +46,12 @@ type CreateMachineRoleParams struct {
 	Required                  bool
 }
 
+type UpdateMachineRoleDefinitionParams struct {
+	DisplayName          string
+	RequiredCapabilities []string
+	Required             bool
+}
+
 func (s *Store) RegisterCompanion(ctx context.Context, p RegisterCompanionParams) (domain.Companion, error) {
 	name := strings.TrimSpace(p.DisplayName)
 	if name == "" {
@@ -195,10 +201,158 @@ func (s *Store) CreateMachineRole(ctx context.Context, projectID string, p Creat
 	return s.GetMachineRole(ctx, id)
 }
 
+func (s *Store) UpdateMachineRoleDefinition(ctx context.Context, projectID, machineRoleID string, p UpdateMachineRoleDefinitionParams) (domain.MachineRole, error) {
+	projectID = strings.TrimSpace(projectID)
+	machineRoleID = strings.TrimSpace(machineRoleID)
+	if projectID == "" || machineRoleID == "" {
+		return domain.MachineRole{}, fmt.Errorf("%w: project and Machine Role are required", domain.ErrInvalidInput)
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return domain.MachineRole{}, err
+	}
+	role, err := s.GetMachineRole(ctx, machineRoleID)
+	if err != nil {
+		return domain.MachineRole{}, err
+	}
+	if role.ProjectID != projectID {
+		return domain.MachineRole{}, domain.ErrNotFound
+	}
+	capabilitiesJSON, err := json.Marshal(normalizeStringList(p.RequiredCapabilities))
+	if err != nil {
+		return domain.MachineRole{}, fmt.Errorf("encode role capabilities: %w", err)
+	}
+	nowUS := clock.UnixMicros(s.clock.Now())
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE machine_roles
+		SET display_name = ?, required_capabilities_json = ?, required = ?, updated_at_us = ?
+		WHERE machine_role_id = ? AND project_id = ?`,
+		strings.TrimSpace(p.DisplayName), string(capabilitiesJSON), boolInt(p.Required),
+		nowUS, machineRoleID, projectID)
+	if err != nil {
+		return domain.MachineRole{}, fmt.Errorf("update machine role definition: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.MachineRole{}, fmt.Errorf("machine role update rows affected: %w", err)
+	}
+	if rows != 1 {
+		return domain.MachineRole{}, domain.ErrNotFound
+	}
+	return s.GetMachineRole(ctx, machineRoleID)
+}
+
+func (s *Store) SetMachineRoleRetired(ctx context.Context, projectID, machineRoleID string, retired bool) (domain.MachineRole, error) {
+	projectID = strings.TrimSpace(projectID)
+	machineRoleID = strings.TrimSpace(machineRoleID)
+	if projectID == "" || machineRoleID == "" {
+		return domain.MachineRole{}, fmt.Errorf("%w: project and Machine Role are required", domain.ErrInvalidInput)
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return domain.MachineRole{}, err
+	}
+	role, err := s.GetMachineRole(ctx, machineRoleID)
+	if err != nil {
+		return domain.MachineRole{}, err
+	}
+	if role.ProjectID != projectID {
+		return domain.MachineRole{}, domain.ErrNotFound
+	}
+	if retired {
+		var active int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM role_assignments
+			WHERE machine_role_id = ? AND state <> 'RELEASED'`, machineRoleID).Scan(&active); err != nil {
+			return domain.MachineRole{}, fmt.Errorf("count active role assignments: %w", err)
+		}
+		if active > 0 {
+			return domain.MachineRole{}, fmt.Errorf("%w: release the active Companion assignment before retiring this Machine Role", domain.ErrConflict)
+		}
+	}
+	nowUS := clock.UnixMicros(s.clock.Now())
+	retiredValue := 0
+	var retiredAt any
+	if retired {
+		retiredValue = 1
+		retiredAt = nowUS
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE machine_roles
+		SET retired = ?, retired_at_us = ?, updated_at_us = ?
+		WHERE machine_role_id = ? AND project_id = ?`,
+		retiredValue, retiredAt, nowUS, machineRoleID, projectID)
+	if err != nil {
+		return domain.MachineRole{}, fmt.Errorf("set machine role retirement: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.MachineRole{}, fmt.Errorf("machine role retirement rows affected: %w", err)
+	}
+	if rows != 1 {
+		return domain.MachineRole{}, domain.ErrNotFound
+	}
+	return s.GetMachineRole(ctx, machineRoleID)
+}
+
+func (s *Store) DeleteMachineRoleIfUnreferenced(ctx context.Context, projectID, machineRoleID string) error {
+	projectID = strings.TrimSpace(projectID)
+	machineRoleID = strings.TrimSpace(machineRoleID)
+	if projectID == "" || machineRoleID == "" {
+		return fmt.Errorf("%w: project and Machine Role are required", domain.ErrInvalidInput)
+	}
+	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
+		return err
+	}
+	role, err := s.GetMachineRole(ctx, machineRoleID)
+	if err != nil {
+		return err
+	}
+	if role.ProjectID != projectID {
+		return domain.ErrNotFound
+	}
+	if !role.Retired {
+		return fmt.Errorf("%w: Machine Role must be retired before permanent removal", domain.ErrConflict)
+	}
+
+	checks := []struct {
+		label string
+		query string
+		args  []any
+	}{
+		{"assignment history", `SELECT COUNT(*) FROM role_assignments WHERE machine_role_id = ?`, []any{machineRoleID}},
+		{"media requirements", `SELECT COUNT(*) FROM machine_role_media_requirements WHERE machine_role_id = ?`, []any{machineRoleID}},
+		{"execution environments", `SELECT COUNT(*) FROM execution_environment_manifests WHERE machine_role_id = ?`, []any{machineRoleID}},
+		{"live video sources", `SELECT COUNT(*) FROM live_video_sources WHERE execution_machine_role_id = ?`, []any{machineRoleID}},
+		{"Project targets", `SELECT COUNT(*) FROM project_device_aliases WHERE project_id = ? AND (project_config_json LIKE ? OR (lower(logical_type) = 'machine_role' AND target_ref = ?))`, []any{projectID, "%" + machineRoleID + "%", role.RoleKey}},
+		{"published Runtime Snapshots", `SELECT COUNT(*) FROM runtime_snapshots WHERE project_id = ? AND manifest_json LIKE ?`, []any{projectID, "%" + machineRoleID + "%"}},
+	}
+	for _, check := range checks {
+		var count int
+		if err := s.db.QueryRowContext(ctx, check.query, check.args...).Scan(&count); err != nil {
+			return fmt.Errorf("check Machine Role %s references: %w", check.label, err)
+		}
+		if count > 0 {
+			return fmt.Errorf("%w: Machine Role is still referenced by %s", domain.ErrConflict, check.label)
+		}
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM machine_roles WHERE machine_role_id = ? AND project_id = ? AND retired = 1`, machineRoleID, projectID)
+	if err != nil {
+		return fmt.Errorf("delete machine role: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("machine role delete rows affected: %w", err)
+	}
+	if rows != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetMachineRole(ctx context.Context, machineRoleID string) (domain.MachineRole, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT machine_role_id, project_id, role_key, display_name, required_capabilities_json,
-		       required_runtime_snapshot_id, required_config_hash, required, created_at_us, updated_at_us
+		       required_runtime_snapshot_id, required_config_hash, required, retired, retired_at_us,
+		       created_at_us, updated_at_us
 		FROM machine_roles WHERE machine_role_id = ?`, machineRoleID)
 	return scanMachineRole(row)
 }
@@ -213,12 +367,15 @@ func (s *Store) AssignMachineRole(ctx context.Context, machineRoleID, companionI
 	}
 	defer tx.Rollback()
 
-	var roleExists int
-	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM machine_roles WHERE machine_role_id = ?`, machineRoleID).Scan(&roleExists); err != nil {
+	var retired int
+	if err := tx.QueryRowContext(ctx, `SELECT retired FROM machine_roles WHERE machine_role_id = ?`, machineRoleID).Scan(&retired); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.RoleAssignment{}, domain.ErrNotFound
 		}
 		return domain.RoleAssignment{}, fmt.Errorf("read machine role: %w", err)
+	}
+	if retired == 1 {
+		return domain.RoleAssignment{}, fmt.Errorf("%w: retired Machine Role cannot be assigned", domain.ErrConflict)
 	}
 	var trust string
 	if err := tx.QueryRowContext(ctx, `SELECT trust_state FROM companions WHERE companion_id = ?`, companionID).Scan(&trust); err != nil {
@@ -334,11 +491,12 @@ func scanMachineRole(row rowScanner) (domain.MachineRole, error) {
 	var role domain.MachineRole
 	var capabilitiesJSON string
 	var snapshot sql.NullString
-	var required int
+	var required, retired int
+	var retiredUS sql.NullInt64
 	var createdUS, updatedUS int64
 	if err := row.Scan(
 		&role.ID, &role.ProjectID, &role.RoleKey, &role.DisplayName, &capabilitiesJSON,
-		&snapshot, &role.RequiredConfigHash, &required, &createdUS, &updatedUS,
+		&snapshot, &role.RequiredConfigHash, &required, &retired, &retiredUS, &createdUS, &updatedUS,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.MachineRole{}, domain.ErrNotFound
@@ -353,6 +511,11 @@ func scanMachineRole(row rowScanner) (domain.MachineRole, error) {
 		role.RequiredRuntimeSnapshotID = &value
 	}
 	role.Required = required == 1
+	role.Retired = retired == 1
+	if retiredUS.Valid {
+		value := clock.FromUnixMicros(retiredUS.Int64)
+		role.RetiredAt = &value
+	}
 	role.CreatedAt = clock.FromUnixMicros(createdUS)
 	role.UpdatedAt = clock.FromUnixMicros(updatedUS)
 	return role, nil
