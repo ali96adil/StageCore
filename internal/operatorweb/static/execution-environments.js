@@ -26,6 +26,10 @@ const f025Strings = {
   "f025.machine_role": {"en":"Machine Role binding","ar-IQ":"ربط دور الجهاز"},
   "f025.unbound_option": {"en":"Unbound — choose explicitly later","ar-IQ":"غير مربوط — اختر الدور لاحقاً بشكل صريح"},
   "f025.create": {"en":"Create environment","ar-IQ":"إنشاء بيئة التشغيل"},
+  "f025.edit": {"en":"Edit environment","ar-IQ":"تعديل بيئة التشغيل"},
+  "f025.update": {"en":"Update environment","ar-IQ":"تحديث بيئة التشغيل"},
+  "f025.cancel_edit": {"en":"Cancel edit","ar-IQ":"إلغاء التعديل"},
+  "f025.updated": {"en":"Execution environment updated.","ar-IQ":"تم تحديث بيئة التشغيل."},
   "f025.start_edit": {"en":"Start environment edit","ar-IQ":"بدء تعديل بيئات التشغيل"},
   "f025.refresh": {"en":"Refresh","ar-IQ":"تحديث"},
   "f025.unbound": {"en":"UNBOUND","ar-IQ":"غير مربوط"},
@@ -515,7 +519,7 @@ function f025EnvironmentCard(environment, roles, editable) {
       <p class="eyebrow">${esc(f025T("f025.snapshots"))}</p>
       <p class="muted">${esc(f025T("f025.snapshots_loading"))}</p>
     </div>
-    ${editable ? `<div class="toolbar" style="margin-top:12px"><button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
+    ${editable ? `<div class="toolbar" style="margin-top:12px"><button class="button f025-edit" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.edit"))}</button><button class="button danger f025-remove" data-environment-id="${esc(environment.execution_environment_id)}" type="button">${esc(f025T("f025.remove"))}</button></div>` : ""}
   </article>`;
 }
 
@@ -630,7 +634,7 @@ async function renderExecutionEnvironments(message = "") {
     ${roleCanEdit ? `<div class="grid cards" style="margin-top:14px">
       <article class="card">
         <p class="eyebrow">VDMX</p><h2>${esc(f025T("f025.guided"))}</h2>
-        <form id="f025GuidedForm" style="margin-top:14px">
+        <form id="f025GuidedForm" data-environment-id="" style="margin-top:14px">
           <div class="form-grid two">
             <label>${esc(f025T("f025.environment_key"))}<input id="f025EnvironmentKey" value="video-main" ${disabled} required></label>
             <label>${esc(f025T("f025.name"))}<input id="f025EnvironmentName" value="Main video workstation" ${disabled} required></label>
@@ -642,7 +646,7 @@ async function renderExecutionEnvironments(message = "") {
             <label id="f025SizeBytesLabel" class="hidden">${esc(f025T("f025.size_bytes"))}<input id="f025SizeBytes" type="number" min="0" step="1" ${disabled}></label>
             <label>${esc(f025T("f025.machine_role"))}<select id="f025GuidedRole" ${disabled}>${f025RoleOptions(model.machine_roles || [])}</select></label>
           </div>
-          <div class="message">${esc(f025T("f025.osc_go_hint"))}</div>\n          <button class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button>
+          <div class="message">${esc(f025T("f025.osc_go_hint"))}</div>\n          <div class="toolbar"><button id="f025GuidedSubmit" class="button primary" type="submit" ${disabled}>${esc(f025T("f025.create"))}</button><button id="f025GuidedCancel" class="button ghost hidden" type="button" ${disabled}>${esc(f025T("f025.cancel_edit"))}</button></div>
         </form>
       </article>
 
