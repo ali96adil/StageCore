@@ -110,6 +110,7 @@ func TestPreflightOperatorUXLinksBlockingChecksToRelevantWorkspace(t *testing.T)
 	for _, required := range []string{
 		"preflightDestination",
 		"Open Stage Devices",
+		"Open Network Cockpit",
 		"Open Live Video",
 		"Open Machine Roles",
 		"Open Environments",
