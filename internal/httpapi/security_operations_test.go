@@ -141,6 +141,81 @@ func TestSecurityAdministrationShowGateAndEmergencyRevocation(t *testing.T) {
 	assertAuditEvent(t, records, "companion.revoke", securityaudit.ResultSuccess, "lost device")
 }
 
+func TestSecurityPendingPairingInventoryAndApproval(t *testing.T) {
+	ctx := context.Background()
+	h := newAuthHarness(t)
+	stageStore := store.New(h.db.DB, clock.Real{})
+	secrets, err := secretstore.Open(ctx, h.db.DB, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit, err := securityaudit.New(h.db.DB, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugins, err := pluginpermissions.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	companions := companionauth.New(stageStore, nil)
+	handler := New(
+		WithUserAuth(h.auth, h.hub, audit),
+		WithSecurityOperations(h.auth, stageStore, secrets, plugins, audit, companions, nil),
+	).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicBytes := elliptic.Marshal(elliptic.P256(), privateKey.X, privateKey.Y)
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	companionID := "55555555-5555-4555-8555-555555555555"
+	receipt, err := companions.RequestPairing(ctx, companionauth.PairingRequestInput{
+		CompanionID: companionID, DisplayName: "Tablet D57EC1", Hostname: "tablet.local",
+		Platform: "android", Architecture: "arm64", Version: "1.0.0-rc4", Capabilities: []string{"tablet.media.play"},
+		PublicKeyAlgorithm: domain.CompanionPublicKeyAlgorithm,
+		PublicKeyBase64: base64.StdEncoding.EncodeToString(publicBytes),
+		ClientNonceBase64: base64.StdEncoding.EncodeToString(nonce),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pending := securityRequest(t, handler, owner, http.MethodGet, "/api/v1/security/companions/pairing/pending", "")
+	if pending.Code != http.StatusOK {
+		t.Fatalf("pending pairing=%d %s", pending.Code, pending.Body.String())
+	}
+	body := pending.Body.String()
+	for _, required := range []string{receipt.RequestID, companionID, "Tablet D57EC1", "android", "1.0.0-rc4"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("pending pairing response missing %q: %s", required, body)
+		}
+	}
+	for _, secret := range []string{receipt.PairingCode, base64.StdEncoding.EncodeToString(publicBytes), "pairing_code_hash", "public_key_base64"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("pending pairing response exposed %q: %s", secret, body)
+		}
+	}
+
+	approveBody, _ := json.Marshal(map[string]string{"request_id": receipt.RequestID, "pairing_code": receipt.PairingCode})
+	approved := securityRequest(t, handler, owner, http.MethodPost, "/api/v1/security/companions/pairing/approve", string(approveBody))
+	if approved.Code != http.StatusOK || !strings.Contains(approved.Body.String(), companionID) {
+		t.Fatalf("approve pairing=%d %s", approved.Code, approved.Body.String())
+	}
+
+	pending = securityRequest(t, handler, owner, http.MethodGet, "/api/v1/security/companions/pairing/pending", "")
+	if pending.Code != http.StatusOK || strings.Contains(pending.Body.String(), receipt.RequestID) {
+		t.Fatalf("approved request remained pending: %d %s", pending.Code, pending.Body.String())
+	}
+}
+
 func securityRequest(t *testing.T, handler http.Handler, credential userauth.Credential, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
