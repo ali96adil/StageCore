@@ -14,6 +14,7 @@ func TestOperatorWebBundlesVisualEngineWorkspace(t *testing.T) {
 		required []string
 	}{
 		{path: "/phase4.js", required: []string{"renderVisualEngine", "/visual-engine/mode", "SHOW_CONFIGURATION_LOCKED", "data-visual-engine-nav"}},
+		{path: "/guided-ux.js", required: []string{"Native Visual Engine", "visual.preload", "visual.blackout", "visual.transition", "visual.layer.crop", "visual.output.mapping", "External VDMX stays on OSC / Execution Environments"}},
 		{path: "/phase4.css", required: []string{"visual-mode-grid", "visual-inventory-grid", "visual-authority-handoff"}},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
