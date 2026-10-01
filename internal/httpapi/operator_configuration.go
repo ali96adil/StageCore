@@ -18,6 +18,10 @@ type targetCreateRequest struct {
 	Configuration json.RawMessage `json:"configuration"`
 }
 
+type targetConfigurationUpdateRequest struct {
+	Configuration json.RawMessage `json:"configuration"`
+}
+
 type inputCreateRequest struct {
 	Name        string          `json:"name"`
 	SourceRef   string          `json:"source_ref"`
@@ -177,6 +181,32 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			return
 		}
 		writeJSON(w, http.StatusCreated, targetView(created))
+	}))
+
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/targets/{alias_id}/configuration", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		var body targetConfigurationUpdateRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		if len(body.Configuration) == 0 {
+			body.Configuration = json.RawMessage(`{}`)
+		}
+		updated, err := stageStore.UpdateAliasConfiguration(
+			r.Context(),
+			strings.TrimSpace(r.PathValue("project_id")),
+			strings.TrimSpace(r.PathValue("alias_id")),
+			body.Configuration,
+		)
+		if err != nil {
+			switch {
+			case errors.Is(err, domain.ErrInvalidInput):
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "TARGET_CONFIGURATION_INVALID"})
+			default:
+				writeProjectStoreError(w, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, targetView(updated))
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/targets/{alias_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
