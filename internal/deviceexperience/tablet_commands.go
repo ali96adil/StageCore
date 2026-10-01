@@ -13,6 +13,8 @@ const (
 	CommandTabletOverlayClear  = "TABLET_OVERLAY_CLEAR"
 	CommandTabletLiveShow      = "TABLET_LIVE_SHOW"
 	CommandTabletLiveHide      = "TABLET_LIVE_HIDE"
+	CommandTabletBrightnessSet = "TABLET_BRIGHTNESS_SET"
+	CommandTabletShowModeSet   = "TABLET_SHOW_MODE_SET"
 )
 
 const (
@@ -26,6 +28,8 @@ const (
 	CapabilityTabletOverlayClear  = "tablet.media.overlay.clear"
 	CapabilityTabletLiveShow      = "tablet.media.live.show"
 	CapabilityTabletLiveHide      = "tablet.media.live.hide"
+	CapabilityTabletBrightnessSet = "tablet.settings.brightness.set"
+	CapabilityTabletShowModeSet   = "tablet.settings.show_mode.set"
 )
 
 func init() {
@@ -39,4 +43,6 @@ func init() {
 	commandCapability[CommandTabletOverlayClear] = CapabilityTabletOverlayClear
 	commandCapability[CommandTabletLiveShow] = CapabilityTabletLiveShow
 	commandCapability[CommandTabletLiveHide] = CapabilityTabletLiveHide
+	commandCapability[CommandTabletBrightnessSet] = CapabilityTabletBrightnessSet
+	commandCapability[CommandTabletShowModeSet] = CapabilityTabletShowModeSet
 }

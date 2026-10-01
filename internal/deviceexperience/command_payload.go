@@ -24,6 +24,34 @@ func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.T
 		}
 		return canonical, nil
 
+	case CommandTabletBrightnessSet:
+		for key := range object {
+			if key != "brightness_percent" && key != "tablet_manifest_id" {
+				return nil, fmt.Errorf("%w: %s field %q is unsupported", ErrInvalidState, CommandTabletBrightnessSet, key)
+			}
+		}
+		value, ok := numericInteger(object["brightness_percent"])
+		if !ok || value < 5 || value > 100 {
+			return nil, fmt.Errorf("%w: brightness_percent must be an integer between 5 and 100", ErrInvalidState)
+		}
+		object["brightness_percent"] = value
+		if err := validateTabletManifestHint(object); err != nil {
+			return nil, err
+		}
+
+	case CommandTabletShowModeSet:
+		for key := range object {
+			if key != "show_mode" && key != "tablet_manifest_id" {
+				return nil, fmt.Errorf("%w: %s field %q is unsupported", ErrInvalidState, CommandTabletShowModeSet, key)
+			}
+		}
+		if _, ok := object["show_mode"].(bool); !ok {
+			return nil, fmt.Errorf("%w: show_mode must be boolean", ErrInvalidState)
+		}
+		if err := validateTabletManifestHint(object); err != nil {
+			return nil, err
+		}
+
 	case "DISPLAY_MESSAGE":
 		message, _ := object["message"].(string)
 		message = strings.TrimSpace(message)
@@ -138,6 +166,28 @@ func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.T
 		return nil, fmt.Errorf("canonicalize Stage Device command payload: %w", err)
 	}
 	return canonical, nil
+}
+
+func numericInteger(value any) (int, bool) {
+	number, ok := numericSeconds(value)
+	if !ok || number != float64(int(number)) {
+		return 0, false
+	}
+	return int(number), true
+}
+
+func validateTabletManifestHint(object map[string]any) error {
+	value, exists := object["tablet_manifest_id"]
+	if !exists {
+		return nil
+	}
+	text, ok := value.(string)
+	text = strings.TrimSpace(text)
+	if !ok || text == "" || len(text) > 256 {
+		return fmt.Errorf("%w: tablet_manifest_id is invalid", ErrInvalidState)
+	}
+	object["tablet_manifest_id"] = text
+	return nil
 }
 
 func optionalEnum(value any, allowed []string, fallback string) (string, bool) {

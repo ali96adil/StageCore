@@ -34,6 +34,7 @@ type tabletCommandRequest struct {
 	SessionID     string          `json:"session_id"`
 	CorrelationID string          `json:"correlation_id"`
 	Priority      string          `json:"priority"`
+	Confirm       string          `json:"confirm"`
 	Payload       json.RawMessage `json:"payload"`
 }
 
@@ -183,7 +184,7 @@ func WithOperatorTabletController(
 			}
 			input.CommandType = strings.TrimSpace(input.CommandType)
 			capability := deviceexperience.RequiredCapability(input.CommandType)
-			if capability == "" || !strings.HasPrefix(capability, "tablet.media.") {
+			if capability == "" || !tabletRuntimeCapability(capability) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
@@ -205,6 +206,31 @@ func WithOperatorTabletController(
 			if len(targets) == 0 {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "TABLET_TARGET_EMPTY"})
 				return
+			}
+			settingsCommand := tabletSettingsCommand(input.CommandType)
+			if settingsCommand {
+				for _, tablet := range targets {
+					if tablet.Runtime == nil || tablet.Runtime.Connection != deviceexperience.ConnectionOnline ||
+						tablet.Runtime.Readiness != deviceexperience.ReadinessReady {
+						writeJSON(w, http.StatusConflict, map[string]any{
+							"error": "TABLET_SETTINGS_DEVICE_NOT_READY",
+							"device_id": tablet.ID,
+						})
+						return
+					}
+				}
+				if len(targets) > 1 {
+					active, activeErr := stageStore.ActiveSessionForProject(r.Context(), projectID)
+					if activeErr != nil {
+						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "TABLET_SETTINGS_SHOW_CHECK_FAILED"})
+						return
+					}
+					if active != nil && active.Type == domain.SessionShow &&
+						strings.TrimSpace(input.Confirm) != "APPLY_TABLET_SETTINGS_DURING_SHOW" {
+						writeJSON(w, http.StatusConflict, map[string]any{"error": "TABLET_SETTINGS_SHOW_CONFIRMATION_REQUIRED"})
+						return
+					}
+				}
 			}
 			correlationID := strings.TrimSpace(input.CorrelationID)
 			if correlationID == "" {
@@ -470,7 +496,32 @@ func defaultTabletPriority(value string) string {
 }
 
 func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (json.RawMessage, error) {
-	if strings.TrimSpace(commandType) != deviceexperience.CommandTabletLiveShow {
+	commandType = strings.TrimSpace(commandType)
+	if commandType == deviceexperience.CommandTabletBrightnessSet {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 1 {
+			return nil, fmt.Errorf("brightness requires exactly brightness_percent")
+		}
+		value, ok := object["brightness_percent"].(float64)
+		if !ok || value != float64(int(value)) || value < 5 || value > 100 {
+			return nil, fmt.Errorf("brightness_percent must be an integer between 5 and 100")
+		}
+		encoded, _ := json.Marshal(map[string]int{"brightness_percent": int(value)})
+		return encoded, nil
+	}
+	if commandType == deviceexperience.CommandTabletShowModeSet {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 1 {
+			return nil, fmt.Errorf("Show Mode requires exactly show_mode")
+		}
+		value, ok := object["show_mode"].(bool)
+		if !ok {
+			return nil, fmt.Errorf("show_mode must be boolean")
+		}
+		encoded, _ := json.Marshal(map[string]bool{"show_mode": value})
+		return encoded, nil
+	}
+	if commandType != deviceexperience.CommandTabletLiveShow {
 		return normalizeRawObject(raw), nil
 	}
 	var object map[string]any
@@ -506,6 +557,21 @@ func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (jso
 	}
 	encoded, _ := json.Marshal(map[string]string{"url": directURL})
 	return encoded, nil
+}
+
+func tabletRuntimeCapability(capability string) bool {
+	return strings.HasPrefix(capability, "tablet.media.") ||
+		capability == deviceexperience.CapabilityTabletBrightnessSet ||
+		capability == deviceexperience.CapabilityTabletShowModeSet
+}
+
+func tabletSettingsCommand(commandType string) bool {
+	switch strings.TrimSpace(commandType) {
+	case deviceexperience.CommandTabletBrightnessSet, deviceexperience.CommandTabletShowModeSet:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeRawObject(raw json.RawMessage) json.RawMessage {

@@ -13,7 +13,7 @@ func TestOperatorWebBundlesTabletControllerWorkspace(t *testing.T) {
 		path     string
 		required []string
 	}{
-		{path: "/phase4.js", required: []string{"renderTabletController", "tablet-controller/cue-actions", "TABLET_OVERLAY_PLAY", "TABLET_LIVE_SHOW", "tabletLiveMode", "tabletLiveURL", "Direct URL", "TABLET_BLACKOUT_CLEAR", "battery_percent", "battery_charging", "power_save", "data-tablet-battery", "scheduleTabletHealthRefresh", "tabletAssignCurrent", "assignSelectedToCurrentSnapshot", "/assign", "assignment_epoch", "renderTabletScenes", "tablet-controller/scenes", "TABLET_SCENE", "cues/reorder"}},
+		{path: "/phase4.js", required: []string{"renderTabletController", "tablet-controller/cue-actions", "TABLET_OVERLAY_PLAY", "TABLET_LIVE_SHOW", "tabletLiveMode", "tabletLiveURL", "Direct URL", "TABLET_BLACKOUT_CLEAR", "battery_percent", "battery_charging", "power_save", "data-tablet-battery", "scheduleTabletHealthRefresh", "tabletAssignCurrent", "assignSelectedToCurrentSnapshot", "/assign", "assignment_epoch", "TABLET_BRIGHTNESS_SET", "TABLET_SHOW_MODE_SET", "tabletBrightnessPercent", "data-tablet-show-mode", "APPLY_TABLET_SETTINGS_DURING_SHOW", "renderTabletScenes", "tablet-controller/scenes", "TABLET_SCENE", "cues/reorder"}},
 		{path: "/phase4.css", required: []string{"tablet-device-grid", "tablet-control-grid", "tablet-cue-builder", "tablet-scene-list", "tablet-scene-action-editor"}},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)

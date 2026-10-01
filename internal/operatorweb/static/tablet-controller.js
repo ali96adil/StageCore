@@ -66,6 +66,15 @@
       assignmentOld: "Old Snapshot",
       assignmentUpdated: "Tablet assignment updated. The Tablet Player will reconnect with the current Snapshot.",
       assignmentNone: "No published Runtime Snapshot is available.",
+      tabletSettings: "Tablet settings",
+      tabletSettingsSub: "Authenticated v2 controls. Changes are confirmed by the tablet's observed health state.",
+      brightnessSet: "Apply brightness",
+      brightnessPercent: "Brightness %",
+      enterShowMode: "Enter Show Mode",
+      exitShowMode: "Exit Show Mode",
+      showMode: "Show mode",
+      broadShowConfirm: "Apply this settings change to multiple tablets during SHOW?",
+      settingsNeedReady: "Selected tablets must be ONLINE and READY.",
     },
     ar: {
       nav: "تحكم التابلت",
@@ -131,6 +140,15 @@
       assignmentOld: "Snapshot قديم",
       assignmentUpdated: "تم تحديث ربط التابلت. راح يعيد الاتصال على الـSnapshot الحالي.",
       assignmentNone: "ماكو Runtime Snapshot منشور حالياً.",
+      tabletSettings: "إعدادات التابلت",
+      tabletSettingsSub: "تحكم v2 موثّق. التغيير يتأكد من الحالة الفعلية اللي يرجعها التابلت.",
+      brightnessSet: "تطبيق السطوع",
+      brightnessPercent: "السطوع %",
+      enterShowMode: "دخول Show Mode",
+      exitShowMode: "خروج من Show Mode",
+      showMode: "وضع العرض",
+      broadShowConfirm: "تطبق هذا التغيير على أكثر من تابلت أثناء SHOW؟",
+      settingsNeedReady: "التابلتات المحددة لازم تكون ONLINE و READY.",
     },
   };
 
@@ -185,6 +203,7 @@
     const value = health(device);
     const details = [];
     if (Number.isFinite(Number(value.brightness_percent))) details.push(`${t("brightness")}: ${Math.round(Number(value.brightness_percent))}%`);
+    if (typeof value.show_mode === "boolean") details.push(`${t("showMode")}: ${value.show_mode ? t("on") : t("off")}`);
     if (value.orientation_mode) details.push(`${t("orientation")}: ${String(value.orientation_mode)}`);
     return details.join(" · ") || "—";
   }
@@ -301,6 +320,23 @@
             </div>
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
           </section>
+          <section class="card tablet-control-panel">
+            <div><p class="eyebrow">SETTINGS</p><h2>${esc(t("tabletSettings"))}</h2><p class="muted">${esc(t("tabletSettingsSub"))}</p></div>
+            <div class="tablet-inline-fields">
+              <label>${esc(t("brightnessPercent"))}<input id="tabletBrightnessPercent" type="number" min="5" max="100" value="100" inputmode="numeric"></label>
+            </div>
+            <div class="tablet-command-row">
+              <button class="button ghost" data-tablet-brightness="25" data-tablet-settings-control type="button">25%</button>
+              <button class="button ghost" data-tablet-brightness="50" data-tablet-settings-control type="button">50%</button>
+              <button class="button ghost" data-tablet-brightness="75" data-tablet-settings-control type="button">75%</button>
+              <button class="button ghost" data-tablet-brightness="100" data-tablet-settings-control type="button">100%</button>
+              <button id="tabletBrightnessApply" class="button primary" data-tablet-settings-control type="button">${esc(t("brightnessSet"))}</button>
+            </div>
+            <div class="tablet-command-row">
+              <button class="button primary" data-tablet-show-mode="true" data-tablet-settings-control type="button">${esc(t("enterShowMode"))}</button>
+              <button class="button ghost" data-tablet-show-mode="false" data-tablet-settings-control type="button">${esc(t("exitShowMode"))}</button>
+            </div>
+          </section>
           <section class="card tablet-control-panel tablet-safety-panel">
             <div><p class="eyebrow">P0</p><h2>${esc(t("blackout"))}</h2><p class="muted">${esc(t("blackoutSub"))}</p></div>
             <div class="tablet-command-row"><button class="button danger big" data-tablet-command="TABLET_BLACKOUT" type="button">${esc(t("blackoutOn"))}</button><button class="button ghost" data-tablet-command="TABLET_BLACKOUT_CLEAR" type="button">${esc(t("blackoutOff"))}</button></div>
@@ -357,9 +393,19 @@
     if (target) setMessage(target, message, kind);
   }
 
+  function selectedSettingsReady() {
+    const devices = selectedDevices();
+    return devices.length > 0 && devices.every((device) => {
+      const runtime = device.runtime || {};
+      return runtime.connection_state === "ONLINE" && runtime.readiness === "READY";
+    });
+  }
+
   function refreshSelectionUI() {
     document.getElementById("tabletSelectionCount")?.replaceChildren(document.createTextNode(selectionText()));
     document.querySelectorAll(".tablet-device-check").forEach((checkbox) => { checkbox.checked = selected.has(checkbox.dataset.deviceId); });
+    const ready = selectedSettingsReady();
+    document.querySelectorAll("[data-tablet-settings-control]").forEach((button) => { button.disabled = !ready; });
   }
 
   function bindTabletController() {
@@ -391,7 +437,26 @@
       try { await dispatchTabletCommand(button.dataset.tabletCommand); }
       finally { button.disabled = false; }
     }));
+    document.getElementById("tabletBrightnessApply")?.addEventListener("click", async () => {
+      const input = document.getElementById("tabletBrightnessPercent");
+      const percent = Number(input?.value || 0);
+      if (!Number.isInteger(percent) || percent < 5 || percent > 100) {
+        setControllerMessage("Brightness must be between 5 and 100.", "warn");
+        return;
+      }
+      await dispatchTabletCommand("TABLET_BRIGHTNESS_SET", null, { brightness_percent: percent });
+    });
+    document.querySelectorAll("[data-tablet-brightness]").forEach((button) => button.addEventListener("click", async () => {
+      const percent = Number(button.dataset.tabletBrightness || 0);
+      const input = document.getElementById("tabletBrightnessPercent");
+      if (input) input.value = String(percent);
+      await dispatchTabletCommand("TABLET_BRIGHTNESS_SET", null, { brightness_percent: percent });
+    }));
+    document.querySelectorAll("[data-tablet-show-mode]").forEach((button) => button.addEventListener("click", async () => {
+      await dispatchTabletCommand("TABLET_SHOW_MODE_SET", null, { show_mode: button.dataset.tabletShowMode === "true" });
+    }));
     document.getElementById("tabletAddCueAction")?.addEventListener("click", addTabletActionToCue);
+    refreshSelectionUI();
   }
 
   async function assignSelectedToCurrentSnapshot() {
@@ -467,6 +532,16 @@
     catch (error) { setControllerMessage(error.message, "warn"); return; }
     let runtime = null;
     try { runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/runtime`); } catch (_) {}
+    const settingsCommand = command === "TABLET_BRIGHTNESS_SET" || command === "TABLET_SHOW_MODE_SET";
+    if (settingsCommand && !selectedSettingsReady()) {
+      setControllerMessage(t("settingsNeedReady"), "warn");
+      return;
+    }
+    let confirm = "";
+    if (settingsCommand && ids.length > 1 && runtime?.mode === "SHOW") {
+      if (!window.confirm(t("broadShowConfirm"))) return;
+      confirm = "APPLY_TABLET_SETTINGS_DURING_SHOW";
+    }
     const response = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands`, {
       method: "POST",
       json: {
@@ -475,11 +550,15 @@
         session_id: runtime?.session?.session_id || "",
         correlation_id: requestID(),
         priority: command.includes("BLACKOUT") ? "P0" : "P1",
+        confirm,
         payload,
       },
     });
     const failures = (response.results || []).filter((item) => item.error || ["FAILED", "REJECTED", "TIMED_OUT", "CANCELLED"].includes(item.command?.status));
     setControllerMessage(failures.length ? `${t("commandPartial")} ${failures.map((item) => item.display_name || item.device_id).join(", ")}` : t("commandOK"), failures.length ? "warn" : "success");
+    if (settingsCommand && !failures.length) {
+      window.setTimeout(() => refreshTabletHealth(), 350);
+    }
   }
 
   async function addTabletActionToCue() {
