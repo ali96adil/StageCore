@@ -644,7 +644,6 @@ async function renderRuntime(startPolling = false) {
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
   const showBlocked = preflight?.status === "BLOCK";
-  const preflightKind = preflight?.status === "PASS" ? "good" : preflight?.status === "WARN" ? "warn" : preflight?.status === "BLOCK" ? "bad" : "neutral";
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
