@@ -391,12 +391,14 @@ function f002RenderTabletParameterFields(composer) {
         </label>
         <label id="f002TabletLiveKeyWrap">Media key<input id="f002TabletLiveKey" dir="ltr" placeholder="camera-main"></label>
         <label id="f002TabletLiveURLWrap" class="hidden">Live URL<input id="f002TabletLiveURL" dir="ltr" placeholder="Paste an absolute Live URL"></label>
+        <label id="f002TabletLiveFlashWrap" class="hidden"><input id="f002TabletLiveFlash" type="checkbox"> Use camera flash for this Live</label>
       </div>`;
     const mode = host.querySelector("#f002TabletLiveMode");
     mode?.addEventListener("change", () => {
       const direct = mode.value === "url";
       host.querySelector("#f002TabletLiveKeyWrap")?.classList.toggle("hidden", direct);
       host.querySelector("#f002TabletLiveURLWrap")?.classList.toggle("hidden", !direct);
+      host.querySelector("#f002TabletLiveFlashWrap")?.classList.toggle("hidden", !direct);
     });
     return;
   }
@@ -427,7 +429,13 @@ function f002TabletVisualPayload(composer, command) {
   }
   if (command === "TABLET_LIVE_SHOW") {
     const mode = composer.querySelector("#f002TabletLiveMode")?.value || "key";
-    if (mode === "url") return { url: f002NormalizeLiveURL(composer.querySelector("#f002TabletLiveURL")?.value) };
+    if (mode === "url") {
+      const rawURL = f002NormalizeLiveURL(composer.querySelector("#f002TabletLiveURL")?.value);
+      const parsed = new URL(rawURL);
+      if (composer.querySelector("#f002TabletLiveFlash")?.checked) parsed.searchParams.set("flash", "1");
+      else parsed.searchParams.delete("flash");
+      return { url: parsed.toString() };
+    }
     const mediaKey = composer.querySelector("#f002TabletLiveKey")?.value.trim() || "";
     if (!mediaKey) throw new Error("Enter a Live media key.");
     return { media_key: mediaKey };
