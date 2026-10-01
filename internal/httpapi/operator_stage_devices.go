@@ -128,7 +128,7 @@ func WithOperatorStageDevices(
 			}
 			out := make([]unassignedDevice, 0)
 			for _, item := range items {
-				if item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
+				if !item.Enabled || item.ProtocolVersion != deviceexperience.ProtocolVersion2 || item.ProjectID != "" {
 					continue
 				}
 				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
