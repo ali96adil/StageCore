@@ -252,7 +252,7 @@ func waitEmergencyDeviceCommands(
 			default:
 				detail := fmt.Sprintf("%s has invalid status %s", deviceID, current.Status)
 				report.Details = append(report.Details, detail)
-				return fmt.Errorf(detail)
+				return fmt.Errorf("%s", detail)
 			}
 		}
 		if len(pending) == 0 {
@@ -330,7 +330,7 @@ func setNativeVisualBlackout(
 	}
 	if len(report.Details) > 0 || report.Completed != report.Attempted {
 		report.Status = "FAILED"
-		return report, fmt.Errorf(strings.Join(report.Details, "; "))
+		return report, fmt.Errorf("%s", strings.Join(report.Details, "; "))
 	}
 	report.Status = "COMPLETED"
 	return report, nil
