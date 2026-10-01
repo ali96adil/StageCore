@@ -25,7 +25,7 @@ func TestEmbeddedConfigurationClientUsesOperatorAPIOnly(t *testing.T) {
 		t.Fatalf("configuration.js status=%d", jsRes.Code)
 	}
 	client := jsRes.Body.String()
-	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes"} {
+	for _, required := range []string{"/configuration", "/targets", "/inputs", "/outputs", "/routes", "Routing & Machine Roles", "jumpMachineRoles", "machineRolesCard"} {
 		if !strings.Contains(client, required) {
 			t.Fatalf("configuration client missing %q", required)
 		}
