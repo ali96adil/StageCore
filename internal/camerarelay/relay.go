@@ -372,8 +372,12 @@ func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
  if up && age>=0 && age<r.cfg.FrameTimeout.Milliseconds(){state="ready";code=http.StatusOK}
  w.Header().Set("Content-Type","application/json")
  w.Header().Set("Cache-Control","no-store")
+ // Health is intentionally read-only and may be observed directly by the
+ // Operator browser on the show LAN. The Hub never proxies arbitrary URLs.
+ w.Header().Set("Access-Control-Allow-Origin","*")
  w.WriteHeader(code)
  _=json.NewEncoder(w).Encode(map[string]any{
+  "service":"stagecore-camera-relay",
   "state":state,"upstream_connected":up,"frames_received":received,
   "viewers":viewers,"last_frame_age_ms":age,"max_clients":r.cfg.MaxClients,
   "flash_control_enabled":r.cfg.FlashControlURL!="",
