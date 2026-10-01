@@ -81,7 +81,10 @@ function f018RateNamesForKind(kind) {
 function f018RateOptions(kind, selected) {
   const values = f018RateNamesForKind(kind);
   const normalized = String(selected || "");
-  return values.map((value) => `<option value="${esc(value)}" ${value === normalized ? "selected" : ""}>${esc(value)}</option>`).join("");
+  const unsupported = normalized && !values.includes(normalized)
+    ? `<option value="${esc(normalized)}" selected disabled>${esc(normalized)} · unsupported for ${esc(String(kind || "").toUpperCase())}</option>`
+    : "";
+  return unsupported + values.map((value) => `<option value="${esc(value)}" ${value === normalized ? "selected" : ""}>${esc(value)}</option>`).join("");
 }
 
 function f018Locale() {
@@ -146,6 +149,10 @@ async function renderTimecodeWorkspace() {
   const sourceKind = String(draftConfig.kind || "INTERNAL").toUpperCase();
   const sourceRate = String(draftConfig.rate || "30");
   const editable = canEdit() && targets.length <= 1;
+  if (state.f018TimecodeValidationProjectID !== state.project.project_id) {
+    state.f018TimecodeValidation = null;
+    state.f018TimecodeValidationProjectID = state.project.project_id;
+  }
   const validation = state.f018TimecodeValidation || null;
 
   const publishedError = publishedResult?.__error || null;
@@ -262,12 +269,27 @@ async function renderTimecodeWorkspace() {
       setMessage(globalMessage, "Target name, source ID and integer offset are required.", "error");
       return;
     }
+    const kindValue = el("f018SourceKind").value;
+    const rateValue = el("f018SourceRate").value;
+    const startValue = el("f018StartTimecode").value.trim();
+    if (!f018RateNamesForKind(kindValue).includes(rateValue)) {
+      setMessage(globalMessage, "Choose a frame rate supported by the selected Timecode source kind.", "error");
+      return;
+    }
+    if (startValue && !/^\d{2}:\d{2}:\d{2}[:;]\d{2}$/.test(startValue)) {
+      setMessage(globalMessage, "Start timecode must use HH:MM:SS:FF or HH:MM:SS;FF.", "error");
+      return;
+    }
+    if (startValue && (rateValue.includes("DF") !== startValue.includes(";"))) {
+      setMessage(globalMessage, "Start timecode delimiter must match the selected drop-frame mode.", "error");
+      return;
+    }
     const sourceConfiguration = {
       source_id: sourceID,
-      kind: el("f018SourceKind").value,
-      rate: el("f018SourceRate").value,
+      kind: kindValue,
+      rate: rateValue,
       offset_frames: offsetFrames,
-      start_timecode: el("f018StartTimecode").value.trim(),
+      start_timecode: startValue,
     };
     try {
       const aliasID = el("f018SourceForm").dataset.aliasId || "";
@@ -286,6 +308,7 @@ async function renderTimecodeWorkspace() {
           },
         });
       }
+      state.f018TimecodeValidationProjectID = state.project.project_id;
       state.f018TimecodeValidation = await api(`/api/v1/projects/${projectID}/validation`).catch(() => null);
       setMessage(globalMessage, f018T("timecode.source_saved"), "success");
       await renderTimecodeWorkspace();
@@ -296,6 +319,7 @@ async function renderTimecodeWorkspace() {
 
   el("f018ValidateDraft")?.addEventListener("click", async () => {
     try {
+      state.f018TimecodeValidationProjectID = state.project.project_id;
       state.f018TimecodeValidation = await api(`/api/v1/projects/${projectID}/validation`);
       await renderTimecodeWorkspace();
     } catch (error) {
