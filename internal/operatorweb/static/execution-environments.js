@@ -630,6 +630,17 @@ async function f025Create(manifest, machineRoleID) {
   }
 }
 
+async function f025Update(environmentID, manifest, machineRoleID) {
+  await api(`${f025CollectionPath()}/${encodeURIComponent(environmentID)}`, {
+    method: "PUT",
+    json: {manifest},
+  });
+  await api(`${f025CollectionPath()}/${encodeURIComponent(environmentID)}/machine-role`, {
+    method: "PUT",
+    json: {machine_role_id: machineRoleID || null},
+  });
+}
+
 async function renderExecutionEnvironments(message = "") {
   const model = await f025LoadModel();
   const roleCanEdit = canEdit();
