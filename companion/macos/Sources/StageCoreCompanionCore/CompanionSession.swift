@@ -134,6 +134,7 @@ public actor CompanionSession {
                 platform: configuration.platform,
                 architecture: configuration.architecture,
                 capabilities: state.capabilities.sorted(),
+                midiDestinations: state.capabilities.contains("midi.send") ? MIDIDestinationInventory.currentNames() : [],
                 machineRoleID: state.machineRoleID,
                 roleKey: state.roleKey,
                 appliedRuntimeSnapshotID: state.appliedRuntimeSnapshotID,
