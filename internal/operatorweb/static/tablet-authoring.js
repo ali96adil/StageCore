@@ -31,6 +31,7 @@
 
   let sceneModel = { scenes: [] };
   let tabletModel = { devices: [] };
+  let allCueModel = { cues: [] };
   let filterDeviceID = "";
 
   function lang() { return document.documentElement.lang?.toLowerCase().startsWith("ar") ? "ar" : "en"; }
@@ -71,9 +72,10 @@
   }
 
   async function loadModels() {
-    [tabletModel, sceneModel] = await Promise.all([
+    [tabletModel, sceneModel, allCueModel] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(pid())}/tablet-controller`),
       api(`/api/v1/projects/${encodeURIComponent(pid())}/tablet-controller/scenes`),
+      api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`),
     ]);
     if (filterDeviceID && !devices().some((device) => device.device_id === filterDeviceID)) filterDeviceID = "";
   }
@@ -128,7 +130,7 @@
   }
 
   function nextOrderIndex() {
-    return (sceneModel.scenes || []).reduce((max, scene) => Math.max(max, Number(scene.order_index) || 0), -1) + 1;
+    return (allCueModel.cues || []).reduce((max, cue) => Math.max(max, Number(cue.order_index) || 0), -1) + 1;
   }
 
   function addActionRow(action) {
