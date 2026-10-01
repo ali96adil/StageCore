@@ -641,6 +641,7 @@ async function renderRuntime(startPolling = false) {
   const next = runtime.next_cue;
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
+  const emergencyBlackout = !!runtime.managed_output_blackout;
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
   const showBlocked = preflight?.status === "BLOCK";
@@ -668,16 +669,17 @@ async function renderRuntime(startPolling = false) {
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
           <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
           <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
               <option value="">Select published Cue…</option>
               ${(runtime.cues || []).map((cue) => `<option value="${esc(cue.cue_id)}">${esc(cue.display_label)} · ${esc(cue.name)}</option>`).join("")}
             </select>
           </label>
-          <button id="jumpButton" class="button warn" ${!canControl ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          <div class="message warn"><strong>STOP CUE is not a blackout.</strong> It only interrupts the current Cue/interruptible Actions. Stopping the Session runs configured Lighting blackout safety before ending the Session; Tablet, Native Visual, external VDMX and audio remain separate safe-state domains.</div>`}
+          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE only interrupts the current Cue. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -694,6 +696,7 @@ async function renderRuntime(startPolling = false) {
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
   el("goButton")?.addEventListener("click", goRuntime);
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
+  el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
   el("jumpButton")?.addEventListener("click", jumpRuntime);
   el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
   if (startPolling) startRuntimePolling();
