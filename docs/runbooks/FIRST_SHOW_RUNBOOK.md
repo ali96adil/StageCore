@@ -219,40 +219,51 @@ Do not solve an offline tablet by creating another StageCore Project.
 
 ## 7. Camera Media Relay for the first show
 
-For the first show, keep Camera Media Relay **standalone** rather than coupling its lifecycle to the Hub.
+Keep Camera Media Relay as a **standalone systemd service** on the Pi. Its source is merged into the canonical StageCore main tracked by #307; do not build from an old Draft branch or PR.
 
-The current isolated relay source remains Draft and should be built from its exact branch/PR checkout.
-
-Build on the Pi:
+Build the relay binary from the same checked-out StageCore revision used for the Hub:
 
 ```bash
-go test ./internal/camerarelay ./cmd/stagecore-camera-relay
-go build -o /tmp/stagecore-camera-relay ./cmd/stagecore-camera-relay
+go build -trimpath -o /tmp/stagecore-camera-relay ./cmd/stagecore-camera-relay
+sudo install -m 0755 /tmp/stagecore-camera-relay /opt/stagecore/bin/stagecore-camera-relay
 ```
 
-Run on the trusted show LAN:
+Install the packaged standalone service and environment template:
 
 ```bash
-/tmp/stagecore-camera-relay \
-  -source http://<camera-ip>:81/api/v0/stream \
-  -listen <pi-show-lan-ip>:9081 \
-  -allow-lan
+sudo install -m 0644 deploy/systemd/stagecore-camera-relay.service /etc/systemd/system/stagecore-camera-relay.service
+sudo install -m 0600 deploy/systemd/camera-relay.env.example /etc/stagecore/camera-relay.env
+sudoedit /etc/stagecore/camera-relay.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now stagecore-camera-relay.service
+```
+
+Set the show-LAN values in `/etc/stagecore/camera-relay.env`:
+
+```text
+STAGECORE_CAMERA_RELAY_SOURCE=http://stagecam-d44a4c.local:81/api/v0/stream
+STAGECORE_CAMERA_RELAY_LISTEN=<pi-show-lan-ip>:9081
+STAGECORE_CAMERA_FLASH_CONTROL=http://stagecam-d44a4c.local/api/v0/flash
 ```
 
 Health:
 
 ```bash
+systemctl --no-pager --full status stagecore-camera-relay.service
 curl --max-time 5 http://127.0.0.1:9081/api/v0/health
 ```
 
 Expected healthy fields include:
 
 ```text
+service=stagecore-camera-relay
 state=ready
 upstream_connected=true
 last_frame_age_ms reasonably fresh
 max_clients=4
 ```
+
+The Operator Live Video workspace can also read the bounded relay-health surface natively. That read is observational; it does not replace the direct health check during qualification.
 
 Downstream stream:
 
@@ -262,83 +273,66 @@ http://<pi-show-lan-ip>:9081/api/v0/stream
 
 Do not point four tablets directly at the ESP32-CAM. The relay owns the one upstream connection and fans out to bounded downstream viewers.
 
-The tested path has already demonstrated:
+The tested path has already demonstrated four simultaneous downstream viewers, fifth-viewer refusal, slot release/reacquire, relay restart recovery and selective flash behavior. Final qualification must still exercise one real Tablet first, then all intended Tablets.
 
-- four simultaneous downstream viewers;
-- fifth viewer rejected with HTTP 503;
-- source frames continuing during the four-viewer test;
-- browser playback without meaningful stage-use lag/freezing.
+### Integrated Tablet Player path
 
-This does **not** replace one-tablet-then-four-tablet Android playback qualification.
+Use the exact integrated Tablet Player main/APK artifact pinned by #307. PR #27 is historical evidence, not the deployment source.
 
-### Android MJPEG trial APK
+For each Tablet:
 
-The Tablet Player MJPEG Live layer is maintained in StageCore-TabletPlayer PR #27 until physical Android qualification completes.
-
-Its Android workflow uploads the debug artifact:
-
-```text
-stagecore-player-debug-apk
-```
-
-The debug build uses application ID suffix:
-
-```text
-.mjpegtrial
-```
-
-so it can be installed beside the existing RC3 application without uninstalling RC3.
-
-The trial APK also includes the merged project-independent v2 Tablet bootstrap, so the first physical test must exercise both:
-
-- Hub-owned reusable Tablet assignment; and
-- MJPEG Live playback from the Pi relay.
-
-Do not replace the known RC3 installation before the trial build passes on one real tablet.
-
-### Camera rehearsal gate
+1. install the pinned integrated APK;
+2. trust/pair until the Tablet is ONLINE/READY;
+3. assign the exact current Published Runtime Snapshot;
+4. create/publish the Direct Live Cue with the relay URL;
+5. confirm the Live command reaches terminal COMPLETED only after the first rendered frame;
+6. Hide must release its relay viewer slot;
+7. only then expand to all four Tablets.
 
 Before relying on the camera in a Cue:
 
-1. relay health READY;
-2. one real tablet displays the relay stream;
-3. then test all intended tablets;
-4. disconnect/reconnect the ESP32-CAM once and confirm the relay recovers;
-5. never expose the unauthenticated relay to untrusted Wi-Fi or the internet.
-
----
+1. relay service is active;
+2. relay health is READY;
+3. one real Tablet displays the relay stream;
+4. then test all intended Tablets;
+5. disconnect/reconnect the ESP32-CAM once and confirm relay recovery;
+6. confirm flash AUTO returns OFF when no requesting viewer remains;
+7. never expose the unauthenticated relay to untrusted Wi-Fi or the internet.
 
 ## 8. Ableton Live and show GO
 
-For the first rehearsal, keep the control topology simple.
+For new Ableton/IAC Cue Actions, use the guided Companion `midi.send` authoring path with a **stable CoreMIDI destination name**.
 
-### Visual MIDI Cue authoring
+Recommended flow:
 
-StageCore's guided Cue Action editor can author the Companion `midi.send` capability without raw JSON.
+1. assign the macOS Companion to the intended Audio/Ableton Machine Role;
+2. ensure the Companion reports `midi.send` and its current MIDI destination inventory;
+3. in the Cue Action builder choose **Send MIDI message**;
+4. choose **Stable destination name** and select the exact IAC/CoreMIDI destination reported by that Companion;
+5. choose Note On, Note Off, Control Change or Program Change;
+6. set MIDI channel 1–16 and the Note/Controller/Program plus Velocity/Value;
+7. save the Cue;
+8. run Preflight before SHOW.
 
-For a Cue Action:
-
-1. choose the Mac/Companion Machine Role as the target;
-2. choose **Send MIDI message**;
-3. choose the CoreMIDI destination index used by the Ableton input path;
-4. choose Note On, Note Off, Control Change or Program Change;
-5. choose MIDI channel 1–16;
-6. set Note/Controller/Program and Velocity/Value;
-7. save the Cue and publish a fresh Runtime Snapshot.
-
-The UI compiles the visual fields to the existing Companion MIDI transport. For example, MIDI channel 1 Note On 60 velocity 127 becomes:
+Example canonical parameters:
 
 ```json
 {
-  "destination_index": 0,
+  "destination_name": "IAC Driver Bus 1",
   "bytes": [144, 60, 127]
 }
 ```
 
+Preflight behavior:
+
+- exact named destination with one current match -> PASS;
+- missing named destination -> BLOCK;
+- duplicate exact destination name -> BLOCK as ambiguous;
+- legacy `destination_index` -> WARN because CoreMIDI ordering can change.
+
+Existing numeric-index Cues remain backward compatible, but do not author new first-show Cues that depend on an index when a stable destination name is available.
+
 In Ableton Live, map the chosen Note or Control Change to the scene, clip, transport or control needed for the rehearsal.
-
-Treat the CoreMIDI destination index as part of rehearsal preflight: verify it after Mac reboot, audio/MIDI device changes, or IAC/virtual-port changes before SHOW.
-
 
 Recommended initial direction:
 
@@ -350,54 +344,49 @@ operator / VDMX / Ableton control surface
         -> next StageCore Cue
 ```
 
-StageCore Companion also contains outbound OSC and MIDI capability executors, but use them only where the Project has an explicitly authored and tested action.
-
 Do not create a bidirectional feedback loop where Ableton advances StageCore while the same StageCore Cue also causes Ableton to send another GO.
 
 Validate one audio Cue at a time before combining it with Tablet/VDMX/Lighting actions.
 
----
-
 ## 9. ESP32 DMX Lighting ACTIVE physical gate
 
-Firmware `main` contains the safe source foundations:
+Use the exact integrated ESP32 DMX Lighting `main` / firmware artifact pinned by #307. The ACTIVE source is no longer selected from a Draft PR; **physical ACTIVE qualification is still mandatory**.
 
-- bounded DMX diagnostics;
-- GPTimer/IRAM-safe esp_dmx path;
-- project-independent v2 assignment;
-- deterministic blackout/BLOCKED epoch ACK;
-- optional read-only software state probe.
+The integrated firmware includes:
 
-The ACTIVE runtime remains in the separate Draft firmware PR and must not be promoted merely from CI.
+- v2 exact-Snapshot authority;
+- project-independent assignment/reuse;
+- blackout-first boot and BLOCKED state;
+- Stage-LAN Wi-Fi self-recovery;
+- bounded runtime-loss hold/fade -> blackout;
+- protected local diagnostics/emergency blackout;
+- physical Hub trust reset/re-pair recovery.
 
 ### Required attended sequence
 
 With the real decoder/LED path under observation:
 
-1. pin the exact Hub and firmware build SHAs;
-2. start with physical output expected dark;
-3. flash only the intended ACTIVE qualification candidate;
-4. verify boot remains physically dark;
-5. verify Hub restart remains dark;
-6. verify Wi-Fi loss remains dark;
-7. verify reconnect remains dark until current scope is acknowledged;
-8. verify power cycle remains dark;
-9. assign/transfer the reusable node to the intended Project;
-10. activate only the exact Published Runtime Snapshot configuration;
-11. verify config hash matches;
-12. verify one bounded nonzero test Cue;
-13. verify immediate/faded return to zero as authored;
-14. verify disconnect during/after output returns to failsafe blackout;
+1. pin the exact Hub and firmware build SHAs from #307;
+2. preserve rollback before flashing;
+3. start with physical output expected dark;
+4. flash only the pinned integrated ACTIVE firmware artifact;
+5. verify boot remains physically dark;
+6. verify Hub restart remains dark;
+7. verify Wi-Fi/AP loss enters the documented hold/fade path and reaches physical blackout;
+8. verify reconnect remains dark until current Project/Snapshot scope is acknowledged;
+9. verify power cycle remains dark;
+10. assign/transfer the reusable node to the intended Project;
+11. activate only the exact Published Runtime Snapshot configuration;
+12. verify config hash matches;
+13. verify one bounded nonzero test Cue;
+14. verify immediate/faded return to zero as authored;
 15. transfer ACTIVE Project A through blackout to Project B;
 16. verify Project A loses authority;
 17. apply Project B's exact Published configuration;
-18. verify one bounded Project B Cue and return to blackout.
+18. verify one bounded Project B Cue and return to blackout;
+19. verify local emergency diagnostics and trust-reset/re-pair recovery.
 
 Independent physical decoder/LED observation is required. ESP software zero, DMX health, UART logs, CI, or StageCore UI status alone cannot mark this gate PASS.
-
-Until this gate passes, do not enable Lighting ACTIVE merely to complete a rehearsal checklist.
-
----
 
 ## 9A. Build mixed Cues without JSON
 
@@ -487,10 +476,24 @@ At the end of a rehearsal:
 1. stop or complete the REHEARSAL session deliberately;
 2. verify Tablets enter the intended safe/end state;
 3. verify VDMX/Ableton are left in a known operator state;
-4. verify the Camera Relay can be stopped without affecting the Hub;
-5. verify Lighting is blackout if it was active;
+4. verify the Camera Relay can be stopped/restarted without affecting the Hub;
+5. verify Lighting is physically blackout if it was active;
 6. preserve any useful VDMX partial snapshot and rehearsal notes;
 7. record blockers before changing configuration.
+
+### STOP CUE vs Emergency Blackout
+
+`STOP CUE` only interrupts the current Cue / interruptible Actions. It is **not** a global blackout.
+
+`EMERGENCY BLACKOUT` is a separate P0 managed-output safety operation:
+
+- the Hub persists a session blackout latch before touching outputs;
+- GO and Jump remain blocked while that latch is active, including across Hub/browser restart;
+- managed Lighting, active Tablets and Native Visual are driven toward their blackout state;
+- partial activation failure leaves the latch active;
+- audio is **UNCHANGED_BY_DESIGN**;
+- external VDMX/OSC is **UNCHANGED_BY_DESIGN**;
+- clearing managed blackout is explicit; Lighting intentionally remains dark until an explicit Lighting Cue/operator action restores it.
 
 Session closeout must never depend on replaying old commands on the next startup.
 
