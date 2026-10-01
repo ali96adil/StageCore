@@ -132,10 +132,10 @@ final class VDMXInspectionTests: XCTestCase {
         let extensionOutcome = await provider.inspect(manifest: withExtension)
         XCTAssertEqual(extensionOutcome.status, .completed)
         XCTAssertNil(extensionOutcome.errorCode)
-        let extension = try XCTUnwrap(extensionOutcome.observation?.extensions.first)
-        XCTAssertEqual(extension.key, "isf-pack")
-        XCTAssertFalse(extension.present)
-        XCTAssertNil(extension.versionConstraintSatisfied)
+        let extensionObservation = try XCTUnwrap(extensionOutcome.observation?.extensions.first)
+        XCTAssertEqual(extensionObservation.key, "isf-pack")
+        XCTAssertFalse(extensionObservation.present)
+        XCTAssertNil(extensionObservation.versionConstraintSatisfied)
 
         var withBinding = manifest(versionConstraint: "6.x-tested")
         withBinding["bindings"] = .array([.object([
