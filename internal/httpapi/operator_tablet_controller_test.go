@@ -251,7 +251,8 @@ func TestNormalizeTabletLivePayload(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "media key", raw: `{"media_key":"live.camera.01"}`, wantKey: "media_key", wantVal: "live.camera.01"},
-		{name: "http url", raw: `{"url":"http://192.168.3.130:9081/api/v0/stream"}`, wantKey: "url", wantVal: "http://192.168.3.130:9081/api/v0/stream"},
+		{name: "http url", raw: `{"url":"http://192.168.3.135:9081/api/v0/stream"}`, wantKey: "url", wantVal: "http://192.168.3.135:9081/api/v0/stream"},
+		{name: "http url with flash", raw: `{"url":"http://192.168.3.135:9081/api/v0/stream?flash=1"}`, wantKey: "url", wantVal: "http://192.168.3.135:9081/api/v0/stream?flash=1"},
 		{name: "https url", raw: `{"url":"https://relay.example.test/live.mjpeg"}`, wantKey: "url", wantVal: "https://relay.example.test/live.mjpeg"},
 		{name: "both", raw: `{"media_key":"camera","url":"http://relay/live"}`, wantErr: true},
 		{name: "missing", raw: `{}`, wantErr: true},
