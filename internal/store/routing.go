@@ -36,6 +36,69 @@ func (s *Store) CreateInput(ctx context.Context, input domain.InputDefinition) (
 	return input, nil
 }
 
+func (s *Store) UpdateInput(ctx context.Context, input domain.InputDefinition) (domain.InputDefinition, error) {
+	if err := s.ensureDraft(ctx, s.db, input.RevisionID); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	schema, err := normalizeJSON(input.ValueSchema, "{}")
+	if err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("input value schema: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE input_definitions
+		SET name = ?, source_ref = ?, event_type = ?, value_schema_json = ?, enabled = ?
+		WHERE input_id = ? AND revision_id = ?`,
+		strings.TrimSpace(input.Name), strings.TrimSpace(input.SourceRef), strings.TrimSpace(input.EventType),
+		schema, boolInt(input.Enabled), strings.TrimSpace(input.ID), input.RevisionID)
+	if err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("update input: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("count updated inputs: %w", err)
+	}
+	if rows != 1 {
+		return domain.InputDefinition{}, fmt.Errorf("%w: input does not belong to revision", domain.ErrInvalidInput)
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.SourceRef = strings.TrimSpace(input.SourceRef)
+	input.EventType = strings.TrimSpace(input.EventType)
+	input.ValueSchema = json.RawMessage(schema)
+	return input, nil
+}
+
+func (s *Store) DeleteInput(ctx context.Context, revisionID, inputID string) error {
+	revisionID = strings.TrimSpace(revisionID)
+	inputID = strings.TrimSpace(inputID)
+	if err := s.ensureDraft(ctx, s.db, revisionID); err != nil {
+		return err
+	}
+	if ok, err := s.entityBelongsToRevision(ctx, "input_definitions", "input_id", inputID, revisionID); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: input does not belong to revision", domain.ErrInvalidInput)
+	}
+	var references int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE input_id = ?`, inputID).Scan(&references); err != nil {
+		return fmt.Errorf("count input route references: %w", err)
+	}
+	if references > 0 {
+		return fmt.Errorf("%w: input is referenced by %d route(s)", domain.ErrConflict, references)
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM input_definitions WHERE input_id = ? AND revision_id = ?`, inputID, revisionID)
+	if err != nil {
+		return fmt.Errorf("delete input: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count deleted inputs: %w", err)
+	}
+	if rows != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateOutput(ctx context.Context, output domain.OutputDefinition) (domain.OutputDefinition, error) {
 	if err := s.ensureDraft(ctx, s.db, output.RevisionID); err != nil {
 		return domain.OutputDefinition{}, err
@@ -231,6 +294,140 @@ func (s *Store) CreateRouteWithActions(ctx context.Context, route domain.Route, 
 	route.TransformDefinition = json.RawMessage(transform)
 	route.ErrorPolicy = json.RawMessage(errorPolicy)
 	return route, nil
+}
+
+func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, actions []domain.RouteAction) (domain.Route, error) {
+	route.ID = strings.TrimSpace(route.ID)
+	route.RevisionID = strings.TrimSpace(route.RevisionID)
+	if route.ID == "" || route.RevisionID == "" {
+		return domain.Route{}, fmt.Errorf("%w: route and revision are required", domain.ErrInvalidInput)
+	}
+	if route.PriorityClass == "" {
+		route.PriorityClass = domain.PriorityP2
+	}
+	condition, err := normalizeJSON(route.ConditionDefinition, "null")
+	if err != nil {
+		return domain.Route{}, fmt.Errorf("route condition: %w", err)
+	}
+	transform, err := normalizeJSON(route.TransformDefinition, "null")
+	if err != nil {
+		return domain.Route{}, fmt.Errorf("route transform: %w", err)
+	}
+	errorPolicy, err := normalizeJSON(route.ErrorPolicy, "{}")
+	if err != nil {
+		return domain.Route{}, fmt.Errorf("route error policy: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Route{}, fmt.Errorf("begin update route: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.ensureDraft(ctx, tx, route.RevisionID); err != nil {
+		return domain.Route{}, err
+	}
+	if ok, err := s.entityBelongsToRevisionTx(ctx, tx, "routes", "route_id", route.ID, route.RevisionID); err != nil {
+		return domain.Route{}, err
+	} else if !ok {
+		return domain.Route{}, fmt.Errorf("%w: route does not belong to revision", domain.ErrInvalidInput)
+	}
+	if ok, err := s.entityBelongsToRevisionTx(ctx, tx, "input_definitions", "input_id", route.InputID, route.RevisionID); err != nil {
+		return domain.Route{}, err
+	} else if !ok {
+		return domain.Route{}, fmt.Errorf("%w: route input does not belong to revision", domain.ErrInvalidInput)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE routes
+		SET name = ?, input_id = ?, condition_definition_json = ?, transform_definition_json = ?,
+		    delay_ms = ?, debounce_ms = ?, priority_class = ?, error_policy_json = ?, enabled = ?
+		WHERE route_id = ? AND revision_id = ?`,
+		strings.TrimSpace(route.Name), strings.TrimSpace(route.InputID), condition, transform,
+		route.DelayMS, route.DebounceMS, route.PriorityClass, errorPolicy, boolInt(route.Enabled),
+		route.ID, route.RevisionID)
+	if err != nil {
+		return domain.Route{}, fmt.Errorf("update route: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		if err != nil {
+			return domain.Route{}, fmt.Errorf("count updated routes: %w", err)
+		}
+		return domain.Route{}, fmt.Errorf("%w: route does not belong to revision", domain.ErrInvalidInput)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM route_actions WHERE route_id = ?`, route.ID); err != nil {
+		return domain.Route{}, fmt.Errorf("replace route actions: %w", err)
+	}
+
+	route.Actions = make([]domain.RouteAction, 0, len(actions))
+	for index, action := range actions {
+		if (action.OutputID == nil) == (action.CueID == nil) {
+			return domain.Route{}, fmt.Errorf("%w: route action requires exactly one output or cue", domain.ErrInvalidInput)
+		}
+		if action.OutputID != nil {
+			ok, err := s.entityBelongsToRevisionTx(ctx, tx, "output_definitions", "output_id", *action.OutputID, route.RevisionID)
+			if err != nil {
+				return domain.Route{}, err
+			}
+			if !ok {
+				return domain.Route{}, fmt.Errorf("%w: route output does not belong to revision", domain.ErrInvalidInput)
+			}
+		}
+		if action.CueID != nil {
+			ok, err := s.entityBelongsToRevisionTx(ctx, tx, "cues", "cue_id", *action.CueID, route.RevisionID)
+			if err != nil {
+				return domain.Route{}, err
+			}
+			if !ok {
+				return domain.Route{}, fmt.Errorf("%w: route cue does not belong to revision", domain.ErrInvalidInput)
+			}
+		}
+		action.ID, err = stageid.New()
+		if err != nil {
+			return domain.Route{}, err
+		}
+		action.RouteID = route.ID
+		action.OrderIndex = index
+		params, err := normalizeJSON(action.Parameters, "{}")
+		if err != nil {
+			return domain.Route{}, fmt.Errorf("route action parameters: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO route_actions (route_action_id, route_id, order_index, output_id, cue_id, parameters_json)
+			VALUES (?, ?, ?, ?, ?, ?)`, action.ID, route.ID, index, action.OutputID, action.CueID, params); err != nil {
+			return domain.Route{}, fmt.Errorf("insert updated route action: %w", err)
+		}
+		action.Parameters = json.RawMessage(params)
+		route.Actions = append(route.Actions, action)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Route{}, fmt.Errorf("commit update route: %w", err)
+	}
+	route.Name = strings.TrimSpace(route.Name)
+	route.InputID = strings.TrimSpace(route.InputID)
+	route.ConditionDefinition = json.RawMessage(condition)
+	route.TransformDefinition = json.RawMessage(transform)
+	route.ErrorPolicy = json.RawMessage(errorPolicy)
+	return route, nil
+}
+
+func (s *Store) DeleteRoute(ctx context.Context, revisionID, routeID string) error {
+	revisionID = strings.TrimSpace(revisionID)
+	routeID = strings.TrimSpace(routeID)
+	if err := s.ensureDraft(ctx, s.db, revisionID); err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM routes WHERE route_id = ? AND revision_id = ?`, routeID, revisionID)
+	if err != nil {
+		return fmt.Errorf("delete route: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count deleted routes: %w", err)
+	}
+	if rows != 1 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) ListRoutes(ctx context.Context, revisionID string) ([]domain.Route, error) {
