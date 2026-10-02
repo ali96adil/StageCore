@@ -102,6 +102,75 @@ func TestOperatorLightingConfigurationSavesAndReportsMatchingHealth(t *testing.T
 	}
 }
 
+func TestOperatorLightingConfigurationKeepsMigratedV2NodeVisible(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "V2 Lighting Setup", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "lighting-v2"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Migrated Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
+		ChannelKey: "cold_a", ChannelNumber: 1, DisplayName: "Front Cold",
+		Kind: lightingnode.ChannelColdWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+	}}}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, lightingnode.ProjectBinding{
+		DeviceID: deviceID, ProfileID: lightingnode.ProfileID, Configuration: config,
+		Aliases: map[string]string{"front_cold": "cold_a"},
+	}, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.MigrateLegacyLightingToV2Blocked(ctx, deviceID, project.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorLightingController(h.auth, devices, stageStore)).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/lighting-controller/configuration", nil)
+	req.RemoteAddr = "127.0.0.1:19504"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Nodes []lightingConfigurationNodeView `json:"nodes"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Nodes) != 1 {
+		t.Fatalf("migrated v2 node disappeared from configuration view: %+v", payload.Nodes)
+	}
+	node := payload.Nodes[0]
+	if node.DeviceID != deviceID || node.DisplayName != "Migrated Lighting" || !node.Configured ||
+		node.Configuration == nil || len(node.Configuration.Channels) != 1 ||
+		node.Configuration.Channels[0].ChannelKey != "cold_a" ||
+		node.Aliases["front_cold"] != "cold_a" {
+		t.Fatalf("migrated v2 configuration node=%+v", node)
+	}
+	if node.Health.CommandsEnabled {
+		t.Fatalf("configuration visibility must not grant runtime command authority: %+v", node.Health)
+	}
+}
+
 func TestOperatorLightingConfigurationWriteBlockedDuringShow(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
