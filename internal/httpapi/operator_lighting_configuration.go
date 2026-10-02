@@ -182,7 +182,9 @@ func lightingConfigurationNodes(bindings []lightingnode.ProjectBinding, all []de
 	}
 	out := make([]lightingConfigurationNodeView, 0)
 	for _, device := range all {
-		if device.ProfileID != lightingnode.ProfileID || device.ProtocolVersion != deviceexperience.ProtocolVersion1 {
+		if device.ProfileID != lightingnode.ProfileID ||
+			(device.ProtocolVersion != deviceexperience.ProtocolVersion1 &&
+				device.ProtocolVersion != deviceexperience.ProtocolVersion2) {
 			continue
 		}
 		binding, configured := bindingByDevice[device.ID]
