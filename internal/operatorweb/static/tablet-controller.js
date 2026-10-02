@@ -19,6 +19,11 @@
       play: "GO / PLAY",
       pause: "Pause",
       stop: "Stop",
+      loopPlayback: "Loop",
+      endBehavior: "When video ends",
+      endHold: "Hold last frame",
+      endBlackout: "Cut to black",
+      endClear: "Clear video",
       overlay: "Overlay",
       overlaySub: "Play or clear the overlay layer without disturbing the main video.",
       overlayPlay: "Play overlay",
@@ -108,6 +113,11 @@
       play: "GO / تشغيل",
       pause: "إيقاف مؤقت",
       stop: "إيقاف",
+      loopPlayback: "تكرار Loop",
+      endBehavior: "عند انتهاء الفيديو",
+      endHold: "تثبيت آخر فريم",
+      endBlackout: "Cut to Black",
+      endClear: "إخفاء الفيديو",
       overlay: "Overlay",
       overlaySub: "شغّل أو امسح طبقة الـOverlay بدون ما توقف الفيديو الرئيسي.",
       overlayPlay: "تشغيل Overlay",
@@ -363,6 +373,8 @@
               <label><select id="tabletMainMode"><option value="media">${esc(t("byMedia"))}</option><option value="cue">${esc(t("byCue"))}</option></select></label>
               <label><input id="tabletMediaNumber" type="number" min="1" value="1" inputmode="numeric"></label>
               <label id="tabletCueIDWrap" class="hidden"><input id="tabletCueID" placeholder="cue-id" dir="ltr"></label>
+              <label id="tabletMainLoopWrap" class="check-row"><input id="tabletMainLoop" type="checkbox" checked> ${esc(t("loopPlayback"))}</label>
+              <label id="tabletMainEndWrap" class="hidden">${esc(t("endBehavior"))}<select id="tabletMainEndBehavior"><option value="hold">${esc(t("endHold"))}</option><option value="blackout">${esc(t("endBlackout"))}</option><option value="clear">${esc(t("endClear"))}</option></select></label>
             </div>
             <div class="tablet-command-row">
               <button class="button" data-tablet-command="TABLET_PREPARE" type="button">${esc(t("prepare"))}</button>
@@ -503,11 +515,17 @@
       if (checkbox.checked) selected.add(checkbox.dataset.deviceId); else selected.delete(checkbox.dataset.deviceId);
       refreshSelectionUI();
     }));
-    document.getElementById("tabletMainMode")?.addEventListener("change", (event) => {
-      const cueMode = event.target.value === "cue";
+    const syncMainPlaybackOptions = () => {
+      const cueMode = document.getElementById("tabletMainMode")?.value === "cue";
+      const loop = document.getElementById("tabletMainLoop")?.checked !== false;
       document.getElementById("tabletCueIDWrap")?.classList.toggle("hidden", !cueMode);
       document.getElementById("tabletMediaNumber")?.closest("label")?.classList.toggle("hidden", cueMode);
-    });
+      document.getElementById("tabletMainLoopWrap")?.classList.toggle("hidden", cueMode);
+      document.getElementById("tabletMainEndWrap")?.classList.toggle("hidden", cueMode || loop);
+    };
+    document.getElementById("tabletMainMode")?.addEventListener("change", syncMainPlaybackOptions);
+    document.getElementById("tabletMainLoop")?.addEventListener("change", syncMainPlaybackOptions);
+    syncMainPlaybackOptions();
     document.getElementById("tabletLiveMode")?.addEventListener("change", (event) => {
       const direct = event.target.value === "url";
       document.getElementById("tabletLiveKeyWrap")?.classList.toggle("hidden", direct);
@@ -608,7 +626,14 @@
         if (!cueID) throw new Error(t("needCueID"));
         return { tablet_cue_id: cueID };
       }
-      return { media_number: Math.max(1, Number(document.getElementById("tabletMediaNumber")?.value || 1)) };
+      const mediaNumber = Math.max(1, Number(document.getElementById("tabletMediaNumber")?.value || 1));
+      if (command === "TABLET_PREPARE") return { media_number: mediaNumber };
+      const loop = document.getElementById("tabletMainLoop")?.checked !== false;
+      return {
+        media_number: mediaNumber,
+        loop,
+        end_behavior: loop ? "none" : (document.getElementById("tabletMainEndBehavior")?.value || "hold"),
+      };
     }
     if (command === "TABLET_OVERLAY_PLAY") return { media_number: Math.max(1, Number(document.getElementById("tabletOverlayNumber")?.value || 1)) };
     if (command === "TABLET_OVERLAY_CLEAR") return { dissolve_ms: Math.max(0, Number(document.getElementById("tabletOverlayDissolve")?.value || 0)) };

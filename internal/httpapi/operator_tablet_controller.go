@@ -681,6 +681,83 @@ func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (jso
 		encoded, _ := json.Marshal(map[string]int{"live_rotation_degrees": degrees})
 		return encoded, nil
 	}
+	if commandType == deviceexperience.CommandTabletPlay {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil {
+			return nil, fmt.Errorf("playback payload must be an object")
+		}
+		allowed := map[string]bool{
+			"tablet_cue_id": true,
+			"tablet_sequence": true,
+			"media_number": true,
+			"loop": true,
+			"end_behavior": true,
+		}
+		for key := range object {
+			if !allowed[key] {
+				return nil, fmt.Errorf("unsupported playback field %q", key)
+			}
+		}
+		selectors := 0
+		if _, ok := object["tablet_cue_id"]; ok { selectors++ }
+		if _, ok := object["tablet_sequence"]; ok { selectors++ }
+		if _, ok := object["media_number"]; ok { selectors++ }
+		if selectors != 1 {
+			return nil, fmt.Errorf("TABLET_PLAY requires exactly one media selector")
+		}
+		if cueRaw, ok := object["tablet_cue_id"]; ok {
+			cueID, ok := cueRaw.(string)
+			cueID = strings.TrimSpace(cueID)
+			if !ok || cueID == "" || len(cueID) > 256 {
+				return nil, fmt.Errorf("tablet_cue_id must be a non-empty string")
+			}
+			if _, exists := object["loop"]; exists {
+				return nil, fmt.Errorf("loop is only valid with media_number")
+			}
+			if _, exists := object["end_behavior"]; exists {
+				return nil, fmt.Errorf("end_behavior is only valid with media_number")
+			}
+			encoded, _ := json.Marshal(map[string]string{"tablet_cue_id": cueID})
+			return encoded, nil
+		}
+		if sequenceRaw, ok := object["tablet_sequence"]; ok {
+			sequence, ok := sequenceRaw.(float64)
+			if !ok || sequence != float64(int(sequence)) || sequence < 1 {
+				return nil, fmt.Errorf("tablet_sequence must be a positive integer")
+			}
+			if _, exists := object["loop"]; exists {
+				return nil, fmt.Errorf("loop is only valid with media_number")
+			}
+			if _, exists := object["end_behavior"]; exists {
+				return nil, fmt.Errorf("end_behavior is only valid with media_number")
+			}
+			encoded, _ := json.Marshal(map[string]int{"tablet_sequence": int(sequence)})
+			return encoded, nil
+		}
+		mediaRaw, ok := object["media_number"]
+		mediaNumber, ok := mediaRaw.(float64)
+		if !ok || mediaNumber != float64(int(mediaNumber)) || mediaNumber < 1 {
+			return nil, fmt.Errorf("media_number must be a positive integer")
+		}
+		normalized := map[string]any{"media_number": int(mediaNumber)}
+		if loopRaw, exists := object["loop"]; exists {
+			loop, ok := loopRaw.(bool)
+			if !ok {
+				return nil, fmt.Errorf("loop must be boolean")
+			}
+			normalized["loop"] = loop
+		}
+		if endRaw, exists := object["end_behavior"]; exists {
+			endBehavior, ok := endRaw.(string)
+			endBehavior = strings.ToLower(strings.TrimSpace(endBehavior))
+			if !ok || (endBehavior != "none" && endBehavior != "hold" && endBehavior != "blackout" && endBehavior != "stop" && endBehavior != "clear") {
+				return nil, fmt.Errorf("end_behavior must be none, hold, blackout, stop, or clear")
+			}
+			normalized["end_behavior"] = endBehavior
+		}
+		encoded, _ := json.Marshal(normalized)
+		return encoded, nil
+	}
 	if commandType != deviceexperience.CommandTabletLiveShow {
 		return normalizeRawObject(raw), nil
 	}

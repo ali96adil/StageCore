@@ -9,7 +9,7 @@
       back: "Back", save: "Save scene", name: "Scene name", label: "Label", addAction: "Add tablet action", tablet: "Tablet", operation: "Layer / action",
       mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainPause: "Main · Pause", mainStop: "Main · Stop",
       overlayPlay: "Overlay · Play", overlayClear: "Overlay · Clear", liveShow: "Live · Show", liveHide: "Live · Hide",
-      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", liveMode: "Live source type", liveByKey: "Media key", liveByURL: "Direct URL", liveKey: "Live media key", liveURL: "Live URL", liveFlash: "Use camera flash for this Live", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", needLiveURL: "Enter an absolute HTTP(S) live URL.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
+      blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", loopPlayback: "Loop", endBehavior: "When video ends", endHold: "Hold last frame", endBlackout: "Cut to black", endClear: "Clear video", liveMode: "Live source type", liveByKey: "Media key", liveByURL: "Direct URL", liveKey: "Live media key", liveURL: "Live URL", liveFlash: "Use camera flash for this Live", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", needLiveURL: "Enter an absolute HTTP(S) live URL.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
     },
     ar: {
       nav: "مشاهد التابلت", title: "مشاهد التابلت / Playlist", sub: "ابنِ كيوهات التابلت المرتبة بصورة رسومية. تبقى مخزنة كـ Draft Cues عادية وتتنفذ من Cue Engine.",
@@ -18,7 +18,7 @@
       back: "رجوع", save: "حفظ المشهد", name: "اسم المشهد", label: "الرمز", addAction: "إضافة أمر تابلت", tablet: "التابلت", operation: "الطبقة / الأمر",
       mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
       overlayPlay: "Overlay · تشغيل", overlayClear: "Overlay · مسح", liveShow: "Live · إظهار", liveHide: "Live · إخفاء",
-      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", liveMode: "نوع مصدر البث", liveByKey: "Media key", liveByURL: "رابط مباشر", liveKey: "Live media key", liveURL: "رابط البث", liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", needLiveURL: "دخل رابط HTTP(S) كامل للبث.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
+      blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", loopPlayback: "تكرار Loop", endBehavior: "عند انتهاء الفيديو", endHold: "تثبيت آخر فريم", endBlackout: "Cut to Black", endClear: "إخفاء الفيديو", liveMode: "نوع مصدر البث", liveByKey: "Media key", liveByURL: "رابط مباشر", liveKey: "Live media key", liveURL: "رابط البث", liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", needLiveURL: "دخل رابط HTTP(S) كامل للبث.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
     },
   };
 
@@ -151,12 +151,22 @@
     if (!host) return;
     if (["TABLET_PREPARE", "TABLET_PLAY"].includes(command)) {
       const cueMode = !!params.tablet_cue_id;
-      host.innerHTML = `<label>${esc(tx("contentMode"))}<select class="tablet-param-mode"><option value="media" ${cueMode ? "" : "selected"}>${esc(tx("media"))}</option><option value="cue" ${cueMode ? "selected" : ""}>${esc(tx("cue"))}</option></select></label><label class="tablet-param-media ${cueMode ? "hidden" : ""}">${esc(tx("mediaNumber"))}<input type="number" min="1" value="${Number(params.media_number || 1)}"></label><label class="tablet-param-cue ${cueMode ? "" : "hidden"}">${esc(tx("tabletCue"))}<input value="${esc(params.tablet_cue_id || "")}" dir="ltr"></label>`;
-      host.querySelector(".tablet-param-mode")?.addEventListener("change", (event) => {
-        const cue = event.target.value === "cue";
+      const loop = params.loop !== false;
+      const playback = command === "TABLET_PLAY"
+        ? `<label class="tablet-param-loop ${cueMode ? "hidden" : ""}"><input type="checkbox" ${loop ? "checked" : ""}> ${esc(tx("loopPlayback"))}</label><label class="tablet-param-end ${cueMode || loop ? "hidden" : ""}">${esc(tx("endBehavior"))}<select><option value="hold" ${params.end_behavior === "hold" ? "selected" : ""}>${esc(tx("endHold"))}</option><option value="blackout" ${params.end_behavior === "blackout" ? "selected" : ""}>${esc(tx("endBlackout"))}</option><option value="clear" ${params.end_behavior === "clear" ? "selected" : ""}>${esc(tx("endClear"))}</option></select></label>`
+        : "";
+      host.innerHTML = `<label>${esc(tx("contentMode"))}<select class="tablet-param-mode"><option value="media" ${cueMode ? "" : "selected"}>${esc(tx("media"))}</option><option value="cue" ${cueMode ? "selected" : ""}>${esc(tx("cue"))}</option></select></label><label class="tablet-param-media ${cueMode ? "hidden" : ""}">${esc(tx("mediaNumber"))}<input type="number" min="1" value="${Number(params.media_number || 1)}"></label><label class="tablet-param-cue ${cueMode ? "" : "hidden"}">${esc(tx("tabletCue"))}<input value="${esc(params.tablet_cue_id || "")}" dir="ltr"></label>${playback}`;
+      const syncPlayback = () => {
+        const cue = host.querySelector(".tablet-param-mode")?.value === "cue";
+        const looping = host.querySelector(".tablet-param-loop input")?.checked !== false;
         host.querySelector(".tablet-param-media")?.classList.toggle("hidden", cue);
         host.querySelector(".tablet-param-cue")?.classList.toggle("hidden", !cue);
-      });
+        host.querySelector(".tablet-param-loop")?.classList.toggle("hidden", cue);
+        host.querySelector(".tablet-param-end")?.classList.toggle("hidden", cue || looping);
+      };
+      host.querySelector(".tablet-param-mode")?.addEventListener("change", syncPlayback);
+      host.querySelector(".tablet-param-loop input")?.addEventListener("change", syncPlayback);
+      syncPlayback();
       return;
     }
     if (command === "TABLET_OVERLAY_PLAY") {
@@ -199,7 +209,14 @@
         if (!cueID) throw new Error(tx("needCueID"));
         return { tablet_cue_id: cueID };
       }
-      return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-media input")?.value || 1)) };
+      const mediaNumber = Math.max(1, Number(params.querySelector(".tablet-param-media input")?.value || 1));
+      if (command === "TABLET_PREPARE") return { media_number: mediaNumber };
+      const loop = params.querySelector(".tablet-param-loop input")?.checked !== false;
+      return {
+        media_number: mediaNumber,
+        loop,
+        end_behavior: loop ? "none" : (params.querySelector(".tablet-param-end select")?.value || "hold"),
+      };
     }
     if (command === "TABLET_OVERLAY_PLAY") return { media_number: Math.max(1, Number(params.querySelector(".tablet-param-single")?.value || 1)) };
     if (command === "TABLET_OVERLAY_CLEAR") return { dissolve_ms: Math.max(0, Number(params.querySelector(".tablet-param-single")?.value || 0)) };
