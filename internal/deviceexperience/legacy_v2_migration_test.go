@@ -96,6 +96,18 @@ func TestLegacyLightingMigrationFencesV1AndAllowsV2Reconnect(t *testing.T) {
 		t.Fatalf("v2 reconnect changed migration scope: %+v", reconnected)
 	}
 
+	ack, err := repo.RecordBlockedEpochAck(
+		ctx, deviceID, projectID, 2, 7, true, make([]int, lightingnode.MaxChannels),
+	)
+	if err != nil {
+		t.Fatalf("fresh migrated v2 BLOCKED epoch ACK was rejected: %v", err)
+	}
+	if ack.DeviceID != deviceID || ack.ProjectID != projectID ||
+		ack.AssignmentEpoch != 2 || ack.ConnectionGeneration != 7 ||
+		ack.ChannelCount != lightingnode.MaxChannels {
+		t.Fatalf("migrated v2 epoch ACK=%+v", ack)
+	}
+
 	var audits int
 	if err := handle.DB.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM stage_device_legacy_v2_migrations WHERE device_id=?",
