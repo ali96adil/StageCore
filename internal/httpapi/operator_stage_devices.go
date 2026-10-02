@@ -299,6 +299,58 @@ func WithOperatorStageDevices(
 			})
 		}))
 
+		// One-way migration for a known project-linked v1 ESP32 lighting node.
+		// This only fences legacy authority and enters BLOCKED v2 state. It does
+		// not activate a Runtime Snapshot, enable commands or claim physical zero.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/migrate-v2-lighting", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if session.User.Role != userauth.RoleOwner {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "OWNER_REQUIRED"})
+				return
+			}
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LEGACY_V2_MIGRATION_SCOPE_REQUIRED"})
+				return
+			}
+			var input struct {
+				Confirm string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			const confirmation = "MIGRATE_LEGACY_LIGHTING_TO_V2_BLOCKED"
+			if strings.TrimSpace(input.Confirm) != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LEGACY_V2_MIGRATION_CONFIRMATION_REQUIRED"})
+				return
+			}
+			record, err := devices.MigrateLegacyLightingToV2Blocked(
+				r.Context(), deviceID, projectID, session.User.ID)
+			if err != nil {
+				switch {
+				case errors.Is(err, sql.ErrNoRows):
+					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+				case errors.Is(err, deviceexperience.ErrInvalidState):
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "LEGACY_V2_MIGRATION_BLOCKED", "detail": err.Error()})
+				default:
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LEGACY_V2_MIGRATION_FAILED", "detail": err.Error()})
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"migration": record,
+				"state": "BLOCKED",
+				"commands_enabled": false,
+				"snapshot_active": false,
+				"physical_blackout_verified": false,
+				"note": "LEGACY_AUTHORITY_FENCED_V2_BLOCKED_REQUIRES_FRESH_RUNTIME_ACK",
+			})
+		}))
+
 		// An explicit read-only transfer preflight. The requester needs both
 		// project.edit and companion.pair before seeing device identity or
 		// project affiliation. The returned result does not mutate storage
