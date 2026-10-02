@@ -78,6 +78,11 @@
       tabletSettingsSub: "Authenticated v2 controls. Changes are confirmed by the tablet's observed health state.",
       brightnessSet: "Apply brightness",
       brightnessPercent: "Brightness %",
+      videoScale: "Video scale",
+      liveRotation: "Live rotation",
+      applyScale: "Apply scale",
+      applyOrientation: "Apply orientation",
+      applyRotation: "Apply Live rotation",
       enterShowMode: "Enter Show Mode",
       exitShowMode: "Exit Show Mode",
       showMode: "Show mode",
@@ -160,6 +165,11 @@
       tabletSettingsSub: "تحكم v2 موثّق. التغيير يتأكد من الحالة الفعلية اللي يرجعها التابلت.",
       brightnessSet: "تطبيق السطوع",
       brightnessPercent: "السطوع %",
+      videoScale: "حجم الفيديو",
+      liveRotation: "دوران Live",
+      applyScale: "تطبيق حجم الفيديو",
+      applyOrientation: "تطبيق الاتجاه",
+      applyRotation: "تطبيق دوران Live",
       enterShowMode: "دخول Show Mode",
       exitShowMode: "خروج من Show Mode",
       showMode: "وضع العرض",
@@ -221,6 +231,8 @@
     if (Number.isFinite(Number(value.brightness_percent))) details.push(`${t("brightness")}: ${Math.round(Number(value.brightness_percent))}%`);
     if (typeof value.show_mode === "boolean") details.push(`${t("showMode")}: ${value.show_mode ? t("on") : t("off")}`);
     if (value.orientation_mode) details.push(`${t("orientation")}: ${String(value.orientation_mode)}`);
+    if (value.video_scale_mode) details.push(`${t("videoScale")}: ${String(value.video_scale_mode)}`);
+    if (Number.isFinite(Number(value.live_rotation_degrees))) details.push(`${t("liveRotation")}: ${Number(value.live_rotation_degrees)}°`);
     return details.join(" · ") || "—";
   }
 
@@ -347,6 +359,9 @@
             <div><p class="eyebrow">SETTINGS</p><h2>${esc(t("tabletSettings"))}</h2><p class="muted">${esc(t("tabletSettingsSub"))}</p></div>
             <div class="tablet-inline-fields">
               <label>${esc(t("brightnessPercent"))}<input id="tabletBrightnessPercent" type="number" min="5" max="100" value="100" inputmode="numeric"></label>
+              <label>${esc(t("orientation"))}<select id="tabletOrientationMode"><option value="AUTO">AUTO</option><option value="PORTRAIT">PORTRAIT</option><option value="LANDSCAPE">LANDSCAPE</option></select></label>
+              <label>${esc(t("videoScale"))}<select id="tabletVideoScaleMode"><option value="FIT">FIT</option><option value="CROP">CROP</option><option value="FULL">FULL</option></select></label>
+              <label>${esc(t("liveRotation"))}<select id="tabletLiveRotationDegrees"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
             </div>
             <div class="tablet-command-row">
               <button class="button ghost" data-tablet-brightness="25" data-tablet-settings-control type="button">25%</button>
@@ -354,6 +369,11 @@
               <button class="button ghost" data-tablet-brightness="75" data-tablet-settings-control type="button">75%</button>
               <button class="button ghost" data-tablet-brightness="100" data-tablet-settings-control type="button">100%</button>
               <button id="tabletBrightnessApply" class="button primary" data-tablet-settings-control type="button">${esc(t("brightnessSet"))}</button>
+            </div>
+            <div class="tablet-command-row">
+              <button id="tabletOrientationApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyOrientation"))}</button>
+              <button id="tabletVideoScaleApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyScale"))}</button>
+              <button id="tabletLiveRotationApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyRotation"))}</button>
             </div>
             <div class="tablet-command-row">
               <button class="button primary" data-tablet-show-mode="true" data-tablet-settings-control type="button">${esc(t("enterShowMode"))}</button>
@@ -482,6 +502,18 @@
       if (input) input.value = String(percent);
       await dispatchTabletCommand("TABLET_BRIGHTNESS_SET", null, { brightness_percent: percent });
     }));
+    document.getElementById("tabletOrientationApply")?.addEventListener("click", async () => {
+      const mode = document.getElementById("tabletOrientationMode")?.value || "AUTO";
+      await dispatchTabletCommand("TABLET_ORIENTATION_SET", null, { orientation_mode: mode });
+    });
+    document.getElementById("tabletVideoScaleApply")?.addEventListener("click", async () => {
+      const mode = document.getElementById("tabletVideoScaleMode")?.value || "FIT";
+      await dispatchTabletCommand("TABLET_VIDEO_SCALE_SET", null, { video_scale_mode: mode });
+    });
+    document.getElementById("tabletLiveRotationApply")?.addEventListener("click", async () => {
+      const degrees = Number(document.getElementById("tabletLiveRotationDegrees")?.value || 0);
+      await dispatchTabletCommand("TABLET_LIVE_ROTATION_SET", null, { live_rotation_degrees: degrees });
+    });
     document.querySelectorAll("[data-tablet-show-mode]").forEach((button) => button.addEventListener("click", async () => {
       await dispatchTabletCommand("TABLET_SHOW_MODE_SET", null, { show_mode: button.dataset.tabletShowMode === "true" });
     }));
@@ -616,7 +648,13 @@
     catch (error) { setControllerMessage(error.message, "warn"); return; }
     let runtime = null;
     try { runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/runtime`); } catch (_) {}
-    const settingsCommand = command === "TABLET_BRIGHTNESS_SET" || command === "TABLET_SHOW_MODE_SET";
+    const settingsCommand = [
+      "TABLET_BRIGHTNESS_SET",
+      "TABLET_SHOW_MODE_SET",
+      "TABLET_ORIENTATION_SET",
+      "TABLET_VIDEO_SCALE_SET",
+      "TABLET_LIVE_ROTATION_SET",
+    ].includes(command);
     if (settingsCommand && !selectedSettingsReady()) {
       setControllerMessage(t("settingsNeedReady"), "warn");
       return;
