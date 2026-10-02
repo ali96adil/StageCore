@@ -53,6 +53,8 @@ async function renderSecurity() {
     return;
   }
   const model = await securityLoad();
+  const trustedCompanions = model.companions.filter((companion) => companion.trust_state === "TRUSTED");
+  const historicalCompanions = model.companions.filter((companion) => companion.trust_state !== "TRUSTED");
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">HUB SECURITY</p><h1>Security operations</h1><p>Secrets, users, first-party Plugin permissions and append-oriented audit records stay local to this Hub.</p></div>
@@ -110,7 +112,12 @@ async function renderSecurity() {
     </article>
 
     <article class="card" style="margin-top:16px">
-      <p class="eyebrow">COMPANION TRUST</p><h2>Pending pairing and emergency revoke</h2>
+      <div class="section-title-row">
+        <div><p class="eyebrow">COMPANION TRUST</p><h2>Trusted Companions</h2></div>
+        <div class="toolbar">${pill(`TRUSTED ${trustedCompanions.length}`, trustedCompanions.length ? "good" : "neutral")}</div>
+      </div>
+      <p class="muted">Only currently trusted Companion identities count here. Revoked and untrusted identities remain preserved in Security history.</p>
+      <h3 style="margin-top:16px">Pending pairing</h3>
       <p class="muted">Pairing request IDs stay internal. Match the code shown on the physical device before approving trust.</p>
       <div class="actions-editor" style="margin-top:14px">
         ${model.pendingPairing.length ? model.pendingPairing.map((request) => `
@@ -130,7 +137,7 @@ async function renderSecurity() {
           </div>`).join("") : `<div class="empty">No pending Companion pairing requests.</div>`}
       </div>
       <div class="actions-editor" style="margin-top:14px">
-        ${model.companions.length ? model.companions.map((companion) => `
+        ${trustedCompanions.length ? trustedCompanions.map((companion) => `
           <div class="action-editor companion-inventory-row" data-companion-id="${esc(companion.companion_id)}">
             <div class="section-title-row">
               <div>
@@ -142,17 +149,36 @@ async function renderSecurity() {
             </div>
             <p class="muted">Capabilities: ${esc((companion.capabilities || []).join(", ") || "—")}</p>
             ${companion.machine_role ? `<p class="muted">Machine Role: <strong>${esc(companion.machine_role.display_name || companion.machine_role.role_key)}</strong> · ${esc(companion.machine_role.role_key)} · ${esc(companion.assignment?.state || "")}</p>` : '<p class="muted">Machine Role: unassigned</p>'}
-          </div>`).join("") : '<div class="empty">No Companion identities recorded.</div>'}
+          </div>`).join("") : '<div class="empty">No trusted Companion identities.</div>'}
       </div>
+
+      <details class="action-editor" style="margin-top:14px">
+        <summary><strong>History / removed devices</strong> · ${historicalCompanions.length}</summary>
+        <p class="muted" style="margin-top:10px">Revoked and untrusted identities are excluded from the trusted count but retained for pairing, key and security audit history.</p>
+        <div class="actions-editor" style="margin-top:10px">
+          ${historicalCompanions.length ? historicalCompanions.map((companion) => `
+            <div class="action-editor companion-history-row" data-companion-id="${esc(companion.companion_id)}">
+              <div class="section-title-row">
+                <div>
+                  <strong>${esc(companion.display_name || companion.hostname || companion.companion_id)}</strong>
+                  <p class="muted">${esc(companion.hostname || "—")} · ${esc(companion.platform || "unknown")} ${esc(companion.version || "")} · last seen ${esc(fmtDate(companion.last_seen_at))}</p>
+                  <p class="muted mono">${esc(companion.companion_id)}</p>
+                </div>
+                <div class="toolbar">${pill(companion.trust_state || "UNKNOWN", companion.trust_state === "REVOKED" ? "bad" : "warn")}</div>
+              </div>
+            </div>`).join("") : '<div class="empty">No revoked or untrusted Companion history.</div>'}
+        </div>
+      </details>
+
       <form id="companionRevokeForm" class="form-grid two" style="margin-top:14px">
         <label>Companion
           <select id="revokeCompanionID" required>
             <option value="">Choose a Companion…</option>
-            ${model.companions.filter((companion) => companion.trust_state !== "REVOKED").map((companion) => `<option value="${esc(companion.companion_id)}">${esc(companion.display_name || companion.hostname || companion.companion_id)} · ${esc(companion.hostname || companion.companion_id)} · ${esc(companion.trust_state || "UNKNOWN")}</option>`).join("")}
+            ${trustedCompanions.map((companion) => `<option value="${esc(companion.companion_id)}">${esc(companion.display_name || companion.hostname || companion.companion_id)} · ${esc(companion.hostname || companion.companion_id)}</option>`).join("")}
           </select>
         </label>
         <label>Emergency reason<input id="revokeCompanionReason" required></label>
-        <button class="button ghost" type="submit" ${model.companions.some((companion) => companion.trust_state !== "REVOKED") ? "" : "disabled"}>Emergency revoke Companion</button>
+        <button class="button ghost" type="submit" ${trustedCompanions.length ? "" : "disabled"}>Emergency revoke Companion</button>
       </form>
     </article>
 
