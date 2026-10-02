@@ -77,8 +77,16 @@ public struct CompanionRuntimeState: Sendable, Equatable {
         readiness = .offline
     }
 
+    /// Credential freshness is used when deciding whether a new handshake
+    /// may reuse an authentication credential. An already-established runtime
+    /// channel remains authenticated until transport teardown or explicit
+    /// invalidation, matching Hub-side established-session authority.
     public func isAuthenticated(at date: Date = Date()) -> Bool {
         guard authenticatedSessionID != nil, let authenticatedUntil else { return false }
         return date < authenticatedUntil
+    }
+
+    public func hasEstablishedAuthenticatedSession() -> Bool {
+        authenticatedSessionID != nil
     }
 }

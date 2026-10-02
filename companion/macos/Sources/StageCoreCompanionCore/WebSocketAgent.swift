@@ -164,7 +164,7 @@ public actor WebSocketCompanionAgent {
                 let runtimeState = await session.runtimeState()
                 if let response = try await inspectionRouter.handleIfInspection(
                     data,
-                    authenticated: runtimeState.isAuthenticated()
+                    authenticated: runtimeState.hasEstablishedAuthenticatedSession()
                 ) {
                     try await send(response, socket: socket)
                     continue
