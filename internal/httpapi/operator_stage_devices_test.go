@@ -720,3 +720,118 @@ func TestOperatorGlobalV2InventoryKeepsAssignedReusableDeviceVisible(t *testing.
 		t.Fatalf("offline ACTIVE status overclaimed runtime/physical authority: %+v", status)
 	}
 }
+
+
+func TestLegacyLightingV2MigrationRequiresOwnerCSRFAndExplicitConsent(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Legacy Lighting Migration", CreatedBy: "owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "legacy-lighting-migrate-api"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID,
+		ProjectID: project.ID,
+		ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Legacy Lighting",
+		Platform: "esp32",
+		Architecture: "xtensa",
+		ClientVersion: "0.2.0-dev.1",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"lighting.blackout"},
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/" + deviceID + "/migrate-v2-lighting"
+	body := `{"confirm":"MIGRATE_LEGACY_LIGHTING_TO_V2_BLOCKED"}`
+	invoke := func(credentials userauth.Credential, includeCSRF bool, payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(payload))
+		req.RemoteAddr = "127.0.0.1:19420"
+		req.Header.Set("Content-Type", "application/json")
+		if includeCSRF {
+			req.Header.Set(csrfHeader, credentials.CSRFToken)
+		}
+		if credentials.Token != "" {
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credentials.Token})
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+
+	if res := invoke(userauth.Credential{}, false, body); res.Code == http.StatusOK {
+		t.Fatalf("unauthenticated migration succeeded: %s", res.Body.String())
+	}
+	if res := invoke(owner, false, body); res.Code == http.StatusOK {
+		t.Fatalf("migration without CSRF succeeded: %s", res.Body.String())
+	}
+	if res := invoke(owner, true, `{"confirm":"yes"}`); res.Code != http.StatusBadRequest {
+		t.Fatalf("implicit migration consent status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	const operatorPassword = "legacy v2 migration operator password"
+	if _, err := h.auth.CreateUser(ctx, "migration-operator", operatorPassword, userauth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.Login(ctx, "migration-operator", operatorPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := invoke(operator, true, body); res.Code != http.StatusForbidden {
+		t.Fatalf("non-owner migration status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	res := invoke(owner, true, body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("owner migration status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Migration deviceexperience.LegacyLightingV2Migration `json:"migration"`
+		State string `json:"state"`
+		CommandsEnabled bool `json:"commands_enabled"`
+		SnapshotActive bool `json:"snapshot_active"`
+		PhysicalBlackoutVerified bool `json:"physical_blackout_verified"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.State != "BLOCKED" || response.CommandsEnabled ||
+		response.SnapshotActive || response.PhysicalBlackoutVerified ||
+		response.Migration.DeviceID != deviceID ||
+		response.Migration.ProjectID != project.ID ||
+		response.Migration.FromEpoch != 1 ||
+		response.Migration.ToEpoch != 2 {
+		t.Fatalf("migration response overclaimed authority: %+v", response)
+	}
+
+	loaded, err := devices.GetDevice(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
+		loaded.ProjectID != "" || loaded.Assignment == nil ||
+		loaded.Assignment.State != "BLOCKED" ||
+		loaded.Assignment.ProjectID != project.ID ||
+		loaded.Assignment.Epoch != 2 {
+		t.Fatalf("migrated device=%+v", loaded)
+	}
+}
