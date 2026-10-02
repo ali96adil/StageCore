@@ -246,6 +246,37 @@ func TestTabletDevicesIncludeOnlyActiveV2TabletAssignments(t *testing.T) {
 }
 
 
+func TestNormalizeTabletMainPlaybackPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		raw string
+		want string
+		wantErr bool
+	}{
+		{name:"legacy media number", raw:`{"media_number":1}`, want:`{"media_number":1}`},
+		{name:"looping media", raw:`{"media_number":2,"loop":true,"end_behavior":"none"}`, want:`{"end_behavior":"none","loop":true,"media_number":2}`},
+		{name:"one shot blackout", raw:`{"media_number":3,"loop":false,"end_behavior":"BLACKOUT"}`, want:`{"end_behavior":"blackout","loop":false,"media_number":3}`},
+		{name:"one shot hold", raw:`{"media_number":3,"loop":false,"end_behavior":"hold"}`, want:`{"end_behavior":"hold","loop":false,"media_number":3}`},
+		{name:"cue keeps manifest behavior", raw:`{"tablet_cue_id":"cue-1"}`, want:`{"tablet_cue_id":"cue-1"}`},
+		{name:"cue rejects override", raw:`{"tablet_cue_id":"cue-1","loop":false}`, wantErr:true},
+		{name:"bad loop type", raw:`{"media_number":1,"loop":"false"}`, wantErr:true},
+		{name:"bad end", raw:`{"media_number":1,"loop":false,"end_behavior":"rewind"}`, wantErr:true},
+		{name:"unknown field", raw:`{"media_number":1,"volume":0}`, wantErr:true},
+		{name:"ambiguous selector", raw:`{"media_number":1,"tablet_cue_id":"cue-1"}`, wantErr:true},
+	}
+	for _,tc:=range tests{
+		t.Run(tc.name,func(t *testing.T){
+			got,err:=normalizeTabletCommandPayload(deviceexperience.CommandTabletPlay,json.RawMessage(tc.raw))
+			if tc.wantErr{
+				if err==nil{t.Fatalf("expected error, got %s",got)}
+				return
+			}
+			if err!=nil{t.Fatal(err)}
+			if string(got)!=tc.want{t.Fatalf("payload=%s want=%s",got,tc.want)}
+		})
+	}
+}
+
 func TestNormalizeTabletLivePayload(t *testing.T) {
 	tests := []struct {
 		name    string
