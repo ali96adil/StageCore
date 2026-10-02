@@ -168,7 +168,7 @@ public actor CompanionSession {
 
         switch header.type {
         case .sessionReady:
-            guard !configuration.requiresAuthenticatedSession || state.isAuthenticated() else {
+            guard !configuration.requiresAuthenticatedSession || state.hasEstablishedAuthenticatedSession() else {
                 throw CompanionSessionError.unauthenticatedSession
             }
             let ready = try decoder.decode(SessionReady.self, from: data)
@@ -198,7 +198,7 @@ public actor CompanionSession {
     }
 
     private func handleExecution(_ request: CompanionExecutionRequest) async -> CompanionExecutionResult {
-        guard !configuration.requiresAuthenticatedSession || state.isAuthenticated() else {
+        guard !configuration.requiresAuthenticatedSession || state.hasEstablishedAuthenticatedSession() else {
             guardState.markTerminal(request.executionID)
             return rejection(request, code: "SESSION_UNAUTHENTICATED", summary: "authenticated runtime session is required")
         }
