@@ -166,8 +166,12 @@ func TestOperatorLightingConfigurationKeepsMigratedV2NodeVisible(t *testing.T) {
 		node.Aliases["front_cold"] != "cold_a" {
 		t.Fatalf("migrated v2 configuration node=%+v", node)
 	}
-	if node.Health.CommandsEnabled {
-		t.Fatalf("configuration visibility must not grant runtime command authority: %+v", node.Health)
+	assignment, err := devices.GetAssignmentRecord(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assignment.State != "BLOCKED" || assignment.Epoch != 2 || assignment.RuntimeSnapshotID != "" {
+		t.Fatalf("configuration visibility changed v2 authority: %+v", assignment)
 	}
 }
 
