@@ -639,6 +639,48 @@ func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (jso
 		encoded, _ := json.Marshal(map[string]bool{"show_mode": value})
 		return encoded, nil
 	}
+	if commandType == deviceexperience.CommandTabletVideoScaleSet {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 1 {
+			return nil, fmt.Errorf("video scale requires exactly video_scale_mode")
+		}
+		value, ok := object["video_scale_mode"].(string)
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if !ok || (value != "FIT" && value != "CROP" && value != "FULL") {
+			return nil, fmt.Errorf("video_scale_mode must be FIT, CROP, or FULL")
+		}
+		encoded, _ := json.Marshal(map[string]string{"video_scale_mode": value})
+		return encoded, nil
+	}
+	if commandType == deviceexperience.CommandTabletOrientationSet {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 1 {
+			return nil, fmt.Errorf("orientation requires exactly orientation_mode")
+		}
+		value, ok := object["orientation_mode"].(string)
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if !ok || (value != "AUTO" && value != "PORTRAIT" && value != "LANDSCAPE") {
+			return nil, fmt.Errorf("orientation_mode must be AUTO, PORTRAIT, or LANDSCAPE")
+		}
+		encoded, _ := json.Marshal(map[string]string{"orientation_mode": value})
+		return encoded, nil
+	}
+	if commandType == deviceexperience.CommandTabletLiveRotationSet {
+		var object map[string]any
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || object == nil || len(object) != 1 {
+			return nil, fmt.Errorf("Live rotation requires exactly live_rotation_degrees")
+		}
+		value, ok := object["live_rotation_degrees"].(float64)
+		if !ok || value != float64(int(value)) {
+			return nil, fmt.Errorf("live_rotation_degrees must be 0, 90, 180, or 270")
+		}
+		degrees := int(value)
+		if degrees != 0 && degrees != 90 && degrees != 180 && degrees != 270 {
+			return nil, fmt.Errorf("live_rotation_degrees must be 0, 90, 180, or 270")
+		}
+		encoded, _ := json.Marshal(map[string]int{"live_rotation_degrees": degrees})
+		return encoded, nil
+	}
 	if commandType != deviceexperience.CommandTabletLiveShow {
 		return normalizeRawObject(raw), nil
 	}
@@ -680,12 +722,19 @@ func normalizeTabletCommandPayload(commandType string, raw json.RawMessage) (jso
 func tabletRuntimeCapability(capability string) bool {
 	return strings.HasPrefix(capability, "tablet.media.") ||
 		capability == deviceexperience.CapabilityTabletBrightnessSet ||
-		capability == deviceexperience.CapabilityTabletShowModeSet
+		capability == deviceexperience.CapabilityTabletShowModeSet ||
+		capability == deviceexperience.CapabilityTabletVideoScaleSet ||
+		capability == deviceexperience.CapabilityTabletOrientationSet ||
+		capability == deviceexperience.CapabilityTabletLiveRotationSet
 }
 
 func tabletSettingsCommand(commandType string) bool {
 	switch strings.TrimSpace(commandType) {
-	case deviceexperience.CommandTabletBrightnessSet, deviceexperience.CommandTabletShowModeSet:
+	case deviceexperience.CommandTabletBrightnessSet,
+		deviceexperience.CommandTabletShowModeSet,
+		deviceexperience.CommandTabletVideoScaleSet,
+		deviceexperience.CommandTabletOrientationSet,
+		deviceexperience.CommandTabletLiveRotationSet:
 		return true
 	default:
 		return false
