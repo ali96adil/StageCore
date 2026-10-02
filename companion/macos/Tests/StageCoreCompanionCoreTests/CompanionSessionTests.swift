@@ -207,6 +207,68 @@ final class CompanionSessionTests: XCTestCase {
         XCTAssertEqual(freshResult.status, .completed)
     }
 
+    func testEstablishedRuntimeSessionRemainsAuthoritativeAfterCredentialExpiryUntilInvalidated() async throws {
+        let session = CompanionSession(
+            configuration: CompanionSessionConfiguration(
+                companionID: "11111111-1111-4111-8111-111111111111",
+                agentVersion: "0.1.0",
+                platform: "macos",
+                architecture: "arm64"
+            ),
+            executors: [LocalEchoExecutor()]
+        )
+
+        await session.establishAuthenticatedSession(
+            CompanionRuntimeCredential(
+                sessionID: "session-established",
+                token: "handshake-token",
+                expiresAt: Date().addingTimeInterval(-60)
+            )
+        )
+
+        var runtimeState = await session.runtimeState()
+        XCTAssertFalse(runtimeState.isAuthenticated())
+        XCTAssertTrue(runtimeState.hasEstablishedAuthenticatedSession())
+
+        let ready = SessionReady(
+            machineRoleID: "role-video-main",
+            roleKey: "VIDEO-MAIN",
+            runtimeSnapshotID: "snap-established",
+            configHash: ""
+        )
+        _ = try await session.handle(JSONEncoder().encode(ready))
+
+        let request = CompanionExecutionRequest(
+            executionID: "exec-established",
+            correlationID: nil,
+            machineRoleID: "role-video-main",
+            runtimeSnapshotID: "snap-established",
+            capability: "local.echo",
+            parameters: ["message": .string("still-authoritative")],
+            timeoutMS: 100
+        )
+        let completed = try await result(session, request: request)
+        XCTAssertEqual(completed.status, .completed)
+        XCTAssertEqual(completed.output["echo"], .string("still-authoritative"))
+
+        await session.invalidateAuthenticatedSession()
+        runtimeState = await session.runtimeState()
+        XCTAssertFalse(runtimeState.hasEstablishedAuthenticatedSession())
+
+        let afterInvalidation = CompanionExecutionRequest(
+            executionID: "exec-after-invalidation",
+            correlationID: nil,
+            machineRoleID: "role-video-main",
+            runtimeSnapshotID: "snap-established",
+            capability: "local.echo",
+            parameters: [:],
+            timeoutMS: 100
+        )
+        let rejected = try await result(session, request: afterInvalidation)
+        XCTAssertEqual(rejected.status, .rejected)
+        XCTAssertEqual(rejected.errorCode, "SESSION_UNAUTHENTICATED")
+    }
+
     func testSessionProducesExplicitTimeout() async throws {
         let session = CompanionSession(
             configuration: CompanionSessionConfiguration(
