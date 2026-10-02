@@ -29,6 +29,8 @@
       liveMode: "Source type",
       liveByKey: "Media key",
       liveByURL: "Direct URL",
+      liveConfigured: "Configured source",
+      liveManual: "Manual / editable URL",
       liveKey: "Media key",
       liveURL: "Live URL",
       liveShow: "Show live",
@@ -116,6 +118,8 @@
       liveMode: "نوع المصدر",
       liveByKey: "Media key",
       liveByURL: "رابط مباشر",
+      liveConfigured: "المصدر المحفوظ بالمشروع",
+      liveManual: "رابط يدوي / قابل للتعديل",
       liveKey: "Media key",
       liveURL: "رابط البث",
       liveShow: "إظهار Live",
@@ -180,6 +184,7 @@
 
   let model = null;
   let runtimeModel = null;
+  let liveSourcesModel = { sources: [] };
   const selected = new Set();
   let healthRefreshTimer = null;
 
@@ -234,6 +239,35 @@
     if (value.video_scale_mode) details.push(`${t("videoScale")}: ${String(value.video_scale_mode)}`);
     if (Number.isFinite(Number(value.live_rotation_degrees))) details.push(`${t("liveRotation")}: ${Number(value.live_rotation_degrees)}°`);
     return details.join(" · ") || "—";
+  }
+
+  function directLiveSources() {
+    return (liveSourcesModel?.sources || []).filter((source) => {
+      if (source?.desired_enabled === false) return false;
+      const value = String(source?.endpoint_ref || "").trim();
+      if (!value) return false;
+      try {
+        const parsed = new URL(value);
+        return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  function preferredDirectLiveSource(sources) {
+    return sources.find((source) => {
+      try { return new URL(source.endpoint_ref).pathname === "/api/v0/stream"; }
+      catch (_) { return false; }
+    }) || sources[0] || null;
+  }
+
+  function liveSourceOptions(sources, preferred) {
+    return sources.map((source) => {
+      const selected = preferred?.source_id === source.source_id ? "selected" : "";
+      const label = source.name || source.source_id || source.endpoint_ref;
+      return `<option value="${esc(source.endpoint_ref)}" ${selected}>${esc(label)}</option>`;
+    }).join("");
   }
 
   function selectedDevices() {
@@ -302,11 +336,14 @@
     if (!state.project) return;
     setPage("tablet-controller");
     const pid = projectID();
-    [model, runtimeModel] = await Promise.all([
+    [model, runtimeModel, liveSourcesModel] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(pid)}/tablet-controller`),
       api(`/api/v1/projects/${encodeURIComponent(pid)}/runtime`),
+      api(`/api/v1/projects/${encodeURIComponent(pid)}/live-video-sources`).catch(() => ({ sources: [] })),
     ]);
     const devices = model.devices || [];
+    const configuredLiveSources = directLiveSources();
+    const preferredLiveSource = preferredDirectLiveSource(configuredLiveSources);
     syncSelection(devices);
     content.innerHTML = `
       <div class="page-head tablet-controller-head">
@@ -342,10 +379,11 @@
           <section class="card tablet-control-panel">
             <div><p class="eyebrow">LIVE</p><h2>${esc(t("live"))}</h2><p class="muted">${esc(t("liveSub"))}</p></div>
             <div class="tablet-inline-fields">
-              <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="key">${esc(t("liveByKey"))}</option><option value="url">${esc(t("liveByURL"))}</option></select></label>
-              <label id="tabletLiveKeyWrap">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
-              <label id="tabletLiveURLWrap" class="hidden">${esc(t("liveURL"))}<input id="tabletLiveURL" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
-              <label id="tabletLiveFlashWrap" class="hidden"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
+              <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="url" ${preferredLiveSource ? "selected" : ""}>${esc(t("liveByURL"))}</option><option value="key" ${preferredLiveSource ? "" : "selected"}>${esc(t("liveByKey"))}</option></select></label>
+              <label id="tabletLiveConfiguredWrap" class="${configuredLiveSources.length ? (preferredLiveSource ? "" : "hidden") : "hidden"}">${esc(t("liveConfigured"))}<select id="tabletLiveConfigured">${liveSourceOptions(configuredLiveSources, preferredLiveSource)}</select></label>
+              <label id="tabletLiveKeyWrap" class="${preferredLiveSource ? "hidden" : ""}">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
+              <label id="tabletLiveURLWrap" class="${preferredLiveSource ? "" : "hidden"}">${esc(t("liveManual"))}<input id="tabletLiveURL" value="${esc(preferredLiveSource?.endpoint_ref || "")}" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
+              <label id="tabletLiveFlashWrap" class="${preferredLiveSource ? "" : "hidden"}"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
             </div>
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
             <div id="tabletFlashOverrideWrap" class="tablet-command-row hidden">
@@ -473,9 +511,14 @@
     document.getElementById("tabletLiveMode")?.addEventListener("change", (event) => {
       const direct = event.target.value === "url";
       document.getElementById("tabletLiveKeyWrap")?.classList.toggle("hidden", direct);
+      document.getElementById("tabletLiveConfiguredWrap")?.classList.toggle("hidden", !direct || !directLiveSources().length);
       document.getElementById("tabletLiveURLWrap")?.classList.toggle("hidden", !direct);
       document.getElementById("tabletLiveFlashWrap")?.classList.toggle("hidden", !direct);
       document.getElementById("tabletFlashOverrideWrap")?.classList.toggle("hidden", !direct);
+    });
+    document.getElementById("tabletLiveConfigured")?.addEventListener("change", (event) => {
+      const input = document.getElementById("tabletLiveURL");
+      if (input) input.value = event.target.value || "";
     });
     document.querySelectorAll("[data-tablet-command]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
