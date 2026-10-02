@@ -166,7 +166,7 @@ async function renderSecurity() {
                 </div>
                 <div class="toolbar">${pill(companion.trust_state || "UNKNOWN", companion.trust_state === "REVOKED" ? "bad" : "warn")}</div>
               </div>
-            </div>`).join("") : '<div class="empty">No revoked or untrusted Companion history.</div>'}"}
+            </div>`).join("") : '<div class="empty">No revoked or untrusted Companion history.</div>'}
         </div>
       </details>
 
