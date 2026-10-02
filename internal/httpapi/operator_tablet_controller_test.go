@@ -303,6 +303,12 @@ func TestNormalizeTabletSettingsPayload(t *testing.T) {
 		{name:"show on", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":true}`, want:`{"show_mode":true}`},
 		{name:"show off", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":false}`, want:`{"show_mode":false}`},
 		{name:"show wrong type", command:deviceexperience.CommandTabletShowModeSet, raw:`{"show_mode":"true"}`, wantErr:true},
+		{name:"scale crop", command:deviceexperience.CommandTabletVideoScaleSet, raw:`{"video_scale_mode":"crop"}`, want:`{"video_scale_mode":"CROP"}`},
+		{name:"scale invalid", command:deviceexperience.CommandTabletVideoScaleSet, raw:`{"video_scale_mode":"zoom"}`, wantErr:true},
+		{name:"orientation portrait", command:deviceexperience.CommandTabletOrientationSet, raw:`{"orientation_mode":"portrait"}`, want:`{"orientation_mode":"PORTRAIT"}`},
+		{name:"orientation invalid", command:deviceexperience.CommandTabletOrientationSet, raw:`{"orientation_mode":"sideways"}`, wantErr:true},
+		{name:"live rotation 90", command:deviceexperience.CommandTabletLiveRotationSet, raw:`{"live_rotation_degrees":90}`, want:`{"live_rotation_degrees":90}`},
+		{name:"live rotation invalid", command:deviceexperience.CommandTabletLiveRotationSet, raw:`{"live_rotation_degrees":45}`, wantErr:true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,11 +325,17 @@ func TestNormalizeTabletSettingsPayload(t *testing.T) {
 
 func TestTabletSettingsCapabilityClassification(t *testing.T) {
 	if !tabletRuntimeCapability(deviceexperience.CapabilityTabletBrightnessSet) ||
-		!tabletRuntimeCapability(deviceexperience.CapabilityTabletShowModeSet) {
+		!tabletRuntimeCapability(deviceexperience.CapabilityTabletShowModeSet) ||
+		!tabletRuntimeCapability(deviceexperience.CapabilityTabletVideoScaleSet) ||
+		!tabletRuntimeCapability(deviceexperience.CapabilityTabletOrientationSet) ||
+		!tabletRuntimeCapability(deviceexperience.CapabilityTabletLiveRotationSet) {
 		t.Fatal("authenticated Tablet settings capabilities were not accepted by runtime facade")
 	}
 	if !tabletSettingsCommand(deviceexperience.CommandTabletBrightnessSet) ||
-		!tabletSettingsCommand(deviceexperience.CommandTabletShowModeSet) {
+		!tabletSettingsCommand(deviceexperience.CommandTabletShowModeSet) ||
+		!tabletSettingsCommand(deviceexperience.CommandTabletVideoScaleSet) ||
+		!tabletSettingsCommand(deviceexperience.CommandTabletOrientationSet) ||
+		!tabletSettingsCommand(deviceexperience.CommandTabletLiveRotationSet) {
 		t.Fatal("settings commands were not classified as guarded settings mutations")
 	}
 	if tabletSettingsCommand(deviceexperience.CommandTabletPlay) {
@@ -336,6 +348,9 @@ func TestTabletSettingsRemainOperatorOnlyNotCueBuilderCapabilities(t *testing.T)
 	for _, capability := range []string{
 		deviceexperience.CapabilityTabletBrightnessSet,
 		deviceexperience.CapabilityTabletShowModeSet,
+		deviceexperience.CapabilityTabletVideoScaleSet,
+		deviceexperience.CapabilityTabletOrientationSet,
+		deviceexperience.CapabilityTabletLiveRotationSet,
 	} {
 		if strings.HasPrefix(capability, "tablet.media.") {
 			t.Fatalf("settings capability %q unexpectedly entered media Cue namespace", capability)

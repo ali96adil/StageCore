@@ -12,8 +12,13 @@ func TestTabletControllerCommandCapabilities(t *testing.T) {
 		CommandTabletBlackoutClear: CapabilityTabletBlackoutClear,
 		CommandTabletOverlayPlay:   CapabilityTabletOverlayPlay,
 		CommandTabletOverlayClear:  CapabilityTabletOverlayClear,
-		CommandTabletLiveShow:      CapabilityTabletLiveShow,
-		CommandTabletLiveHide:      CapabilityTabletLiveHide,
+		CommandTabletLiveShow:         CapabilityTabletLiveShow,
+		CommandTabletLiveHide:         CapabilityTabletLiveHide,
+		CommandTabletBrightnessSet:    CapabilityTabletBrightnessSet,
+		CommandTabletShowModeSet:      CapabilityTabletShowModeSet,
+		CommandTabletVideoScaleSet:    CapabilityTabletVideoScaleSet,
+		CommandTabletOrientationSet:   CapabilityTabletOrientationSet,
+		CommandTabletLiveRotationSet:  CapabilityTabletLiveRotationSet,
 	}
 	for command, capability := range tests {
 		if got := RequiredCapability(command); got != capability {

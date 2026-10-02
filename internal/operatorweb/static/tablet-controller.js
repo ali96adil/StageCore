@@ -29,6 +29,8 @@
       liveMode: "Source type",
       liveByKey: "Media key",
       liveByURL: "Direct URL",
+      liveConfigured: "Configured source",
+      liveManual: "Manual / editable URL",
       liveKey: "Media key",
       liveURL: "Live URL",
       liveShow: "Show live",
@@ -78,6 +80,11 @@
       tabletSettingsSub: "Authenticated v2 controls. Changes are confirmed by the tablet's observed health state.",
       brightnessSet: "Apply brightness",
       brightnessPercent: "Brightness %",
+      videoScale: "Video scale",
+      liveRotation: "Live rotation",
+      applyScale: "Apply scale",
+      applyOrientation: "Apply orientation",
+      applyRotation: "Apply Live rotation",
       enterShowMode: "Enter Show Mode",
       exitShowMode: "Exit Show Mode",
       showMode: "Show mode",
@@ -111,6 +118,8 @@
       liveMode: "نوع المصدر",
       liveByKey: "Media key",
       liveByURL: "رابط مباشر",
+      liveConfigured: "المصدر المحفوظ بالمشروع",
+      liveManual: "رابط يدوي / قابل للتعديل",
       liveKey: "Media key",
       liveURL: "رابط البث",
       liveShow: "إظهار Live",
@@ -160,6 +169,11 @@
       tabletSettingsSub: "تحكم v2 موثّق. التغيير يتأكد من الحالة الفعلية اللي يرجعها التابلت.",
       brightnessSet: "تطبيق السطوع",
       brightnessPercent: "السطوع %",
+      videoScale: "حجم الفيديو",
+      liveRotation: "دوران Live",
+      applyScale: "تطبيق حجم الفيديو",
+      applyOrientation: "تطبيق الاتجاه",
+      applyRotation: "تطبيق دوران Live",
       enterShowMode: "دخول Show Mode",
       exitShowMode: "خروج من Show Mode",
       showMode: "وضع العرض",
@@ -170,6 +184,7 @@
 
   let model = null;
   let runtimeModel = null;
+  let liveSourcesModel = { sources: [] };
   const selected = new Set();
   let healthRefreshTimer = null;
 
@@ -221,7 +236,38 @@
     if (Number.isFinite(Number(value.brightness_percent))) details.push(`${t("brightness")}: ${Math.round(Number(value.brightness_percent))}%`);
     if (typeof value.show_mode === "boolean") details.push(`${t("showMode")}: ${value.show_mode ? t("on") : t("off")}`);
     if (value.orientation_mode) details.push(`${t("orientation")}: ${String(value.orientation_mode)}`);
+    if (value.video_scale_mode) details.push(`${t("videoScale")}: ${String(value.video_scale_mode)}`);
+    if (Number.isFinite(Number(value.live_rotation_degrees))) details.push(`${t("liveRotation")}: ${Number(value.live_rotation_degrees)}°`);
     return details.join(" · ") || "—";
+  }
+
+  function directLiveSources() {
+    return (liveSourcesModel?.sources || []).filter((source) => {
+      if (source?.desired_enabled === false) return false;
+      const value = String(source?.endpoint_ref || "").trim();
+      if (!value) return false;
+      try {
+        const parsed = new URL(value);
+        return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
+      } catch (_) {
+        return false;
+      }
+    });
+  }
+
+  function preferredDirectLiveSource(sources) {
+    return sources.find((source) => {
+      try { return new URL(source.endpoint_ref).pathname === "/api/v0/stream"; }
+      catch (_) { return false; }
+    }) || sources[0] || null;
+  }
+
+  function liveSourceOptions(sources, preferred) {
+    return sources.map((source) => {
+      const selected = preferred?.source_id === source.source_id ? "selected" : "";
+      const label = source.name || source.source_id || source.endpoint_ref;
+      return `<option value="${esc(source.endpoint_ref)}" ${selected}>${esc(label)}</option>`;
+    }).join("");
   }
 
   function selectedDevices() {
@@ -290,11 +336,14 @@
     if (!state.project) return;
     setPage("tablet-controller");
     const pid = projectID();
-    [model, runtimeModel] = await Promise.all([
+    [model, runtimeModel, liveSourcesModel] = await Promise.all([
       api(`/api/v1/projects/${encodeURIComponent(pid)}/tablet-controller`),
       api(`/api/v1/projects/${encodeURIComponent(pid)}/runtime`),
+      api(`/api/v1/projects/${encodeURIComponent(pid)}/live-video-sources`).catch(() => ({ sources: [] })),
     ]);
     const devices = model.devices || [];
+    const configuredLiveSources = directLiveSources();
+    const preferredLiveSource = preferredDirectLiveSource(configuredLiveSources);
     syncSelection(devices);
     content.innerHTML = `
       <div class="page-head tablet-controller-head">
@@ -330,10 +379,11 @@
           <section class="card tablet-control-panel">
             <div><p class="eyebrow">LIVE</p><h2>${esc(t("live"))}</h2><p class="muted">${esc(t("liveSub"))}</p></div>
             <div class="tablet-inline-fields">
-              <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="key">${esc(t("liveByKey"))}</option><option value="url">${esc(t("liveByURL"))}</option></select></label>
-              <label id="tabletLiveKeyWrap">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
-              <label id="tabletLiveURLWrap" class="hidden">${esc(t("liveURL"))}<input id="tabletLiveURL" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
-              <label id="tabletLiveFlashWrap" class="hidden"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
+              <label>${esc(t("liveMode"))}<select id="tabletLiveMode"><option value="url" ${preferredLiveSource ? "selected" : ""}>${esc(t("liveByURL"))}</option><option value="key" ${preferredLiveSource ? "" : "selected"}>${esc(t("liveByKey"))}</option></select></label>
+              <label id="tabletLiveConfiguredWrap" class="${configuredLiveSources.length ? (preferredLiveSource ? "" : "hidden") : "hidden"}">${esc(t("liveConfigured"))}<select id="tabletLiveConfigured">${liveSourceOptions(configuredLiveSources, preferredLiveSource)}</select></label>
+              <label id="tabletLiveKeyWrap" class="${preferredLiveSource ? "hidden" : ""}">${esc(t("liveKey"))}<input id="tabletLiveKey" placeholder="camera-main" dir="ltr"></label>
+              <label id="tabletLiveURLWrap" class="${preferredLiveSource ? "" : "hidden"}">${esc(t("liveManual"))}<input id="tabletLiveURL" value="${esc(preferredLiveSource?.endpoint_ref || "")}" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
+              <label id="tabletLiveFlashWrap" class="${preferredLiveSource ? "" : "hidden"}"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
             </div>
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
             <div id="tabletFlashOverrideWrap" class="tablet-command-row hidden">
@@ -347,6 +397,9 @@
             <div><p class="eyebrow">SETTINGS</p><h2>${esc(t("tabletSettings"))}</h2><p class="muted">${esc(t("tabletSettingsSub"))}</p></div>
             <div class="tablet-inline-fields">
               <label>${esc(t("brightnessPercent"))}<input id="tabletBrightnessPercent" type="number" min="5" max="100" value="100" inputmode="numeric"></label>
+              <label>${esc(t("orientation"))}<select id="tabletOrientationMode"><option value="AUTO">AUTO</option><option value="PORTRAIT">PORTRAIT</option><option value="LANDSCAPE">LANDSCAPE</option></select></label>
+              <label>${esc(t("videoScale"))}<select id="tabletVideoScaleMode"><option value="FIT">FIT</option><option value="CROP">CROP</option><option value="FULL">FULL</option></select></label>
+              <label>${esc(t("liveRotation"))}<select id="tabletLiveRotationDegrees"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
             </div>
             <div class="tablet-command-row">
               <button class="button ghost" data-tablet-brightness="25" data-tablet-settings-control type="button">25%</button>
@@ -354,6 +407,11 @@
               <button class="button ghost" data-tablet-brightness="75" data-tablet-settings-control type="button">75%</button>
               <button class="button ghost" data-tablet-brightness="100" data-tablet-settings-control type="button">100%</button>
               <button id="tabletBrightnessApply" class="button primary" data-tablet-settings-control type="button">${esc(t("brightnessSet"))}</button>
+            </div>
+            <div class="tablet-command-row">
+              <button id="tabletOrientationApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyOrientation"))}</button>
+              <button id="tabletVideoScaleApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyScale"))}</button>
+              <button id="tabletLiveRotationApply" class="button ghost" data-tablet-settings-control type="button">${esc(t("applyRotation"))}</button>
             </div>
             <div class="tablet-command-row">
               <button class="button primary" data-tablet-show-mode="true" data-tablet-settings-control type="button">${esc(t("enterShowMode"))}</button>
@@ -453,9 +511,14 @@
     document.getElementById("tabletLiveMode")?.addEventListener("change", (event) => {
       const direct = event.target.value === "url";
       document.getElementById("tabletLiveKeyWrap")?.classList.toggle("hidden", direct);
+      document.getElementById("tabletLiveConfiguredWrap")?.classList.toggle("hidden", !direct || !directLiveSources().length);
       document.getElementById("tabletLiveURLWrap")?.classList.toggle("hidden", !direct);
       document.getElementById("tabletLiveFlashWrap")?.classList.toggle("hidden", !direct);
       document.getElementById("tabletFlashOverrideWrap")?.classList.toggle("hidden", !direct);
+    });
+    document.getElementById("tabletLiveConfigured")?.addEventListener("change", (event) => {
+      const input = document.getElementById("tabletLiveURL");
+      if (input) input.value = event.target.value || "";
     });
     document.querySelectorAll("[data-tablet-command]").forEach((button) => button.addEventListener("click", async () => {
       button.disabled = true;
@@ -482,6 +545,18 @@
       if (input) input.value = String(percent);
       await dispatchTabletCommand("TABLET_BRIGHTNESS_SET", null, { brightness_percent: percent });
     }));
+    document.getElementById("tabletOrientationApply")?.addEventListener("click", async () => {
+      const mode = document.getElementById("tabletOrientationMode")?.value || "AUTO";
+      await dispatchTabletCommand("TABLET_ORIENTATION_SET", null, { orientation_mode: mode });
+    });
+    document.getElementById("tabletVideoScaleApply")?.addEventListener("click", async () => {
+      const mode = document.getElementById("tabletVideoScaleMode")?.value || "FIT";
+      await dispatchTabletCommand("TABLET_VIDEO_SCALE_SET", null, { video_scale_mode: mode });
+    });
+    document.getElementById("tabletLiveRotationApply")?.addEventListener("click", async () => {
+      const degrees = Number(document.getElementById("tabletLiveRotationDegrees")?.value || 0);
+      await dispatchTabletCommand("TABLET_LIVE_ROTATION_SET", null, { live_rotation_degrees: degrees });
+    });
     document.querySelectorAll("[data-tablet-show-mode]").forEach((button) => button.addEventListener("click", async () => {
       await dispatchTabletCommand("TABLET_SHOW_MODE_SET", null, { show_mode: button.dataset.tabletShowMode === "true" });
     }));
@@ -616,7 +691,13 @@
     catch (error) { setControllerMessage(error.message, "warn"); return; }
     let runtime = null;
     try { runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/runtime`); } catch (_) {}
-    const settingsCommand = command === "TABLET_BRIGHTNESS_SET" || command === "TABLET_SHOW_MODE_SET";
+    const settingsCommand = [
+      "TABLET_BRIGHTNESS_SET",
+      "TABLET_SHOW_MODE_SET",
+      "TABLET_ORIENTATION_SET",
+      "TABLET_VIDEO_SCALE_SET",
+      "TABLET_LIVE_ROTATION_SET",
+    ].includes(command);
     if (settingsCommand && !selectedSettingsReady()) {
       setControllerMessage(t("settingsNeedReady"), "warn");
       return;

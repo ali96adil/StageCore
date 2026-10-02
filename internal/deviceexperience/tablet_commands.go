@@ -13,8 +13,11 @@ const (
 	CommandTabletOverlayClear  = "TABLET_OVERLAY_CLEAR"
 	CommandTabletLiveShow      = "TABLET_LIVE_SHOW"
 	CommandTabletLiveHide      = "TABLET_LIVE_HIDE"
-	CommandTabletBrightnessSet = "TABLET_BRIGHTNESS_SET"
-	CommandTabletShowModeSet   = "TABLET_SHOW_MODE_SET"
+	CommandTabletBrightnessSet    = "TABLET_BRIGHTNESS_SET"
+	CommandTabletShowModeSet      = "TABLET_SHOW_MODE_SET"
+	CommandTabletVideoScaleSet    = "TABLET_VIDEO_SCALE_SET"
+	CommandTabletOrientationSet   = "TABLET_ORIENTATION_SET"
+	CommandTabletLiveRotationSet  = "TABLET_LIVE_ROTATION_SET"
 )
 
 const (
@@ -28,8 +31,11 @@ const (
 	CapabilityTabletOverlayClear  = "tablet.media.overlay.clear"
 	CapabilityTabletLiveShow      = "tablet.media.live.show"
 	CapabilityTabletLiveHide      = "tablet.media.live.hide"
-	CapabilityTabletBrightnessSet = "tablet.settings.brightness.set"
-	CapabilityTabletShowModeSet   = "tablet.settings.show_mode.set"
+	CapabilityTabletBrightnessSet   = "tablet.settings.brightness.set"
+	CapabilityTabletShowModeSet     = "tablet.settings.show_mode.set"
+	CapabilityTabletVideoScaleSet   = "tablet.settings.video_scale.set"
+	CapabilityTabletOrientationSet  = "tablet.settings.orientation.set"
+	CapabilityTabletLiveRotationSet = "tablet.settings.live_rotation.set"
 )
 
 func init() {
@@ -45,4 +51,7 @@ func init() {
 	commandCapability[CommandTabletLiveHide] = CapabilityTabletLiveHide
 	commandCapability[CommandTabletBrightnessSet] = CapabilityTabletBrightnessSet
 	commandCapability[CommandTabletShowModeSet] = CapabilityTabletShowModeSet
+	commandCapability[CommandTabletVideoScaleSet] = CapabilityTabletVideoScaleSet
+	commandCapability[CommandTabletOrientationSet] = CapabilityTabletOrientationSet
+	commandCapability[CommandTabletLiveRotationSet] = CapabilityTabletLiveRotationSet
 }
