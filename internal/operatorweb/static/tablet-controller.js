@@ -59,7 +59,8 @@
       on: "ON",
       off: "OFF",
       offline: "Offline",
-      commandOK: "Tablet command dispatched.",
+      commandOK: "Tablet command completed.",
+      commandPending: "Tablet command was dispatched and is still pending.",
       commandPartial: "Command completed with one or more tablet errors.",
       cueReady: "Tablet actions added to a new Draft Cue. Name it and save the Cue.",
       chooseTablet: "Choose at least one tablet.",
@@ -140,7 +141,8 @@
       on: "مفعّل",
       off: "متوقف",
       offline: "غير متصل",
-      commandOK: "تم إرسال أمر التابلت.",
+      commandOK: "اكتمل أمر التابلت بنجاح.",
+      commandPending: "تم إرسال أمر التابلت لكن النتيجة النهائية بعدها معلقة.",
       commandPartial: "تم التنفيذ لكن أكو خطأ بواحد أو أكثر من التابلتات.",
       cueReady: "انضافت أوامر التابلت إلى Draft Cue جديد. سمّه واحفظه.",
       chooseTablet: "اختار تابلت واحد على الأقل.",
@@ -574,6 +576,38 @@
     }
   }
 
+  async function waitForTabletCommandResult(command, timeoutMS = 5000) {
+    const commandID = command?.envelope?.command_id;
+    if (!commandID || command?.status !== "ACCEPTED") return command;
+    const deadline = Date.now() + timeoutMS;
+    let current = command;
+    while (current?.status === "ACCEPTED" && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      try {
+        current = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands/${encodeURIComponent(commandID)}`);
+      } catch (_) {
+        return current;
+      }
+    }
+    return current;
+  }
+
+  async function settleTabletCommandResults(response) {
+    const results = response?.results || [];
+    await Promise.all(results.map(async (item) => {
+      if (item?.command?.status === "ACCEPTED") {
+        item.command = await waitForTabletCommandResult(item.command);
+      }
+    }));
+    return response;
+  }
+
+  function tabletCommandErrorLabel(item) {
+    const code = item?.command?.result?.error?.error_code || item?.error || item?.command?.status || "";
+    const name = item?.display_name || item?.device_id || "Tablet";
+    return code ? `${name} (${code})` : name;
+  }
+
   async function dispatchTabletCommand(command, deviceIDs = null, payloadOverride = null) {
     const ids = deviceIDs || selectedDevices().map((device) => device.device_id);
     if (!ids.length) { setControllerMessage(t("chooseTablet"), "warn"); return; }
@@ -592,7 +626,7 @@
       if (!window.confirm(t("broadShowConfirm"))) return;
       confirm = "APPLY_TABLET_SETTINGS_DURING_SHOW";
     }
-    const response = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands`, {
+    const response = await settleTabletCommandResults(await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands`, {
       method: "POST",
       json: {
         device_ids: ids,
@@ -603,10 +637,17 @@
         confirm,
         payload,
       },
-    });
+    }));
     const failures = (response.results || []).filter((item) => item.error || ["FAILED", "REJECTED", "TIMED_OUT", "CANCELLED"].includes(item.command?.status));
-    setControllerMessage(failures.length ? `${t("commandPartial")} ${failures.map((item) => item.display_name || item.device_id).join(", ")}` : t("commandOK"), failures.length ? "warn" : "success");
-    if (settingsCommand && !failures.length) {
+    const pending = (response.results || []).filter((item) => item.command?.status === "ACCEPTED");
+    if (failures.length) {
+      setControllerMessage(`${t("commandPartial")} ${failures.map(tabletCommandErrorLabel).join(", ")}`, "warn");
+    } else if (pending.length) {
+      setControllerMessage(t("commandPending"), "warn");
+    } else {
+      setControllerMessage(t("commandOK"), "success");
+    }
+    if (settingsCommand && !failures.length && !pending.length) {
       window.setTimeout(() => refreshTabletHealth(), 350);
     }
   }
@@ -672,12 +713,17 @@
     const match = raw.match(/\d+/);
     const payload = ["TABLET_PREPARE", "TABLET_PLAY"].includes(button.dataset.command) && match ? { media_number: Math.max(1, Number(match[0])) } : {};
     try {
-      const response = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands`, {
+      const response = await settleTabletCommandResults(await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller/commands`, {
         method: "POST",
         json: { device_ids: [deviceID], command_type: button.dataset.command, correlation_id: requestID(), priority: button.dataset.command.includes("BLACKOUT") ? "P0" : "P1", payload },
-      });
-      const failed = (response.results || []).some((item) => item.error);
-      setMessage(globalMessage, failed ? t("commandPartial") : t("commandOK"), failed ? "warn" : "success");
+      }));
+      const failures = (response.results || []).filter((item) => item.error || ["FAILED", "REJECTED", "TIMED_OUT", "CANCELLED"].includes(item.command?.status));
+      const pending = (response.results || []).some((item) => item.command?.status === "ACCEPTED");
+      setMessage(
+        globalMessage,
+        failures.length ? `${t("commandPartial")} ${failures.map(tabletCommandErrorLabel).join(", ")}` : (pending ? t("commandPending") : t("commandOK")),
+        failures.length || pending ? "warn" : "success"
+      );
     } catch (error) {
       setMessage(globalMessage, errorMessage(error), "error");
     }

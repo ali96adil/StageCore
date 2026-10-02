@@ -345,6 +345,31 @@ func WithOperatorTabletController(
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
 
+		// Read back the durable terminal state of a Tablet Controller command.
+		// Dispatch is asynchronous, so the initial POST may legitimately return
+		// ACCEPTED before the physical tablet reports COMPLETED/FAILED/REJECTED.
+		// This endpoint lets Operator surface the real tablet result instead of
+		// treating transport acceptance as execution success.
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/tablet-controller/commands/{command_id}", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			commandID := strings.TrimSpace(r.PathValue("command_id"))
+			if projectID == "" || commandID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_SCOPE_REQUIRED"})
+				return
+			}
+			command, err := devices.GetCommand(r.Context(), commandID)
+			if err != nil || command.Envelope.ProjectID != projectID {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "TABLET_COMMAND_NOT_FOUND"})
+				return
+			}
+			device, err := devices.GetDevice(r.Context(), command.DeviceID)
+			if err != nil || device.Kind != deviceexperience.DeviceTabletPlayer {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "TABLET_COMMAND_NOT_FOUND"})
+				return
+			}
+			writeJSON(w, http.StatusOK, command)
+		}))
+
 		// Convert a visual Tablet Action into canonical Cue Engine actions. This
 		// endpoint owns the Stage Device alias detail so the Operator UI never
 		// needs to expose target_ref, capability strings, or JSON configuration.
