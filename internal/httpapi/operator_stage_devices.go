@@ -12,11 +12,24 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
+
+type runtimeSnapshotDeviceSyncResult struct {
+	DeviceID          string `json:"device_id"`
+	DisplayName       string `json:"display_name,omitempty"`
+	DeviceKind        string `json:"device_kind,omitempty"`
+	ProfileID         string `json:"profile_id,omitempty"`
+	FromSnapshotID    string `json:"from_runtime_snapshot_id,omitempty"`
+	ToSnapshotID      string `json:"to_runtime_snapshot_id"`
+	AssignmentEpoch   int64  `json:"assignment_epoch,omitempty"`
+	Status            string `json:"status"`
+	Detail            string `json:"detail,omitempty"`
+}
 
 // WithOperatorStageDevices exposes the Phase 4 Operator surface for connected
 // tablets/displays/render nodes, live-video source configuration and the
@@ -51,6 +64,167 @@ func WithOperatorStageDevices(
 				}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": active})
+		}))
+
+
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/sync-runtime-snapshot", withPermission(auth, userauth.PermissionSnapshotPublish, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionProjectEdit) != nil ||
+				userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if projectID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_PROJECT_REQUIRED"})
+				return
+			}
+			if active, err := stageStore.ActiveSessionForProject(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_SESSION_CHECK_FAILED"})
+				return
+			} else if active != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "STAGE_DEVICE_SNAPSHOT_SYNC_SESSION_ACTIVE",
+					"detail": "End the active Session before synchronizing Stage Devices to a new Runtime Snapshot.",
+				})
+				return
+			}
+			var input struct {
+				RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			input.RuntimeSnapshotID = strings.TrimSpace(input.RuntimeSnapshotID)
+			snapshot, err := stageStore.GetRuntimeSnapshot(r.Context(), input.RuntimeSnapshotID)
+			if err != nil || snapshot.ProjectID != projectID || snapshot.Status != domain.SnapshotPublished {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_TARGET_INVALID"})
+				return
+			}
+
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionSnapshotPublish); err != nil {
+					return err
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+
+			items, err := devices.ListDevices(r.Context(), projectID)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_INVENTORY_FAILED"})
+				return
+			}
+			results := make([]runtimeSnapshotDeviceSyncResult, 0)
+			complete := true
+			for _, device := range items {
+				if !device.Enabled || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
+					device.Assignment == nil || device.Assignment.ProjectID != projectID {
+					continue
+				}
+				assignment := *device.Assignment
+				result := runtimeSnapshotDeviceSyncResult{
+					DeviceID: device.ID, DisplayName: device.DisplayName,
+					DeviceKind: string(device.Kind), ProfileID: device.ProfileID,
+					FromSnapshotID: assignment.RuntimeSnapshotID,
+					ToSnapshotID: input.RuntimeSnapshotID,
+					AssignmentEpoch: assignment.Epoch,
+					Status: "FAILED",
+				}
+
+				scope, scopeReady := runtime.CurrentV2Scope(device.ID)
+				if assignment.State == "ACTIVE" &&
+					assignment.RuntimeSnapshotID == input.RuntimeSnapshotID &&
+					scopeReady && scope.ProjectID == projectID &&
+					scope.RuntimeSnapshotID == input.RuntimeSnapshotID &&
+					scope.AssignmentEpoch == assignment.Epoch && scope.CommandsEnabled {
+					result.Status = "ALREADY_SYNCED"
+					results = append(results, result)
+					continue
+				}
+
+				switch {
+				case device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID:
+					if assignment.State != "ACTIVE" || assignment.RuntimeSnapshotID == "" {
+						result.Detail = "Tablet is not ACTIVE on an authoritative source Runtime Snapshot."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					record, assignErr := runtime.ExecuteTabletAssignmentAuthorized(
+						r.Context(),
+						deviceexperience.TabletAssignmentInput{
+							DeviceID: device.ID,
+							ExpectedProjectID: projectID,
+							ExpectedRuntimeSnapshotID: assignment.RuntimeSnapshotID,
+							TargetProjectID: projectID,
+							TargetRuntimeSnapshotID: input.RuntimeSnapshotID,
+							ExpectedEpoch: assignment.Epoch,
+						},
+						actor,
+						reauthorize,
+					)
+					if assignErr != nil {
+						result.Detail = assignErr.Error()
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.AssignmentEpoch = record.ToEpoch
+					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
+						result.Detail = "Tablet assignment committed but fresh Runtime Snapshot reconnect did not become READY in time."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.Status = "SYNCED"
+					results = append(results, result)
+
+				case device.ProfileID == lightingnode.ProfileID:
+					if assignment.State != "ACTIVE" || assignment.RuntimeSnapshotID == "" {
+						result.Detail = "Lighting Node is not ACTIVE on an authoritative source Runtime Snapshot."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					rebind, rebindErr := runtime.RebindLightingSnapshotAuthorized(
+						r.Context(), device.ID, projectID, input.RuntimeSnapshotID, actor, reauthorize,
+					)
+					if rebindErr != nil {
+						result.Detail = rebindErr.Error()
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					if rebind.Reassign != nil {
+						result.AssignmentEpoch = rebind.Reassign.ToEpoch
+					}
+					result.Status = "SYNCED"
+					results = append(results, result)
+				}
+			}
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"runtime_snapshot_id": input.RuntimeSnapshotID,
+				"complete": complete,
+				"results": results,
+			})
 		}))
 
 		// Device provisioning inventory is not scoped to any Project yet.
@@ -772,6 +946,35 @@ func WithOperatorStageDevices(
 		}))
 	}
 }
+
+
+func waitForStageDeviceScope(
+	ctx context.Context,
+	runtime *devicechannel.Runtime,
+	deviceID, projectID, runtimeSnapshotID string,
+	assignmentEpoch int64,
+	timeout time.Duration,
+) bool {
+	wait, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if scope, ok := runtime.CurrentV2Scope(deviceID); ok &&
+			scope.ProjectID == projectID &&
+			scope.RuntimeSnapshotID == runtimeSnapshotID &&
+			scope.AssignmentEpoch == assignmentEpoch &&
+			scope.CommandsEnabled {
+			return true
+		}
+		select {
+		case <-wait.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 
 func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 	status := http.StatusConflict
