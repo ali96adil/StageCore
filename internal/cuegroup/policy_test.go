@@ -46,6 +46,16 @@ func TestValidateRejectsCueCyclesAndMultipleParents(t *testing.T) {
 			t.Fatalf("cycle not rejected: %v", err)
 		}
 	})
+	t.Run("disabled parent", func(t *testing.T) {
+		cues := []domain.Cue{
+			{ID: "cue-1", Name: "Cue 1", Enabled: false, ExecutionPolicy: linkedPolicy("cue-2")},
+			{ID: "cue-2", Name: "Cue 2", Enabled: true, ExecutionPolicy: json.RawMessage(`{}`)},
+		}
+		err := Validate(cues)
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "disabled") {
+			t.Fatalf("disabled parent group not rejected: %v", err)
+		}
+	})
 	t.Run("multiple parents", func(t *testing.T) {
 		cues := []domain.Cue{
 			{ID: "cue-1", Name: "Cue 1", Enabled: true, ExecutionPolicy: linkedPolicy("cue-3")},
