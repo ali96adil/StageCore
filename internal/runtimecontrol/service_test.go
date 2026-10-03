@@ -548,3 +548,43 @@ func TestProjectBlackoutWorksWithoutActiveSessionAndUsesPublishedSnapshot(t *tes
 		t.Fatalf("sessionless blackout during active session=%+v", blocked)
 	}
 }
+
+
+func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.startGate = func(_ context.Context, projectID, snapshotID string) (bool, string, error) {
+		if projectID != h.project.ID || snapshotID != h.snapshot.ID {
+			t.Fatalf("start gate scope project=%s snapshot=%s", projectID, snapshotID)
+		}
+		return false, "Lighting Node is not synchronized to the latest Published Runtime Snapshot.", nil
+	}
+
+	for _, tc := range []struct {
+		name      string
+		mode      domain.SessionType
+		requestID string
+	}{
+		{"REHEARSAL", domain.SessionRehearsal, "00000000-0000-7000-8000-000000000901"},
+		{"SHOW", domain.SessionShow, "00000000-0000-7000-8000-000000000902"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session, result := h.service.StartSession(context.Background(), StartRequest{
+				ProjectID: h.project.ID,
+				Mode: tc.mode,
+				Issuer: "owner",
+				RequestID: tc.requestID,
+			})
+			if session.ID != "" || result.Status != contracts.CommandRejected ||
+				result.Error == nil || result.Error.ErrorCode != "SESSION_DEVICE_SCOPE_BLOCKED" {
+				t.Fatalf("stale managed-device scope start=%+v session=%+v", result, session)
+			}
+			active, err := h.store.ActiveSessionForProject(context.Background(), h.project.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if active != nil {
+				t.Fatalf("device-scope rejection created active Session: %+v", active)
+			}
+		})
+	}
+}
