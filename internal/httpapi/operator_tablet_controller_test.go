@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
@@ -63,6 +64,106 @@ func TestOperatorTabletControllerListsOnlyTabletPlayersAndGroups(t *testing.T) {
 	}
 	if len(response.Groups) != 1 || response.Groups[0] != "actors" {
 		t.Fatalf("groups=%v", response.Groups)
+	}
+}
+
+func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Tablet Live", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorTabletController(h.auth, devices, runtime, stageStore)).Handler()
+
+	get := func() []deviceexperience.LiveSource {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/live-video-sources", nil)
+		req.Host = "192.168.3.135:7840"
+		req.RemoteAddr = "127.0.0.1:19201"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+		}
+		var response struct {
+			Sources []deviceexperience.LiveSource `json:"sources"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response.Sources
+	}
+
+	sources := get()
+	if len(sources) != 1 {
+		t.Fatalf("sources=%+v", sources)
+	}
+	auto := sources[0]
+	if auto.ID != "stagecore.camera-relay.auto" ||
+		auto.EndpointRef != "http://192.168.3.135:9081/api/v0/stream" ||
+		auto.Class != deviceexperience.SourceNetworkStream ||
+		!auto.DesiredEnabled {
+		t.Fatalf("auto relay source=%+v", auto)
+	}
+
+	if _, err := devices.UpsertLiveSource(ctx, deviceexperience.LiveSource{
+		ID:             "relay-configured",
+		ProjectID:      project.ID,
+		Name:           "Show Camera Relay",
+		Class:          deviceexperience.SourceNetworkStream,
+		EndpointRef:    "http://192.168.3.140:9081/api/v0/stream",
+		Capabilities:   []string{},
+		Config:         json.RawMessage(`{}`),
+		DesiredEnabled: true,
+		Readiness:      deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sources = get()
+	if len(sources) != 1 || sources[0].ID != "relay-configured" {
+		t.Fatalf("configured relay must override auto fallback: %+v", sources)
+	}
+}
+
+func TestTabletRelayHealthURLUsesBoundedLocalRelayEndpoint(t *testing.T) {
+	got, err := tabletRelayHealthURL("http://192.168.3.135:9081/api/v0/stream?flash=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://192.168.3.135:9081/api/v0/health" {
+		t.Fatalf("health url=%q", got)
+	}
+	for _, raw := range []string{
+		"https://192.168.3.135:9081/api/v0/stream",
+		"http://example.com:9081/api/v0/stream",
+		"http://192.168.3.135:9082/api/v0/stream",
+		"http://192.168.3.135:9081/other",
+	} {
+		if got, err := tabletRelayHealthURL(raw); err == nil {
+			t.Fatalf("expected rejection for %q, got %q", raw, got)
+		}
+	}
+}
+
+func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
+	if _, ok := tabletAutoRelaySource("project-1", "example.com:7840", time.Now()); ok {
+		t.Fatal("public/untrusted Host must not become an automatic relay URL")
+	}
+	if source, ok := tabletAutoRelaySource("project-1", "stagecore-pi.local:7840", time.Now()); !ok ||
+		source.EndpointRef != "http://stagecore-pi.local:9081/api/v0/stream" {
+		t.Fatalf("mDNS Hub host should produce local relay candidate: %+v ok=%v", source, ok)
 	}
 }
 
