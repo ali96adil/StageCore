@@ -80,6 +80,131 @@ func tabletHasConfiguredRelaySource(sources []deviceexperience.LiveSource) bool 
 	return false
 }
 
+type tabletCameraRelayStatus struct {
+	SourceID          string `json:"source_id,omitempty"`
+	SourceName        string `json:"source_name,omitempty"`
+	EndpointRef       string `json:"endpoint_ref,omitempty"`
+	RelayStatus       string `json:"relay_status"`
+	RelayState        string `json:"relay_state,omitempty"`
+	CameraStatus      string `json:"camera_status"`
+	UpstreamConnected bool   `json:"upstream_connected"`
+	FramesReceived    int64  `json:"frames_received,omitempty"`
+	LastFrameAgeMS    int64  `json:"last_frame_age_ms,omitempty"`
+	Viewers           int    `json:"viewers,omitempty"`
+	MaxClients        int    `json:"max_clients,omitempty"`
+	Detail            string `json:"detail,omitempty"`
+}
+
+func tabletRelayHealthURL(rawLiveURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawLiveURL))
+	if err != nil || parsed == nil || !strings.EqualFold(parsed.Scheme, "http") ||
+		parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("relay Live URL must be absolute HTTP without credentials or fragment")
+	}
+	if parsed.Path != "/api/v0/stream" || parsed.Port() != "9081" {
+		return "", fmt.Errorf("relay Live URL must use /api/v0/stream on port 9081")
+	}
+	ip := net.ParseIP(parsed.Hostname())
+	if ip != nil {
+		if !ip.IsPrivate() && !ip.IsLoopback() {
+			return "", fmt.Errorf("relay Live URL host must be local")
+		}
+	} else {
+		lower := strings.ToLower(parsed.Hostname())
+		if lower != "localhost" && !strings.HasSuffix(lower, ".local") {
+			return "", fmt.Errorf("relay Live URL host must be local")
+		}
+	}
+	for key := range parsed.Query() {
+		if key != "flash" {
+			return "", fmt.Errorf("relay Live URL contains unsupported query field %q", key)
+		}
+	}
+	return (&url.URL{Scheme: "http", Host: parsed.Host, Path: "/api/v0/health"}).String(), nil
+}
+
+func tabletRelaySource(sources []deviceexperience.LiveSource) *deviceexperience.LiveSource {
+	for i := range sources {
+		if _, err := tabletRelayHealthURL(sources[i].EndpointRef); err == nil {
+			return &sources[i]
+		}
+	}
+	return nil
+}
+
+func probeTabletCameraRelay(ctx context.Context, source *deviceexperience.LiveSource) tabletCameraRelayStatus {
+	status := tabletCameraRelayStatus{RelayStatus: "NOT_CONFIGURED", CameraStatus: "UNKNOWN"}
+	if source == nil {
+		return status
+	}
+	status.SourceID = source.ID
+	status.SourceName = source.Name
+	status.EndpointRef = source.EndpointRef
+	status.RelayStatus = "OFFLINE"
+	status.CameraStatus = "UNKNOWN"
+
+	healthURL, err := tabletRelayHealthURL(source.EndpointRef)
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	client := &http.Client{
+		Timeout: 1200 * time.Millisecond,
+		Transport: &http.Transport{Proxy: nil},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("relay redirects are not allowed")
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 16<<10))
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		status.Detail = fmt.Sprintf("relay health returned HTTP %d", response.StatusCode)
+		return status
+	}
+	var health struct {
+		State             string `json:"state"`
+		UpstreamConnected bool   `json:"upstream_connected"`
+		FramesReceived    int64  `json:"frames_received"`
+		LastFrameAgeMS    int64  `json:"last_frame_age_ms"`
+		Viewers           int    `json:"viewers"`
+		MaxClients        int    `json:"max_clients"`
+	}
+	if err := json.Unmarshal(body, &health); err != nil {
+		status.Detail = "relay health response is invalid"
+		return status
+	}
+	status.RelayStatus = "READY"
+	status.RelayState = strings.ToUpper(strings.TrimSpace(health.State))
+	status.UpstreamConnected = health.UpstreamConnected
+	status.FramesReceived = health.FramesReceived
+	status.LastFrameAgeMS = health.LastFrameAgeMS
+	status.Viewers = health.Viewers
+	status.MaxClients = health.MaxClients
+	switch {
+	case !health.UpstreamConnected:
+		status.CameraStatus = "OFFLINE"
+	case strings.EqualFold(health.State, "ready") && health.LastFrameAgeMS <= 2000:
+		status.CameraStatus = "READY"
+	default:
+		status.CameraStatus = "WARNING"
+	}
+	return status
+}
+
 type tabletObservedScope struct {
 	ProjectID         string `json:"project_id"`
 	RuntimeSnapshotID string `json:"runtime_snapshot_id"`
@@ -170,7 +295,8 @@ func WithOperatorTabletController(
 					sources = append(sources, source)
 				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"sources": sources})
+			cameraStatus := probeTabletCameraRelay(r.Context(), tabletRelaySource(sources))
+			writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "camera_status": cameraStatus})
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/devices/{device_id}/assign", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
