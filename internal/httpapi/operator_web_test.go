@@ -50,8 +50,12 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	if jsRes.Code != http.StatusOK || !strings.HasPrefix(jsRes.Header().Get("Content-Type"), "application/javascript") {
 		t.Fatalf("app.js status=%d content-type=%q", jsRes.Code, jsRes.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(jsRes.Body.String(), "/api/v1/auth/login") || !strings.Contains(jsRes.Body.String(), "/runtime/go") {
-		t.Fatal("embedded Operator JS is missing authenticated operator flows")
+	if !strings.Contains(jsRes.Body.String(), "/api/v1/auth/login") ||
+		!strings.Contains(jsRes.Body.String(), "/runtime/go") ||
+		!strings.Contains(jsRes.Body.String(), "/runtime/project-blackout") ||
+		!strings.Contains(jsRes.Body.String(), "FORCE_EXIT_WITHOUT_BLACKOUT") ||
+		!strings.Contains(jsRes.Body.String(), "forceStopSessionButton") {
+		t.Fatal("embedded Operator JS is missing authenticated runtime safety/override flows")
 	}
 
 	preflightReq := httptest.NewRequest(http.MethodGet, "/preflight.js", nil)
