@@ -97,6 +97,11 @@ func main() {
 	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
+		runtimecontrol.WithSessionStartGate(sessionsafety.NewStageDeviceSnapshotGate(
+			application.Store,
+			application.DeviceExperience,
+			application.DeviceRuntime,
+		)),
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 		runtimecontrol.WithSessionStopSafety(sessionsafety.NewLightingBlackout(
 			application.Store,

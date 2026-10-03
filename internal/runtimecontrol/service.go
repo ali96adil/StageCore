@@ -30,11 +30,16 @@ const (
 	defaultStopWait = 2 * time.Second
 )
 
+type SessionStartGate func(context.Context, string, string) (bool, string, error)
 type ShowGate func(context.Context, string, string) (bool, string, error)
 type SessionStopSafety func(context.Context, domain.Session, contracts.CommandEnvelope) error
 type EmergencySafety func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error)
 
 type Option func(*Service)
+
+func WithSessionStartGate(gate SessionStartGate) Option {
+	return func(s *Service) { s.startGate = gate }
+}
 
 func WithShowGate(gate ShowGate) Option {
 	return func(s *Service) { s.showGate = gate }
@@ -52,6 +57,7 @@ type Service struct {
 	store    *store.Store
 	engine   *cueengine.Engine
 	executor *stoppableExecutor
+	startGate       SessionStartGate
 	showGate        ShowGate
 	stopSafety      SessionStopSafety
 	emergencySafety EmergencySafety
@@ -161,6 +167,18 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	if active != nil {
 		return finish(rejected(command.CommandID, "SESSION_ALREADY_ACTIVE", "the Project already has an active runtime Session", active.ID))
+	}
+	if s.startGate != nil {
+		allowed, reason, err := s.startGate(ctx, project.ID, snapshot.ID)
+		if err != nil {
+			return finish(failed(command.CommandID, "SESSION_DEVICE_SCOPE_GATE_FAILED"))
+		}
+		if !allowed {
+			if strings.TrimSpace(reason) == "" {
+				reason = "managed Stage Devices are not READY on the latest Published Runtime Snapshot"
+			}
+			return finish(rejected(command.CommandID, "SESSION_DEVICE_SCOPE_BLOCKED", reason, snapshot.ID))
+		}
 	}
 	if req.Mode == domain.SessionShow {
 		if s.showGate == nil {

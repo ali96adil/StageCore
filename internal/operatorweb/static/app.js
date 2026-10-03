@@ -363,7 +363,7 @@ async function loadCues() {
   return payload;
 }
 
-async function renderCues(message = "") {
+async function renderCues(message = "", messageKind = "success") {
   const payload = await loadCues();
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
@@ -382,6 +382,7 @@ async function renderCues(message = "") {
   const runtimeCuesByID = new Map((runtime?.cues || []).map((cue) => [cue.cue_id, cue]));
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
+  const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
 
   content.innerHTML = `
     <div class="page-head">
@@ -390,9 +391,10 @@ async function renderCues(message = "") {
         ${hasDraft ? `<button id="validateButton" class="button" type="button">Validate</button>` : ""}
         ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
         ${canModify && !hasDraft ? `<button id="createDraftButton" class="button primary" type="button">Create Draft</button>` : ""}
+        ${canModify && hasPublishedSnapshot ? `<button id="syncDevicesButton" class="button" ${runtimeMode !== "EDIT" ? "disabled" : ""} type="button">Sync Devices</button>` : ""}
       </div>
     </div>
-    ${message ? `<div class="message success">${esc(message)}</div>` : ""}
+    ${message ? `<div class="message ${cueMessageKind}">${esc(message)}</div>` : ""}
     ${hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
     <section class="card" style="margin-top:14px">
       <div class="section-title-row">
@@ -442,6 +444,7 @@ async function renderCues(message = "") {
   el("createCueButton")?.addEventListener("click", () => openCueEditor(null));
   el("publishButton")?.addEventListener("click", publishDraft);
   el("createDraftButton")?.addEventListener("click", createCueDraft);
+  el("syncDevicesButton")?.addEventListener("click", syncDevicesFromWorkspace);
   el("cueCheckStopButton")?.addEventListener("click", stopCueFromWorkspace);
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
@@ -749,11 +752,63 @@ async function validateDraft() {
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
+async function syncPublishedSnapshotDevices(runtimeSnapshotID) {
+  const snapshotID = String(runtimeSnapshotID || "").trim();
+  if (!snapshotID) throw new Error("No Published Runtime Snapshot is available for device sync.");
+  return api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/stage-devices/sync-runtime-snapshot`, {
+    method: "POST",
+    json: { runtime_snapshot_id: snapshotID },
+  });
+}
+
+function deviceSyncMessage(sync) {
+  const results = Array.isArray(sync?.results) ? sync.results : [];
+  const synced = results.filter((item) => item.status === "SYNCED" || item.status === "ALREADY_SYNCED").length;
+  const failed = results.filter((item) => item.status === "FAILED");
+  if (!results.length) return "No managed v2 Stage Devices required snapshot synchronization.";
+  if (!failed.length && sync?.complete) return `Device sync complete: ${synced}/${results.length} ready on the Published Runtime Snapshot.`;
+  const names = failed.slice(0, 3).map((item) => item.display_name || item.device_id).join(", ");
+  const extra = failed.length > 3 ? ` +${failed.length - 3} more` : "";
+  return `Device sync partial: ${synced}/${results.length} ready. Failed: ${names}${extra}.`;
+}
+
+async function syncDevicesFromWorkspace() {
+  try {
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+    const snapshotID = runtime.runtime_snapshot?.runtime_snapshot_id;
+    if (!snapshotID) {
+      setMessage(globalMessage, "Publish a Runtime Snapshot before syncing Stage Devices.", "warn");
+      return;
+    }
+    if (runtime.session) {
+      setMessage(globalMessage, "End the active Session before syncing Stage Devices to the Published Runtime Snapshot.", "warn");
+      return;
+    }
+    if (!confirm("Synchronize all managed v2 Tablets and Lighting to the current Published Runtime Snapshot? Devices may briefly enter safe-media / blackout while authority changes.")) return;
+    const sync = await syncPublishedSnapshotDevices(snapshotID);
+    await renderCues(deviceSyncMessage(sync), sync.complete ? "success" : "warn");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
+}
+
 async function publishDraft() {
-  if (!confirm("Publish this validated Draft as a new immutable Runtime Snapshot?")) return;
+  if (!confirm("Publish this validated Draft and automatically synchronize all managed v2 Tablets and Lighting to the new immutable Runtime Snapshot? Devices may briefly enter safe-media / blackout while authority changes.")) return;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/publish`, { method: "POST" });
-    await renderCues(`Published Runtime Snapshot v${payload.runtime_snapshot.snapshot_version}.`);
+    const snapshot = payload.runtime_snapshot;
+    try {
+      const sync = await syncPublishedSnapshotDevices(snapshot.runtime_snapshot_id);
+      await renderCues(
+        `Published Runtime Snapshot v${snapshot.snapshot_version}. ${deviceSyncMessage(sync)}`,
+        sync.complete ? "success" : "warn",
+      );
+    } catch (syncError) {
+      await renderCues(
+        `Published Runtime Snapshot v${snapshot.snapshot_version}, but automatic device sync did not complete: ${errorMessage(syncError)}`,
+        "warn",
+      );
+    }
   } catch (error) {
     if (error.payload?.validation?.findings) {
       state.validation = error.payload.validation;
