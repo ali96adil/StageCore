@@ -3,6 +3,7 @@ package hubsecurity
 import (
 	"context"
 	"crypto/ed25519"
+	"os"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/db"
