@@ -46,7 +46,7 @@ service_loaded() {
 }
 
 running_unmanaged_pids() {
-  pgrep -f -- "$BIN" 2>/dev/null || true
+  pgrep -f "$BIN" 2>/dev/null || true
 }
 
 write_plist() {
