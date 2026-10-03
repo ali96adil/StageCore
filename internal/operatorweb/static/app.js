@@ -743,6 +743,15 @@ function nextCueOrder() {
 async function toggleCue(id) {
   const cue = cueByID(id);
   if (!cue) return;
+  if (cue.enabled) {
+    const parentID = cueParentMap().get(cue.cue_id);
+    const children = cueLinkedIDs(cue);
+    if (parentID || children.length) {
+      const relation = parentID ? `it is a child of ${cueByID(parentID)?.name || parentID}` : `it contains ${children.length} child Cue(s)`;
+      setMessage(globalMessage, `Unlink this Cue Group relationship before disabling “${cue.name}”; ${relation}.`, "warn");
+      return;
+    }
+  }
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(id)}`, {
       method: "PUT",
