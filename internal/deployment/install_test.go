@@ -123,6 +123,71 @@ STAGECORE_OSC_PLUGIN_PATH=/opt/stagecore/bin/stagecore-osc-plugin
 	}
 }
 
+func TestReplaceEnvironmentValuePreservesOtherDeploymentSettings(t *testing.T) {
+	original := []byte("# existing\n" +
+		"STAGECORE_DATA_ROOT=/srv/data\n" +
+		"STAGECORE_VAULT_ROOT=/srv/vault\n" +
+		"STAGECORE_LISTEN=127.0.0.1:7840\n" +
+		"STAGECORE_OSC_INPUT_LISTEN=127.0.0.1:9000\n" +
+		"STAGECORE_MTC_INPUT_DEVICE=/dev/snd/midiC4D1\n")
+	updated, err := replaceEnvironmentValue(original, "STAGECORE_LISTEN", "0.0.0.0:7840")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "STAGECORE_LISTEN=0.0.0.0:7840") {
+		t.Fatalf("listen not updated: %s", text)
+	}
+	for _, preserved := range []string{
+		"STAGECORE_OSC_INPUT_LISTEN=127.0.0.1:9000",
+		"STAGECORE_MTC_INPUT_DEVICE=/dev/snd/midiC4D1",
+		"STAGECORE_DATA_ROOT=/srv/data",
+	} {
+		if !strings.Contains(text, preserved) {
+			t.Fatalf("existing setting %q was not preserved: %s", preserved, text)
+		}
+	}
+}
+
+func TestDryRunCanMigrateOnlyExistingListen(t *testing.T) {
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64") {
+		t.Skip("dry-run bundle test requires supported Linux CI architecture")
+	}
+	bundle := makeNativeTestBundle(t)
+	configRoot := t.TempDir()
+	env := []byte("STAGECORE_DATA_ROOT=/srv/stagecore/data\n" +
+		"STAGECORE_VAULT_ROOT=/srv/stagecore/vault\n" +
+		"STAGECORE_LISTEN=127.0.0.1:7840\n" +
+		"STAGECORE_OSC_PLUGIN_PATH=/opt/stagecore/bin/stagecore-osc-plugin\n" +
+		"STAGECORE_OSC_INPUT_LISTEN=127.0.0.1:9000\n")
+	if err := os.WriteFile(filepath.Join(configRoot, "stagecore.env"), env, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := DefaultOptions(bundle)
+	opts.ConfigRoot = configRoot
+	opts.Listen = "0.0.0.0:7840"
+	opts.ListenExplicit = true
+	opts.DryRun = true
+
+	installer := NewInstaller()
+	installer.EUID = func() int { return 1000 }
+	installer.Runner = panicRunner{t: t}
+	result, err := installer.Install(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.ConfigPreserved || !result.ListenUpdated {
+		t.Fatalf("expected preserved config with listen-only migration: %+v", result)
+	}
+	if result.Effective.Listen != "0.0.0.0:7840" {
+		t.Fatalf("effective listen=%q", result.Effective.Listen)
+	}
+	if result.ReadinessURL != "http://127.0.0.1:7840/health/ready" {
+		t.Fatalf("readiness URL=%q", result.ReadinessURL)
+	}
+}
+
 func TestExistingConfigurationMustContainCriticalDeploymentValues(t *testing.T) {
 	opts := DefaultOptions("/tmp/release")
 	_, err := adoptExistingConfig(opts, []byte("STAGECORE_DATA_ROOT=/srv/data\n"))
