@@ -85,7 +85,12 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(WithOperatorTabletController(h.auth, devices, runtime, stageStore)).Handler()
+	// Compose the same Stage Device + Tablet Controller surfaces used by the Hub.
+	// This is a regression guard against duplicate ServeMux route registration.
+	handler := New(
+		WithOperatorStageDevices(h.auth, devices, runtime, stageStore),
+		WithOperatorTabletController(h.auth, devices, runtime, stageStore),
+	).Handler()
 
 	get := func() []deviceexperience.LiveSource {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/live-video-sources", nil)
