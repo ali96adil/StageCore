@@ -21,7 +21,7 @@ func TestDefaultOptionsMatchReferenceDeployment(t *testing.T) {
 	if opts.DataRoot != "/var/lib/stagecore/data" || opts.VaultRoot != "/var/lib/stagecore/vault" {
 		t.Fatalf("unexpected data/vault roots: %+v", opts)
 	}
-	if opts.ServiceUser != "stagecore" || opts.ServiceGroup != "stagecore" || opts.Listen != "0.0.0.0:7840" {
+	if opts.ServiceUser != "stagecore" || opts.ServiceGroup != "stagecore" || opts.Listen != "127.0.0.1:7840" || opts.OperatorTLSListen != "0.0.0.0:7842" {
 		t.Fatalf("unexpected service defaults: %+v", opts)
 	}
 }
@@ -202,7 +202,8 @@ func TestRenderEnvironmentAndSystemdUnit(t *testing.T) {
 	for _, marker := range []string{
 		"STAGECORE_DATA_ROOT=/var/lib/stagecore/data",
 		"STAGECORE_VAULT_ROOT=/var/lib/stagecore/vault",
-		"STAGECORE_LISTEN=0.0.0.0:7840",
+		"STAGECORE_LISTEN=127.0.0.1:7840",
+		"STAGECORE_OPERATOR_TLS_LISTEN=0.0.0.0:7842",
 		"STAGECORE_OSC_PLUGIN_PATH=/opt/stagecore/bin/stagecore-osc-plugin",
 	} {
 		if !strings.Contains(env, marker) {
