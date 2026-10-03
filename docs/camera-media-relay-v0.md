@@ -110,27 +110,28 @@ The mDNS lookup uses a unicast-response query from an ephemeral UDP port and has
 This source-only change requires a separate attended physical qualification against the real ESP32-CAM and show LAN before replacing the already qualified literal-IP C3 binary.
 
 
-## First-show service deployment (prepared, not automatically installed)
+## First-show service deployment
 
-The relay should not depend on an interactive shell or `nohup` for the final show. A hardened systemd unit and environment-file example are provided under:
+The release bundle now carries the relay binary, hardened systemd unit and a one-time installer:
 
-- `deploy/systemd/stagecore-camera-relay.service`
-- `deploy/systemd/camera-relay.env.example`
+- `stagecore-camera-relay`
+- `install-camera-relay.sh`
+- `camera-relay.service`
+- `camera-relay.env.example`
 
-The unit is intentionally **not installed by CI**. Promotion remains an attended deployment step after the exact relay binary and source URL have passed physical qualification.
+The relay intentionally remains outside the transactional Hub F-010 updater so a failed Hub update cannot leave a partially rolled-back camera component. Install or refresh it explicitly from the exact qualified release bundle. On first install, provide the camera source; use the stable camera `.local` name so DHCP/subnet changes do not require a new source URL:
 
-Recommended deployment shape:
+    ./install-camera-relay.sh \\
+      --source http://stagecam-xxxxxx.local:81/api/v0/stream \\
+      --flash-control http://stagecam-xxxxxx.local/api/v0/flash
 
-1. install the qualified ARM64 binary at `/opt/stagecore/bin/stagecore-camera-relay`;
-2. copy the example environment file to `/etc/stagecore/camera-relay.env`;
-3. set the source to the qualified camera URL;
-4. set the listen address to the show-LAN Pi address and reserve that Pi address in DHCP before relying on Tablet Direct Live URLs;
-5. copy the unit to `/etc/systemd/system/`, run `systemctl daemon-reload`, then enable/start it;
-6. verify `/api/v0/health` is ready and frame count advances before any tablet command is authored against the relay.
+Fresh installs listen on `0.0.0.0:9081` so Tablets can reach the relay on whichever isolated Stage-LAN subnet is active. The relay HTTP surface is unauthenticated by design: do not expose TCP/9081 to WAN, port forwarding or untrusted Wi-Fi.
 
-The current relay HTTP surface is unauthenticated by design and must stay on the isolated/trusted show LAN. Do not expose TCP/9081 through port forwarding or a public reverse proxy.
+If `/etc/stagecore/camera-relay.env` already exists, re-running the installer preserves every value not explicitly supplied. This makes network migration safe; for example, the current Pi can migrate only the listener without rewriting the camera source:
 
-A camera `.local` source is appropriate only after the relay-side mDNS resolver has passed the attended DHCP-address-change qualification. Until then, retain the previously qualified literal-IP binary/source as rollback evidence.
+    ./install-camera-relay.sh --listen 0.0.0.0:9081
+
+The installer verifies the relay binary against the release `SHA256SUMS`, installs the binary/unit, writes the environment atomically, then enables and restarts `stagecore-camera-relay.service`. After this one-time installation there is no per-boot shell step.
 
 ### Restart expectations
 
