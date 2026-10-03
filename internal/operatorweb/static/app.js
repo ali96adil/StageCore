@@ -10,6 +10,7 @@ const state = {
   cues: [],
   validation: null,
   runtimeTimer: null,
+  runtimeForceExitAvailable: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -637,6 +638,7 @@ async function renderRuntime(startPolling = false) {
     api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
   ]);
   const active = runtime.session;
+  if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
   const canControl = canRuntime();
@@ -682,7 +684,7 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          <button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE only interrupts the current Cue. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE only interrupts the current Cue. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -711,6 +713,7 @@ async function renderRuntime(startPolling = false) {
 async function startRuntime(mode) {
   if (mode === "SHOW" && !confirm("Enter SHOW mode? StageCore will enforce the SHOW Preflight gate.")) return;
   try {
+    state.runtimeForceExitAvailable = false;
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
       json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
@@ -807,12 +810,17 @@ async function stopSessionRuntime() {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop-session`, {
       method: "POST", json: { request_id: requestID() },
     });
+    state.runtimeForceExitAvailable = false;
     await renderRuntime(true);
   } catch (error) {
     const code = error.payload?.result?.error?.error_code || "";
-    const suffix = code === "SESSION_STOP_SAFETY_FAILED"
+    state.runtimeForceExitAvailable = code === "SESSION_STOP_SAFETY_FAILED" || code === "SESSION_STOP_CUE_UNCONFIRMED";
+    const suffix = state.runtimeForceExitAvailable
       ? " You can retry normal Stop, or use FORCE EXIT if you intentionally accept an unconfirmed safe state."
       : "";
+    if (state.runtimeForceExitAvailable) {
+      try { await renderRuntime(true); } catch (_) {}
+    }
     setMessage(globalMessage, errorMessage(error) + suffix, "error");
   }
 }
@@ -825,6 +833,7 @@ async function forceStopSessionRuntime() {
       method: "POST",
       json: { request_id: requestID(), force: true, confirm: "FORCE_EXIT_WITHOUT_BLACKOUT" },
     });
+    state.runtimeForceExitAvailable = false;
     setMessage(globalMessage, "Session force-exited. Safe-state confirmation was intentionally bypassed and recorded.", "warn");
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
