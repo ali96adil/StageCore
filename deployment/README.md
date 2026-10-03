@@ -13,6 +13,8 @@ cd stagecore-linux-arm64   # or stagecore-linux-amd64
 
 The wrapper uses `sudo` when required and delegates to `stagecore-setup install`.
 
+Fresh production installs listen for the authenticated Operator UI on `0.0.0.0:7840`, so the Pi remains reachable from the Stage LAN even when the router/subnet changes. The installer still performs readiness checks through loopback on the Pi itself. Do not expose port 7840 to the public Internet or forward it from the Stage router.
+
 Default fresh-host layout:
 
 ```text
@@ -67,7 +69,7 @@ Review the existing configuration first. `--replace-config` is explicit because 
   --config-root /etc/stagecore \
   --data-root /var/lib/stagecore/data \
   --vault-root /var/lib/stagecore/vault \
-  --listen 127.0.0.1:7840 \
+  --listen 0.0.0.0:7840 \
   --service-user stagecore \
   --service-group stagecore
 ```
