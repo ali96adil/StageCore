@@ -383,6 +383,8 @@ async function renderCues(message = "", messageKind = "success") {
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
+  const cueNamesByID = new Map((state.cues || []).map((cue) => [cue.cue_id, `${cue.display_label || "—"} · ${cue.name}`]));
+  const cueParents = cueParentMap();
 
   content.innerHTML = `
     <div class="page-head">
@@ -422,7 +424,7 @@ async function renderCues(message = "", messageKind = "success") {
             <tr>
               <td>${esc(cue.order_index)}</td>
               <td>${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small></td>
+              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small>${cueLinkedIDs(cue).length ? `<br><small class="muted">Runs together: ${cueLinkedIDs(cue).map((id) => esc(cueNamesByID.get(id) || id)).join(" + ")}</small>` : cueParents.has(cue.cue_id) ? `<br><small class="muted">Child of ${esc(cueNamesByID.get(cueParents.get(cue.cue_id)) || cueParents.get(cue.cue_id))}</small>` : ""}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
@@ -574,6 +576,81 @@ function renderValidation(report) {
   </section>`;
 }
 
+function cuePolicyObject(cue) {
+  const value = cue?.execution_policy;
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+}
+
+function cueLinkedIDs(cue) {
+  const policy = cuePolicyObject(cue);
+  return Array.isArray(policy.linked_cue_ids)
+    ? [...new Set(policy.linked_cue_ids.map((id) => String(id || "").trim()).filter(Boolean))]
+    : [];
+}
+
+function cueParentMap() {
+  const parents = new Map();
+  (state.cues || []).forEach((cue) => {
+    cueLinkedIDs(cue).forEach((childID) => {
+      if (!parents.has(childID)) parents.set(childID, cue.cue_id);
+    });
+  });
+  return parents;
+}
+
+function renderLinkedCuesEditor(cue) {
+  const host = el("linkedCuesEditor");
+  if (!host) return;
+  const currentID = cue?.cue_id || "";
+  const selected = new Set(cueLinkedIDs(cue));
+  const parents = cueParentMap();
+  const ancestors = new Set();
+  let cursor = currentID;
+  while (cursor && parents.has(cursor)) {
+    cursor = parents.get(cursor);
+    if (!cursor || ancestors.has(cursor)) break;
+    ancestors.add(cursor);
+  }
+  const candidates = (state.cues || []).filter((item) => item.cue_id !== currentID);
+  if (!candidates.length) {
+    host.innerHTML = '<p class="muted">Create another Cue first, then you can link it here.</p>';
+    return;
+  }
+  host.innerHTML = candidates.map((item) => {
+    const existingParent = parents.get(item.cue_id);
+    const ownedElsewhere = existingParent && existingParent !== currentID;
+    const wouldCycle = ancestors.has(item.cue_id);
+    const disabled = ownedElsewhere || wouldCycle || !item.enabled;
+    const parentCue = existingParent ? cueByID(existingParent) : null;
+    const note = ownedElsewhere
+      ? ` · inside ${parentCue?.display_label || parentCue?.name || "another Cue"}`
+      : wouldCycle
+        ? " · ancestor (would create a cycle)"
+        : !item.enabled
+          ? " · disabled"
+          : "";
+    return `<label class="check-row">
+      <input class="linked-cue-checkbox" type="checkbox" value="${esc(item.cue_id)}" ${selected.has(item.cue_id) ? "checked" : ""} ${disabled && !selected.has(item.cue_id) ? "disabled" : ""}>
+      <span><strong>${esc(item.display_label || "—")} · ${esc(item.name)}</strong><small class="muted">${esc(note)}</small></span>
+    </label>`;
+  }).join("");
+}
+
+function linkedCuePolicyFromEditor(basePolicy) {
+  const policy = basePolicy && typeof basePolicy === "object" && !Array.isArray(basePolicy) ? { ...basePolicy } : {};
+  const linked = [...document.querySelectorAll("#linkedCuesEditor .linked-cue-checkbox:checked")]
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+  if (linked.length) {
+    policy.linked_cue_ids = [...new Set(linked)];
+    policy.linked_cue_mode = "TOGETHER";
+  } else {
+    delete policy.linked_cue_ids;
+    delete policy.linked_cue_mode;
+  }
+  return policy;
+}
+
 function cueByID(id) {
   return state.cues.find((cue) => cue.cue_id === id);
 }
@@ -586,6 +663,7 @@ function openCueEditor(cue) {
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
+  renderLinkedCuesEditor(cue);
   el("cueNotes").value = cue?.notes_summary || "";
   actionsEditor.innerHTML = "";
   (cue?.actions || []).forEach(addActionEditor);
@@ -643,7 +721,7 @@ cueForm.addEventListener("submit", async (event) => {
       cue_type: "STANDARD",
       criticality: el("cueCriticality").value,
       enabled: el("cueEnabled").checked,
-      execution_policy: parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy"),
+      execution_policy: linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy")),
       notes_summary: el("cueNotes").value.trim(),
       actions,
     };
@@ -665,6 +743,15 @@ function nextCueOrder() {
 async function toggleCue(id) {
   const cue = cueByID(id);
   if (!cue) return;
+  if (cue.enabled) {
+    const parentID = cueParentMap().get(cue.cue_id);
+    const children = cueLinkedIDs(cue);
+    if (parentID || children.length) {
+      const relation = parentID ? `it is a child of ${cueByID(parentID)?.name || parentID}` : `it contains ${children.length} child Cue(s)`;
+      setMessage(globalMessage, `Unlink this Cue Group relationship before disabling “${cue.name}”; ${relation}.`, "warn");
+      return;
+    }
+  }
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(id)}`, {
       method: "PUT",

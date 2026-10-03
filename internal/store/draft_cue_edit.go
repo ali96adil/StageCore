@@ -230,16 +230,16 @@ func executionPolicyForDuplicatedCue(raw json.RawMessage) json.RawMessage {
 	if err := json.Unmarshal(raw, &policy); err != nil {
 		return raw
 	}
-	timecodeValue, ok := policy["timecode"]
-	if !ok {
-		return raw
+	if timecodeValue, ok := policy["timecode"]; ok {
+		if timecodePolicy, ok := timecodeValue.(map[string]any); ok {
+			delete(timecodePolicy, "binding_id")
+			policy["timecode"] = timecodePolicy
+		}
 	}
-	timecodePolicy, ok := timecodeValue.(map[string]any)
-	if !ok {
-		return raw
-	}
-	delete(timecodePolicy, "binding_id")
-	policy["timecode"] = timecodePolicy
+	// A duplicated Cue is a new top-level Cue. Copying child links would make
+	// the same child belong to two parents and create an ambiguous Cue tree.
+	delete(policy, "linked_cue_ids")
+	delete(policy, "linked_cue_mode")
 	encoded, err := json.Marshal(policy)
 	if err != nil {
 		return raw

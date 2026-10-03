@@ -110,6 +110,11 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		errResult.CommandID = command.CommandID
 		return *errResult
 	}
+	group, groupErr := resolveCueGroup(manifest, selected)
+	if groupErr != nil {
+		return rejection(command.CommandID, "CUE_GROUP_INVALID", "VALIDATION", groupErr.Error(), false, selected.ID)
+	}
+	linkedIDs := linkedCueIDs(group)
 
 	cueExecution, err := e.store.CreateCueExecution(ctx, sessionID, selected.ID, command.CorrelationID, command.Issuer)
 	if err != nil {
@@ -119,6 +124,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		"cue_execution_id": cueExecution.ID,
 		"cue_id":           selected.ID,
 		"cue_name":         selected.Name,
+		"linked_cue_ids":   linkedIDs,
 	})
 	if err != nil {
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
@@ -129,7 +135,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
 	}
 
-	cueResult, lastEventID, executionErr := e.executeActions(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, selected.Actions)
+	cueResult, lastEventID, executionErr := e.executeCueGroup(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, group)
 	if executionErr != nil {
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "ACTION_EXECUTION_PERSISTENCE_FAILED", executionErr)
@@ -155,6 +161,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if _, err := e.emit(ctx, &sessionID, command, cueEventType, lastEventID, map[string]any{
 		"cue_execution_id": cueExecution.ID,
 		"cue_id":           selected.ID,
+		"linked_cue_ids":   linkedIDs,
 		"result":           cueResult,
 	}); err != nil {
 		return internalFailure(command.CommandID, "CUE_RESULT_EVENT_FAILED", err)
@@ -162,6 +169,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	resultBody := map[string]any{
 		"cue_execution_id": cueExecution.ID,
 		"cue_id":           selected.ID,
+		"linked_cue_ids":   linkedIDs,
 		"result":           cueResult,
 	}
 	var commandError *contracts.ContractError
@@ -573,6 +581,12 @@ func selectCue(manifest snapshot.Manifest, currentCueID *string, payload CueGoPa
 		return snapshot.Cue{}, &result
 	}
 
+	nested, err := nestedCueIDs(manifest)
+	if err != nil {
+		result := rejection("", "CUE_GROUP_INVALID", "VALIDATION", err.Error(), false, "")
+		return snapshot.Cue{}, &result
+	}
+
 	start := 0
 	if current != "" {
 		found := false
@@ -589,11 +603,11 @@ func selectCue(manifest snapshot.Manifest, currentCueID *string, payload CueGoPa
 		}
 	}
 	for i := start; i < len(manifest.Cues); i++ {
-		if manifest.Cues[i].Enabled {
+		if manifest.Cues[i].Enabled && !nested[manifest.Cues[i].ID] {
 			return manifest.Cues[i], nil
 		}
 	}
-	result := rejection("", "NO_NEXT_CUE", "VALIDATION", "no enabled next cue is available", false, "")
+	result := rejection("", "NO_NEXT_CUE", "VALIDATION", "no enabled top-level next Cue is available", false, "")
 	return snapshot.Cue{}, &result
 }
 
