@@ -18,18 +18,22 @@ for arch in amd64 arm64; do
     cd "$ROOT"
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore" ./cmd/stagecore
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-hub" ./cmd/stagecore-hub
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-camera-relay" ./cmd/stagecore-camera-relay
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-osc-plugin" ./cmd/stagecore-osc-plugin
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-pairing" ./cmd/stagecore-pairing
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$bundle/stagecore-setup" ./cmd/stagecore-setup
   )
 
   cp "$ROOT/deployment/install.sh" "$bundle/install.sh"
-  chmod 0755 "$bundle/install.sh" "$bundle/stagecore" "$bundle"/stagecore-*
+  cp "$ROOT/deployment/install-camera-relay.sh" "$bundle/install-camera-relay.sh"
+  cp "$ROOT/deploy/systemd/stagecore-camera-relay.service" "$bundle/camera-relay.service"
+  cp "$ROOT/deploy/systemd/camera-relay.env.example" "$bundle/camera-relay.env.example"
+  chmod 0755 "$bundle/install.sh" "$bundle/install-camera-relay.sh" "$bundle/stagecore" "$bundle"/stagecore-*
   printf '%s\n' "$REVISION" > "$bundle/RELEASE_REVISION"
 
   (
     cd "$bundle"
-    sha256sum stagecore stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS
+    sha256sum stagecore stagecore-hub stagecore-camera-relay stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS
   )
 
   tar -C "$DIST" -czf "$archive" "$(basename "$bundle")"
