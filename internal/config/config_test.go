@@ -57,6 +57,24 @@ func TestLoadRejectsPartialMTCInputConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadOperatorTLSListenerDefaultsToStageLANPort(t *testing.T) {
+	t.Setenv("STAGECORE_OPERATOR_TLS_LISTEN", "")
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OperatorTLSListen != "0.0.0.0:7842" {
+		t.Fatalf("Operator TLS listen=%q, want 0.0.0.0:7842", cfg.OperatorTLSListen)
+	}
+}
+
+func TestLoadRejectsInvalidOperatorTLSListener(t *testing.T) {
+	_, err := Load([]string{"--operator-tls-listen", "stagecore.local"})
+	if err == nil || !strings.Contains(err.Error(), "invalid Operator TLS listen address") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestLoadDeviceListenerDefaultsToSecureLANPort(t *testing.T) {
 	t.Setenv("STAGECORE_DEVICE_LISTEN", "")
 	cfg, err := Load(nil)
