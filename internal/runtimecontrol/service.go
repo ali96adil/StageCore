@@ -17,12 +17,15 @@ import (
 )
 
 const (
-	CommandCueStop           = "cue.stop"
-	CommandEmergencyBlackout = "runtime.emergency_blackout.set"
-	CommandRehearsalStart    = "rehearsal.start"
-	CommandRehearsalStop  = "rehearsal.stop"
-	CommandShowEnter      = "show.enter"
-	CommandShowExit       = "show.exit"
+	CommandCueStop              = "cue.stop"
+	CommandEmergencyBlackout    = "runtime.emergency_blackout.set"
+	CommandProjectBlackout      = "runtime.project_blackout.set"
+	CommandRehearsalStart       = "rehearsal.start"
+	CommandRehearsalStop        = "rehearsal.stop"
+	CommandRehearsalForceStop   = "rehearsal.force_stop"
+	CommandShowEnter            = "show.enter"
+	CommandShowExit             = "show.exit"
+	CommandShowForceExit        = "show.force_exit"
 
 	defaultStopWait = 2 * time.Second
 )
@@ -88,6 +91,13 @@ type StopRequest struct {
 
 type EmergencyRequest struct {
 	SessionID string
+	Issuer    string
+	RequestID string
+	Enabled   bool
+}
+
+type ProjectEmergencyRequest struct {
+	ProjectID string
 	Issuer    string
 	RequestID string
 	Enabled   bool
@@ -246,6 +256,155 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	}
 	resultPayload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload})
+}
+
+func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contracts.CommandResult {
+	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
+		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
+	}
+	session, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
+	}
+	commandType := CommandRehearsalForceStop
+	eventType := "rehearsal.force_stopped"
+	if session.Type == domain.SessionShow {
+		commandType = CommandShowForceExit
+		eventType = "show.force_exited"
+	}
+	payload, _ := json.Marshal(map[string]any{"forced": true, "safety_bypassed": true})
+	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
+	command.Priority = "P0"
+	if existing, terminal, ok := s.reserve(ctx, command); !ok {
+		return existing
+	} else if terminal {
+		return existing
+	}
+	finish := func(result contracts.CommandResult) contracts.CommandResult {
+		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
+		}
+		return result
+	}
+	if session.Status != domain.SessionActive {
+		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
+	}
+
+	cueStopErr := s.stopActiveCueForSession(ctx, session.ID)
+	reason := "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
+	if err := s.store.EndSessionLifecycle(context.WithoutCancel(ctx), session.ID, domain.SessionLifecycleAborted, reason); err != nil {
+		return finish(resultFromStoreError(command.CommandID, "SESSION_FORCE_STOP_FAILED", err, session.ID))
+	}
+
+	resultPayloadMap := map[string]any{
+		"session_id": session.ID,
+		"status": domain.SessionAborted,
+		"forced": true,
+		"safety_bypassed": true,
+		"cue_stop_confirmed": cueStopErr == nil,
+	}
+	if cueStopErr != nil {
+		resultPayloadMap["cue_stop_error"] = cueStopErr.Error()
+	}
+	resultPayload, _ := json.Marshal(resultPayloadMap)
+	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
+		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
+		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
+		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: resultPayload,
+	})
+	return finish(contracts.CommandResult{
+		CommandID: command.CommandID,
+		Status: contracts.CommandCompleted,
+		Payload: resultPayload,
+	})
+}
+
+func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyRequest) contracts.CommandResult {
+	if strings.TrimSpace(req.ProjectID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
+		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "project, issuer and request_id are required", req.ProjectID)
+	}
+	project, err := s.store.GetProject(ctx, req.ProjectID)
+	if err != nil {
+		return resultFromStoreError(req.RequestID, "PROJECT_LOOKUP_FAILED", err, req.ProjectID)
+	}
+	if active, err := s.store.ActiveSessionForProject(ctx, project.ID); err != nil {
+		return failed(req.RequestID, "SESSION_LOOKUP_FAILED")
+	} else if active != nil {
+		return rejected(req.RequestID, "SESSION_ALREADY_ACTIVE", "use the Session Emergency Blackout while REHEARSAL or SHOW is active", active.ID)
+	}
+	snapshot, err := s.store.LatestPublishedRuntimeSnapshotForProject(ctx, project.ID)
+	if err != nil {
+		return failed(req.RequestID, "SNAPSHOT_LOOKUP_FAILED")
+	}
+	if snapshot == nil {
+		return rejected(req.RequestID, "SNAPSHOT_REQUIRED", "a published Runtime Snapshot is required", project.ID)
+	}
+
+	payload, _ := json.Marshal(map[string]any{"enabled": req.Enabled, "sessionless": true})
+	command := commandEnvelope(req.RequestID, CommandProjectBlackout, project.ID, snapshot.ID, req.Issuer, payload)
+	command.Priority = "P0"
+	if existing, terminal, ok := s.reserve(ctx, command); !ok {
+		return existing
+	} else if terminal {
+		return existing
+	}
+	finish := func(result contracts.CommandResult) contracts.CommandResult {
+		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
+		}
+		return result
+	}
+	if s.emergencySafety == nil {
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID,
+			Status: contracts.CommandFailed,
+			Error: &contracts.ContractError{
+				ErrorCode: "PROJECT_BLACKOUT_UNAVAILABLE", Category: "SAFETY",
+				Message: "managed-output project blackout safety is not configured",
+				Retryable: false, AffectedEntityID: project.ID,
+			},
+		})
+	}
+
+	synthetic := domain.Session{
+		ProjectID: project.ID,
+		RuntimeSnapshotID: snapshot.ID,
+		Type: domain.SessionRehearsal,
+		Status: domain.SessionActive,
+	}
+	report, safetyErr := s.emergencySafety(ctx, synthetic, command, req.Enabled)
+	eventType := "runtime.edit_blackout.cleared"
+	if req.Enabled {
+		eventType = "runtime.edit_blackout.applied"
+	}
+	eventPayload := report
+	if len(eventPayload) == 0 {
+		eventPayload = json.RawMessage(`{}`)
+	}
+	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), nil, contracts.EventEnvelope{
+		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
+		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID,
+		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
+		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
+	})
+	if safetyErr != nil {
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID,
+			Status: contracts.CommandFailed,
+			Payload: eventPayload,
+			Error: &contracts.ContractError{
+				ErrorCode: "PROJECT_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
+				Message: "sessionless managed-output blackout completed with a partial failure: " + safetyErr.Error(),
+				Retryable: true, AffectedEntityID: project.ID,
+			},
+		})
+	}
+	return finish(contracts.CommandResult{
+		CommandID: command.CommandID,
+		Status: contracts.CommandCompleted,
+		Payload: eventPayload,
+	})
 }
 
 func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResult {

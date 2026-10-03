@@ -438,3 +438,113 @@ func TestStopSessionCancelsActiveCueBeforeCompleting(t *testing.T) {
 		t.Fatalf("session not completed after active Cue cancellation: %+v", state)
 	}
 }
+
+
+func TestForceStopSessionBypassesFailedSafetyAndRecordsAbortedExit(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, start := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000801",
+	})
+	if start.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", start)
+	}
+	safetyCalls := 0
+	h.service.stopSafety = func(context.Context, domain.Session, contracts.CommandEnvelope) error {
+		safetyCalls++
+		return fmt.Errorf("blackout unconfirmed")
+	}
+	normal := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000802",
+	})
+	if normal.Status != contracts.CommandFailed || normal.Error == nil || normal.Error.ErrorCode != "SESSION_STOP_SAFETY_FAILED" {
+		t.Fatalf("normal stop=%+v", normal)
+	}
+	forced := h.service.ForceStopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000803",
+	})
+	if forced.Status != contracts.CommandCompleted {
+		t.Fatalf("force stop=%+v", forced)
+	}
+	if safetyCalls != 1 {
+		t.Fatalf("force stop must bypass another safety attempt, calls=%d", safetyCalls)
+	}
+	state, err := h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != domain.SessionAborted || state.EndedAt == nil {
+		t.Fatalf("forced exit must be ABORTED and terminal: %+v", state)
+	}
+	events, err := h.store.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.EventType == "rehearsal.force_stopped" {
+			found = true
+			var payload map[string]any
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["forced"] != true || payload["safety_bypassed"] != true {
+				t.Fatalf("force event payload=%v", payload)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("force-exit audit event missing: %+v", events)
+	}
+}
+
+func TestProjectBlackoutWorksWithoutActiveSessionAndUsesPublishedSnapshot(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	var calls []bool
+	h.service.emergencySafety = func(_ context.Context, session domain.Session, command contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if session.ID != "" || session.ProjectID != h.project.ID || session.RuntimeSnapshotID != h.snapshot.ID {
+			t.Fatalf("sessionless scope=%+v", session)
+		}
+		if command.Priority != "P0" || command.RuntimeSnapshotID != h.snapshot.ID {
+			t.Fatalf("project blackout command=%+v", command)
+		}
+		calls = append(calls, enabled)
+		return json.RawMessage(`{"lighting":{"status":"COMPLETED"},"tablets":{"status":"COMPLETED"},"native_visual":{"status":"NOT_CONFIGURED"}}`), nil
+	}
+	applied := h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{
+		ProjectID: h.project.ID, Issuer: "owner", Enabled: true,
+		RequestID: "00000000-0000-7000-8000-000000000811",
+	})
+	if applied.Status != contracts.CommandCompleted {
+		t.Fatalf("EDIT blackout=%+v", applied)
+	}
+	cleared := h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{
+		ProjectID: h.project.ID, Issuer: "owner", Enabled: false,
+		RequestID: "00000000-0000-7000-8000-000000000812",
+	})
+	if cleared.Status != contracts.CommandCompleted {
+		t.Fatalf("EDIT clear=%+v", cleared)
+	}
+	if len(calls) != 2 || !calls[0] || calls[1] {
+		t.Fatalf("project blackout callbacks=%v", calls)
+	}
+
+	session, start := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000813",
+	})
+	if start.Status != contracts.CommandCompleted || session.ID == "" {
+		t.Fatalf("start=%+v session=%+v", start, session)
+	}
+	blocked := h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{
+		ProjectID: h.project.ID, Issuer: "owner", Enabled: true,
+		RequestID: "00000000-0000-7000-8000-000000000814",
+	})
+	if blocked.Status != contracts.CommandRejected || blocked.Error == nil || blocked.Error.ErrorCode != "SESSION_ALREADY_ACTIVE" {
+		t.Fatalf("sessionless blackout during active session=%+v", blocked)
+	}
+}
