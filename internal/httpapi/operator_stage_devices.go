@@ -718,14 +718,24 @@ func WithOperatorStageDevices(
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
-			items, err := devices.ListLiveSources(r.Context(), projectID)
+			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "PROJECT_NOT_FOUND"})
+				return
+			}
+			sources, err := devices.ListLiveSources(r.Context(), projectID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "LIVE_SOURCE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"sources": items})
+			if !tabletHasConfiguredRelaySource(sources) {
+				if source, ok := tabletAutoRelaySource(projectID, r.Host, time.Now()); ok {
+					sources = append(sources, source)
+				}
+			}
+			cameraStatus := probeTabletCameraRelay(r.Context(), tabletRelaySource(sources))
+			writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "camera_status": cameraStatus})
 		}))
 
 		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/live-video-sources/{source_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
