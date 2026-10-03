@@ -201,6 +201,18 @@ func WithOperatorStageDevices(
 					results = append(results, result)
 					continue
 				}
+				if isTablet && assignment.State == "ACTIVE" &&
+					assignment.RuntimeSnapshotID == input.RuntimeSnapshotID {
+					if waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, assignment.Epoch, 12*time.Second) {
+						result.Status = "SYNCED"
+						results = append(results, result)
+						continue
+					}
+					result.Detail = "Tablet authority is committed to the Published Runtime Snapshot but its fresh reconnect is not READY."
+					complete = false
+					results = append(results, result)
+					continue
+				}
 
 				switch {
 				case device.Kind == deviceexperience.DeviceTabletPlayer &&
