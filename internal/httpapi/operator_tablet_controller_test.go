@@ -92,9 +92,9 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 		WithOperatorTabletController(h.auth, devices, runtime, stageStore),
 	).Handler()
 
-	get := func() []deviceexperience.LiveSource {
+	get := func(host string) []deviceexperience.LiveSource {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/live-video-sources", nil)
-		req.Host = "192.168.3.135:7840"
+		req.Host = host
 		req.RemoteAddr = "127.0.0.1:19201"
 		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
 		res := httptest.NewRecorder()
@@ -111,7 +111,7 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 		return response.Sources
 	}
 
-	sources := get()
+	sources := get("192.168.3.135:7840")
 	if len(sources) != 1 {
 		t.Fatalf("sources=%+v", sources)
 	}
@@ -121,6 +121,12 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 		auto.Class != deviceexperience.SourceNetworkStream ||
 		!auto.DesiredEnabled {
 		t.Fatalf("auto relay source=%+v", auto)
+	}
+
+	for _, host := range []string{"127.0.0.1:7840", "localhost:7840", "[::1]:7840"} {
+		if loopback := get(host); len(loopback) != 0 {
+			t.Fatalf("loopback Host %q must not advertise Tablet Live relay: %+v", host, loopback)
+		}
 	}
 
 	if _, err := devices.UpsertLiveSource(ctx, deviceexperience.LiveSource{
@@ -136,7 +142,9 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	sources = get()
+	// Explicit configuration still wins even when the Operator itself is
+	// opened through loopback; only the unsafe automatic fallback is suppressed.
+	sources = get("127.0.0.1:7840")
 	if len(sources) != 1 || sources[0].ID != "relay-configured" {
 		t.Fatalf("configured relay must override auto fallback: %+v", sources)
 	}
@@ -165,6 +173,11 @@ func TestTabletRelayHealthURLUsesBoundedLocalRelayEndpoint(t *testing.T) {
 func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
 	if _, ok := tabletAutoRelaySource("project-1", "example.com:7840", time.Now()); ok {
 		t.Fatal("public/untrusted Host must not become an automatic relay URL")
+	}
+	for _, host := range []string{"127.0.0.1:7840", "localhost:7840", "[::1]:7840"} {
+		if _, ok := tabletAutoRelaySource("project-1", host, time.Now()); ok {
+			t.Fatalf("loopback Host %q must not become an automatic Tablet relay URL", host)
+		}
 	}
 	if source, ok := tabletAutoRelaySource("project-1", "stagecore-pi.local:7840", time.Now()); !ok ||
 		source.EndpointRef != "http://stagecore-pi.local:9081/api/v0/stream" {

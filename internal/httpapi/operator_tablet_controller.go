@@ -40,12 +40,17 @@ func tabletAutoRelaySource(projectID, requestHost string, now time.Time) (device
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
-		if !ip.IsPrivate() && !ip.IsLoopback() {
+		// A loopback address is valid only from the Hub itself. Advertising it
+		// as a Tablet Live endpoint would make every Tablet connect to itself.
+		if ip.IsLoopback() || !ip.IsPrivate() {
 			return deviceexperience.LiveSource{}, false
 		}
 	} else {
 		lower := strings.ToLower(host)
-		if lower != "localhost" && !strings.HasSuffix(lower, ".local") {
+		// localhost has the same Tablet-side ambiguity as a loopback IP.
+		// Trusted mDNS Hub names remain valid because Tablets can resolve them
+		// on the Stage LAN.
+		if lower == "localhost" || !strings.HasSuffix(lower, ".local") {
 			return deviceexperience.LiveSource{}, false
 		}
 	}
