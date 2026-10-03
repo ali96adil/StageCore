@@ -6,6 +6,10 @@ on:
       - 'internal/camerarelay/**'
       - 'cmd/stagecore-camera-relay/**'
       - 'docs/camera-media-relay-v0.md'
+      - 'deployment/install-camera-relay.sh'
+      - 'deploy/systemd/stagecore-camera-relay.service'
+      - 'deploy/systemd/camera-relay.env.example'
+      - 'scripts/build-release.sh'
       - 'tools/camera-relay-smoke.py'
       - 'tools/test_camera_relay_smoke.py'
       - '.github/workflows/camera-relay-ci.yml'
@@ -15,6 +19,10 @@ on:
       - 'internal/camerarelay/**'
       - 'cmd/stagecore-camera-relay/**'
       - 'docs/camera-media-relay-v0.md'
+      - 'deployment/install-camera-relay.sh'
+      - 'deploy/systemd/stagecore-camera-relay.service'
+      - 'deploy/systemd/camera-relay.env.example'
+      - 'scripts/build-release.sh'
       - '.github/workflows/camera-relay-ci.yml'
   workflow_dispatch:
 
@@ -41,6 +49,15 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
+      - name: Validate persistent deployment helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deployment/install-camera-relay.sh
+          bash -n scripts/build-release.sh
+          grep -q 'STAGECORE_CAMERA_RELAY_LISTEN=0.0.0.0:9081' deploy/systemd/camera-relay.env.example
+          grep -q 'WantedBy=multi-user.target' deploy/systemd/stagecore-camera-relay.service
+          grep -q 'Restart=on-failure' deploy/systemd/stagecore-camera-relay.service
       - name: Compile portable camera smoke probe
         shell: bash
         run: |

@@ -28,11 +28,14 @@ func TestReleaseBundleScriptsKeepCanonicalInstallShape(t *testing.T) {
 		"CGO_ENABLED=0 GOOS=linux GOARCH=\"$arch\"",
 		"./cmd/stagecore",
 		"./cmd/stagecore-hub",
+		"./cmd/stagecore-camera-relay",
 		"./cmd/stagecore-osc-plugin",
 		"./cmd/stagecore-pairing",
 		"./cmd/stagecore-setup",
-		"chmod 0755 \"$bundle/install.sh\" \"$bundle/stagecore\"",
-		"sha256sum stagecore stagecore-hub stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS",
+		"cp \"$ROOT/deployment/install-camera-relay.sh\" \"$bundle/install-camera-relay.sh\"",
+		"cp \"$ROOT/deploy/systemd/stagecore-camera-relay.service\" \"$bundle/camera-relay.service\"",
+		"chmod 0755 \"$bundle/install.sh\" \"$bundle/install-camera-relay.sh\"",
+		"sha256sum stagecore stagecore-hub stagecore-camera-relay stagecore-osc-plugin stagecore-pairing stagecore-setup > SHA256SUMS",
 		"stagecore-linux-$arch.tar.gz",
 	} {
 		if !strings.Contains(buildText, marker) {
