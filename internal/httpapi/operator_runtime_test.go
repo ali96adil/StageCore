@@ -232,12 +232,47 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatalf("STOP without running Cue status=%d body=%s", noRunStopRes.Code, noRunStopRes.Body.String())
 	}
 
+	badForcePayload, _ := json.Marshal(runtimeCommandRequest{
+		RequestID: "00000000-0000-7000-8000-000000000412",
+		Force: true,
+	})
+	badForceReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/stop-session", badForcePayload, owner.Token, owner.CSRFToken)
+	badForceRes := httptest.NewRecorder()
+	handler.ServeHTTP(badForceRes, badForceReq)
+	if badForceRes.Code != http.StatusBadRequest || !strings.Contains(badForceRes.Body.String(), "CONFIRMATION_REQUIRED") {
+		t.Fatalf("unconfirmed Force Exit status=%d body=%s", badForceRes.Code, badForceRes.Body.String())
+	}
+	activeAfterBadForce, err := projectStore.ActiveSessionForProject(ctx, project.ID)
+	if err != nil || activeAfterBadForce == nil || activeAfterBadForce.ID != start.Session.ID {
+		t.Fatalf("unconfirmed Force Exit changed active Session: active=%+v err=%v", activeAfterBadForce, err)
+	}
+
 	stopSessionPayload, _ := json.Marshal(runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000406"})
 	stopSessionReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/stop-session", stopSessionPayload, owner.Token, owner.CSRFToken)
 	stopSessionRes := httptest.NewRecorder()
 	handler.ServeHTTP(stopSessionRes, stopSessionReq)
 	if stopSessionRes.Code != http.StatusOK {
 		t.Fatalf("stop Session status=%d body=%s", stopSessionRes.Code, stopSessionRes.Body.String())
+	}
+
+	badEditBlackoutBody, _ := json.Marshal(runtimeEmergencyBlackoutRequest{
+		RequestID: "00000000-0000-7000-8000-000000000413", Enabled: true, Confirm: "",
+	})
+	badEditBlackoutReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/project-blackout", badEditBlackoutBody, owner.Token, owner.CSRFToken)
+	badEditBlackoutRes := httptest.NewRecorder()
+	handler.ServeHTTP(badEditBlackoutRes, badEditBlackoutReq)
+	if badEditBlackoutRes.Code != http.StatusBadRequest || !strings.Contains(badEditBlackoutRes.Body.String(), "CONFIRMATION_REQUIRED") {
+		t.Fatalf("unconfirmed EDIT Blackout status=%d body=%s", badEditBlackoutRes.Code, badEditBlackoutRes.Body.String())
+	}
+
+	editBlackoutBody, _ := json.Marshal(runtimeEmergencyBlackoutRequest{
+		RequestID: "00000000-0000-7000-8000-000000000414", Enabled: true, Confirm: "BLACKOUT",
+	})
+	editBlackoutReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/project-blackout", editBlackoutBody, owner.Token, owner.CSRFToken)
+	editBlackoutRes := httptest.NewRecorder()
+	handler.ServeHTTP(editBlackoutRes, editBlackoutReq)
+	if editBlackoutRes.Code != http.StatusOK || !strings.Contains(editBlackoutRes.Body.String(), "\"sessionless\":true") {
+		t.Fatalf("EDIT Blackout status=%d body=%s", editBlackoutRes.Code, editBlackoutRes.Body.String())
 	}
 
 	showPayload, _ := json.Marshal(runtimeStartRequest{Mode: "SHOW", Name: "Blocked Show", RequestID: "00000000-0000-7000-8000-000000000407"})
