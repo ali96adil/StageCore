@@ -28,7 +28,7 @@ const (
 	DefaultVaultRoot   = "/var/lib/stagecore/vault"
 	DefaultServiceUser = "stagecore"
 	DefaultServiceGroup = "stagecore"
-	DefaultListen      = "127.0.0.1:7840"
+	DefaultListen      = "0.0.0.0:7840"
 	DefaultUnitPath    = "/etc/systemd/system/stagecore-hub.service"
 	checksumFileName   = "SHA256SUMS"
 )
