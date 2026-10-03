@@ -23,6 +23,63 @@ import (
 
 var tabletAliasSlugRE = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
+func tabletAutoRelaySource(projectID, requestHost string, now time.Time) (deviceexperience.LiveSource, bool) {
+	projectID = strings.TrimSpace(projectID)
+	requestHost = strings.TrimSpace(requestHost)
+	if projectID == "" || requestHost == "" {
+		return deviceexperience.LiveSource{}, false
+	}
+
+	host := requestHost
+	if parsedHost, _, err := net.SplitHostPort(requestHost); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return deviceexperience.LiveSource{}, false
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsPrivate() && !ip.IsLoopback() {
+			return deviceexperience.LiveSource{}, false
+		}
+	} else {
+		lower := strings.ToLower(host)
+		if lower != "localhost" && !strings.HasSuffix(lower, ".local") {
+			return deviceexperience.LiveSource{}, false
+		}
+	}
+
+	now = now.UTC()
+	return deviceexperience.LiveSource{
+		ID:             "stagecore.camera-relay.auto",
+		ProjectID:      projectID,
+		Name:           "Camera Relay (auto)",
+		Class:          deviceexperience.SourceNetworkStream,
+		EndpointRef:    "http://" + net.JoinHostPort(host, "9081") + "/api/v0/stream",
+		Capabilities:   []string{},
+		Config:         json.RawMessage(`{"discovery":"hub-host","relay_port":9081}`),
+		Required:       false,
+		DesiredEnabled: true,
+		Readiness:      deviceexperience.ReadinessUnknown,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, true
+}
+
+func tabletHasConfiguredRelaySource(sources []deviceexperience.LiveSource) bool {
+	for _, source := range sources {
+		parsed, err := url.Parse(strings.TrimSpace(source.EndpointRef))
+		if err != nil || parsed == nil {
+			continue
+		}
+		if parsed.Path == "/api/v0/stream" && parsed.Port() == "9081" {
+			return true
+		}
+	}
+	return false
+}
+
 type tabletObservedScope struct {
 	ProjectID         string `json:"project_id"`
 	RuntimeSnapshotID string `json:"runtime_snapshot_id"`
@@ -95,6 +152,25 @@ func WithOperatorTabletController(
 				"devices": tablets,
 				"groups":  groups,
 			})
+		}))
+
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "PROJECT_NOT_FOUND"})
+				return
+			}
+			sources, err := devices.ListLiveSources(r.Context(), projectID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "LIVE_VIDEO_SOURCE_LIST_FAILED", "detail": err.Error()})
+				return
+			}
+			if !tabletHasConfiguredRelaySource(sources) {
+				if source, ok := tabletAutoRelaySource(projectID, r.Host, time.Now()); ok {
+					sources = append(sources, source)
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"sources": sources})
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/devices/{device_id}/assign", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
