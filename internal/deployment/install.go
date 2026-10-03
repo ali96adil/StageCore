@@ -28,7 +28,8 @@ const (
 	DefaultVaultRoot   = "/var/lib/stagecore/vault"
 	DefaultServiceUser = "stagecore"
 	DefaultServiceGroup = "stagecore"
-	DefaultListen      = "0.0.0.0:7840"
+	DefaultListen      = "127.0.0.1:7840"
+	DefaultOperatorTLSListen = "0.0.0.0:7842"
 	DefaultUnitPath    = "/etc/systemd/system/stagecore-hub.service"
 	checksumFileName   = "SHA256SUMS"
 )
@@ -49,6 +50,7 @@ type Options struct {
 	ServiceUser    string
 	ServiceGroup   string
 	Listen         string
+	OperatorTLSListen string
 	ListenExplicit bool
 	SystemdUnit    string
 	ReplaceConfig  bool
@@ -114,6 +116,7 @@ func DefaultOptions(bundleDir string) Options {
 		ServiceUser:     DefaultServiceUser,
 		ServiceGroup:    DefaultServiceGroup,
 		Listen:          DefaultListen,
+		OperatorTLSListen: DefaultOperatorTLSListen,
 		SystemdUnit:     DefaultUnitPath,
 		ReadinessTimeout: 20 * time.Second,
 	}
@@ -303,6 +306,9 @@ func normalizeOptions(opts Options) (Options, error) {
 	if strings.TrimSpace(opts.Listen) == "" {
 		opts.Listen = defaults.Listen
 	}
+	if strings.TrimSpace(opts.OperatorTLSListen) == "" {
+		opts.OperatorTLSListen = defaults.OperatorTLSListen
+	}
 	if strings.TrimSpace(opts.SystemdUnit) == "" {
 		opts.SystemdUnit = defaults.SystemdUnit
 	}
@@ -351,6 +357,10 @@ func normalizeOptions(opts Options) (Options, error) {
 		return Options{}, fmt.Errorf("invalid listen address %q: %w", opts.Listen, err)
 	}
 	opts.Listen = strings.TrimSpace(opts.Listen)
+	if _, _, err = net.SplitHostPort(strings.TrimSpace(opts.OperatorTLSListen)); err != nil {
+		return Options{}, fmt.Errorf("invalid Operator TLS listen address %q: %w", opts.OperatorTLSListen, err)
+	}
+	opts.OperatorTLSListen = strings.TrimSpace(opts.OperatorTLSListen)
 	return opts, nil
 }
 
@@ -550,6 +560,7 @@ func RenderEnvironment(opts Options) string {
 		"STAGECORE_DATA_ROOT=" + opts.DataRoot,
 		"STAGECORE_VAULT_ROOT=" + opts.VaultRoot,
 		"STAGECORE_LISTEN=" + opts.Listen,
+		"STAGECORE_OPERATOR_TLS_LISTEN=" + opts.OperatorTLSListen,
 		"STAGECORE_OSC_PLUGIN_PATH=" + plugin,
 		"",
 	}, "\n")

@@ -13,7 +13,7 @@ cd stagecore-linux-arm64   # or stagecore-linux-amd64
 
 The wrapper uses `sudo` when required and delegates to `stagecore-setup install`.
 
-Fresh production installs listen for the authenticated Operator UI on `0.0.0.0:7840`, so the Pi remains reachable from the Stage LAN even when the router/subnet changes. The installer still performs readiness checks through loopback on the Pi itself. Do not expose port 7840 to the public Internet or forward it from the Stage router.
+Fresh production installs keep HTTP maintenance/readiness on `127.0.0.1:7840` and expose the authenticated Operator separately over TLS on `0.0.0.0:7842`. The browser certificate uses the stable Bonjour hostname `stagecore-<hub-short-id>.local`. Do not expose StageCore management ports to the public Internet or forward them from the Stage router.
 
 Default fresh-host layout:
 
@@ -61,25 +61,27 @@ Dry run does not require root inside `stagecore-setup`, though the shell wrapper
 
 This installs the binaries/config/unit, reloads systemd and enables `stagecore-hub.service`, but does not restart/start it or poll readiness.
 
+## Secure Stage-LAN Operator
+
+Use the HTTPS endpoint for browser access from another machine:
+
+```text
+https://stagecore-<hub-short-id>.local:7842/
+```
+
+Port 7841 remains the separate pinned Companion/Stage Device gateway. The Operator certificate is independently derived from the durable Hub identity so enabling browser TLS does not rotate the device-gateway certificate pin. Browser certificate trust is a one-time local onboarding step.
+
 ## Existing deployments
 
 A repeated installation preserves an existing `/etc/stagecore/stagecore.env` by default. StageCore adopts the Data Root, Vault Root, listen address and OSC plugin path from that existing configuration for service sandbox/readiness behavior.
 
-To migrate an existing loopback-only Pi to Stage-LAN Operator access without replacing unrelated settings, explicitly set only the listen address:
+If an existing Pi previously exposed plaintext Operator HTTP on the Stage LAN, migrate that listener back to loopback during the transactional upgrade:
 
 ```bash
-./install.sh --listen 0.0.0.0:7840
+sudo ./stagecore-setup update --bundle . --listen 127.0.0.1:7840
 ```
 
-When `--listen` is explicitly supplied and an environment file already exists, the installer updates only `STAGECORE_LISTEN`; existing OSC/MTC and other environment entries are preserved. This is a one-time deployment migration. Afterward systemd starts the Hub automatically on every boot.
-
-For an existing deployment being upgraded, the same migration can be included inside the transactional update/rollback path:
-
-```bash
-sudo ./stagecore-setup update --bundle . --listen 0.0.0.0:7840
-```
-
-The explicit listen change is then covered by the update cold snapshot and automatic rollback together with the candidate binaries.
+When `--listen` is explicitly supplied, only `STAGECORE_LISTEN` is changed; existing OSC/MTC and other environment entries are preserved. The listen migration is covered by the update cold snapshot and automatic rollback. The upgraded Hub serves Stage-LAN Operator HTTPS on port 7842 by default.
 
 It does **not** delete Project data, the SQLite database, security state, history, Notes, Vault objects or other authoritative contents.
 
@@ -99,7 +101,7 @@ Review the existing configuration first. `--replace-config` is explicit because 
   --config-root /etc/stagecore \
   --data-root /var/lib/stagecore/data \
   --vault-root /var/lib/stagecore/vault \
-  --listen 0.0.0.0:7840 \
+  --listen 127.0.0.1:7840 \
   --service-user stagecore \
   --service-group stagecore
 ```
