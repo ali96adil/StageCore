@@ -59,6 +59,9 @@ func Validate(cues []domain.Cue) error {
 		if err != nil {
 			return fmt.Errorf("Cue %s: %w", cue.Name, err)
 		}
+		if len(policy.LinkedCueIDs) != 0 && !cue.Enabled {
+			return fmt.Errorf("disabled Cue %s cannot own linked child Cues", cue.Name)
+		}
 		for _, childID := range policy.LinkedCueIDs {
 			if childID == cue.ID {
 				return fmt.Errorf("Cue %s cannot link to itself", cue.Name)
