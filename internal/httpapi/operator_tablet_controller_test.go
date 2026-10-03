@@ -136,6 +136,26 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 	}
 }
 
+func TestTabletRelayHealthURLUsesBoundedLocalRelayEndpoint(t *testing.T) {
+	got, err := tabletRelayHealthURL("http://192.168.3.135:9081/api/v0/stream?flash=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://192.168.3.135:9081/api/v0/health" {
+		t.Fatalf("health url=%q", got)
+	}
+	for _, raw := range []string{
+		"https://192.168.3.135:9081/api/v0/stream",
+		"http://example.com:9081/api/v0/stream",
+		"http://192.168.3.135:9082/api/v0/stream",
+		"http://192.168.3.135:9081/other",
+	} {
+		if got, err := tabletRelayHealthURL(raw); err == nil {
+			t.Fatalf("expected rejection for %q, got %q", raw, got)
+		}
+	}
+}
+
 func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
 	if _, ok := tabletAutoRelaySource("project-1", "example.com:7840", time.Now()); ok {
 		t.Fatal("public/untrusted Host must not become an automatic relay URL")
