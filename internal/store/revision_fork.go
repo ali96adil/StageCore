@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -204,12 +205,19 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			return domain.ProjectRevision{}, err
 		}
 		cueIDs[cue.ID] = newCueID
+	}
+	for _, cue := range cues {
+		newCueID := cueIDs[cue.ID]
+		policy, err := remapForkedCueExecutionPolicy(cue.ExecutionPolicy, cueIDs)
+		if err != nil {
+			return domain.ProjectRevision{}, fmt.Errorf("clone cue execution policy: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO cues
 			(cue_id, revision_id, display_label, name, order_index, cue_type, criticality, enabled, execution_policy_json, notes_summary)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, newCueID, newRevisionID, cue.DisplayLabel, cue.Name, cue.OrderIndex, cue.CueType,
-			cue.Criticality, boolInt(cue.Enabled), string(cue.ExecutionPolicy), cue.NotesSummary); err != nil {
+			cue.Criticality, boolInt(cue.Enabled), string(policy), cue.NotesSummary); err != nil {
 			return domain.ProjectRevision{}, fmt.Errorf("clone cue: %w", err)
 		}
 		for _, action := range cue.Actions {
@@ -323,4 +331,41 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		Status: domain.RevisionDraft, ParentRevisionID: &source.ID,
 		CreatedAt: now, CreatedBy: createdBy, ChangeNote: changeNote,
 	}, nil
+}
+
+
+func remapForkedCueExecutionPolicy(raw json.RawMessage, cueIDs map[string]string) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var policy map[string]any
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return nil, err
+	}
+	value, ok := policy["linked_cue_ids"]
+	if !ok {
+		return raw, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: linked_cue_ids must be an array", domain.ErrConflict)
+	}
+	mapped := make([]string, 0, len(items))
+	for _, item := range items {
+		oldID, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%w: linked Cue id must be a string", domain.ErrConflict)
+		}
+		newID, ok := cueIDs[oldID]
+		if !ok {
+			return nil, fmt.Errorf("%w: linked Cue %s missing during draft fork", domain.ErrConflict, oldID)
+		}
+		mapped = append(mapped, newID)
+	}
+	policy["linked_cue_ids"] = mapped
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
