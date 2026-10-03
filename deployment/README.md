@@ -27,6 +27,20 @@ Default fresh-host layout:
 
 The installer verifies `SHA256SUMS` and the ELF architecture of the four required service/install binaries (`stagecore-hub`, `stagecore-osc-plugin`, `stagecore-pairing`, `stagecore-setup`) before modifying the host. The release bundle also carries the optional `stagecore` CLI binary.
 
+## Camera Relay persistent service
+
+Release bundles also include the standalone Camera Relay binary and its one-time persistent-service installer. This component stays separate from the transactional Hub updater so Hub rollback remains complete and deterministic.
+
+First install example on the Stage Pi:
+
+```bash
+./install-camera-relay.sh \\
+  --source http://stagecam-xxxxxx.local:81/api/v0/stream \\
+  --flash-control http://stagecam-xxxxxx.local/api/v0/flash
+```
+
+The installer enables `stagecore-camera-relay.service`; after that, Pi boot and process recovery require no operator shell. Re-running the helper preserves existing relay settings unless a value is explicitly supplied. The fresh listener default is `0.0.0.0:9081` for the isolated Stage LAN. Never port-forward this unauthenticated relay endpoint to WAN.
+
 ## Preview without changing the host
 
 ```bash
