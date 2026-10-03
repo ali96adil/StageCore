@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -224,9 +225,17 @@ func buildDashboard(r *http.Request, projectStore *store.Store, project domain.P
 }
 
 func currentAndNextCue(cues []domain.Cue, currentID *string) (*cueSummaryView, *cueSummaryView) {
+	parents, err := cuegroup.ParentMap(cues)
+	if err != nil {
+		parents = map[string]string{}
+	}
+	isTopLevel := func(cue domain.Cue) bool {
+		_, linkedChild := parents[cue.ID]
+		return cue.Enabled && !linkedChild
+	}
 	if currentID == nil {
 		for _, cue := range cues {
-			if cue.Enabled {
+			if isTopLevel(cue) {
 				value := makeCueSummary(cue)
 				return nil, &value
 			}
@@ -242,7 +251,7 @@ func currentAndNextCue(cues []domain.Cue, currentID *string) (*cueSummaryView, *
 			foundCurrent = true
 			continue
 		}
-		if foundCurrent && cue.Enabled {
+		if foundCurrent && isTopLevel(cue) {
 			value := makeCueSummary(cue)
 			return current, &value
 		}
