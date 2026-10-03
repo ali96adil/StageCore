@@ -41,6 +41,10 @@
       liveShow: "Show live",
       liveHide: "Hide live",
       liveFlash: "Use camera flash for this Live",
+      relayStatus: "Camera Relay",
+      cameraStatus: "Camera",
+      cameraFrames: "Frames",
+      cameraViewers: "Viewers",
       flashOverride: "Camera flash override",
       flashAuto: "AUTO",
       flashOn: "Force ON",
@@ -135,6 +139,10 @@
       liveShow: "إظهار Live",
       liveHide: "إخفاء Live",
       liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive",
+      relayStatus: "Camera Relay",
+      cameraStatus: "الكاميرا",
+      cameraFrames: "الفريمات",
+      cameraViewers: "المشاهدون",
       flashOverride: "تحكم يدوي بفلاش الكاميرا",
       flashAuto: "تلقائي AUTO",
       flashOn: "تشغيل إجباري",
@@ -194,7 +202,7 @@
 
   let model = null;
   let runtimeModel = null;
-  let liveSourcesModel = { sources: [] };
+  let liveSourcesModel = { sources: [], camera_status: null };
   const selected = new Set();
   let healthRefreshTimer = null;
 
@@ -278,6 +286,41 @@
       const label = source.name || source.source_id || source.endpoint_ref;
       return `<option value="${esc(source.endpoint_ref)}" ${selected}>${esc(label)}</option>`;
     }).join("");
+  }
+
+  function cameraStatusPill(status, label) {
+    const value = String(status || "UNKNOWN").toUpperCase();
+    const kind = value === "READY" ? "good" : (value === "WARNING" ? "warn" : "bad");
+    return `<span class="pill ${kind}">${esc(label)}: ${esc(value)}</span>`;
+  }
+
+  function cameraHealthMarkup() {
+    const status = liveSourcesModel?.camera_status || {};
+    const relay = status.relay_status || "NOT_CONFIGURED";
+    const camera = status.camera_status || "UNKNOWN";
+    const frameAge = Number(status.last_frame_age_ms);
+    const frameText = Number.isFinite(frameAge) && frameAge >= 0 ? ` · ${Math.round(frameAge)} ms` : "";
+    const viewers = Number(status.viewers);
+    const maxClients = Number(status.max_clients);
+    const viewerText = Number.isFinite(viewers) && Number.isFinite(maxClients) && maxClients > 0
+      ? `${viewers}/${maxClients}`
+      : "—";
+    return `
+      <div class="tablet-camera-health" data-camera-health>
+        ${cameraStatusPill(relay, t("relayStatus"))}
+        ${cameraStatusPill(camera, t("cameraStatus"))}
+        <span class="muted">${esc(t("cameraFrames"))}: ${esc(status.frames_received ?? "—")}${esc(frameText)}</span>
+        <span class="muted">${esc(t("cameraViewers"))}: ${esc(viewerText)}</span>
+      </div>`;
+  }
+
+  function refreshCameraHealthUI() {
+    const target = document.querySelector("[data-camera-health]");
+    if (!target) return;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = cameraHealthMarkup();
+    const replacement = wrapper.firstElementChild;
+    if (replacement) target.replaceWith(replacement);
   }
 
   function selectedDevices() {
@@ -397,6 +440,7 @@
               <label id="tabletLiveURLWrap" class="${preferredLiveSource ? "" : "hidden"}">${esc(t("liveManual"))}<input id="tabletLiveURL" value="${esc(preferredLiveSource?.endpoint_ref || "")}" placeholder="http://stagecore-pi:9081/api/v0/stream" dir="ltr"></label>
               <label id="tabletLiveFlashWrap" class="${preferredLiveSource ? "" : "hidden"}"><input id="tabletLiveFlash" type="checkbox"> ${esc(t("liveFlash"))}</label>
             </div>
+            ${cameraHealthMarkup()}
             <div class="tablet-command-row"><button class="button primary" data-tablet-command="TABLET_LIVE_SHOW" type="button">${esc(t("liveShow"))}</button><button class="button ghost" data-tablet-command="TABLET_LIVE_HIDE" type="button">${esc(t("liveHide"))}</button></div>
             <div id="tabletFlashOverrideWrap" class="tablet-command-row hidden">
               <span class="muted">${esc(t("flashOverride"))}</span>
@@ -451,8 +495,15 @@
     healthRefreshTimer = null;
     if (state.page !== "tablet-controller" || !state.project) return;
     try {
-      const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller`);
+      const [payload, sources] = await Promise.all([
+        api(`/api/v1/projects/${encodeURIComponent(projectID())}/tablet-controller`),
+        api(`/api/v1/projects/${encodeURIComponent(projectID())}/live-video-sources`).catch(() => null),
+      ]);
       model = payload;
+      if (sources) {
+        liveSourcesModel = sources;
+        refreshCameraHealthUI();
+      }
       for (const device of payload.devices || []) {
         const card = content.querySelector(`[data-tablet-device-id="${CSS.escape(device.device_id)}"]`);
         if (!card) continue;
