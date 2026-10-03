@@ -363,7 +363,7 @@ async function loadCues() {
   return payload;
 }
 
-async function renderCues(message = "") {
+async function renderCues(message = "", messageKind = "success") {
   const payload = await loadCues();
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
@@ -382,6 +382,7 @@ async function renderCues(message = "") {
   const runtimeCuesByID = new Map((runtime?.cues || []).map((cue) => [cue.cue_id, cue]));
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
+  const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
 
   content.innerHTML = `
     <div class="page-head">
@@ -390,9 +391,10 @@ async function renderCues(message = "") {
         ${hasDraft ? `<button id="validateButton" class="button" type="button">Validate</button>` : ""}
         ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
         ${canModify && !hasDraft ? `<button id="createDraftButton" class="button primary" type="button">Create Draft</button>` : ""}
+        ${canModify && hasPublishedSnapshot ? `<button id="syncDevicesButton" class="button" ${runtimeMode !== "EDIT" ? "disabled" : ""} type="button">Sync Devices</button>` : ""}
       </div>
     </div>
-    ${message ? `<div class="message success">${esc(message)}</div>` : ""}
+    ${message ? `<div class="message ${cueMessageKind}">${esc(message)}</div>` : ""}
     ${hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
     <section class="card" style="margin-top:14px">
       <div class="section-title-row">
@@ -442,6 +444,7 @@ async function renderCues(message = "") {
   el("createCueButton")?.addEventListener("click", () => openCueEditor(null));
   el("publishButton")?.addEventListener("click", publishDraft);
   el("createDraftButton")?.addEventListener("click", createCueDraft);
+  el("syncDevicesButton")?.addEventListener("click", syncDevicesFromWorkspace);
   el("cueCheckStopButton")?.addEventListener("click", stopCueFromWorkspace);
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
