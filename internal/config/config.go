@@ -22,6 +22,7 @@ type Config struct {
 	DataRoot              string
 	VaultRoot             string
 	Listen                string
+	OperatorTLSListen     string
 	DeviceListen          string
 	OSCPluginPath         string
 	OSCInputListen        string
@@ -40,6 +41,7 @@ func Load(args []string) (Config, error) {
 	defaultDataRoot := envOr("STAGECORE_DATA_ROOT", filepath.Join(".", "stagecore-data"))
 	defaultVaultRoot := envOr("STAGECORE_VAULT_ROOT", filepath.Join(defaultDataRoot, "vault"))
 	defaultListen := envOr("STAGECORE_LISTEN", "127.0.0.1:7840")
+	defaultOperatorTLSListen := envOr("STAGECORE_OPERATOR_TLS_LISTEN", "0.0.0.0:7842")
 	defaultDeviceListen := envOr("STAGECORE_DEVICE_LISTEN", "0.0.0.0:7841")
 	defaultOSCPlugin := defaultOSCPluginPath()
 	defaultOSCInputListen := strings.TrimSpace(os.Getenv("STAGECORE_OSC_INPUT_LISTEN"))
@@ -63,6 +65,7 @@ func Load(args []string) (Config, error) {
 	dataRoot := fs.String("data-root", defaultDataRoot, "authoritative StageCore data root")
 	vaultRoot := fs.String("vault-root", defaultVaultRoot, "StageCore Vault root")
 	listen := fs.String("listen", defaultListen, "local Operator HTTP listen address")
+	operatorTLSListen := fs.String("operator-tls-listen", defaultOperatorTLSListen, "TLS-only Stage-LAN Operator HTTPS listen address")
 	deviceListen := fs.String("device-listen", defaultDeviceListen, "TLS-only Companion/device listen address")
 	oscPluginPath := fs.String("osc-plugin-path", defaultOSCPlugin, "path to the StageCore OSC plugin executable")
 	oscInputListen := fs.String("osc-input-listen", defaultOSCInputListen, "OSC input UDP listen address (loopback only)")
@@ -81,7 +84,7 @@ func Load(args []string) (Config, error) {
 
 	cfg := Config{
 		DataRoot: strings.TrimSpace(*dataRoot), VaultRoot: strings.TrimSpace(*vaultRoot),
-		Listen: strings.TrimSpace(*listen), DeviceListen: strings.TrimSpace(*deviceListen),
+		Listen: strings.TrimSpace(*listen), OperatorTLSListen: strings.TrimSpace(*operatorTLSListen), DeviceListen: strings.TrimSpace(*deviceListen),
 		OSCPluginPath: strings.TrimSpace(*oscPluginPath),
 		OSCInputListen: strings.TrimSpace(*oscInputListen), OSCInputProjectID: strings.TrimSpace(*oscInputProjectID),
 		MTCInputDevice: strings.TrimSpace(*mtcInputDevice), MTCInputSourceID: strings.TrimSpace(*mtcInputSourceID),
@@ -101,6 +104,12 @@ func Load(args []string) (Config, error) {
 	}
 	if _, _, err := net.SplitHostPort(cfg.Listen); err != nil {
 		return Config{}, fmt.Errorf("invalid local listen address %q: %w", cfg.Listen, err)
+	}
+	if cfg.OperatorTLSListen == "" {
+		return Config{}, fmt.Errorf("Operator TLS listen address is required")
+	}
+	if _, _, err := net.SplitHostPort(cfg.OperatorTLSListen); err != nil {
+		return Config{}, fmt.Errorf("invalid Operator TLS listen address %q: %w", cfg.OperatorTLSListen, err)
 	}
 	if cfg.DeviceListen == "" {
 		return Config{}, fmt.Errorf("device listen address is required")
