@@ -13,7 +13,7 @@ cd stagecore-linux-arm64   # or stagecore-linux-amd64
 
 The wrapper uses `sudo` when required and delegates to `stagecore-setup install`.
 
-Fresh production installs listen for the authenticated Operator UI on `0.0.0.0:7840`, so the Pi remains reachable from the Stage LAN even when the router/subnet changes. The installer still performs readiness checks through loopback on the Pi itself. Do not expose port 7840 to the public Internet or forward it from the Stage router.
+Fresh production installs keep HTTP maintenance/readiness on `127.0.0.1:7840` and expose the authenticated Operator separately over TLS on `0.0.0.0:7842`. The browser certificate uses the stable Bonjour hostname `stagecore-<hub-short-id>.local`. Do not expose StageCore management ports to the public Internet or forward them from the Stage router.
 
 Default fresh-host layout:
 
@@ -60,6 +60,16 @@ Dry run does not require root inside `stagecore-setup`, though the shell wrapper
 ```
 
 This installs the binaries/config/unit, reloads systemd and enables `stagecore-hub.service`, but does not restart/start it or poll readiness.
+
+## Secure Stage-LAN Operator
+
+Use the HTTPS endpoint for browser access from another machine:
+
+```text
+https://stagecore-<hub-short-id>.local:7842/
+```
+
+Port 7841 remains the separate pinned Companion/Stage Device gateway. The Operator certificate is independently derived from the durable Hub identity so enabling browser TLS does not rotate the device-gateway certificate pin. Browser certificate trust is a one-time local onboarding step.
 
 ## Existing deployments
 
