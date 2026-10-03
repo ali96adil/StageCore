@@ -15,7 +15,7 @@ func TestLiteralHTTPRoutePatternsAreUnique(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	routePattern := regexp.MustCompile(`HandleFunc\("([^"]+)"`)
+	routePattern := regexp.MustCompile(`HandleFunc\("([^"]+)"\s*,`)
 	seen := map[string]string{}
 
 	for _, path := range files {
