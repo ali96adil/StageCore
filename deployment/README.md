@@ -25,7 +25,7 @@ Default fresh-host layout:
 /var/lib/stagecore/vault/
 ```
 
-The installer verifies `SHA256SUMS` and the ELF architecture of the four required service/install binaries (`stagecore-hub`, `stagecore-osc-plugin`, `stagecore-pairing`, `stagecore-setup`) before modifying the host. The release bundle also carries the optional `stagecore` CLI binary.
+The Hub installer verifies `SHA256SUMS` and the ELF architecture of the four required Hub service/install binaries (`stagecore-hub`, `stagecore-osc-plugin`, `stagecore-pairing`, `stagecore-setup`) before modifying the host. The release bundle also carries the optional `stagecore` CLI plus the independently installed `stagecore-camera-relay` component.
 
 ## Camera Relay persistent service
 
