@@ -51,6 +51,14 @@ This installs the binaries/config/unit, reloads systemd and enables `stagecore-h
 
 A repeated installation preserves an existing `/etc/stagecore/stagecore.env` by default. StageCore adopts the Data Root, Vault Root, listen address and OSC plugin path from that existing configuration for service sandbox/readiness behavior.
 
+To migrate an existing loopback-only Pi to Stage-LAN Operator access without replacing unrelated settings, explicitly set only the listen address:
+
+```bash
+./install.sh --listen 0.0.0.0:7840
+```
+
+When `--listen` is explicitly supplied and an environment file already exists, the installer updates only `STAGECORE_LISTEN`; existing OSC/MTC and other environment entries are preserved. This is a one-time deployment migration. Afterward systemd starts the Hub automatically on every boot.
+
 It does **not** delete Project data, the SQLite database, security state, history, Notes, Vault objects or other authoritative contents.
 
 To deliberately replace the environment file with values from installer flags:
