@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
@@ -117,6 +118,10 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 			block("INLINE_CREDENTIAL_FORBIDDEN", "Project target configuration must use secret_ref instead of inline password/token/secret values", alias.ID)
 		}
 	}
+	if err := cuegroup.Validate(cues); err != nil {
+		block("CUE_GROUP_INVALID", err.Error(), revisionID)
+	}
+
 	for _, cue := range cues {
 		if cue.Criticality == "SAFETY_CRITICAL" {
 			block("SAFETY_CRITICAL_RESERVED", "SAFETY_CRITICAL Cues are reserved and not executable in the MVP", cue.ID)
