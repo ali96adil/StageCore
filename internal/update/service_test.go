@@ -102,6 +102,31 @@ func TestApplyDryRunValidatesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestApplyPreservesExplicitListenMigrationAcrossValidationAndInstall(t *testing.T) {
+	installer := &fakeInstaller{}
+	diagnostics := &fakeDoctor{reports: []doctor.Report{readyReport(), readyReport()}}
+	snapshots := &fakeSnapshots{}
+	commands := &fakeCommands{}
+	service := testService(installer, diagnostics, snapshots, commands)
+
+	opts := testOptions(false)
+	opts.Deployment.Listen = "0.0.0.0:7840"
+	opts.Deployment.ListenExplicit = true
+
+	_, err := service.Apply(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if len(installer.calls) != 2 {
+		t.Fatalf("installer calls = %d, want 2", len(installer.calls))
+	}
+	for index, call := range installer.calls {
+		if call.Listen != "0.0.0.0:7840" || !call.ListenExplicit {
+			t.Fatalf("installer call %d lost explicit listen migration: %+v", index, call)
+		}
+	}
+}
+
 func TestApplyBlocksOnDoctorPreflight(t *testing.T) {
 	installer := &fakeInstaller{}
 	diagnostics := &fakeDoctor{reports: []doctor.Report{blockedReport()}}
