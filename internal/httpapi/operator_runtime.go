@@ -22,6 +22,8 @@ type runtimeCommandRequest struct {
 	RequestID            string  `json:"request_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
+	Force                bool    `json:"force"`
+	Confirm              string  `json:"confirm"`
 }
 
 type runtimeEmergencyBlackoutRequest struct {
@@ -111,6 +113,20 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				return
 			}
 		}
+		if body.Force {
+			if strings.TrimSpace(body.Confirm) != "FORCE_EXIT_WITHOUT_BLACKOUT" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+				return
+			}
+			result := runtime.ForceStopSession(r.Context(), runtimecontrol.StopRequest{
+				SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
+			})
+			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
+				"forced": true,
+				"safety_bypassed": true,
+			})
+			return
+		}
 		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
@@ -156,6 +172,31 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
+	}))
+
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/project-blackout", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		var body runtimeEmergencyBlackoutRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		requiredConfirmation := "CLEAR"
+		if body.Enabled {
+			requiredConfirmation = "BLACKOUT"
+		}
+		if strings.TrimSpace(body.Confirm) != requiredConfirmation {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		result := runtime.ProjectBlackout(r.Context(), runtimecontrol.ProjectEmergencyRequest{
+			ProjectID: r.PathValue("project_id"),
+			Issuer: session.User.ID,
+			RequestID: strings.TrimSpace(body.RequestID),
+			Enabled: body.Enabled,
+		})
+		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
+			"sessionless": true,
+			"managed_output_blackout": body.Enabled,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/emergency-blackout", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
