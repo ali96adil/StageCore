@@ -13,6 +13,8 @@ cd stagecore-linux-arm64   # or stagecore-linux-amd64
 
 The wrapper uses `sudo` when required and delegates to `stagecore-setup install`.
 
+Fresh production installs listen for the authenticated Operator UI on `0.0.0.0:7840`, so the Pi remains reachable from the Stage LAN even when the router/subnet changes. The installer still performs readiness checks through loopback on the Pi itself. Do not expose port 7840 to the public Internet or forward it from the Stage router.
+
 Default fresh-host layout:
 
 ```text
@@ -49,6 +51,14 @@ This installs the binaries/config/unit, reloads systemd and enables `stagecore-h
 
 A repeated installation preserves an existing `/etc/stagecore/stagecore.env` by default. StageCore adopts the Data Root, Vault Root, listen address and OSC plugin path from that existing configuration for service sandbox/readiness behavior.
 
+To migrate an existing loopback-only Pi to Stage-LAN Operator access without replacing unrelated settings, explicitly set only the listen address:
+
+```bash
+./install.sh --listen 0.0.0.0:7840
+```
+
+When `--listen` is explicitly supplied and an environment file already exists, the installer updates only `STAGECORE_LISTEN`; existing OSC/MTC and other environment entries are preserved. This is a one-time deployment migration. Afterward systemd starts the Hub automatically on every boot.
+
 It does **not** delete Project data, the SQLite database, security state, history, Notes, Vault objects or other authoritative contents.
 
 To deliberately replace the environment file with values from installer flags:
@@ -67,7 +77,7 @@ Review the existing configuration first. `--replace-config` is explicit because 
   --config-root /etc/stagecore \
   --data-root /var/lib/stagecore/data \
   --vault-root /var/lib/stagecore/vault \
-  --listen 127.0.0.1:7840 \
+  --listen 0.0.0.0:7840 \
   --service-user stagecore \
   --service-group stagecore
 ```

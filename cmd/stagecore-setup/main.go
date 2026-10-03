@@ -60,6 +60,12 @@ func runInstall(args []string) {
 		fmt.Fprintf(os.Stderr, "stagecore-setup install: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
 		os.Exit(2)
 	}
+	listenExplicit := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "listen" {
+			listenExplicit = true
+		}
+	})
 
 	opts := deployment.Options{
 		BundleDir:        strings.TrimSpace(*bundle),
@@ -70,6 +76,7 @@ func runInstall(args []string) {
 		ServiceUser:      strings.TrimSpace(*serviceUser),
 		ServiceGroup:     strings.TrimSpace(*serviceGroup),
 		Listen:           strings.TrimSpace(*listen),
+		ListenExplicit:   listenExplicit,
 		SystemdUnit:      strings.TrimSpace(*unitPath),
 		ReplaceConfig:    *replaceConfig,
 		NoStart:          *noStart,

@@ -28,7 +28,7 @@ const (
 	DefaultVaultRoot   = "/var/lib/stagecore/vault"
 	DefaultServiceUser = "stagecore"
 	DefaultServiceGroup = "stagecore"
-	DefaultListen      = "127.0.0.1:7840"
+	DefaultListen      = "0.0.0.0:7840"
 	DefaultUnitPath    = "/etc/systemd/system/stagecore-hub.service"
 	checksumFileName   = "SHA256SUMS"
 )
@@ -49,6 +49,7 @@ type Options struct {
 	ServiceUser    string
 	ServiceGroup   string
 	Listen         string
+	ListenExplicit bool
 	SystemdUnit    string
 	ReplaceConfig  bool
 	NoStart        bool
@@ -60,6 +61,7 @@ type Result struct {
 	Effective       Options
 	Actions         []string
 	ConfigPreserved bool
+	ListenUpdated   bool
 	ReadinessURL    string
 }
 
@@ -154,16 +156,32 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	)
 
 	envPath := filepath.Join(effective.ConfigRoot, "stagecore.env")
+	var preservedEnvironment []byte
 	if !effective.ReplaceConfig {
 		if existing, readErr := os.ReadFile(envPath); readErr == nil {
+			requestedListen := effective.Listen
+			listenExplicit := effective.ListenExplicit
 			adopted, adoptErr := adoptExistingConfig(effective, existing)
 			if adoptErr != nil {
 				return Result{}, fmt.Errorf("preserve existing %s: %w (use --replace-config only after reviewing the existing deployment configuration)", envPath, adoptErr)
 			}
 			effective = adopted
-			result.Effective = effective
+			effective.ListenExplicit = listenExplicit
 			result.ConfigPreserved = true
-			result.Actions = append(result.Actions, fmt.Sprintf("preserve existing deployment configuration %s", envPath))
+			if listenExplicit && requestedListen != adopted.Listen {
+				updated, updateErr := replaceEnvironmentValue(existing, "STAGECORE_LISTEN", requestedListen)
+				if updateErr != nil {
+					return Result{}, fmt.Errorf("update existing StageCore listen address: %w", updateErr)
+				}
+				preservedEnvironment = updated
+				effective.Listen = requestedListen
+				result.ListenUpdated = true
+				result.Actions = append(result.Actions,
+					fmt.Sprintf("preserve existing deployment configuration %s and update only STAGECORE_LISTEN", envPath))
+			} else {
+				result.Actions = append(result.Actions, fmt.Sprintf("preserve existing deployment configuration %s", envPath))
+			}
+			result.Effective = effective
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return Result{}, fmt.Errorf("read existing deployment configuration %s: %w", envPath, readErr)
 		} else {
@@ -230,6 +248,10 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 		content := []byte(RenderEnvironment(effective))
 		if err := writeFileAtomic(envPath, content, 0o640); err != nil {
 			return Result{}, fmt.Errorf("write deployment configuration: %w", err)
+		}
+	} else if result.ListenUpdated {
+		if err := writeFileAtomic(envPath, preservedEnvironment, 0o640); err != nil {
+			return Result{}, fmt.Errorf("update deployment listen address: %w", err)
 		}
 	}
 	unit := []byte(RenderSystemdUnit(effective))
@@ -467,6 +489,30 @@ func adoptExistingConfig(opts Options, content []byte) (Options, error) {
 		return Options{}, fmt.Errorf("existing STAGECORE_OSC_PLUGIN_PATH %q is outside managed binary directory %q", values["STAGECORE_OSC_PLUGIN_PATH"], expectedBinDir)
 	}
 	return normalizeOptions(opts)
+}
+
+func replaceEnvironmentValue(content []byte, key, value string) ([]byte, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, fmt.Errorf("environment key is required")
+	}
+	lines := strings.Split(string(content), "\n")
+	found := false
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		name, _, ok := strings.Cut(trimmed, "=")
+		if !ok || strings.TrimSpace(name) != key {
+			continue
+		}
+		lines[index] = key + "=" + value
+		found = true
+	}
+	if !found {
+		return nil, fmt.Errorf("existing configuration is missing %s", key)
+	}
+	return []byte(strings.Join(lines, "\n")), nil
 }
 
 func parseEnvironment(content []byte) (map[string]string, error) {
