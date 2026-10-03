@@ -144,7 +144,21 @@
         </label>
         <label class="check-row"><input id="cueEnabled" type="checkbox" checked> Enabled</label>
       </div>
-      <label>Execution policy (JSON)<textarea id="cueExecutionPolicy" class="mono" rows="3">{}</textarea></label>
+      <section class="card cue-link-editor">
+        <div class="section-title-row">
+          <div>
+            <p class="eyebrow">CUE GROUP</p>
+            <h3>Run together with</h3>
+          </div>
+          <span class="pill neutral">TOGETHER</span>
+        </div>
+        <p class="muted">Selected Cues become children of this Cue. They run together as one composite Cue, are skipped by normal GO, and can still be tested individually.</p>
+        <div id="linkedCuesEditor" class="linked-cues-editor"></div>
+      </section>
+      <details class="card">
+        <summary>Advanced execution policy</summary>
+        <label>Execution policy (JSON)<textarea id="cueExecutionPolicy" class="mono" rows="3">{}</textarea></label>
+      </details>
       <label>Notes summary<textarea id="cueNotes" rows="2"></textarea></label>
 
       <div class="section-title-row">
