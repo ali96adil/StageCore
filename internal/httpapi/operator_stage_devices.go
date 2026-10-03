@@ -100,6 +100,21 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_TARGET_INVALID"})
 				return
 			}
+			var manifest struct {
+				LightingNodes []struct {
+					DeviceID string `json:"device_id"`
+				} `json:"lighting_nodes"`
+			}
+			if err := json.Unmarshal(snapshot.Manifest, &manifest); err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_MANIFEST_INVALID"})
+				return
+			}
+			targetLighting := make(map[string]bool, len(manifest.LightingNodes))
+			for _, binding := range manifest.LightingNodes {
+				if deviceID := strings.TrimSpace(binding.DeviceID); deviceID != "" {
+					targetLighting[deviceID] = true
+				}
+			}
 
 			token, ok := browserSessionToken(r)
 			if !ok {
@@ -130,14 +145,43 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_INVENTORY_FAILED"})
 				return
 			}
+			// A failed Lighting rebind can intentionally leave the node UNASSIGNED.
+			// Include target Lighting identities from global Hub inventory so a
+			// retry can resume from that fail-closed state.
+			seen := make(map[string]bool, len(items))
+			for _, device := range items {
+				seen[device.ID] = true
+			}
+			if len(targetLighting) != 0 {
+				global, globalErr := devices.ListDevices(r.Context(), "")
+				if globalErr != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_GLOBAL_INVENTORY_FAILED"})
+					return
+				}
+				for _, device := range global {
+					if !seen[device.ID] && targetLighting[device.ID] {
+						items = append(items, device)
+						seen[device.ID] = true
+					}
+				}
+			}
 			results := make([]runtimeSnapshotDeviceSyncResult, 0)
 			complete := true
 			for _, device := range items {
 				if !device.Enabled || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
-					device.Assignment == nil || device.Assignment.ProjectID != projectID {
+					device.Assignment == nil {
 					continue
 				}
 				assignment := *device.Assignment
+				isTablet := device.Kind == deviceexperience.DeviceTabletPlayer &&
+					device.ProfileID == deviceexperience.TabletPlayerProfileID
+				isTargetLighting := device.ProfileID == lightingnode.ProfileID && targetLighting[device.ID]
+				if !isTablet && !isTargetLighting {
+					continue
+				}
+				if isTablet && assignment.ProjectID != projectID {
+					continue
+				}
 				result := runtimeSnapshotDeviceSyncResult{
 					DeviceID: device.ID, DisplayName: device.DisplayName,
 					DeviceKind: string(device.Kind), ProfileID: device.ProfileID,
@@ -196,9 +240,9 @@ func WithOperatorStageDevices(
 					result.Status = "SYNCED"
 					results = append(results, result)
 
-				case device.ProfileID == lightingnode.ProfileID:
-					if assignment.State != "ACTIVE" || assignment.RuntimeSnapshotID == "" {
-						result.Detail = "Lighting Node is not ACTIVE on an authoritative source Runtime Snapshot."
+				case isTargetLighting:
+					if assignment.ProjectID != "" && assignment.ProjectID != projectID {
+						result.Detail = "Lighting Node is assigned to another Project and will not be moved automatically."
 						complete = false
 						results = append(results, result)
 						continue
@@ -214,6 +258,8 @@ func WithOperatorStageDevices(
 					}
 					if rebind.Reassign != nil {
 						result.AssignmentEpoch = rebind.Reassign.ToEpoch
+					} else if rebind.Activation != nil {
+						result.AssignmentEpoch = rebind.Activation.AssignmentEpoch
 					}
 					result.Status = "SYNCED"
 					results = append(results, result)
