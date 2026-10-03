@@ -40,6 +40,12 @@ func runUpdate(args []string) {
 		fmt.Fprintf(os.Stderr, "stagecore-setup update: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
 		os.Exit(2)
 	}
+	listenExplicit := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "listen" {
+			listenExplicit = true
+		}
+	})
 	if *readinessTimeout < time.Second {
 		fatal(fmt.Errorf("readiness timeout must be at least 1s"))
 	}
@@ -54,6 +60,7 @@ func runUpdate(args []string) {
 			ServiceUser:      strings.TrimSpace(*serviceUser),
 			ServiceGroup:     strings.TrimSpace(*serviceGroup),
 			Listen:           strings.TrimSpace(*listen),
+			ListenExplicit:   listenExplicit,
 			SystemdUnit:      strings.TrimSpace(*unitPath),
 			ReadinessTimeout: *readinessTimeout,
 		},

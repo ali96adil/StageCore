@@ -73,6 +73,14 @@ To migrate an existing loopback-only Pi to Stage-LAN Operator access without rep
 
 When `--listen` is explicitly supplied and an environment file already exists, the installer updates only `STAGECORE_LISTEN`; existing OSC/MTC and other environment entries are preserved. This is a one-time deployment migration. Afterward systemd starts the Hub automatically on every boot.
 
+For an existing deployment being upgraded, the same migration can be included inside the transactional update/rollback path:
+
+```bash
+sudo ./stagecore-setup update --bundle . --listen 0.0.0.0:7840
+```
+
+The explicit listen change is then covered by the update cold snapshot and automatic rollback together with the candidate binaries.
+
 It does **not** delete Project data, the SQLite database, security state, history, Notes, Vault objects or other authoritative contents.
 
 To deliberately replace the environment file with values from installer flags:
