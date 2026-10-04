@@ -528,20 +528,25 @@ func TestTabletSettingsCapabilityClassification(t *testing.T) {
 }
 
 
-func TestTabletSettingsRemainOperatorOnlyNotCueBuilderCapabilities(t *testing.T) {
+func TestTabletCueSettingsCapabilityClassification(t *testing.T) {
 	for _, capability := range []string{
 		deviceexperience.CapabilityTabletBrightnessSet,
-		deviceexperience.CapabilityTabletShowModeSet,
 		deviceexperience.CapabilityTabletVideoScaleSet,
 		deviceexperience.CapabilityTabletOrientationSet,
 		deviceexperience.CapabilityTabletLiveRotationSet,
 	} {
-		if strings.HasPrefix(capability, "tablet.media.") {
-			t.Fatalf("settings capability %q unexpectedly entered media Cue namespace", capability)
+		if !tabletCueCapability(capability) {
+			t.Fatalf("cue-safe Tablet setting capability %q was rejected", capability)
 		}
 		if !tabletRuntimeCapability(capability) {
-			t.Fatalf("settings capability %q unavailable to direct Tablet runtime", capability)
+			t.Fatalf("cue-safe Tablet setting capability %q unavailable to direct runtime", capability)
 		}
+	}
+	if tabletCueCapability(deviceexperience.CapabilityTabletShowModeSet) {
+		t.Fatal("Show Mode must remain Operator-only and not become a Cue action")
+	}
+	if !tabletCueCapability(deviceexperience.CapabilityTabletPlay) {
+		t.Fatal("existing Tablet media Cue capability was rejected")
 	}
 }
 
