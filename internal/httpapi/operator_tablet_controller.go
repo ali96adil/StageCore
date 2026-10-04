@@ -606,7 +606,7 @@ func WithOperatorTabletController(
 			}
 			input.CommandType = strings.TrimSpace(input.CommandType)
 			capability := deviceexperience.RequiredCapability(input.CommandType)
-			if capability == "" || !strings.HasPrefix(capability, "tablet.media.") {
+			if capability == "" || !tabletCueCapability(capability) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
@@ -1021,6 +1021,14 @@ func tabletRuntimeCapability(capability string) bool {
 	return strings.HasPrefix(capability, "tablet.media.") ||
 		capability == deviceexperience.CapabilityTabletBrightnessSet ||
 		capability == deviceexperience.CapabilityTabletShowModeSet ||
+		capability == deviceexperience.CapabilityTabletVideoScaleSet ||
+		capability == deviceexperience.CapabilityTabletOrientationSet ||
+		capability == deviceexperience.CapabilityTabletLiveRotationSet
+}
+
+func tabletCueCapability(capability string) bool {
+	return strings.HasPrefix(capability, "tablet.media.") ||
+		capability == deviceexperience.CapabilityTabletBrightnessSet ||
 		capability == deviceexperience.CapabilityTabletVideoScaleSet ||
 		capability == deviceexperience.CapabilityTabletOrientationSet ||
 		capability == deviceexperience.CapabilityTabletLiveRotationSet
