@@ -380,6 +380,8 @@
       ["TABLET_PREPARE", t("prepare")], ["TABLET_PLAY", t("play")], ["TABLET_PAUSE", t("pause")], ["TABLET_STOP", t("stop")],
       ["TABLET_OVERLAY_PLAY", t("overlayPlay")], ["TABLET_OVERLAY_CLEAR", t("overlayClear")],
       ["TABLET_LIVE_SHOW", t("liveShow")], ["TABLET_LIVE_HIDE", t("liveHide")],
+      ["TABLET_BRIGHTNESS_SET", t("brightnessSet")], ["TABLET_ORIENTATION_SET", t("applyOrientation")],
+      ["TABLET_VIDEO_SCALE_SET", t("applyScale")], ["TABLET_LIVE_ROTATION_SET", t("applyRotation")],
       ["TABLET_BLACKOUT", t("blackoutOn")], ["TABLET_BLACKOUT_CLEAR", t("blackoutOff")],
     ];
     return options.map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("");
@@ -703,6 +705,22 @@
       const key = document.getElementById("tabletLiveKey")?.value.trim() || "";
       if (!key) throw new Error(t("needLiveKey"));
       return { media_key: key };
+    }
+    if (command === "TABLET_BRIGHTNESS_SET") {
+      const percent = Number(document.getElementById("tabletBrightnessPercent")?.value || 0);
+      if (!Number.isInteger(percent) || percent < 5 || percent > 100) {
+        throw new Error("Brightness must be between 5 and 100.");
+      }
+      return { brightness_percent: percent };
+    }
+    if (command === "TABLET_ORIENTATION_SET") {
+      return { orientation_mode: document.getElementById("tabletOrientationMode")?.value || "AUTO" };
+    }
+    if (command === "TABLET_VIDEO_SCALE_SET") {
+      return { video_scale_mode: document.getElementById("tabletVideoScaleMode")?.value || "FIT" };
+    }
+    if (command === "TABLET_LIVE_ROTATION_SET") {
+      return { live_rotation_degrees: Number(document.getElementById("tabletLiveRotationDegrees")?.value || 0) };
     }
     return {};
   }
