@@ -687,6 +687,7 @@ function renderLinkedCuesEditor(cue) {
   const candidates = (state.cues || []).filter((item) => item.cue_id !== currentID);
   if (!candidates.length) {
     host.innerHTML = '<p class="muted">Create another Cue first, then you can link it here.</p>';
+    updateLinkedCuesEditorState();
     return;
   }
   host.innerHTML = candidates.map((item) => {
@@ -998,6 +999,8 @@ async function renderRuntime(startPolling = false) {
   const next = runtime.next_cue;
   const runtimeCues = runtime.cues || [];
   const runtimeCueParents = cueParentMapFor(runtimeCues);
+  const currentCue = current ? (cueInList(runtimeCues, current.cue_id) || current) : null;
+  const nextCue = next ? (cueInList(runtimeCues, next.cue_id) || next) : null;
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
   const emergencyBlackout = !!runtime.managed_output_blackout;
@@ -1014,11 +1017,11 @@ async function renderRuntime(startPolling = false) {
         <div>
           <p class="eyebrow">CURRENT CUE</p>
           <div class="current">${current ? `${esc(current.display_label)} · ${esc(current.name)}` : "—"}</div>
-          ${current ? `<div class="runtime-cue-links">${renderCueRelationship(current, runtimeCues, runtimeCueParents, true)}</div>` : ""}
+          ${currentCue ? `<div class="runtime-cue-links">${renderCueRelationship(currentCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
         </div>
         <div class="next">
           <strong>Next:</strong> ${next ? `${esc(next.display_label)} · ${esc(next.name)}` : "—"}
-          ${next ? `<div class="runtime-cue-links compact">${renderCueRelationship(next, runtimeCues, runtimeCueParents, true)}</div>` : ""}
+          ${nextCue ? `<div class="runtime-cue-links compact">${renderCueRelationship(nextCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
         </div>
       </section>
       <section class="runtime-controls">
