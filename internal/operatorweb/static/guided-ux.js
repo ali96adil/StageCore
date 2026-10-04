@@ -480,6 +480,10 @@ function f002TabletCommandOptions() {
     ["TABLET_OVERLAY_CLEAR", "Clear overlay"],
     ["TABLET_LIVE_SHOW", "Show live"],
     ["TABLET_LIVE_HIDE", "Hide live"],
+    ["TABLET_BRIGHTNESS_SET", "Set brightness"],
+    ["TABLET_ORIENTATION_SET", "Set orientation"],
+    ["TABLET_VIDEO_SCALE_SET", "Set video scale"],
+    ["TABLET_LIVE_ROTATION_SET", "Set Live rotation"],
     ["TABLET_BLACKOUT", "Blackout"],
     ["TABLET_BLACKOUT_CLEAR", "Clear blackout"],
   ];
@@ -567,6 +571,22 @@ function f002RenderTabletParameterFields(composer) {
     });
     return;
   }
+  if (command === "TABLET_BRIGHTNESS_SET") {
+    host.innerHTML = `<div class="form-grid two"><label>Brightness %<input id="f002TabletBrightness" type="number" min="5" max="100" step="1" value="100"></label></div>`;
+    return;
+  }
+  if (command === "TABLET_ORIENTATION_SET") {
+    host.innerHTML = `<div class="form-grid two"><label>Orientation<select id="f002TabletOrientation"><option value="AUTO">AUTO</option><option value="PORTRAIT">PORTRAIT</option><option value="LANDSCAPE">LANDSCAPE</option></select></label></div>`;
+    return;
+  }
+  if (command === "TABLET_VIDEO_SCALE_SET") {
+    host.innerHTML = `<div class="form-grid two"><label>Video scale<select id="f002TabletVideoScale"><option value="FIT">FIT</option><option value="CROP">CROP</option><option value="FULL">FULL</option></select></label></div>`;
+    return;
+  }
+  if (command === "TABLET_LIVE_ROTATION_SET") {
+    host.innerHTML = `<div class="form-grid two"><label>Live rotation<select id="f002TabletLiveRotation"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label></div>`;
+    return;
+  }
   host.innerHTML = `<p class="muted">This Tablet command does not require parameters.</p>`;
 }
 
@@ -604,6 +624,20 @@ function f002TabletVisualPayload(composer, command) {
     const mediaKey = composer.querySelector("#f002TabletLiveKey")?.value.trim() || "";
     if (!mediaKey) throw new Error("Enter a Live media key.");
     return { media_key: mediaKey };
+  }
+  if (command === "TABLET_BRIGHTNESS_SET") {
+    const value = Number(composer.querySelector("#f002TabletBrightness")?.value || 0);
+    if (!Number.isInteger(value) || value < 5 || value > 100) throw new Error("Brightness must be 5–100%.");
+    return { brightness_percent: value };
+  }
+  if (command === "TABLET_ORIENTATION_SET") {
+    return { orientation_mode: composer.querySelector("#f002TabletOrientation")?.value || "AUTO" };
+  }
+  if (command === "TABLET_VIDEO_SCALE_SET") {
+    return { video_scale_mode: composer.querySelector("#f002TabletVideoScale")?.value || "FIT" };
+  }
+  if (command === "TABLET_LIVE_ROTATION_SET") {
+    return { live_rotation_degrees: Number(composer.querySelector("#f002TabletLiveRotation")?.value || 0) };
   }
   return {};
 }
