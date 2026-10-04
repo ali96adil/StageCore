@@ -38,3 +38,29 @@ func TestTabletAuthoringOrdersScenesAcrossAllRevisionCues(t *testing.T) {
 		t.Fatal("tablet scene order cannot be allocated from the filtered tablet-scene list")
 	}
 }
+
+
+func TestTabletAuthoringSupportsCueStoredDisplaySettings(t *testing.T) {
+	js := string(mustReadOperatorContractFile(t, "static/tablet-authoring.js"))
+	for _, marker := range []string{
+		"TABLET_BRIGHTNESS_SET",
+		"TABLET_ORIENTATION_SET",
+		"TABLET_VIDEO_SCALE_SET",
+		"TABLET_LIVE_ROTATION_SET",
+		"tablet-param-brightness",
+		"tablet-param-orientation",
+		"tablet-param-scale",
+		"tablet-param-live-rotation",
+		"brightness_percent",
+		"orientation_mode",
+		"video_scale_mode",
+		"live_rotation_degrees",
+	} {
+		if !strings.Contains(js, marker) {
+			t.Fatalf("tablet scene settings authoring missing contract marker %q", marker)
+		}
+	}
+	if strings.Contains(js, "TABLET_SHOW_MODE_SET", "") {
+		t.Fatal("Show Mode must remain outside Tablet Scene Cue authoring")
+	}
+}
