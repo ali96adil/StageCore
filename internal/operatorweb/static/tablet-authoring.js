@@ -9,6 +9,8 @@
       back: "Back", save: "Save scene", name: "Scene name", label: "Label", addAction: "Add tablet action", tablet: "Tablet", operation: "Layer / action",
       mainPrepare: "Main · Prepare", mainPlay: "Main · Play", mainPause: "Main · Pause", mainStop: "Main · Stop",
       overlayPlay: "Overlay · Play", overlayClear: "Overlay · Clear", liveShow: "Live · Show", liveHide: "Live · Hide",
+      brightness: "Settings · Brightness", orientation: "Settings · Orientation", videoScale: "Settings · Video scale", liveRotation: "Settings · Live rotation",
+      brightnessPercent: "Brightness %", orientationMode: "Orientation", videoScaleMode: "Video scale", liveRotationDegrees: "Live rotation",
       blackout: "Screen · Blackout", blackoutClear: "Screen · Clear blackout", mediaNumber: "Media number", tabletCue: "Tablet Cue ID", contentMode: "Content", media: "Media number", cue: "Tablet Cue ID", loopPlayback: "Loop", endBehavior: "When video ends", endHold: "Hold last frame", endBlackout: "Cut to black", endClear: "Clear video", liveMode: "Live source type", liveByKey: "Media key", liveByURL: "Direct URL", liveKey: "Live media key", liveURL: "Live URL", liveFlash: "Use camera flash for this Live", dissolve: "Dissolve (ms)", clear: "Clear action", deleteAction: "Remove action", emptyAction: "Add at least one tablet action.", chooseTablet: "Choose a tablet for every action.", needCueID: "Enter a Tablet Cue ID.", needLiveKey: "Enter a live media key.", needLiveURL: "Enter an absolute HTTP(S) live URL.", saved: "Tablet Scene saved.", duplicated: "Tablet Scene duplicated.", deleted: "Tablet Scene removed.", reordered: "Tablet Scene order updated.", confirmDelete: "Remove this Tablet Scene?", readonly: "You do not have permission to edit project cues.",
     },
     ar: {
@@ -18,6 +20,8 @@
       back: "رجوع", save: "حفظ المشهد", name: "اسم المشهد", label: "الرمز", addAction: "إضافة أمر تابلت", tablet: "التابلت", operation: "الطبقة / الأمر",
       mainPrepare: "Main · تهيئة", mainPlay: "Main · تشغيل", mainPause: "Main · إيقاف مؤقت", mainStop: "Main · إيقاف",
       overlayPlay: "Overlay · تشغيل", overlayClear: "Overlay · مسح", liveShow: "Live · إظهار", liveHide: "Live · إخفاء",
+      brightness: "الإعدادات · السطوع", orientation: "الإعدادات · الاتجاه", videoScale: "الإعدادات · حجم الفيديو", liveRotation: "الإعدادات · دوران Live",
+      brightnessPercent: "السطوع %", orientationMode: "الاتجاه", videoScaleMode: "حجم الفيديو", liveRotationDegrees: "دوران Live",
       blackout: "الشاشة · Blackout", blackoutClear: "الشاشة · إلغاء Blackout", mediaNumber: "رقم الميديا", tabletCue: "Tablet Cue ID", contentMode: "المحتوى", media: "رقم الميديا", cue: "Tablet Cue ID", loopPlayback: "تكرار Loop", endBehavior: "عند انتهاء الفيديو", endHold: "تثبيت آخر فريم", endBlackout: "Cut to Black", endClear: "إخفاء الفيديو", liveMode: "نوع مصدر البث", liveByKey: "Media key", liveByURL: "رابط مباشر", liveKey: "Live media key", liveURL: "رابط البث", liveFlash: "تشغيل فلاش الكاميرا لهذا الـLive", dissolve: "Dissolve (ms)", clear: "Clear", deleteAction: "حذف الأمر", emptyAction: "أضف أمر تابلت واحد على الأقل.", chooseTablet: "اختار تابلت لكل أمر.", needCueID: "دخل Tablet Cue ID.", needLiveKey: "دخل Live media key.", needLiveURL: "دخل رابط HTTP(S) كامل للبث.", saved: "تم حفظ Tablet Scene.", duplicated: "تم نسخ Tablet Scene.", deleted: "تم حذف Tablet Scene.", reordered: "تم تحديث ترتيب Tablet Scenes.", confirmDelete: "تحذف هذا الـ Tablet Scene؟", readonly: "ما عندك صلاحية تعديل كيوهات المشروع.",
     },
   };
@@ -26,6 +30,8 @@
     ["TABLET_PREPARE", "mainPrepare"], ["TABLET_PLAY", "mainPlay"],
     ["TABLET_PAUSE", "mainPause"], ["TABLET_STOP", "mainStop"], ["TABLET_OVERLAY_PLAY", "overlayPlay"],
     ["TABLET_OVERLAY_CLEAR", "overlayClear"], ["TABLET_LIVE_SHOW", "liveShow"], ["TABLET_LIVE_HIDE", "liveHide"],
+    ["TABLET_BRIGHTNESS_SET", "brightness"], ["TABLET_ORIENTATION_SET", "orientation"],
+    ["TABLET_VIDEO_SCALE_SET", "videoScale"], ["TABLET_LIVE_ROTATION_SET", "liveRotation"],
     ["TABLET_BLACKOUT", "blackout"], ["TABLET_BLACKOUT_CLEAR", "blackoutClear"],
   ];
 
@@ -50,6 +56,10 @@
     if (p.media_key) return `${tx("liveKey")}: ${p.media_key}`;
     if (p.url) return `${tx("liveURL")}: ${p.url}`;
     if (p.dissolve_ms != null) return `${tx("dissolve")}: ${p.dissolve_ms}`;
+    if (p.brightness_percent != null) return `${tx("brightnessPercent")}: ${p.brightness_percent}`;
+    if (p.orientation_mode) return `${tx("orientationMode")}: ${p.orientation_mode}`;
+    if (p.video_scale_mode) return `${tx("videoScaleMode")}: ${p.video_scale_mode}`;
+    if (p.live_rotation_degrees != null) return `${tx("liveRotationDegrees")}: ${p.live_rotation_degrees}°`;
     return tx("clear");
   }
 
@@ -198,6 +208,25 @@
       });
       return;
     }
+    if (command === "TABLET_BRIGHTNESS_SET") {
+      host.innerHTML = `<label>${esc(tx("brightnessPercent"))}<input class="tablet-param-brightness" type="number" min="5" max="100" step="1" value="${Number(params.brightness_percent ?? 100)}"></label>`;
+      return;
+    }
+    if (command === "TABLET_ORIENTATION_SET") {
+      const value = String(params.orientation_mode || "AUTO").toUpperCase();
+      host.innerHTML = `<label>${esc(tx("orientationMode"))}<select class="tablet-param-orientation"><option value="AUTO" ${value === "AUTO" ? "selected" : ""}>AUTO</option><option value="PORTRAIT" ${value === "PORTRAIT" ? "selected" : ""}>PORTRAIT</option><option value="LANDSCAPE" ${value === "LANDSCAPE" ? "selected" : ""}>LANDSCAPE</option></select></label>`;
+      return;
+    }
+    if (command === "TABLET_VIDEO_SCALE_SET") {
+      const value = String(params.video_scale_mode || "FIT").toUpperCase();
+      host.innerHTML = `<label>${esc(tx("videoScaleMode"))}<select class="tablet-param-scale"><option value="FIT" ${value === "FIT" ? "selected" : ""}>FIT</option><option value="CROP" ${value === "CROP" ? "selected" : ""}>CROP</option><option value="FULL" ${value === "FULL" ? "selected" : ""}>FULL</option></select></label>`;
+      return;
+    }
+    if (command === "TABLET_LIVE_ROTATION_SET") {
+      const value = Number(params.live_rotation_degrees ?? 0);
+      host.innerHTML = `<label>${esc(tx("liveRotationDegrees"))}<select class="tablet-param-live-rotation"><option value="0" ${value === 0 ? "selected" : ""}>0°</option><option value="90" ${value === 90 ? "selected" : ""}>90°</option><option value="180" ${value === 180 ? "selected" : ""}>180°</option><option value="270" ${value === 270 ? "selected" : ""}>270°</option></select></label>`;
+      return;
+    }
     host.innerHTML = `<span class="pill neutral">${esc(tx("clear"))}</span>`;
   }
 
@@ -235,6 +264,20 @@
       const mediaKey = params.querySelector(".tablet-live-key input")?.value.trim() || "";
       if (!mediaKey) throw new Error(tx("needLiveKey"));
       return { media_key: mediaKey };
+    }
+    if (command === "TABLET_BRIGHTNESS_SET") {
+      const value = Number(params.querySelector(".tablet-param-brightness")?.value || 0);
+      if (!Number.isInteger(value) || value < 5 || value > 100) throw new Error("Brightness must be 5–100.");
+      return { brightness_percent: value };
+    }
+    if (command === "TABLET_ORIENTATION_SET") {
+      return { orientation_mode: params.querySelector(".tablet-param-orientation")?.value || "AUTO" };
+    }
+    if (command === "TABLET_VIDEO_SCALE_SET") {
+      return { video_scale_mode: params.querySelector(".tablet-param-scale")?.value || "FIT" };
+    }
+    if (command === "TABLET_LIVE_ROTATION_SET") {
+      return { live_rotation_degrees: Number(params.querySelector(".tablet-param-live-rotation")?.value || 0) };
     }
     return {};
   }
