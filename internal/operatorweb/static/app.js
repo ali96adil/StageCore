@@ -329,13 +329,25 @@ function pill(text, kind = "neutral") {
 }
 
 async function renderDashboard() {
-  const dashboard = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/dashboard`);
+  const projectID = encodeURIComponent(state.project.project_id);
+  const [dashboard, runtime] = await Promise.all([
+    api(`/api/v1/projects/${projectID}/dashboard`),
+    api(`/api/v1/projects/${projectID}/runtime`).catch(() => null),
+  ]);
   state.project = dashboard.project;
   updateWorkspaceProject();
   const published = dashboard.published_snapshot;
   const draft = dashboard.draft_revision;
   const publicationKind = dashboard.unpublished_changes ? "warn" : (published ? "good" : "bad");
   const readinessKind = dashboard.readiness?.status === "PASS" ? "good" : "warn";
+  const dashboardRuntimeCues = runtime?.cues || [];
+  const dashboardCueParents = cueParentMapFor(dashboardRuntimeCues);
+  const dashboardCurrentCue = dashboard.current_cue
+    ? (cueInList(dashboardRuntimeCues, dashboard.current_cue.cue_id) || dashboard.current_cue)
+    : null;
+  const dashboardNextCue = dashboard.next_cue
+    ? (cueInList(dashboardRuntimeCues, dashboard.next_cue.cue_id) || dashboard.next_cue)
+    : null;
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">DASHBOARD</p><h1>${esc(dashboard.project.name)}</h1><p>${esc(dashboard.project.description || "No description")}</p></div>
@@ -344,8 +356,22 @@ async function renderDashboard() {
     <div class="stat-grid">
       <article class="stat"><span class="label">Draft Revision</span><span class="value">r${esc(draft.revision_number)} · ${esc(draft.status)}</span><span class="sub mono">${esc(draft.revision_id)}</span></article>
       <article class="stat"><span class="label">Published Runtime</span><span class="value">${published ? `Snapshot v${esc(published.snapshot_version)}` : "Not Published"}</span><span class="sub mono">${esc(published?.runtime_snapshot_id || "—")}</span></article>
-      <article class="stat"><span class="label">Current Cue</span><span class="value">${dashboard.current_cue ? `${esc(dashboard.current_cue.display_label)} · ${esc(dashboard.current_cue.name)}` : "—"}</span><span class="sub">Mode ${esc(dashboard.mode)}</span></article>
-      <article class="stat"><span class="label">Next Cue</span><span class="value">${dashboard.next_cue ? `${esc(dashboard.next_cue.display_label)} · ${esc(dashboard.next_cue.name)}` : "—"}</span><span class="sub">${dashboard.active_session ? `Session ${esc(dashboard.active_session.type)}` : "No active Session"}</span></article>
+      <article class="stat">
+        <span class="label">Current Cue</span>
+        <span class="value">${dashboard.current_cue ? `${esc(dashboard.current_cue.display_label)} · ${esc(dashboard.current_cue.name)}` : "—"}</span>
+        ${dashboardCurrentCue && renderCueRelationship(dashboardCurrentCue, dashboardRuntimeCues, dashboardCueParents, true)
+          ? `<div class="runtime-cue-links dashboard-cue-links">${renderCueRelationship(dashboardCurrentCue, dashboardRuntimeCues, dashboardCueParents, true)}</div>`
+          : ""}
+        <span class="sub">Mode ${esc(dashboard.mode)}</span>
+      </article>
+      <article class="stat">
+        <span class="label">Next Cue</span>
+        <span class="value">${dashboard.next_cue ? `${esc(dashboard.next_cue.display_label)} · ${esc(dashboard.next_cue.name)}` : "—"}</span>
+        ${dashboardNextCue && renderCueRelationship(dashboardNextCue, dashboardRuntimeCues, dashboardCueParents, true)
+          ? `<div class="runtime-cue-links dashboard-cue-links">${renderCueRelationship(dashboardNextCue, dashboardRuntimeCues, dashboardCueParents, true)}</div>`
+          : ""}
+        <span class="sub">${dashboard.active_session ? `Session ${esc(dashboard.active_session.type)}` : "No active Session"}</span>
+      </article>
       <article class="stat"><span class="label">Readiness</span><span class="value">${pill(dashboard.readiness?.status || "NOT_EVALUATED", readinessKind)}</span><span class="sub">${esc(dashboard.readiness?.note || "")}</span></article>
       <article class="stat"><span class="label">Runtime Results</span><span class="value">${esc(dashboard.runtime_error_count)} errors</span><span class="sub">${esc(dashboard.runtime_warning_count)} warnings</span></article>
     </div>
