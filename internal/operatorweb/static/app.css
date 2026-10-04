@@ -186,6 +186,89 @@ tr:last-child td { border-bottom: 0; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-actions .button { min-height: 30px; padding: 5px 8px; font-size: .73rem; }
 
+/* Linked Cue groups must remain visible at a glance in both edit and runtime surfaces. */
+.cue-link-cell { min-width: 230px; }
+.cue-row-linked td { transition: background-color .12s ease; }
+.cue-row-parent td { background: rgba(102, 179, 255, .055); }
+.cue-row-parent td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
+.cue-row-child td { background: rgba(255, 189, 91, .035); }
+.cue-row-child td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
+.cue-row-parent.cue-row-child td:first-child {
+  box-shadow: inset 4px 0 0 var(--accent), inset 8px 0 0 var(--warn);
+}
+
+.cue-link-status { display: grid; gap: 6px; align-items: start; }
+.cue-link-status + .cue-link-status { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #354151; }
+.cue-link-badge {
+  width: max-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .045em;
+  line-height: 1.1;
+}
+.cue-link-badge-parent { color: #cde7ff; background: rgba(45, 140, 255, .18); border: 1px solid rgba(102, 179, 255, .5); }
+.cue-link-badge-child { color: #ffe0ae; background: rgba(255, 189, 91, .12); border: 1px solid rgba(255, 189, 91, .45); }
+.cue-link-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.cue-link-chip {
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 7px;
+  background: #0f1822;
+  border: 1px solid #314255;
+  color: #dce8f5;
+  font-size: .7rem;
+}
+.cue-link-parent-name { color: #d8c29e; font-size: .72rem; font-weight: 650; }
+.cue-link-none { color: #596777; }
+
+.cue-link-editor { border-color: #35536f; background: linear-gradient(145deg, #15202c, #111820); }
+.linked-cues-editor { display: grid; gap: 8px; margin-top: 12px; }
+.linked-cue-option {
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid #354151;
+  border-radius: 9px;
+  background: #0f141b;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.linked-cue-option:hover:not(.unavailable) { border-color: #4a6a89; background: #121c27; }
+.linked-cue-option.selected {
+  border-color: var(--accent);
+  background: rgba(45, 140, 255, .12);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.linked-cue-option.unavailable:not(.selected) { opacity: .56; }
+.linked-cue-option input { width: auto; }
+.linked-cue-main { min-width: 0; display: grid; gap: 3px; }
+.linked-cue-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-cue-main small { display: block; }
+.linked-cue-checkmark {
+  visibility: hidden;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(45, 140, 255, .2);
+  color: #cde7ff;
+  font-size: .64rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+.linked-cue-option.selected .linked-cue-checkmark { visibility: visible; }
+
+.runtime-cue-links { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; }
+.runtime-cue-links.compact { margin-top: 5px; }
+.runtime-cue-links .cue-link-status { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.runtime-cue-links .cue-link-status + .cue-link-status { margin-top: 0; padding-top: 0; border-top: 0; }
+.runtime-cue-links .cue-link-parent-name { font-size: .76rem; }
+
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 999px; font-size: .7rem; }
 .pill.good { border-color: #275d3a; color: #8be1a7; background: #10291a; }
 .pill.warn { border-color: #6a5125; color: #ffd795; background: #2b2111; }
