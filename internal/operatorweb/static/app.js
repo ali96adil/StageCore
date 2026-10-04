@@ -383,7 +383,6 @@ async function renderCues(message = "", messageKind = "success") {
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
-  const cueNamesByID = new Map((state.cues || []).map((cue) => [cue.cue_id, `${cue.display_label || "—"} · ${cue.name}`]));
   const cueParents = cueParentMap();
 
   content.innerHTML = `
@@ -418,13 +417,14 @@ async function renderCues(message = "", messageKind = "success") {
     </section>
     <div class="table-wrap" style="margin-top:14px">
       <table>
-        <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
+        <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>Group</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
         <tbody>
           ${state.cues.length ? state.cues.map((cue, index) => `
-            <tr>
+            <tr class="${cueRelationshipClass(cue, cueParents)}">
               <td>${esc(cue.order_index)}</td>
               <td>${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small>${cueLinkedIDs(cue).length ? `<br><small class="muted">Runs together: ${cueLinkedIDs(cue).map((id) => esc(cueNamesByID.get(id) || id)).join(" + ")}</small>` : cueParents.has(cue.cue_id) ? `<br><small class="muted">Child of ${esc(cueNamesByID.get(cueParents.get(cue.cue_id)) || cueParents.get(cue.cue_id))}</small>` : ""}</td>
+              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small></td>
+              <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
@@ -437,7 +437,7 @@ async function renderCues(message = "", messageKind = "success") {
                   <button class="button cue-duplicate" data-id="${esc(cue.cue_id)}" type="button">Duplicate</button>
                   <button class="button danger cue-delete" data-id="${esc(cue.cue_id)}" type="button">Delete</button>` : canModify ? `<span class="muted">Create Draft to edit</span>` : `<span class="muted">Read only</span>`}
               </div></td>
-            </tr>`).join("") : `<tr><td colspan="6"><div class="empty">No Cues in this revision.</div></td></tr>`}
+            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
         </tbody>
       </table>
     </div>`;
@@ -588,14 +588,87 @@ function cueLinkedIDs(cue) {
     : [];
 }
 
-function cueParentMap() {
+function cueParentMapFor(cues) {
   const parents = new Map();
-  (state.cues || []).forEach((cue) => {
+  (cues || []).forEach((cue) => {
     cueLinkedIDs(cue).forEach((childID) => {
       if (!parents.has(childID)) parents.set(childID, cue.cue_id);
     });
   });
   return parents;
+}
+
+function cueParentMap() {
+  return cueParentMapFor(state.cues || []);
+}
+
+function cueInList(cues, cueID) {
+  return (cues || []).find((cue) => cue.cue_id === cueID) || null;
+}
+
+function cueDisplayName(cue) {
+  if (!cue) return "Unknown Cue";
+  return `${cue.display_label || "—"} · ${cue.name || "Unnamed Cue"}`;
+}
+
+function cueRelationshipClass(cue, parents) {
+  const isParent = cueLinkedIDs(cue).length > 0;
+  const isChild = parents.has(cue.cue_id);
+  if (isParent && isChild) return "cue-row-linked cue-row-parent cue-row-child";
+  if (isParent) return "cue-row-linked cue-row-parent";
+  if (isChild) return "cue-row-linked cue-row-child";
+  return "";
+}
+
+function cueRelationshipLabel(cue, cues, parents) {
+  if (!cue) return "";
+  const childCount = cueLinkedIDs(cue).length;
+  const parentID = parents.get(cue.cue_id);
+  if (childCount && parentID) return `GROUP +${childCount} · LINKED CHILD`;
+  if (childCount) return `GROUP +${childCount}`;
+  if (parentID) return "LINKED CHILD";
+  return "";
+}
+
+function renderCueRelationship(cue, cues, parents, compact = false) {
+  if (!cue) return "";
+  const children = cueLinkedIDs(cue)
+    .map((cueID) => cueInList(cues, cueID))
+    .filter(Boolean);
+  const parentID = parents.get(cue.cue_id);
+  const parent = parentID ? cueInList(cues, parentID) : null;
+  const parts = [];
+
+  if (children.length) {
+    parts.push(`
+      <div class="cue-link-status cue-link-parent">
+        <span class="cue-link-badge cue-link-badge-parent">GROUP · ${esc(children.length)} LINKED</span>
+        ${compact ? "" : `<div class="cue-link-chips">${children.map((child) => `<span class="cue-link-chip">↳ ${esc(cueDisplayName(child))}</span>`).join("")}</div>`}
+      </div>`);
+  }
+
+  if (parent) {
+    parts.push(`
+      <div class="cue-link-status cue-link-child">
+        <span class="cue-link-badge cue-link-badge-child">LINKED CHILD</span>
+        <span class="cue-link-parent-name">↳ Runs with ${esc(cueDisplayName(parent))}</span>
+      </div>`);
+  }
+
+  return parts.join("");
+}
+
+function updateLinkedCuesEditorState() {
+  const checkboxes = [...document.querySelectorAll("#linkedCuesEditor .linked-cue-checkbox")];
+  const selectedCount = checkboxes.filter((input) => input.checked).length;
+  const count = el("linkedCuesCount");
+  if (count) {
+    count.textContent = selectedCount ? `${selectedCount} LINKED` : "NO LINKS";
+    count.className = `pill ${selectedCount ? "good" : "neutral"}`;
+  }
+  checkboxes.forEach((input) => {
+    input.closest(".linked-cue-option")?.classList.toggle("selected", input.checked);
+  });
 }
 
 function renderLinkedCuesEditor(cue) {
@@ -614,6 +687,7 @@ function renderLinkedCuesEditor(cue) {
   const candidates = (state.cues || []).filter((item) => item.cue_id !== currentID);
   if (!candidates.length) {
     host.innerHTML = '<p class="muted">Create another Cue first, then you can link it here.</p>';
+    updateLinkedCuesEditorState();
     return;
   }
   host.innerHTML = candidates.map((item) => {
@@ -629,11 +703,19 @@ function renderLinkedCuesEditor(cue) {
         : !item.enabled
           ? " · disabled"
           : "";
-    return `<label class="check-row">
+    return `<label class="linked-cue-option ${selected.has(item.cue_id) ? "selected" : ""} ${disabled ? "unavailable" : ""}">
       <input class="linked-cue-checkbox" type="checkbox" value="${esc(item.cue_id)}" ${selected.has(item.cue_id) ? "checked" : ""} ${disabled && !selected.has(item.cue_id) ? "disabled" : ""}>
-      <span><strong>${esc(item.display_label || "—")} · ${esc(item.name)}</strong><small class="muted">${esc(note)}</small></span>
+      <span class="linked-cue-main">
+        <strong>${esc(item.display_label || "—")} · ${esc(item.name)}</strong>
+        ${note ? `<small class="muted">${esc(note)}</small>` : `<small class="muted">Available to run together</small>`}
+      </span>
+      <span class="linked-cue-checkmark">LINKED</span>
     </label>`;
   }).join("");
+  host.querySelectorAll(".linked-cue-checkbox").forEach((input) => {
+    input.addEventListener("change", updateLinkedCuesEditorState);
+  });
+  updateLinkedCuesEditorState();
 }
 
 function linkedCuePolicyFromEditor(basePolicy) {
@@ -915,6 +997,10 @@ async function renderRuntime(startPolling = false) {
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
+  const runtimeCues = runtime.cues || [];
+  const runtimeCueParents = cueParentMapFor(runtimeCues);
+  const currentCue = current ? (cueInList(runtimeCues, current.cue_id) || current) : null;
+  const nextCue = next ? (cueInList(runtimeCues, next.cue_id) || next) : null;
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
   const emergencyBlackout = !!runtime.managed_output_blackout;
@@ -931,8 +1017,12 @@ async function renderRuntime(startPolling = false) {
         <div>
           <p class="eyebrow">CURRENT CUE</p>
           <div class="current">${current ? `${esc(current.display_label)} · ${esc(current.name)}` : "—"}</div>
+          ${currentCue ? `<div class="runtime-cue-links">${renderCueRelationship(currentCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
         </div>
-        <div class="next"><strong>Next:</strong> ${next ? `${esc(next.display_label)} · ${esc(next.name)}` : "—"}</div>
+        <div class="next">
+          <strong>Next:</strong> ${next ? `${esc(next.display_label)} · ${esc(next.name)}` : "—"}
+          ${nextCue ? `<div class="runtime-cue-links compact">${renderCueRelationship(nextCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
+        </div>
       </section>
       <section class="runtime-controls">
         ${!active ? `
@@ -954,7 +1044,10 @@ async function renderRuntime(startPolling = false) {
           <label>Jump to Cue
             <select id="jumpCueSelect">
               <option value="">Select published Cue…</option>
-              ${(runtime.cues || []).map((cue) => `<option value="${esc(cue.cue_id)}">${esc(cue.display_label)} · ${esc(cue.name)}</option>`).join("")}
+              ${runtimeCues.map((cue) => {
+                const relation = cueRelationshipLabel(cue, runtimeCues, runtimeCueParents);
+                return `<option value="${esc(cue.cue_id)}">${relation ? `[${esc(relation)}] · ` : ""}${esc(cue.display_label)} · ${esc(cue.name)}</option>`;
+              }).join("")}
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
