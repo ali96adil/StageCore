@@ -1022,8 +1022,10 @@
   async function renderNetworkCockpit() {
     pageHeader(t("networkTitle"), t("networkSub"), renderNetworkCockpit);
     const payload = await api("/api/v1/network/cockpit");
+    const body = document.getElementById("phase4Body");
+    if (!body || state.page !== "network") return;
     const targets = payload.targets || [];
-    document.getElementById("phase4Body").innerHTML = targets.length
+    body.innerHTML = targets.length
       ? `<div class="phase4-grid">${targets.map(cockpitCard).join("")}</div>`
       : `<div class="phase4-empty">${esc(t("noNetwork"))}</div>`;
   }
