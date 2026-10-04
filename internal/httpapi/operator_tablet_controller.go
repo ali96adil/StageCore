@@ -128,6 +128,23 @@ func tabletRelayHealthURL(rawLiveURL string) (string, error) {
 	return (&url.URL{Scheme: "http", Host: parsed.Host, Path: "/api/v0/health"}).String(), nil
 }
 
+func tabletRelayProbeHealthURL(source *deviceexperience.LiveSource) (string, error) {
+	if source == nil {
+		return "", fmt.Errorf("relay source is required")
+	}
+	healthURL, err := tabletRelayProbeHealthURL(source)
+	if err != nil {
+		return "", err
+	}
+	if source.ID == "stagecore.camera-relay.auto" {
+		// The automatic relay is hosted by this Hub. Keep the advertised
+		// .local/LAN endpoint for Tablets, but probe the local service over
+		// loopback so Hub health does not depend on mDNS resolver support.
+		return "http://127.0.0.1:9081/api/v0/health", nil
+	}
+	return healthURL, nil
+}
+
 func tabletRelaySource(sources []deviceexperience.LiveSource) *deviceexperience.LiveSource {
 	for i := range sources {
 		if _, err := tabletRelayHealthURL(sources[i].EndpointRef); err == nil {
