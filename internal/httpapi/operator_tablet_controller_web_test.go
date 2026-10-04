@@ -31,3 +31,35 @@ func TestOperatorWebBundlesTabletControllerWorkspace(t *testing.T) {
 		}
 	}
 }
+
+
+func TestOperatorTabletControllerBuildsOneCombinedCueAndKeepsSurfaceVisible(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	req.RemoteAddr = "127.0.0.1:19204"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, marker := range []string{
+		"queuedCueActions",
+		"tabletCueQueue",
+		"tabletOpenCombinedCue",
+		"openQueuedTabletCue",
+		"clearQueuedTabletCue",
+		"Action added to the combined Cue.",
+		"Tablet Combined Cue",
+		"command_type: command",
+		"${devices.length ? `<section class=\"tablet-targets card\">",
+		"<div class=\"tablet-control-grid\">",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("combined Tablet Cue/project parity missing %q", marker)
+		}
+	}
+	if strings.Contains(body, "Tablet actions added to a new Draft Cue") {
+		t.Fatal("Tablet Controller still describes every action as a separate new Cue")
+	}
+}
