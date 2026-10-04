@@ -170,6 +170,32 @@ func TestTabletRelayHealthURLUsesBoundedLocalRelayEndpoint(t *testing.T) {
 	}
 }
 
+func TestTabletRelayProbeHealthURLUsesLoopbackForSameHubAutoSource(t *testing.T) {
+	auto := &deviceexperience.LiveSource{
+		ID:          "stagecore.camera-relay.auto",
+		EndpointRef: "http://stagecore-01a04551a301.local:9081/api/v0/stream",
+	}
+	got, err := tabletRelayProbeHealthURL(auto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://127.0.0.1:9081/api/v0/health" {
+		t.Fatalf("auto relay probe url=%q", got)
+	}
+
+	configured := &deviceexperience.LiveSource{
+		ID:          "show-camera",
+		EndpointRef: "http://192.168.3.140:9081/api/v0/stream",
+	}
+	got, err = tabletRelayProbeHealthURL(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://192.168.3.140:9081/api/v0/health" {
+		t.Fatalf("configured relay probe url=%q", got)
+	}
+}
+
 func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
 	if _, ok := tabletAutoRelaySource("project-1", "example.com:7840", time.Now()); ok {
 		t.Fatal("public/untrusted Host must not become an automatic relay URL")
