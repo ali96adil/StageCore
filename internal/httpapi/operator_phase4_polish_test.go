@@ -77,3 +77,24 @@ func TestPhase4LiveVideoUXSupportsEditingAndMachineRolePlacement(t *testing.T) {
 		}
 	}
 }
+
+func TestPhase4NetworkCockpitIgnoresStaleAsyncRender(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	req.RemoteAddr = "127.0.0.1:19108"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("phase4.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, required := range []string{
+		`const body = document.getElementById("phase4Body")`,
+		`if (!body || state.page !== "network") return`,
+		`body.innerHTML = targets.length`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("phase4.js missing stale-render guard %q", required)
+		}
+	}
+}
