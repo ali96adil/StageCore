@@ -60,7 +60,7 @@ func TestTabletAuthoringSupportsCueStoredDisplaySettings(t *testing.T) {
 			t.Fatalf("tablet scene settings authoring missing contract marker %q", marker)
 		}
 	}
-	if strings.Contains(js, "TABLET_SHOW_MODE_SET", "") {
+	if strings.Contains(js, "TABLET_SHOW_MODE_SET") {
 		t.Fatal("Show Mode must remain outside Tablet Scene Cue authoring")
 	}
 }
