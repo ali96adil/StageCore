@@ -132,7 +132,7 @@ func tabletRelayProbeHealthURL(source *deviceexperience.LiveSource) (string, err
 	if source == nil {
 		return "", fmt.Errorf("relay source is required")
 	}
-	healthURL, err := tabletRelayProbeHealthURL(source)
+	healthURL, err := tabletRelayHealthURL(source.EndpointRef)
 	if err != nil {
 		return "", err
 	}
@@ -165,7 +165,7 @@ func probeTabletCameraRelay(ctx context.Context, source *deviceexperience.LiveSo
 	status.RelayStatus = "OFFLINE"
 	status.CameraStatus = "UNKNOWN"
 
-	healthURL, err := tabletRelayHealthURL(source.EndpointRef)
+	healthURL, err := tabletRelayProbeHealthURL(source)
 	if err != nil {
 		status.Detail = err.Error()
 		return status
