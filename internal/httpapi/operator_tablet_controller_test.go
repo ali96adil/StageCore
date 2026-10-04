@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,9 +93,16 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 		WithOperatorTabletController(h.auth, devices, runtime, stageStore),
 	).Handler()
 
-	get := func(host string) []deviceexperience.LiveSource {
+	get := func(host, localIP string) []deviceexperience.LiveSource {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/live-video-sources", nil)
 		req.Host = host
+		if ip := net.ParseIP(localIP); ip != nil {
+			req = req.WithContext(context.WithValue(
+				req.Context(),
+				http.LocalAddrContextKey,
+				&net.TCPAddr{IP: ip, Port: 7842},
+			))
+		}
 		req.RemoteAddr = "127.0.0.1:19201"
 		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
 		res := httptest.NewRecorder()
@@ -111,7 +119,7 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 		return response.Sources
 	}
 
-	sources := get("192.168.3.135:7840")
+	sources := get("stagecore-01a04551a301.local:7842", "192.168.3.135")
 	if len(sources) != 1 {
 		t.Fatalf("sources=%+v", sources)
 	}
@@ -124,7 +132,7 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 	}
 
 	for _, host := range []string{"127.0.0.1:7840", "localhost:7840", "[::1]:7840"} {
-		if loopback := get(host); len(loopback) != 0 {
+		if loopback := get(host, "127.0.0.1"); len(loopback) != 0 {
 			t.Fatalf("loopback Host %q must not advertise Tablet Live relay: %+v", host, loopback)
 		}
 	}
@@ -144,7 +152,7 @@ func TestOperatorTabletControllerLiveSourcesAddsSameHubRelayCandidate(t *testing
 	}
 	// Explicit configuration still wins even when the Operator itself is
 	// opened through loopback; only the unsafe automatic fallback is suppressed.
-	sources = get("127.0.0.1:7840")
+	sources = get("127.0.0.1:7840", "127.0.0.1")
 	if len(sources) != 1 || sources[0].ID != "relay-configured" {
 		t.Fatalf("configured relay must override auto fallback: %+v", sources)
 	}
