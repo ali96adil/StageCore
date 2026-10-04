@@ -134,3 +134,64 @@ func TestOperatorTabletAuthoringExcludesMixedCue(t *testing.T) {
 		t.Fatalf("mixed cue leaked into Tablet Scene editor: %+v", response.Scenes)
 	}
 }
+
+
+func TestTabletSceneProjectionKeepsCueSafeDisplaySettingsEditable(t *testing.T) {
+	capabilities := []struct {
+		capability string
+		command    string
+		parameters json.RawMessage
+	}{
+		{deviceexperience.CapabilityTabletPlay, deviceexperience.CommandTabletPlay, json.RawMessage(`{"media_number":1}`)},
+		{deviceexperience.CapabilityTabletBrightnessSet, deviceexperience.CommandTabletBrightnessSet, json.RawMessage(`{"brightness_percent":50}`)},
+		{deviceexperience.CapabilityTabletOrientationSet, deviceexperience.CommandTabletOrientationSet, json.RawMessage(`{"orientation_mode":"PORTRAIT"}`)},
+		{deviceexperience.CapabilityTabletVideoScaleSet, deviceexperience.CommandTabletVideoScaleSet, json.RawMessage(`{"video_scale_mode":"CROP"}`)},
+		{deviceexperience.CapabilityTabletLiveRotationSet, deviceexperience.CommandTabletLiveRotationSet, json.RawMessage(`{"live_rotation_degrees":90}`)},
+	}
+
+	aliases := make([]domain.ProjectDeviceAlias, 0, len(capabilities))
+	actions := make([]domain.Action, 0, len(capabilities))
+	for i, item := range capabilities {
+		target := "tablet.tablet-01.setting-" + item.command
+		config, err := json.Marshal(map[string]string{
+			"device_id":      "tablet-01",
+			"capability_key": item.capability,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliases = append(aliases, domain.ProjectDeviceAlias{
+			LogicalName: target,
+			LogicalType: devicechannel.StageDeviceLogicalType,
+			TargetRef:   "tablet-01",
+			ProjectConfig: config,
+		})
+		actions = append(actions, domain.Action{
+			OrderIndex: i,
+			TargetRef: target,
+			CapabilityKey: item.capability,
+			Parameters: item.parameters,
+			ExecutionMode: "PARALLEL_BARRIER",
+			PriorityClass: domain.PriorityP1,
+			Enabled: true,
+		})
+	}
+
+	scene, ok := makeTabletSceneView(
+		domain.Cue{CueType: tabletSceneCueType, Name: "Combined Tablet Cue", Actions: actions},
+		tabletAliasBindings(aliases),
+		map[string]string{"tablet-01": "Actor One"},
+	)
+	if !ok {
+		t.Fatal("cue-safe Tablet display settings made the Tablet Scene projection disappear")
+	}
+	if len(scene.Actions) != len(capabilities) {
+		t.Fatalf("actions=%+v", scene.Actions)
+	}
+	for i, want := range capabilities {
+		got := scene.Actions[i]
+		if got.DeviceID != "tablet-01" || got.DisplayName != "Actor One" || got.CommandType != want.command {
+			t.Fatalf("action[%d]=%+v want command=%s", i, got, want.command)
+		}
+	}
+}
