@@ -23,6 +23,23 @@ import (
 
 var tabletAliasSlugRE = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
+func tabletAutoRelayAdvertiseHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if localAddr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && localAddr != nil {
+		host := strings.TrimSpace(localAddr.String())
+		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+			host = parsedHost
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if ip := net.ParseIP(host); ip != nil && ip.IsPrivate() && !ip.IsLoopback() {
+			return host
+		}
+	}
+	return r.Host
+}
+
 func tabletAutoRelaySource(projectID, requestHost string, now time.Time) (deviceexperience.LiveSource, bool) {
 	projectID = strings.TrimSpace(projectID)
 	requestHost = strings.TrimSpace(requestHost)

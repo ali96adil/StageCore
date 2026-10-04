@@ -962,7 +962,7 @@ func WithOperatorStageDevices(
 				return
 			}
 			if !tabletHasConfiguredRelaySource(sources) {
-				if source, ok := tabletAutoRelaySource(projectID, r.Host, time.Now()); ok {
+				if source, ok := tabletAutoRelaySource(projectID, tabletAutoRelayAdvertiseHost(r), time.Now()); ok {
 					sources = append(sources, source)
 				}
 			}
