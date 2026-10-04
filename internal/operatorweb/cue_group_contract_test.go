@@ -37,6 +37,8 @@ func TestCueGroupEditorProvidesVisualLinkedCueComposition(t *testing.T) {
 		"LINKED CHILD",
 		"<th>Group</th>",
 		"runtime-cue-links",
+		"dashboard-cue-links",
+		"dashboardCueParents",
 	} {
 		if !strings.Contains(js, marker) {
 			t.Fatalf("Cue Group editor missing JS marker %q", marker)
