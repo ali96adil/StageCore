@@ -386,6 +386,7 @@
     const runtime = device.runtime || {};
     const assignment = device.assignment || {};
     const showRequirementKnown = device.protocol_version === "stagecore.device/2" &&
+      assignment.assignment_state === "ACTIVE" &&
       assignment.project_id === currentProjectID();
     const requiredForShow = assignment.required_for_show !== false;
     const showRequirementEditable = showRequirementKnown && canEdit() && !showLocked;
