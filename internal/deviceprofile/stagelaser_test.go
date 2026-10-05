@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
@@ -16,7 +17,7 @@ func TestBuiltinCatalogIncludesStageLaser(t *testing.T) {
 	if profile.Source != SourceOfficial || profile.Kind != KindDevice {
 		t.Fatalf("StageLaser profile source/kind=%s/%s", profile.Source, profile.Kind)
 	}
-	if profile.Target == nil || profile.Target.LogicalType != stagelaser.LogicalTargetType {
+	if profile.Target == nil || profile.Target.LogicalType != devicechannel.StageDeviceLogicalType {
 		t.Fatalf("StageLaser target=%+v", profile.Target)
 	}
 	for _, field := range profile.ConnectionFields {
@@ -29,9 +30,8 @@ func TestBuiltinCatalogIncludesStageLaser(t *testing.T) {
 func TestStageLaserDiscoveryProfileMatch(t *testing.T) {
 	catalog := BuiltinCatalog()
 	profile, err := catalog.Choose(Observation{Attributes: map[string]string{
-		"profile_id":   stagelaser.ProfileID,
-		"api_protocol": stagelaser.TransportProtocolVersion,
-		"service_type": stagelaser.DiscoveryServiceType,
+		"profile_id":       stagelaser.ProfileID,
+		"protocol_version": stagelaser.StageDeviceProtocolVersion,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestStageLaserTargetMaterializesOnlyStableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.LogicalType != stagelaser.LogicalTargetType {
+	if target.LogicalType != devicechannel.StageDeviceLogicalType {
 		t.Fatalf("logical type=%q", target.LogicalType)
 	}
 	var config map[string]any
