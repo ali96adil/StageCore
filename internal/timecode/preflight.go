@@ -30,16 +30,16 @@ func (s *PreflightService) Evaluate(ctx context.Context, projectID, runtimeSnaps
 		return preflight.Report{}, err
 	}
 	if strings.TrimSpace(report.RuntimeSnapshotID) == "" {
-		return report, nil
+		return finalizeLiveContinuity(report), nil
 	}
 	summary, err := s.runtime.LiveSummary(ctx, report.ProjectID, report.RuntimeSnapshotID)
 	if err != nil {
 		addTimecodeCheck(&report, preflight.Block, "timecode.configuration", "Timecode configuration is invalid", err.Error(), report.RuntimeSnapshotID)
-		return report, nil
+		return finalizeLiveContinuity(report), nil
 	}
 	if !summary.Enabled {
 		addTimecodeCheck(&report, preflight.Pass, "timecode.disabled", "Timecode synchronization is not configured", "No TIMECODE_SOURCE target or timecode cue bindings are required by this Runtime Snapshot.", report.RuntimeSnapshotID)
-		return report, nil
+		return finalizeLiveContinuity(report), nil
 	}
 	addTimecodeCheck(&report, preflight.Pass, "timecode.snapshot", "Timecode configuration is sealed in the Runtime Snapshot", fmt.Sprintf("%s / %s / offset %d frames", summary.Configuration.Source.Kind, summary.Configuration.Source.Rate.Name, summary.Configuration.Source.OffsetFrames), summary.Configuration.TargetRef)
 	if len(summary.Configuration.Bindings) > 0 {
@@ -60,7 +60,7 @@ func (s *PreflightService) Evaluate(ctx context.Context, projectID, runtimeSnaps
 	default:
 		addTimecodeCheck(&report, preflight.Block, "timecode.source.kind", "Unsupported timecode source kind", string(summary.Configuration.Source.Kind), summary.Configuration.Source.SourceID)
 	}
-	return report, nil
+	return finalizeLiveContinuity(report), nil
 }
 
 func (s *PreflightService) ShowGate(ctx context.Context, projectID, runtimeSnapshotID string) (bool, string, error) {
@@ -68,15 +68,58 @@ func (s *PreflightService) ShowGate(ctx context.Context, projectID, runtimeSnaps
 	if err != nil {
 		return false, "", err
 	}
-	if report.Status != preflight.Block {
-		return true, "", nil
+	if report.Status == preflight.Block {
+		for _, check := range report.Checks {
+			if check.Status == preflight.Block {
+				return false, check.Summary, nil
+			}
+		}
+		return false, "SHOW Preflight contains a structural blocking condition", nil
 	}
+	degraded := 0
 	for _, check := range report.Checks {
-		if check.Status == preflight.Block {
-			return false, check.Summary, nil
+		if check.Status == preflight.Warn && liveContinuityCategory(check.Category) {
+			degraded++
 		}
 	}
-	return false, "SHOW Preflight contains a blocking condition", nil
+	if degraded > 0 {
+		return true, fmt.Sprintf("%d degraded runtime resource condition(s); see Runtime readiness details.", degraded), nil
+	}
+	return true, "", nil
+}
+
+func finalizeLiveContinuity(report preflight.Report) preflight.Report {
+	for i := range report.Checks {
+		if report.Checks[i].Status == preflight.Block && liveContinuityCategory(report.Checks[i].Category) {
+			report.Checks[i].Status = preflight.Warn
+		}
+	}
+	for i := range report.Roles {
+		if report.Roles[i].Status == preflight.Block {
+			report.Roles[i].Status = preflight.Warn
+		}
+	}
+	for i := range report.Media {
+		if report.Media[i].Status == preflight.Block {
+			report.Media[i].Status = preflight.Warn
+		}
+	}
+	report.Status = preflight.Pass
+	for _, check := range report.Checks {
+		if timecodePreflightRank(check.Status) > timecodePreflightRank(report.Status) {
+			report.Status = check.Status
+		}
+	}
+	return report
+}
+
+func liveContinuityCategory(category string) bool {
+	switch strings.TrimSpace(category) {
+	case "adapter", "companion", "media", "stage_device", "network", "live_video", "execution_environment":
+		return true
+	default:
+		return false
+	}
 }
 
 func addExternalHealthCheck(report *preflight.Report, summary RuntimeSummary, label string) {
