@@ -19,6 +19,11 @@ func TestRuntimeUsesFailSoftDegradedOperationUX(t *testing.T) {
 		`id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""}`,
 		`return ["OWNER", "TECHNICIAN", "OPERATOR"].includes(state.user?.role)`,
 		"advisory for live start",
+		"groupRuntimeReadinessIssues",
+		"runtimeReadinessGroupTitle",
+		"Repeated offline / stale Snapshot / stale network observations are grouped by affected resource below.",
+		"RESOURCE",
+		"DETAIL",
 	} {
 		if !strings.Contains(js, marker) {
 			t.Fatalf("Operator fail-soft Runtime UX missing %q", marker)
