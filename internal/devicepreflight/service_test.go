@@ -138,6 +138,40 @@ func TestOptionalOfflineDeviceAndElevatedNetworkAreWarnings(t *testing.T) {
 	}
 }
 
+func TestDisabledStageDeviceDoesNotDegradeNetworkReadiness(t *testing.T) {
+	ctx := context.Background()
+	repo, projectID := newFixture(t)
+	device, err := repo.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "tablet-disabled", ProjectID: projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet Disabled", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+		TargetKind: "STAGE_DEVICE", TargetID: device.ID,
+		Reachability: deviceexperience.Unreachable,
+		TransportState: "WEBSOCKET_DISCONNECTED",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	base := baseReport{report: preflight.Report{
+		Status: preflight.Pass, ProjectID: projectID,
+		RuntimeSnapshotID: "snapshot-1", Checks: []preflight.Check{},
+	}}
+	report, err := devicepreflight.New(base, repo).Evaluate(ctx, projectID, "snapshot-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != preflight.Pass {
+		t.Fatalf("disabled device degraded readiness: status=%s checks=%+v", report.Status, report.Checks)
+	}
+	if hasCheck(report.Checks, "network.STAGE_DEVICE."+device.ID, preflight.Warn) {
+		t.Fatalf("disabled device network warning leaked into Preflight: %+v", report.Checks)
+	}
+}
+
 func TestNoPhase4RequirementsPreservesBasePass(t *testing.T) {
 	ctx := context.Background()
 	repo, projectID := newFixture(t)
