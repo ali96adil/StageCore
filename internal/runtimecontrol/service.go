@@ -168,6 +168,7 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	if active != nil {
 		return finish(rejected(command.CommandID, "SESSION_ALREADY_ACTIVE", "the Project already has an active runtime Session", active.ID))
 	}
+	startWarning := ""
 	if s.startGate != nil {
 		allowed, reason, err := s.startGate(ctx, project.ID, snapshot.ID)
 		if err != nil {
@@ -175,10 +176,11 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		}
 		if !allowed {
 			if strings.TrimSpace(reason) == "" {
-				reason = "managed Stage Devices are not READY on the latest Published Runtime Snapshot"
+				reason = "managed Stage Device Session-start invariant failed"
 			}
 			return finish(rejected(command.CommandID, "SESSION_DEVICE_SCOPE_BLOCKED", reason, snapshot.ID))
 		}
+		startWarning = strings.TrimSpace(reason)
 	}
 	if req.Mode == domain.SessionShow {
 		if s.showGate == nil {
@@ -204,7 +206,12 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	if req.Mode == domain.SessionShow {
 		eventType = "show.entered"
 	}
-	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "session_type": session.Type})
+	eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
+	if startWarning != "" {
+		eventPayload["degraded_start"] = true
+		eventPayload["device_scope_warning"] = startWarning
+	}
+	payload, _ := json.Marshal(eventPayload)
 	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
@@ -213,10 +220,15 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		_ = s.store.EndSession(context.WithoutCancel(ctx), session.ID, domain.SessionAborted)
 		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
 	}
-	resultPayload, _ := json.Marshal(map[string]any{
+	resultData := map[string]any{
 		"session_id": session.ID, "session_type": session.Type,
 		"runtime_snapshot_id": session.RuntimeSnapshotID,
-	})
+	}
+	if startWarning != "" {
+		resultData["degraded_start"] = true
+		resultData["device_scope_warning"] = startWarning
+	}
+	resultPayload, _ := json.Marshal(resultData)
 	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
 	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
 		return domain.Session{}, failed(command.CommandID, "COMMAND_FINISH_FAILED")
