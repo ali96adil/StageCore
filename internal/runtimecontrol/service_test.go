@@ -639,10 +639,10 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 }
 
 
-func TestShowPreflightBlockStartsDegradedSession(t *testing.T) {
+func TestShowOperationalPreflightWarningStartsDegradedSession(t *testing.T) {
 	h := newRuntimeHarness(t)
 	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
-		return false, "Required Machine Role is not READY: AUDIO-ABLETON", nil
+		return true, "1 degraded runtime resource condition(s); see Runtime readiness details.", nil
 	}
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
@@ -653,7 +653,7 @@ func TestShowPreflightBlockStartsDegradedSession(t *testing.T) {
 		RequestID: "00000000-0000-7000-8000-000000009103",
 	})
 	if result.Status != contracts.CommandCompleted || session.ID == "" || session.Type != domain.SessionShow {
-		t.Fatalf("preflight BLOCK should start degraded SHOW: result=%+v session=%+v", result, session)
+		t.Fatalf("operational warning should start degraded SHOW: result=%+v session=%+v", result, session)
 	}
 
 	var payload map[string]any
@@ -663,11 +663,24 @@ func TestShowPreflightBlockStartsDegradedSession(t *testing.T) {
 	if payload["degraded_start"] != true {
 		t.Fatalf("degraded_start=%v payload=%s", payload["degraded_start"], result.Payload)
 	}
-	if got := payload["preflight_warning"]; got != "Required Machine Role is not READY: AUDIO-ABLETON" {
+	if got := payload["preflight_warning"]; got != "1 degraded runtime resource condition(s); see Runtime readiness details." {
 		t.Fatalf("preflight_warning=%v", got)
 	}
-	reasons, ok := payload["degraded_reasons"].([]any)
-	if !ok || len(reasons) != 1 || reasons[0] != "Required Machine Role is not READY: AUDIO-ABLETON" {
-		t.Fatalf("degraded_reasons=%#v", payload["degraded_reasons"])
+}
+
+func TestShowStructuralPreflightBlockStillRejects(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return false, "Runtime Snapshot manifest integrity mismatch", nil
+	}
+	session, result := h.service.StartSession(context.Background(), StartRequest{
+		ProjectID: h.project.ID,
+		Mode: domain.SessionShow,
+		Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009104",
+	})
+	if session.ID != "" || result.Status != contracts.CommandRejected ||
+		result.Error == nil || result.Error.ErrorCode != "SHOW_PREFLIGHT_BLOCKED" {
+		t.Fatalf("structural Preflight block should reject SHOW: result=%+v session=%+v", result, session)
 	}
 }
