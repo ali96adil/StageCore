@@ -12,6 +12,7 @@ const (
 	ProfileID                = "stagecore.esp32-stagelaser"
 	TransportProtocolVersion = "stagecore.laser/1"
 	DiscoveryServiceType     = "_stagecore-laser._tcp"
+	LogicalTargetType        = "STAGE_LASER"
 )
 
 const (
