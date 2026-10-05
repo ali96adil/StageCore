@@ -467,6 +467,11 @@ func actionFailureIsFatal(raw json.RawMessage, result domain.ExecutionResult) (b
 	if result == domain.ExecutionCompleted {
 		return false, nil
 	}
+	// Operator STOP / Session Stop cancellation is authoritative and must never
+	// be swallowed by fail-soft output handling.
+	if result == domain.ExecutionCancelled {
+		return true, nil
+	}
 	var policy struct {
 		OnError string `json:"on_error"`
 	}
