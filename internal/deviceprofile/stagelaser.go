@@ -3,6 +3,7 @@ package deviceprofile
 import (
 	"encoding/json"
 
+	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
@@ -23,8 +24,7 @@ func stageLaserProfile() Profile {
 		},
 		DiscoveryHints: []DiscoveryHint{
 			{Attribute: "profile_id", Mode: MatchExact, Value: stagelaser.ProfileID, Weight: 100, Required: true},
-			{Attribute: "api_protocol", Mode: MatchExact, Value: stagelaser.TransportProtocolVersion, Weight: 90, Required: true},
-			{Attribute: "service_type", Mode: MatchExact, Value: stagelaser.DiscoveryServiceType, Weight: 80, Required: true},
+			{Attribute: "protocol_version", Mode: MatchExact, Value: stagelaser.StageDeviceProtocolVersion, Weight: 90, Required: true},
 		},
 		ConnectionFields: []ConnectionField{
 			{
@@ -107,10 +107,10 @@ func stageLaserProfile() Profile {
 			{ID: "health", Type: "OBSERVATION", Name: LocalizedText{EN: "Device health", ArIQ: "سلامة الجهاز"}, TimeoutMS: 15000},
 			{ID: "state", Type: "OBSERVATION", Name: LocalizedText{EN: "Laser state quality", ArIQ: "جودة حالة الليزر"}, TimeoutMS: 15000},
 		},
-		TestedProtocolVersions: []string{stagelaser.TransportProtocolVersion},
-		Tags: []string{"laser", "esp32-c3", "show-control", "adapter", "official"},
+		TestedProtocolVersions: []string{stagelaser.StageDeviceProtocolVersion},
+		Tags: []string{"laser", "esp32-c3", "show-control", "stage-device", "official"},
 		Target: &TargetTemplate{
-			LogicalType: stagelaser.LogicalTargetType,
+			LogicalType: devicechannel.StageDeviceLogicalType,
 			Configuration: json.RawMessage(`{
 				"device_id": {"$field":"device_id"}
 			}`),
