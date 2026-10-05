@@ -867,6 +867,10 @@ const f001Arabic = {
   "LIGHTING CONTROLLER": "التحكم بالإضاءة",
   "LIGHTING CONFIGURATION": "إعداد الإضاءة",
 
+  "TABLET PLAYER": "مشغل التابلت",
+  "SIMULATED INPUT EVENTS": "أحداث الإدخال المحاكية",
+  "SIMULATION_ONLY · TEST": "محاكاة فقط · اختبار",
+
   "Request failed.": "تعذر تنفيذ الطلب.",
   "Configuration unavailable": "الإعدادات غير متاحة",
   "Forbidden": "غير مسموح",
