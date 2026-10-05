@@ -215,6 +215,73 @@ func hasCheck(checks []preflight.Check, key string, status preflight.Status) boo
 }
 
 
+func TestV2StageDeviceNotRequiredForShowDoesNotDegradeGenericReadiness(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	stageStore := store.New(h.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Optional Stage Device", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := deviceexperience.NewRepository(h.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: "tablet-not-required",
+		Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet Not Required",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ProfileID: deviceexperience.TabletPlayerProfileID,
+		Enabled: true,
+		Capabilities: []string{"tablet.media.play"},
+	}
+	if _, err := repo.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET assignment_state='ACTIVE', project_id=?, runtime_snapshot_id='snapshot-old', assignment_epoch=2
+		WHERE device_id=?
+	`, project.ID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SetRequiredForShow(ctx, device.ID, project.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+		TargetKind: "STAGE_DEVICE", TargetID: device.ID,
+		Reachability: deviceexperience.Unreachable,
+		TransportState: "WEBSOCKET_DISCONNECTED",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	base := baseReport{report: preflight.Report{
+		Status: preflight.Pass,
+		ProjectID: project.ID,
+		RuntimeSnapshotID: "snapshot-new",
+		Checks: []preflight.Check{},
+	}}
+	report, err := devicepreflight.New(base, repo).Evaluate(ctx, project.ID, "snapshot-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != preflight.Pass {
+		t.Fatalf("not-required Stage Device degraded generic readiness: status=%s checks=%+v", report.Status, report.Checks)
+	}
+	for _, check := range report.Checks {
+		if strings.Contains(check.Key, device.ID) {
+			t.Fatalf("not-required Stage Device leaked into generic readiness: %+v", report.Checks)
+		}
+	}
+}
+
 func TestV2StageDeviceOldSnapshotIsReportedAsWarning(t *testing.T) {
 	ctx := context.Background()
 	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})

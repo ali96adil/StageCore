@@ -285,7 +285,8 @@ func (r *Repository) CommitTabletSafeAssignment(ctx context.Context, in Verified
 	res, err := tx.ExecContext(ctx, `
 		UPDATE stage_device_assignments
 		SET project_id = NULLIF(?, ''), runtime_snapshot_id = ?,
-		    assignment_epoch = ?, assignment_state = ?, updated_at_us = ?
+		    assignment_epoch = ?, assignment_state = ?,
+		    required_for_show = 1, updated_at_us = ?
 		WHERE device_id = ? AND project_id IS NULLIF(?, '')
 		      AND runtime_snapshot_id = ? AND assignment_epoch = ?
 		      AND assignment_state = ?

@@ -82,6 +82,47 @@ func TestLegacyAssignmentSidecarRegistersWithoutActivatingV2(t *testing.T) {
 	}
 }
 
+func TestAssignmentShowRequirementDefaultsRequiredAndCanBeChangedPerProject(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "tablet-show-requirement-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceTabletPlayer, DisplayName: "Show Tablet",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.RequiredForShow {
+		t.Fatalf("new assignment default required_for_show=false: %+v", record)
+	}
+	updated, err := repo.SetRequiredForShow(ctx, device.ID, projectID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RequiredForShow {
+		t.Fatalf("show requirement was not disabled: %+v", updated)
+	}
+	if _, err := repo.SetRequiredForShow(ctx, device.ID, "wrong-project", true); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("cross-project show requirement update err=%v", err)
+	}
+	stillOptional, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillOptional.RequiredForShow {
+		t.Fatalf("rejected cross-project update changed requirement: %+v", stillOptional)
+	}
+	updated, err = repo.SetRequiredForShow(ctx, device.ID, projectID, true)
+	if err != nil || !updated.RequiredForShow {
+		t.Fatalf("show requirement was not restored: %+v err=%v", updated, err)
+	}
+}
+
 func TestAssignmentMetadataSchemaRejectsInvalidTransitionAndEpoch(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, projectID := newRepository(t)
@@ -157,11 +198,26 @@ func TestAssignmentMigrationBackfillsPreExistingStageDevice(t *testing.T) {
 		legacy.ID).Scan(&existingIdentity); err != nil || existingIdentity != 1 {
 		t.Fatalf("migration lost pre-existing physical identity: count=%d err=%v", existingIdentity, err)
 	}
+	var backfilledDeviceID, backfilledProjectID, backfilledState, backfilledSnapshot string
+	var backfilledEpoch int64
+	if err := handle.DB.QueryRowContext(ctx, `
+		SELECT device_id, project_id, assignment_epoch, assignment_state, runtime_snapshot_id
+		FROM stage_device_assignments WHERE device_id = ?
+	`, legacy.ID).Scan(&backfilledDeviceID, &backfilledProjectID, &backfilledEpoch, &backfilledState, &backfilledSnapshot); err != nil {
+		t.Fatalf("read migration-29 sidecar: %v", err)
+	}
+	if backfilledDeviceID != legacy.ID || backfilledProjectID != projectID ||
+		backfilledState != deviceexperience.AssignmentLegacy || backfilledEpoch != 1 ||
+		backfilledSnapshot != "" {
+		t.Fatalf("pre-existing device was not safely backfilled at migration 29: device=%s project=%s epoch=%d state=%s snapshot=%s",
+			backfilledDeviceID, backfilledProjectID, backfilledEpoch, backfilledState, backfilledSnapshot)
+	}
+	if err := goose.Up(handle.DB, "."); err != nil {
+		t.Fatalf("upgrade test fixture to current schema: %v", err)
+	}
 	record, err := repo.GetAssignmentRecord(ctx, legacy.ID)
-	if err != nil || record.DeviceID != legacy.ID || record.ProjectID != projectID ||
-		record.State != deviceexperience.AssignmentLegacy || record.Epoch != 1 ||
-		record.RuntimeSnapshotID != "" {
-		t.Fatalf("pre-existing device was not safely backfilled: %+v err=%v", record, err)
+	if err != nil || !record.RequiredForShow {
+		t.Fatalf("current schema did not backfill required_for_show safely: %+v err=%v", record, err)
 	}
 	loaded, err := repo.GetDevice(ctx, legacy.ID)
 	if err != nil || loaded.ProjectID != projectID || !loaded.Enabled {

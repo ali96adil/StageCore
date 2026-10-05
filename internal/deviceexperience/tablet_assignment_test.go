@@ -205,6 +205,14 @@ func TestTabletV2ActiveAssignmentMovesSafelyToAnotherProject(t *testing.T) {
 		t.Fatalf("first assignment=%+v err=%v", firstCommit, err)
 	}
 
+	if _, err := repo.SetRequiredForShow(ctx, deviceID, firstProject.ID, false); err != nil {
+		t.Fatalf("mark first Project tablet optional: %v", err)
+	}
+	optionalBeforeMove, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || optionalBeforeMove.RequiredForShow {
+		t.Fatalf("first Project tablet show requirement was not disabled: %+v err=%v", optionalBeforeMove, err)
+	}
+
 	move := deviceexperience.TabletAssignmentInput{
 		DeviceID: deviceID,
 		ExpectedProjectID: firstProject.ID,
@@ -249,8 +257,8 @@ func TestTabletV2ActiveAssignmentMovesSafelyToAnotherProject(t *testing.T) {
 	if err != nil || record.State != "ACTIVE" ||
 		record.ProjectID != secondProject.ID ||
 		record.RuntimeSnapshotID != secondSnapshot ||
-		record.Epoch != 3 {
-		t.Fatalf("tablet remained locked to old project: %+v err=%v", record, err)
+		record.Epoch != 3 || !record.RequiredForShow {
+		t.Fatalf("tablet remained locked to old project or inherited old show requirement: %+v err=%v", record, err)
 	}
 
 	if _, _, err := repo.CreateCommand(ctx, deviceexperience.CreateCommandInput{

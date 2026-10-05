@@ -227,7 +227,7 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 	res, err := tx.ExecContext(ctx, `
 		UPDATE stage_device_assignments
 		SET project_id=NULLIF(?, ''), assignment_epoch=?, assignment_state=?,
-		    runtime_snapshot_id='', updated_at_us=?
+		    runtime_snapshot_id='', required_for_show=1, updated_at_us=?
 		WHERE device_id=? AND project_id IS NULLIF(?, '')
 		      AND runtime_snapshot_id=? AND assignment_epoch=? AND assignment_state=?
 	`, in.ToProjectID, in.ExpectedEpoch+1, nextState, nowUS, in.DeviceID,

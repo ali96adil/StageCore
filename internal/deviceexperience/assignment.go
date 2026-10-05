@@ -21,6 +21,7 @@ type AssignmentRecord struct {
 	Epoch             int64     `json:"assignment_epoch"`
 	State             string    `json:"assignment_state"`
 	RuntimeSnapshotID string    `json:"runtime_snapshot_id,omitempty"`
+	RequiredForShow   bool      `json:"required_for_show"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
@@ -37,18 +38,45 @@ func (r *Repository) GetAssignmentRecord(ctx context.Context, deviceID string) (
 	var record AssignmentRecord
 	var project sql.NullString
 	var updatedUS int64
+	var requiredForShow int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT device_id, project_id, assignment_epoch, assignment_state,
-		       runtime_snapshot_id, updated_at_us
+		       runtime_snapshot_id, required_for_show, updated_at_us
 		FROM stage_device_assignments WHERE device_id = ?
 	`, deviceID).Scan(&record.DeviceID, &project, &record.Epoch, &record.State,
-		&record.RuntimeSnapshotID, &updatedUS)
+		&record.RuntimeSnapshotID, &requiredForShow, &updatedUS)
 	if err != nil {
 		return AssignmentRecord{}, fmt.Errorf("read Stage Device assignment metadata: %w", err)
 	}
 	if project.Valid {
 		record.ProjectID = project.String
 	}
+	record.RequiredForShow = requiredForShow == 1
 	record.UpdatedAt = time.UnixMicro(updatedUS).UTC()
 	return record, nil
+}
+
+func (r *Repository) SetRequiredForShow(ctx context.Context, deviceID, projectID string, required bool) (AssignmentRecord, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	projectID = strings.TrimSpace(projectID)
+	if deviceID == "" || projectID == "" {
+		return AssignmentRecord{}, ErrInvalidDevice
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET required_for_show = ?, updated_at_us = ?
+		WHERE device_id = ? AND project_id = ?
+		  AND assignment_state IN ('LEGACY', 'ACTIVE')
+	`, boolInt(required), r.now().UTC().UnixMicro(), deviceID, projectID)
+	if err != nil {
+		return AssignmentRecord{}, fmt.Errorf("update Stage Device show requirement: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return AssignmentRecord{}, fmt.Errorf("read Stage Device show requirement result: %w", err)
+	}
+	if changed == 0 {
+		return AssignmentRecord{}, fmt.Errorf("%w: Stage Device is not actively assigned to this Project", ErrInvalidState)
+	}
+	return r.GetAssignmentRecord(ctx, deviceID)
 }
