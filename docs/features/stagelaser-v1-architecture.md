@@ -1,67 +1,108 @@
 # StageLaser V1 architecture
 
 Status: implementation baseline  
-Branch baseline: `main@89c5c801e31cc57d2dd763dbc837ed0441e0352f`
+StageCore baseline: `main@89c5c801e31cc57d2dd763dbc837ed0441e0352f`  
+ESP32 precedent reviewed: `ali96adil/StageCore-ESP32-DMX-Lighting@ef338b1d1533b25782c81deb9f0638d23c786e2b`
 
 ## 1. Goal
 
-StageLaser is an official StageCore-controlled show device for a laser whose existing physical button is a toggle input. The ESP32-C3 never exposes a raw toggle command to StageCore. StageCore and the firmware exchange idempotent desired-state commands and the firmware decides whether a relay pulse is required.
+StageLaser is an official StageCore Stage Device for an ESP32-C3 that simulates the original laser's momentary toggle button through a dry-contact output.
 
-The first hardware target is an ESP32-C3 Super Mini driving a 1-channel 5 V mechanical relay as a dry contact. The control contract deliberately describes a logical switch rather than a relay so a future PhotoMOS/electronic driver can replace the mechanical relay without changing Cue semantics.
+The physical button is toggle-only, but the StageCore contract is desired-state and idempotent. There is intentionally no raw TOGGLE command.
+
+The initial driver is a 1-channel 5 V mechanical relay. The public StageCore contract describes logical laser state rather than relay mechanics so a future PhotoMOS/electronic switch can replace the relay without changing Cue semantics.
 
 ## 2. Architecture decision
 
-### Chosen: Hub-managed native adapter + official Controller ADDON
+### Chosen: native authenticated Stage Device v2
 
-StageLaser V1 uses a native Hub-side adapter for discovery, pairing, health, command dispatch and Cue capability execution. The Operator experience is packaged like the existing Lighting Controller: an official ADDON may own the graphical workspace, while transport, safety, command identity and event history remain StageCore Core responsibilities.
+StageLaser V1 uses the existing secure StageCore device architecture:
 
-The Stage Devices workspace will surface StageLaser as show hardware using its stable device identity. The everyday operator does not enter an IP address, URL, token or JSON.
+```text
+StageCore Hub
+  _stagecore-hub._tcp discovery
+  secure pairing / remembered device identity
+  TLS Stage Device gateway
+  stagecore.device/2 assignment + Runtime Snapshot authority
+  canonical Command Envelope + command results
+  Cue Engine / event history / Emergency Blackout
+        |
+        v
+official StageLaser Controller ADDON
+  graphical device / diagnostics / Cue Builder UX
+  no independent network authority
+        |
+        v
+ESP32-C3 StageLaser
+  persistent P-256 identity
+  Hub certificate pinning
+  authenticated TLS WebSocket Stage Device runtime
+  local state machine / dedupe / flash timing
+        |
+        v
+output-driver abstraction
+  mechanical relay V1
+  PhotoMOS/electronic switch later
+        |
+        v
+laser momentary button dry contact
+```
 
-### Not chosen: direct `stagecore.device/2` client
+### Why this supersedes the temporary Hub-adapter idea
 
-The current secure Stage Device v2 gateway is an authenticated Hub-authority protocol with connection generations, assignment epochs, Runtime Snapshot fencing and profile-specific activation for Tablet Player and ESP32 DMX Lighting. StageLaser V1 must not weaken or bypass those guarantees merely to accommodate a smaller ESP firmware.
+The production `StageCore-ESP32-DMX-Lighting` firmware already proves that ESP32 firmware in this project can implement:
 
-The secure device gateway remains unchanged.
+- ESP-IDF;
+- Hub mDNS discovery;
+- persistent P-256 device identity;
+- Hub certificate pinning;
+- secure pairing/authentication;
+- TLS WebSocket Stage Device runtime;
+- Stage Device command envelopes;
+- command-ID deduplication;
+- v2 assignment/scope handling.
 
-### Not chosen: standalone F-015 runtime plugin as the device transport
+Therefore creating a second HTTP/adapter command path for StageLaser would duplicate working trust, pairing, reconnect, command history and Cue authority.
 
-The extension runtime is suitable for supervised executable plugins, but its current brokered network contract is intentionally narrow and its runtime protocol is not a first-class device discovery/pairing/health model. Expanding that subsystem only for StageLaser would create more architecture than the device requires.
+StageLaser adds a new authorised product profile to the v2 machinery; it does not weaken the secure gateway and does not create an anonymous LAN actuation route.
 
-The official Controller ADDON remains useful for product/UI ownership without moving command authority out of Core.
+## 3. Discovery and DHCP
 
-## 3. Stable identity and discovery
+StageLaser follows the existing Stage Device convention: the device discovers the Hub, not the other way around.
 
-The firmware owns a persistent random `device_id` generated once and retained in NVS.
+The ESP32-C3 browses the existing:
 
-The discovery service is:
+`_stagecore-hub._tcp`
 
-`_stagecore-laser._tcp`
+service and verifies the Hub identity/certificate exactly as the ESP32 DMX node does.
 
-Discovery is a hint only. An mDNS record never grants command authority.
+A separate `_stagecore-laser._tcp` service is not required for V1.
 
-The final TXT record set will be bounded and versioned. It is expected to carry only non-secret identification and compatibility metadata such as discovery version, device ID, display name, firmware version, API protocol version and capabilities. Secrets are never advertised.
+The device identity is persistent and independent of IP address. The ESP reconnects outbound after DHCP changes, so normal StageCore operation never stores or asks the operator for a fixed device IP.
 
-StageCore resolves the current address from the discovered stable identity, so a DHCP address change does not break the logical device binding. IP address remains diagnostic data.
+IP may still appear in diagnostics.
 
-## 4. Pairing and command security
+mDNS discovery never grants trust by itself.
 
-Actuation endpoints must not be anonymously writable on the Stage LAN.
+## 4. Profile and protocol
 
-V1 will use a one-time commissioning/pairing flow to establish a per-device credential retained by the Hub and firmware. Discovery itself remains unauthenticated; commands and state-changing configuration require the paired credential.
-
-The exact pairing UX is implemented only after the real ESP32-C3 board controls are verified. A physical/local pairing window is preferred over a permanently open claim endpoint.
-
-No token is exposed in the normal Operator UI.
-
-## 5. Control contract
-
-Canonical profile:
+Official profile ID:
 
 `stagecore.esp32-stagelaser`
 
-Protocol:
+Stage Device protocol:
 
-`stagecore.laser/1`
+`stagecore.device/2`
+
+StageLaser control contract:
+
+`stagecore.stagelaser/1`
+
+The Stage Device coarse kind remains `GENERIC`, matching the existing ESP32 DMX precedent. Product semantics come from the official profile ID.
+
+The canonical Cue target remains the existing Stage Device logical target with stable `device_id`; no new parallel target transport is introduced.
+
+## 5. Capabilities and commands
 
 Capabilities:
 
@@ -74,7 +115,7 @@ Capabilities:
 - `laser.state.read`
 - `laser.state.resync`
 
-Normal command vocabulary:
+Cue-safe commands:
 
 - `LASER_ARM`
 - `LASER_DISARM`
@@ -84,25 +125,25 @@ Normal command vocabulary:
 - `LASER_FLASH_STOP`
 - `LASER_SAFE_OFF`
 
-Diagnostic/commissioning commands:
+Commissioning/diagnostic commands:
 
 - `LASER_STATE_READ`
 - `LASER_STATE_RESYNC`
 
-There is intentionally no `TOGGLE` command.
+There is deliberately no `LASER_TOGGLE`.
 
 State resync is never a normal Cue action.
 
-## 6. State machine
+## 6. State model
 
-Safety state and laser state are separate, coupled state axes rather than unrelated booleans.
+Safety state and laser state are separate, coupled state axes.
 
 Arm state:
 
 - `DISARMED`
 - `ARMED`
 
-Logical laser state:
+Logical state:
 
 - `OFF`
 - `TURNING_ON`
@@ -113,201 +154,278 @@ Logical laser state:
 - `UNKNOWN`
 - `ERROR`
 
-This permits truthful states such as `DISARMED + ON + TRACKED` after a software restart. Boot never has to lie by converting that state to OFF.
-
 State quality:
 
-- `TRACKED`: derived from successfully completed software-controlled transitions.
-- `CONFIRMED`: reserved for future physical feedback.
-- `UNKNOWN`: the physical state cannot be inferred safely.
+- `TRACKED`: software-tracked from completed local transitions;
+- `CONFIRMED`: reserved for future physical feedback;
+- `UNKNOWN`: physical state cannot be inferred safely.
+
+This allows truthful combinations such as `DISARMED + ON + TRACKED` after a clean ESP software restart. Boot never has to lie by rewriting logical state to OFF.
 
 ## 7. Toggle-to-idempotent conversion
 
 The relay is a button simulator, not laser power control.
 
-For `SET ON`:
+`SET ON`:
 
-- tracked OFF -> perform exactly one complete pulse;
-- tracked ON -> complete with no pulse;
-- UNKNOWN/ERROR -> reject; do not guess.
+- tracked OFF -> exactly one complete output pulse;
+- tracked ON -> no pulse;
+- UNKNOWN/ERROR -> reject, no pulse.
 
-For `SET OFF`:
+`SET OFF`:
 
-- tracked ON -> perform exactly one complete pulse;
-- tracked OFF -> complete with no pulse;
-- UNKNOWN/ERROR -> reject; do not guess.
+- tracked ON -> exactly one complete output pulse;
+- tracked OFF -> no pulse;
+- UNKNOWN/ERROR -> reject, no pulse.
 
-A state transition is committed only after the relay has been released successfully. The logical state never flips at relay-pick time.
+A stable logical-state transition commits only after output release completes.
 
-## 8. Relay timing
+## 8. Output timing
 
-The initial mechanical profile is:
+Initial mechanical defaults:
 
 - pulse: 180 ms;
-- minimum rest between pulses: 250 ms;
-- flash range: 0.1..1.0 Hz;
+- minimum rest: 250 ms;
+- flash frequency: 0.1..1.0 Hz;
 - maximum single flash request: 60 seconds.
 
-These are conservative software defaults, not a substitute for checking the exact relay module. The real hardware may reduce these limits after inspection.
+These are conservative software defaults and remain subject to the exact relay module qualification.
 
-The limits are represented in device health so a future electronic switch can advertise a wider range without changing StageCore Cue/API semantics.
+Limits are observable device data. A future electronic output driver may advertise wider limits without changing the StageCore command vocabulary.
 
-All runtime timing is non-blocking and watchdog friendly.
+Runtime timing is non-blocking and watchdog-friendly.
 
-## 9. Flash safety
+## 9. Flash
 
-`FLASH_START` carries both frequency and a bounded duration. A Cue therefore never relies on continuous network ON/OFF traffic and never creates an unbounded flash if the Hub disappears.
+`LASER_FLASH_START` always carries both frequency and bounded duration.
 
-The ESP executes the flash locally.
+The device performs flashing locally. StageCore never streams ON/OFF toggles over the network.
 
-`FLASH_STOP` stops the local flasher early and settles to OFF when the state is known.
+`LASER_FLASH_STOP` ends a running flash early.
 
-If communication is lost while flash is active, the local duration still expires and the firmware settles to OFF. Loss of the Hub does not extend the requested flash.
+When flash ends normally or because of STOP, the target stable state is OFF when logical state is known.
+
+If the Hub/Wi-Fi disappears during flash, the already accepted bounded local request still expires locally and attempts its deterministic tracked OFF settlement. No network loss extends flash duration.
 
 ## 10. ARM / DISARM
 
-The firmware always boots DISARMED.
+The firmware boots DISARMED.
 
-ARM authorizes ON/Flash commands but does not pulse the relay. ARM must fail while state is UNKNOWN/ERROR and must not silently correct state.
+ARM authorizes ON/Flash but does not itself pulse the output.
+
+ARM must fail while state is UNKNOWN/ERROR.
 
 DISARM:
 
-1. prevents new ON/Flash work;
-2. stops any active flasher;
-3. if physical state is tracked ON, performs the one required transition to OFF;
-4. if state is already tracked OFF, does not pulse;
-5. if state is UNKNOWN, remains DISARMED + UNKNOWN and requires resync instead of issuing a blind toggle.
+1. blocks new ON/Flash;
+2. stops a running flash;
+3. tracked ON -> performs the one required OFF transition;
+4. tracked OFF -> no pulse;
+5. UNKNOWN -> remains DISARMED + UNKNOWN and requires attended resync.
 
-## 11. Restart and persistence
+No boot path issues an automatic blind toggle.
 
-Firmware persists the last stable logical state and command-deduplication information in NVS.
+## 11. Restart persistence and interrupted transitions
 
-Before beginning a relay pulse it persists an interrupted-transition marker. That marker is cleared only after relay release and stable-state commit.
+NVS stores:
+
+- persistent device identity and trust state;
+- last stable logical state;
+- state quality;
+- relay/output limits;
+- bounded recent command IDs/results;
+- an interrupted-transition marker.
+
+Before asserting the output driver, firmware durably marks the transition in progress. It clears that marker only after release and stable-state commit.
 
 On restart:
 
-- interrupted-transition marker -> `UNKNOWN`, resync required;
-- clean software/watchdog restart with an intact stable record -> retain the tracked stable state but boot DISARMED;
-- power-on/brownout is not automatically interpreted as physical laser OFF unless the installation has a separately qualified shared-power guarantee.
+- interrupted transition -> UNKNOWN + resync required;
+- clean software/watchdog restart with intact stable record -> preserve tracked stable state, boot DISARMED;
+- power-on/brownout does not automatically prove laser OFF unless the physical installation has separately qualified shared-power behavior.
 
-The statement “full laser power-up starts OFF” is useful physical behavior but, without a feedback/power sensor, the ESP cannot always prove that the laser was power-cycled together with it.
+The laser's documented full-power-up OFF behavior is useful, but without a feedback or laser-power sensor the ESP cannot always distinguish “laser power-cycled too” from “ESP restarted alone”.
 
 ## 12. Resync
 
-When state is UNKNOWN there is no safe universal pulse that guarantees OFF because the same pulse can turn an already-OFF laser ON.
+UNKNOWN cannot be safely forced OFF by a blind pulse because the same pulse can turn an already-OFF laser ON.
 
-Recovery therefore uses an explicit commissioning action:
+Recovery is therefore explicit and attended:
 
-- operator verifies physical laser state;
-- while DISARMED, `LASER_STATE_RESYNC` asserts only stable OFF or ON;
-- the command updates tracked software state without pulsing the relay;
-- normal operation can resume only after a safe known state is restored.
+- keep the device DISARMED;
+- operator verifies the physical laser state;
+- `LASER_STATE_RESYNC` asserts stable OFF or ON without pulsing;
+- normal arming remains blocked until state becomes known.
 
-Resync is Advanced/Diagnostics only and never a Cue action.
+Resync belongs in Advanced/Diagnostics only.
 
-## 13. Command identity and retries
+## 13. Command identity and duplicate delivery
 
-Every state-changing request carries a StageCore command/execution ID.
+Every command uses the existing Stage Device Command Envelope `command_id`.
 
-The firmware retains a bounded recent-command journal and the last accepted/applied IDs. Receiving the same command ID again returns the prior result and never repeats a relay pulse.
+Firmware keeps a bounded recent-command journal. A duplicate command ID returns the known result and never repeats the physical pulse.
 
-The Hub does not create a new command ID as an automatic retry for an ambiguous state-changing operation. If transport reconciliation is added, it may query status or retransmit the same ID only, relying on firmware deduplication.
+Reconnect never replays prior commands automatically.
 
-## 14. Hub adapter responsibilities
+An ambiguous post-dispatch timeout must not be converted into a new command ID. Existing Stage Device connection-generation fencing remains authoritative, while firmware-side dedupe protects physical actuation from duplicate delivery of the same ID.
 
-The native adapter will:
+## 14. Stage Device v2 authority
 
-- browse StageLaser mDNS announcements;
-- maintain stable identity -> current endpoint resolution;
-- pair and retain per-device credentials;
-- poll/read bounded health;
-- expose Online/Offline, arm state, logical state and quality;
-- surface RSSI, IP, firmware, uptime, last command and relay pulse count;
-- translate Cue capability requests into StageLaser commands;
-- preserve command IDs across uncertain transport outcomes;
-- refuse anonymous or incompatible endpoints;
-- never infer trust from mDNS alone.
+StageLaser must receive the same v2 principles already used by current Stage Devices:
 
-## 15. Operator integration
+- authenticated device identity;
+- new identity starts UNASSIGNED;
+- client never supplies Project authority in v2 hello;
+- Hub owns assignment epoch and Runtime Snapshot;
+- ACTIVE command authority only after exact Hub scope handshake;
+- stale/replaced connection generations cannot complete newer authority;
+- command capabilities must be explicitly advertised;
+- reconnect never silently restores show authority.
 
-The Stage Devices workspace will receive a StageLaser section/card using existing StageCore UI conventions.
+The implementation will extend the v2 profile allowlists/policies specifically for `stagecore.esp32-stagelaser`; it will not make arbitrary GENERIC v2 devices ACTIVE.
 
-Normal UI:
+## 15. Observations and Device Card
 
-- name;
-- online/offline;
-- armed/disarmed;
-- ON/OFF/UNKNOWN;
-- state quality;
-- Wi-Fi RSSI;
-- IP;
-- firmware;
+The StageLaser observation contract includes:
+
+- firmware version;
+- control-contract version;
+- boot ID;
 - uptime;
-- last command;
-- diagnostics/pulse count.
+- reset reason;
+- Wi-Fi RSSI;
+- diagnostic IP;
+- arm state;
+- logical state;
+- state quality;
+- resync required;
+- output pulse in progress;
+- pulse count;
+- driver kind;
+- timing/flash limits;
+- active flash;
+- last accepted/applied command IDs;
+- last command type/result.
 
-Advanced/commissioning UI owns pairing, firmware compatibility, resync and detailed diagnostics.
+Canonical Online/Offline, readiness, last seen and authenticated network state remain owned by the Stage Device runtime.
 
-Normal operation does not expose raw endpoint, credential or JSON fields.
+The Operator Device Card will present these values using existing Stage Devices patterns.
 
-## 16. Cue integration
+## 16. Cue Builder and Mixed Cue
 
-The visual builder follows the Tablet Controller pattern: the Hub facade converts a friendly request into canonical Cue actions so the browser does not author target refs or capability strings directly.
+The graphical authoring flow follows the existing Tablet/Lighting pattern:
 
-Target logical type will be StageLaser-specific and resolve by stable `device_id`.
+`Add Action -> StageLaser -> Device -> Action`
 
-Mixed Cue consumes the same canonical actions; there is no separate execution path for Mixed Cue.
+The Hub facade converts visual choices to canonical Cue actions. The browser never asks ordinary users for target refs, capability keys, JSON, IPs or URLs.
 
-## 17. Emergency safe state
+Mixed Cue reuses the same canonical actions; there is no second execution path.
 
-StageLaser will become an explicit managed-output Emergency Blackout domain.
+Example:
 
-Emergency safety requests `laser.safe_off`, not raw toggle.
+```text
+Device: Laser Left
+Action: Flash
+Frequency: 1 Hz
+Duration: 8 sec
+```
 
-Known tracked ON may safely transition OFF. Known OFF is a no-op. UNKNOWN must be reported truthfully as a partial safe-state failure/resync requirement; StageCore must never claim physical OFF when it cannot know it.
+## 17. Emergency Blackout / Safe Off
 
-Releasing Emergency Blackout never auto-arms or auto-restores the laser.
+StageLaser becomes an explicit managed-output safety domain.
 
-## 18. Firmware boundary
+Emergency Blackout uses `LASER_SAFE_OFF`.
 
-The production ESP32-C3 firmware will include:
+- tracked ON -> one deterministic OFF transition;
+- tracked OFF -> no pulse;
+- UNKNOWN -> no blind pulse; report partial safe-state failure / resync required.
 
-- safe GPIO initialization before networking;
-- relay-driver abstraction;
-- non-blocking state machine;
-- NVS identity/config/state;
-- command deduplication journal;
-- Wi-Fi provisioning and fallback AP;
-- authenticated local control API;
-- mDNS advertisement;
-- browser OTA with safe output handling;
-- health/diagnostics API;
-- watchdog-friendly scheduling.
+Releasing Emergency Blackout never automatically arms or restores the laser.
 
-The relay GPIO is intentionally not selected in this architecture slice. It will be fixed only after the exact ESP32-C3 Super Mini board and relay module are verified.
+## 18. Official Controller ADDON
 
-## 19. Failure policy
+Like Lighting Controller, StageLaser will have an official non-executable Controller ADDON for product/UI ownership.
 
-- Wi-Fi loss: local bounded flash completes then OFF; no new commands; tracked stable state retained.
-- Hub loss: same as Wi-Fi loss; no autonomous ON.
-- ESP restart: boot DISARMED; restore only provable stable state.
-- timeout: no new-ID automatic retry; reconcile by command ID/status.
-- reset during pulse: UNKNOWN + resync required.
-- duplicate command: prior result returned, no duplicate pulse.
-- flash + connectivity loss: bounded local timer settles OFF.
-- OTA/reboot: output initialized inactive before network/OTA services and device returns DISARMED.
+The ADDON may own:
 
-## 20. Hardware gate still pending
+- workspace/device presentation;
+- graphical Cue actions;
+- readiness/diagnostics presentation;
+- commissioning/resync UI.
 
-Before firmware GPIO/driver code is finalized, verify:
+It does not own:
 
-- exact ESP32-C3 Super Mini board revision/pinout;
-- safe non-strapping GPIO;
-- whether the relay input is active-high or active-low;
-- whether 3.3 V logic reliably drives the 5 V module;
-- isolation/opto topology;
+- network sockets;
+- pairing;
+- command authority;
+- device command persistence;
+- show history.
+
+Those remain native StageCore Core responsibilities.
+
+## 19. Firmware repository boundary
+
+Production firmware will live in a dedicated repository rather than mixing ESP-IDF sources into StageCore Core.
+
+Planned repository:
+
+`ali96adil/StageCore-ESP32-StageLaser`
+
+Its foundation should reuse/adapt the proven non-DMX infrastructure from `StageCore-ESP32-DMX-Lighting`:
+
+- ESP-IDF / PlatformIO build + CI conventions;
+- persistent P-256 device identity;
+- Stage LAN provisioning and recovery;
+- Hub discovery;
+- Hub trust/certificate pinning;
+- pairing/authentication;
+- Stage Device v2 runtime;
+- command envelope validation;
+- command dedupe;
+- observations;
+- OTA/recovery conventions where applicable.
+
+DMX/output-specific code is not copied.
+
+## 20. Hardware gate
+
+GPIO and electrical driver code remain deliberately unfixed until the actual hardware is identified.
+
+Before selecting the ESP32-C3 output pin, verify:
+
+- exact ESP32-C3 Super Mini revision/pinout;
+- strapping/boot/USB/JTAG constraints;
+- relay IN active level;
+- whether 3.3 V logic reliably drives the 5 V relay module;
+- optocoupler/transistor topology;
+- relay default state during MCU reset;
 - dry-contact voltage/current at the laser button;
-- NO/COM behavior;
+- correct NO/COM terminals;
 - whether ESP and laser share a power domain.
 
-No source code may assume those details before the physical module is identified.
+Cold boot acceptance requires zero unintended contact closure.
+
+## 21. Failure policy
+
+- Wi-Fi loss: no new commands; bounded local flash completes; stable tracked state retained.
+- Hub loss: same; device cannot autonomously arm or turn ON.
+- ESP restart: boot DISARMED; restore only provable tracked state.
+- command timeout: no new-ID blind retry.
+- reset during pulse: UNKNOWN + resync required.
+- duplicate command: return known result, no duplicate pulse.
+- flash + network loss: bounded local flash expires locally.
+- OTA/reboot: output driver is initialized inactive before networking/runtime.
+
+## 22. Implementation order
+
+1. contract + tests;
+2. official StageLaser Device Profile;
+3. Stage Device v2 enrollment/assignment/command authority for the StageLaser profile;
+4. deterministic software StageLaser simulator/state machine tests;
+5. Cue Engine forwarding + visual Cue Builder/Mixed Cue;
+6. Operator Device Card / commissioning / diagnostics;
+7. managed-output Emergency Blackout integration;
+8. official StageLaser Controller ADDON;
+9. dedicated ESP32-C3 firmware repository;
+10. software CI freeze;
+11. attended hardware qualification.
