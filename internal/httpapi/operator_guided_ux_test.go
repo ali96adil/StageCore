@@ -101,9 +101,10 @@ func TestGuidedOperatorUXAssetsAreEmbeddedAndOffline(t *testing.T) {
 	for _, required := range []string{
 		"/preflight",
 		"Preflight:",
+		"runtimeIssues",
 		"showBlocked",
 		"runtimeOpenPreflight",
-		"Client readiness display cannot bypass Preflight",
+		"Operational readiness is advisory:",
 		"/runtime/emergency-blackout",
 		"EMERGENCY BLACKOUT",
 		"CLEAR MANAGED BLACKOUT",

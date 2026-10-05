@@ -100,6 +100,30 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		}
 		status, summary, detail := deviceStatus(device)
 		add(&report, status, "device."+device.ID, "stage_device", summary, detail, device.ID)
+		if device.ProtocolVersion == deviceexperience.ProtocolVersion2 {
+			name := strings.TrimSpace(device.DisplayName)
+			if name == "" {
+				name = device.ID
+			}
+			assignment := device.Assignment
+			switch {
+			case assignment == nil:
+				add(&report, preflight.Warn, "device."+device.ID+".snapshot", "stage_device",
+					"Stage Device has no active Runtime Snapshot assignment: "+name,
+					"Published Runtime Snapshot: "+report.RuntimeSnapshotID, device.ID)
+			case assignment.State != "ACTIVE" || assignment.ProjectID != report.ProjectID:
+				add(&report, preflight.Warn, "device."+device.ID+".snapshot", "stage_device",
+					"Stage Device assignment is not active for this Project: "+name,
+					fmt.Sprintf("state=%s · project=%s · published=%s", assignment.State, assignment.ProjectID, report.RuntimeSnapshotID), device.ID)
+			case assignment.RuntimeSnapshotID != report.RuntimeSnapshotID:
+				add(&report, preflight.Warn, "device."+device.ID+".snapshot", "stage_device",
+					"Stage Device is on an older Runtime Snapshot: "+name,
+					fmt.Sprintf("device=%s · published=%s", assignment.RuntimeSnapshotID, report.RuntimeSnapshotID), device.ID)
+			default:
+				add(&report, preflight.Pass, "device."+device.ID+".snapshot", "stage_device",
+					"Stage Device Runtime Snapshot matches: "+name, report.RuntimeSnapshotID, device.ID)
+			}
+		}
 	}
 
 	sources, err := s.repository.ListLiveSources(ctx, report.ProjectID)

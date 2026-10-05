@@ -120,7 +120,7 @@ function canEdit() {
 }
 
 function canRuntime() {
-  return ["OWNER", "OPERATOR"].includes(state.user?.role);
+  return ["OWNER", "TECHNICIAN", "OPERATOR"].includes(state.user?.role);
 }
 
 function showLogin(message = "") {
@@ -504,13 +504,14 @@ async function testCueFromWorkspace(cueID) {
     }
 
     const startRehearsal = !runtime.session;
+    let startWarning = "";
     const promptText = startRehearsal
       ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
       : `Test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now in the active REHEARSAL?`;
     if (!confirm(promptText)) return;
 
     if (startRehearsal) {
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
+      const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
         method: "POST",
         json: {
           mode: "REHEARSAL",
@@ -518,6 +519,7 @@ async function testCueFromWorkspace(cueID) {
           request_id: requestID(),
         },
       });
+      startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
       runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     }
     if (!runtime.session || runtime.session.type !== "REHEARSAL") {
@@ -535,7 +537,10 @@ async function testCueFromWorkspace(cueID) {
         confirm: true,
       },
     });
-    await renderCues(`Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
+    await renderCues(
+      `Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}${startWarning ? ` · DEGRADED: ${startWarning}` : ""}`,
+      startWarning ? "warn" : "",
+    );
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
@@ -1033,6 +1038,30 @@ async function renderRuntime(startPolling = false) {
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
   const showBlocked = preflight?.status === "BLOCK";
+  const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
+  const runtimeIssueMarkup = runtimeIssues.length
+    ? `<section class="card runtime-readiness-issues">
+        <div class="section-title-row">
+          <div>
+            <h3>Runtime readiness · degraded operation allowed</h3>
+            <p class="muted">WARN means degraded live operation is allowed: healthy outputs continue and unavailable Actions are recorded without stopping later Actions unless FAIL_CUE is explicit. BLOCK is reserved for structural Snapshot/security/storage/timecode configuration conditions and prevents SHOW entry.</p>
+          </div>
+          ${pill(`${runtimeIssues.length} ISSUE${runtimeIssues.length === 1 ? "" : "S"}`, blockers ? "bad" : "warn")}
+        </div>
+        <div class="validation-list">
+          ${runtimeIssues.map((check) => `<div class="validation-item">
+            <div class="section-title-row">
+              <strong>${esc(check.summary || check.key || "Runtime readiness issue")}</strong>
+              ${pill(check.status || "WARN", check.status === "BLOCK" ? "bad" : "warn")}
+            </div>
+            <p class="muted">${esc(check.category || "runtime")}${check.entity_id ? ` · ${esc(check.entity_id)}` : ""}</p>
+            ${check.detail ? `<p>${esc(check.detail)}</p>` : ""}
+          </div>`).join("")}
+        </div>
+      </section>`
+    : `<section class="card runtime-readiness-issues">
+        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
+      </section>`;
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
@@ -1055,7 +1084,7 @@ async function renderRuntime(startPolling = false) {
           <p class="muted">Runtime is in EDIT mode.</p>
           <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
             <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
-            <span> · ${esc(blockers)} blocker(s) · ${esc(warnings)} warning(s)</span>
+            <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
@@ -1063,7 +1092,7 @@ async function renderRuntime(startPolling = false) {
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
-          <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
+          <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
@@ -1087,7 +1116,8 @@ async function renderRuntime(startPolling = false) {
     <div class="stat-grid">
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
-    </div>`;
+    </div>
+    ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
@@ -1104,14 +1134,23 @@ async function renderRuntime(startPolling = false) {
 }
 
 async function startRuntime(mode) {
-  if (mode === "SHOW" && !confirm("Enter SHOW mode? StageCore will enforce the SHOW Preflight gate.")) return;
+  if (mode === "SHOW" && !confirm("Enter SHOW mode? Operational readiness warnings are advisory: healthy outputs continue, unavailable outputs stay visible as degraded, and their Actions do not stop later Actions unless FAIL_CUE is explicit. Structural Preflight BLOCK conditions still prevent SHOW entry.")) return;
   try {
     state.runtimeForceExitAvailable = false;
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
+    const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
       json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
     });
-    setMessage(globalMessage, `${mode} Session started.`, "success");
+    const payload = started.result?.payload || {};
+    const degradedReasons = Array.isArray(payload.degraded_reasons)
+      ? payload.degraded_reasons.map((value) => String(value || "").trim()).filter(Boolean)
+      : [payload.device_scope_warning, payload.preflight_warning].map((value) => String(value || "").trim()).filter(Boolean);
+    const degraded = degradedReasons.length > 0;
+    setMessage(
+      globalMessage,
+      degraded ? `${mode} Session started in DEGRADED mode. ${degradedReasons.join(" ")}` : `${mode} Session started.`,
+      degraded ? "warn" : "success",
+    );
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }

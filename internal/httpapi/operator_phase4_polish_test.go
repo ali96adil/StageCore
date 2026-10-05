@@ -98,3 +98,26 @@ func TestPhase4NetworkCockpitIgnoresStaleAsyncRender(t *testing.T) {
 		}
 	}
 }
+
+
+func TestPhase4StageDevicesGuardsMissingBodyAcrossAsyncRefresh(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	req.RemoteAddr = "127.0.0.1:19109"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("phase4.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, required := range []string{
+		`let body = document.getElementById("phase4Body")`,
+		`if (!body) return`,
+		`body = document.getElementById("phase4Body")`,
+		`if (!body || !body.isConnected) return`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("phase4.js missing Stage Devices async body guard %q", required)
+		}
+	}
+}

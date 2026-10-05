@@ -12,12 +12,13 @@ import (
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
-// NewStageDeviceSnapshotGate prevents REHEARSAL and SHOW from starting while
-// managed v2 Tablets or Lighting required by the target Published Runtime
-// Snapshot still hold authority for an older Snapshot.
+// NewStageDeviceSnapshotGate verifies the target Published Runtime Snapshot
+// before Session start. A cross-Project Snapshot is a hard invariant failure,
+// but managed v2 Tablet/Lighting readiness is advisory: a live show must be
+// able to continue in degraded mode when one physical device is unavailable.
 //
 // This is intentionally read-only. Publish/Sync owns authority transitions;
-// Session start only verifies that those transitions completed.
+// Session start reports incomplete device transitions without mutating them.
 func NewStageDeviceSnapshotGate(
 	stageStore *store.Store,
 	devices *deviceexperience.Repository,
@@ -40,12 +41,13 @@ func NewStageDeviceSnapshotGate(
 		}
 
 		// Every enabled v2 Tablet currently assigned to this Project is managed
-		// output and must have exact current Snapshot authority before a Session
-		// can start.
+		// output. Snapshot/readiness mismatches are reported as degraded-start
+		// warnings, not Session blockers.
 		items, err := devices.ListDevices(ctx, projectID)
 		if err != nil {
 			return false, "", err
 		}
+		warnings := make([]string, 0)
 		for _, device := range items {
 			if !device.Enabled ||
 				device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
@@ -58,10 +60,11 @@ func NewStageDeviceSnapshotGate(
 				assignment.State != "ACTIVE" ||
 				assignment.ProjectID != projectID ||
 				assignment.RuntimeSnapshotID != runtimeSnapshotID {
-				return false, fmt.Sprintf(
+				warnings = append(warnings, fmt.Sprintf(
 					"Tablet %s is not synchronized to the latest Published Runtime Snapshot.",
 					stageDeviceGateName(device),
-				), nil
+				))
+				continue
 			}
 			scope, ok := runtime.CurrentV2Scope(device.ID)
 			if !ok ||
@@ -69,10 +72,10 @@ func NewStageDeviceSnapshotGate(
 				scope.RuntimeSnapshotID != runtimeSnapshotID ||
 				scope.AssignmentEpoch != assignment.Epoch ||
 				!scope.CommandsEnabled {
-				return false, fmt.Sprintf(
+				warnings = append(warnings, fmt.Sprintf(
 					"Tablet %s has not completed its fresh Runtime Snapshot reconnect.",
 					stageDeviceGateName(device),
-				), nil
+				))
 			}
 		}
 
@@ -93,10 +96,11 @@ func NewStageDeviceSnapshotGate(
 			}
 			device, err := devices.GetDevice(ctx, deviceID)
 			if err != nil {
-				return false, fmt.Sprintf(
+				warnings = append(warnings, fmt.Sprintf(
 					"Lighting Node %s required by the Published Runtime Snapshot is unavailable.",
 					deviceID,
-				), nil
+				))
+				continue
 			}
 			if !device.Enabled ||
 				device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
@@ -105,10 +109,11 @@ func NewStageDeviceSnapshotGate(
 				device.Assignment.State != "ACTIVE" ||
 				device.Assignment.ProjectID != projectID ||
 				device.Assignment.RuntimeSnapshotID != runtimeSnapshotID {
-				return false, fmt.Sprintf(
+				warnings = append(warnings, fmt.Sprintf(
 					"Lighting Node %s is not synchronized to the latest Published Runtime Snapshot.",
 					stageDeviceGateName(device),
-				), nil
+				))
+				continue
 			}
 			scope, ok := runtime.CurrentV2Scope(device.ID)
 			if !ok ||
@@ -116,13 +121,13 @@ func NewStageDeviceSnapshotGate(
 				scope.RuntimeSnapshotID != runtimeSnapshotID ||
 				scope.AssignmentEpoch != device.Assignment.Epoch ||
 				!scope.CommandsEnabled {
-				return false, fmt.Sprintf(
+				warnings = append(warnings, fmt.Sprintf(
 					"Lighting Node %s has not completed its fresh Runtime Snapshot reconnect.",
 					stageDeviceGateName(device),
-				), nil
+				))
 			}
 		}
-		return true, "", nil
+		return true, strings.Join(warnings, " "), nil
 	}
 }
 

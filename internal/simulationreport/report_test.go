@@ -54,7 +54,7 @@ func TestReportFindsMappingTimingFailureAndObservedStageDifference(t *testing.T)
 	}
 	unmappedAction := domain.Action{
 		ExecutionMode: "SEQUENTIAL", TargetRef: "MISSING-TARGET", CapabilityKey: "osc.send",
-		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 		PriorityClass: domain.PriorityP1, Enabled: true, OrderIndex: 0,
 	}
 	if _, err := s.CreateCueWithActions(ctx, domain.Cue{RevisionID: revision.ID, DisplayLabel: "1", Name: "Mapped cue", OrderIndex: 0, Enabled: true}, []domain.Action{mappedAction}); err != nil { t.Fatal(err) }

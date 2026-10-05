@@ -499,7 +499,8 @@
     // The project or page may have changed while awaiting the device list.
     if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
     const devices = payload.devices || [];
-    const body = document.getElementById("phase4Body");
+    let body = document.getElementById("phase4Body");
+    if (!body) return;
     // A v2 sidecar may be BLOCKED for the current Project even though the
     // legacy project_id column is NULL. Display it, never make it executable.
     const canPair = ["OWNER", "TECHNICIAN"].includes(state.user?.role);
@@ -538,6 +539,8 @@
     const assignmentLocked = runtimeStatus?.mode === "SHOW";
     // Never paint stale Project inventory after either additional async fetch.
     if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" || currentProjectID() !== projectID) return;
+    body = document.getElementById("phase4Body");
+    if (!body || !body.isConnected) return;
     const inventoryCard = (device) => {
       const assignment = device.assignment || {};
       const assignmentState = assignment.assignment_state || "UNKNOWN";

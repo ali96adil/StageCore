@@ -467,6 +467,11 @@ func actionFailureIsFatal(raw json.RawMessage, result domain.ExecutionResult) (b
 	if result == domain.ExecutionCompleted {
 		return false, nil
 	}
+	// Operator STOP / Session Stop cancellation is authoritative and must never
+	// be swallowed by fail-soft output handling.
+	if result == domain.ExecutionCancelled {
+		return true, nil
+	}
 	var policy struct {
 		OnError string `json:"on_error"`
 	}
@@ -476,11 +481,14 @@ func actionFailureIsFatal(raw json.RawMessage, result domain.ExecutionResult) (b
 		}
 	}
 	onError := strings.ToUpper(strings.TrimSpace(policy.OnError))
-	if onError == "" || onError == "FAIL_CUE" {
-		return true, nil
-	}
-	if onError == "CONTINUE" {
+	// Live StageCore operation is fail-soft by default: an unavailable output
+	// must not prevent later Actions in the same Cue from reaching healthy
+	// subsystems. Authors can still opt into strict abort semantics explicitly.
+	if onError == "" || onError == "CONTINUE" {
 		return false, nil
+	}
+	if onError == "FAIL_CUE" {
+		return true, nil
 	}
 	return true, fmt.Errorf("unsupported on_error policy %q", policy.OnError)
 }

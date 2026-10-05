@@ -266,6 +266,7 @@ var rolePermissions = map[string]map[Permission]bool{
 	},
 	RoleTechnician: {
 		PermissionProjectRead: true, PermissionProjectEdit: true, PermissionSnapshotPublish: true,
+		PermissionRuntimeControl: true, PermissionShowEnterExit: true,
 		PermissionCompanionPair: true, PermissionPluginManage: true,
 	},
 	RoleOperator: {
