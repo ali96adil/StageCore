@@ -90,6 +90,13 @@
       renderNode: "Execution / Render Node",
       required: "Required for show",
       enabled: "Enabled",
+      showRequirement: "Required for show",
+      showRequired: "Required",
+      showNotRequired: "Not required",
+      requireForShow: "Require for show",
+      excludeFromShow: "Exclude from show readiness",
+      showRequirementNote: "Controls generic SHOW readiness only. Device identity and pairing are preserved.",
+      showRequirementSaved: "Stage Device show requirement updated.",
       saveSource: "Save source",
       updateSource: "Update source",
       editSource: "Edit",
@@ -223,6 +230,13 @@
       renderNode: "جهاز التنفيذ / Render Node",
       required: "مطلوب للعرض",
       enabled: "مفعّل",
+      showRequirement: "مطلوب للعرض",
+      showRequired: "مطلوب",
+      showNotRequired: "غير مطلوب",
+      requireForShow: "اعتبره مطلوباً للعرض",
+      excludeFromShow: "استبعده من جاهزية العرض",
+      showRequirementNote: "يغيّر فحص جاهزية العرض فقط؛ هوية الجهاز والاقتران يبقيان محفوظين.",
+      showRequirementSaved: "تم تحديث حالة الجهاز بالنسبة للعرض.",
       saveSource: "حفظ المصدر",
       updateSource: "تحديث المصدر",
       editSource: "تعديل",
@@ -368,8 +382,13 @@
       </div>`;
   }
 
-  function deviceCard(device, v2Status = null) {
+  function deviceCard(device, v2Status = null, showLocked = false) {
     const runtime = device.runtime || {};
+    const assignment = device.assignment || {};
+    const showRequirementKnown = device.protocol_version === "stagecore.device/2" &&
+      assignment.project_id === currentProjectID();
+    const requiredForShow = assignment.required_for_show !== false;
+    const showRequirementEditable = showRequirementKnown && canEdit() && !showLocked;
     const observed = runtime.observed_state && typeof runtime.observed_state === "object"
       ? runtime.observed_state : {};
     const health = observed.health && typeof observed.health === "object" ? observed.health : {};
@@ -431,6 +450,16 @@
             <button class="button ghost" data-live-diagnostic-device="${esc(device.device_id)}" type="button">${esc(t("liveDiagnostic"))}</button>
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
+        ${showRequirementKnown ? `
+          <div class="phase4-empty" role="status">
+            <strong>${esc(t("showRequirement"))}: ${esc(t(requiredForShow ? "showRequired" : "showNotRequired"))}</strong>
+            <p>${esc(t("showRequirementNote"))}</p>
+            ${showRequirementEditable ? `
+              <button class="button ghost" data-show-requirement="${esc(device.device_id)}"
+                data-required-for-show="${requiredForShow ? "true" : "false"}" type="button">
+                ${esc(t(requiredForShow ? "excludeFromShow" : "requireForShow"))}
+              </button>` : ""}
+          </div>` : ""}
         ${device.protocol_version === "stagecore.device/2" &&
           device.device_kind === "TABLET_PLAYER" &&
           runtime.connection_state !== "ONLINE" &&
@@ -583,7 +612,7 @@
     };
     body.innerHTML = `
       ${devices.length
-        ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id])).join("")}</div>`
+        ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id], assignmentLocked)).join("")}</div>`
         : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
       ${canPair ? `<section aria-label="${esc(t("v2InventoryTitle"))}">
         <h2>${esc(t("v2InventoryTitle"))}</h2>
@@ -598,6 +627,28 @@
         const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
         if (navButton) navButton.click();
         else navigate(page);
+      });
+    });
+
+    body.querySelectorAll("[data-show-requirement]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.showRequirement || "";
+        const currentRequired = button.dataset.requiredForShow !== "false";
+        if (!deviceID) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/show-requirement`, {
+            method: "PUT",
+            body: JSON.stringify({ required_for_show: !currentRequired }),
+          });
+          phase4Message(t("showRequirementSaved"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
       });
     });
 
