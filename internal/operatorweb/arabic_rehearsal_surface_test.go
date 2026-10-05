@@ -16,6 +16,11 @@ func TestArabicRehearsalSurfaceCoverage(t *testing.T) {
 		`"TABLET CONTROLLER": "التحكم بالتابلت"`,
 		`"LIGHTING AUTHORING": "تأليف الإضاءة"`,
 		`"TIMECODE": "التايم كود"`,
+		`"Cue Check": "فحص الإشارة"`,
+		`"Sync Devices": "مزامنة الأجهزة"`,
+		`"Enter an absolute HTTP(S) Live URL.": "أدخل رابط بث HTTP(S) كاملاً."`,
+		`"Choose a logical Lighting channel.": "اختر قناة إضاءة منطقية."`,
+		`"Timecode expiry frames must be a non-negative integer.": "يجب أن يكون عدد إطارات انتهاء التايم كود عدداً صحيحاً غير سالب."`,
 	}
 	for _, marker := range required {
 		if !strings.Contains(localization, marker) {
