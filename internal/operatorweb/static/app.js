@@ -1018,6 +1018,39 @@ async function publishDraft() {
   }
 }
 
+function groupRuntimeReadinessIssues(checks) {
+  const groups = new Map();
+  (checks || []).filter((check) => check.status !== "PASS").forEach((check, index) => {
+    const entityID = String(check.entity_id || "").trim();
+    const key = entityID || `${check.category || "runtime"}:${check.key || index}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        entityID,
+        status: check.status || "WARN",
+        issues: [],
+        categories: new Set(),
+      });
+    }
+    const group = groups.get(key);
+    group.issues.push(check);
+    group.categories.add(check.category || "runtime");
+    if (check.status === "BLOCK") group.status = "BLOCK";
+  });
+  return [...groups.values()];
+}
+
+function runtimeReadinessGroupTitle(group) {
+  const preferred = group.issues.find((check) => check.category !== "network") || group.issues[0] || {};
+  const summary = String(preferred.summary || preferred.key || "Runtime readiness issue").trim();
+  const colon = summary.indexOf(":");
+  if (group.entityID && colon >= 0 && colon < summary.length - 1) {
+    const suffix = summary.slice(colon + 1).trim();
+    if (suffix && suffix !== group.entityID) return suffix;
+  }
+  return summary;
+}
+
 async function renderRuntime(startPolling = false) {
   const projectID = encodeURIComponent(state.project.project_id);
   const [runtime, preflight] = await Promise.all([
@@ -1039,23 +1072,32 @@ async function renderRuntime(startPolling = false) {
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
   const showBlocked = preflight?.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
-  const runtimeIssueMarkup = runtimeIssues.length
+  const runtimeIssueGroups = groupRuntimeReadinessIssues(preflight?.checks || []);
+  const runtimeIssueMarkup = runtimeIssueGroups.length
     ? `<section class="card runtime-readiness-issues">
         <div class="section-title-row">
           <div>
             <h3>Runtime readiness · degraded operation allowed</h3>
-            <p class="muted">WARN means degraded live operation is allowed: healthy outputs continue and unavailable Actions are recorded without stopping later Actions unless FAIL_CUE is explicit. BLOCK is reserved for structural Snapshot/security/storage/timecode configuration conditions and prevents SHOW entry.</p>
+            <p class="muted">WARN means degraded live operation is allowed: healthy outputs continue and unavailable Actions are recorded without stopping later Actions unless FAIL_CUE is explicit. Repeated offline / stale Snapshot / stale network observations are grouped by affected resource below.</p>
           </div>
-          ${pill(`${runtimeIssues.length} ISSUE${runtimeIssues.length === 1 ? "" : "S"}`, blockers ? "bad" : "warn")}
+          ${pill(
+            `${runtimeIssueGroups.length} RESOURCE${runtimeIssueGroups.length === 1 ? "" : "S"} · ${runtimeIssues.length} DETAIL${runtimeIssues.length === 1 ? "" : "S"}`,
+            blockers ? "bad" : "warn",
+          )}
         </div>
         <div class="validation-list">
-          ${runtimeIssues.map((check) => `<div class="validation-item">
+          ${runtimeIssueGroups.map((group) => `<div class="validation-item">
             <div class="section-title-row">
-              <strong>${esc(check.summary || check.key || "Runtime readiness issue")}</strong>
-              ${pill(check.status || "WARN", check.status === "BLOCK" ? "bad" : "warn")}
+              <strong>${esc(runtimeReadinessGroupTitle(group))}</strong>
+              ${pill(group.status, group.status === "BLOCK" ? "bad" : "warn")}
             </div>
-            <p class="muted">${esc(check.category || "runtime")}${check.entity_id ? ` · ${esc(check.entity_id)}` : ""}</p>
-            ${check.detail ? `<p>${esc(check.detail)}</p>` : ""}
+            <p class="muted">${esc([...group.categories].join(" · "))}${group.entityID ? ` · ${esc(group.entityID)}` : ""}</p>
+            <ul>
+              ${group.issues.map((check) => `<li>
+                <strong>${esc(check.summary || check.key || "Runtime readiness issue")}</strong>
+                ${check.detail ? `<br><span class="muted">${esc(check.detail)}</span>` : ""}
+              </li>`).join("")}
+            </ul>
           </div>`).join("")}
         </div>
       </section>`
