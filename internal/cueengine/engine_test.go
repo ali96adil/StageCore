@@ -73,6 +73,23 @@ func TestCueGoContinuePolicyAllowsCueCompletion(t *testing.T) {
 	events, _ := f.store.ListEvents(context.Background(), f.session.ID); assertEventTypes(t, events, []string{"cue.started", "action.started", "action.failed", "action.started", "action.completed", "cue.completed"})
 }
 
+func TestCueGoDefaultPolicyContinuesAfterUnavailableAction(t *testing.T) {
+	first := action("SEQUENTIAL", "FAIL", 0, "CONTINUE")
+	first.OrderIndex = 0
+	first.ErrorPolicy = json.RawMessage(`{}`)
+	second := action("SEQUENTIAL", "COMPLETE", 0, "CONTINUE")
+	second.OrderIndex = 1
+	second.ErrorPolicy = json.RawMessage(`{}`)
+	f := newFixture(t, []domain.Action{first, second})
+
+	result := cueengine.New(f.store).ExecuteCueGo(context.Background(), f.session.ID, commandFor(t, f))
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("default fail-soft result=%#v", result)
+	}
+	events, _ := f.store.ListEvents(context.Background(), f.session.ID)
+	assertEventTypes(t, events, []string{"cue.started", "action.started", "action.failed", "action.started", "action.completed", "cue.completed"})
+}
+
 func TestCueGoTimeoutIsTruthful(t *testing.T) {
 	timed := action("SEQUENTIAL", "TIMEOUT", 0, "FAIL_CUE"); timed.OrderIndex = 0; timed.TimeoutPolicy = json.RawMessage(`{"timeout_ms":15}`); f := newFixture(t, []domain.Action{timed})
 	result := cueengine.New(f.store).ExecuteCueGo(context.Background(), f.session.ID, commandFor(t, f)); if result.Status != contracts.CommandTimedOut { t.Fatalf("result=%#v", result) }
