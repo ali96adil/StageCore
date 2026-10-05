@@ -1083,7 +1083,7 @@ async function renderRuntime(startPolling = false) {
           <p class="muted">Runtime is in EDIT mode.</p>
           <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
             <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
-            <span> · ${esc(blockers)} blocker(s) · ${esc(warnings)} warning(s)</span>
+            <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
