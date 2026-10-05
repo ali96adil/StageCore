@@ -588,3 +588,52 @@ func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *test
 		})
 	}
 }
+
+
+func TestSessionStartGateWarningAllowsDegradedRehearsal(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.startGate = func(context.Context, string, string) (bool, string, error) {
+		return true, "Tablet Tablet 72AEEE is not synchronized to the latest Published Runtime Snapshot.", nil
+	}
+
+	session, result := h.service.StartSession(context.Background(), StartRequest{
+		ProjectID: h.project.ID,
+		Mode: domain.SessionRehearsal,
+		Name: "Degraded rehearsal",
+		Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009101",
+	})
+	if result.Status != contracts.CommandCompleted || session.ID == "" {
+		t.Fatalf("degraded Session start should complete: result=%+v session=%+v", result, session)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["degraded_start"] != true {
+		t.Fatalf("degraded_start=%v payload=%s", payload["degraded_start"], result.Payload)
+	}
+	if got := payload["device_scope_warning"]; got != "Tablet Tablet 72AEEE is not synchronized to the latest Published Runtime Snapshot." {
+		t.Fatalf("device_scope_warning=%v", got)
+	}
+}
+
+func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.startGate = func(context.Context, string, string) (bool, string, error) {
+		return false, "Published Runtime Snapshot does not belong to this Project.", nil
+	}
+
+	session, result := h.service.StartSession(context.Background(), StartRequest{
+		ProjectID: h.project.ID,
+		Mode: domain.SessionRehearsal,
+		Name: "Invalid rehearsal",
+		Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009102",
+	})
+	if session.ID != "" || result.Status != contracts.CommandRejected ||
+		result.Error == nil || result.Error.ErrorCode != "SESSION_DEVICE_SCOPE_BLOCKED" {
+		t.Fatalf("hard Session-start invariant was not blocked: result=%+v session=%+v", result, session)
+	}
+}
