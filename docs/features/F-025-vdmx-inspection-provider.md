@@ -59,15 +59,18 @@ For `REFERENCE_ONLY` assets:
 - StageCore does not claim checksum integrity or backup coverage;
 - the existing readiness evaluator preserves the reference-only portability warning.
 
-## Unsupported requirement scope
+## Binding and extension scope
 
-This first VDMX provider does not yet claim truthful probes for VDMX extensions or external bindings.
+The VDMX provider now truthfully probes the declared local OSCQuery network binding when:
 
-If a VDMX manifest contains `external_extensions` or `bindings`, inspection returns:
+- the binding key is `oscquery`;
+- the binding kind is `NETWORK`;
+- the declared URL is loopback-only (`127.0.0.1`, `localhost`, or `::1`);
+- the endpoint returns a successful HTTP response containing parseable JSON.
 
-`FAILED / VDMX_INSPECTION_SCOPE_UNSUPPORTED`
+The probe is bounded and never scans arbitrary hosts or ports. A stopped VDMX/OSCQuery service therefore reports the binding absent, while starting the declared local OSCQuery service allows readiness to recover automatically on the next Preflight.
 
-It does not guess that the requirement is present or absent. Future slices may add narrow VDMX-specific probes for these requirement types after their stable discovery contracts are defined.
+Other external bindings and VDMX extensions remain conservatively unverified.
 
 ## Security and privacy boundary
 
@@ -103,14 +106,15 @@ Acceptance requires macOS tests proving:
 - content-bound files return streaming SHA-256 and observed size;
 - reference-only locators report presence without content claims;
 - symlinked declared assets are not followed;
-- extension/binding requirements fail explicitly as unsupported;
+- local OSCQuery binding presence is verified against the declared loopback endpoint;
+- unsupported extension/binding requirements remain conservative;
 - the real macOS Companion executable builds with the provider registered;
 - Companion Core CI and real macOS replacement/media acceptance pass on the exact PR head.
 
 ## Deferred
 
 - VDMX extension / ISF / Vuo / TouchDesigner component inspection;
-- display, MIDI, audio, and network binding probes;
+- display, MIDI, audio, and non-OSCQuery network binding probes;
 - VDMX process-running state;
 - project parsing or VDMX internal workspace introspection;
 - launch/open/reconnect controls;
