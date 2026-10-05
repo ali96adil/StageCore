@@ -218,6 +218,76 @@ func TestOperatorNetworkCockpitReturnsLatestTargetState(t *testing.T) {
 	}
 }
 
+func TestOperatorStageDeviceShowRequirementCanBeChangedForActiveV2Assignment(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Show Requirement", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: "tablet-show-required-01",
+		Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Show Requirement Tablet",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ProfileID: deviceexperience.TabletPlayerProfileID,
+		Capabilities: []string{"tablet.media.play"},
+		Enabled: true,
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET assignment_state='ACTIVE', project_id=?, runtime_snapshot_id='snapshot-current', assignment_epoch=2
+		WHERE device_id=?
+	`, project.ID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := bytes.NewBufferString(`{"required_for_show":false}`)
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/stage-devices/"+device.ID+"/show-requirement", body)
+	req.RemoteAddr = "127.0.0.1:19008"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, credential.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("show requirement status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Assignment deviceexperience.AssignmentRecord `json:"assignment"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Assignment.DeviceID != device.ID || response.Assignment.RequiredForShow {
+		t.Fatalf("show requirement response=%+v", response.Assignment)
+	}
+	stored, err := devices.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RequiredForShow {
+		t.Fatalf("show requirement was not persisted: %+v", stored)
+	}
+}
+
 func TestOperatorStageDeviceAssignmentMetadataIsReadOnlyAndAuthenticated(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
