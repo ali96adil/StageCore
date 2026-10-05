@@ -115,6 +115,40 @@ final class VDMXInspectionTests: XCTestCase {
         XCTAssertEqual(asset?.contentHash, "")
     }
 
+    func testLocalOSCQueryBindingBecomesPresentWhenDeclaredEndpointResponds() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent("VDMX6.app", isDirectory: true)
+        try makeApplicationBundle(at: app, version: "1.3.8")
+
+        let provider = VDMXInspectionProvider(
+            applicationCandidates: [app],
+            bindingProbe: { url in
+                url.absoluteString == "http://127.0.0.1:2345/"
+            }
+        )
+
+        var value = manifest(versionConstraint: "1.3.8")
+        value["bindings"] = .array([.object([
+            "key": .string("oscquery"),
+            "kind": .string("NETWORK"),
+            "name": .string("VDMX OSCQuery"),
+            "external_ref": .string("[http://127.0.0.1:2345/](http://127.0.0.1:2345/)"),
+            "required": .bool(false),
+        ])])
+
+        let outcome = await provider.inspect(manifest: value)
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertNil(outcome.errorCode)
+        let binding = try XCTUnwrap(outcome.observation?.bindings.first)
+        XCTAssertEqual(binding.key, "oscquery")
+        XCTAssertTrue(binding.present)
+        XCTAssertEqual(
+            outcome.responseSummary,
+            "VDMX application, declared assets and supported bindings inspected"
+        )
+    }
+
     func testUninspectableVDMXDependenciesCompleteWithConservativeAbsenceObservations() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
