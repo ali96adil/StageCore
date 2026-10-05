@@ -168,7 +168,9 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	if active != nil {
 		return finish(rejected(command.CommandID, "SESSION_ALREADY_ACTIVE", "the Project already has an active runtime Session", active.ID))
 	}
-	startWarning := ""
+	startWarnings := make([]string, 0, 2)
+	deviceScopeWarning := ""
+	preflightWarning := ""
 	if s.startGate != nil {
 		allowed, reason, err := s.startGate(ctx, project.ID, snapshot.ID)
 		if err != nil {
@@ -180,23 +182,28 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 			}
 			return finish(rejected(command.CommandID, "SESSION_DEVICE_SCOPE_BLOCKED", reason, snapshot.ID))
 		}
-		startWarning = strings.TrimSpace(reason)
+		deviceScopeWarning = strings.TrimSpace(reason)
+		if deviceScopeWarning != "" {
+			startWarnings = append(startWarnings, deviceScopeWarning)
+		}
 	}
 	if req.Mode == domain.SessionShow {
 		if s.showGate == nil {
-			return finish(rejected(command.CommandID, "SHOW_PREFLIGHT_REQUIRED", "SHOW entry remains blocked until the S3 Preflight gate is configured", snapshot.ID))
+			return finish(rejected(command.CommandID, "SHOW_PREFLIGHT_REQUIRED", "SHOW entry requires the Preflight evaluator to be configured", snapshot.ID))
 		}
 		allowed, reason, err := s.showGate(ctx, project.ID, snapshot.ID)
 		if err != nil {
 			return finish(failed(command.CommandID, "SHOW_PREFLIGHT_FAILED"))
 		}
 		if !allowed {
-			if strings.TrimSpace(reason) == "" {
-				reason = "SHOW Preflight contains a blocking condition"
+			preflightWarning = strings.TrimSpace(reason)
+			if preflightWarning == "" {
+				preflightWarning = "SHOW Preflight reports unavailable or mismatched runtime resources"
 			}
-			return finish(rejected(command.CommandID, "SHOW_PREFLIGHT_BLOCKED", reason, snapshot.ID))
+			startWarnings = append(startWarnings, preflightWarning)
 		}
 	}
+	startWarning := strings.Join(startWarnings, " ")
 
 	session, err := s.store.CreateSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name))
 	if err != nil {
@@ -209,7 +216,13 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
 	if startWarning != "" {
 		eventPayload["degraded_start"] = true
-		eventPayload["device_scope_warning"] = startWarning
+		eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
+	}
+	if deviceScopeWarning != "" {
+		eventPayload["device_scope_warning"] = deviceScopeWarning
+	}
+	if preflightWarning != "" {
+		eventPayload["preflight_warning"] = preflightWarning
 	}
 	payload, _ := json.Marshal(eventPayload)
 	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
@@ -226,7 +239,13 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	if startWarning != "" {
 		resultData["degraded_start"] = true
-		resultData["device_scope_warning"] = startWarning
+		resultData["degraded_reasons"] = append([]string(nil), startWarnings...)
+	}
+	if deviceScopeWarning != "" {
+		resultData["device_scope_warning"] = deviceScopeWarning
+	}
+	if preflightWarning != "" {
+		resultData["preflight_warning"] = preflightWarning
 	}
 	resultPayload, _ := json.Marshal(resultData)
 	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
