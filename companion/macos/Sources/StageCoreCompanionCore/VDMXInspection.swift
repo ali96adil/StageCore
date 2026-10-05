@@ -7,13 +7,16 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
 
     private let applicationCandidates: [URL]
     private let architecture: String
+    private let bindingProbe: @Sendable (URL) async -> Bool
 
     public init(
         applicationCandidates: [URL] = Self.defaultApplicationCandidates(),
-        architecture: String = Self.currentArchitecture
+        architecture: String = Self.currentArchitecture,
+        bindingProbe: (@Sendable (URL) async -> Bool)? = nil
     ) {
         self.applicationCandidates = applicationCandidates
         self.architecture = architecture
+        self.bindingProbe = bindingProbe ?? Self.probeOSCQuery
     }
 
     public func inspect(manifest: [String: JSONValue]) async -> CompanionInspectionOutcome {
@@ -38,15 +41,21 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
             let extensions = decoded.externalExtensions.map {
                 CompanionInspectionExtensionObservation(key: $0.key, present: false)
             }
-            let bindings = decoded.bindings.map {
-                CompanionInspectionBindingObservation(key: $0.key, present: false)
+            var bindings: [CompanionInspectionBindingObservation] = []
+            bindings.reserveCapacity(decoded.bindings.count)
+            var hasUnsupportedBinding = false
+            for binding in decoded.bindings {
+                try Task.checkCancellation()
+                let result = await inspectBinding(binding)
+                bindings.append(.init(key: binding.key, present: result.present))
+                hasUnsupportedBinding = hasUnsupportedBinding || !result.supported
             }
-            let unsupportedDependencies = !extensions.isEmpty || !bindings.isEmpty
+            let unsupportedDependencies = !extensions.isEmpty || hasUnsupportedBinding
             return .init(
                 status: .completed,
                 responseSummary: unsupportedDependencies
-                    ? "VDMX application and declared assets inspected; extension and binding presence remains unverified"
-                    : "VDMX application and declared asset inspection completed",
+                    ? "VDMX application and declared assets inspected; some extension or binding requirements remain unverified"
+                    : "VDMX application, declared assets and supported bindings inspected",
                 observation: CompanionInspectionObservation(
                     os: "darwin",
                     architecture: architecture,
@@ -150,6 +159,68 @@ public struct VDMXInspectionProvider: CompanionInspectionProvider {
             }
         default:
             return .init(key: asset.key, present: false, inspectable: false)
+        }
+    }
+
+    private func inspectBinding(_ binding: VDMXBindingRequirement) async -> (present: Bool, supported: Bool) {
+        guard binding.kind == "NETWORK",
+              binding.key.lowercased() == "oscquery",
+              let url = loopbackHTTPURL(binding.externalRef)
+        else {
+            return (false, false)
+        }
+        return (await bindingProbe(url), true)
+    }
+
+    private func loopbackHTTPURL(_ rawValue: String) -> URL? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Accept an accidentally pasted Markdown link when its destination is
+        // still a literal loopback URL. Existing manifests created from copied
+        // operator notes should not need database surgery to become inspectable.
+        if value.hasPrefix("["),
+           let marker = value.range(of: "]("),
+           value.hasSuffix(")") {
+            value = String(value[marker.upperBound..<value.index(before: value.endIndex)])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.user == nil,
+              url.password == nil,
+              let host = url.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost" || host == "::1"
+        else {
+            return nil
+        }
+        return url
+    }
+
+    private static func probeOSCQuery(_ url: URL) async -> Bool {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 0.75
+        configuration.timeoutIntervalForResource = 1.0
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<400).contains(http.statusCode)
+            else {
+                return false
+            }
+            // OSCQuery roots are JSON. Requiring parseable JSON avoids treating
+            // an unrelated service on the same port as a valid VDMX binding.
+            return (try? JSONSerialization.jsonObject(with: data)) != nil
+        } catch {
+            return false
         }
     }
 
@@ -332,5 +403,13 @@ private struct VDMXExtensionRequirement: Decodable {
 
 private struct VDMXBindingRequirement: Decodable {
     let key: String
+    let kind: String
+    let externalRef: String
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case kind
+        case externalRef = "external_ref"
+    }
 }
 #endif

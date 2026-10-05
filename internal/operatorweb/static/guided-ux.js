@@ -1165,7 +1165,7 @@ function f002EnhanceActionCard(card) {
         </select>
       </label>
     </div>
-    <p class="muted">FAIL_CUE is the Cue engine default. Advanced JSON is preserved unchanged when the policy contains fields this guided editor does not understand.</p>`;
+    <p class="muted">Continue Cue is the Cue engine default. Explicit FAIL_CUE stops following sequential work. Advanced JSON is preserved unchanged when the policy contains fields this guided editor does not understand.</p>`;
   params.closest("label").parentNode.insertBefore(builder, params.closest("label"));
 
   const advanced = f002CreateDetails("Advanced action settings");
