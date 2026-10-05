@@ -67,6 +67,39 @@ func WithOperatorStageDevices(
 		}))
 
 
+		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/stage-devices/{device_id}/show-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				RequiredForShow *bool `json:"required_for_show"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			if input.RequiredForShow == nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_REQUIRED"})
+				return
+			}
+			assignment, err := devices.SetRequiredForShow(r.Context(), deviceID, projectID, *input.RequiredForShow)
+			if err != nil {
+				status := http.StatusConflict
+				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
+					status = http.StatusBadRequest
+				}
+				writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_UPDATE_FAILED", "detail": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"assignment": assignment})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/sync-runtime-snapshot", withPermission(auth, userauth.PermissionSnapshotPublish, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			if userauth.Authorize(session.User.Role, userauth.PermissionProjectEdit) != nil ||
 				userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
