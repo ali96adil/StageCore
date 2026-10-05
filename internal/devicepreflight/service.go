@@ -308,8 +308,8 @@ func missingCapabilities(required, advertised []string) []string {
 func projectNetworkTarget(target deviceexperience.CockpitTarget, devices map[string]deviceexperience.Device, sources map[string]deviceexperience.LiveSource, endpoints map[string]bool) bool {
 	switch target.TargetKind {
 	case "STAGE_DEVICE":
-		_, ok := devices[target.TargetID]
-		return ok
+		device, ok := devices[target.TargetID]
+		return ok && device.Enabled
 	case "LIVE_SOURCE":
 		_, ok := sources[target.TargetID]
 		return ok
