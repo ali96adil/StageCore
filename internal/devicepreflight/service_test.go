@@ -3,6 +3,7 @@ package devicepreflight_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,4 +178,68 @@ func hasCheck(checks []preflight.Check, key string, status preflight.Status) boo
 		}
 	}
 	return false
+}
+
+
+func TestV2StageDeviceOldSnapshotIsReportedAsWarning(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	stageStore := store.New(h.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot Warning", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := deviceexperience.NewRepository(h.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: "tablet-old-snapshot",
+		Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet Old Snapshot",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ProfileID: deviceexperience.TabletPlayerProfileID,
+		Enabled: true,
+		Capabilities: []string{"tablet.media.play"},
+	}
+	if _, err := repo.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET assignment_state='ACTIVE', project_id=?, runtime_snapshot_id='snapshot-old', assignment_epoch=2
+		WHERE device_id=?
+	`, project.ID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	base := baseReport{report: preflight.Report{
+		Status: preflight.Pass,
+		ProjectID: project.ID,
+		RuntimeSnapshotID: "snapshot-new",
+		Checks: []preflight.Check{},
+	}}
+	report, err := devicepreflight.New(base, repo).Evaluate(ctx, project.ID, "snapshot-new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheck(report.Checks, "device."+device.ID+".snapshot", preflight.Warn) {
+		t.Fatalf("old v2 snapshot warning missing: %+v", report.Checks)
+	}
+	foundDetail := false
+	for _, check := range report.Checks {
+		if check.Key == "device."+device.ID+".snapshot" &&
+			strings.Contains(check.Detail, "snapshot-old") &&
+			strings.Contains(check.Detail, "snapshot-new") {
+			foundDetail = true
+		}
+	}
+	if !foundDetail {
+		t.Fatalf("old/new snapshot IDs not exposed in warning: %+v", report.Checks)
+	}
 }
