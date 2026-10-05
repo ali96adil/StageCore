@@ -196,10 +196,14 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 			return finish(failed(command.CommandID, "SHOW_PREFLIGHT_FAILED"))
 		}
 		if !allowed {
-			preflightWarning = strings.TrimSpace(reason)
-			if preflightWarning == "" {
-				preflightWarning = "SHOW Preflight reports unavailable or mismatched runtime resources"
+			reason = strings.TrimSpace(reason)
+			if reason == "" {
+				reason = "SHOW Preflight contains a structural blocking condition"
 			}
+			return finish(rejected(command.CommandID, "SHOW_PREFLIGHT_BLOCKED", reason, snapshot.ID))
+		}
+		preflightWarning = strings.TrimSpace(reason)
+		if preflightWarning != "" {
 			startWarnings = append(startWarnings, preflightWarning)
 		}
 	}
