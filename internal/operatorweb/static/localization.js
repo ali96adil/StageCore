@@ -862,6 +862,11 @@ const f001Arabic = {
   "GO to projector": "إرسال GO إلى البروجكتر",
   "Ableton Audio": "صوت Ableton",
 
+  "Current revision is unavailable.": "النسخة الحالية غير متاحة.",
+  "No active project": "لا يوجد مشروع نشط",
+  "LIGHTING CONTROLLER": "التحكم بالإضاءة",
+  "LIGHTING CONFIGURATION": "إعداد الإضاءة",
+
   "Request failed.": "تعذر تنفيذ الطلب.",
   "Configuration unavailable": "الإعدادات غير متاحة",
   "Forbidden": "غير مسموح",
