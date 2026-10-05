@@ -504,13 +504,14 @@ async function testCueFromWorkspace(cueID) {
     }
 
     const startRehearsal = !runtime.session;
+    let startWarning = "";
     const promptText = startRehearsal
       ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
       : `Test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now in the active REHEARSAL?`;
     if (!confirm(promptText)) return;
 
     if (startRehearsal) {
-      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
+      const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
         method: "POST",
         json: {
           mode: "REHEARSAL",
@@ -518,6 +519,7 @@ async function testCueFromWorkspace(cueID) {
           request_id: requestID(),
         },
       });
+      startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
       runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     }
     if (!runtime.session || runtime.session.type !== "REHEARSAL") {
@@ -535,7 +537,10 @@ async function testCueFromWorkspace(cueID) {
         confirm: true,
       },
     });
-    await renderCues(`Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
+    await renderCues(
+      `Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}${startWarning ? ` · DEGRADED: ${startWarning}` : ""}`,
+      startWarning ? "warn" : "",
+    );
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
@@ -1107,11 +1112,16 @@ async function startRuntime(mode) {
   if (mode === "SHOW" && !confirm("Enter SHOW mode? StageCore will enforce the SHOW Preflight gate.")) return;
   try {
     state.runtimeForceExitAvailable = false;
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
+    const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
       json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
     });
-    setMessage(globalMessage, `${mode} Session started.`, "success");
+    const deviceWarning = String(started.result?.payload?.device_scope_warning || "").trim();
+    setMessage(
+      globalMessage,
+      deviceWarning ? `${mode} Session started in DEGRADED mode. ${deviceWarning}` : `${mode} Session started.`,
+      deviceWarning ? "warn" : "success",
+    );
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
