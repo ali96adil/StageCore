@@ -198,11 +198,26 @@ func TestAssignmentMigrationBackfillsPreExistingStageDevice(t *testing.T) {
 		legacy.ID).Scan(&existingIdentity); err != nil || existingIdentity != 1 {
 		t.Fatalf("migration lost pre-existing physical identity: count=%d err=%v", existingIdentity, err)
 	}
+	var backfilledDeviceID, backfilledProjectID, backfilledState, backfilledSnapshot string
+	var backfilledEpoch int64
+	if err := handle.DB.QueryRowContext(ctx, `
+		SELECT device_id, project_id, assignment_epoch, assignment_state, runtime_snapshot_id
+		FROM stage_device_assignments WHERE device_id = ?
+	`, legacy.ID).Scan(&backfilledDeviceID, &backfilledProjectID, &backfilledEpoch, &backfilledState, &backfilledSnapshot); err != nil {
+		t.Fatalf("read migration-29 sidecar: %v", err)
+	}
+	if backfilledDeviceID != legacy.ID || backfilledProjectID != projectID ||
+		backfilledState != deviceexperience.AssignmentLegacy || backfilledEpoch != 1 ||
+		backfilledSnapshot != "" {
+		t.Fatalf("pre-existing device was not safely backfilled at migration 29: device=%s project=%s epoch=%d state=%s snapshot=%s",
+			backfilledDeviceID, backfilledProjectID, backfilledEpoch, backfilledState, backfilledSnapshot)
+	}
+	if err := goose.Up(handle.DB, "."); err != nil {
+		t.Fatalf("upgrade test fixture to current schema: %v", err)
+	}
 	record, err := repo.GetAssignmentRecord(ctx, legacy.ID)
-	if err != nil || record.DeviceID != legacy.ID || record.ProjectID != projectID ||
-		record.State != deviceexperience.AssignmentLegacy || record.Epoch != 1 ||
-		record.RuntimeSnapshotID != "" {
-		t.Fatalf("pre-existing device was not safely backfilled: %+v err=%v", record, err)
+	if err != nil || !record.RequiredForShow {
+		t.Fatalf("current schema did not backfill required_for_show safely: %+v err=%v", record, err)
 	}
 	loaded, err := repo.GetDevice(ctx, legacy.ID)
 	if err != nil || loaded.ProjectID != projectID || !loaded.Enabled {
