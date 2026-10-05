@@ -82,6 +82,47 @@ func TestLegacyAssignmentSidecarRegistersWithoutActivatingV2(t *testing.T) {
 	}
 }
 
+func TestAssignmentShowRequirementDefaultsRequiredAndCanBeChangedPerProject(t *testing.T) {
+	ctx := context.Background()
+	repo, _, projectID := newRepository(t)
+	device := deviceexperience.Device{
+		ID: "tablet-show-requirement-01", ProjectID: projectID,
+		Kind: deviceexperience.DeviceTabletPlayer, DisplayName: "Show Tablet",
+		ProtocolVersion: deviceexperience.ProtocolVersion1, Enabled: true,
+	}
+	if _, err := repo.UpsertDevice(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !record.RequiredForShow {
+		t.Fatalf("new assignment default required_for_show=false: %+v", record)
+	}
+	updated, err := repo.SetRequiredForShow(ctx, device.ID, projectID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RequiredForShow {
+		t.Fatalf("show requirement was not disabled: %+v", updated)
+	}
+	if _, err := repo.SetRequiredForShow(ctx, device.ID, "wrong-project", true); !errors.Is(err, deviceexperience.ErrInvalidState) {
+		t.Fatalf("cross-project show requirement update err=%v", err)
+	}
+	stillOptional, err := repo.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillOptional.RequiredForShow {
+		t.Fatalf("rejected cross-project update changed requirement: %+v", stillOptional)
+	}
+	updated, err = repo.SetRequiredForShow(ctx, device.ID, projectID, true)
+	if err != nil || !updated.RequiredForShow {
+		t.Fatalf("show requirement was not restored: %+v err=%v", updated, err)
+	}
+}
+
 func TestAssignmentMetadataSchemaRejectsInvalidTransitionAndEpoch(t *testing.T) {
 	ctx := context.Background()
 	repo, handle, projectID := newRepository(t)
