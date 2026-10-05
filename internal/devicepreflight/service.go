@@ -95,7 +95,7 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 	deviceByID := make(map[string]deviceexperience.Device, len(devices))
 	for _, device := range devices {
 		deviceByID[device.ID] = device
-		if !device.Enabled {
+		if !device.Enabled || !deviceRequiredForShow(device) {
 			continue
 		}
 		status, summary, detail := deviceStatus(device)
@@ -178,6 +178,13 @@ func (s *Service) ShowGate(ctx context.Context, projectID, runtimeSnapshotID str
 		}
 	}
 	return false, "SHOW Preflight contains a blocking Stage Device condition", nil
+}
+
+func deviceRequiredForShow(device deviceexperience.Device) bool {
+	if device.ProtocolVersion != deviceexperience.ProtocolVersion2 || device.Assignment == nil {
+		return true
+	}
+	return device.Assignment.RequiredForShow
 }
 
 func deviceStatus(device deviceexperience.Device) (preflight.Status, string, string) {
@@ -309,7 +316,7 @@ func projectNetworkTarget(target deviceexperience.CockpitTarget, devices map[str
 	switch target.TargetKind {
 	case "STAGE_DEVICE":
 		device, ok := devices[target.TargetID]
-		return ok && device.Enabled
+		return ok && device.Enabled && deviceRequiredForShow(device)
 	case "LIVE_SOURCE":
 		_, ok := sources[target.TargetID]
 		return ok
