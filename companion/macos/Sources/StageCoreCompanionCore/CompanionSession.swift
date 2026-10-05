@@ -98,6 +98,7 @@ public actor CompanionSession {
     private var guardState: ExecutionGuard
     private let executors: [String: any CompanionCapabilityExecutor]
     private let mediaSynchronizer: (any CompanionMediaSynchronizer)?
+    private let midiDestinationInventory: @Sendable () -> [String]
     private var runtimeSessionToken: String?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -106,6 +107,7 @@ public actor CompanionSession {
         configuration: CompanionSessionConfiguration,
         executors: [any CompanionCapabilityExecutor],
         mediaSynchronizer: (any CompanionMediaSynchronizer)? = nil,
+        midiDestinationInventory: (@Sendable () -> [String])? = nil,
         duplicateCapacity: Int = 512
     ) {
         self.configuration = configuration
@@ -117,6 +119,9 @@ public actor CompanionSession {
         )
         self.guardState = ExecutionGuard(capacity: duplicateCapacity)
         self.mediaSynchronizer = mediaSynchronizer
+        self.midiDestinationInventory = midiDestinationInventory ?? {
+            MIDIDestinationInventory.currentNames()
+        }
         var registry: [String: any CompanionCapabilityExecutor] = [:]
         for executor in executors {
             registry[executor.capabilityKey] = executor
@@ -134,7 +139,7 @@ public actor CompanionSession {
                 platform: configuration.platform,
                 architecture: configuration.architecture,
                 capabilities: state.capabilities.sorted(),
-                midiDestinations: state.capabilities.contains("midi.send") ? MIDIDestinationInventory.currentNames() : [],
+                midiDestinations: state.capabilities.contains("midi.send") ? midiDestinationInventory() : [],
                 machineRoleID: state.machineRoleID,
                 roleKey: state.roleKey,
                 appliedRuntimeSnapshotID: state.appliedRuntimeSnapshotID,

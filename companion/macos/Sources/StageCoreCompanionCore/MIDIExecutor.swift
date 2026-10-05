@@ -35,6 +35,22 @@ public enum MIDIExecutorError: Error, Equatable {
 enum MIDIDestinationInventory {
     static func currentNames() -> [String] {
         #if os(macOS)
+        // Keep CoreMIDI discovery fresh even when IAC endpoints are created,
+        // enabled, renamed, or restored after the Companion process started.
+        // The runtime heartbeat calls this method for every Companion hello,
+        // so a short-lived client makes the inventory self-healing without
+        // requiring a Companion restart.
+        var discoveryClient = MIDIClientRef()
+        guard MIDIClientCreate(
+            "StageCore MIDI Inventory" as CFString,
+            nil,
+            nil,
+            &discoveryClient
+        ) == noErr else {
+            return []
+        }
+        defer { _ = MIDIClientDispose(discoveryClient) }
+
         var names: [String] = []
         let count = MIDIGetNumberOfDestinations()
         for index in 0..<count {
