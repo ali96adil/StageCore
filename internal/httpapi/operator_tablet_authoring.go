@@ -118,7 +118,7 @@ func tabletAliasBindings(aliases []domain.ProjectDeviceAlias) map[string]tabletA
 		}
 		config.DeviceID = strings.TrimSpace(config.DeviceID)
 		config.CapabilityKey = strings.TrimSpace(config.CapabilityKey)
-		if config.DeviceID == "" || !strings.HasPrefix(config.CapabilityKey, "tablet.media.") {
+		if config.DeviceID == "" || !tabletCueCapability(config.CapabilityKey) {
 			continue
 		}
 		bindings[alias.LogicalName] = tabletAliasBinding{DeviceID: config.DeviceID, CapabilityKey: config.CapabilityKey}
@@ -129,7 +129,7 @@ func tabletAliasBindings(aliases []domain.ProjectDeviceAlias) map[string]tabletA
 func makeTabletSceneView(cue domain.Cue, bindings map[string]tabletAliasBinding, displayNames map[string]string) (tabletSceneView, bool) {
 	actions := make([]tabletSceneActionView, 0, len(cue.Actions))
 	for _, action := range cue.Actions {
-		if !strings.HasPrefix(action.CapabilityKey, "tablet.media.") {
+		if !tabletCueCapability(action.CapabilityKey) {
 			// A mixed Cue is deliberately left to the general Cue editor. Editing
 			// it as a Tablet Scene could otherwise discard non-tablet actions.
 			if len(cue.Actions) != 0 {
@@ -184,6 +184,14 @@ func tabletCommandForCapability(capability string) string {
 		return deviceexperience.CommandTabletLiveShow
 	case deviceexperience.CapabilityTabletLiveHide:
 		return deviceexperience.CommandTabletLiveHide
+	case deviceexperience.CapabilityTabletBrightnessSet:
+		return deviceexperience.CommandTabletBrightnessSet
+	case deviceexperience.CapabilityTabletOrientationSet:
+		return deviceexperience.CommandTabletOrientationSet
+	case deviceexperience.CapabilityTabletVideoScaleSet:
+		return deviceexperience.CommandTabletVideoScaleSet
+	case deviceexperience.CapabilityTabletLiveRotationSet:
+		return deviceexperience.CommandTabletLiveRotationSet
 	default:
 		return ""
 	}

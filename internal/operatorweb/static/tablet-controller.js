@@ -58,7 +58,12 @@
       cueBuilder: "Cue Builder",
       cueBuilderSub: "Convert the current graphical selection into canonical StageCore Cue Actions.",
       action: "Action",
-      addCue: "Add to new Cue",
+      addCue: "Add action to Cue",
+      openCombinedCue: "Open combined Cue",
+      clearCueQueue: "Clear Cue",
+      queuedActions: "Queued actions",
+      cueQueueEmpty: "No actions queued yet.",
+      cueQueued: "Action added to the combined Cue.",
       runtimeScope: "Runtime scope",
       manifest: "Manifest",
       snapshot: "Snapshot",
@@ -73,7 +78,7 @@
       commandOK: "Tablet command completed.",
       commandPending: "Tablet command was dispatched and is still pending.",
       commandPartial: "Command completed with one or more tablet errors.",
-      cueReady: "Tablet actions added to a new Draft Cue. Name it and save the Cue.",
+      cueReady: "Combined Tablet Cue is ready. Name it and save the Cue.",
       chooseTablet: "Choose at least one tablet.",
       needLiveKey: "Enter a live media key first.",
       needLiveURL: "Enter an absolute HTTP(S) live URL first.",
@@ -156,7 +161,12 @@
       cueBuilder: "بناء Cue",
       cueBuilderSub: "حوّل اختيارك الرسومي الحالي إلى Cue Actions رسمية داخل StageCore.",
       action: "الأمر",
-      addCue: "إضافة إلى Cue جديد",
+      addCue: "إضافة أمر إلى Cue",
+      openCombinedCue: "فتح الـCue المركب",
+      clearCueQueue: "مسح أوامر الـCue",
+      queuedActions: "أوامر الـCue المجمعة",
+      cueQueueEmpty: "ماكو أوامر مضافة للـCue بعد.",
+      cueQueued: "انضاف الأمر إلى نفس الـCue.",
       runtimeScope: "Runtime scope",
       manifest: "Manifest",
       snapshot: "Snapshot",
@@ -171,7 +181,7 @@
       commandOK: "اكتمل أمر التابلت بنجاح.",
       commandPending: "تم إرسال أمر التابلت لكن النتيجة النهائية بعدها معلقة.",
       commandPartial: "تم التنفيذ لكن أكو خطأ بواحد أو أكثر من التابلتات.",
-      cueReady: "انضافت أوامر التابلت إلى Draft Cue جديد. سمّه واحفظه.",
+      cueReady: "الـTablet Cue المركب جاهز. سمّه واحفظه.",
       chooseTablet: "اختار تابلت واحد على الأقل.",
       needLiveKey: "دخل Live media key أولاً.",
       needLiveURL: "دخل رابط HTTP(S) كامل للبث أولاً.",
@@ -205,6 +215,8 @@
   let liveSourcesModel = { sources: [], camera_status: null };
   const selected = new Set();
   let healthRefreshTimer = null;
+  let queuedCueProjectID = "";
+  let queuedCueActions = [];
 
   function lang() {
     return document.documentElement.lang?.toLowerCase().startsWith("ar") ? "ar" : "en";
@@ -338,6 +350,57 @@
     if (!selected.size) devices.filter((device) => device.enabled !== false).forEach((device) => selected.add(device.device_id));
   }
 
+  function syncCueQueueProject() {
+    const currentProjectID = projectID();
+    if (queuedCueProjectID !== currentProjectID) {
+      queuedCueProjectID = currentProjectID;
+      queuedCueActions = [];
+    }
+  }
+
+  function renderCueQueue() {
+    syncCueQueueProject();
+    const host = document.getElementById("tabletCueQueue");
+    const openButton = document.getElementById("tabletOpenCombinedCue");
+    const clearButton = document.getElementById("tabletClearCueQueue");
+    if (host) {
+      host.innerHTML = queuedCueActions.length
+        ? `<div class="tablet-device-meta"><strong>${esc(t("queuedActions"))}: ${queuedCueActions.length}</strong>${queuedCueActions.map((action) => `<span>${esc(action.display_name || action.device_id || "Tablet")} · ${esc(String(action.command_type || "").replace("TABLET_", "").replaceAll("_", " "))}</span>`).join("")}</div>`
+        : `<p class="muted">${esc(t("cueQueueEmpty"))}</p>`;
+    }
+    if (openButton) openButton.disabled = queuedCueActions.length === 0;
+    if (clearButton) clearButton.disabled = queuedCueActions.length === 0;
+  }
+
+  function clearQueuedTabletCue() {
+    queuedCueActions = [];
+    renderCueQueue();
+  }
+
+  function openQueuedTabletCue() {
+    syncCueQueueProject();
+    if (!queuedCueActions.length) {
+      setControllerMessage(t("cueQueueEmpty"), "warn");
+      return;
+    }
+    const actions = queuedCueActions.map((action) => ({ ...action, parameters: { ...(action.parameters || {}) } }));
+    queuedCueActions = [];
+    openCueEditor(null);
+    const label = document.getElementById("cueName");
+    if (label) label.value = "Tablet Combined Cue";
+    actions.forEach((action) => addActionEditor({
+      target_ref: action.target_ref,
+      capability_key: action.capability_key,
+      execution_mode: action.execution_mode,
+      priority_class: action.priority,
+      parameters: action.parameters || {},
+      timeout_policy: {},
+      error_policy: {},
+      enabled: true,
+    }));
+    setMessage(globalMessage, t("cueReady"), "success");
+  }
+
   function currentRuntimeSnapshotID() {
     return runtimeModel?.runtime_snapshot?.runtime_snapshot_id || "";
   }
@@ -406,11 +469,10 @@
         <div class="toolbar"><span id="tabletSelectionCount" class="pill neutral">${esc(selectionText())}</span>${canEdit() ? `<button id="tabletAssignCurrent" class="button" type="button">${esc(t("assignCurrent"))}</button>` : ""}<button id="tabletRefresh" class="button ghost" type="button">${esc(t("refresh"))}</button></div>
       </div>
       <div id="tabletControllerMessage" class="message ${message ? kind : "hidden"}">${message ? esc(message) : ""}</div>
-      ${devices.length ? `
-        <section class="tablet-targets card">
+      ${devices.length ? `<section class="tablet-targets card">
           <div class="toolbar"><button id="tabletSelectAll" class="button" type="button">${esc(t("selectAll"))}</button><button id="tabletClearSelection" class="button ghost" type="button">${esc(t("clear"))}</button>${groupButtons(model.groups)}</div>
           <div class="tablet-device-grid">${devices.map(deviceCard).join("")}</div>
-        </section>
+        </section>` : `<div class="empty">${esc(t("noTablets"))}</div>`}
         <div class="tablet-control-grid">
           <section class="card tablet-control-panel">
             <div><p class="eyebrow">MAIN</p><h2>${esc(t("main"))}</h2><p class="muted">${esc(t("mainSub"))}</p></div>
@@ -481,8 +543,7 @@
             <div class="tablet-command-row"><button class="button danger big" data-tablet-command="TABLET_BLACKOUT" type="button">${esc(t("blackoutOn"))}</button><button class="button ghost" data-tablet-command="TABLET_BLACKOUT_CLEAR" type="button">${esc(t("blackoutOff"))}</button></div>
           </section>
         </div>
-        ${canEdit() ? `<section class="card tablet-cue-builder"><div><p class="eyebrow">CUE ENGINE</p><h2>${esc(t("cueBuilder"))}</h2><p class="muted">${esc(t("cueBuilderSub"))}</p></div><div class="tablet-cue-row"><label>${esc(t("action"))}<select id="tabletCueCommand">${commandOptions()}</select></label><button id="tabletAddCueAction" class="button primary" type="button">${esc(t("addCue"))}</button></div></section>` : ""}
-      ` : `<div class="empty">${esc(t("noTablets"))}</div>`}`;
+        ${canEdit() ? `<section class="card tablet-cue-builder"><div><p class="eyebrow">CUE ENGINE</p><h2>${esc(t("cueBuilder"))}</h2><p class="muted">${esc(t("cueBuilderSub"))}</p></div><div class="tablet-cue-row"><label>${esc(t("action"))}<select id="tabletCueCommand">${commandOptions()}</select></label><button id="tabletAddCueAction" class="button primary" type="button">${esc(t("addCue"))}</button></div><div id="tabletCueQueue"></div><div class="tablet-command-row"><button id="tabletOpenCombinedCue" class="button primary" type="button">${esc(t("openCombinedCue"))}</button><button id="tabletClearCueQueue" class="button ghost" type="button">${esc(t("clearCueQueue"))}</button></div></section>` : ""}`;
 
     bindTabletController();
     scheduleTabletHealthRefresh();
@@ -632,7 +693,10 @@
       await dispatchTabletCommand("TABLET_SHOW_MODE_SET", null, { show_mode: button.dataset.tabletShowMode === "true" });
     }));
     document.getElementById("tabletAddCueAction")?.addEventListener("click", addTabletActionToCue);
+    document.getElementById("tabletOpenCombinedCue")?.addEventListener("click", openQueuedTabletCue);
+    document.getElementById("tabletClearCueQueue")?.addEventListener("click", clearQueuedTabletCue);
     refreshSelectionUI();
+    renderCueQueue();
   }
 
   async function assignSelectedToCurrentSnapshot() {
@@ -828,6 +892,7 @@
   }
 
   async function addTabletActionToCue() {
+    syncCueQueueProject();
     const ids = selectedDevices().map((device) => device.device_id);
     if (!ids.length) { setControllerMessage(t("chooseTablet"), "warn"); return; }
     const command = document.getElementById("tabletCueCommand")?.value || "TABLET_PLAY";
@@ -839,20 +904,13 @@
         method: "POST",
         json: { device_ids: ids, command_type: command, execution_mode: "PARALLEL_BARRIER", priority: command.includes("BLACKOUT") ? "P0" : "P1", payload },
       });
-      openCueEditor(null);
-      const label = document.getElementById("cueName");
-      if (label) label.value = `Tablet ${command.replace("TABLET_", "").replaceAll("_", " ")}`;
-      (response.actions || []).forEach((action) => addActionEditor({
-        target_ref: action.target_ref,
-        capability_key: action.capability_key,
-        execution_mode: action.execution_mode,
-        priority_class: action.priority,
+      (response.actions || []).forEach((action) => queuedCueActions.push({
+        ...action,
+        command_type: command,
         parameters: action.parameters || {},
-        timeout_policy: {},
-        error_policy: {},
-        enabled: true,
       }));
-      setMessage(globalMessage, t("cueReady"), "success");
+      renderCueQueue();
+      setControllerMessage(t("cueQueued"), "success");
     } catch (error) {
       setControllerMessage(errorMessage(error), "error");
     }
