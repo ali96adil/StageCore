@@ -24,8 +24,8 @@ func TestOpenAppliesMigrationAndRequiredPragmas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 47 {
-		t.Fatalf("schema version=%d, want 47", version)
+	if version != 48 {
+		t.Fatalf("schema version=%d, want 48", version)
 	}
 }
 
