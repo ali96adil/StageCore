@@ -1037,7 +1037,30 @@ async function renderRuntime(startPolling = false) {
   const emergencyBlackout = !!runtime.managed_output_blackout;
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
-  const showBlocked = preflight?.status === "BLOCK";
+  const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
+  const runtimeIssueMarkup = runtimeIssues.length
+    ? `<section class="card runtime-readiness-issues">
+        <div class="section-title-row">
+          <div>
+            <h3>Runtime readiness · degraded operation allowed</h3>
+            <p class="muted">These conditions do not stop REHEARSAL/SHOW or GO. Healthy outputs continue; unavailable Actions are recorded and skipped unless an Action explicitly uses FAIL_CUE.</p>
+          </div>
+          ${pill(`${runtimeIssues.length} ISSUE${runtimeIssues.length === 1 ? "" : "S"}`, blockers ? "bad" : "warn")}
+        </div>
+        <div class="validation-list">
+          ${runtimeIssues.map((check) => `<div class="validation-item">
+            <div class="section-title-row">
+              <strong>${esc(check.summary || check.key || "Runtime readiness issue")}</strong>
+              ${pill(check.status || "WARN", check.status === "BLOCK" ? "bad" : "warn")}
+            </div>
+            <p class="muted">${esc(check.category || "runtime")}${check.entity_id ? ` · ${esc(check.entity_id)}` : ""}</p>
+            ${check.detail ? `<p>${esc(check.detail)}</p>` : ""}
+          </div>`).join("")}
+        </div>
+      </section>`
+    : `<section class="card runtime-readiness-issues">
+        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
+      </section>`;
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
@@ -1064,11 +1087,11 @@ async function renderRuntime(startPolling = false) {
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
-          <small class="muted">The Hub remains authoritative for SHOW entry. Client readiness display cannot bypass Preflight.</small>` : `
+          <small class="muted">Preflight is advisory at live Session start. Missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below but do not disable SHOW.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
@@ -1092,7 +1115,8 @@ async function renderRuntime(startPolling = false) {
     <div class="stat-grid">
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
-    </div>`;
+    </div>
+    ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
@@ -1109,18 +1133,22 @@ async function renderRuntime(startPolling = false) {
 }
 
 async function startRuntime(mode) {
-  if (mode === "SHOW" && !confirm("Enter SHOW mode? StageCore will enforce the SHOW Preflight gate.")) return;
+  if (mode === "SHOW" && !confirm("Enter SHOW mode? Preflight issues are advisory: healthy outputs will continue, unavailable outputs will be shown as degraded and their Actions will not stop the rest of the Cue unless FAIL_CUE is explicitly configured.")) return;
   try {
     state.runtimeForceExitAvailable = false;
     const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
       json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
     });
-    const deviceWarning = String(started.result?.payload?.device_scope_warning || "").trim();
+    const payload = started.result?.payload || {};
+    const degradedReasons = Array.isArray(payload.degraded_reasons)
+      ? payload.degraded_reasons.map((value) => String(value || "").trim()).filter(Boolean)
+      : [payload.device_scope_warning, payload.preflight_warning].map((value) => String(value || "").trim()).filter(Boolean);
+    const degraded = degradedReasons.length > 0;
     setMessage(
       globalMessage,
-      deviceWarning ? `${mode} Session started in DEGRADED mode. ${deviceWarning}` : `${mode} Session started.`,
-      deviceWarning ? "warn" : "success",
+      degraded ? `${mode} Session started in DEGRADED mode. ${degradedReasons.join(" ")}` : `${mode} Session started.`,
+      degraded ? "warn" : "success",
     );
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
