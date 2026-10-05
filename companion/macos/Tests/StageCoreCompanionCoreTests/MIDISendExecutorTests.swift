@@ -66,6 +66,45 @@ final class MIDISendExecutorTests: XCTestCase {
         XCTAssertEqual(sender.sendCount, 0)
     }
 
+    func testCompanionHelloRefreshesMIDIDestinationInventoryWithoutRestart() async throws {
+        let inventory = MutableMIDIDestinationInventory()
+        let session = CompanionSession(
+            configuration: CompanionSessionConfiguration(
+                companionID: "11111111-1111-4111-8111-111111111111",
+                agentVersion: "0.1.0",
+                platform: "macos",
+                architecture: "arm64"
+            ),
+            executors: [MIDISendExecutor(sender: RecordingMIDISender())],
+            midiDestinationInventory: { inventory.current() }
+        )
+
+        var hello = try JSONDecoder().decode(
+            CompanionHello.self,
+            from: await session.helloData()
+        )
+        XCTAssertEqual(hello.midiDestinations, [])
+
+        inventory.set([
+            "IAC Driver Bus 1",
+            "IAC Driver StageCore Ableton",
+            "IAC Driver xdmxx",
+        ])
+
+        hello = try JSONDecoder().decode(
+            CompanionHello.self,
+            from: await session.helloData()
+        )
+        XCTAssertEqual(
+            hello.midiDestinations,
+            [
+                "IAC Driver Bus 1",
+                "IAC Driver StageCore Ableton",
+                "IAC Driver xdmxx",
+            ]
+        )
+    }
+
     func testCompanionSessionExecutesMIDIOnceAndRejectsDuplicateExecution() async throws {
         let sender = RecordingMIDISender()
         let executor = MIDISendExecutor(sender: sender)
@@ -153,5 +192,21 @@ private final class RecordingMIDISender: MIDISending, @unchecked Sendable {
             storedSendCount += 1
         }
         return bytes.count
+    }
+}
+
+
+private final class MutableMIDIDestinationInventory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [String] = []
+
+    func current() -> [String] {
+        lock.withLock { names }
+    }
+
+    func set(_ value: [String]) {
+        lock.withLock {
+            names = value
+        }
     }
 }
