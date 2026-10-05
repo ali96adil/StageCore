@@ -114,6 +114,14 @@ func TestVerifiedTransferCASPersistsBlockedEpochAndAuditWithoutAuthorizingComman
 		t.Fatal(err)
 	}
 
+	if _, err := repo.SetRequiredForShow(ctx, deviceID, targetID, false); err != nil {
+		t.Fatalf("mark first Project lighting optional: %v", err)
+	}
+	optionalBeforeMove, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || optionalBeforeMove.RequiredForShow {
+		t.Fatalf("first Project show requirement was not disabled: %+v err=%v", optionalBeforeMove, err)
+	}
+
 	// The same ACTIVE node is reusable in another Project without any NVS/project
 	// bootstrap change. Commit returns to BLOCKED pending the new Project epoch ACK.
 	toSecond := input
@@ -134,8 +142,9 @@ func TestVerifiedTransferCASPersistsBlockedEpochAndAuditWithoutAuthorizingComman
 	}
 	newInventory, err := repo.ListDevices(ctx, second.ID)
 	if err != nil || len(newInventory) != 1 || newInventory[0].Assignment == nil ||
-		newInventory[0].Assignment.ProjectID != second.ID || newInventory[0].Assignment.Epoch != 3 {
-		t.Fatalf("new Project inventory missing Hub-assigned device: %+v err=%v", newInventory, err)
+		newInventory[0].Assignment.ProjectID != second.ID || newInventory[0].Assignment.Epoch != 3 ||
+		!newInventory[0].Assignment.RequiredForShow {
+		t.Fatalf("new Project inventory missing Hub-assigned device or fresh show requirement: %+v err=%v", newInventory, err)
 	}
 	// Unassign persists the next epoch; old project and old snapshot cannot
 	// regain authority just because a v1 client or API returns.
