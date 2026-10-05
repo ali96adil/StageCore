@@ -8,11 +8,10 @@ import (
 )
 
 const (
-	SchemaVersion1           = 1
-	ProfileID                = "stagecore.esp32-stagelaser"
-	TransportProtocolVersion = "stagecore.laser/1"
-	DiscoveryServiceType     = "_stagecore-laser._tcp"
-	LogicalTargetType        = "STAGE_LASER"
+	SchemaVersion1            = 1
+	ProfileID                 = "stagecore.esp32-stagelaser"
+	StageDeviceProtocolVersion = "stagecore.device/2"
+	ControlContractVersion    = "stagecore.stagelaser/1"
 )
 
 const (
@@ -111,7 +110,7 @@ type FlashObservation struct {
 type Observation struct {
 	SchemaVersion         int               `json:"schema_version"`
 	FirmwareVersion       string            `json:"firmware_version,omitempty"`
-	APIProtocolVersion    string            `json:"api_protocol_version,omitempty"`
+	ControlContractVersion string            `json:"control_contract_version,omitempty"`
 	BootID                string            `json:"boot_id,omitempty"`
 	UptimeSeconds         int64             `json:"uptime_seconds,omitempty"`
 	ResetReason           string            `json:"reset_reason,omitempty"`
