@@ -120,7 +120,7 @@ function canEdit() {
 }
 
 function canRuntime() {
-  return ["OWNER", "OPERATOR"].includes(state.user?.role);
+  return ["OWNER", "TECHNICIAN", "OPERATOR"].includes(state.user?.role);
 }
 
 function showLogin(message = "") {
