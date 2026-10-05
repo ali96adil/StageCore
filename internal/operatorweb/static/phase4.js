@@ -9,8 +9,8 @@
       callboard: "Callboard",
       video: "Live Video",
       network: "Network Cockpit",
-      devicesTitle: "Tablets and Stage Devices",
-      devicesSub: "Paired devices appear here automatically. Normal operation never requires manual IP addresses or raw OSC.",
+      devicesTitle: "Stage Devices and Cameras",
+      devicesSub: "Paired devices and live camera sources appear here automatically. Normal operation never requires manual IP addresses or raw OSC.",
       callboardTitle: "Stage Display / Callboard",
       callboardSub: "Send messages, countdowns and alerts to one display, a group, or every display.",
       videoTitle: "Live Video Sources",
@@ -52,6 +52,15 @@
       diagnosticNoCommand: "No GO replay, automatic correction or output command is available.",
       noDisplays: "No Stage Displays are registered for this project yet.",
       noSources: "No live video sources are configured yet.",
+      liveSourcesSection: "Cameras and live sources",
+      liveSourcesSectionSub: "Camera and relay health are shown here with the rest of the show hardware. Source editing stays in Live Video.",
+      liveSourcesUnavailable: "Camera and live-source status is currently unavailable.",
+      cameraState: "Camera",
+      relayState: "Relay",
+      upstream: "Upstream",
+      upstreamConnected: "Connected",
+      upstreamDisconnected: "Disconnected",
+      openLiveVideo: "Open Live Video",
       noNetwork: "No network observations have been recorded yet.",
       media: "Media file / logical media name",
       prepare: "Prepare",
@@ -149,8 +158,8 @@
       callboard: "شاشة الكواليس",
       video: "الفيديو الحي",
       network: "شبكة المسرح",
-      devicesTitle: "التابلت وأجهزة المسرح",
-      devicesSub: "الأجهزة المقترنة تظهر هنا تلقائياً. التشغيل الطبيعي لا يحتاج IP يدوي ولا أوامر OSC خام.",
+      devicesTitle: "أجهزة المسرح والكاميرات",
+      devicesSub: "الأجهزة المقترنة ومصادر الكاميرا الحية تظهر هنا تلقائياً. التشغيل الطبيعي لا يحتاج IP يدوي ولا أوامر OSC خام.",
       callboardTitle: "شاشة المسرح / Callboard",
       callboardSub: "أرسل رسالة أو عدّاً تنازلياً أو تنبيهاً لشاشة واحدة أو مجموعة أو لكل الشاشات.",
       videoTitle: "مصادر الفيديو الحي",
@@ -192,6 +201,15 @@
       diagnosticNoCommand: "ماكو إعادة GO ولا تصحيح تلقائي ولا أمر تشغيل بهذه الصفحة.",
       noDisplays: "ماكو شاشات Stage Display مسجلة بهذا المشروع حالياً.",
       noSources: "ماكو مصادر فيديو حي معرفة حالياً.",
+      liveSourcesSection: "الكاميرات والمصادر الحية",
+      liveSourcesSectionSub: "حالة الكاميرا والـRelay تظهر هنا ويا بقية أجهزة العرض، أما إعداد المصدر وتعديله فيبقى بصفحة الفيديو الحي.",
+      liveSourcesUnavailable: "حالة الكاميرا والمصادر الحية غير متاحة حالياً.",
+      cameraState: "الكاميرا",
+      relayState: "Relay",
+      upstream: "المصدر",
+      upstreamConnected: "متصل",
+      upstreamDisconnected: "غير متصل",
+      openLiveVideo: "فتح الفيديو الحي",
       noNetwork: "ماكو قراءات شبكة مسجلة حالياً.",
       media: "ملف الفيديو / اسم الميديا المنطقي",
       prepare: "تهيئة",
@@ -520,6 +538,51 @@
       <p class="muted">${esc(t("diagnosticNoCommand"))}</p>
     </div>`;
   }
+  function stageDevicesLiveSourceCard(source, cameraStatus) {
+    const cameraRelay = cameraStatus && cameraStatus.source_id === source.source_id;
+    const primaryStatus = cameraRelay
+      ? String(cameraStatus.camera_status || "UNKNOWN").toUpperCase()
+      : String(source.readiness || "UNKNOWN").toUpperCase();
+    const relayStatus = cameraRelay
+      ? String(cameraStatus.relay_status || "UNKNOWN").toUpperCase()
+      : "";
+    const frameAge = Number(cameraStatus?.last_frame_age_ms);
+    const viewers = Number(cameraStatus?.viewers);
+    const maxClients = Number(cameraStatus?.max_clients);
+    return `
+      <article class="phase4-card" data-stage-live-source="${esc(source.source_id)}">
+        <div class="phase4-card-head">
+          <div>
+            <p class="eyebrow">${esc(source.source_class || "LIVE_SOURCE")}</p>
+            <h3>${esc(source.name || source.source_id)}</h3>
+          </div>
+          <div class="phase4-status-row">
+            ${pulse(primaryStatus)}
+            ${cameraRelay ? pulse(relayStatus) : ""}
+          </div>
+        </div>
+        <dl class="phase4-kv">
+          ${cameraRelay ? `
+            <div><dt>${esc(t("cameraState"))}</dt><dd>${esc(primaryStatus)}</dd></div>
+            <div><dt>${esc(t("relayState"))}</dt><dd>${esc(relayStatus)}</dd></div>
+            <div><dt>${esc(t("upstream"))}</dt><dd>${esc(t(cameraStatus.upstream_connected ? "upstreamConnected" : "upstreamDisconnected"))}</dd></div>
+            <div><dt>${esc(t("relayFrameAge"))}</dt><dd>${Number.isFinite(frameAge) && frameAge >= 0 ? `${esc(frameAge)} ms` : "—"}</dd></div>
+            <div><dt>${esc(t("relayViewerSlots"))}</dt><dd>${Number.isFinite(viewers) ? esc(viewers) : "—"} / ${Number.isFinite(maxClients) ? esc(maxClients) : "—"}</dd></div>
+          ` : `
+            <div><dt>${esc(t("readiness"))}</dt><dd>${esc(primaryStatus)}</dd></div>
+            <div><dt>${esc(t("observed"))}</dt><dd>${when(source.last_observed_at)}</dd></div>
+          `}
+          <div><dt>${esc(t("endpoint"))}</dt><dd class="mono">${esc(source.endpoint_ref || "—")}</dd></div>
+          <div><dt>${esc(t("required"))}</dt><dd>${source.required ? "✓" : "—"}</dd></div>
+          <div><dt>${esc(t("enabled"))}</dt><dd>${source.desired_enabled !== false ? "✓" : "—"}</dd></div>
+          <div><dt>ID</dt><dd class="mono">${esc(source.source_id)}</dd></div>
+        </dl>
+        ${cameraRelay && cameraStatus.detail ? `<p class="message warn">${esc(cameraStatus.detail)}</p>` : ""}
+        <div class="row-actions">
+          <button class="button ghost" data-open-workspace="video" type="button">${esc(t("openLiveVideo"))}</button>
+        </div>
+      </article>`;
+  }
   let stageDevicesRenderGeneration = 0;
   async function renderStageDevices() {
     const renderGeneration = ++stageDevicesRenderGeneration;
@@ -550,17 +613,24 @@
     }
     let globalInventory = [];
     let runtimeStatus = null;
-    if (canPair) {
-      const [inventoryResult, runtimeResult] = await Promise.allSettled([
-        api("/api/v1/stage-devices/inventory"),
-        api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`),
-      ]);
-      if (inventoryResult.status === "fulfilled") {
-        globalInventory = inventoryResult.value.devices || [];
-      }
-      if (runtimeResult.status === "fulfilled") {
-        runtimeStatus = runtimeResult.value;
-      }
+    let liveSources = [];
+    let cameraStatus = null;
+    let liveSourcesAvailable = false;
+    const [liveSourcesResult, inventoryResult, runtimeResult] = await Promise.allSettled([
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/live-video-sources`),
+      canPair ? api("/api/v1/stage-devices/inventory") : Promise.resolve({ devices: [] }),
+      canPair ? api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`) : Promise.resolve(null),
+    ]);
+    if (liveSourcesResult.status === "fulfilled") {
+      liveSourcesAvailable = true;
+      liveSources = liveSourcesResult.value.sources || [];
+      cameraStatus = liveSourcesResult.value.camera_status || null;
+    }
+    if (inventoryResult.status === "fulfilled") {
+      globalInventory = inventoryResult.value?.devices || [];
+    }
+    if (runtimeResult.status === "fulfilled") {
+      runtimeStatus = runtimeResult.value;
     }
     const inventory = globalInventory.filter((device) =>
       device.enabled !== false && (device.assignment?.project_id || "") !== projectID
@@ -615,6 +685,15 @@
       ${devices.length
         ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id], assignmentLocked)).join("")}</div>`
         : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
+      <section aria-label="${esc(t("liveSourcesSection"))}">
+        <h2>${esc(t("liveSourcesSection"))}</h2>
+        <p class="muted">${esc(t("liveSourcesSectionSub"))}</p>
+        ${!liveSourcesAvailable
+          ? `<div class="phase4-empty">${esc(t("liveSourcesUnavailable"))}</div>`
+          : liveSources.length
+            ? `<div class="phase4-grid">${liveSources.map((source) => stageDevicesLiveSourceCard(source, cameraStatus)).join("")}</div>`
+            : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}
+      </section>
       ${canPair ? `<section aria-label="${esc(t("v2InventoryTitle"))}">
         <h2>${esc(t("v2InventoryTitle"))}</h2>
         ${inventory.length
