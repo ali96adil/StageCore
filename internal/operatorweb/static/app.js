@@ -1037,13 +1037,14 @@ async function renderRuntime(startPolling = false) {
   const emergencyBlackout = !!runtime.managed_output_blackout;
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
+  const showBlocked = preflight?.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
   const runtimeIssueMarkup = runtimeIssues.length
     ? `<section class="card runtime-readiness-issues">
         <div class="section-title-row">
           <div>
             <h3>Runtime readiness · degraded operation allowed</h3>
-            <p class="muted">These conditions do not stop REHEARSAL/SHOW or GO. Healthy outputs continue; unavailable Actions are recorded and skipped unless an Action explicitly uses FAIL_CUE.</p>
+            <p class="muted">WARN means degraded live operation is allowed: healthy outputs continue and unavailable Actions are recorded without stopping later Actions unless FAIL_CUE is explicit. BLOCK is reserved for structural Snapshot/security/storage/timecode configuration conditions and prevents SHOW entry.</p>
           </div>
           ${pill(`${runtimeIssues.length} ISSUE${runtimeIssues.length === 1 ? "" : "S"}`, blockers ? "bad" : "warn")}
         </div>
@@ -1087,11 +1088,11 @@ async function renderRuntime(startPolling = false) {
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot ? "disabled" : ""} type="button">Enter SHOW</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
-          <small class="muted">Preflight is advisory at live Session start. Missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below but do not disable SHOW.</small>` : `
+          <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
@@ -1133,7 +1134,7 @@ async function renderRuntime(startPolling = false) {
 }
 
 async function startRuntime(mode) {
-  if (mode === "SHOW" && !confirm("Enter SHOW mode? Preflight issues are advisory: healthy outputs will continue, unavailable outputs will be shown as degraded and their Actions will not stop the rest of the Cue unless FAIL_CUE is explicitly configured.")) return;
+  if (mode === "SHOW" && !confirm("Enter SHOW mode? Operational readiness warnings are advisory: healthy outputs continue, unavailable outputs stay visible as degraded, and their Actions do not stop later Actions unless FAIL_CUE is explicit. Structural Preflight BLOCK conditions still prevent SHOW entry.")) return;
   try {
     state.runtimeForceExitAvailable = false;
     const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
