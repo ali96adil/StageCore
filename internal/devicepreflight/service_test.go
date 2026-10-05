@@ -149,7 +149,7 @@ func TestDisabledStageDeviceDoesNotDegradeNetworkReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
+	if _, err := repo.RecordNetworkObservation(ctx, deviceexperience.NetworkObservation{
 		TargetKind: "STAGE_DEVICE", TargetID: device.ID,
 		Reachability: deviceexperience.Unreachable,
 		TransportState: "WEBSOCKET_DISCONNECTED",
