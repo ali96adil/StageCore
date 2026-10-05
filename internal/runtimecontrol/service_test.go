@@ -637,3 +637,37 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 		t.Fatalf("hard Session-start invariant was not blocked: result=%+v session=%+v", result, session)
 	}
 }
+
+
+func TestShowPreflightBlockStartsDegradedSession(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return false, "Required Machine Role is not READY: AUDIO-ABLETON", nil
+	}
+
+	session, result := h.service.StartSession(context.Background(), StartRequest{
+		ProjectID: h.project.ID,
+		Mode: domain.SessionShow,
+		Name: "Degraded show",
+		Issuer: "operator",
+		RequestID: "00000000-0000-7000-8000-000000009103",
+	})
+	if result.Status != contracts.CommandCompleted || session.ID == "" || session.Type != domain.SessionShow {
+		t.Fatalf("preflight BLOCK should start degraded SHOW: result=%+v session=%+v", result, session)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["degraded_start"] != true {
+		t.Fatalf("degraded_start=%v payload=%s", payload["degraded_start"], result.Payload)
+	}
+	if got := payload["preflight_warning"]; got != "Required Machine Role is not READY: AUDIO-ABLETON" {
+		t.Fatalf("preflight_warning=%v", got)
+	}
+	reasons, ok := payload["degraded_reasons"].([]any)
+	if !ok || len(reasons) != 1 || reasons[0] != "Required Machine Role is not READY: AUDIO-ABLETON" {
+		t.Fatalf("degraded_reasons=%#v", payload["degraded_reasons"])
+	}
+}
