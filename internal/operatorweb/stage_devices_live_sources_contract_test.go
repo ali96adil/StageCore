@@ -18,8 +18,8 @@ func TestStageDevicesSurfaceIncludesCamerasAndLiveSources(t *testing.T) {
 		`cameraStatus.camera_status`,
 		`cameraStatus.relay_status`,
 		`cameraStatus.upstream_connected`,
-		`cameraStatus.last_frame_age_ms`,
-		`cameraStatus.viewers`,
+		`cameraStatus?.last_frame_age_ms`,
+		`cameraStatus?.viewers`,
 		`data-open-workspace="video"`,
 	} {
 		if !strings.Contains(js, marker) {
