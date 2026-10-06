@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.stagelaser-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "source": "OFFICIAL",
+  "name": {
+    "en": "StageLaser Controller",
+    "ar-IQ": "التحكم بـ StageLaser"
+  },
+  "summary": {
+    "en": "Graphical StageCore experience for authenticated ESP32-C3 StageLaser devices, tracked safety state, Cue actions and managed Safe Off.",
+    "ar-IQ": "واجهة رسومية لإدارة أجهزة StageLaser الموثقة عبر ESP32-C3 وحالة الأمان المتتبعة وكيوهات الليزر والإطفاء الآمن من StageCore."
+  },
+  "compatibility": {
+    "api_min": 1,
+    "api_max": 1,
+    "platforms": ["linux"],
+    "architectures": ["arm64", "amd64"]
+  },
+  "capabilities": [
+    "stagelaser.controller.workspace",
+    "stagelaser.controller.device-profile",
+    "stagelaser.controller.cue-actions",
+    "stagelaser.controller.health",
+    "stagelaser.controller.safe-state"
+  ]
+}

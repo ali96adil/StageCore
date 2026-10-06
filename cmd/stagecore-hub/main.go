@@ -14,6 +14,7 @@ import (
 	"time"
 
 	lightingcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.lighting-controller"
+	stagelasercontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.stagelaser-controller"
 	tabletcontrollerbundle "github.com/ali96adil/StageCore/extensions/stagecore.tablet-controller"
 	"github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -208,6 +209,21 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if _, err := extensionLibrary.BootstrapOfficial(ctx, extension.BundledOfficialPackage{
+		Manifest:         stagelasercontrollerbundle.ManifestBytes(),
+		Payload:          stagelasercontrollerbundle.PayloadBytes(),
+		Platform:         "linux",
+		Architecture:     runtime.GOARCH,
+		OriginalFilename: stagelasercontrollerbundle.ProductID + "-" + stagelasercontrollerbundle.Version + ".addon",
+		ReleaseNotes:     "Bundled StageCore StageLaser Controller ADDON.",
+	}, "stagecore:bootstrap"); err != nil {
+		if errors.Is(err, domain.ErrShowConfigurationLocked) {
+			logger.Warn("official extension bootstrap deferred by SHOW configuration lock", "extension_id", stagelasercontrollerbundle.ProductID)
+		} else {
+			logger.Error("official extension bootstrap failed", "extension_id", stagelasercontrollerbundle.ProductID, "error", err)
+			os.Exit(1)
+		}
+	}
 	extensionInstaller, err := extension.NewInstaller(
 		extensionLibrary,
 		filepath.Join(application.Config.DataRoot, "extensions"),
@@ -293,6 +309,7 @@ func main() {
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingController(userAuth, application.DeviceExperience, application.Store),
+		httpapi.WithOperatorStageLaserController(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingLiveDiagnostics(userAuth, application.Store,
 			livereconcile.NewBlockedDiagnosticReader(application.Store, application.DeviceExperience, application.DeviceRuntime)),
 		httpapi.WithOperatorLightingCommissioning(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),

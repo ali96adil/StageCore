@@ -11,6 +11,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/contracts"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
 func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput) (DeviceCommand, bool, error) {
@@ -57,7 +58,8 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	case ProtocolVersion2:
 		profileAuthorized := (device.Kind == DeviceTabletPlayer &&
 			device.ProfileID == TabletPlayerProfileID) ||
-			device.ProfileID == "stagecore.esp32-dmx-lighting-node"
+			device.ProfileID == "stagecore.esp32-dmx-lighting-node" ||
+			(device.Kind == DeviceGeneric && device.ProfileID == stagelaser.ProfileID)
 		if device.ProjectID != "" || !profileAuthorized ||
 			assignment.State != "ACTIVE" ||
 			assignment.ProjectID != input.ProjectID ||
@@ -93,6 +95,9 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 		return DeviceCommand{}, false, err
 	}
 	if err := r.validateLightingCommandAuthority(ctx, input, device, payload); err != nil {
+		return DeviceCommand{}, false, err
+	}
+	if err := r.validateStageLaserCommandAuthority(ctx, input, device); err != nil {
 		return DeviceCommand{}, false, err
 	}
 	commandID, err := stageid.New()

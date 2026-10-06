@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/visualengine"
 )
 
@@ -35,6 +36,7 @@ type EmergencyDomainReport struct {
 type EmergencyReport struct {
 	Enabled          bool                  `json:"enabled"`
 	Lighting         EmergencyDomainReport `json:"lighting"`
+	StageLaser       EmergencyDomainReport `json:"stagelaser"`
 	Tablets          EmergencyDomainReport `json:"tablets"`
 	NativeVisual     EmergencyDomainReport `json:"native_visual"`
 	Audio            EmergencyDomainReport `json:"audio"`
@@ -70,6 +72,7 @@ func SetManagedOutputBlackout(
 	report := EmergencyReport{
 		Enabled: enabled,
 		Lighting: EmergencyDomainReport{Domain: "LIGHTING", Status: "NOT_CONFIGURED"},
+		StageLaser: EmergencyDomainReport{Domain: "STAGELASER", Status: "NOT_CONFIGURED"},
 		Tablets: EmergencyDomainReport{Domain: "TABLET", Status: "NOT_CONFIGURED"},
 		NativeVisual: EmergencyDomainReport{Domain: "NATIVE_VISUAL", Status: "NOT_CONFIGURED"},
 		Audio: EmergencyDomainReport{
@@ -112,6 +115,12 @@ func SetManagedOutputBlackout(
 		report.Lighting.Details = []string{"Lighting remains at blackout; restore it only with an explicit Lighting Cue or operator action."}
 	}
 
+	stageLaserReport, stageLaserErr := setStageLaserSafeOff(ctx, devices, dispatcher, session, command, enabled)
+	report.StageLaser = stageLaserReport
+	if stageLaserErr != nil {
+		failures = append(failures, "stagelaser: "+stageLaserErr.Error())
+	}
+
 	tabletReport, tabletErr := setTabletBlackout(ctx, devices, dispatcher, session, command, enabled)
 	report.Tablets = tabletReport
 	if tabletErr != nil {
@@ -138,6 +147,90 @@ func uniqueLightingNodeCount(manifest snapshot.Manifest) int {
 		}
 	}
 	return len(seen)
+}
+
+func setStageLaserSafeOff(
+	ctx context.Context,
+	devices emergencyDeviceRepository,
+	dispatcher lightingDispatcher,
+	session domain.Session,
+	command contracts.CommandEnvelope,
+	enabled bool,
+) (EmergencyDomainReport, error) {
+	report := EmergencyDomainReport{Domain: "STAGELASER", Status: "NOT_CONFIGURED"}
+	all, err := devices.ListDevices(ctx, session.ProjectID)
+	if err != nil {
+		report.Status = "FAILED"
+		report.Details = []string{err.Error()}
+		return report, err
+	}
+	targets := make([]deviceexperience.Device, 0)
+	for _, device := range all {
+		if !device.Enabled ||
+			device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
+			device.Kind != deviceexperience.DeviceGeneric ||
+			device.ProfileID != stagelaser.ProfileID ||
+			device.Assignment == nil ||
+			device.Assignment.State != "ACTIVE" ||
+			device.Assignment.ProjectID != session.ProjectID ||
+			device.Assignment.RuntimeSnapshotID != session.RuntimeSnapshotID {
+			continue
+		}
+		report.Attempted++
+		targets = append(targets, device)
+	}
+	if report.Attempted == 0 {
+		return report, nil
+	}
+	if !enabled {
+		report.Status = "MANUAL_RECOVERY_REQUIRED"
+		report.Details = []string{"StageLaser remains DISARMED/OFF after managed blackout clear; use explicit ARM and Cue actions to restore laser output."}
+		return report, nil
+	}
+
+	for _, device := range targets {
+		if !hasCapability(device.Capabilities, stagelaser.CapabilitySafeOff) {
+			report.Details = append(report.Details, device.ID+": required "+stagelaser.CapabilitySafeOff+" capability is unavailable")
+		}
+	}
+	if len(report.Details) > 0 {
+		report.Status = "FAILED"
+		return report, fmt.Errorf("%s", strings.Join(report.Details, "; "))
+	}
+
+	deadline := time.Now().UTC().Add(emergencyWait)
+	pending := map[string]string{}
+	for _, device := range targets {
+		dispatched, err := dispatcher.Dispatch(ctx, deviceexperience.CreateCommandInput{
+			ProjectID: session.ProjectID,
+			SessionID: session.ID,
+			DeviceID: device.ID,
+			CommandType: stagelaser.CommandSafeOff,
+			Issuer: "hub.runtime_control",
+			CorrelationID: command.CorrelationID,
+			CausationID: command.CommandID,
+			RuntimeSnapshotID: session.RuntimeSnapshotID,
+			Priority: "P0",
+			IdempotencyKey: "emergency-blackout:" + command.CommandID + ":" + stagelaser.CommandSafeOff + ":" + device.ID,
+			Payload: stagelaser.CanonicalEmptyPayload(),
+			DeadlineAt: &deadline,
+		})
+		if err != nil {
+			report.Status = "FAILED"
+			report.Details = append(report.Details, device.ID+": "+err.Error())
+			continue
+		}
+		pending[dispatched.Envelope.CommandID] = device.ID
+	}
+	if len(report.Details) > 0 {
+		return report, fmt.Errorf("%s", strings.Join(report.Details, "; "))
+	}
+	if err := waitEmergencyDeviceCommands(ctx, devices, pending, deadline, &report); err != nil {
+		report.Status = "FAILED"
+		return report, err
+	}
+	report.Status = "COMPLETED"
+	return report, nil
 }
 
 func setTabletBlackout(
@@ -259,7 +352,7 @@ func waitEmergencyDeviceCommands(
 			return nil
 		}
 		if time.Now().UTC().After(deadline) {
-			return fmt.Errorf("tablet blackout confirmation timed out")
+			return fmt.Errorf("managed Stage Device safe-state confirmation timed out")
 		}
 		select {
 		case <-ctx.Done():

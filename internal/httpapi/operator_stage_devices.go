@@ -15,6 +15,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -137,6 +138,10 @@ func WithOperatorStageDevices(
 				LightingNodes []struct {
 					DeviceID string `json:"device_id"`
 				} `json:"lighting_nodes"`
+				Targets []struct {
+					LogicalType string          `json:"logical_type"`
+					Configuration json.RawMessage `json:"configuration"`
+				} `json:"targets"`
 			}
 			if err := json.Unmarshal(snapshot.Manifest, &manifest); err != nil {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_MANIFEST_INVALID"})
@@ -146,6 +151,21 @@ func WithOperatorStageDevices(
 			for _, binding := range manifest.LightingNodes {
 				if deviceID := strings.TrimSpace(binding.DeviceID); deviceID != "" {
 					targetLighting[deviceID] = true
+				}
+			}
+			targetStageLasers := make(map[string]bool)
+			for _, target := range manifest.Targets {
+				if !strings.EqualFold(strings.TrimSpace(target.LogicalType), stagelaser.LogicalTargetType) {
+					continue
+				}
+				var config struct {
+					DeviceID string `json:"device_id"`
+				}
+				if json.Unmarshal(target.Configuration, &config) != nil {
+					continue
+				}
+				if deviceID := strings.TrimSpace(config.DeviceID); deviceID != "" {
+					targetStageLasers[deviceID] = true
 				}
 			}
 
@@ -209,10 +229,12 @@ func WithOperatorStageDevices(
 				isTablet := device.Kind == deviceexperience.DeviceTabletPlayer &&
 					device.ProfileID == deviceexperience.TabletPlayerProfileID
 				isTargetLighting := device.ProfileID == lightingnode.ProfileID && targetLighting[device.ID]
-				if !isTablet && !isTargetLighting {
+				isTargetStageLaser := device.Kind == deviceexperience.DeviceGeneric &&
+					device.ProfileID == stagelaser.ProfileID && targetStageLasers[device.ID]
+				if !isTablet && !isTargetLighting && !isTargetStageLaser {
 					continue
 				}
-				if isTablet && assignment.ProjectID != projectID {
+				if (isTablet || isTargetStageLaser) && assignment.ProjectID != projectID {
 					continue
 				}
 				result := runtimeSnapshotDeviceSyncResult{
@@ -242,6 +264,18 @@ func WithOperatorStageDevices(
 						continue
 					}
 					result.Detail = "Tablet authority is committed to the Published Runtime Snapshot but its fresh reconnect is not READY."
+					complete = false
+					results = append(results, result)
+					continue
+				}
+				if isTargetStageLaser && assignment.State == "ACTIVE" &&
+					assignment.RuntimeSnapshotID == input.RuntimeSnapshotID {
+					if waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, assignment.Epoch, 12*time.Second) {
+						result.Status = "SYNCED"
+						results = append(results, result)
+						continue
+					}
+					result.Detail = "StageLaser authority is committed to the Published Runtime Snapshot but its fresh reconnect is not READY."
 					complete = false
 					results = append(results, result)
 					continue
@@ -278,6 +312,43 @@ func WithOperatorStageDevices(
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "Tablet assignment committed but fresh Runtime Snapshot reconnect did not become READY in time."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.Status = "SYNCED"
+					results = append(results, result)
+
+				case isTargetStageLaser:
+					if assignment.State != "ACTIVE" || assignment.ProjectID != projectID ||
+						assignment.RuntimeSnapshotID == "" {
+						result.Detail = "StageLaser is not ACTIVE on an authoritative source Runtime Snapshot. Assign it from Devices first."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					record, assignErr := runtime.ExecuteStageLaserAssignmentAuthorized(
+						r.Context(),
+						deviceexperience.StageLaserAssignmentInput{
+							DeviceID: device.ID,
+							ExpectedProjectID: projectID,
+							ExpectedRuntimeSnapshotID: assignment.RuntimeSnapshotID,
+							TargetProjectID: projectID,
+							TargetRuntimeSnapshotID: input.RuntimeSnapshotID,
+							ExpectedEpoch: assignment.Epoch,
+						},
+						actor,
+						reauthorize,
+					)
+					if assignErr != nil {
+						result.Detail = assignErr.Error()
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.AssignmentEpoch = record.ToEpoch
+					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
+						result.Detail = "StageLaser safe rebind committed but fresh Runtime Snapshot reconnect did not become READY in time."
 						complete = false
 						results = append(results, result)
 						continue
@@ -343,6 +414,7 @@ func WithOperatorStageDevices(
 				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
 				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
 				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
+				Runtime       *deviceexperience.RuntimeState   `json:"runtime,omitempty"`
 				Enabled       bool                             `json:"enabled"`
 			}
 			out := make([]inventoryDevice, 0)
@@ -366,6 +438,10 @@ func WithOperatorStageDevices(
 				if item.Runtime != nil {
 					view.Connection = item.Runtime.Connection
 					view.Readiness = item.Runtime.Readiness
+					runtimeCopy := *item.Runtime
+					runtimeCopy.ObservedState = append(json.RawMessage(nil), item.Runtime.ObservedState...)
+					runtimeCopy.NetworkState = append(json.RawMessage(nil), item.Runtime.NetworkState...)
+					view.Runtime = &runtimeCopy
 				}
 				if scope, ok := runtime.CurrentV2Scope(item.ID); ok {
 					copy := scope
@@ -749,6 +825,88 @@ func WithOperatorStageDevices(
 		// an attended BLOCKED transfer + current-generation software-zero ACK.
 		// It applies the exact Published Runtime Snapshot configuration while
 		// blackout remains asserted, then requires a fresh reconnect/scope ACK.
+		// StageLaser first assignment is fail-closed: the exact authenticated
+		// socket must report DISARMED + OFF with known state before the Hub
+		// commits ACTIVE Project/Snapshot authority. The committed socket is
+		// closed and commands remain disabled until a fresh scope ACK.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-assignment", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_ASSIGNMENT_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm           string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			const confirmation = "VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_ASSIGNMENT_CONFIRMATION_REQUIRED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteStageLaserAssignmentAuthorized(
+				r.Context(),
+				deviceexperience.StageLaserAssignmentInput{
+					DeviceID: deviceID,
+					TargetProjectID: projectID,
+					TargetRuntimeSnapshotID: strings.TrimSpace(input.RuntimeSnapshotID),
+					ExpectedEpoch: input.ExpectedEpoch,
+				},
+				actor,
+				reauthorize,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "STAGELASER_ASSIGNMENT_NOT_COMMITTED",
+					"detail": err.Error(),
+					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_DEVICE_STATE_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"assignment": record,
+				"state": "ACTIVE",
+				"commands_enabled": false,
+				"reconnect_required": true,
+				"state_quality": record.StateQuality,
+				"physical_state_confirmed": record.StateQuality == "CONFIRMED",
+				"note": "TRACKED_STATE_IS_SOFTWARE_STATE_UNLESS_PHYSICAL_FEEDBACK_EXISTS",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/lighting-activation", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION") != "1" {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_ACTIVATION_DISABLED"})

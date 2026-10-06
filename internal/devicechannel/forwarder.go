@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	snapshotpkg "github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -55,6 +56,28 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	}
 
 	commandType := deviceexperience.CommandTypeForCueCapability(req.Capability)
+	parameters := req.Parameters
+	if strings.TrimSpace(req.Capability) == stagelaser.CapabilityStateSet {
+		var desired struct {
+			State string `json:"state"`
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(req.Parameters, &raw); err != nil || len(raw) != 1 {
+			return stageDeviceFailure("STAGELASER_STATE_INVALID", "StageLaser state action requires exactly state=ON or OFF")
+		}
+		if err := json.Unmarshal(req.Parameters, &desired); err != nil {
+			return stageDeviceFailure("STAGELASER_STATE_INVALID", "StageLaser state action is invalid")
+		}
+		switch strings.ToUpper(strings.TrimSpace(desired.State)) {
+		case string(stagelaser.StateOn):
+			commandType = stagelaser.CommandSetOn
+		case string(stagelaser.StateOff):
+			commandType = stagelaser.CommandSetOff
+		default:
+			return stageDeviceFailure("STAGELASER_STATE_INVALID", "StageLaser state must be ON or OFF")
+		}
+		parameters = stagelaser.CanonicalEmptyPayload()
+	}
 	if commandType == "" {
 		return stageDeviceFailure("STAGE_DEVICE_CAPABILITY_UNAVAILABLE", "capability is not a typed Stage Device command")
 	}
@@ -82,7 +105,6 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 		return *sessionFailure
 	}
 
-	parameters := req.Parameters
 	if lightingnode.CommandCapability(commandType) != "" {
 		manifest, decodeErr := snapshotpkg.Decode(snapshot.Manifest)
 		if decodeErr != nil {

@@ -68,7 +68,7 @@ func BuiltinCatalog() *Catalog {
 			},
 		},
 	}
-	profiles = append(profiles, tabletPlayerProfile(), esp32DMXLightingNodeProfile())
+	profiles = append(profiles, tabletPlayerProfile(), esp32DMXLightingNodeProfile(), stageLaserProfile())
 	catalog, err := NewCatalog(profiles)
 	if err != nil {
 		panic("invalid built-in StageCore device profile catalog: " + err.Error())

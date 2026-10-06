@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
 func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.Time) (json.RawMessage, error) {
@@ -16,7 +17,16 @@ func canonicalCommandPayload(commandType string, raw json.RawMessage, now time.T
 		return nil, fmt.Errorf("%w: command payload must be a JSON object", ErrInvalidState)
 	}
 
-	switch strings.TrimSpace(commandType) {
+	commandType = strings.TrimSpace(commandType)
+	if stagelaser.CommandCapability(commandType) != "" {
+		canonical, err := stagelaser.CanonicalCommandPayload(commandType, payload)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidState, err)
+		}
+		return canonical, nil
+	}
+
+	switch commandType {
 	case lightingnode.CommandChannelsSet, lightingnode.CommandChannelsFade, lightingnode.CommandBlackout, lightingnode.CommandStateRead, lightingnode.CommandIdentify, lightingnode.CommandConfigRead, lightingnode.CommandConfigApply:
 		canonical, err := lightingnode.CanonicalCommandPayload(commandType, payload)
 		if err != nil {

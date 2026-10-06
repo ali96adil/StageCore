@@ -15,6 +15,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/visualengine"
 )
 
@@ -110,17 +111,35 @@ func TestManagedOutputEmergencyBlackoutCoversTabletAndNativeVisualWithoutAudio(t
 	}
 
 	devices := &fakeEmergencyRuntime{
-		devices: []deviceexperience.Device{{
-			ID: "tablet-1",
-			ProjectID: project.ID,
-			Kind: deviceexperience.DeviceTabletPlayer,
-			ProtocolVersion: deviceexperience.ProtocolVersion1,
-			Capabilities: []string{
-				deviceexperience.CapabilityTabletBlackout,
-				deviceexperience.CapabilityTabletBlackoutClear,
+		devices: []deviceexperience.Device{
+			{
+				ID: "tablet-1",
+				ProjectID: project.ID,
+				Kind: deviceexperience.DeviceTabletPlayer,
+				ProtocolVersion: deviceexperience.ProtocolVersion1,
+				Capabilities: []string{
+					deviceexperience.CapabilityTabletBlackout,
+					deviceexperience.CapabilityTabletBlackoutClear,
+				},
+				Enabled: true,
 			},
-			Enabled: true,
-		}},
+			{
+				ID: "stagelaser-1",
+				ProfileID: stagelaser.ProfileID,
+				Kind: deviceexperience.DeviceGeneric,
+				ProtocolVersion: deviceexperience.ProtocolVersion2,
+				Capabilities: []string{stagelaser.CapabilitySafeOff},
+				Enabled: true,
+				Assignment: &deviceexperience.AssignmentRecord{
+					DeviceID: "stagelaser-1",
+					ProjectID: project.ID,
+					Epoch: 2,
+					State: "ACTIVE",
+					RuntimeSnapshotID: runtimeSnapshot.ID,
+					RequiredForShow: true,
+				},
+			},
+		},
 	}
 	visual := &fakeEmergencyCapabilityExecutor{}
 	command := contracts.CommandEnvelope{CommandID: "emergency-1", CorrelationID: "emergency-1"}
@@ -130,15 +149,21 @@ func TestManagedOutputEmergencyBlackoutCoversTabletAndNativeVisualWithoutAudio(t
 		t.Fatal(err)
 	}
 	if applied.Lighting.Status != "NOT_CONFIGURED" ||
+		applied.StageLaser.Status != "COMPLETED" || applied.StageLaser.Attempted != 1 || applied.StageLaser.Completed != 1 ||
 		applied.Tablets.Status != "COMPLETED" || applied.Tablets.Attempted != 1 || applied.Tablets.Completed != 1 ||
 		applied.NativeVisual.Status != "COMPLETED" || applied.NativeVisual.Attempted != 1 || applied.NativeVisual.Completed != 1 ||
 		applied.Audio.Status != "UNCHANGED_BY_DESIGN" ||
 		applied.ExternalAdapters.Status != "UNCHANGED_BY_DESIGN" {
 		t.Fatalf("applied report=%+v", applied)
 	}
-	if len(devices.inputs) != 1 || devices.inputs[0].CommandType != deviceexperience.CommandTabletBlackout ||
-		devices.inputs[0].Priority != "P0" || devices.inputs[0].RuntimeSnapshotID != runtimeSnapshot.ID {
-		t.Fatalf("tablet blackout inputs=%+v", devices.inputs)
+	if len(devices.inputs) != 2 ||
+		devices.inputs[0].CommandType != stagelaser.CommandSafeOff ||
+		devices.inputs[0].Priority != "P0" ||
+		devices.inputs[0].RuntimeSnapshotID != runtimeSnapshot.ID ||
+		devices.inputs[1].CommandType != deviceexperience.CommandTabletBlackout ||
+		devices.inputs[1].Priority != "P0" ||
+		devices.inputs[1].RuntimeSnapshotID != runtimeSnapshot.ID {
+		t.Fatalf("managed blackout inputs=%+v", devices.inputs)
 	}
 	if len(visual.requests) != 1 || visual.requests[0].Capability != visualengine.CapabilityBlackout ||
 		visual.requests[0].Priority != "P0" {
@@ -155,12 +180,18 @@ func TestManagedOutputEmergencyBlackoutCoversTabletAndNativeVisualWithoutAudio(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.Tablets.Status != "COMPLETED" || cleared.NativeVisual.Status != "COMPLETED" ||
+	if cleared.StageLaser.Status != "MANUAL_RECOVERY_REQUIRED" ||
+		cleared.Tablets.Status != "COMPLETED" || cleared.NativeVisual.Status != "COMPLETED" ||
 		cleared.Audio.Status != "UNCHANGED_BY_DESIGN" {
 		t.Fatalf("cleared report=%+v", cleared)
 	}
-	if len(devices.inputs) != 2 || devices.inputs[1].CommandType != deviceexperience.CommandTabletBlackoutClear {
-		t.Fatalf("tablet clear inputs=%+v", devices.inputs)
+	if len(devices.inputs) != 3 || devices.inputs[2].CommandType != deviceexperience.CommandTabletBlackoutClear {
+		t.Fatalf("managed clear inputs=%+v", devices.inputs)
+	}
+	for _, input := range devices.inputs[2:] {
+		if input.CommandType == stagelaser.CommandArm || input.CommandType == stagelaser.CommandSetOn {
+			t.Fatalf("managed clear must never re-arm or turn StageLaser on: %+v", devices.inputs)
+		}
 	}
 	if len(visual.requests) != 2 {
 		t.Fatalf("visual clear requests=%+v", visual.requests)
