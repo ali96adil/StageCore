@@ -38,6 +38,24 @@
       v2TabletNoSnapshot: "Publish a Runtime Snapshot before assigning this tablet.",
       v2TabletActive: "Hub-owned tablet assignment is active",
       v2TabletScope: "Runtime Snapshot",
+      stageLaserTitle: "StageLaser",
+      stageLaserArm: "Arm state",
+      stageLaserState: "Laser state",
+      stageLaserQuality: "State quality",
+      stageLaserRSSI: "Wi-Fi RSSI",
+      stageLaserIP: "IP address",
+      stageLaserFirmware: "Firmware",
+      stageLaserUptime: "Uptime",
+      stageLaserPulses: "Relay pulses",
+      stageLaserLastCommand: "Last command",
+      stageLaserTracked: "TRACKED is software-tracked state only; it is not physical confirmation.",
+      stageLaserConfirmed: "Physical feedback confirmed this state.",
+      stageLaserUnknown: "Laser state is unknown or requires resync. Do not assume OFF.",
+      stageLaserAssign: "Verify Safe Off and assign StageLaser",
+      stageLaserAssigning: "Verifying DISARMED + OFF on the authenticated StageLaser…",
+      stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
+      stageLaserNoSnapshot: "Publish a Runtime Snapshot containing this StageLaser target before assignment.",
+      stageLaserAssignConfirm: "StageCore will require this StageLaser to prove DISARMED + OFF on its current authenticated connection. TRACKED means software state only unless physical feedback exists. Continue?",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -187,6 +205,24 @@
       v2TabletNoSnapshot: "انشر Runtime Snapshot قبل تخصيص هذا التابلت.",
       v2TabletActive: "تخصيص التابلت من الـHub فعّال",
       v2TabletScope: "Runtime Snapshot",
+      stageLaserTitle: "StageLaser",
+      stageLaserArm: "حالة التسليح",
+      stageLaserState: "حالة الليزر",
+      stageLaserQuality: "جودة الحالة",
+      stageLaserRSSI: "إشارة Wi-Fi",
+      stageLaserIP: "عنوان IP",
+      stageLaserFirmware: "الفيرموير",
+      stageLaserUptime: "مدة التشغيل",
+      stageLaserPulses: "نبضات الـRelay",
+      stageLaserLastCommand: "آخر أمر",
+      stageLaserTracked: "TRACKED يعني حالة متتبعة برمجياً فقط، وليست تأكيداً فعلياً من الليزر.",
+      stageLaserConfirmed: "الحالة مؤكدة بواسطة تغذية راجعة فعلية.",
+      stageLaserUnknown: "حالة الليزر غير معروفة أو تحتاج Resync. لا تفترض أنه مطفأ.",
+      stageLaserAssign: "تحقق من Safe Off وخصص StageLaser",
+      stageLaserAssigning: "جاري التحقق من DISARMED + OFF على اتصال StageLaser الموثق…",
+      stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
+      stageLaserNoSnapshot: "انشر Runtime Snapshot يحتوي هدف StageLaser هذا قبل التخصيص.",
+      stageLaserAssignConfirm: "سيطلب StageCore من StageLaser إثبات DISARMED + OFF على اتصاله الموثق الحالي. TRACKED تعني حالة برمجية فقط ما لم توجد تغذية راجعة فعلية. هل تريد المتابعة؟",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
@@ -400,6 +436,50 @@
       </div>`;
   }
 
+  function isStageLaser(device) {
+    return device?.protocol_version === "stagecore.device/2" &&
+      device?.device_kind === "GENERIC" &&
+      device?.profile_id === "stagecore.esp32-stagelaser";
+  }
+
+  function stageLaserTelemetryMarkup(device, compact = false) {
+    if (!isStageLaser(device)) return "";
+    const runtime = device.runtime || {};
+    const observed = runtime.observed_state && typeof runtime.observed_state === "object"
+      ? runtime.observed_state : {};
+    const arm = String(observed.arm_state || "UNKNOWN").toUpperCase();
+    const logical = String(observed.logical_state || "UNKNOWN").toUpperCase();
+    const quality = String(observed.state_quality || "UNKNOWN").toUpperCase();
+    const rssi = Number(observed.wifi_rssi_dbm);
+    const uptime = Number(observed.uptime_seconds);
+    const pulses = Number(observed.relay_pulse_count);
+    const lastCommand = [observed.last_command_type, observed.last_command_result]
+      .filter(Boolean).join(" · ") || "—";
+    const qualityNote = quality === "CONFIRMED"
+      ? t("stageLaserConfirmed")
+      : quality === "TRACKED" ? t("stageLaserTracked") : t("stageLaserUnknown");
+    return `
+      <section class="phase4-empty stage-laser-status" role="status">
+        <div class="phase4-status-row">
+          ${pulse(arm)} ${pulse(logical)} ${pulse(quality)}
+        </div>
+        <dl class="phase4-kv">
+          <div><dt>${esc(t("stageLaserArm"))}</dt><dd>${esc(arm)}</dd></div>
+          <div><dt>${esc(t("stageLaserState"))}</dt><dd>${esc(logical)}</dd></div>
+          <div><dt>${esc(t("stageLaserQuality"))}</dt><dd>${esc(quality)}</dd></div>
+          ${compact ? "" : `
+            <div><dt>${esc(t("stageLaserFirmware"))}</dt><dd>${esc(observed.firmware_version || device.client_version || "—")}</dd></div>
+            <div><dt>${esc(t("stageLaserRSSI"))}</dt><dd>${Number.isFinite(rssi) ? `${esc(Math.round(rssi))} dBm` : "—"}</dd></div>
+            <div><dt>${esc(t("stageLaserIP"))}</dt><dd class="mono">${esc(observed.ip_address || "—")}</dd></div>
+            <div><dt>${esc(t("stageLaserUptime"))}</dt><dd>${Number.isFinite(uptime) && uptime >= 0 ? `${esc(Math.round(uptime))} s` : "—"}</dd></div>
+            <div><dt>${esc(t("stageLaserPulses"))}</dt><dd>${Number.isFinite(pulses) && pulses >= 0 ? esc(Math.round(pulses)) : "—"}</dd></div>
+            <div><dt>${esc(t("stageLaserLastCommand"))}</dt><dd class="mono">${esc(lastCommand)}</dd></div>
+          `}
+        </dl>
+        <p class="${quality === "UNKNOWN" || observed.resync_required ? "message warn" : "muted"}">${esc(qualityNote)}</p>
+      </section>`;
+  }
+
   function deviceCard(device, v2Status = null, showLocked = false) {
     const runtime = device.runtime || {};
     const assignment = device.assignment || {};
@@ -469,6 +549,7 @@
             <button class="button ghost" data-live-diagnostic-device="${esc(device.device_id)}" type="button">${esc(t("liveDiagnostic"))}</button>
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
+        ${stageLaserTelemetryMarkup(device)}
         ${showRequirementKnown ? `
           <div class="phase4-empty" role="status">
             <strong>${esc(t("showRequirement"))}: ${esc(t(requiredForShow ? "showRequired" : "showNotRequired"))}</strong>
@@ -654,6 +735,10 @@
       const reusableTablet = tablet && (unassigned || activeElsewhere);
       const canAssignTablet = reusableTablet &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
+      const stageLaser = isStageLaser(device);
+      const assignableStageLaser = stageLaser && unassigned;
+      const canAssignStageLaser = assignableStageLaser &&
+        device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
       return `
         <article class="phase4-card">
           <div class="phase4-card-head">
@@ -667,6 +752,7 @@
             ${assignedSnapshot ? `<div><dt>${esc(t("v2AssignedSnapshot"))}</dt><dd class="mono">${esc(assignedSnapshot)}</dd></div>` : ""}
           </dl>
           <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
+          ${stageLaserTelemetryMarkup(device, true)}
           ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
@@ -677,7 +763,16 @@
                 type="button" ${canAssignTablet ? "" : "disabled"}>
                 ${esc(t(activeElsewhere ? "v2MoveTablet" : "v2AssignTablet"))}
               </button>
-            </div>` : `
+            </div>` : assignableStageLaser ? `
+            <div class="phase4-empty">
+              <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("stageLaserNoSnapshot"))}</p>
+              <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
+                data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
+                type="button" ${canAssignStageLaser ? "" : "disabled"}>
+                ${esc(t("stageLaserAssign"))}
+              </button>
+            </div>` : stageLaser ? `
+            <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p><p>${esc(t("v2NoControls"))}</p></div>` : `
             <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
         </article>`;
     };
@@ -774,6 +869,38 @@
             }),
           });
           phase4Message(t("v2TabletAssigned"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-assign-stagelaser]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            !assignmentSnapshotID || assignmentLocked) return;
+        const deviceID = button.dataset.assignStagelaser || "";
+        const epoch = Number(button.dataset.assignmentEpoch || 0);
+        if (!deviceID || !Number.isInteger(epoch) || epoch < 1 ||
+            !window.confirm(t("stageLaserAssignConfirm"))) return;
+        button.disabled = true;
+        phase4Message(t("stageLaserAssigning"));
+        try {
+          await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelaser-assignment`, {
+            method: "POST",
+            body: JSON.stringify({
+              runtime_snapshot_id: assignmentSnapshotID,
+              expected_assignment_epoch: epoch,
+              confirm: "VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER",
+            }),
+          });
+          phase4Message(t("stageLaserAssigned"), "success");
           if (renderGeneration === stageDevicesRenderGeneration &&
               state.page === "devices" && currentProjectID() === projectID) {
             await renderStageDevices();

@@ -990,3 +990,100 @@ func TestStageLaserAssignmentEndpointFailsClosedWithoutAuthenticatedDeviceRuntim
 		t.Fatalf("denied StageLaser API calls mutated assignment: %+v", record)
 	}
 }
+
+
+func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	if _, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "StageLaser Inventory", CreatedBy: "owner",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "stagelaser-inventory-observation"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID,
+		Kind: deviceexperience.DeviceGeneric,
+		ProfileID: stagelaser.ProfileID,
+		DisplayName: "Laser Left",
+		Platform: "esp32",
+		Architecture: "riscv32",
+		ClientVersion: "0.1.0-test",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: stagelaser.CapabilityKeys(),
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observation := stagelaser.Observation{
+		SchemaVersion: stagelaser.SchemaVersion1,
+		FirmwareVersion: "0.1.0-test",
+		ControlContractVersion: stagelaser.ControlContractVersion,
+		ArmState: stagelaser.ArmDisarmed,
+		LogicalState: stagelaser.StateOff,
+		StateQuality: stagelaser.StateQualityTracked,
+		WiFiRSSI: func() *int { value := -57; return &value }(),
+		IPAddress: "192.168.3.77",
+		UptimeSeconds: 91,
+		RelayPulseCount: 4,
+		DriverKind: stagelaser.DriverMechanicalRelay,
+		Limits: stagelaser.DefaultMechanicalLimits(),
+	}
+	raw, err := json.Marshal(observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: deviceID,
+		Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker,
+		ObservedState: raw,
+		NetworkState: json.RawMessage(`{"transport":"TLS"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stage-devices/inventory", nil)
+	req.RemoteAddr = "127.0.0.1:19401"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("StageLaser inventory status=%d body=%s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Devices []struct {
+			DeviceID string `json:"device_id"`
+			Runtime *deviceexperience.RuntimeState `json:"runtime"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Devices) != 1 || response.Devices[0].DeviceID != deviceID ||
+		response.Devices[0].Runtime == nil {
+		t.Fatalf("StageLaser inventory runtime=%+v", response.Devices)
+	}
+	var got stagelaser.Observation
+	if err := json.Unmarshal(response.Devices[0].Runtime.ObservedState, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.LogicalState != stagelaser.StateOff ||
+		got.ArmState != stagelaser.ArmDisarmed ||
+		got.StateQuality != stagelaser.StateQualityTracked ||
+		got.IPAddress != "192.168.3.77" {
+		t.Fatalf("StageLaser inventory observation=%+v", got)
+	}
+}

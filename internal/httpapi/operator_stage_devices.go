@@ -343,6 +343,7 @@ func WithOperatorStageDevices(
 				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
 				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
 				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
+				Runtime       *deviceexperience.RuntimeState   `json:"runtime,omitempty"`
 				Enabled       bool                             `json:"enabled"`
 			}
 			out := make([]inventoryDevice, 0)
@@ -366,6 +367,10 @@ func WithOperatorStageDevices(
 				if item.Runtime != nil {
 					view.Connection = item.Runtime.Connection
 					view.Readiness = item.Runtime.Readiness
+					runtimeCopy := *item.Runtime
+					runtimeCopy.ObservedState = append(json.RawMessage(nil), item.Runtime.ObservedState...)
+					runtimeCopy.NetworkState = append(json.RawMessage(nil), item.Runtime.NetworkState...)
+					view.Runtime = &runtimeCopy
 				}
 				if scope, ok := runtime.CurrentV2Scope(item.ID); ok {
 					copy := scope
