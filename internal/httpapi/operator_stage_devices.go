@@ -15,6 +15,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -137,6 +138,10 @@ func WithOperatorStageDevices(
 				LightingNodes []struct {
 					DeviceID string `json:"device_id"`
 				} `json:"lighting_nodes"`
+				Targets []struct {
+					LogicalType string          `json:"logical_type"`
+					Configuration json.RawMessage `json:"configuration"`
+				} `json:"targets"`
 			}
 			if err := json.Unmarshal(snapshot.Manifest, &manifest); err != nil {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_SNAPSHOT_SYNC_MANIFEST_INVALID"})
@@ -146,6 +151,21 @@ func WithOperatorStageDevices(
 			for _, binding := range manifest.LightingNodes {
 				if deviceID := strings.TrimSpace(binding.DeviceID); deviceID != "" {
 					targetLighting[deviceID] = true
+				}
+			}
+			targetStageLasers := make(map[string]bool)
+			for _, target := range manifest.Targets {
+				if !strings.EqualFold(strings.TrimSpace(target.LogicalType), stagelaser.LogicalTargetType) {
+					continue
+				}
+				var config struct {
+					DeviceID string `json:"device_id"`
+				}
+				if json.Unmarshal(target.Configuration, &config) != nil {
+					continue
+				}
+				if deviceID := strings.TrimSpace(config.DeviceID); deviceID != "" {
+					targetStageLasers[deviceID] = true
 				}
 			}
 
@@ -209,10 +229,12 @@ func WithOperatorStageDevices(
 				isTablet := device.Kind == deviceexperience.DeviceTabletPlayer &&
 					device.ProfileID == deviceexperience.TabletPlayerProfileID
 				isTargetLighting := device.ProfileID == lightingnode.ProfileID && targetLighting[device.ID]
-				if !isTablet && !isTargetLighting {
+				isTargetStageLaser := device.Kind == deviceexperience.DeviceGeneric &&
+					device.ProfileID == stagelaser.ProfileID && targetStageLasers[device.ID]
+				if !isTablet && !isTargetLighting && !isTargetStageLaser {
 					continue
 				}
-				if isTablet && assignment.ProjectID != projectID {
+				if (isTablet || isTargetStageLaser) && assignment.ProjectID != projectID {
 					continue
 				}
 				result := runtimeSnapshotDeviceSyncResult{
@@ -242,6 +264,18 @@ func WithOperatorStageDevices(
 						continue
 					}
 					result.Detail = "Tablet authority is committed to the Published Runtime Snapshot but its fresh reconnect is not READY."
+					complete = false
+					results = append(results, result)
+					continue
+				}
+				if isTargetStageLaser && assignment.State == "ACTIVE" &&
+					assignment.RuntimeSnapshotID == input.RuntimeSnapshotID {
+					if waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, assignment.Epoch, 12*time.Second) {
+						result.Status = "SYNCED"
+						results = append(results, result)
+						continue
+					}
+					result.Detail = "StageLaser authority is committed to the Published Runtime Snapshot but its fresh reconnect is not READY."
 					complete = false
 					results = append(results, result)
 					continue
@@ -278,6 +312,43 @@ func WithOperatorStageDevices(
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "Tablet assignment committed but fresh Runtime Snapshot reconnect did not become READY in time."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.Status = "SYNCED"
+					results = append(results, result)
+
+				case isTargetStageLaser:
+					if assignment.State != "ACTIVE" || assignment.ProjectID != projectID ||
+						assignment.RuntimeSnapshotID == "" {
+						result.Detail = "StageLaser is not ACTIVE on an authoritative source Runtime Snapshot. Assign it from Devices first."
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					record, assignErr := runtime.ExecuteStageLaserAssignmentAuthorized(
+						r.Context(),
+						deviceexperience.StageLaserAssignmentInput{
+							DeviceID: device.ID,
+							ExpectedProjectID: projectID,
+							ExpectedRuntimeSnapshotID: assignment.RuntimeSnapshotID,
+							TargetProjectID: projectID,
+							TargetRuntimeSnapshotID: input.RuntimeSnapshotID,
+							ExpectedEpoch: assignment.Epoch,
+						},
+						actor,
+						reauthorize,
+					)
+					if assignErr != nil {
+						result.Detail = assignErr.Error()
+						complete = false
+						results = append(results, result)
+						continue
+					}
+					result.AssignmentEpoch = record.ToEpoch
+					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
+						result.Detail = "StageLaser safe rebind committed but fresh Runtime Snapshot reconnect did not become READY in time."
 						complete = false
 						results = append(results, result)
 						continue

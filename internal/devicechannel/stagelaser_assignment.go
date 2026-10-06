@@ -170,6 +170,8 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 	record, err := r.repository.CommitStageLaserSafeAssignment(ctx, deviceexperience.VerifiedStageLaserAssignmentInput{
 		AssignmentID: assignmentID,
 		DeviceID: input.DeviceID,
+		ExpectedProjectID: input.ExpectedProjectID,
+		ExpectedRuntimeSnapshotID: input.ExpectedRuntimeSnapshotID,
 		TargetProjectID: input.TargetProjectID,
 		TargetRuntimeSnapshotID: input.TargetRuntimeSnapshotID,
 		ExpectedEpoch: input.ExpectedEpoch,

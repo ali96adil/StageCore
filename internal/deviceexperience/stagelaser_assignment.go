@@ -15,14 +15,18 @@ import (
 )
 
 type StageLaserAssignmentInput struct {
-	DeviceID                string
-	TargetProjectID         string
-	TargetRuntimeSnapshotID string
-	ExpectedEpoch           int64
+	DeviceID                  string
+	ExpectedProjectID         string
+	ExpectedRuntimeSnapshotID string
+	TargetProjectID           string
+	TargetRuntimeSnapshotID   string
+	ExpectedEpoch             int64
 }
 
 type StageLaserAssignmentPreflight struct {
 	DeviceID                string `json:"device_id"`
+	FromProjectID           string `json:"from_project_id,omitempty"`
+	FromRuntimeSnapshotID   string `json:"from_runtime_snapshot_id,omitempty"`
 	ToProjectID             string `json:"to_project_id"`
 	ToRuntimeSnapshotID     string `json:"to_runtime_snapshot_id"`
 	AssignmentEpoch         int64  `json:"assignment_epoch"`
@@ -32,10 +36,12 @@ type StageLaserAssignmentPreflight struct {
 }
 
 type VerifiedStageLaserAssignmentInput struct {
-	AssignmentID         string
-	DeviceID             string
-	TargetProjectID      string
-	TargetRuntimeSnapshotID string
+	AssignmentID              string
+	DeviceID                  string
+	ExpectedProjectID         string
+	ExpectedRuntimeSnapshotID string
+	TargetProjectID           string
+	TargetRuntimeSnapshotID   string
 	ExpectedEpoch        int64
 	ConnectionGeneration int64
 	Challenge            string
@@ -48,10 +54,12 @@ type VerifiedStageLaserAssignmentInput struct {
 }
 
 type StageLaserAssignmentCommit struct {
-	AssignmentID         string                 `json:"assignment_id"`
-	DeviceID             string                 `json:"device_id"`
-	ToProjectID          string                 `json:"to_project_id"`
-	ToRuntimeSnapshotID  string                 `json:"to_runtime_snapshot_id"`
+	AssignmentID          string                  `json:"assignment_id"`
+	DeviceID              string                  `json:"device_id"`
+	FromProjectID         string                  `json:"from_project_id,omitempty"`
+	FromRuntimeSnapshotID string                  `json:"from_runtime_snapshot_id,omitempty"`
+	ToProjectID           string                  `json:"to_project_id"`
+	ToRuntimeSnapshotID   string                  `json:"to_runtime_snapshot_id"`
 	FromEpoch            int64                  `json:"from_epoch"`
 	ToEpoch              int64                  `json:"to_epoch"`
 	NextState            string                 `json:"next_state"`
@@ -64,9 +72,15 @@ type stageLaserSnapshotQueryer interface {
 
 func normalizeStageLaserAssignmentInput(in StageLaserAssignmentInput) StageLaserAssignmentInput {
 	in.DeviceID = strings.TrimSpace(in.DeviceID)
+	in.ExpectedProjectID = strings.TrimSpace(in.ExpectedProjectID)
+	in.ExpectedRuntimeSnapshotID = strings.TrimSpace(in.ExpectedRuntimeSnapshotID)
 	in.TargetProjectID = strings.TrimSpace(in.TargetProjectID)
 	in.TargetRuntimeSnapshotID = strings.TrimSpace(in.TargetRuntimeSnapshotID)
 	return in
+}
+
+func validStageLaserScopePair(projectID, snapshotID string) bool {
+	return (projectID == "" && snapshotID == "") || (projectID != "" && snapshotID != "")
 }
 
 func resolveStageLaserSnapshotTarget(
@@ -141,7 +155,10 @@ func (r *Repository) PreflightStageLaserAssignment(
 	in = normalizeStageLaserAssignmentInput(in)
 	if in.DeviceID == "" || in.TargetProjectID == "" ||
 		in.TargetRuntimeSnapshotID == "" || in.ExpectedEpoch <= 0 ||
-		in.ExpectedEpoch >= math.MaxInt64 {
+		in.ExpectedEpoch >= math.MaxInt64 ||
+		!validStageLaserScopePair(in.ExpectedProjectID, in.ExpectedRuntimeSnapshotID) ||
+		(in.ExpectedProjectID != "" && in.ExpectedProjectID != in.TargetProjectID) ||
+		(in.ExpectedRuntimeSnapshotID != "" && in.ExpectedRuntimeSnapshotID == in.TargetRuntimeSnapshotID) {
 		return StageLaserAssignmentPreflight{}, fmt.Errorf("%w: invalid StageLaser assignment scope", ErrInvalidState)
 	}
 	device, err := r.GetDevice(ctx, in.DeviceID)
@@ -157,9 +174,19 @@ func (r *Repository) PreflightStageLaserAssignment(
 	if err != nil {
 		return StageLaserAssignmentPreflight{}, err
 	}
-	if record.State != "UNASSIGNED" || record.ProjectID != "" ||
-		record.RuntimeSnapshotID != "" || record.Epoch != in.ExpectedEpoch {
-		return StageLaserAssignmentPreflight{}, fmt.Errorf("%w: StageLaser is not at the expected UNASSIGNED epoch", ErrInvalidState)
+	validSource := false
+	switch record.State {
+	case "UNASSIGNED":
+		validSource = in.ExpectedProjectID == "" && in.ExpectedRuntimeSnapshotID == "" &&
+			record.ProjectID == "" && record.RuntimeSnapshotID == ""
+	case "ACTIVE":
+		validSource = in.ExpectedProjectID != "" && in.ExpectedRuntimeSnapshotID != "" &&
+			record.ProjectID == in.ExpectedProjectID &&
+			record.RuntimeSnapshotID == in.ExpectedRuntimeSnapshotID &&
+			in.TargetProjectID == record.ProjectID
+	}
+	if record.Epoch != in.ExpectedEpoch || !validSource {
+		return StageLaserAssignmentPreflight{}, fmt.Errorf("%w: StageLaser source assignment does not match the expected scope", ErrInvalidState)
 	}
 	if err := resolveStageLaserSnapshotTarget(
 		ctx, r.db, in.DeviceID, in.TargetProjectID, in.TargetRuntimeSnapshotID,
@@ -188,6 +215,8 @@ func (r *Repository) PreflightStageLaserAssignment(
 	}
 	return StageLaserAssignmentPreflight{
 		DeviceID: in.DeviceID,
+		FromProjectID: record.ProjectID,
+		FromRuntimeSnapshotID: record.RuntimeSnapshotID,
 		ToProjectID: in.TargetProjectID,
 		ToRuntimeSnapshotID: in.TargetRuntimeSnapshotID,
 		AssignmentEpoch: in.ExpectedEpoch,
@@ -203,12 +232,17 @@ func (r *Repository) CommitStageLaserSafeAssignment(
 ) (StageLaserAssignmentCommit, error) {
 	in.AssignmentID = strings.TrimSpace(in.AssignmentID)
 	in.DeviceID = strings.TrimSpace(in.DeviceID)
+	in.ExpectedProjectID = strings.TrimSpace(in.ExpectedProjectID)
+	in.ExpectedRuntimeSnapshotID = strings.TrimSpace(in.ExpectedRuntimeSnapshotID)
 	in.TargetProjectID = strings.TrimSpace(in.TargetProjectID)
 	in.TargetRuntimeSnapshotID = strings.TrimSpace(in.TargetRuntimeSnapshotID)
 	in.ActorID = strings.TrimSpace(in.ActorID)
 	if len(in.AssignmentID) != 36 || in.DeviceID == "" || in.TargetProjectID == "" ||
 		in.TargetRuntimeSnapshotID == "" || in.ActorID == "" ||
 		in.ExpectedEpoch <= 0 || in.ExpectedEpoch >= math.MaxInt64 ||
+		!validStageLaserScopePair(in.ExpectedProjectID, in.ExpectedRuntimeSnapshotID) ||
+		(in.ExpectedProjectID != "" && in.ExpectedProjectID != in.TargetProjectID) ||
+		(in.ExpectedRuntimeSnapshotID != "" && in.ExpectedRuntimeSnapshotID == in.TargetRuntimeSnapshotID) ||
 		in.ConnectionGeneration <= 0 || in.AckDeviceID != in.DeviceID ||
 		in.AckEpoch != in.ExpectedEpoch || in.AckGeneration != in.ConnectionGeneration ||
 		in.AckChallenge != in.Challenge {
@@ -245,8 +279,18 @@ func (r *Repository) CommitStageLaserSafeAssignment(
 	if err != nil {
 		return StageLaserAssignmentCommit{}, fmt.Errorf("read authoritative StageLaser assignment: %w", err)
 	}
-	if state != "UNASSIGNED" || projectID != "" || snapshotID != "" ||
-		epoch != in.ExpectedEpoch || protocol != ProtocolVersion2 ||
+	validSource := false
+	switch state {
+	case "UNASSIGNED":
+		validSource = in.ExpectedProjectID == "" && in.ExpectedRuntimeSnapshotID == "" &&
+			projectID == "" && snapshotID == ""
+	case "ACTIVE":
+		validSource = in.ExpectedProjectID != "" && in.ExpectedRuntimeSnapshotID != "" &&
+			projectID == in.ExpectedProjectID &&
+			snapshotID == in.ExpectedRuntimeSnapshotID &&
+			in.TargetProjectID == projectID
+	}
+	if !validSource || epoch != in.ExpectedEpoch || protocol != ProtocolVersion2 ||
 		profile != stagelaser.ProfileID || kind != string(DeviceGeneric) ||
 		legacyProject != "" || enabled != 1 {
 		return StageLaserAssignmentCommit{}, fmt.Errorf("%w: StageLaser assignment changed during handshake", ErrInvalidState)
@@ -278,14 +322,18 @@ func (r *Repository) CommitStageLaserSafeAssignment(
 	}
 
 	nowUS := r.now().UTC().UnixMicro()
+	sourceState := state
 	result, err := tx.ExecContext(ctx, `
 		UPDATE stage_device_assignments
 		SET project_id=?, runtime_snapshot_id=?, assignment_epoch=?,
-		    assignment_state='ACTIVE', required_for_show=1, updated_at_us=?
-		WHERE device_id=? AND project_id IS NULL AND runtime_snapshot_id=''
-		      AND assignment_epoch=? AND assignment_state='UNASSIGNED'
+		    assignment_state='ACTIVE',
+		    required_for_show=CASE WHEN assignment_state='UNASSIGNED' THEN 1 ELSE required_for_show END,
+		    updated_at_us=?
+		WHERE device_id=? AND project_id IS NULLIF(?, '')
+		      AND runtime_snapshot_id=? AND assignment_epoch=? AND assignment_state=?
 	`, in.TargetProjectID, in.TargetRuntimeSnapshotID, in.ExpectedEpoch+1,
-		nowUS, in.DeviceID, in.ExpectedEpoch)
+		nowUS, in.DeviceID, in.ExpectedProjectID, in.ExpectedRuntimeSnapshotID,
+		in.ExpectedEpoch, sourceState)
 	if err != nil {
 		return StageLaserAssignmentCommit{}, fmt.Errorf("CAS StageLaser assignment: %w", err)
 	}
@@ -311,6 +359,8 @@ func (r *Repository) CommitStageLaserSafeAssignment(
 	return StageLaserAssignmentCommit{
 		AssignmentID: in.AssignmentID,
 		DeviceID: in.DeviceID,
+		FromProjectID: in.ExpectedProjectID,
+		FromRuntimeSnapshotID: in.ExpectedRuntimeSnapshotID,
 		ToProjectID: in.TargetProjectID,
 		ToRuntimeSnapshotID: in.TargetRuntimeSnapshotID,
 		FromEpoch: in.ExpectedEpoch,
