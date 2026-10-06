@@ -1,6 +1,6 @@
 # StageLaser V1 architecture
 
-Status: implementation baseline  
+Status: StageCore Core implementation candidate; ESP32-C3 firmware and hardware qualification pending  
 StageCore baseline: `main@89c5c801e31cc57d2dd763dbc837ed0441e0352f`  
 ESP32 precedent reviewed: `ali96adil/StageCore-ESP32-DMX-Lighting@ef338b1d1533b25782c81deb9f0638d23c786e2b`
 
@@ -282,7 +282,7 @@ StageLaser must receive the same v2 principles already used by current Stage Dev
 - command capabilities must be explicitly advertised;
 - reconnect never silently restores show authority.
 
-The implementation will extend the v2 profile allowlists/policies specifically for `stagecore.esp32-stagelaser`; it will not make arbitrary GENERIC v2 devices ACTIVE.
+The v2 profile allowlists/policies are extended specifically for `stagecore.esp32-stagelaser`; arbitrary GENERIC v2 devices do not receive ACTIVE authority.
 
 ## 15. Observations and Device Card
 
@@ -309,11 +309,11 @@ The StageLaser observation contract includes:
 
 Canonical Online/Offline, readiness, last seen and authenticated network state remain owned by the Stage Device runtime.
 
-The Operator Device Card will present these values using existing Stage Devices patterns.
+The Operator Device Card presents these values using the existing Stage Devices inventory/runtime patterns. TRACKED state is explicitly labelled as software-tracked rather than physical confirmation, and UNKNOWN/resync-required state never claims OFF.
 
 ## 16. Cue Builder and Mixed Cue
 
-The graphical authoring flow follows the existing Tablet/Lighting pattern:
+The implemented graphical authoring flow follows the existing Tablet/Lighting pattern:
 
 `Add Action -> StageLaser -> Device -> Action`
 
@@ -332,7 +332,7 @@ Duration: 8 sec
 
 ## 17. Emergency Blackout / Safe Off
 
-StageLaser becomes an explicit managed-output safety domain.
+StageLaser is an explicit managed-output safety domain.
 
 Emergency Blackout uses `LASER_SAFE_OFF`.
 
@@ -344,7 +344,7 @@ Releasing Emergency Blackout never automatically arms or restores the laser.
 
 ## 18. Official Controller ADDON
 
-Like Lighting Controller, StageLaser will have an official non-executable Controller ADDON for product/UI ownership.
+Like Lighting Controller, StageLaser ships as an official non-executable Controller ADDON for product/UI ownership.
 
 The ADDON may own:
 
@@ -416,16 +416,58 @@ Cold boot acceptance requires zero unintended contact closure.
 - flash + network loss: bounded local flash expires locally.
 - OTA/reboot: output driver is initialized inactive before networking/runtime.
 
-## 22. Implementation order
+## 22. Implementation status
 
-1. contract + tests;
+StageCore Core completed in the StageLaser feature branch:
+
+1. contract + validation tests;
 2. official StageLaser Device Profile;
-3. Stage Device v2 enrollment/assignment/command authority for the StageLaser profile;
-4. deterministic software StageLaser simulator/state machine tests;
-5. Cue Engine forwarding + visual Cue Builder/Mixed Cue;
-6. Operator Device Card / commissioning / diagnostics;
-7. managed-output Emergency Blackout integration;
-8. official StageLaser Controller ADDON;
-9. dedicated ESP32-C3 firmware repository;
-10. software CI freeze;
-11. attended hardware qualification.
+3. audited Stage Device v2 enrollment/assignment/command authority scoped specifically to the StageLaser profile;
+4. deterministic software state machine and restart/flash/idempotency tests;
+5. authenticated safe-off assignment handshake and fresh reconnect scope ACK;
+6. desired-state Cue Engine forwarding with no raw-toggle command;
+7. visual Cue Builder / Mixed Cue authoring;
+8. Operator Device Card telemetry and safe commissioning;
+9. safe same-Project Runtime Snapshot rebind after Publish, including a fresh DISARMED + OFF handshake and epoch increment;
+10. managed Emergency Blackout `LASER_SAFE_OFF` with no automatic re-arm on clear;
+11. official non-executable StageLaser Controller ADDON.
+
+Still pending outside StageCore Core:
+
+12. dedicated `ali96adil/StageCore-ESP32-StageLaser` firmware repository;
+13. ESP32-C3 firmware implementation using the proven Hub discovery/pairing/TLS/v2 runtime conventions;
+14. exact ESP32-C3 board and relay electrical qualification;
+15. firmware CI freeze and versioned unqualified artifact;
+16. attended hardware acceptance and final show qualification.
+
+## 23. Runtime Snapshot rebind rule
+
+Publishing a new Runtime Snapshot never silently rewrites StageLaser authority.
+
+For an already ACTIVE StageLaser in the same Project, synchronization performs another authenticated safe-state assignment handshake:
+
+1. source Project/Snapshot/epoch must match Hub-owned authority;
+2. target Snapshot must be PUBLISHED and contain the same StageLaser `device_id` target;
+3. the current authenticated socket must report stable `DISARMED + OFF` with TRACKED or CONFIRMED state;
+4. Hub commits a new assignment epoch and audit record;
+5. the old connection is closed;
+6. StageLaser reconnects and acknowledges the exact new Project/Snapshot/epoch;
+7. only then does `runtime.ready` enable commands.
+
+Cross-Project StageLaser movement is intentionally not part of this V1 rebind path.
+
+## 24. Core software acceptance gates
+
+Before merge, Core CI must keep proving at minimum:
+
+- no `LASER_TOGGLE` / `laser.toggle` control path;
+- SET ON / SET OFF desired-state translation;
+- duplicate/idempotent state-machine behavior;
+- UNKNOWN never produces a blind Safe Off pulse;
+- safe initial assignment and exact Runtime Snapshot command fencing;
+- same-Project Snapshot rebind with fresh safe-off handshake and epoch;
+- visual Cue Builder emits canonical actions through the Hub translator;
+- Emergency Blackout dispatches `LASER_SAFE_OFF` at P0 and clear does not ARM/ON;
+- official Controller ADDON remains non-executable and V2-native.
+
+Hardware acceptance remains separate because software tests cannot prove relay polarity, GPIO boot behavior, contact wiring, or actual laser optical state.
