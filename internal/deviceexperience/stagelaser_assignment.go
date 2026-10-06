@@ -117,6 +117,9 @@ func validateStageLaserSafeAssignmentObservation(observation stagelaser.Observat
 	if err := stagelaser.ValidateObservation(observation); err != nil {
 		return fmt.Errorf("%w: invalid StageLaser safe-state observation: %v", ErrInvalidState, err)
 	}
+	if observation.ControlContractVersion != stagelaser.ControlContractVersion {
+		return fmt.Errorf("%w: StageLaser control contract mismatch", ErrInvalidState)
+	}
 	if observation.ArmState != stagelaser.ArmDisarmed ||
 		observation.LogicalState != stagelaser.StateOff ||
 		(observation.StateQuality != stagelaser.StateQualityTracked &&
@@ -350,6 +353,9 @@ func (r *Repository) ObserveAuthorizedV2StageLaser(
 	}
 	if err := stagelaser.ValidateObservation(laserObservation); err != nil {
 		return RuntimeState{}, fmt.Errorf("%w: invalid StageLaser observation: %v", ErrInvalidState, err)
+	}
+	if laserObservation.ControlContractVersion != stagelaser.ControlContractVersion {
+		return RuntimeState{}, fmt.Errorf("%w: StageLaser control contract mismatch", ErrInvalidState)
 	}
 	if laserObservation.StateQuality == stagelaser.StateQualityUnknown ||
 		laserObservation.ResyncRequired ||

@@ -17,6 +17,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"golang.org/x/net/websocket"
 )
 
@@ -49,8 +50,9 @@ type Runtime struct {
 	pendingBlackouts        map[string]*pendingBlackout
 	pendingV2LightingProbes map[string]*pendingV2LightingProbe
 	latestV2SoftwareLevels  map[string]V2SoftwareLevels
-	pendingTabletAssignments   map[string]*pendingTabletAssignment
-	pendingLightingActivations map[string]*pendingLightingActivation
+	pendingTabletAssignments     map[string]*pendingTabletAssignment
+	pendingStageLaserAssignments map[string]*pendingStageLaserAssignment
+	pendingLightingActivations   map[string]*pendingLightingActivation
 	assignmentTransitions      map[string]bool
 	autoProbeV2              bool
 	nextGeneration           int64
@@ -147,8 +149,9 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		pendingBlackouts:          make(map[string]*pendingBlackout),
 		pendingV2LightingProbes:   make(map[string]*pendingV2LightingProbe),
 		latestV2SoftwareLevels:    make(map[string]V2SoftwareLevels),
-		pendingTabletAssignments:   make(map[string]*pendingTabletAssignment),
-		pendingLightingActivations: make(map[string]*pendingLightingActivation),
+		pendingTabletAssignments:     make(map[string]*pendingTabletAssignment),
+		pendingStageLaserAssignments: make(map[string]*pendingStageLaserAssignment),
+		pendingLightingActivations:   make(map[string]*pendingLightingActivation),
 		assignmentTransitions:      make(map[string]bool),
 		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
@@ -474,7 +477,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			valid = assignment.ProjectID != "" && assignment.RuntimeSnapshotID != "" &&
 				((device.Kind == deviceexperience.DeviceTabletPlayer &&
 					device.ProfileID == deviceexperience.TabletPlayerProfileID) ||
-					device.ProfileID == "stagecore.esp32-dmx-lighting-node")
+					device.ProfileID == "stagecore.esp32-dmx-lighting-node" ||
+					(device.Kind == deviceexperience.DeviceGeneric &&
+						device.ProfileID == stagelaser.ProfileID))
 		}
 		if !valid {
 			return
@@ -491,16 +496,22 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		switch assignment.State {
 		case "UNASSIGNED":
 			response["safe_media_required"] = device.Kind == deviceexperience.DeviceTabletPlayer
-			response["blackout_required"] = device.ProfileID != deviceexperience.TabletPlayerProfileID
+			response["blackout_required"] = device.ProfileID != deviceexperience.TabletPlayerProfileID &&
+				device.ProfileID != stagelaser.ProfileID
+			response["safe_off_required"] = device.ProfileID == stagelaser.ProfileID
 		case "BLOCKED":
 			response["project_id"] = assignment.ProjectID
-			response["blackout_required"] = true
+			response["blackout_required"] = device.ProfileID != stagelaser.ProfileID
+			response["safe_off_required"] = device.ProfileID == stagelaser.ProfileID
 			response["epoch_ack_required"] = true
 		case "ACTIVE":
 			response["project_id"] = assignment.ProjectID
 			response["runtime_snapshot_id"] = assignment.RuntimeSnapshotID
 			response["scope_ack_required"] = true
 			response["safe_media_required"] = false
+			if device.ProfileID == stagelaser.ProfileID {
+				response["safe_off_required"] = true
+			}
 			if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
 				scope, err := r.repository.ResolveLightingScope(
 					ctx, device.ID, assignment.ProjectID, assignment.RuntimeSnapshotID)
@@ -556,6 +567,26 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			return
 		}
 		switch message.Type {
+		case "stagelaser.assignment.safe_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverStageLaserAssignmentAck(current, message) {
+				return
+			}
+		case "stagelaser.assignment.scope_ack":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.activateStageLaserScope(ctx, current, message) {
+				return
+			}
 		case "lighting.assignment.activate_ack":
 			if !isV2 {
 				return
@@ -752,11 +783,16 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 					}
 					continue
 				}
-				if device.ProfileID == "stagecore.esp32-dmx-lighting-node" {
+				switch device.ProfileID {
+				case "stagecore.esp32-dmx-lighting-node":
 					if _, err := r.repository.ObserveAuthorizedV2Lighting(ctx, observation, projectID, snapshotID, epoch); err != nil {
 						return
 					}
-				} else {
+				case stagelaser.ProfileID:
+					if _, err := r.repository.ObserveAuthorizedV2StageLaser(ctx, observation, projectID, snapshotID, epoch); err != nil {
+						return
+					}
+				default:
 					if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, observation, projectID, snapshotID, epoch); err != nil {
 						return
 					}
