@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
 const ProtocolVersion1 = "stagecore.device/1"
@@ -222,6 +223,15 @@ var commandCapability = map[string]string{
 	lightingnode.CommandIdentify:     lightingnode.CapabilityIdentify,
 	lightingnode.CommandConfigRead:   lightingnode.CapabilityConfigRead,
 	lightingnode.CommandConfigApply:  lightingnode.CapabilityConfigApply,
+	stagelaser.CommandArm:         stagelaser.CapabilityArm,
+	stagelaser.CommandDisarm:      stagelaser.CapabilityDisarm,
+	stagelaser.CommandSetOn:       stagelaser.CapabilityStateSet,
+	stagelaser.CommandSetOff:      stagelaser.CapabilityStateSet,
+	stagelaser.CommandFlashStart:  stagelaser.CapabilityFlashStart,
+	stagelaser.CommandFlashStop:   stagelaser.CapabilityFlashStop,
+	stagelaser.CommandSafeOff:     stagelaser.CapabilitySafeOff,
+	stagelaser.CommandStateRead:   stagelaser.CapabilityStateRead,
+	stagelaser.CommandStateResync: stagelaser.CapabilityStateResync,
 }
 
 func LiveSourceCapabilityKeys() []string {
@@ -250,6 +260,11 @@ func RequiredCapability(commandType string) string {
 
 func CommandTypeForCapability(capability string) string {
 	capability = strings.TrimSpace(capability)
+	// Desired laser state has two typed commands. Never let Go map iteration
+	// nondeterministically choose ON or OFF; the StageLaser Cue facade resolves it.
+	if capability == stagelaser.CapabilityStateSet {
+		return ""
+	}
 	for commandType, required := range commandCapability {
 		if required == capability {
 			return commandType
@@ -261,7 +276,8 @@ func CommandTypeForCapability(capability string) string {
 func CommandTypeForCueCapability(capability string) string {
 	capability = strings.TrimSpace(capability)
 	switch capability {
-	case lightingnode.CapabilityStateRead, lightingnode.CapabilityIdentify, lightingnode.CapabilityConfigRead, lightingnode.CapabilityConfigApply:
+	case lightingnode.CapabilityStateRead, lightingnode.CapabilityIdentify, lightingnode.CapabilityConfigRead, lightingnode.CapabilityConfigApply,
+		stagelaser.CapabilityStateRead, stagelaser.CapabilityStateResync, stagelaser.CapabilityStateSet:
 		return ""
 	default:
 		return CommandTypeForCapability(capability)

@@ -3,7 +3,6 @@ package deviceprofile
 import (
 	"encoding/json"
 
-	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
@@ -72,7 +71,7 @@ func stageLaserProfile() Profile {
 				Actions: []Action{{
 					ID: "start",
 					Name: LocalizedText{EN: "Flash", ArIQ: "فلاش"},
-					ParameterSchema: json.RawMessage(`{"type":"object","required":["frequency_hz","duration_ms"],"properties":{"frequency_hz":{"type":"number","minimum":0.1,"maximum":20},"duration_ms":{"type":"integer","minimum":1,"maximum":3600000}},"additionalProperties":false}`),
+					ParameterSchema: json.RawMessage(`{"type":"object","required":["frequency_hz","duration_ms"],"properties":{"frequency_hz":{"type":"number","minimum":0.1,"maximum":1},"duration_ms":{"type":"integer","minimum":1,"maximum":60000}},"additionalProperties":false}`),
 				}},
 			},
 			{
@@ -110,7 +109,7 @@ func stageLaserProfile() Profile {
 		TestedProtocolVersions: []string{stagelaser.StageDeviceProtocolVersion},
 		Tags: []string{"laser", "esp32-c3", "show-control", "stage-device", "official"},
 		Target: &TargetTemplate{
-			LogicalType: devicechannel.StageDeviceLogicalType,
+			LogicalType: stagelaser.LogicalTargetType,
 			Configuration: json.RawMessage(`{
 				"device_id": {"$field":"device_id"}
 			}`),

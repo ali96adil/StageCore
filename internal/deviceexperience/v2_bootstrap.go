@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
 const ProtocolVersion2 = "stagecore.device/2"
@@ -17,8 +19,8 @@ const ProtocolVersion2 = "stagecore.device/2"
 //
 // New identities always bootstrap UNASSIGNED. Existing v2 identities may
 // reconnect only in a Hub-owned state that is valid for their stored profile.
-// Lighting and Tablet Players may reconnect ACTIVE only when the Hub already
-// owns a non-empty Project + published Runtime Snapshot sidecar. The client never
+// Lighting, Tablet Players and StageLaser may reconnect ACTIVE only when the
+// Hub already owns a non-empty Project + published Runtime Snapshot sidecar. The client never
 // supplies Project authority in device.hello.
 func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (Device, error) {
 	device.ID = strings.TrimSpace(device.ID)
@@ -72,7 +74,23 @@ func (r *Repository) RegisterUnassignedV2(ctx context.Context, device Device) (D
 			validAssignment = assignedProject != "" && assignedSnapshot != "" &&
 				((kind == string(DeviceTabletPlayer) &&
 					storedProfile == TabletPlayerProfileID) ||
-					storedProfile == "stagecore.esp32-dmx-lighting-node")
+					storedProfile == "stagecore.esp32-dmx-lighting-node" ||
+					(kind == string(DeviceGeneric) && storedProfile == stagelaser.ProfileID))
+		}
+		if validAssignment && assignmentState == "ACTIVE" &&
+			storedProfile == stagelaser.ProfileID {
+			var audited int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*)
+				FROM stage_device_assignments a
+				JOIN stage_device_stagelaser_assignment_audit x
+				  ON x.device_id=a.device_id AND x.to_epoch=a.assignment_epoch
+				WHERE a.device_id=? AND a.project_id=x.project_id
+				  AND a.runtime_snapshot_id=x.runtime_snapshot_id
+			`, device.ID).Scan(&audited); err != nil {
+				return Device{}, fmt.Errorf("verify StageLaser v2 assignment audit: %w", err)
+			}
+			validAssignment = audited == 1
 		}
 		if protocol != ProtocolVersion2 || kind != string(device.Kind) ||
 			storedProfile != device.ProfileID || legacyProject != "" ||

@@ -124,3 +124,37 @@ func TestObservationRejectsUnsafeOrContradictoryState(t *testing.T) {
 		t.Fatal("pulse_in_progress with stable ON state unexpectedly accepted")
 	}
 }
+
+func TestCanonicalCommandPayload(t *testing.T) {
+	for _, commandType := range []string{
+		CommandArm, CommandDisarm, CommandSetOn, CommandSetOff,
+		CommandFlashStop, CommandSafeOff, CommandStateRead,
+	} {
+		payload, err := CanonicalCommandPayload(commandType, nil)
+		if err != nil || string(payload) != "{}" {
+			t.Fatalf("%s payload=%s err=%v", commandType, payload, err)
+		}
+		if _, err := CanonicalCommandPayload(commandType, []byte(`{"unexpected":true}`)); err == nil {
+			t.Fatalf("%s accepted unexpected parameters", commandType)
+		}
+	}
+
+	payload, err := CanonicalCommandPayload(CommandFlashStart, []byte(`{"frequency_hz":1,"duration_ms":8000}`))
+	if err != nil || string(payload) != `{"frequency_hz":1,"duration_ms":8000}` {
+		t.Fatalf("flash payload=%s err=%v", payload, err)
+	}
+	if _, err := CanonicalCommandPayload(CommandFlashStart, []byte(`{"frequency_hz":2,"duration_ms":8000}`)); err == nil {
+		t.Fatal("mechanical StageLaser accepted unsafe 2 Hz flash")
+	}
+	if _, err := CanonicalCommandPayload(CommandFlashStart, []byte(`{"frequency_hz":1,"duration_ms":8000,"extra":1}`)); err == nil {
+		t.Fatal("flash payload accepted an unknown field")
+	}
+
+	payload, err = CanonicalCommandPayload(CommandStateResync, []byte(`{"state":"off"}`))
+	if err != nil || string(payload) != `{"state":"OFF"}` {
+		t.Fatalf("resync payload=%s err=%v", payload, err)
+	}
+	if _, err := CanonicalCommandPayload(CommandStateResync, []byte(`{"state":"UNKNOWN"}`)); err == nil {
+		t.Fatal("resync accepted UNKNOWN")
+	}
+}

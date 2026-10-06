@@ -12,6 +12,7 @@ const (
 	ProfileID                 = "stagecore.esp32-stagelaser"
 	StageDeviceProtocolVersion = "stagecore.device/2"
 	ControlContractVersion    = "stagecore.stagelaser/1"
+	LogicalTargetType         = "stage_device"
 )
 
 const (
@@ -253,6 +254,59 @@ func ValidateObservation(observation Observation) error {
 		return fmt.Errorf("invalid StageLaser limits: %w", err)
 	}
 	return nil
+}
+
+func CanonicalCommandPayload(commandType string, raw json.RawMessage) (json.RawMessage, error) {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		raw = CanonicalEmptyPayload()
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, fmt.Errorf("StageLaser command payload must be a JSON object")
+	}
+
+	switch strings.TrimSpace(commandType) {
+	case CommandArm, CommandDisarm, CommandSetOn, CommandSetOff,
+		CommandFlashStop, CommandSafeOff, CommandStateRead:
+		if len(object) != 0 {
+			return nil, fmt.Errorf("%s does not accept parameters", commandType)
+		}
+		return CanonicalEmptyPayload(), nil
+	case CommandFlashStart:
+		if len(object) != 2 {
+			return nil, fmt.Errorf("%s requires only frequency_hz and duration_ms", commandType)
+		}
+		frequency, ok := object["frequency_hz"].(float64)
+		if !ok {
+			return nil, fmt.Errorf("frequency_hz must be numeric")
+		}
+		durationNumber, ok := object["duration_ms"].(float64)
+		if !ok || math.IsNaN(durationNumber) || math.IsInf(durationNumber, 0) ||
+			durationNumber != math.Trunc(durationNumber) ||
+			durationNumber < 1 || durationNumber > float64(DefaultMechanicalLimits().MaximumDurationMS) {
+			return nil, fmt.Errorf("duration_ms must be an integer within the StageLaser limit")
+		}
+		payload := FlashStartPayload{FrequencyHz: frequency, DurationMS: int64(durationNumber)}
+		if err := ValidateFlashStartPayload(payload, DefaultMechanicalLimits()); err != nil {
+			return nil, err
+		}
+		return json.Marshal(payload)
+	case CommandStateResync:
+		if len(object) != 1 {
+			return nil, fmt.Errorf("%s requires only state", commandType)
+		}
+		state, ok := object["state"].(string)
+		if !ok {
+			return nil, fmt.Errorf("state must be OFF or ON")
+		}
+		payload := StateResyncPayload{State: LogicalState(strings.ToUpper(strings.TrimSpace(state)))}
+		if err := ValidateStateResyncPayload(payload); err != nil {
+			return nil, err
+		}
+		return json.Marshal(payload)
+	default:
+		return nil, fmt.Errorf("unsupported StageLaser command %q", commandType)
+	}
 }
 
 func CanonicalEmptyPayload() json.RawMessage {
