@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "extension_id": "stagecore.stagelaser-controller",
+  "version": "0.1.0",
+  "kind": "ADDON",
+  "integration": "HUB",
+  "workspace": "stagelaser-controller",
+  "transport": "STAGE_DEVICE_V2",
+  "profile_id": "stagecore.esp32-stagelaser",
+  "control_contract": "stagecore.stagelaser/1",
+  "command_authority": "CUE_ENGINE",
+  "state_authority": "DEVICE_TRACKED",
+  "managed_safe_off": true,
+  "raw_toggle_exposed": false,
+  "runtime_process": false
+}
