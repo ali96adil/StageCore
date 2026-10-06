@@ -569,8 +569,8 @@ async function setCueWorkspaceBlackout(enabled) {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     const activeSession = !!runtime.session;
     const warning = enabled
-      ? `${activeSession ? "Emergency" : "EDIT"} BLACKOUT managed Lighting, Tablet and Native Visual outputs? Audio and external VDMX/OSC remain unchanged.`
-      : "Clear managed Tablet / Native Visual blackout? Lighting intentionally remains dark until an explicit Lighting action restores it.";
+      ? `${activeSession ? "Emergency" : "EDIT"} BLACKOUT managed Lighting, StageLaser, Tablet and Native Visual outputs? Audio and external VDMX/OSC remain unchanged.`
+      : "Clear managed Tablet / Native Visual blackout? Lighting remains dark and StageLaser remains DISARMED/OFF until explicit recovery actions.";
     if (!confirm(warning)) return;
 
     const endpoint = activeSession ? "emergency-blackout" : "project-blackout";
@@ -1222,6 +1222,7 @@ function emergencyDomainSummary(payload) {
   if (!payload || typeof payload !== "object") return "";
   const domains = [
     ["Lighting", payload.lighting],
+    ["StageLaser", payload.stagelaser],
     ["Tablets", payload.tablets],
     ["Native Visual", payload.native_visual],
     ["Audio", payload.audio],
@@ -1235,8 +1236,8 @@ function emergencyDomainSummary(payload) {
 
 async function setEmergencyBlackoutRuntime(enabled) {
   const warning = enabled
-    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt the active Cue and command managed Lighting, Tablet and Native Visual outputs to blackout. Audio and external VDMX/OSC will NOT be stopped."
-    : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting will intentionally remain dark until you run an explicit Lighting Cue or operator action. GO will only unlock after the managed clear succeeds.";
+    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt the active Cue and command managed Lighting, StageLaser, Tablet and Native Visual outputs to safe state. Audio and external VDMX/OSC will NOT be stopped."
+    : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting stays dark and StageLaser stays DISARMED/OFF until explicit Lighting / ARM / Laser Cue actions. GO will only unlock after the managed clear succeeds.";
   if (!confirm(warning)) return;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/emergency-blackout`, {
@@ -1315,8 +1316,8 @@ async function forceStopSessionRuntime() {
 
 async function setProjectBlackoutRuntime(enabled) {
   const warning = enabled
-    ? "BLACKOUT managed Lighting, Tablet and Native Visual outputs while in EDIT? Audio and external VDMX/OSC remain unchanged."
-    : "Clear sessionless Tablet / Native Visual blackout? Lighting intentionally remains dark until an explicit Lighting action restores it.";
+    ? "BLACKOUT managed Lighting, StageLaser, Tablet and Native Visual outputs while in EDIT? Audio and external VDMX/OSC remain unchanged."
+    : "Clear sessionless Tablet / Native Visual blackout? Lighting stays dark and StageLaser stays DISARMED/OFF until explicit recovery actions.";
   if (!confirm(warning)) return;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/project-blackout`, {
