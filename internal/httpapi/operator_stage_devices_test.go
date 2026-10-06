@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -903,5 +904,89 @@ func TestLegacyLightingV2MigrationRequiresOwnerCSRFAndExplicitConsent(t *testing
 		loaded.Assignment.ProjectID != project.ID ||
 		loaded.Assignment.Epoch != 2 {
 		t.Fatalf("migrated device=%+v", loaded)
+	}
+}
+
+
+func TestStageLaserAssignmentEndpointFailsClosedWithoutAuthenticatedDeviceRuntime(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "StageLaser Assignment API", CreatedBy: "owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "stagelaser-api-unassigned"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID,
+		Kind: deviceexperience.DeviceGeneric,
+		ProfileID: stagelaser.ProfileID,
+		DisplayName: "Laser Left",
+		Platform: "esp32",
+		Architecture: "riscv32",
+		ClientVersion: "0.1.0-test",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: stagelaser.CapabilityKeys(),
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// No Companion auth/runtime socket is supplied here deliberately. Even a
+	// fully-authorized browser request must fail closed without the exact
+	// authenticated StageLaser connection that can answer the safe-off challenge.
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/" + deviceID + "/stagelaser-assignment"
+	validBody := `{"runtime_snapshot_id":"snapshot-stagelaser","expected_assignment_epoch":1,"confirm":"VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER"}`
+	invoke := func(credentials userauth.Credential, includeCSRF bool, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.RemoteAddr = "127.0.0.1:19701"
+		req.Header.Set("Content-Type", "application/json")
+		if includeCSRF {
+			req.Header.Set(csrfHeader, credentials.CSRFToken)
+		}
+		if credentials.Token != "" {
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credentials.Token})
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+
+	if res := invoke(userauth.Credential{}, false, validBody); res.Code == http.StatusAccepted {
+		t.Fatalf("unauthenticated StageLaser assignment accepted: %s", res.Body.String())
+	}
+	if res := invoke(owner, false, validBody); res.Code == http.StatusAccepted {
+		t.Fatalf("StageLaser assignment without CSRF accepted: %s", res.Body.String())
+	}
+	if res := invoke(owner, true,
+		`{"runtime_snapshot_id":"snapshot-stagelaser","expected_assignment_epoch":1}`);
+		res.Code != http.StatusBadRequest {
+		t.Fatalf("implicit StageLaser assignment consent allowed: status=%d body=%s", res.Code, res.Body.String())
+	}
+	if res := invoke(owner, true, validBody); res.Code != http.StatusConflict {
+		t.Fatalf("offline/unverified StageLaser assignment status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	record, err := devices.GetAssignmentRecord(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != "UNASSIGNED" || record.ProjectID != "" ||
+		record.RuntimeSnapshotID != "" || record.Epoch != 1 {
+		t.Fatalf("denied StageLaser API calls mutated assignment: %+v", record)
 	}
 }

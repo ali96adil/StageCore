@@ -749,6 +749,88 @@ func WithOperatorStageDevices(
 		// an attended BLOCKED transfer + current-generation software-zero ACK.
 		// It applies the exact Published Runtime Snapshot configuration while
 		// blackout remains asserted, then requires a fresh reconnect/scope ACK.
+		// StageLaser first assignment is fail-closed: the exact authenticated
+		// socket must report DISARMED + OFF with known state before the Hub
+		// commits ACTIVE Project/Snapshot authority. The committed socket is
+		// closed and commands remain disabled until a fresh scope ACK.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-assignment", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if projectID == "" || deviceID == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_ASSIGNMENT_SCOPE_REQUIRED"})
+				return
+			}
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+				return
+			}
+			var input struct {
+				RuntimeSnapshotID string `json:"runtime_snapshot_id"`
+				ExpectedEpoch     int64  `json:"expected_assignment_epoch"`
+				Confirm           string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			const confirmation = "VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER"
+			if input.Confirm != confirmation {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_ASSIGNMENT_CONFIRMATION_REQUIRED"})
+				return
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "AUTH_REQUIRED"})
+				return
+			}
+			csrf := r.Header.Get(csrfHeader)
+			actor := session.User.ID
+			reauthorize := func(ctx context.Context) error {
+				next, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil {
+					return err
+				}
+				if next.User.ID != actor {
+					return userauth.ErrForbidden
+				}
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
+					return err
+				}
+				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+			}
+			record, err := runtime.ExecuteStageLaserAssignmentAuthorized(
+				r.Context(),
+				deviceexperience.StageLaserAssignmentInput{
+					DeviceID: deviceID,
+					TargetProjectID: projectID,
+					TargetRuntimeSnapshotID: strings.TrimSpace(input.RuntimeSnapshotID),
+					ExpectedEpoch: input.ExpectedEpoch,
+				},
+				actor,
+				reauthorize,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "STAGELASER_ASSIGNMENT_NOT_COMMITTED",
+					"detail": err.Error(),
+					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_DEVICE_STATE_BEFORE_RETRY",
+				})
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"assignment": record,
+				"state": "ACTIVE",
+				"commands_enabled": false,
+				"reconnect_required": true,
+				"state_quality": record.StateQuality,
+				"physical_state_confirmed": record.StateQuality == "CONFIRMED",
+				"note": "TRACKED_STATE_IS_SOFTWARE_STATE_UNLESS_PHYSICAL_FEEDBACK_EXISTS",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/lighting-activation", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			if os.Getenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION") != "1" {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_ACTIVATION_DISABLED"})
