@@ -48,17 +48,20 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		}
 		return string(raw)
 	}
-	for _, row := range []struct{ id, manifest, hash string }{
-		{snapshotID, targetManifest(deviceID), strings.Repeat("c", 64)},
-		{otherSnapshotID, targetManifest(deviceID), strings.Repeat("d", 64)},
-		{missingSnapshotID, targetManifest("another-laser"), strings.Repeat("e", 64)},
+	for _, row := range []struct {
+		id, manifest, hash string
+		version int
+	}{
+		{snapshotID, targetManifest(deviceID), strings.Repeat("c", 64), 1},
+		{otherSnapshotID, targetManifest(deviceID), strings.Repeat("d", 64), 2},
+		{missingSnapshotID, targetManifest("another-laser"), strings.Repeat("e", 64), 3},
 	} {
 		if _, err := handle.DB.ExecContext(ctx, `
 			INSERT INTO runtime_snapshots
 			(runtime_snapshot_id, project_id, revision_id, snapshot_version,
 			 created_at_us, created_by, content_hash, manifest_json, status)
-			VALUES (?, ?, ?, 1, ?, 'test', ?, ?, 'PUBLISHED')
-		`, row.id, projectID, project.CurrentRevisionID, phase4Time.UnixMicro(),
+			VALUES (?, ?, ?, ?, ?, 'test', ?, ?, 'PUBLISHED')
+		`, row.id, projectID, project.CurrentRevisionID, row.version, phase4Time.UnixMicro(),
 			row.hash, row.manifest); err != nil {
 			t.Fatalf("insert Runtime Snapshot %s: %v", row.id, err)
 		}
