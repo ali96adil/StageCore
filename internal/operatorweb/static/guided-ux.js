@@ -438,15 +438,17 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController, lightingController, machineRoles] = await Promise.all([
+  const [configuration, tabletController, lightingController, stageLaserController, machineRoles] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
+    f002Optional(`/api/v1/projects/${projectID}/stagelaser-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
   state.f002Lighting = lightingController || { nodes: [] };
+  state.f002StageLasers = stageLaserController.devices || [];
   state.f002MachineRoles = machineRoles.roles || [];
   state.f002Companions = machineRoles.companions || [];
   f002InstallTargetDatalist(state.f002Targets);
@@ -801,6 +803,110 @@ async function f002AddLightingAction(composer) {
   }
 }
 
+
+function f002StageLaserDevices() {
+  return (state.f002StageLasers || []).filter((device) =>
+    device.enabled !== false &&
+    device.protocol_version === "stagecore.device/2" &&
+    device.profile_id === "stagecore.esp32-stagelaser"
+  );
+}
+
+function f002StageLaserCommandOptions() {
+  return [
+    ["LASER_ARM", "Arm"],
+    ["LASER_DISARM", "Disarm"],
+    ["LASER_SET_ON", "Laser ON"],
+    ["LASER_SET_OFF", "Laser OFF"],
+    ["LASER_FLASH_START", "Flash Start"],
+    ["LASER_FLASH_STOP", "Flash Stop"],
+    ["LASER_SAFE_OFF", "Safe Off / Blackout"],
+  ];
+}
+
+function f002RenderStageLaserFields(composer) {
+  const host = composer.querySelector("#f002StageLaserParameters");
+  const command = composer.querySelector("#f002StageLaserCommand")?.value || "LASER_SET_ON";
+  if (!host) return;
+  if (command === "LASER_FLASH_START") {
+    host.innerHTML = `
+      <div class="form-grid two">
+        <label>Flash frequency (Hz)
+          <input id="f002StageLaserFrequency" type="number" min="0.1" max="1" step="0.1" value="1">
+        </label>
+        <label>Duration (ms)
+          <input id="f002StageLaserDuration" type="number" min="1" max="60000" step="1" value="8000">
+        </label>
+      </div>
+      <p class="muted">Mechanical relay V1 is limited to 0.1–1 Hz and 60 seconds. Flash timing runs locally on StageLaser.</p>`;
+    return;
+  }
+  if (command === "LASER_SET_ON" || command === "LASER_SET_OFF") {
+    host.innerHTML = `<p class="muted">Desired state is idempotent. StageCore sends SET ON / SET OFF — never a raw toggle.</p>`;
+    return;
+  }
+  host.innerHTML = `<p class="muted">This StageLaser action has no parameters.</p>`;
+}
+
+function f002StageLaserRequest(composer) {
+  const deviceID = composer.querySelector("#f002StageLaserDevice")?.value || "";
+  const commandType = composer.querySelector("#f002StageLaserCommand")?.value || "";
+  if (!deviceID || !commandType) throw new Error("Choose a StageLaser and action.");
+  const request = {
+    device_id: deviceID,
+    command_type: commandType,
+    execution_mode: "PARALLEL_BARRIER",
+  };
+  if (commandType === "LASER_FLASH_START") {
+    const frequency = Number(composer.querySelector("#f002StageLaserFrequency")?.value);
+    const duration = Number(composer.querySelector("#f002StageLaserDuration")?.value);
+    if (!Number.isFinite(frequency) || frequency < 0.1 || frequency > 1) {
+      throw new Error("StageLaser mechanical relay flash must be 0.1–1 Hz.");
+    }
+    if (!Number.isInteger(duration) || duration < 1 || duration > 60000) {
+      throw new Error("StageLaser flash duration must be 1–60000 ms.");
+    }
+    request.frequency_hz = frequency;
+    request.duration_ms = duration;
+  }
+  return request;
+}
+
+async function f002AddStageLaserAction(composer) {
+  const message = composer.querySelector("#f002StageLaserComposerMessage");
+  try {
+    const projectID = encodeURIComponent(state.project.project_id);
+    const result = await api(`/api/v1/projects/${projectID}/stagelaser-controller/cue-actions`, {
+      method: "POST",
+      json: f002StageLaserRequest(composer),
+    });
+    const actions = result.actions || [];
+    if (!actions.length) throw new Error("No StageLaser Action was returned.");
+    for (const action of actions) {
+      addActionEditor({
+        action_id: "",
+        target_ref: action.target_ref,
+        capability_key: action.capability_key,
+        execution_mode: action.execution_mode,
+        priority_class: action.priority,
+        parameters: action.parameters || {},
+        timeout_policy: action.timeout_policy || {},
+        error_policy: {},
+        enabled: true,
+      });
+    }
+    if (message) {
+      message.textContent = `Added ${actions.length} StageLaser Action(s). Save the Cue to persist them.`;
+      message.className = "message success";
+    }
+  } catch (error) {
+    if (message) {
+      message.textContent = errorMessage(error);
+      message.className = "message error";
+    }
+  }
+}
+
 function f002InstallCueComposer() {
   if (!actionsEditor) return;
   document.getElementById("f002CueComposer")?.remove();
@@ -886,6 +992,33 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002LightingComposerMessage" class="message hidden"></div>
     <p class="muted">${f002LightingNodes().length ? "Uses the configured logical channel aliases and Lighting Node mapping." : "Configure a Lighting Node and logical channel aliases first."}</p>
+
+    <hr>
+    <div class="f002-builder-head">
+      <div>
+        <strong>StageLaser Action</strong>
+        <span>Add ARM, DISARM, desired ON/OFF, local Flash, or Safe Off without typing target refs, capability keys, IPs, URLs, or JSON.</span>
+      </div>
+    </div>
+    <div class="form-grid two">
+      <label>StageLaser
+        <select id="f002StageLaserDevice">
+          <option value="">Choose a StageLaser…</option>
+          ${f002StageLaserDevices().map((device) => `<option value="${esc(device.device_id)}">${esc(device.display_name || device.device_id)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Action
+        <select id="f002StageLaserCommand">
+          ${f002StageLaserCommandOptions().map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div id="f002StageLaserParameters"></div>
+    <div class="toolbar">
+      <button id="f002AddStageLaserAction" class="button" type="button" ${f002StageLaserDevices().length ? "" : "disabled"}>+ StageLaser Action</button>
+    </div>
+    <div id="f002StageLaserComposerMessage" class="message hidden"></div>
+    <p class="muted">${f002StageLaserDevices().length ? "Uses the authenticated Stage Device target and canonical laser.* capabilities." : "Assign an ACTIVE StageLaser to this Project first."}</p>
   `;
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
@@ -922,6 +1055,9 @@ function f002InstallCueComposer() {
   composer.querySelector("#f002LightingCommand")?.addEventListener("change", () => f002RenderLightingFields(composer));
   f002RenderLightingFields(composer);
   composer.querySelector("#f002AddLightingAction")?.addEventListener("click", () => f002AddLightingAction(composer));
+  composer.querySelector("#f002StageLaserCommand")?.addEventListener("change", () => f002RenderStageLaserFields(composer));
+  f002RenderStageLaserFields(composer);
+  composer.querySelector("#f002AddStageLaserAction")?.addEventListener("click", () => f002AddStageLaserAction(composer));
 }
 
 openCueEditor = function f002OpenCueEditor(cue) {

@@ -45,6 +45,21 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"LIGHTING_CHANNELS_FADE",
 		"f002LightingChannel",
 		"f002LightingLevel",
+		"StageLaser Action",
+		"f002AddStageLaserAction",
+		"/stagelaser-controller/cue-actions",
+		"LASER_ARM",
+		"LASER_DISARM",
+		"LASER_SET_ON",
+		"LASER_SET_OFF",
+		"LASER_FLASH_START",
+		"LASER_FLASH_STOP",
+		"LASER_SAFE_OFF",
+		"f002StageLaserDevice",
+		"f002StageLaserCommand",
+		"f002StageLaserFrequency",
+		"f002StageLaserDuration",
+		"never a raw toggle",
 	} {
 		if !strings.Contains(source, marker) {
 			t.Fatalf("mixed Cue composer missing contract marker %q", marker)
@@ -56,6 +71,8 @@ func TestGuidedCueComposerImportsIndependentActionCopies(t *testing.T) {
 		"source.actions.splice",
 		"source.actions.push",
 		"source.actions =",
+		"LASER_TOGGLE",
+		"laser.toggle",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("mixed Cue composer must not reuse IDs or mutate source Cue via %q", forbidden)
