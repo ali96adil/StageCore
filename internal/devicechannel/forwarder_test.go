@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/stagelaser"
 )
 
 type dispatchFunc func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
@@ -190,5 +191,73 @@ func TestForwarderTimeoutBecomesTerminalAndIdempotent(t *testing.T) {
 	}
 	if len(events) != 2 || events[1].EventType != "stage_device.command.timed_out" {
 		t.Fatalf("events=%+v", events)
+	}
+}
+
+
+func TestForwarderMapsStageLaserDesiredStateWithoutToggle(t *testing.T) {
+	fixture := newForwarderFixture(t)
+	for _, test := range []struct {
+		state string
+		want  string
+	}{
+		{state: "ON", want: stagelaser.CommandSetOn},
+		{state: "OFF", want: stagelaser.CommandSetOff},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			var captured deviceexperience.CreateCommandInput
+			dispatcher := dispatchFunc(func(_ context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+				captured = input
+				return deviceexperience.DeviceCommand{
+					Envelope: contracts.CommandEnvelope{CommandID: "laser-command-" + strings.ToLower(test.state)},
+					DeviceID: input.DeviceID,
+					Status: contracts.CommandCompleted,
+				}, nil
+			})
+			forwarder := devicechannel.NewForwarder(fixture.store, fixture.repository, dispatcher)
+			req := stageDeviceRequest(fixture, "laser-"+strings.ToLower(test.state))
+			req.Capability = stagelaser.CapabilityStateSet
+			req.Target = &capability.Target{
+				Ref: "laser-left",
+				LogicalType: devicechannel.StageDeviceLogicalType,
+				Configuration: json.RawMessage(`{"device_id":"stagelaser-01"}`),
+			}
+			req.Parameters = json.RawMessage(`{"state":"` + test.state + `"}`)
+			result := forwarder.Execute(context.Background(), req)
+			if result.Result != domain.ExecutionCompleted || result.ErrorCode != "" {
+				t.Fatalf("result=%+v", result)
+			}
+			if captured.CommandType != test.want {
+				t.Fatalf("command_type=%q want=%q", captured.CommandType, test.want)
+			}
+			if string(captured.Payload) != "{}" {
+				t.Fatalf("payload=%s want={}", captured.Payload)
+			}
+		})
+	}
+}
+
+func TestForwarderRejectsInvalidStageLaserDesiredStateWithoutDispatch(t *testing.T) {
+	fixture := newForwarderFixture(t)
+	dispatched := false
+	dispatcher := dispatchFunc(func(_ context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		dispatched = true
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	forwarder := devicechannel.NewForwarder(fixture.store, fixture.repository, dispatcher)
+	req := stageDeviceRequest(fixture, "laser-invalid")
+	req.Capability = stagelaser.CapabilityStateSet
+	req.Target = &capability.Target{
+		Ref: "laser-left",
+		LogicalType: devicechannel.StageDeviceLogicalType,
+		Configuration: json.RawMessage(`{"device_id":"stagelaser-01"}`),
+	}
+	req.Parameters = json.RawMessage(`{"state":"TOGGLE"}`)
+	result := forwarder.Execute(context.Background(), req)
+	if result.ErrorCode != "STAGELASER_STATE_INVALID" {
+		t.Fatalf("result=%+v", result)
+	}
+	if dispatched {
+		t.Fatal("invalid StageLaser state reached dispatcher")
 	}
 }
