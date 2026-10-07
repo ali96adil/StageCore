@@ -140,8 +140,20 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	device := readyStageLaserDevice(t)
-	if _, err := devices.UpsertDevice(ctx, device); err != nil {
+	device := deviceexperience.Device{
+		ID:              "23c45a07-7286-4afc-91d9-7e54df72aeee",
+		ProfileID:       stagelaser.ProfileID,
+		Kind:            deviceexperience.DeviceGeneric,
+		DisplayName:     "StageLaser Upload Test",
+		Platform:        "esp32",
+		Architecture:    "riscv32",
+		ClientVersion:   "0.1.0",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities:    stagelaser.CapabilityKeys(),
+		Enabled:         true,
+	}
+	device, err = devices.RegisterUnassignedV2(ctx, device)
+	if err != nil {
 		t.Fatal(err)
 	}
 
