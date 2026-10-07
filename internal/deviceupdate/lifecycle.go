@@ -465,8 +465,8 @@ func validDeviceTransition(current, next UpdateState) bool {
 		UpdateSent:        1,
 		UpdateAccepted:    2,
 		UpdateDownloading: 3,
-		UpdateVerifying:   4,
-		UpdateWriting:     5,
+		UpdateWriting:     4,
+		UpdateVerifying:   5,
 		UpdateRebooting:   6,
 	}
 	return rank[current] > 0 && rank[next] == rank[current]+1
