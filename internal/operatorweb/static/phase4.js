@@ -936,6 +936,57 @@
       });
     });
 
+    body.querySelectorAll("[data-setup-ap-save]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.setupApSave || "";
+        const section = button.closest(".stage-setup-ap-maintenance");
+        const input = section?.querySelector(".stage-setup-ap-password");
+        const result = section?.querySelector(".stage-setup-ap-result");
+        const credential = String(input?.value || "");
+        if (!deviceID || credential.length < 8 || credential.length > 63) {
+          if (result) result.innerHTML = `<p class="message warn">${esc(t("stageSetupAPInvalid"))}</p>`;
+          return;
+        }
+        if (!globalThis.confirm(t("stageSetupAPConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/setup-ap-password`, {
+            method: "POST",
+            body: JSON.stringify({ password: credential }),
+          });
+          if (input) input.value = "";
+          if (result) result.innerHTML = `<p class="message success">${esc(t("stageSetupAPApplied"))}</p>`;
+        } catch (error) {
+          if (result) result.innerHTML = `<p class="message error">${esc(errorMessage(error))}</p>`;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-setup-ap-reset]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.setupApReset || "";
+        const section = button.closest(".stage-setup-ap-maintenance");
+        const input = section?.querySelector(".stage-setup-ap-password");
+        const result = section?.querySelector(".stage-setup-ap-result");
+        if (!deviceID || !globalThis.confirm(t("stageSetupAPResetConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/setup-ap-password`, {
+            method: "POST",
+            body: JSON.stringify({ reset_to_default: true }),
+          });
+          if (input) input.value = "";
+          if (result) result.innerHTML = `<p class="message success">${esc(t("stageSetupAPApplied"))}</p>`;
+        } catch (error) {
+          if (result) result.innerHTML = `<p class="message error">${esc(errorMessage(error))}</p>`;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
     body.querySelectorAll("[data-firmware-register]").forEach((button) => {
       button.addEventListener("click", async () => {
         const deviceID = button.dataset.firmwareRegister || "";
