@@ -137,14 +137,18 @@ func TestRolePermissions(t *testing.T) {
 	}{
 		{userauth.RoleOwner, userauth.PermissionUserManage, true},
 		{userauth.RoleOwner, userauth.PermissionRuntimeControl, true},
+		{userauth.RoleOwner, userauth.PermissionDeviceMaintenanceManage, true},
 		{userauth.RoleTechnician, userauth.PermissionProjectEdit, true},
 		{userauth.RoleTechnician, userauth.PermissionRuntimeControl, true},
 		{userauth.RoleTechnician, userauth.PermissionShowEnterExit, true},
+		{userauth.RoleTechnician, userauth.PermissionDeviceMaintenanceManage, true},
 		{userauth.RoleTechnician, userauth.PermissionUserManage, false},
 		{userauth.RoleOperator, userauth.PermissionRuntimeControl, true},
 		{userauth.RoleOperator, userauth.PermissionProjectEdit, false},
+		{userauth.RoleOperator, userauth.PermissionDeviceMaintenanceManage, false},
 		{userauth.RoleViewer, userauth.PermissionProjectRead, true},
 		{userauth.RoleViewer, userauth.PermissionShowEnterExit, false},
+		{userauth.RoleViewer, userauth.PermissionDeviceMaintenanceManage, false},
 		{"UNKNOWN", userauth.PermissionProjectRead, false},
 	}
 	for _, test := range tests {
