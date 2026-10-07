@@ -57,13 +57,22 @@
       stageLaserNoSnapshot: "Publish a Runtime Snapshot containing this StageLaser target before assignment.",
       stageLaserAssignConfirm: "StageCore will require this StageLaser to prove DISARMED + OFF on its current authenticated connection. TRACKED means software state only unless physical feedback exists. Continue?",
       stageFirmwareMaintenance: "Firmware maintenance",
+      stageFirmwareRegister: "Register QUALIFIED firmware",
+      stageFirmwareFile: "Firmware .bin",
+      stageFirmwareVersion: "Target version",
+      stageFirmwareRevision: "Exact Git source revision",
+      stageFirmwareSHA: "Expected SHA-256",
+      stageFirmwareQualificationAck: "I am explicitly promoting these exact bytes as QUALIFIED for this device.",
+      stageFirmwareRegisterConfirm: "Register this exact binary as QUALIFIED for this device? StageCore will verify the SHA-256 before storing it. This does not send or flash the device.",
+      stageFirmwareRegistered: "QUALIFIED firmware registered and integrity-verified.",
+      stageFirmwareUploadInvalid: "Choose a .bin file and enter a target version, 40-character lowercase Git revision, 64-character lowercase SHA-256, then confirm QUALIFIED promotion.",
       stageFirmwareLoad: "Load qualified firmware",
       stageFirmwareNone: "No QUALIFIED firmware is registered for this device.",
       stageFirmwarePrepare: "Issue maintenance manifest",
       stageFirmwarePrepared: "Maintenance manifest issued only; it has NOT been sent to the device.",
       stageFirmwareConfirm: "Issue a short-lived firmware maintenance manifest for this exact device? This step does NOT flash or reboot the device.",
       stageFirmwareSend: "Send maintenance request",
-      stageFirmwareSendConfirm: "Send this firmware maintenance request to the exact authenticated device? The device may download, write firmware and reboot once OTA support is installed.",
+      stageFirmwareSendConfirm: "Send this firmware maintenance request to the exact authenticated device? The OTA-capable candidate may download, verify, write the inactive slot and reboot. Physical OTA behavior is still unqualified.",
       stageFirmwareSent: "Maintenance request sent on the authenticated device connection.",
       stageFirmwareRefresh: "Refresh update status",
       stageFirmwareState: "Update state",
@@ -235,13 +244,22 @@
       stageLaserNoSnapshot: "انشر Runtime Snapshot يحتوي هدف StageLaser هذا قبل التخصيص.",
       stageLaserAssignConfirm: "سيطلب StageCore من StageLaser إثبات DISARMED + OFF على اتصاله الموثق الحالي. TRACKED تعني حالة برمجية فقط ما لم توجد تغذية راجعة فعلية. هل تريد المتابعة؟",
       stageFirmwareMaintenance: "صيانة الفيرموير",
+      stageFirmwareRegister: "تسجيل Firmware بحالة QUALIFIED",
+      stageFirmwareFile: "ملف Firmware .bin",
+      stageFirmwareVersion: "نسخة الهدف",
+      stageFirmwareRevision: "Git revision الكامل",
+      stageFirmwareSHA: "SHA-256 المتوقع",
+      stageFirmwareQualificationAck: "أؤكد ترقية هذه البايتات نفسها إلى QUALIFIED لهذا الجهاز.",
+      stageFirmwareRegisterConfirm: "تسجل هذا الملف بالضبط كـ QUALIFIED لهذا الجهاز؟ StageCore راح يتحقق من SHA-256 قبل التخزين. هذه الخطوة لا ترسل ولا تفلش الجهاز.",
+      stageFirmwareRegistered: "تم تسجيل Firmware بحالة QUALIFIED بعد التحقق من سلامته.",
+      stageFirmwareUploadInvalid: "اختر ملف .bin وأدخل نسخة الهدف وGit revision من 40 حرف lowercase وSHA-256 من 64 حرف lowercase ثم أكد QUALIFIED.",
       stageFirmwareLoad: "عرض الفيرموير المؤهل",
       stageFirmwareNone: "ماكو Firmware بحالة QUALIFIED مسجل لهذا الجهاز.",
       stageFirmwarePrepare: "إصدار بيان الصيانة",
       stageFirmwarePrepared: "تم إصدار بيان الصيانة فقط؛ لم يُرسل للجهاز ولم يبدأ التحديث.",
       stageFirmwareConfirm: "إصدار بيان Firmware قصير العمر لهذا الجهاز بالضبط؟ هاي الخطوة لا تفلش الجهاز ولا تعيد تشغيله.",
       stageFirmwareSend: "إرسال طلب الصيانة",
-      stageFirmwareSendConfirm: "ترسل طلب تحديث الفيرموير لهذا الجهاز الموثق بالضبط؟ بعد إضافة دعم OTA للجهاز ممكن ينزل الفيرموير ويكتبه ويعيد التشغيل.",
+      stageFirmwareSendConfirm: "ترسل طلب تحديث الفيرموير لهذا الجهاز الموثق بالضبط؟ نسخة OTA candidate ممكن تنزل الملف وتتحقق منه وتكتبه بالـinactive slot وتعيد التشغيل. الاختبار الفعلي للـOTA بعده غير مؤهل.",
       stageFirmwareSent: "تم إرسال طلب الصيانة على اتصال الجهاز الموثق.",
       stageFirmwareRefresh: "تحديث حالة التحديث",
       stageFirmwareState: "حالة التحديث",
@@ -513,6 +531,28 @@
         data-firmware-device="${esc(device.device_id)}">
         <strong>${esc(t("stageFirmwareMaintenance"))}</strong>
         <p class="muted">${esc(t("stageFirmwarePrepared"))}</p>
+        <div class="stage-firmware-register">
+          <label>${esc(t("stageFirmwareFile"))}
+            <input class="stage-firmware-file" type="file" accept=".bin,application/octet-stream">
+          </label>
+          <label>${esc(t("stageFirmwareVersion"))}
+            <input class="stage-firmware-version mono" type="text" autocomplete="off" placeholder="0.1.0-dev.2">
+          </label>
+          <label>${esc(t("stageFirmwareRevision"))}
+            <input class="stage-firmware-revision mono" type="text" autocomplete="off" maxlength="40" placeholder="40-char git revision">
+          </label>
+          <label>${esc(t("stageFirmwareSHA"))}
+            <input class="stage-firmware-sha mono" type="text" autocomplete="off" maxlength="64" placeholder="64-char sha256">
+          </label>
+          <label class="check-row">
+            <input class="stage-firmware-qualified" type="checkbox">
+            <span>${esc(t("stageFirmwareQualificationAck"))}</span>
+          </label>
+          <button class="button warn" data-firmware-register="${esc(device.device_id)}" type="button">
+            ${esc(t("stageFirmwareRegister"))}
+          </button>
+          <div class="stage-firmware-register-result" role="status" aria-live="polite"></div>
+        </div>
         <button class="button ghost" data-firmware-load="${esc(device.device_id)}" type="button">
           ${esc(t("stageFirmwareLoad"))}
         </button>
@@ -843,6 +883,53 @@
         const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
         if (navButton) navButton.click();
         else navigate(page);
+      });
+    });
+
+    body.querySelectorAll("[data-firmware-register]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.firmwareRegister || "";
+        const section = button.closest(".stage-firmware-maintenance");
+        const result = section?.querySelector(".stage-firmware-register-result");
+        const file = section?.querySelector(".stage-firmware-file")?.files?.[0] || null;
+        const version = String(section?.querySelector(".stage-firmware-version")?.value || "").trim();
+        const sourceRevision = String(section?.querySelector(".stage-firmware-revision")?.value || "").trim();
+        const sha256 = String(section?.querySelector(".stage-firmware-sha")?.value || "").trim();
+        const qualified = Boolean(section?.querySelector(".stage-firmware-qualified")?.checked);
+        const validRevision = /^[0-9a-f]{40}$/.test(sourceRevision);
+        const validSHA = /^[0-9a-f]{64}$/.test(sha256);
+        if (!deviceID || !file || !version || !validRevision || !validSHA || !qualified) {
+          if (result) result.innerHTML = `<p class="message warn">${esc(t("stageFirmwareUploadInvalid"))}</p>`;
+          return;
+        }
+        if (!globalThis.confirm(t("stageFirmwareRegisterConfirm"))) return;
+
+        const form = new FormData();
+        form.append("firmware", file, file.name);
+        form.append("version", version);
+        form.append("source_revision", sourceRevision);
+        form.append("sha256", sha256);
+        form.append("qualification", "QUALIFIED");
+
+        button.disabled = true;
+        try {
+          const uploaded = await api(
+            `/api/v1/stage-devices/${encodeURIComponent(deviceID)}/firmware-artifacts`,
+            { method: "POST", body: form },
+          );
+          const artifact = uploaded?.artifact || {};
+          if (result) {
+            result.innerHTML = `
+              <p class="message success">${esc(t("stageFirmwareRegistered"))}</p>
+              <p class="mono">${esc(artifact.version || version)} · ${esc(String(artifact.source_revision || sourceRevision).slice(0, 8))} · ${esc(String(artifact.sha256 || sha256).slice(0, 12))}…</p>`;
+          }
+          const load = section?.querySelector("[data-firmware-load]");
+          if (load) load.click();
+        } catch (error) {
+          if (result) result.innerHTML = `<p class="message error">${esc(errorMessage(error))}</p>`;
+        } finally {
+          button.disabled = false;
+        }
       });
     });
 
