@@ -437,6 +437,11 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	}); err != nil || !same {
 		return
 	}
+	if isV2 {
+		if err := r.reconcileFirmwarePostReboot(ctx, current, device); err != nil {
+			return
+		}
+	}
 
 	monitorDone := make(chan struct{})
 	go func() {
@@ -857,8 +862,10 @@ func (r *Runtime) unregister(current *connection) {
 		return
 	}
 	pending := make([]string, 0)
+	wasCurrent := false
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
+		wasCurrent = true
 		delete(r.connections, current.deviceID)
 		delete(r.latestV2SoftwareLevels, current.deviceID)
 		// Do not release r.mu before persisting OFFLINE: a replacement
@@ -883,6 +890,9 @@ func (r *Runtime) unregister(current *connection) {
 		}
 	}
 	r.mu.Unlock()
+	if wasCurrent {
+		r.interruptFirmwareConnection(current)
+	}
 	current.close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
