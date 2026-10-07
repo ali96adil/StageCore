@@ -1,0 +1,35 @@
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class FoundationContract(unittest.TestCase):
+    def test_shared_setup_password_policy(self):
+        source = "\n".join(
+            p.read_text(errors="ignore")
+            for p in (ROOT / "src").rglob("*")
+            if p.is_file() and p.suffix in {".h", ".hpp", ".c", ".cpp"}
+        )
+        self.assertIn("12345678", source)
+        self.assertIn("device.maintenance.setup-ap-password", source)
+
+    def test_no_random_setup_password_generator(self):
+        source = "\n".join(
+            p.read_text(errors="ignore")
+            for p in (ROOT / "src").rglob("*")
+            if p.is_file() and p.suffix in {".h", ".hpp", ".c", ".cpp"}
+        )
+        self.assertNotIn("random_ap_password", source)
+
+    def test_password_is_not_observation_data(self):
+        # Extend this in the device repo with its exact observation builder.
+        observation_files = list((ROOT / "src").rglob("*observation*"))
+        for path in observation_files:
+            if path.is_file():
+                body = path.read_text(errors="ignore")
+                self.assertNotIn("setup_ap_password", body)
+
+
+if __name__ == "__main__":
+    unittest.main()
