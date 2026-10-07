@@ -1,10 +1,14 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,6 +40,168 @@ func WithOperatorStageDeviceFirmware(
 		}
 
 		s.mux.HandleFunc(
+			"POST /api/v1/stage-devices/{device_id}/firmware-artifacts",
+			withPermission(auth, userauth.PermissionDeviceFirmwareManage, func(
+				w http.ResponseWriter,
+				r *http.Request,
+				session userauth.Session,
+			) {
+				deviceID := strings.TrimSpace(r.PathValue("device_id"))
+				device, err := devices.GetDevice(r.Context(), deviceID)
+				if err != nil || !firmwareMaintenanceDeviceEligible(device) {
+					writeJSON(w, http.StatusNotFound, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_DEVICE_NOT_FOUND",
+					})
+					return
+				}
+
+				// Keep the whole multipart request bounded. The extra MiB is only
+				// for multipart headers/form fields; the firmware body itself is
+				// still capped by deviceupdate.MaxArtifactBytes.
+				r.Body = http.MaxBytesReader(
+					w,
+					r.Body,
+					deviceupdate.MaxArtifactBytes+(1<<20),
+				)
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_UPLOAD_INVALID",
+						"detail": "Firmware upload must be bounded multipart form data.",
+					})
+					return
+				}
+				if r.MultipartForm != nil {
+					defer r.MultipartForm.RemoveAll()
+				}
+
+				version := strings.TrimSpace(r.FormValue("version"))
+				sourceRevision := strings.TrimSpace(r.FormValue("source_revision"))
+				expectedSHA := strings.TrimSpace(r.FormValue("sha256"))
+				qualification := strings.TrimSpace(r.FormValue("qualification"))
+				if qualification != deviceupdate.QualificationQualified {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_QUALIFICATION_REQUIRED",
+						"detail": "Explicit QUALIFIED promotion is required.",
+					})
+					return
+				}
+
+				source, header, err := r.FormFile("firmware")
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_FILE_REQUIRED",
+					})
+					return
+				}
+				defer source.Close()
+
+				originalFilename := strings.TrimSpace(header.Filename)
+				if originalFilename == "" ||
+					originalFilename != filepath.Base(originalFilename) {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_FILENAME_INVALID",
+					})
+					return
+				}
+
+				hasher := sha256.New()
+				sizeBytes, err := io.Copy(
+					hasher,
+					io.LimitReader(source, deviceupdate.MaxArtifactBytes+1),
+				)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_UPLOAD_READ_FAILED",
+					})
+					return
+				}
+				if sizeBytes <= 0 || sizeBytes > deviceupdate.MaxArtifactBytes {
+					writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_UPLOAD_SIZE_INVALID",
+					})
+					return
+				}
+				actualSHA := hex.EncodeToString(hasher.Sum(nil))
+				if expectedSHA == "" || expectedSHA != actualSHA {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_SHA256_MISMATCH",
+						"actual_sha256": actualSHA,
+					})
+					return
+				}
+				if _, err := source.Seek(0, io.SeekStart); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_UPLOAD_REWIND_FAILED",
+					})
+					return
+				}
+
+				artifactID, err := stageid.New()
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+						"error_code": "STAGE_DEVICE_FIRMWARE_ARTIFACT_ID_FAILED",
+					})
+					return
+				}
+				metadata := deviceupdate.ArtifactMetadata{
+					ArtifactID: artifactID,
+					DeviceID: device.ID,
+					ProfileID: device.ProfileID,
+					Version: version,
+					SourceRevision: sourceRevision,
+					Qualification: deviceupdate.QualificationQualified,
+					SizeBytes: sizeBytes,
+					SHA256: actualSHA,
+					OriginalFilename: originalFilename,
+					CreatedAt: time.Now().UTC(),
+				}
+
+				imported, err := artifacts.ImportQualified(metadata, source)
+				if err != nil {
+					status := http.StatusBadRequest
+					code := "STAGE_DEVICE_FIRMWARE_ARTIFACT_REJECTED"
+					switch {
+					case errors.Is(err, deviceupdate.ErrArtifactConflict):
+						status = http.StatusConflict
+						code = "STAGE_DEVICE_FIRMWARE_ARTIFACT_CONFLICT"
+					case errors.Is(err, deviceupdate.ErrArtifactInvalid):
+						code = "STAGE_DEVICE_FIRMWARE_ARTIFACT_INVALID"
+					}
+					writeJSON(w, status, map[string]any{
+						"error_code": code,
+						"detail": err.Error(),
+					})
+					return
+				}
+
+				appendAudit(r, audit, securityaudit.Event{
+					EventType: "stage_device.firmware_artifact.qualified",
+					ActorUserID: session.User.ID,
+					ActorUsername: session.User.Username,
+					ResourceType: "stage_device_firmware_artifact",
+					ResourceID: imported.ArtifactID,
+					Result: securityaudit.ResultSuccess,
+					Metadata: map[string]any{
+						"device_id": imported.DeviceID,
+						"profile_id": imported.ProfileID,
+						"version": imported.Version,
+						"source_revision": imported.SourceRevision,
+						"sha256": imported.SHA256,
+						"size_bytes": imported.SizeBytes,
+						"original_filename": imported.OriginalFilename,
+						"qualification": imported.Qualification,
+					},
+				})
+
+				writeJSON(w, http.StatusCreated, map[string]any{
+					"artifact": imported,
+					"artifact_path": deviceupdate.ArtifactPath(imported.ArtifactID),
+					"detail": "Exact uploaded bytes verified and registered as QUALIFIED for this device.",
+				})
+			}),
+		)
+
+	s.mux.HandleFunc(
 			"GET /api/v1/stage-devices/{device_id}/firmware-artifacts",
 			withPermission(auth, userauth.PermissionDeviceFirmwareManage, func(
 				w http.ResponseWriter,
