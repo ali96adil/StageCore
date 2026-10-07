@@ -884,6 +884,7 @@
           </dl>
           <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
           ${stageLaserTelemetryMarkup(device, true)}
+          ${setupAPMaintenanceMarkup(device)}
           ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
