@@ -1,0 +1,14 @@
+# Copy into src/CMakeLists.txt in an ESP-IDF Stage Device repository.
+# Keep Foundation code and hardware/output code as separate source groups.
+
+if(STAGECORE_FIRMWARE_FOUNDATION)
+  idf_component_register(
+    SRCS
+      "main.cpp"
+      # Add Foundation component adapter sources here.
+    INCLUDE_DIRS
+      "."
+  )
+else()
+  message(FATAL_ERROR "StageCore Firmware Foundation must be enabled")
+endif()
