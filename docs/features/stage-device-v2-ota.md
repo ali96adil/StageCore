@@ -90,9 +90,9 @@ The outbound message is `maintenance.firmware_update` and is bound to the exact 
 
 Normal progress is strictly ordered:
 
-`SENT -> ACCEPTED -> DOWNLOADING -> VERIFYING -> WRITING -> REBOOTING`
+`SENT -> ACCEPTED -> DOWNLOADING -> WRITING -> VERIFYING -> REBOOTING`
 
-The device may reject before acceptance or fail after acceptance. It cannot skip normal stages and cannot self-report `COMPLETED`.
+The device may reject before acceptance or fail after acceptance. It cannot skip normal stages and cannot self-report `COMPLETED`. The inactive OTA slot may be written while the body is streaming; `VERIFYING` means the complete received image is checked against the manifest size/SHA-256 and image validation before it becomes bootable.
 
 A disconnect before `REBOOTING` becomes `INTERRUPTED`. A disconnect after `REBOOTING` is expected and preserves the update. Completion is recorded only when the same authenticated device/profile reconnects on a newer connection generation and reports exactly the manifest target firmware version. If it returns on the previous version, StageCore records `ROLLBACK_OBSERVED`; any other version is a post-reboot mismatch.
 
