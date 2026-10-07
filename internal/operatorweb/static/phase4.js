@@ -543,6 +543,36 @@
     return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
   }
 
+  function canManageDeviceMaintenance() {
+    return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
+  }
+
+  function setupAPMaintenanceMarkup(device) {
+    const caps = Array.isArray(device.capabilities) ? device.capabilities : [];
+    if (device.protocol_version !== "stagecore.device/2" ||
+        !caps.includes(setupAPPasswordCapability) ||
+        !canManageDeviceMaintenance()) return "";
+    return `
+      <section class="phase4-empty stage-setup-ap-maintenance"
+        data-setup-ap-device="${esc(device.device_id)}">
+        <strong>${esc(t("stageSetupAPMaintenance"))}</strong>
+        <p class="muted">${esc(t("stageSetupAPPasswordHint"))}</p>
+        <label>${esc(t("stageSetupAPPassword"))}
+          <input class="stage-setup-ap-password" type="password"
+            minlength="8" maxlength="63" autocomplete="new-password">
+        </label>
+        <div class="phase4-actions">
+          <button class="button primary" data-setup-ap-save="${esc(device.device_id)}" type="button">
+            ${esc(t("stageSetupAPSave"))}
+          </button>
+          <button class="button ghost" data-setup-ap-reset="${esc(device.device_id)}" type="button">
+            ${esc(t("stageSetupAPReset"))}
+          </button>
+        </div>
+        <div class="stage-setup-ap-result" role="status" aria-live="polite"></div>
+      </section>`;
+  }
+
   function firmwareMaintenanceMarkup(device) {
     if (!isStageLaser(device) || !canManageFirmware()) return "";
     return `
@@ -649,6 +679,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
+        ${setupAPMaintenanceMarkup(device)}
         ${firmwareMaintenanceMarkup(device)}
         ${showRequirementKnown ? `
           <div class="phase4-empty" role="status">
