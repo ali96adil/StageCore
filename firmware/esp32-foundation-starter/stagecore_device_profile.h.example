@@ -1,0 +1,16 @@
+#pragma once
+
+// Copy to your firmware repository and replace every STAGECORE_NEW_DEVICE_*
+// placeholder. Do not put hardware output policy in this header.
+
+#define STAGECORE_NEW_DEVICE_PROFILE_ID "stagecore.esp32.REPLACE_ME"
+#define STAGECORE_NEW_DEVICE_DISPLAY_PREFIX "StageCore Device"
+
+// Firmware Foundation protocol contract.
+#define STAGECORE_DEVICE_PROTOCOL_VERSION "stagecore.device/2"
+#define STAGECORE_SETUP_AP_DEFAULT_PASSWORD "12345678"
+#define STAGECORE_SETUP_AP_PASSWORD_CAPABILITY   "device.maintenance.setup-ap-password"
+
+// Keep the first secure bring-up inventory-only. Promote show/output
+// capabilities only in device-specific, independently tested slices.
+#define STAGECORE_FOUNDATION_INVENTORY_ONLY 1
