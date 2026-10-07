@@ -45,6 +45,7 @@ type App struct {
 	DeviceExperience  *deviceexperience.Repository
 	DeviceRuntime     *devicechannel.Runtime
 	DeviceUpdateArtifacts *deviceupdate.ArtifactRegistry
+	DeviceUpdates       *deviceupdate.LifecycleStore
 	HubSecurity       *hubsecurity.Service
 	HAAuthority       HAAuthority
 	SecretStore       *secretstore.Service
@@ -125,6 +126,15 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 		_ = handle.Close()
 		return nil, fmt.Errorf("open Stage Device firmware artifact registry: %w", err)
 	}
+	deviceUpdates, err := deviceupdate.NewLifecycleStore(handle.DB)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Stage Device firmware maintenance lifecycle: %w", err)
+	}
+	if _, err := deviceUpdates.ReconcileInterrupted(ctx); err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("reconcile interrupted Stage Device firmware maintenance: %w", err)
+	}
 	bulkManager := bulk.New(func(ctx context.Context) (bulk.Mode, error) {
 		sessionType, err := s.ActiveOperationalSessionType(ctx)
 		if err != nil {
@@ -146,7 +156,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	companionAuth := companionauth.New(s, nil)
 	companionRuntime := companionchannel.NewRuntime(s, companionAuth)
-	deviceRuntime := devicechannel.New(deviceRepository, companionAuth)
+	deviceRuntime := devicechannel.New(deviceRepository, companionAuth, devicechannel.WithFirmwareMaintenance(deviceUpdates))
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
 		deviceRuntime.Close()
@@ -227,6 +237,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
 		DeviceUpdateArtifacts: deviceUpdateArtifacts,
+		DeviceUpdates: deviceUpdates,
 		HubSecurity: hubSecurity, HAAuthority: haAuthority, SecretStore: secrets,
 		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,

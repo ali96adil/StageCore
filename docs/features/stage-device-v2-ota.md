@@ -1,6 +1,6 @@
 # Stage Device v2 controlled firmware update
 
-Status: manifest contract, Hub-local qualified artifact registry/download, and Operator maintenance manifest issuance are implemented. No device maintenance delivery/result lifecycle or ESP32 OTA write path is implemented yet.
+Status: manifest contract, Hub-local qualified artifact registry/download, Operator issuance, and the authenticated Stage Device v2 maintenance lifecycle are implemented. ESP32 OTA download/write is not implemented yet.
 
 Tracked by #430 and required by StageLaser hardware tracker #429.
 
@@ -78,6 +78,28 @@ For StageLaser, issuance additionally requires the latest authenticated observat
 
 Issuance is audited and returns `delivery_state: NOT_SENT`. It does not send a maintenance message, write flash, reboot the device, or use Cue/show authority.
 
+## Authenticated maintenance lifecycle
+
+Firmware delivery stays outside ordinary `stage_device_commands`. The Operator first issues an immutable record in `ISSUED`, then performs a separate explicit send action.
+
+Delivery uses the existing authenticated Stage Device v2 WebSocket only when the current socket advertises:
+
+`device.maintenance.firmware-update`
+
+The outbound message is `maintenance.firmware_update` and is bound to the exact device ID and current connection generation. The device reports lifecycle state with `maintenance.firmware_update.result`.
+
+Normal progress is strictly ordered:
+
+`SENT -> ACCEPTED -> DOWNLOADING -> VERIFYING -> WRITING -> REBOOTING`
+
+The device may reject before acceptance or fail after acceptance. It cannot skip normal stages and cannot self-report `COMPLETED`.
+
+A disconnect before `REBOOTING` becomes `INTERRUPTED`. A disconnect after `REBOOTING` is expected and preserves the update. Completion is recorded only when the same authenticated device/profile reconnects on a newer connection generation and reports exactly the manifest target firmware version. If it returns on the previous version, StageCore records `ROLLBACK_OBSERVED`; any other version is a post-reboot mismatch.
+
+Hub restart interrupts pre-reboot updates but preserves `REBOOTING` handoff so the returning authenticated device can still close the lifecycle.
+
+This slice still does not download or write firmware on the ESP32-C3.
+
 ## StageLaser policy
 
 Before StageLaser V1 can accept an OTA update, later slices must additionally prove:
@@ -95,8 +117,7 @@ UNKNOWN is never converted to OFF by a blind pulse merely to make an update poss
 ## Remaining slices
 
 1. Qualified artifact registration/promotion workflow.
-2. Stage Device v2 maintenance request/result lifecycle.
-3. ESP32-C3 streamed download, SHA-256/size verification and OTA write.
-4. Physical update, failed-boot rollback and recovery qualification.
+2. ESP32-C3 streamed download, SHA-256/size verification and OTA write.
+3. Physical update, failed-boot rollback and recovery qualification.
 
 Anti-rollback eFuse changes are out of scope for the first StageLaser update implementation.

@@ -62,6 +62,11 @@
       stageFirmwarePrepare: "Issue maintenance manifest",
       stageFirmwarePrepared: "Maintenance manifest issued only; it has NOT been sent to the device.",
       stageFirmwareConfirm: "Issue a short-lived firmware maintenance manifest for this exact device? This step does NOT flash or reboot the device.",
+      stageFirmwareSend: "Send maintenance request",
+      stageFirmwareSendConfirm: "Send this firmware maintenance request to the exact authenticated device? The device may download, write firmware and reboot once OTA support is installed.",
+      stageFirmwareSent: "Maintenance request sent on the authenticated device connection.",
+      stageFirmwareRefresh: "Refresh update status",
+      stageFirmwareState: "Update state",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -235,6 +240,11 @@
       stageFirmwarePrepare: "إصدار بيان الصيانة",
       stageFirmwarePrepared: "تم إصدار بيان الصيانة فقط؛ لم يُرسل للجهاز ولم يبدأ التحديث.",
       stageFirmwareConfirm: "إصدار بيان Firmware قصير العمر لهذا الجهاز بالضبط؟ هاي الخطوة لا تفلش الجهاز ولا تعيد تشغيله.",
+      stageFirmwareSend: "إرسال طلب الصيانة",
+      stageFirmwareSendConfirm: "ترسل طلب تحديث الفيرموير لهذا الجهاز الموثق بالضبط؟ بعد إضافة دعم OTA للجهاز ممكن ينزل الفيرموير ويكتبه ويعيد التشغيل.",
+      stageFirmwareSent: "تم إرسال طلب الصيانة على اتصال الجهاز الموثق.",
+      stageFirmwareRefresh: "تحديث حالة التحديث",
+      stageFirmwareState: "حالة التحديث",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
@@ -873,10 +883,53 @@
                 body: JSON.stringify({ artifact_id: artifactID }),
               });
               const manifest = issued.manifest || {};
-              const result = target.querySelector(".stage-firmware-result");
-              if (result) result.innerHTML = `
-                <p class="message success">${esc(t("stageFirmwarePrepared"))}</p>
-                <p class="mono">${esc(manifest.update_id || "—")} · ${esc(manifest.target_version || "—")}</p>`;
+              const renderFirmwareUpdate = (update, noteKey = "") => {
+                const result = target.querySelector(".stage-firmware-result");
+                if (!result) return;
+                const updateManifest = update?.manifest || manifest;
+                const updateID = updateManifest?.update_id || "";
+                const updateState = String(update?.state || "UNKNOWN").toUpperCase();
+                result.innerHTML = `
+                  ${noteKey ? `<p class="message success">${esc(t(noteKey))}</p>` : ""}
+                  <p class="mono">${esc(updateID || "—")} · ${esc(updateManifest?.target_version || "—")}</p>
+                  <p><strong>${esc(t("stageFirmwareState"))}:</strong> ${esc(updateState)}</p>
+                  <div class="row-actions">
+                    ${updateState === "ISSUED" ? `<button class="button warn stage-firmware-send" type="button">${esc(t("stageFirmwareSend"))}</button>` : ""}
+                    <button class="button ghost stage-firmware-refresh" type="button">${esc(t("stageFirmwareRefresh"))}</button>
+                  </div>`;
+
+                result.querySelector(".stage-firmware-send")?.addEventListener("click", async (sendEvent) => {
+                  const sendButton = sendEvent.currentTarget;
+                  if (!updateID || !globalThis.confirm(t("stageFirmwareSendConfirm"))) return;
+                  sendButton.disabled = true;
+                  try {
+                    const sent = await api(
+                      `/api/v1/stage-devices/${encodeURIComponent(deviceID)}/firmware-updates/${encodeURIComponent(updateID)}/send`,
+                      { method: "POST", body: JSON.stringify({}) },
+                    );
+                    renderFirmwareUpdate(sent.update || update, "stageFirmwareSent");
+                  } catch (error) {
+                    phase4Message(errorMessage(error), "error");
+                    if (sendButton.isConnected) sendButton.disabled = false;
+                  }
+                });
+
+                result.querySelector(".stage-firmware-refresh")?.addEventListener("click", async (refreshEvent) => {
+                  const refreshButton = refreshEvent.currentTarget;
+                  if (!updateID) return;
+                  refreshButton.disabled = true;
+                  try {
+                    const latest = await api(
+                      `/api/v1/stage-devices/${encodeURIComponent(deviceID)}/firmware-updates/${encodeURIComponent(updateID)}`,
+                    );
+                    renderFirmwareUpdate(latest.update || update);
+                  } catch (error) {
+                    phase4Message(errorMessage(error), "error");
+                    if (refreshButton.isConnected) refreshButton.disabled = false;
+                  }
+                });
+              };
+              renderFirmwareUpdate(issued.update || { manifest, state: "ISSUED" }, "stageFirmwarePrepared");
             } catch (error) {
               phase4Message(errorMessage(error), "error");
               if (action.isConnected) action.disabled = false;

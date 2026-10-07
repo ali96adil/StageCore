@@ -16,6 +16,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/deviceupdate"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"golang.org/x/net/websocket"
@@ -41,6 +42,7 @@ func WithDeviceLivenessTimeout(timeout time.Duration) RuntimeOption {
 type Runtime struct {
 	repository      *deviceexperience.Repository
 	auth            *companionauth.Service
+	firmwareMaintenance *deviceupdate.LifecycleStore
 	livenessTimeout time.Duration
 
 	transferMu     sync.Mutex
@@ -108,6 +110,9 @@ type inboundMessage struct {
 	ConfigurationHash      string                     `json:"configuration_hash,omitempty"`
 	CommandID              string                     `json:"command_id,omitempty"`
 	TransferID             string                     `json:"transfer_id,omitempty"`
+	UpdateID               string                     `json:"update_id,omitempty"`
+	MaintenanceState       string                     `json:"maintenance_state,omitempty"`
+	Detail                 string                     `json:"detail,omitempty"`
 	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
 	ConnectionGeneration   int64                      `json:"connection_generation,omitempty"`
 	Challenge              string                     `json:"challenge,omitempty"`
@@ -432,6 +437,11 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	}); err != nil || !same {
 		return
 	}
+	if isV2 {
+		if err := r.reconcileFirmwarePostReboot(ctx, current, device); err != nil {
+			return
+		}
+	}
 
 	monitorDone := make(chan struct{})
 	go func() {
@@ -703,6 +713,16 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 			if !r.deliverBlackoutAck(current, message) {
 				return
 			}
+		case "maintenance.firmware_update.result":
+			if !isV2 {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverFirmwareMaintenanceResult(current, message) {
+				return
+			}
 		case "command.result":
 			if isV2 {
 				r.mu.Lock()
@@ -842,8 +862,10 @@ func (r *Runtime) unregister(current *connection) {
 		return
 	}
 	pending := make([]string, 0)
+	wasCurrent := false
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
+		wasCurrent = true
 		delete(r.connections, current.deviceID)
 		delete(r.latestV2SoftwareLevels, current.deviceID)
 		// Do not release r.mu before persisting OFFLINE: a replacement
@@ -868,6 +890,9 @@ func (r *Runtime) unregister(current *connection) {
 		}
 	}
 	r.mu.Unlock()
+	if wasCurrent {
+		r.interruptFirmwareConnection(current)
+	}
 	current.close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
