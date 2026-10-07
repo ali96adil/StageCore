@@ -1,6 +1,6 @@
 # Stage Device v2 controlled firmware update
 
-Status: manifest contract plus Hub-local qualified artifact registry and authenticated device download. No operator update action, device maintenance message, or ESP32 OTA write path is implemented yet.
+Status: manifest contract, Hub-local qualified artifact registry/download, and Operator maintenance manifest issuance are implemented. No device maintenance delivery/result lifecycle or ESP32 OTA write path is implemented yet.
 
 Tracked by #430 and required by StageLaser hardware tracker #429.
 
@@ -62,6 +62,22 @@ The session must still be valid and the authenticated device ID must exactly mat
 
 This route is not installed on the Operator/browser server.
 
+## Operator maintenance issuance
+
+OWNER and TECHNICIAN roles have the dedicated `device.firmware.manage` permission. OPERATOR and VIEWER do not.
+
+The Devices UI can list only verified `QUALIFIED` artifacts bound to the exact device and issue a short-lived maintenance manifest. Issuance is unavailable while any operational Session is active and requires the target device to be ONLINE + READY.
+
+For StageLaser, issuance additionally requires the latest authenticated observation to prove:
+- DISARMED
+- stable OFF
+- state quality TRACKED or CONFIRMED
+- no resync required
+- no relay pulse in progress
+- no local Flash active
+
+Issuance is audited and returns `delivery_state: NOT_SENT`. It does not send a maintenance message, write flash, reboot the device, or use Cue/show authority.
+
 ## StageLaser policy
 
 Before StageLaser V1 can accept an OTA update, later slices must additionally prove:
@@ -78,7 +94,7 @@ UNKNOWN is never converted to OFF by a blind pulse merely to make an update poss
 
 ## Remaining slices
 
-1. Explicit operator maintenance API/UI and qualified artifact registration workflow.
+1. Qualified artifact registration/promotion workflow.
 2. Stage Device v2 maintenance request/result lifecycle.
 3. ESP32-C3 streamed download, SHA-256/size verification and OTA write.
 4. Physical update, failed-boot rollback and recovery qualification.
