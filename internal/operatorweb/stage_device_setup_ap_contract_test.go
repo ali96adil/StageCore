@@ -33,4 +33,14 @@ func TestStageDeviceSetupAPMaintenanceSurface(t *testing.T) {
 			t.Fatalf("phase4.js missing %q", required)
 		}
 	}
+
+	inventoryStart := strings.Index(body, "const inventoryCard = (device) =>")
+	inventoryEnd := strings.Index(body[inventoryStart:], "body.innerHTML =")
+	if inventoryStart < 0 || inventoryEnd < 0 {
+		t.Fatal("phase4.js inventory card surface not found")
+	}
+	inventory := body[inventoryStart : inventoryStart+inventoryEnd]
+	if !strings.Contains(inventory, "setupAPMaintenanceMarkup(device)") {
+		t.Fatal("reusable v2 inventory is missing Setup/Recovery AP maintenance")
+	}
 }
