@@ -31,6 +31,7 @@ Current engineering status and transition evidence:
 
 - `docs/runbooks/FIRST_SHOW_RUNBOOK.md` — integrated first-rehearsal startup, subsystem order, OSC GO, reusable devices, camera relay and Lighting ACTIVE gate.
 - `docs/features/stage-device-firmware-foundation.md` — mandatory reusable baseline for new Stage Device firmware: Setup/Recovery Wi-Fi, shared fallback credential, authenticated maintenance, recovery behavior and CI acceptance.
+- `firmware/esp32-foundation-starter/` — copy/consume this starter when beginning a new ESP-IDF Stage Device; it preserves the generic StageCore UI/capability contract and keeps device-specific output authority outside the Foundation.
 - `docs/BASELINE_STATUS.md`
 - `docs/checkpoints/2026-08-30-m0-m6-physical-qualification-complete.md`
 - `docs/FEATURE_IMPLEMENTATION_ORDER.md`
