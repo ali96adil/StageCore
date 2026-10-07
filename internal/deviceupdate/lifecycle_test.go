@@ -70,8 +70,8 @@ func advanceToRebooting(
 	for _, state := range []UpdateState{
 		UpdateAccepted,
 		UpdateDownloading,
-		UpdateVerifying,
 		UpdateWriting,
+		UpdateVerifying,
 		UpdateRebooting,
 	} {
 		record, err = store.RecordDeviceState(
@@ -112,8 +112,8 @@ func TestLifecycleRequiresExactOrderAndPostRebootTargetVersion(t *testing.T) {
 	for _, state := range []UpdateState{
 		UpdateAccepted,
 		UpdateDownloading,
-		UpdateVerifying,
 		UpdateWriting,
+		UpdateVerifying,
 		UpdateRebooting,
 	} {
 		if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, state, string(state), ""); err != nil {
@@ -226,7 +226,7 @@ func TestLifecycleDisconnectInterruptsBeforeRebootButPreservesRebootHandoff(t *t
 		t.Fatal(err)
 	}
 	for _, state := range []UpdateState{
-		UpdateAccepted, UpdateDownloading, UpdateVerifying, UpdateWriting, UpdateRebooting,
+		UpdateAccepted, UpdateDownloading, UpdateWriting, UpdateVerifying, UpdateRebooting,
 	} {
 		if _, err := store.RecordDeviceState(ctx, record.Manifest.UpdateID, deviceID, 31, state, "", ""); err != nil {
 			t.Fatal(err)
