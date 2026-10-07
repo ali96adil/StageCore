@@ -2,6 +2,7 @@
   "use strict";
 
   const liveSourceExecutionCapabilities = ["video.source.open", "video.source.route"];
+  const setupAPPasswordCapability = "device.maintenance.setup-ap-password";
 
   const copy = {
     en: {
@@ -76,6 +77,15 @@
       stageFirmwareSent: "Maintenance request sent on the authenticated device connection.",
       stageFirmwareRefresh: "Refresh update status",
       stageFirmwareState: "Update state",
+      stageSetupAPMaintenance: "Setup / Recovery Wi-Fi",
+      stageSetupAPPassword: "Setup AP credential",
+      stageSetupAPPasswordHint: "Used only by the device Setup/Recovery access point. StageCore never reads the saved credential back.",
+      stageSetupAPSave: "Save setup credential",
+      stageSetupAPReset: "Reset to shared default",
+      stageSetupAPConfirm: "Replace the Setup/Recovery AP credential on this authenticated device?",
+      stageSetupAPResetConfirm: "Reset this device Setup/Recovery AP credential to the shared default?",
+      stageSetupAPApplied: "Device confirmed the Setup/Recovery AP credential change.",
+      stageSetupAPInvalid: "Enter 8 to 63 characters.",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -263,6 +273,15 @@
       stageFirmwareSent: "تم إرسال طلب الصيانة على اتصال الجهاز الموثق.",
       stageFirmwareRefresh: "تحديث حالة التحديث",
       stageFirmwareState: "حالة التحديث",
+      stageSetupAPMaintenance: "واي فاي الإعداد والاسترجاع",
+      stageSetupAPPassword: "رمز شبكة الإعداد",
+      stageSetupAPPasswordHint: "يُستخدم فقط لشبكة Setup/Recovery التي يبثها الجهاز. StageCore لا يقرأ الرمز المخزون من الجهاز.",
+      stageSetupAPSave: "حفظ رمز الإعداد",
+      stageSetupAPReset: "إرجاعه إلى الافتراضي المشترك",
+      stageSetupAPConfirm: "تغيّر رمز شبكة Setup/Recovery لهذا الجهاز الموثق؟",
+      stageSetupAPResetConfirm: "ترجع رمز Setup/Recovery لهذا الجهاز إلى الافتراضي المشترك؟",
+      stageSetupAPApplied: "الجهاز أكد حفظ رمز Setup/Recovery.",
+      stageSetupAPInvalid: "أدخل رمزاً من 8 إلى 63 حرفاً.",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
@@ -524,6 +543,36 @@
     return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
   }
 
+  function canManageDeviceMaintenance() {
+    return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
+  }
+
+  function setupAPMaintenanceMarkup(device) {
+    const caps = Array.isArray(device.capabilities) ? device.capabilities : [];
+    if (device.protocol_version !== "stagecore.device/2" ||
+        !caps.includes(setupAPPasswordCapability) ||
+        !canManageDeviceMaintenance()) return "";
+    return `
+      <section class="phase4-empty stage-setup-ap-maintenance"
+        data-setup-ap-device="${esc(device.device_id)}">
+        <strong>${esc(t("stageSetupAPMaintenance"))}</strong>
+        <p class="muted">${esc(t("stageSetupAPPasswordHint"))}</p>
+        <label>${esc(t("stageSetupAPPassword"))}
+          <input class="stage-setup-ap-password" type="password"
+            minlength="8" maxlength="63" autocomplete="new-password">
+        </label>
+        <div class="phase4-actions">
+          <button class="button primary" data-setup-ap-save="${esc(device.device_id)}" type="button">
+            ${esc(t("stageSetupAPSave"))}
+          </button>
+          <button class="button ghost" data-setup-ap-reset="${esc(device.device_id)}" type="button">
+            ${esc(t("stageSetupAPReset"))}
+          </button>
+        </div>
+        <div class="stage-setup-ap-result" role="status" aria-live="polite"></div>
+      </section>`;
+  }
+
   function firmwareMaintenanceMarkup(device) {
     if (!isStageLaser(device) || !canManageFirmware()) return "";
     return `
@@ -630,6 +679,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
+        ${setupAPMaintenanceMarkup(device)}
         ${firmwareMaintenanceMarkup(device)}
         ${showRequirementKnown ? `
           <div class="phase4-empty" role="status">
@@ -883,6 +933,57 @@
         const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
         if (navButton) navButton.click();
         else navigate(page);
+      });
+    });
+
+    body.querySelectorAll("[data-setup-ap-save]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.setupApSave || "";
+        const section = button.closest(".stage-setup-ap-maintenance");
+        const input = section?.querySelector(".stage-setup-ap-password");
+        const result = section?.querySelector(".stage-setup-ap-result");
+        const credential = String(input?.value || "");
+        if (!deviceID || credential.length < 8 || credential.length > 63) {
+          if (result) result.innerHTML = `<p class="message warn">${esc(t("stageSetupAPInvalid"))}</p>`;
+          return;
+        }
+        if (!globalThis.confirm(t("stageSetupAPConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/setup-ap-password`, {
+            method: "POST",
+            body: JSON.stringify({ password: credential }),
+          });
+          if (input) input.value = "";
+          if (result) result.innerHTML = `<p class="message success">${esc(t("stageSetupAPApplied"))}</p>`;
+        } catch (error) {
+          if (result) result.innerHTML = `<p class="message error">${esc(errorMessage(error))}</p>`;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-setup-ap-reset]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.setupApReset || "";
+        const section = button.closest(".stage-setup-ap-maintenance");
+        const input = section?.querySelector(".stage-setup-ap-password");
+        const result = section?.querySelector(".stage-setup-ap-result");
+        if (!deviceID || !globalThis.confirm(t("stageSetupAPResetConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/setup-ap-password`, {
+            method: "POST",
+            body: JSON.stringify({ reset_to_default: true }),
+          });
+          if (input) input.value = "";
+          if (result) result.innerHTML = `<p class="message success">${esc(t("stageSetupAPApplied"))}</p>`;
+        } catch (error) {
+          if (result) result.innerHTML = `<p class="message error">${esc(errorMessage(error))}</p>`;
+        } finally {
+          button.disabled = false;
+        }
       });
     });
 

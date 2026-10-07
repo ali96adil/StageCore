@@ -55,6 +55,7 @@ type Runtime struct {
 	pendingTabletAssignments     map[string]*pendingTabletAssignment
 	pendingStageLaserAssignments map[string]*pendingStageLaserAssignment
 	pendingLightingActivations   map[string]*pendingLightingActivation
+	pendingSetupAPPassword       map[string]chan SetupAPPasswordResult
 	assignmentTransitions      map[string]bool
 	autoProbeV2              bool
 	nextGeneration           int64
@@ -111,6 +112,7 @@ type inboundMessage struct {
 	CommandID              string                     `json:"command_id,omitempty"`
 	TransferID             string                     `json:"transfer_id,omitempty"`
 	UpdateID               string                     `json:"update_id,omitempty"`
+	RequestID              string                     `json:"request_id,omitempty"`
 	MaintenanceState       string                     `json:"maintenance_state,omitempty"`
 	Detail                 string                     `json:"detail,omitempty"`
 	AssignmentEpoch        int64                      `json:"assignment_epoch,omitempty"`
@@ -157,6 +159,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		pendingTabletAssignments:     make(map[string]*pendingTabletAssignment),
 		pendingStageLaserAssignments: make(map[string]*pendingStageLaserAssignment),
 		pendingLightingActivations:   make(map[string]*pendingLightingActivation),
+		pendingSetupAPPassword:       make(map[string]chan SetupAPPasswordResult),
 		assignmentTransitions:      make(map[string]bool),
 		autoProbeV2:               os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
@@ -711,6 +714,16 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 				return
 			}
 			if !r.deliverBlackoutAck(current, message) {
+				return
+			}
+		case "maintenance.setup_ap_password.result":
+			if (!isV2) {
+				return
+			}
+			if _, err := r.auth.ValidateEstablishedRuntimeSession(ctx, session.ID); err != nil {
+				return
+			}
+			if !r.deliverSetupAPPasswordResult(current, message) {
 				return
 			}
 		case "maintenance.firmware_update.result":
