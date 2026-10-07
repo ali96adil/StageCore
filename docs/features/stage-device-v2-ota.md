@@ -1,6 +1,6 @@
 # Stage Device v2 controlled firmware update
 
-Status: manifest contract, Hub-local qualified artifact registry/download, Operator issuance, and the authenticated Stage Device v2 maintenance lifecycle are implemented. ESP32 OTA download/write is not implemented yet.
+Status: the controlled OTA software path is implemented end-to-end: manifest validation, qualified artifact registration, pinned-Hub artifact download, Operator issuance/send, authenticated Stage Device v2 lifecycle, and StageLaser ESP32-C3 streamed OTA with rollback protection. Physical update/rollback/recovery qualification is still pending.
 
 Tracked by #430 and required by StageLaser hardware tracker #429.
 
@@ -39,15 +39,19 @@ The path is intentionally relative to the pinned Hub. Scheme, host, query string
 
 ## Qualified artifact registry
 
-The Hub stores device firmware artifacts below its DataRoot in a dedicated immutable registry. Registration is programmatic in this slice; no browser/operator upload endpoint is exposed yet.
+The Hub stores device firmware artifacts below its DataRoot in a dedicated immutable registry. OWNER and TECHNICIAN can explicitly register an exact firmware binary as `QUALIFIED` from the Stage Devices UI. Registration is a maintenance/admin action only; it does not send, flash, reboot, or acquire show authority.
 
 Registry acceptance requires:
-- UUID artifact ID and device ID
+- Hub-generated UUID artifact ID bound to one exact device ID
 - exact target profile and firmware version
-- exact source revision
-- `QUALIFIED` status
-- expected byte size and lowercase SHA-256 matching the bytes actually written
+- exact 40-character lowercase source revision
+- explicit `QUALIFIED` promotion by OWNER/TECHNICIAN
+- expected lowercase SHA-256 supplied by the operator and recomputed from the uploaded bytes
+- bounded non-zero artifact size recomputed from the upload
+- canonical original filename
 - immutable artifact IDs
+
+The Operator upload is same-origin, authenticated, CSRF-protected, role-gated, size-bounded, and audited as `stage_device.firmware_artifact.qualified`. A SHA mismatch or non-`QUALIFIED` submission fails closed.
 
 Every artifact is re-verified from disk before download. Missing, tampered or metadata-mismatched artifacts fail closed.
 
@@ -98,11 +102,11 @@ A disconnect before `REBOOTING` becomes `INTERRUPTED`. A disconnect after `REBOO
 
 Hub restart interrupts pre-reboot updates but preserves `REBOOTING` handoff so the returning authenticated device can still close the lifecycle.
 
-This slice still does not download or write firmware on the ESP32-C3.
+StageLaser firmware PR #37 implements the device side. The OTA-capable 4 MB dual-slot candidate advertises `device.maintenance.firmware-update`; the default image does not. The device downloads only from its pinned Hub over HTTPS using the active `StageCoreSession`, streams bytes into the inactive OTA slot, verifies exact size + SHA-256 + ESP image, persists the expected update/version/source identity, reports `REBOOTING`, selects the verified boot partition, and relies on the existing rollback boot guard. A pending image is confirmed only when its compiled firmware version and source revision exactly match the persisted qualified manifest after the local safe-boot checkpoint; otherwise it rolls back.
 
 ## StageLaser policy
 
-Before StageLaser V1 can accept an OTA update, later slices must additionally prove:
+Before StageLaser V1 accepts an OTA update, the current software path requires:
 
 - controller is DISARMED
 - logical state is stable known OFF
@@ -114,10 +118,14 @@ Before StageLaser V1 can accept an OTA update, later slices must additionally pr
 
 UNKNOWN is never converted to OFF by a blind pulse merely to make an update possible.
 
-## Remaining slices
+## Remaining slice
 
-1. Qualified artifact registration/promotion workflow.
-2. ESP32-C3 streamed download, SHA-256/size verification and OTA write.
-3. Physical update, failed-boot rollback and recovery qualification.
+Only physical qualification remains for StageLaser V1 OTA:
 
-Anti-rollback eFuse changes are out of scope for the first StageLaser update implementation.
+- real-board successful update from one qualified candidate to another
+- failed-boot automatic rollback observation
+- Hub restart / reconnect closure of `REBOOTING`
+- recovery behavior on the qualified physical recovery input
+- confirmation that the OTA path remains non-actuating throughout maintenance
+
+Anti-rollback eFuse changes remain out of scope for the first StageLaser update implementation.
