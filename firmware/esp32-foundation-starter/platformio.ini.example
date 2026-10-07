@@ -1,0 +1,15 @@
+; Starter only. Pin exact platform/framework versions in the device repo
+; after selecting the physical board and reproducing a clean CI build.
+
+[platformio]
+default_envs = foundation-ci
+
+[env:foundation-ci]
+platform = espressif32
+board = REPLACE_ME
+framework = espidf
+monitor_speed = 115200
+build_flags =
+  -DSTAGECORE_FOUNDATION_INVENTORY_ONLY=1
+board_build.cmake_extra_args =
+  -DSTAGECORE_FIRMWARE_FOUNDATION=ON
