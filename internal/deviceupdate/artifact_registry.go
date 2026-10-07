@@ -121,7 +121,7 @@ func (r *ArtifactRegistry) ImportQualified(metadata ArtifactMetadata, source io.
 	if err != nil {
 		return ArtifactMetadata{}, fmt.Errorf("encode artifact metadata: %w", err)
 	}
-	metadataBytes = append(metadataBytes, '\\n')
+	metadataBytes = append(metadataBytes, byte('\n'))
 	if err := os.WriteFile(filepath.Join(tempDir, metadataFilename), metadataBytes, 0o600); err != nil {
 		return ArtifactMetadata{}, fmt.Errorf("write artifact metadata: %w", err)
 	}
