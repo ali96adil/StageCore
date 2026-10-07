@@ -2,6 +2,7 @@
   "use strict";
 
   const liveSourceExecutionCapabilities = ["video.source.open", "video.source.route"];
+  const setupAPPasswordCapability = "device.maintenance.setup-ap-password";
 
   const copy = {
     en: {
@@ -76,6 +77,15 @@
       stageFirmwareSent: "Maintenance request sent on the authenticated device connection.",
       stageFirmwareRefresh: "Refresh update status",
       stageFirmwareState: "Update state",
+      stageSetupAPMaintenance: "Setup / Recovery Wi-Fi",
+      stageSetupAPPassword: "Setup AP credential",
+      stageSetupAPPasswordHint: "Used only by the device Setup/Recovery access point. StageCore never reads the saved credential back.",
+      stageSetupAPSave: "Save setup credential",
+      stageSetupAPReset: "Reset to shared default",
+      stageSetupAPConfirm: "Replace the Setup/Recovery AP credential on this authenticated device?",
+      stageSetupAPResetConfirm: "Reset this device Setup/Recovery AP credential to the shared default?",
+      stageSetupAPApplied: "Device confirmed the Setup/Recovery AP credential change.",
+      stageSetupAPInvalid: "Enter 8 to 63 characters.",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -263,6 +273,15 @@
       stageFirmwareSent: "تم إرسال طلب الصيانة على اتصال الجهاز الموثق.",
       stageFirmwareRefresh: "تحديث حالة التحديث",
       stageFirmwareState: "حالة التحديث",
+      stageSetupAPMaintenance: "واي فاي الإعداد والاسترجاع",
+      stageSetupAPPassword: "رمز شبكة الإعداد",
+      stageSetupAPPasswordHint: "يُستخدم فقط لشبكة Setup/Recovery التي يبثها الجهاز. StageCore لا يقرأ الرمز المخزون من الجهاز.",
+      stageSetupAPSave: "حفظ رمز الإعداد",
+      stageSetupAPReset: "إرجاعه إلى الافتراضي المشترك",
+      stageSetupAPConfirm: "تغيّر رمز شبكة Setup/Recovery لهذا الجهاز الموثق؟",
+      stageSetupAPResetConfirm: "ترجع رمز Setup/Recovery لهذا الجهاز إلى الافتراضي المشترك؟",
+      stageSetupAPApplied: "الجهاز أكد حفظ رمز Setup/Recovery.",
+      stageSetupAPInvalid: "أدخل رمزاً من 8 إلى 63 حرفاً.",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
