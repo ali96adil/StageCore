@@ -36,7 +36,7 @@ func startDeviceGateway(
 	listenAddress string,
 	errCh chan<- error,
 ) (*deviceGateway, error) {
-	if application == nil || application.HubSecurity == nil || application.CompanionAuth == nil || application.CompanionRuntime == nil || application.DeviceExperience == nil || application.DeviceRuntime == nil {
+	if application == nil || application.HubSecurity == nil || application.CompanionAuth == nil || application.CompanionRuntime == nil || application.DeviceExperience == nil || application.DeviceRuntime == nil || application.DeviceUpdateArtifacts == nil {
 		return nil, fmt.Errorf("device gateway requires Hub identity, Companion services and Stage Device runtime")
 	}
 	certificate, certificatePin, err := application.HubSecurity.DeviceTLSCertificate(ctx)
@@ -53,6 +53,7 @@ func startDeviceGateway(
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithStageDeviceRuntime(application.CompanionAuth, application.DeviceRuntime),
+		httpapi.WithStageDeviceFirmwareArtifacts(application.CompanionAuth, application.DeviceUpdateArtifacts),
 		httpapi.WithVault(application.Vault),
 	)
 	server := &http.Server{
