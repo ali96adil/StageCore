@@ -25,6 +25,8 @@ CREATE TABLE stage_device_firmware_updates (
     expires_at_us INTEGER NOT NULL CHECK(expires_at_us > issued_at_us),
     connection_generation INTEGER
         CHECK(connection_generation IS NULL OR connection_generation > 0),
+    completion_connection_generation INTEGER
+        CHECK(completion_connection_generation IS NULL OR completion_connection_generation > 0),
     last_detail TEXT NOT NULL DEFAULT '',
     last_error_code TEXT NOT NULL DEFAULT '',
     updated_at_us INTEGER NOT NULL CHECK(updated_at_us > 0)
