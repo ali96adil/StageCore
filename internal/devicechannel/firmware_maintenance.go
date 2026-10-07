@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/deviceupdate"
@@ -137,4 +138,40 @@ func (r *Runtime) deliverFirmwareMaintenanceResult(
 		errorCode,
 	)
 	return err == nil
+}
+
+
+func (r *Runtime) reconcileFirmwarePostReboot(
+	ctx context.Context,
+	current *connection,
+	device deviceexperience.Device,
+) error {
+	if r == nil || r.firmwareMaintenance == nil || current == nil ||
+		current.protocolVersion != deviceexperience.ProtocolVersion2 {
+		return nil
+	}
+	_, _, err := r.firmwareMaintenance.ConfirmPostReboot(
+		ctx,
+		device.ID,
+		device.ProfileID,
+		device.ClientVersion,
+		current.generation,
+	)
+	return err
+}
+
+func (r *Runtime) interruptFirmwareConnection(current *connection) {
+	if r == nil || r.firmwareMaintenance == nil || current == nil ||
+		current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = r.firmwareMaintenance.InterruptConnection(
+		ctx,
+		current.deviceID,
+		current.generation,
+		"Authenticated Stage Device connection ended before firmware reboot handoff",
+	)
 }
