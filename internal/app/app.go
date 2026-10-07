@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/deviceupdate"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -42,6 +44,7 @@ type App struct {
 	Store             *store.Store
 	DeviceExperience  *deviceexperience.Repository
 	DeviceRuntime     *devicechannel.Runtime
+	DeviceUpdateArtifacts *deviceupdate.ArtifactRegistry
 	HubSecurity       *hubsecurity.Service
 	HAAuthority       HAAuthority
 	SecretStore       *secretstore.Service
@@ -114,6 +117,13 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		_ = handle.Close()
 		return nil, fmt.Errorf("open StageCore software repository: %w", err)
+	}
+	deviceUpdateArtifacts, err := deviceupdate.NewArtifactRegistry(
+		filepath.Join(cfg.DataRoot, "stage-device-firmware", "artifacts"),
+	)
+	if err != nil {
+		_ = handle.Close()
+		return nil, fmt.Errorf("open Stage Device firmware artifact registry: %w", err)
 	}
 	bulkManager := bulk.New(func(ctx context.Context) (bulk.Mode, error) {
 		sessionType, err := s.ActiveOperationalSessionType(ctx)
@@ -216,6 +226,7 @@ func Open(ctx context.Context, cfg config.Config) (*App, error) {
 	cueExecutor := simulator.NewSessionExecutorWithDigitalTwin(s, physicalDispatch, digitalTwin)
 	return &App{
 		Config: cfg, DB: handle, Store: s, DeviceExperience: deviceRepository, DeviceRuntime: deviceRuntime,
+		DeviceUpdateArtifacts: deviceUpdateArtifacts,
 		HubSecurity: hubSecurity, HAAuthority: haAuthority, SecretStore: secrets,
 		SecurityAudit: audit, PluginPermissions: pluginGrants, Capabilities: registry,
 		Vault: vaultService, Software: softwareRepository,
