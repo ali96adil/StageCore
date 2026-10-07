@@ -1,4 +1,4 @@
-package operatorweb
+package operatorweb_test
 
 import (
 	"net/http"
