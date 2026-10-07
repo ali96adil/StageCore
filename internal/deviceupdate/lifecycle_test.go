@@ -51,7 +51,40 @@ func lifecycleManifest(deviceID string, now time.Time) Manifest {
 	}
 }
 
-func TestLifecycleRequiresExplicitSendAndBoundGeneration(t *testing.T) {
+func advanceToRebooting(
+	t *testing.T,
+	store *LifecycleStore,
+	deviceID string,
+	now time.Time,
+	generation int64,
+) UpdateRecord {
+	t.Helper()
+	ctx := context.Background()
+	record, err := store.Issue(ctx, lifecycleManifest(deviceID, now), "owner-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkSent(ctx, record.Manifest.UpdateID, deviceID, generation); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []UpdateState{
+		UpdateAccepted,
+		UpdateDownloading,
+		UpdateVerifying,
+		UpdateWriting,
+		UpdateRebooting,
+	} {
+		record, err = store.RecordDeviceState(
+			ctx, record.Manifest.UpdateID, deviceID, generation, state, string(state), "",
+		)
+		if err != nil {
+			t.Fatalf("advance to %s: %v", state, err)
+		}
+	}
+	return record
+}
+
+func TestLifecycleRequiresExactOrderAndPostRebootTargetVersion(t *testing.T) {
 	ctx := context.Background()
 	store, _, deviceID := newLifecycleTestStore(t)
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -61,10 +94,6 @@ func TestLifecycleRequiresExplicitSendAndBoundGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issued.State != UpdateIssued || issued.ConnectionGeneration != 0 {
-		t.Fatalf("issued=%+v", issued)
-	}
-
 	sent, err := store.MarkSent(ctx, issued.Manifest.UpdateID, deviceID, 11)
 	if err != nil {
 		t.Fatal(err)
@@ -73,29 +102,43 @@ func TestLifecycleRequiresExplicitSendAndBoundGeneration(t *testing.T) {
 		t.Fatalf("sent=%+v", sent)
 	}
 
+	if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, UpdateDownloading, "", ""); !errors.Is(err, ErrUpdateState) {
+		t.Fatalf("skip SENT->DOWNLOADING err=%v", err)
+	}
 	if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 12, UpdateAccepted, "", ""); !errors.Is(err, ErrUpdateGeneration) {
-		t.Fatalf("wrong-generation result err=%v", err)
+		t.Fatalf("wrong generation err=%v", err)
 	}
-	accepted, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, UpdateAccepted, "accepted", "")
-	if err != nil {
-		t.Fatal(err)
+
+	for _, state := range []UpdateState{
+		UpdateAccepted,
+		UpdateDownloading,
+		UpdateVerifying,
+		UpdateWriting,
+		UpdateRebooting,
+	} {
+		if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, state, string(state), ""); err != nil {
+			t.Fatalf("advance to %s: %v", state, err)
+		}
 	}
-	if accepted.State != UpdateAccepted {
-		t.Fatalf("accepted state=%s", accepted.State)
+	if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, UpdateCompleted, "", ""); !errors.Is(err, ErrUpdateState) {
+		t.Fatalf("device-reported completion err=%v", err)
 	}
-	completed, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, UpdateCompleted, "verified", "")
-	if err != nil {
-		t.Fatal(err)
+	if _, handled, err := store.ConfirmPostReboot(ctx, deviceID, issued.Manifest.ProfileID, issued.Manifest.TargetVersion, 11); !handled || !errors.Is(err, ErrUpdateGeneration) {
+		t.Fatalf("same-generation completion handled=%v err=%v", handled, err)
 	}
-	if completed.State != UpdateCompleted {
-		t.Fatalf("completed state=%s", completed.State)
+
+	completed, handled, err := store.ConfirmPostReboot(
+		ctx, deviceID, issued.Manifest.ProfileID, issued.Manifest.TargetVersion, 12,
+	)
+	if err != nil || !handled {
+		t.Fatalf("post-reboot completion handled=%v err=%v", handled, err)
 	}
-	if _, err := store.RecordDeviceState(ctx, issued.Manifest.UpdateID, deviceID, 11, UpdateFailed, "", "late"); !errors.Is(err, ErrUpdateState) {
-		t.Fatalf("terminal mutation err=%v", err)
+	if completed.State != UpdateCompleted || completed.CompletionGeneration != 12 {
+		t.Fatalf("completed=%+v", completed)
 	}
 }
 
-func TestLifecycleExpiresBeforeSend(t *testing.T) {
+func TestLifecycleExpiresBeforeAcceptance(t *testing.T) {
 	ctx := context.Background()
 	store, _, deviceID := newLifecycleTestStore(t)
 	issuedAt := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -104,61 +147,120 @@ func TestLifecycleExpiresBeforeSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.MarkSent(ctx, record.Manifest.UpdateID, deviceID, 3); err != nil {
+		t.Fatal(err)
+	}
+
 	store.now = func() time.Time { return issuedAt.Add(6 * time.Minute) }
-	if _, err := store.MarkSent(ctx, record.Manifest.UpdateID, deviceID, 3); !errors.Is(err, ErrUpdateExpired) {
-		t.Fatalf("expired send err=%v", err)
+	if _, err := store.RecordDeviceState(
+		ctx, record.Manifest.UpdateID, deviceID, 3, UpdateAccepted, "late", "",
+	); !errors.Is(err, ErrUpdateExpired) {
+		t.Fatalf("expired acceptance err=%v", err)
 	}
 	current, err := store.Get(ctx, record.Manifest.UpdateID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.State != UpdateExpired {
-		t.Fatalf("state=%s", current.State)
+	if current.State != UpdateExpired || current.LastErrorCode != "MANIFEST_EXPIRED" {
+		t.Fatalf("current=%+v", current)
 	}
 }
 
-func TestLifecycleRestartInterruptsDeliveredUpdatesWithoutRetry(t *testing.T) {
+func TestLifecycleRecordsRollbackAfterReboot(t *testing.T) {
 	ctx := context.Background()
-	store, handle, deviceID := newLifecycleTestStore(t)
+	store, _, deviceID := newLifecycleTestStore(t)
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now }
-	first, err := store.Issue(ctx, lifecycleManifest(deviceID, now), "owner-1")
+	record := advanceToRebooting(t, store, deviceID, now, 20)
+
+	result, handled, err := store.ConfirmPostReboot(
+		ctx,
+		deviceID,
+		record.Manifest.ProfileID,
+		record.Manifest.CurrentVersion,
+		21,
+	)
+	if err != nil || !handled {
+		t.Fatalf("rollback handled=%v err=%v", handled, err)
+	}
+	if result.State != UpdateFailed ||
+		result.LastErrorCode != "ROLLBACK_OBSERVED" ||
+		result.CompletionGeneration != 21 {
+		t.Fatalf("rollback result=%+v", result)
+	}
+}
+
+func TestLifecycleDisconnectInterruptsBeforeRebootButPreservesRebootHandoff(t *testing.T) {
+	ctx := context.Background()
+	store, _, deviceID := newLifecycleTestStore(t)
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	first := lifecycleManifest(deviceID, now)
+	record, err := store.Issue(ctx, first, "owner-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MarkSent(ctx, first.Manifest.UpdateID, deviceID, 7); err != nil {
+	if _, err := store.MarkSent(ctx, record.Manifest.UpdateID, deviceID, 30); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.RecordDeviceState(ctx, record.Manifest.UpdateID, deviceID, 30, UpdateAccepted, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.InterruptConnection(ctx, deviceID, 30, "socket closed")
+	if err != nil || count != 1 {
+		t.Fatalf("interrupt count=%d err=%v", count, err)
+	}
+	current, _ := store.Get(ctx, record.Manifest.UpdateID)
+	if current.State != UpdateInterrupted {
+		t.Fatalf("interrupted state=%s", current.State)
 	}
 
-	secondManifest := lifecycleManifest(deviceID, now)
-	secondManifest.UpdateID = "018f2744-0cb0-7bf6-9637-4a3a467a7a42"
-	if _, err := store.Issue(ctx, secondManifest, "owner-1"); err != nil {
+	second := lifecycleManifest(deviceID, now)
+	second.UpdateID = "018f2744-0cb0-7bf6-9637-4a3a467a7a42"
+	record, err = store.Issue(ctx, second, "owner-1")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.MarkSent(ctx, record.Manifest.UpdateID, deviceID, 31); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []UpdateState{
+		UpdateAccepted, UpdateDownloading, UpdateVerifying, UpdateWriting, UpdateRebooting,
+	} {
+		if _, err := store.RecordDeviceState(ctx, record.Manifest.UpdateID, deviceID, 31, state, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count, err = store.InterruptConnection(ctx, deviceID, 31, "expected reboot disconnect")
+	if err != nil || count != 0 {
+		t.Fatalf("reboot interrupt count=%d err=%v", count, err)
+	}
+	current, _ = store.Get(ctx, record.Manifest.UpdateID)
+	if current.State != UpdateRebooting {
+		t.Fatalf("reboot handoff state=%s", current.State)
+	}
+}
+
+func TestLifecycleHubRestartPreservesRebootHandoff(t *testing.T) {
+	ctx := context.Background()
+	store, _, deviceID := newLifecycleTestStore(t)
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	record := advanceToRebooting(t, store, deviceID, now, 40)
 
 	count, err := store.ReconcileInterrupted(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("interrupted count=%d", count)
+	if count != 0 {
+		t.Fatalf("unexpected interrupted count=%d", count)
 	}
-	delivered, _ := store.Get(ctx, first.Manifest.UpdateID)
-	unsent, _ := store.Get(ctx, secondManifest.UpdateID)
-	if delivered.State != UpdateInterrupted {
-		t.Fatalf("delivered state=%s", delivered.State)
-	}
-	if unsent.State != UpdateIssued {
-		t.Fatalf("unsent state=%s", unsent.State)
-	}
-
-	var active int
-	if err := handle.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM stage_device_firmware_updates WHERE state IN ('SENT','ACCEPTED','DOWNLOADING','VERIFYING','WRITING','REBOOTING')`,
-	).Scan(&active); err != nil {
+	current, err := store.Get(ctx, record.Manifest.UpdateID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if active != 0 {
-		t.Fatalf("active delivered updates=%d", active)
+	if current.State != UpdateRebooting {
+		t.Fatalf("state after Hub restart=%s", current.State)
 	}
 }
