@@ -306,6 +306,7 @@ func main() {
 		httpapi.WithOperatorConfiguration(userAuth, application.Store),
 		httpapi.WithOperatorConfigurationDraft(userAuth, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorStageDevices(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
+		httpapi.WithOperatorStageDeviceFirmware(userAuth, application.DeviceExperience, application.DeviceUpdateArtifacts, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorTabletController(userAuth, application.DeviceExperience, application.DeviceRuntime, application.Store),
 		httpapi.WithOperatorTabletAuthoring(userAuth, application.DeviceExperience, application.Store),
 		httpapi.WithOperatorLightingController(userAuth, application.DeviceExperience, application.Store),

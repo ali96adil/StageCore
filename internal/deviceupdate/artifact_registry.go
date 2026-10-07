@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -133,6 +134,45 @@ func (r *ArtifactRegistry) ImportQualified(metadata ArtifactMetadata, source io.
 		return ArtifactMetadata{}, fmt.Errorf("publish firmware artifact: %w", err)
 	}
 	return metadata, nil
+}
+
+func (r *ArtifactRegistry) InspectForDevice(artifactID, deviceID string) (ArtifactMetadata, error) {
+	file, metadata, err := r.OpenForDevice(artifactID, deviceID)
+	if file != nil {
+		_ = file.Close()
+	}
+	return metadata, err
+}
+
+func (r *ArtifactRegistry) ListForDevice(deviceID string) ([]ArtifactMetadata, error) {
+	if r == nil || r.root == "" || strings.TrimSpace(deviceID) == "" {
+		return nil, ErrArtifactNotFound
+	}
+	entries, err := os.ReadDir(r.root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ArtifactMetadata, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".incoming-") {
+			continue
+		}
+		metadata, err := r.InspectForDevice(entry.Name(), deviceID)
+		if errors.Is(err, ErrArtifactNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, metadata)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ArtifactID < out[j].ArtifactID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func (r *ArtifactRegistry) OpenForDevice(artifactID, deviceID string) (*os.File, ArtifactMetadata, error) {

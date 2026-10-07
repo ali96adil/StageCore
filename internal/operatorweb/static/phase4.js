@@ -56,6 +56,12 @@
       stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
       stageLaserNoSnapshot: "Publish a Runtime Snapshot containing this StageLaser target before assignment.",
       stageLaserAssignConfirm: "StageCore will require this StageLaser to prove DISARMED + OFF on its current authenticated connection. TRACKED means software state only unless physical feedback exists. Continue?",
+      stageFirmwareMaintenance: "Firmware maintenance",
+      stageFirmwareLoad: "Load qualified firmware",
+      stageFirmwareNone: "No QUALIFIED firmware is registered for this device.",
+      stageFirmwarePrepare: "Issue maintenance manifest",
+      stageFirmwarePrepared: "Maintenance manifest issued only; it has NOT been sent to the device.",
+      stageFirmwareConfirm: "Issue a short-lived firmware maintenance manifest for this exact device? This step does NOT flash or reboot the device.",
       liveDiagnostic: "Read current Cue / node report",
       diagnosticLoading: "Reading current software-only report…",
       diagnosticUnavailable: "Diagnostic unavailable. Blackout remains in effect.",
@@ -223,6 +229,12 @@
       stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
       stageLaserNoSnapshot: "انشر Runtime Snapshot يحتوي هدف StageLaser هذا قبل التخصيص.",
       stageLaserAssignConfirm: "سيطلب StageCore من StageLaser إثبات DISARMED + OFF على اتصاله الموثق الحالي. TRACKED تعني حالة برمجية فقط ما لم توجد تغذية راجعة فعلية. هل تريد المتابعة؟",
+      stageFirmwareMaintenance: "صيانة الفيرموير",
+      stageFirmwareLoad: "عرض الفيرموير المؤهل",
+      stageFirmwareNone: "ماكو Firmware بحالة QUALIFIED مسجل لهذا الجهاز.",
+      stageFirmwarePrepare: "إصدار بيان الصيانة",
+      stageFirmwarePrepared: "تم إصدار بيان الصيانة فقط؛ لم يُرسل للجهاز ولم يبدأ التحديث.",
+      stageFirmwareConfirm: "إصدار بيان Firmware قصير العمر لهذا الجهاز بالضبط؟ هاي الخطوة لا تفلش الجهاز ولا تعيد تشغيله.",
       liveDiagnostic: "قراءة الكيو الحالي وتقرير العقدة",
       diagnosticLoading: "جاري قراءة تقرير القنوات البرمجي…",
       diagnosticUnavailable: "التقرير غير متاح. يبقى الـBlackout مفعل.",
@@ -480,6 +492,24 @@
       </section>`;
   }
 
+  function canManageFirmware() {
+    return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
+  }
+
+  function firmwareMaintenanceMarkup(device) {
+    if (!isStageLaser(device) || !canManageFirmware()) return "";
+    return `
+      <section class="phase4-empty stage-firmware-maintenance"
+        data-firmware-device="${esc(device.device_id)}">
+        <strong>${esc(t("stageFirmwareMaintenance"))}</strong>
+        <p class="muted">${esc(t("stageFirmwarePrepared"))}</p>
+        <button class="button ghost" data-firmware-load="${esc(device.device_id)}" type="button">
+          ${esc(t("stageFirmwareLoad"))}
+        </button>
+        <div class="stage-firmware-options" role="status" aria-live="polite"></div>
+      </section>`;
+  }
+
   function deviceCard(device, v2Status = null, showLocked = false) {
     const runtime = device.runtime || {};
     const assignment = device.assignment || {};
@@ -550,6 +580,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
+        ${firmwareMaintenanceMarkup(device)}
         ${showRequirementKnown ? `
           <div class="phase4-empty" role="status">
             <strong>${esc(t("showRequirement"))}: ${esc(t(requiredForShow ? "showRequired" : "showNotRequired"))}</strong>
@@ -802,6 +833,59 @@
         const navButton = document.querySelector(`#workspaceNav [data-page="${CSS.escape(page)}"]`);
         if (navButton) navButton.click();
         else navigate(page);
+      });
+    });
+
+    body.querySelectorAll("[data-firmware-load]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.firmwareLoad || "";
+        const section = button.closest(".stage-firmware-maintenance");
+        const target = section?.querySelector(".stage-firmware-options");
+        if (!deviceID || !target) return;
+        button.disabled = true;
+        try {
+          const payload = await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/firmware-artifacts`);
+          const artifacts = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+          if (!artifacts.length) {
+            target.innerHTML = `<p class="message warn">${esc(t("stageFirmwareNone"))}</p>`;
+            return;
+          }
+          target.innerHTML = `
+            <label>${esc(t("stageLaserFirmware"))}
+              <select class="stage-firmware-select">
+                ${artifacts.map((artifact) => `<option value="${esc(artifact.artifact_id)}">
+                  ${esc(artifact.version)} · ${esc(String(artifact.source_revision || "").slice(0, 8))}
+                </option>`).join("")}
+              </select>
+            </label>
+            <button class="button primary stage-firmware-prepare" type="button">
+              ${esc(t("stageFirmwarePrepare"))}
+            </button>
+            <div class="stage-firmware-result"></div>`;
+          target.querySelector(".stage-firmware-prepare")?.addEventListener("click", async (event) => {
+            const action = event.currentTarget;
+            const artifactID = target.querySelector(".stage-firmware-select")?.value || "";
+            if (!artifactID || !globalThis.confirm(t("stageFirmwareConfirm"))) return;
+            action.disabled = true;
+            try {
+              const issued = await api(`/api/v1/stage-devices/${encodeURIComponent(deviceID)}/firmware-updates`, {
+                method: "POST",
+                body: JSON.stringify({ artifact_id: artifactID }),
+              });
+              const manifest = issued.manifest || {};
+              const result = target.querySelector(".stage-firmware-result");
+              if (result) result.innerHTML = `
+                <p class="message success">${esc(t("stageFirmwarePrepared"))}</p>
+                <p class="mono">${esc(manifest.update_id || "—")} · ${esc(manifest.target_version || "—")}</p>`;
+            } catch (error) {
+              phase4Message(errorMessage(error), "error");
+              if (action.isConnected) action.disabled = false;
+            }
+          });
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
       });
     });
 

@@ -35,6 +35,7 @@ const (
 	PermissionUserManage     Permission = "user.manage"
 	PermissionBackupRestore  Permission = "backup.restore"
 	PermissionAuditRead      Permission = "audit.read"
+	PermissionDeviceFirmwareManage Permission = "device.firmware.manage"
 
 	defaultSessionTTL = 8 * time.Hour
 	maxLoginFailures  = 5
@@ -263,11 +264,13 @@ var rolePermissions = map[string]map[Permission]bool{
 		PermissionRuntimeControl: true, PermissionShowEnterExit: true, PermissionCompanionPair: true,
 		PermissionCompanionRevoke: true, PermissionPluginManage: true, PermissionSecretManage: true,
 		PermissionUserManage: true, PermissionBackupRestore: true, PermissionAuditRead: true,
+		PermissionDeviceFirmwareManage: true,
 	},
 	RoleTechnician: {
 		PermissionProjectRead: true, PermissionProjectEdit: true, PermissionSnapshotPublish: true,
 		PermissionRuntimeControl: true, PermissionShowEnterExit: true,
 		PermissionCompanionPair: true, PermissionPluginManage: true,
+		PermissionDeviceFirmwareManage: true,
 	},
 	RoleOperator: {
 		PermissionProjectRead: true, PermissionRuntimeControl: true, PermissionShowEnterExit: true,

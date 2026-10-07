@@ -157,3 +157,35 @@ func TestArtifactRegistryDetectsOnDiskCorruption(t *testing.T) {
 		t.Fatalf("corruption error = %v", err)
 	}
 }
+
+func TestArtifactRegistryListsOnlyExactDevice(t *testing.T) {
+	registry, err := NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPayload := []byte("qualified-image-one")
+	first := validArtifactMetadata(firstPayload)
+	if _, err := registry.ImportQualified(first, bytes.NewReader(firstPayload)); err != nil {
+		t.Fatal(err)
+	}
+
+	secondPayload := []byte("qualified-image-two")
+	second := validArtifactMetadata(secondPayload)
+	second.ArtifactID = "018f2744-0cb0-7bf6-9637-4a3a467a7a12"
+	second.DeviceID = "12345678-1234-1234-1234-123456789012"
+	hash := sha256.Sum256(secondPayload)
+	second.SizeBytes = int64(len(secondPayload))
+	second.SHA256 = hex.EncodeToString(hash[:])
+	second.CreatedAt = first.CreatedAt.Add(time.Minute)
+	if _, err := registry.ImportQualified(second, bytes.NewReader(secondPayload)); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := registry.ListForDevice(first.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ArtifactID != first.ArtifactID {
+		t.Fatalf("items = %#v", items)
+	}
+}
