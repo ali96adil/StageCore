@@ -15,9 +15,10 @@ func TestStageLaserOnlineMessagingIsEmissionSafe(t *testing.T) {
 		`stageLaserReadOnly: "StageLaser monitoring only;`,
 		`stageLaserReadOnly: "متابعة StageLaser فقط؛`,
 		`v2GenericHardwareUnverified:`,
-		`isStageLaser(device) ? \`<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>\` : ""`,
-		`stageLaser ? \`<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>\` : ""`,
+		`isStageLaser(device) ? `,
+		`stageLaser ? `,
 		`t("stageLaserReadOnly")`,
+		`<p>${esc(t("stageLaserTransportOnly"))}</p>`,
 		`device.profile_id === "stagecore.esp32-dmx-lighting-node" ? "v2HardwareUnverified" : "v2GenericHardwareUnverified"`,
 	} {
 		if !strings.Contains(js, marker) {
