@@ -431,21 +431,46 @@ func inspectDatabase(ctx context.Context, dataRoot string) (*sql.DB, Check) {
 }
 
 func inspectPairing(ctx context.Context, database *sql.DB) Check {
-	rows, err := database.QueryContext(ctx, `SELECT trust_state, readiness, COUNT(*) FROM companions GROUP BY trust_state, readiness`)
+	// The legacy companions.readiness column does not represent authenticated
+	// stagecore.device/2 runtime connectivity or SHOW readiness. Those checks
+	// belong to Stage Devices and their Project/Runtime Snapshot preflight.
+	// Keep doctor compatible with older schema versions without stage_devices.
+	var stageDevicesTableCount int
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'stage_devices'`,
+	).Scan(&stageDevicesTableCount); err != nil {
+		return Check{ID: "pairing.summary", Status: Warning, MessageKey: "pairing.unavailable", Detail: err.Error(), RemedyKey: "remedy.pairing"}
+	}
+
+	query := `SELECT trust_state, readiness, 0 AS v2, COUNT(*) FROM companions GROUP BY trust_state, readiness`
+	if stageDevicesTableCount > 0 {
+		query = `
+			SELECT c.trust_state, c.readiness,
+				CASE WHEN d.protocol_version = 'stagecore.device/2' THEN 1 ELSE 0 END AS v2,
+				COUNT(*)
+			FROM companions AS c
+			LEFT JOIN stage_devices AS d ON d.device_id = c.companion_id
+			GROUP BY c.trust_state, c.readiness, v2
+		`
+	}
+	rows, err := database.QueryContext(ctx, query)
 	if err != nil {
 		return Check{ID: "pairing.summary", Status: Warning, MessageKey: "pairing.unavailable", Detail: err.Error(), RemedyKey: "remedy.pairing"}
 	}
 	defer rows.Close()
-	var trustedReady, trustedUnready, untrusted, revoked int
+
+	var trustedReady, trustedUnready, trustedV2, untrusted, revoked int
 	for rows.Next() {
 		var trust, readiness string
-		var count int
-		if err := rows.Scan(&trust, &readiness, &count); err != nil {
+		var v2, count int
+		if err := rows.Scan(&trust, &readiness, &v2, &count); err != nil {
 			return Check{ID: "pairing.summary", Status: Warning, MessageKey: "pairing.unavailable", Detail: err.Error(), RemedyKey: "remedy.pairing"}
 		}
 		switch trust {
 		case "TRUSTED":
-			if readiness == "READY" {
+			if v2 != 0 {
+				trustedV2 += count
+			} else if readiness == "READY" {
 				trustedReady += count
 			} else {
 				trustedUnready += count
@@ -459,7 +484,10 @@ func inspectPairing(ctx context.Context, database *sql.DB) Check {
 	if err := rows.Err(); err != nil {
 		return Check{ID: "pairing.summary", Status: Warning, MessageKey: "pairing.unavailable", Detail: err.Error(), RemedyKey: "remedy.pairing"}
 	}
-	detail := fmt.Sprintf("trusted_ready=%d trusted_unready=%d untrusted=%d revoked=%d", trustedReady, trustedUnready, untrusted, revoked)
+	detail := fmt.Sprintf(
+		"trusted_ready=%d trusted_unready=%d trusted_v2=%d untrusted=%d revoked=%d",
+		trustedReady, trustedUnready, trustedV2, untrusted, revoked,
+	)
 	if trustedUnready > 0 {
 		return Check{ID: "pairing.summary", Status: Warning, MessageKey: "pairing.unready", MessageArgs: []string{strconv.Itoa(trustedUnready)}, Detail: detail, RemedyKey: "remedy.pairing.unready"}
 	}
