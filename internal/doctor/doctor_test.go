@@ -96,6 +96,79 @@ func TestHealthyDoctorReportUsesReadOnlyLocalSources(t *testing.T) {
 	}
 }
 
+// V2 stage devices authenticate through companions but their operational
+// connection/readiness is tracked in Stage Devices, not companions.readiness.
+func TestInspectPairingSeparatesStageDeviceV2FromLegacyCompanionReadiness(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "pairing.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	for _, statement := range []string{
+		`CREATE TABLE companions (companion_id TEXT PRIMARY KEY, trust_state TEXT NOT NULL, readiness TEXT NOT NULL)`,
+		`CREATE TABLE stage_devices (device_id TEXT PRIMARY KEY, protocol_version TEXT NOT NULL)`,
+		`INSERT INTO companions VALUES ('legacy-ready', 'TRUSTED', 'READY')`,
+		`INSERT INTO companions VALUES ('legacy-unknown', 'TRUSTED', 'UNKNOWN')`,
+		`INSERT INTO companions VALUES ('laser-unknown', 'TRUSTED', 'UNKNOWN')`,
+		`INSERT INTO companions VALUES ('tablet-unknown', 'TRUSTED', 'UNKNOWN')`,
+		`INSERT INTO companions VALUES ('tablet-ready', 'TRUSTED', 'READY')`,
+		`INSERT INTO companions VALUES ('revoked-unknown', 'REVOKED', 'UNKNOWN')`,
+		`INSERT INTO companions VALUES ('untrusted-unknown', 'PENDING', 'UNKNOWN')`,
+		`INSERT INTO stage_devices VALUES ('laser-unknown', 'stagecore.device/2')`,
+		`INSERT INTO stage_devices VALUES ('tablet-unknown', 'stagecore.device/2')`,
+		`INSERT INTO stage_devices VALUES ('tablet-ready', 'stagecore.device/2')`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	check := inspectPairing(context.Background(), database)
+	if check.Status != Warning || check.MessageKey != "pairing.unready" {
+		t.Fatalf("legacy unready must still warn: %+v", check)
+	}
+	for _, want := range []string{
+		"trusted_ready=1", "trusted_unready=1", "trusted_v2=3", "untrusted=1", "revoked=1",
+	} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("missing %q in pairing detail: %+v", want, check)
+		}
+	}
+	if _, err := database.Exec(`UPDATE companions SET readiness='READY' WHERE companion_id='legacy-unknown'`); err != nil {
+		t.Fatal(err)
+	}
+	check = inspectPairing(context.Background(), database)
+	if check.Status != Ready || check.MessageKey != "pairing.ok" {
+		t.Fatalf("v2 UNKNOWN must not become a legacy readiness warning: %+v", check)
+	}
+	for _, want := range []string{"trusted_ready=2", "trusted_unready=0", "trusted_v2=3"} {
+		if !strings.Contains(check.Detail, want) {
+			t.Fatalf("missing %q in pairing detail: %+v", want, check)
+		}
+	}
+}
+
+func TestInspectPairingOlderSchemaStillReportsLegacyUnknown(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, statement := range []string{
+		`CREATE TABLE companions (companion_id TEXT PRIMARY KEY, trust_state TEXT NOT NULL, readiness TEXT NOT NULL)`,
+		`INSERT INTO companions VALUES ('legacy-unknown', 'TRUSTED', 'UNKNOWN')`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := inspectPairing(context.Background(), database)
+	if check.Status != Warning || !strings.Contains(check.Detail, "trusted_unready=1") ||
+		!strings.Contains(check.Detail, "trusted_v2=0") {
+		t.Fatalf("legacy-only schema must retain warning: %+v", check)
+	}
+}
+
 func TestDoctorBlocksOnInactiveHubButKeepsOtherEvidence(t *testing.T) {
 	report := Report{Checks: []Check{
 		{ID: "systemd.active", Status: Blocker, MessageKey: "service.inactive"},
