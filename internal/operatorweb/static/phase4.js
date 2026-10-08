@@ -29,6 +29,7 @@
       v2ReusableNote: "This physical device is Hub-owned and reusable across Projects; assignment state controls which Project currently has authority.",
       v2BlockedStatus: "Hub assignment status",
       v2HardwareUnverified: "Software-only status. Physical DMX and fixtures are NOT verified. Project commands remain disabled.",
+      v2GenericHardwareUnverified: "Software-only device report; physical outputs have not been verified. No output authority is implied.",
       v2CurrentSoftwareZero: "Device reported zero on the current authenticated connection",
       v2NoCurrentSoftwareZero: "No current-connection zero report",
       v2NoControls: "Read-only commissioning view; no Project transfer or output controls available.",
@@ -52,6 +53,8 @@
       stageLaserTracked: "TRACKED is software-tracked state only; it is not physical confirmation.",
       stageLaserConfirmed: "Physical feedback confirmed this state.",
       stageLaserUnknown: "Laser state is unknown or requires resync. Do not assume OFF.",
+      stageLaserTransportOnly: "ONLINE confirms authenticated communication only. It does NOT certify relay actuation, physical laser OFF state, or emission safety. Keep laser emission inhibited pending hardware qualification.",
+      stageLaserReadOnly: "StageLaser monitoring only; no beam or relay output controls are available here.",
       stageLaserAssign: "Verify Safe Off and assign StageLaser",
       stageLaserAssigning: "Verifying DISARMED + OFF on the authenticated StageLaser…",
       stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
@@ -225,9 +228,10 @@
       v2ReusableNote: "هذا جهاز فعلي تابع للـHub وقابل لإعادة الاستخدام بين المشاريع؛ حالة التخصيص هي اللي تحدد أي مشروع عنده السلطة حالياً.",
       v2BlockedStatus: "حالة التخصيص في الـHub",
       v2HardwareUnverified: "هاي حالة برمجية فقط؛ الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن. أوامر المشروع معطّلة.",
+      v2GenericHardwareUnverified: "هاي قراءة برمجية فقط؛ المخرجات الفعلية للجهاز بعد ما متحققين منها، وما تعطي صلاحية لتشغيلها.",
       v2CurrentSoftwareZero: "الجهاز بلّغ عن صفر على الاتصال الموثّق الحالي",
       v2NoCurrentSoftwareZero: "ماكو تقرير صفر للاتصال الحالي",
-      v2NoControls: "عرض متابعة فقط؛ نقل المشروع والتحكم بالإضاءة غير متاحين هنا.",
+      v2NoControls: "عرض متابعة فقط؛ نقل المشروع والتحكم بمخرجات الجهاز غير متاحين هنا.",
       v2AssignTablet: "خصّص التابلت لهذا المشروع",
       v2MoveTablet: "انقل التابلت لهذا المشروع",
       v2AssigningTablet: "جاري نقل التابلت عبر الحالة الآمنة…",
@@ -248,6 +252,8 @@
       stageLaserTracked: "TRACKED يعني حالة متتبعة برمجياً فقط، وليست تأكيداً فعلياً من الليزر.",
       stageLaserConfirmed: "الحالة مؤكدة بواسطة تغذية راجعة فعلية.",
       stageLaserUnknown: "حالة الليزر غير معروفة أو تحتاج Resync. لا تفترض أنه مطفأ.",
+      stageLaserTransportOnly: "ONLINE يثبت الاتصال الموثّق فقط؛ مو إثبات لتأهيل الريليه أو انطفاء الشعاع أو أمان تشغيل الليزر. خلي انبعاث الليزر معطّلاً لحين اكتمال فحوص الأمان الفعلية.",
+      stageLaserReadOnly: "متابعة StageLaser فقط؛ ماكو أوامر لتشغيل الشعاع أو الريليه من هنا.",
       stageLaserAssign: "تحقق من Safe Off وخصص StageLaser",
       stageLaserAssigning: "جاري التحقق من DISARMED + OFF على اتصال StageLaser الموثق…",
       stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
@@ -679,6 +685,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
+        ${isStageLaser(device) ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
         ${setupAPMaintenanceMarkup(device)}
         ${firmwareMaintenanceMarkup(device)}
         ${showRequirementKnown ? `
@@ -884,6 +891,7 @@
           </dl>
           <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
           ${stageLaserTelemetryMarkup(device, true)}
+          ${stageLaser ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
           ${setupAPMaintenanceMarkup(device)}
           ${reusableTablet ? `
             <div class="phase4-empty">
@@ -904,8 +912,8 @@
                 ${esc(t("stageLaserAssign"))}
               </button>
             </div>` : stageLaser ? `
-            <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p><p>${esc(t("v2NoControls"))}</p></div>` : `
-            <div class="phase4-empty"><p>${esc(t("v2HardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
+            <div class="phase4-empty"><p>${esc(t("stageLaserReadOnly"))}</p></div>` : `
+            <div class="phase4-empty"><p>${esc(t(device.profile_id === "stagecore.esp32-dmx-lighting-node" ? "v2HardwareUnverified" : "v2GenericHardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
         </article>`;
     };
     body.innerHTML = `
