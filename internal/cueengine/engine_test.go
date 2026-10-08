@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cueengine"
@@ -88,6 +89,78 @@ func TestCueGoDefaultPolicyContinuesAfterUnavailableAction(t *testing.T) {
 	}
 	events, _ := f.store.ListEvents(context.Background(), f.session.ID)
 	assertEventTypes(t, events, []string{"cue.started", "action.started", "action.failed", "action.started", "action.completed", "cue.completed"})
+}
+
+func TestCueGoStrongFailSoftContinuesFromUnavailableTabletToHealthyLighting(t *testing.T) {
+	first := action("SEQUENTIAL", "FAIL", 0, "CONTINUE")
+	first.OrderIndex = 0
+	first.CapabilityKey = "tablet.media.play"
+	first.ErrorPolicy = json.RawMessage(`{}`)
+
+	second := action("SEQUENTIAL", "COMPLETE", 0, "CONTINUE")
+	second.OrderIndex = 1
+	second.CapabilityKey = "lighting.channels.set"
+	second.ErrorPolicy = json.RawMessage(`{}`)
+
+	f := newFixture(t, []domain.Action{first, second})
+	calls := make([]string, 0, 2)
+	executor := capability.ExecutorFunc(func(_ context.Context, request capability.Request) capability.Result {
+		calls = append(calls, request.Capability)
+		switch request.Capability {
+		case "tablet.media.play":
+			return capability.Result{
+				Result:          domain.ExecutionFailed,
+				AckLevel:        contracts.AckNone,
+				ErrorCode:       "TABLET_UNAVAILABLE",
+				ResponseSummary: "tablet unavailable",
+			}
+		case "lighting.channels.set":
+			return capability.Result{
+				Result:          domain.ExecutionCompleted,
+				AckLevel:        contracts.AckAccepted,
+				ResponseSummary: "lighting dispatched",
+			}
+		default:
+			t.Fatalf("unexpected capability %q", request.Capability)
+			return capability.Result{Result: domain.ExecutionFailed}
+		}
+	})
+
+	result := cueengine.NewWithExecutor(f.store, executor).ExecuteCueGo(
+		context.Background(), f.session.ID, commandFor(t, f),
+	)
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("strong fail-soft result=%#v", result)
+	}
+	if len(calls) != 2 || calls[0] != "tablet.media.play" || calls[1] != "lighting.channels.set" {
+		t.Fatalf("dispatch order=%v", calls)
+	}
+
+	cueExecutions, err := f.store.ListCueExecutions(context.Background(), f.session.ID)
+	if err != nil || len(cueExecutions) != 1 {
+		t.Fatalf("cue executions=%#v err=%v", cueExecutions, err)
+	}
+	actionExecutions, err := f.store.ListActionExecutions(context.Background(), cueExecutions[0].ID)
+	if err != nil || len(actionExecutions) != 2 {
+		t.Fatalf("action executions=%#v err=%v", actionExecutions, err)
+	}
+	if actionExecutions[0].Result != domain.ExecutionFailed ||
+		actionExecutions[1].Result != domain.ExecutionCompleted {
+		t.Fatalf("action results=%#v", actionExecutions)
+	}
+
+	events, err := f.store.ListEvents(context.Background(), f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEventTypes(t, events, []string{
+		"cue.started",
+		"action.started",
+		"action.failed",
+		"action.started",
+		"action.completed",
+		"cue.completed",
+	})
 }
 
 func TestCueGoTimeoutIsTruthful(t *testing.T) {
