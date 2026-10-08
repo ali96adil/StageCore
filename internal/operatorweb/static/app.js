@@ -449,7 +449,7 @@ async function renderCues(message = "", messageKind = "success") {
             <tr class="${cueRelationshipClass(cue, cueParents)}">
               <td>${esc(cue.order_index)}</td>
               <td>${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small></td>
+              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(cuePolicyObject(cue).start_delay_ms) + " ms" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
