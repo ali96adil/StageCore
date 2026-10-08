@@ -144,6 +144,12 @@
         </label>
         <label class="check-row"><input id="cueEnabled" type="checkbox" checked> Enabled</label>
       </div>
+      <section class="card">
+        <label>Start Delay (milliseconds, per Cue)
+          <input id="cueStartDelayMS" type="number" min="0" max="600000" step="1" value="0" inputmode="numeric">
+        </label>
+        <p class="muted">Delay starts when GO is pressed. Each linked Cue uses its own independent delay. 0 means immediate start. STOP cancels a pending delay.</p>
+      </section>
       <section class="card cue-link-editor">
         <div class="section-title-row">
           <div>
