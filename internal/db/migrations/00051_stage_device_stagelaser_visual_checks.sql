@@ -9,6 +9,7 @@ CREATE TABLE stage_device_stagelaser_visual_checks (
     visual_state TEXT NOT NULL CHECK(visual_state IN ('OFF', 'ON', 'UNKNOWN')),
     device_reported_state TEXT NOT NULL CHECK(device_reported_state <> ''),
     device_connection_state TEXT NOT NULL CHECK(device_connection_state <> ''),
+    device_boot_id TEXT NOT NULL CHECK(device_boot_id <> ''),
     checked_at_us INTEGER NOT NULL CHECK(checked_at_us > 0)
 );
 
