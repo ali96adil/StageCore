@@ -55,6 +55,21 @@
       stageLaserUnknown: "Laser state is unknown or requires resync. Do not assume OFF.",
       stageLaserTransportOnly: "ONLINE confirms authenticated communication only. It does NOT certify relay actuation, physical laser OFF state, or emission safety. Keep laser emission inhibited pending hardware qualification.",
       stageLaserReadOnly: "StageLaser monitoring only; no beam or relay output controls are available here.",
+      stageLaserVisualTitle: "Pre-show visual check (record only)",
+      stageLaserVisualHint: "Record what you physically see. This will NOT toggle the relay, change device state, certify beam OFF, or unblock SHOW. A mismatch needs investigation.",
+      stageLaserVisualSelect: "Observed emission status",
+      stageLaserVisualOn: "ON — physically observed",
+      stageLaserVisualOff: "OFF — physically observed",
+      stageLaserVisualUnknown: "UNKNOWN — cannot verify",
+      stageLaserVisualSave: "Record visual check",
+      stageLaserVisualConfirm: "Record this independent visual observation without changing the laser's actual or logical state?",
+      stageLaserVisualSaved: "Visual check recorded. Device control state unchanged.",
+      stageLaserVisualLast: "Last visual check",
+      stageLaserVisualMismatch: "MISMATCH — operator saw a different state. Do not rely on software OFF.",
+      stageLaserVisualMatch: "Visual observation matches the reported logical state; this does NOT prove fail-safe beam inhibition.",
+      stageLaserVisualUnverified: "Not comparable. Do not assume OFF.",
+      stageLaserVisualStale: "Device-reported state changed since this check; repeat the optical inspection.",
+      stageLaserVisualNone: "No visual check recorded for this Project.",
       stageLaserAssign: "Verify Safe Off and assign StageLaser",
       stageLaserAssigning: "Verifying DISARMED + OFF on the authenticated StageLaser…",
       stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
@@ -254,6 +269,21 @@
       stageLaserUnknown: "حالة الليزر غير معروفة أو تحتاج Resync. لا تفترض أنه مطفأ.",
       stageLaserTransportOnly: "ONLINE يثبت الاتصال الموثّق فقط؛ مو إثبات لتأهيل الريليه أو انطفاء الشعاع أو أمان تشغيل الليزر. خلي انبعاث الليزر معطّلاً لحين اكتمال فحوص الأمان الفعلية.",
       stageLaserReadOnly: "متابعة StageLaser فقط؛ ماكو أوامر لتشغيل الشعاع أو الريليه من هنا.",
+      stageLaserVisualTitle: "الفحص البصري قبل البروفة أو العرض (تسجيل فقط)",
+      stageLaserVisualHint: "سجّل الحالة اللي تشوفها بعينك. هذا ما يرسل نبضة للريليه، وما يغيّر حالة المتحكم أو يثبت أمان إطفاء الشعاع أو يرفع منع العرض. الاختلاف يحتاج فحص.",
+      stageLaserVisualSelect: "حالة الليزر بالمشاهدة",
+      stageLaserVisualOn: "شغال ON — مشاهدة فعلية",
+      stageLaserVisualOff: "مطفي OFF — مشاهدة فعلية",
+      stageLaserVisualUnknown: "غير متأكد UNKNOWN",
+      stageLaserVisualSave: "سجّل الفحص البصري",
+      stageLaserVisualConfirm: "تسجيل المشاهدة فقط بدون تغيير الحالة الفعلية أو المنطقية لليزر؟",
+      stageLaserVisualSaved: "تم تسجيل الفحص البصري؛ حالة التحكم بالجهاز ما تغيرت.",
+      stageLaserVisualLast: "آخر فحص بصري",
+      stageLaserVisualMismatch: "اختلاف MISMATCH — الحالة المشاهدة تختلف عن حالة الجهاز. لا تعتمد على OFF البرمجية.",
+      stageLaserVisualMatch: "الفحص البصري يطابق الحالة البرمجية، لكن هذا ما يثبت ضمان إيقاف الشعاع عند العطل.",
+      stageLaserVisualUnverified: "المقارنة غير مؤكدة؛ لا تعتبر الليزر مطفياً.",
+      stageLaserVisualStale: "الحالة اللي يرسلها الجهاز تغيرت بعد الفحص؛ أعد الفحص البصري.",
+      stageLaserVisualNone: "ماكو فحص بصري مسجل لهذا المشروع.",
       stageLaserAssign: "تحقق من Safe Off وخصص StageLaser",
       stageLaserAssigning: "جاري التحقق من DISARMED + OFF على اتصال StageLaser الموثق…",
       stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
@@ -545,6 +575,41 @@
       </section>`;
   }
 
+  function stageLaserVisualCheckMarkup(device, check, editable) {
+    if (!isStageLaser(device)) return "";
+    const observed = device.runtime?.observed_state || {};
+    const reported = String(observed.logical_state || "UNKNOWN").toUpperCase();
+    const previous = check || null;
+    const stale = Boolean(previous && previous.device_reported_state !== reported);
+    const message = !previous ? t("stageLaserVisualNone")
+      : stale ? t("stageLaserVisualStale")
+      : previous.comparison === "MISMATCH" ? t("stageLaserVisualMismatch")
+      : previous.comparison === "MATCH" ? t("stageLaserVisualMatch")
+      : t("stageLaserVisualUnverified");
+    const caution = !previous || stale || previous.comparison !== "MATCH";
+    return `
+      <section class="phase4-empty stage-laser-visual-check" data-stage-laser-visual-device="${esc(device.device_id)}"
+        data-reported-state="${esc(reported)}">
+        <strong>${esc(t("stageLaserVisualTitle"))}</strong>
+        <p class="muted">${esc(t("stageLaserVisualHint"))}</p>
+        <p class="${caution ? "message warn" : "muted"}" role="status">
+          ${previous ? esc(t("stageLaserVisualLast") + ": " + previous.visual_state + " / " + previous.device_reported_state + " · " + (previous.checked_at || "")) + " — " : ""}
+          ${esc(message)}
+        </p>
+        <label>${esc(t("stageLaserVisualSelect"))}
+          <select class="stage-laser-visual-state" ${editable ? "" : "disabled"}>
+            <option value="UNKNOWN">${esc(t("stageLaserVisualUnknown"))}</option>
+            <option value="OFF">${esc(t("stageLaserVisualOff"))}</option>
+            <option value="ON">${esc(t("stageLaserVisualOn"))}</option>
+          </select>
+        </label>
+        <div class="phase4-actions">
+          <button class="button ghost" data-stage-laser-visual-save="${esc(device.device_id)}"
+            type="button" ${editable ? "" : "disabled"}>${esc(t("stageLaserVisualSave"))}</button>
+        </div>
+      </section>`;
+  }
+
   function canManageFirmware() {
     return state.user?.role === "OWNER" || state.user?.role === "TECHNICIAN";
   }
@@ -685,6 +750,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
+        ${stageLaserVisualCheckMarkup(device, visualChecks[device.device_id], !assignmentLocked && canPair)}
         ${isStageLaser(device) ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
         ${setupAPMaintenanceMarkup(device)}
         ${firmwareMaintenanceMarkup(device)}
@@ -854,6 +920,23 @@
     const inventory = globalInventory.filter((device) =>
       device.enabled !== false && (device.assignment?.project_id || "") !== projectID
     );
+    const visualChecks = {};
+    if (canPair) {
+      const unique = new Map(
+        [...devices, ...globalInventory].filter(isStageLaser).map((device) => [device.device_id, device])
+      );
+      await Promise.all([...unique.keys()].map(async (deviceID) => {
+        try {
+          const result = await api(
+            `/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelaser-visual-check`
+          );
+          visualChecks[deviceID] = result.visual_check || null;
+        } catch (_) {
+          // Unavailable inspection data is never a successful verification.
+          visualChecks[deviceID] = null;
+        }
+      }));
+    }
     const assignmentSnapshotID = runtimeStatus?.runtime_snapshot?.runtime_snapshot_id || "";
     const assignmentLocked = runtimeStatus?.mode === "SHOW";
     // Never paint stale Project inventory after either additional async fetch.
@@ -891,6 +974,7 @@
           </dl>
           <div class="phase4-empty"><p>${esc(t("v2ReusableNote"))}</p></div>
           ${stageLaserTelemetryMarkup(device, true)}
+          ${stageLaserVisualCheckMarkup(device, visualChecks[device.device_id], !assignmentLocked && canPair)}
           ${stageLaser ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
           ${setupAPMaintenanceMarkup(device)}
           ${reusableTablet ? `
@@ -1203,6 +1287,39 @@
             }),
           });
           phase4Message(t("v2TabletAssigned"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-stage-laser-visual-save]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const section = button.closest(".stage-laser-visual-check");
+        const deviceID = button.dataset.stageLaserVisualSave || "";
+        const visualState = section?.querySelector(".stage-laser-visual-state")?.value || "UNKNOWN";
+        const expectedReported = section?.dataset.reportedState || "UNKNOWN";
+        if (!section || !deviceID || !["ON", "OFF", "UNKNOWN"].includes(visualState) ||
+            !globalThis.confirm(t("stageLaserVisualConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(
+            `/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelaser-visual-check`,
+            { method: "POST", body: JSON.stringify({
+              visual_state: visualState,
+              expected_device_reported_state: expectedReported,
+              confirm: "RECORD_VISUAL_OBSERVATION_ONLY",
+            }) }
+          );
+          phase4Message(t("stageLaserVisualSaved"), "success");
           if (renderGeneration === stageDevicesRenderGeneration &&
               state.page === "devices" && currentProjectID() === projectID) {
             await renderStageDevices();
