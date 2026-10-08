@@ -25,6 +25,7 @@ type StageLaserVisualCheck struct {
 	VisualState           string    `json:"visual_state"`
 	DeviceReportedState   string    `json:"device_reported_state"`
 	DeviceConnectionState string    `json:"device_connection_state"`
+	DeviceBootID          string    `json:"device_boot_id"`
 	Comparison            string    `json:"comparison"`
 	CheckedAt             time.Time `json:"checked_at"`
 }
@@ -78,13 +79,18 @@ func (r *Repository) RecordStageLaserVisualCheck(
 		return StageLaserVisualCheck{}, ErrInvalidDevice
 	}
 	reported := "UNKNOWN"
+	bootID := "UNKNOWN"
 	if stateJSON.Valid {
 		var observed struct {
 			LogicalState string `json:"logical_state"`
+			BootID       string `json:"boot_id"`
 		}
 		if json.Unmarshal([]byte(stateJSON.String), &observed) == nil {
 			if state := strings.ToUpper(strings.TrimSpace(observed.LogicalState)); state != "" {
 				reported = state
+			}
+			if value := strings.TrimSpace(observed.BootID); value != "" {
+				bootID = value
 			}
 		}
 	}
@@ -95,18 +101,21 @@ func (r *Repository) RecordStageLaserVisualCheck(
 	check := StageLaserVisualCheck{
 		CheckID: uuid.NewString(), DeviceID: deviceID, ProjectID: projectID,
 		ActorID: actorID, VisualState: visual, DeviceReportedState: reported,
-		DeviceConnectionState: connection, Comparison: stageLaserComparison(visual, reported),
-		CheckedAt: checkedAt,
+		DeviceConnectionState: connection, DeviceBootID: bootID,
+		Comparison: stageLaserComparison(visual, reported), CheckedAt: checkedAt,
 	}
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO stage_device_stagelaser_visual_checks
 			(check_id, device_id, project_id, actor_id, visual_state,
-			 device_reported_state, device_connection_state, checked_at_us)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			 device_reported_state, device_connection_state, device_boot_id, checked_at_us)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, check.CheckID, check.DeviceID, check.ProjectID, check.ActorID,
 		check.VisualState, check.DeviceReportedState, check.DeviceConnectionState,
-		checkedAt.UnixMicro()); err != nil {
+		check.DeviceBootID, checkedAt.UnixMicro()); err != nil {
 		return StageLaserVisualCheck{}, fmt.Errorf("record StageLaser visual check: %w", err)
+	}
+	if connection != string(ConnectionOnline) {
+		check.Comparison = "UNVERIFIED"
 	}
 	if err = tx.Commit(); err != nil {
 		return StageLaserVisualCheck{}, err
@@ -124,14 +133,14 @@ func (r *Repository) LatestStageLaserVisualCheck(
 	var checkedAtUS int64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT check_id, device_id, project_id, actor_id, visual_state,
-		       device_reported_state, device_connection_state, checked_at_us
+		       device_reported_state, device_connection_state, device_boot_id, checked_at_us
 		FROM stage_device_stagelaser_visual_checks
 		WHERE device_id = ? AND project_id = ?
 		ORDER BY checked_at_us DESC, check_id DESC LIMIT 1
 	`, deviceID, projectID).Scan(
 		&check.CheckID, &check.DeviceID, &check.ProjectID, &check.ActorID,
 		&check.VisualState, &check.DeviceReportedState, &check.DeviceConnectionState,
-		&checkedAtUS,
+		&check.DeviceBootID, &checkedAtUS,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -140,6 +149,9 @@ func (r *Repository) LatestStageLaserVisualCheck(
 		return nil, err
 	}
 	check.Comparison = stageLaserComparison(check.VisualState, check.DeviceReportedState)
+	if check.DeviceConnectionState != string(ConnectionOnline) {
+		check.Comparison = "UNVERIFIED"
+	}
 	check.CheckedAt = time.UnixMicro(checkedAtUS).UTC()
 	return &check, nil
 }
