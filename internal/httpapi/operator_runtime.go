@@ -39,6 +39,7 @@ type runtimeJumpRequest struct {
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
 	Confirm              bool    `json:"confirm"`
+	Async                bool    `json:"async"`
 }
 
 type runtimeExecutionView struct {
@@ -175,11 +176,17 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		request := runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
-		})
-		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
+		}
+		if body.Async {
+			result := runtime.QueueGo(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusAccepted, result, map[string]any{"operation": "JUMP"})
+		} else {
+			result := runtime.Go(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
+		}
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/project-blackout", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
