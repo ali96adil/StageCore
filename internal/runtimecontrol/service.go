@@ -75,6 +75,7 @@ type activeRun struct {
 	done          chan struct{}
 	cancel        context.CancelFunc
 	sequence      uint64
+	resources     []string
 }
 
 type StartRequest struct {
@@ -505,6 +506,23 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
 
+	// Resolve all linked Cue outputs while GO selection remains fenced.
+	// Same-target output overlap is rejected rather than silently racing
+	// late old actions against a newer Cue's desired device state.
+	resources, previewRejected, previewErr := s.engine.PreviewCueOutputTargets(
+		ctx, session, cueengine.CueGoPayload{
+			ExpectedCurrentCueID: req.ExpectedCurrentCueID,
+			RequestedNextCueID: req.RequestedCueID,
+			OperatorNote: req.OperatorNote,
+		})
+	if previewErr != nil {
+		return failed(req.RequestID, "CUE_OUTPUT_PREVIEW_FAILED")
+	}
+	if previewRejected != nil {
+		previewRejected.CommandID = req.RequestID
+		return *previewRejected
+	}
+
 	done := make(chan struct{})
 	delayStop, cancel := context.WithCancel(context.Background())
 	runCtx := cueengine.WithSelectionHook(cueengine.WithDelayStop(ctx, delayStop.Done()), unlock)
@@ -514,6 +532,14 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	run := activeRun{
 		requestID: req.RequestID, correlationID: command.CorrelationID,
 		done: done, cancel: cancel, sequence: s.nextSequence,
+		resources: resources,
+	}
+	for _, other := range s.active[session.ID] {
+		if conflict := overlappingTarget(resources, other.resources); conflict != "" {
+			s.mu.Unlock()
+			cancel()
+			return s.rejectOutputConflict(ctx, command, other.requestID, conflict)
+		}
 	}
 	if s.active[session.ID] == nil {
 		s.active[session.ID] = make(map[string]activeRun)
@@ -538,6 +564,36 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		s.mu.Unlock()
 	}()
 	return s.engine.ExecuteCueGo(runCtx, session.ID, command)
+}
+
+// overlappingTarget is a conservative in-flight resource fence. Two Cues
+// writing one physical target cannot overlap while an earlier one is running.
+// Empty-resource Cues (e.g. sim.test-only) remain freely concurrent.
+func overlappingTarget(a, b []string) string {
+	for _, left := range a {
+		for _, right := range b {
+			if left == right || left == "*" || right == "*" {
+				if left == "*" || right == "*" { return "UNRESOLVED_TARGET" }
+				return left
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Service) rejectOutputConflict(
+	ctx context.Context, command contracts.CommandEnvelope, priorRequestID, target string,
+) contracts.CommandResult {
+	if existing, terminal, ok := s.reserve(ctx, command); !ok {
+		return existing
+	} else if terminal { return existing }
+	result := rejected(command.CommandID, "OUTPUT_BUSY",
+		"another Cue execution still controls this output target; wait or STOP the conflicting Cue",
+		target)
+	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		return failed(command.CommandID, "COMMAND_FINISH_FAILED")
+	}
+	return result
 }
 
 // latestActiveRun is the last GO still running, NOT necessarily the latest
