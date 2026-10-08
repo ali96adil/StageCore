@@ -58,6 +58,46 @@ func NewWithExecutor(s *store.Store, executor capability.Executor) *Engine {
 	return &Engine{store: s, executor: executor}
 }
 
+// PreviewCueOutputTargets conservatively inventories output targets for the
+// next GO, including every linked Cue, before any actions are dispatched.
+// This enables RuntimeControl to reject overlapping writes to one target.
+// sim.test is a deterministic in-process simulator and has no physical output.
+func (e *Engine) PreviewCueOutputTargets(
+	ctx context.Context, session domain.Session, payload CueGoPayload,
+) ([]string, *contracts.CommandResult, error) {
+	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, session.RuntimeSnapshotID)
+	if err != nil { return nil, nil, err }
+	if runtimeSnapshot.Status != domain.SnapshotPublished {
+		failure := rejection("", "SNAPSHOT_NOT_PUBLISHED", "SNAPSHOT_MISMATCH",
+			"runtime snapshot not published", false, session.RuntimeSnapshotID)
+		return nil, &failure, nil
+	}
+	manifest, err := snapshot.Decode(runtimeSnapshot.Manifest)
+	if err != nil { return nil, nil, err }
+	selected, rejected := selectCue(manifest, session.CurrentCueID, payload)
+	if rejected != nil { return nil, rejected, nil }
+	group, err := resolveCueGroup(manifest, selected)
+	if err != nil {
+		failure := rejection("", "CUE_GROUP_INVALID", "VALIDATION", err.Error(), false, selected.ID)
+		return nil, &failure, nil
+	}
+	seen := map[string]struct{}{}
+	for _, cue := range group {
+		for _, action := range cue.Actions {
+			if !action.Enabled || action.CapabilityKey == "sim.test" { continue }
+			target := strings.TrimSpace(action.TargetRef)
+			if target == "" {
+				// Unknown target must not be treated as independent.
+				target = "*"
+			}
+			seen[target] = struct{}{}
+		}
+	}
+	targets := make([]string, 0, len(seen))
+	for target := range seen { targets = append(targets, target) }
+	return targets, nil, nil
+}
+
 func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
 	if result := validateEnvelope(command); result != nil {
 		return *result
