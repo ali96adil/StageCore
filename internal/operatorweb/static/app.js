@@ -1300,6 +1300,7 @@ async function jumpRuntime() {
         request_id: requestID(), cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         confirm: true,
+        async: true,
       },
     });
     await renderRuntime(true);
