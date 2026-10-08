@@ -93,6 +93,7 @@ type CueRequest struct {
 	ExpectedCurrentCueID *string
 	RequestedCueID       *string
 	OperatorNote         *string
+	onSelected           func()
 }
 
 type StopRequest struct {
@@ -533,7 +534,10 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 
 	done := make(chan struct{})
 	delayStop, cancel := context.WithCancel(context.Background())
-	runCtx := cueengine.WithSelectionHook(cueengine.WithDelayStop(ctx, delayStop.Done()), unlock)
+	runCtx := cueengine.WithSelectionHook(cueengine.WithDelayStop(ctx, delayStop.Done()), func() {
+		unlock()
+		if req.onSelected != nil { req.onSelected() }
+	})
 
 	s.mu.Lock()
 	s.nextSequence++
@@ -602,6 +606,36 @@ func (s *Service) rejectOutputConflict(
 		return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 	}
 	return result
+}
+
+// QueueGo provides a fast, durable GO acceptance for the operator interface:
+// return ACCEPTED only after current_cue_id was persisted. The run continues
+// under Hub-owned context, independent from the original HTTP request.
+func (s *Service) QueueGo(ctx context.Context, req CueRequest) contracts.CommandResult {
+	if ctx == nil {
+		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "request context is missing", req.SessionID)
+	}
+	selected := make(chan struct{}, 1)
+	terminal := make(chan contracts.CommandResult, 1)
+	req.onSelected = func() {
+		select { case selected <- struct{}{}: default: }
+	}
+	go func() {
+		terminal <- s.Go(context.WithoutCancel(ctx), req)
+	}()
+	select {
+	case <-selected:
+		return contracts.CommandResult{
+			CommandID: req.RequestID, Status: contracts.CommandAccepted,
+			Payload: json.RawMessage(`{"cue_selected":true,"execution_continues":true}`),
+		}
+	case result := <-terminal:
+		return result
+	case <-ctx.Done():
+		// The Hub-owned operation may still complete; idempotent request_id is
+		// required for a retry. Never claim a cancelled HTTP request stopped GO.
+		return failed(req.RequestID, "GO_ACCEPTANCE_UNCONFIRMED")
+	}
 }
 
 // latestActiveRun is the last GO still running, NOT necessarily the latest
