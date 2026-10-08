@@ -47,14 +47,15 @@ func stageLaserComparison(visual, reported string) string {
 // The reported logical state comes from the DB inside the same transaction,
 // never from a browser-provided or manually overridden value.
 func (r *Repository) RecordStageLaserVisualCheck(
-	ctx context.Context, deviceID, projectID, actorID, visual, expectedReported string,
+	ctx context.Context, deviceID, projectID, actorID, visual, expectedReported, expectedBootID string,
 ) (StageLaserVisualCheck, error) {
 	deviceID, projectID, actorID = strings.TrimSpace(deviceID), strings.TrimSpace(projectID), strings.TrimSpace(actorID)
 	visual = strings.ToUpper(strings.TrimSpace(visual))
 	expectedReported = strings.ToUpper(strings.TrimSpace(expectedReported))
+	expectedBootID = strings.TrimSpace(expectedBootID)
 	if deviceID == "" || projectID == "" || actorID == "" ||
 		(visual != "ON" && visual != "OFF" && visual != "UNKNOWN") ||
-		expectedReported == "" {
+		expectedReported == "" || expectedBootID == "" {
 		return StageLaserVisualCheck{}, ErrInvalidDevice
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -94,7 +95,7 @@ func (r *Repository) RecordStageLaserVisualCheck(
 			}
 		}
 	}
-	if expectedReported != reported {
+	if expectedReported != reported || expectedBootID != bootID {
 		return StageLaserVisualCheck{}, ErrStageLaserVisualStateChanged
 	}
 	checkedAt := r.now().UTC()
