@@ -62,8 +62,11 @@ type Service struct {
 	stopSafety      SessionStopSafety
 	emergencySafety EmergencySafety
 
-	mu     sync.Mutex
-	active map[string]activeRun
+	mu           sync.Mutex
+	active       map[string]map[string]activeRun
+	nextSequence uint64
+	// Keep Cue selection ordering brief; do not hold while Actions run.
+	selectionMu  sync.Mutex
 }
 
 type activeRun struct {
@@ -71,6 +74,7 @@ type activeRun struct {
 	correlationID string
 	done          chan struct{}
 	cancel        context.CancelFunc
+	sequence      uint64
 }
 
 type StartRequest struct {
@@ -115,7 +119,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 	service := &Service{
 		store: s, executor: stoppable,
 		engine: cueengine.NewWithExecutor(s, stoppable),
-		active: make(map[string]activeRun),
+		active: make(map[string]map[string]activeRun),
 	}
 	for _, option := range options {
 		option(service)
@@ -465,9 +469,19 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
 		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
 	}
+	// Multiple Cues may execute simultaneously, but selecting/advancing each
+	// one remains serialized to prevent two rapid GOs from selecting Cue N+1.
+	s.selectionMu.Lock()
+	var release sync.Once
+	unlock := func() { release.Do(s.selectionMu.Unlock) }
+	defer unlock()
+
 	session, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
+	}
+	if session.Status != domain.SessionActive {
+		return rejected(req.RequestID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID)
 	}
 	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
 	if err != nil {
@@ -484,30 +498,65 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
 
 	done := make(chan struct{})
-	// STOP cancels only Cue delays. Command persistence must retain the live
-	// request context so terminal results can still be durably recorded.
 	delayStop, cancel := context.WithCancel(context.Background())
-	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
-	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
+	runCtx := cueengine.WithSelectionHook(cueengine.WithDelayStop(ctx, delayStop.Done()), unlock)
+
 	s.mu.Lock()
-	if existing, found := s.active[session.ID]; found {
+	s.nextSequence++
+	run := activeRun{
+		requestID: req.RequestID, correlationID: command.CorrelationID,
+		done: done, cancel: cancel, sequence: s.nextSequence,
+	}
+	if s.active[session.ID] == nil {
+		s.active[session.ID] = make(map[string]activeRun)
+	}
+	if _, alreadyActive := s.active[session.ID][req.RequestID]; alreadyActive {
 		s.mu.Unlock()
 		cancel()
-		return s.rejectWhileActive(ctx, command, existing)
+		return rejected(req.RequestID, "DUPLICATE_UNRESOLVED", "Cue request is already in progress", req.RequestID)
 	}
-	s.active[session.ID] = run
+	s.active[session.ID][req.RequestID] = run
 	s.mu.Unlock()
+
 	defer func() {
 		cancel()
 		s.executor.clear(command.CorrelationID)
 		s.mu.Lock()
-		if current, ok := s.active[session.ID]; ok && current.requestID == req.RequestID {
+		delete(s.active[session.ID], req.RequestID)
+		if len(s.active[session.ID]) == 0 {
 			delete(s.active, session.ID)
 		}
 		close(done)
 		s.mu.Unlock()
 	}()
 	return s.engine.ExecuteCueGo(runCtx, session.ID, command)
+}
+
+// latestActiveRun is the last GO still running, NOT necessarily the latest
+// completed Cue. STOP CUE only cancels this execution. STOP SESSION and
+// Emergency Blackout cancel all outstanding executions.
+func (s *Service) latestActiveRun(sessionID string) (activeRun, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest activeRun
+	found := false
+	for _, run := range s.active[sessionID] {
+		if !found || run.sequence > latest.sequence {
+			latest = run
+			found = true
+		}
+	}
+	return latest, found
+}
+
+func (s *Service) activeRunsForSession(sessionID string) []activeRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runs := make([]activeRun, 0, len(s.active[sessionID]))
+	for _, run := range s.active[sessionID] {
+		runs = append(runs, run)
+	}
+	return runs
 }
 
 func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) contracts.CommandResult {
