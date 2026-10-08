@@ -153,3 +153,67 @@ func TestLinkedCueGroupRunsTogetherAndChildIsSkippedByNextGO(t *testing.T) {
 		t.Fatalf("session current Cue=%v want %s", state.CurrentCueID, next.ID)
 	}
 }
+
+func TestLinkedCueBranchesHaveIndependentDelays(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil { t.Fatal(err) }
+	defer h.Close()
+	s := store.New(h.DB, clock.Real{})
+	_, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Delayed Group", CreatedBy: "test"})
+	if err != nil { t.Fatal(err) }
+	child, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "2", Name: "Delayed Child", OrderIndex: 2,
+		Enabled: true, ExecutionPolicy: json.RawMessage(`{"start_delay_ms":180}`),
+	}, []domain.Action{action("SEQUENTIAL", "COMPLETE", 0, "")})
+	if err != nil { t.Fatal(err) }
+	parentPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{child.ID},
+		"linked_cue_mode": "TOGETHER",
+		"start_delay_ms": 0,
+	})
+	parent, err := s.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Immediate Parent", OrderIndex: 1,
+		Enabled: true, ExecutionPolicy: parentPolicy,
+	}, []domain.Action{action("SEQUENTIAL", "COMPLETE", 0, "")})
+	if err != nil { t.Fatal(err) }
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
+	snap, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "test")
+	if err != nil { t.Fatal(err) }
+	session, err := s.CreateSession(ctx, snap.ID, domain.SessionSimulation, "delayed group")
+	if err != nil { t.Fatal(err) }
+	commandID, err := stageid.New()
+	if err != nil { t.Fatal(err) }
+	payload, _ := json.Marshal(cueengine.CueGoPayload{})
+	command := contracts.CommandEnvelope{
+		CommandID: commandID, CommandType: cueengine.CueGoCommandType,
+		SchemaVersion: contracts.SchemaVersion1, IssuedAt: time.Now().UTC(),
+		ProjectID: snap.ProjectID, RuntimeSnapshotID: snap.ID,
+		Issuer: "test.operator", Priority: "P1", Payload: payload,
+	}
+	start := time.Now()
+	result := cueengine.New(s).ExecuteCueGo(ctx, session.ID, command)
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("delayed GO=%+v", result)
+	}
+	if elapsed := time.Since(start); elapsed < 130*time.Millisecond {
+		t.Fatalf("linked child ignored own 180ms start delay: elapsed=%s", elapsed)
+	}
+	events, err := s.ListEvents(ctx, session.ID)
+	if err != nil { t.Fatal(err) }
+	var started, completed, secondStarted int
+	for _, event := range events {
+		switch event.EventType {
+		case "action.started":
+			started++
+			if started == 2 { secondStarted = int(event.Sequence) }
+		case "action.completed":
+			completed++
+			if started == 2 && completed == 0 { t.Fatal("unexpected order") }
+		}
+	}
+	if started != 2 || completed != 2 || secondStarted == 0 {
+		t.Fatalf("linked action events missing; started=%d completed=%d events=%+v", started, completed, events)
+	}
+	_ = parent
+}
