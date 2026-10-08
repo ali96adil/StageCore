@@ -579,8 +579,15 @@
     if (!isStageLaser(device)) return "";
     const observed = device.runtime?.observed_state || {};
     const reported = String(observed.logical_state || "UNKNOWN").toUpperCase();
+    const bootID = String(observed.boot_id || "UNKNOWN");
+    const connection = String(device.runtime?.connection_state || device.connection_state || "UNKNOWN");
     const previous = check || null;
-    const stale = Boolean(previous && previous.device_reported_state !== reported);
+    const stale = Boolean(previous && (
+      previous.device_reported_state !== reported ||
+      previous.device_boot_id !== bootID ||
+      previous.device_connection_state !== connection ||
+      connection !== "ONLINE"
+    ));
     const message = !previous ? t("stageLaserVisualNone")
       : stale ? t("stageLaserVisualStale")
       : previous.comparison === "MISMATCH" ? t("stageLaserVisualMismatch")
@@ -589,7 +596,7 @@
     const caution = !previous || stale || previous.comparison !== "MATCH";
     return `
       <section class="phase4-empty stage-laser-visual-check" data-stage-laser-visual-device="${esc(device.device_id)}"
-        data-reported-state="${esc(reported)}">
+        data-reported-state="${esc(reported)}" data-boot-id="${esc(bootID)}">
         <strong>${esc(t("stageLaserVisualTitle"))}</strong>
         <p class="muted">${esc(t("stageLaserVisualHint"))}</p>
         <p class="${caution ? "message warn" : "muted"}" role="status">
@@ -1307,6 +1314,7 @@
         const deviceID = button.dataset.stageLaserVisualSave || "";
         const visualState = section?.querySelector(".stage-laser-visual-state")?.value || "UNKNOWN";
         const expectedReported = section?.dataset.reportedState || "UNKNOWN";
+        const expectedBootID = section?.dataset.bootId || "UNKNOWN";
         if (!section || !deviceID || !["ON", "OFF", "UNKNOWN"].includes(visualState) ||
             !globalThis.confirm(t("stageLaserVisualConfirm"))) return;
         button.disabled = true;
@@ -1316,6 +1324,7 @@
             { method: "POST", body: JSON.stringify({
               visual_state: visualState,
               expected_device_reported_state: expectedReported,
+              expected_device_boot_id: expectedBootID,
               confirm: "RECORD_VISUAL_OBSERVATION_ONLY",
             }) }
           );
