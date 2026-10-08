@@ -839,7 +839,7 @@ cueForm.addEventListener("submit", async (event) => {
         const policy = linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy"));
         const rawDelay = String(el("cueStartDelayMS").value || "0").trim();
         const delayMS = Number(rawDelay);
-        if (!/^\\d+$/.test(rawDelay) || !Number.isSafeInteger(delayMS) || delayMS > 600000) {
+        if (!/^[0-9]+$/.test(rawDelay) || !Number.isSafeInteger(delayMS) || delayMS > 600000) {
           throw new Error("Cue Start Delay must be an integer from 0 to 600000 milliseconds.");
         }
         if (delayMS) policy.start_delay_ms = delayMS;
