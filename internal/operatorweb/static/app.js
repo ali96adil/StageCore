@@ -776,6 +776,7 @@ function openCueEditor(cue) {
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
+  el("cueStartDelayMS").value = String(cuePolicyObject(cue).start_delay_ms || 0);
   renderLinkedCuesEditor(cue);
   el("cueNotes").value = cue?.notes_summary || "";
   actionsEditor.innerHTML = "";
@@ -834,7 +835,17 @@ cueForm.addEventListener("submit", async (event) => {
       cue_type: "STANDARD",
       criticality: el("cueCriticality").value,
       enabled: el("cueEnabled").checked,
-      execution_policy: linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy")),
+      execution_policy: (() => {
+        const policy = linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy"));
+        const rawDelay = String(el("cueStartDelayMS").value || "0").trim();
+        const delayMS = Number(rawDelay);
+        if (!/^\\d+$/.test(rawDelay) || !Number.isSafeInteger(delayMS) || delayMS > 600000) {
+          throw new Error("Cue Start Delay must be an integer from 0 to 600000 milliseconds.");
+        }
+        if (delayMS) policy.start_delay_ms = delayMS;
+        else delete policy.start_delay_ms;
+        return policy;
+      })(),
       notes_summary: el("cueNotes").value.trim(),
       actions,
     };
