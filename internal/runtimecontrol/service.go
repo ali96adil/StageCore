@@ -690,9 +690,7 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
 
-	s.mu.Lock()
-	run, ok := s.active[session.ID]
-	s.mu.Unlock()
+	run, ok := s.latestActiveRun(session.ID)
 	if !ok {
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
 	}
@@ -718,24 +716,28 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 }
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
-	s.mu.Lock()
-	run, ok := s.active[sessionID]
-	s.mu.Unlock()
-	if !ok {
+	runs := s.activeRunsForSession(sessionID)
+	if len(runs) == 0 {
 		return nil
 	}
-	s.executor.stop(run.correlationID)
-	if run.cancel != nil { run.cancel() }
+	// Stop *every* execution before waiting. The same bound applies to the
+	// whole batch; a slow older Cue cannot hide behind the current Cue.
+	for _, run := range runs {
+		s.executor.stop(run.correlationID)
+		if run.cancel != nil { run.cancel() }
+	}
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
-	select {
-	case <-run.done:
-		return nil
-	case <-timer.C:
-		return fmt.Errorf("active Cue did not terminate within the bounded stop wait")
-	case <-ctx.Done():
-		return fmt.Errorf("session stop was cancelled while waiting for the active Cue: %w", ctx.Err())
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-timer.C:
+			return fmt.Errorf("%d active Cue execution(s) did not terminate within the bounded stop wait", len(runs))
+		case <-ctx.Done():
+			return fmt.Errorf("session stop was cancelled while waiting for Cue executions: %w", ctx.Err())
+		}
 	}
+	return nil
 }
 
 func (s *Service) rejectWhileActive(ctx context.Context, command contracts.CommandEnvelope, active activeRun) contracts.CommandResult {
