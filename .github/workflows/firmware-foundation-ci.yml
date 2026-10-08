@@ -1,0 +1,55 @@
+name: Firmware Foundation CI
+
+on:
+  pull_request:
+    paths:
+      - "firmware/foundation/**"
+      - "tests/firmware_foundation_contract_test.py"
+      - ".github/workflows/firmware-foundation-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "firmware/foundation/**"
+      - "tests/firmware_foundation_contract_test.py"
+      - ".github/workflows/firmware-foundation-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-foundation-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [esp32dev, esp32c3]
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Contract tests
+        run: python -m unittest tests/firmware_foundation_contract_test.py -v
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio==6.2.0
+      - name: Stage canonical Foundation component
+        shell: bash
+        run: |
+          set -euo pipefail
+          STARTER="firmware/foundation/esp-idf/starter"
+          rm -rf "$STARTER/components/stagecore_foundation"
+          mkdir -p "$STARTER/components"
+          cp -R             firmware/foundation/esp-idf/components/stagecore_foundation             "$STARTER/components/stagecore_foundation"
+      - name: Build Foundation starter
+        run: >
+          pio run
+          --project-dir firmware/foundation/esp-idf/starter
+          -e ${{ matrix.env }}

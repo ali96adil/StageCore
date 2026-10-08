@@ -36,6 +36,9 @@ jobs:
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
         run: node --check internal/operatorweb/static/phase4.js
+      - name: Firmware Foundation contract
+        if: matrix.go == '1.26.x'
+        run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
       - name: Test
         run: go test ./...
       - name: Vet

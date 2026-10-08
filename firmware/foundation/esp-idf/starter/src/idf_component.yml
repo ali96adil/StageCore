@@ -1,0 +1,3 @@
+# The Foundation CI pins the ESP-IDF/PlatformIO toolchain.
+# Runtime component dependencies are declared by stagecore_foundation.
+dependencies: {}
