@@ -164,3 +164,24 @@ func TestRapidConcurrentGoCannotSelectSameCueTwice(t *testing.T) {
 		select { case <-ch: case <-time.After(2*time.Second): t.Fatal("GO leaked") }
 	}
 }
+
+func TestOverlappingTargetRejectsSharedPhysicalTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a []string
+		b []string
+		want string
+	}{
+		{"different output aliases", []string{"LIGHTING_CH1"}, []string{"VDMX"}, ""},
+		{"same output alias", []string{"LIGHTING_CH1"}, []string{"LIGHTING_CH1"}, "LIGHTING_CH1"},
+		{"missing target conflicts with everything", []string{"*"}, []string{"TABLET"}, "UNRESOLVED_TARGET"},
+		{"no external output", nil, []string{"VDMX"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := overlappingTarget(tc.a, tc.b); got != tc.want {
+				t.Fatalf("conflict=%q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
