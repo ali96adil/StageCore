@@ -389,6 +389,76 @@ func WithOperatorStageDevices(
 			})
 		}))
 
+		// An operator's visual inspection is a separate audited observation.
+		// It never calls the Stage Device runtime or changes logical state,
+		// safe-off proof, readiness, assignment, hardware output, or GO authority.
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-visual-check",
+			withPermission(auth, userauth.PermissionProjectRead,
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+					if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+						writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGELASER_VISUAL_CHECK_PAIRING_PERMISSION_REQUIRED"})
+						return
+					}
+					latest, err := devices.LatestStageLaserVisualCheck(
+						r.Context(), r.PathValue("device_id"), r.PathValue("project_id"))
+					if err != nil {
+						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGELASER_VISUAL_CHECK_UNAVAILABLE"})
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{
+						"visual_check": latest, "advisory_only": true,
+					})
+				}))
+
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-visual-check",
+			withPermission(auth, userauth.PermissionProjectEdit,
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+					if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+						writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGELASER_VISUAL_CHECK_PAIRING_PERMISSION_REQUIRED"})
+						return
+					}
+					projectID := strings.TrimSpace(r.PathValue("project_id"))
+					deviceID := strings.TrimSpace(r.PathValue("device_id"))
+					if projectID == "" || deviceID == "" {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_VISUAL_CHECK_SCOPE_REQUIRED"})
+						return
+					}
+					if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+						writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
+						return
+					}
+					var input struct {
+						VisualState                 string `json:"visual_state"`
+						ExpectedDeviceReportedState string `json:"expected_device_reported_state"`
+						ExpectedDeviceBootID       string `json:"expected_device_boot_id"`
+						Confirm                     string `json:"confirm"`
+					}
+					if !decodeBoundedJSON(w, r, &input) {
+						return
+					}
+					if input.Confirm != "RECORD_VISUAL_OBSERVATION_ONLY" {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_VISUAL_CHECK_CONFIRMATION_REQUIRED"})
+						return
+					}
+					check, err := devices.RecordStageLaserVisualCheck(
+						r.Context(), deviceID, projectID, session.User.ID,
+						input.VisualState, input.ExpectedDeviceReportedState, input.ExpectedDeviceBootID,
+					)
+					if err != nil {
+						status := http.StatusConflict
+						if errors.Is(err, deviceexperience.ErrInvalidDevice) {
+							status = http.StatusBadRequest
+						}
+						writeJSON(w, status, map[string]any{"error": "STAGELASER_VISUAL_CHECK_NOT_RECORDED", "detail": err.Error()})
+						return
+					}
+					writeJSON(w, http.StatusCreated, map[string]any{
+						"visual_check": check, "advisory_only": true,
+						"commands_enabled": false,
+						"note": "VISUAL_CHECK_DOES_NOT_OVERRIDE_DEVICE_RUNTIME_OR_CERTIFY_LASER_SAFE_OFF",
+					})
+				}))
+
 		// Device provisioning inventory is not scoped to any Project yet.
 		// Only an operator authorized for pairing may discover unassigned v2
 		// identities. This endpoint grants NO Assign/Transfer authority.
