@@ -430,6 +430,7 @@ func WithOperatorStageDevices(
 					var input struct {
 						VisualState                 string `json:"visual_state"`
 						ExpectedDeviceReportedState string `json:"expected_device_reported_state"`
+						ExpectedDeviceBootID       string `json:"expected_device_boot_id"`
 						Confirm                     string `json:"confirm"`
 					}
 					if !decodeBoundedJSON(w, r, &input) {
@@ -441,7 +442,7 @@ func WithOperatorStageDevices(
 					}
 					check, err := devices.RecordStageLaserVisualCheck(
 						r.Context(), deviceID, projectID, session.User.ID,
-						input.VisualState, input.ExpectedDeviceReportedState,
+						input.VisualState, input.ExpectedDeviceReportedState, input.ExpectedDeviceBootID,
 					)
 					if err != nil {
 						status := http.StatusConflict
