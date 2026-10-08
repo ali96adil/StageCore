@@ -12,6 +12,7 @@ class FirmwareFoundationContractTest(unittest.TestCase):
     def test_required_component_surface_exists(self):
         required = [
             "CMakeLists.txt",
+            "idf_component.yml",
             "include/device_identity.h",
             "include/foundation_contract.h",
             "include/foundation_store.h",
