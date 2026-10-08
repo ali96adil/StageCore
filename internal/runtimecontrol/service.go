@@ -285,6 +285,10 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
@@ -344,6 +348,10 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
@@ -581,6 +589,10 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
