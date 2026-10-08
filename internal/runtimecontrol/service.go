@@ -70,6 +70,7 @@ type activeRun struct {
 	requestID     string
 	correlationID string
 	done          chan struct{}
+	cancel        context.CancelFunc
 }
 
 type StartRequest struct {
@@ -483,15 +484,18 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
 
 	done := make(chan struct{})
-	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done}
+	runCtx, cancel := context.WithCancel(ctx)
+	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
 	if existing, found := s.active[session.ID]; found {
 		s.mu.Unlock()
+		cancel()
 		return s.rejectWhileActive(ctx, command, existing)
 	}
 	s.active[session.ID] = run
 	s.mu.Unlock()
 	defer func() {
+		cancel()
 		s.executor.clear(command.CorrelationID)
 		s.mu.Lock()
 		if current, ok := s.active[session.ID]; ok && current.requestID == req.RequestID {
@@ -500,7 +504,7 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		close(done)
 		s.mu.Unlock()
 	}()
-	return s.engine.ExecuteCueGo(ctx, session.ID, command)
+	return s.engine.ExecuteCueGo(runCtx, session.ID, command)
 }
 
 func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) contracts.CommandResult {
@@ -641,6 +645,7 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
 	}
 	s.executor.stop(run.correlationID)
+	if run.cancel != nil { run.cancel() }
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	select {
@@ -668,6 +673,7 @@ func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string)
 		return nil
 	}
 	s.executor.stop(run.correlationID)
+	if run.cancel != nil { run.cancel() }
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	select {
