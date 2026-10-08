@@ -79,17 +79,28 @@ Stage Devices renders the Setup/Recovery Wi-Fi section only when the authenticat
 device advertises the capability. OWNER and TECHNICIAN may set or reset the
 password. The UI uses a masked field and never reads the existing password back.
 
-## Current device audit
+## Current device audit — 2026-10-08
 
-- ESP32 DMX Lighting: first-run + Recovery AP exist. Default password is
-  `12345678`. Managed override support is the next firmware integration.
-- ESP32 Camera: first-run + Recovery AP exist. Default password is
-  `12345678`. It is not yet an authenticated v2 Stage Device, therefore
-  remote password mutation must remain disabled until a secure maintenance
-  transport exists.
-- ESP32 StageLaser: first-run AP exists and the device is authenticated v2.
-  Default password is `12345678`. Recovery AP on prolonged Stage LAN loss is
-  currently missing and is a Foundation compliance gap.
+All current StageCore ESP device families satisfy this Foundation contract in
+software. Physical qualification remains a separate device-specific gate.
+
+- ESP32 DMX Lighting: Foundation complete. First-run + router-loss Recovery AP,
+  fallback `12345678`, persisted local override, authenticated
+  `SET` / `RESET_DEFAULT`, and output-authority isolation are on main.
+- ESP32 StageLaser: Foundation complete in software. First-run + router-loss
+  Recovery AP, fallback `12345678`, persisted local override, authenticated
+  `SET` / `RESET_DEFAULT`, APSTA recovery and bounded reconnect are on main.
+  Laser physical actuation qualification remains separate.
+- ESP32 Camera: Foundation complete in software. Persistent identity/trust,
+  authenticated `stagecore.device/2`, managed Setup/Recovery AP password,
+  protected first-run + router-loss Recovery AP and the native C3 camera
+  coexistence image are on Camera main. The proven AI Thinker/OV2640 MJPEG,
+  relay and flash contracts are preserved while maintenance remains isolated
+  from camera/show authority. Camera C3 physical qualification remains separate.
+
+StageCore Core renders the generic Setup/Recovery Wi-Fi maintenance UI from the
+authenticated capability, including capable reusable/UNASSIGNED inventory.
+No per-device StageCore settings page is required.
 
 ## New-device acceptance checklist
 
