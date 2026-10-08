@@ -558,11 +558,15 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		done: done, cancel: cancel, sequence: s.nextSequence,
 		resources: resources,
 	}
-	for _, other := range s.active[session.ID] {
-		if conflict := overlappingTarget(resources, other.resources); conflict != "" {
-			s.mu.Unlock()
-			cancel()
-			return s.rejectOutputConflict(ctx, command, other.requestID, conflict)
+	// Resource ownership is global to this Hub, not only to a Session.
+	// Two projects can refer to the same physical OSC endpoint or Companion.
+	for _, sessionRuns := range s.active {
+		for _, other := range sessionRuns {
+			if conflict := overlappingTarget(resources, other.resources); conflict != "" {
+				s.mu.Unlock()
+				cancel()
+				return s.rejectOutputConflict(ctx, command, other.requestID, conflict)
+			}
 		}
 	}
 	if s.active[session.ID] == nil {
