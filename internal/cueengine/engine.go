@@ -85,12 +85,9 @@ func (e *Engine) PreviewCueOutputTargets(
 	for _, cue := range group {
 		for _, action := range cue.Actions {
 			if !action.Enabled || action.CapabilityKey == "sim.test" { continue }
-			target := strings.TrimSpace(action.TargetRef)
-			if target == "" {
-				// Unknown target must not be treated as independent.
-				target = "*"
+			for _, target := range outputResourceKeys(manifest, action) {
+				seen[target] = struct{}{}
 			}
-			seen[target] = struct{}{}
 		}
 	}
 	targets := make([]string, 0, len(seen))
