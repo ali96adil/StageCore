@@ -10,9 +10,13 @@ import (
 
 const ModeTogether = "TOGETHER"
 
+// MaxStartDelayMS bounds a per-Cue delay (including linked Cue branches) to ten minutes.
+const MaxStartDelayMS int64 = 600_000
+
 type Policy struct {
 	LinkedCueIDs  []string `json:"linked_cue_ids,omitempty"`
 	LinkedCueMode string   `json:"linked_cue_mode,omitempty"`
+	StartDelayMS  int64    `json:"start_delay_ms,omitempty"`
 }
 
 func Parse(raw json.RawMessage) (Policy, error) {
@@ -43,6 +47,9 @@ func Parse(raw json.RawMessage) (Policy, error) {
 	}
 	if policy.LinkedCueMode != "" && policy.LinkedCueMode != ModeTogether {
 		return Policy{}, fmt.Errorf("unsupported linked Cue mode %q", policy.LinkedCueMode)
+	}
+	if policy.StartDelayMS < 0 || policy.StartDelayMS > MaxStartDelayMS {
+		return Policy{}, fmt.Errorf("start_delay_ms must be between 0 and %d", MaxStartDelayMS)
 	}
 	return policy, nil
 }
