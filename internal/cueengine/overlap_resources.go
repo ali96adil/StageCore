@@ -93,9 +93,14 @@ func outputResourceKeys(manifest snapshot.Manifest, action snapshot.Action) []st
 		if port < 1 || port > 65535 {
 			return []string{"*"}
 		}
-		if parsed := net.ParseIP(host); parsed != nil {
-			host = parsed.String()
+		// DNS/mDNS aliases may resolve to an address already represented
+		// by another OSC alias. Since the snapshot cannot prove runtime DNS
+		// equivalence, refuse physical concurrency for non-literal hosts.
+		parsed := net.ParseIP(host)
+		if parsed == nil {
+			return []string{"*"}
 		}
+		host = parsed.String()
 		add("osc", net.JoinHostPort(host, strconv.Itoa(port)))
 	} else if _, declared := osc["port"]; declared {
 		return []string{"*"}
