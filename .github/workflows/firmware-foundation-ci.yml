@@ -40,6 +40,14 @@ jobs:
         run: python -m unittest tests/firmware_foundation_contract_test.py -v
       - name: Install PlatformIO
         run: python -m pip install --disable-pip-version-check platformio==6.2.0
+      - name: Stage canonical Foundation component
+        shell: bash
+        run: |
+          set -euo pipefail
+          STARTER="firmware/foundation/esp-idf/starter"
+          rm -rf "$STARTER/components/stagecore_foundation"
+          mkdir -p "$STARTER/components"
+          cp -R             firmware/foundation/esp-idf/components/stagecore_foundation             "$STARTER/components/stagecore_foundation"
       - name: Build Foundation starter
         run: >
           pio run
