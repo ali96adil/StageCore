@@ -57,6 +57,7 @@ type runtimeStatusView struct {
 	CurrentCue      *cueSummaryView       `json:"current_cue"`
 	NextCue         *cueSummaryView       `json:"next_cue"`
 	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
+	RunningExecutions     []runtimeExecutionView `json:"running_executions"`
 	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
 
@@ -299,6 +300,16 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	executions, err := projectStore.ListCueExecutions(r.Context(), active.ID)
 	if err != nil {
 		return runtimeStatusView{}, err
+	}
+	view.RunningExecutions = make([]runtimeExecutionView, 0)
+	for _, execution := range executions {
+		if execution.Result == domain.ExecutionRunning {
+			view.RunningExecutions = append(view.RunningExecutions, runtimeExecutionView{
+				ID: execution.ID, CueID: execution.CueID,
+				Result: execution.Result, StartedAt: execution.StartedAt,
+				CompletedAt: execution.CompletedAt,
+			})
+		}
 	}
 	if len(executions) > 0 {
 		last := executions[len(executions)-1]
