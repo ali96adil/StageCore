@@ -26,6 +26,10 @@ type runtimeHarness struct {
 }
 
 func newRuntimeHarness(t *testing.T, cueParameters ...json.RawMessage) *runtimeHarness {
+	return newRuntimeHarnessWithPolicies(t, nil, cueParameters...)
+}
+
+func newRuntimeHarnessWithPolicies(t *testing.T, policies []json.RawMessage, cueParameters ...json.RawMessage) *runtimeHarness {
 	t.Helper()
 	ctx := context.Background()
 	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
@@ -50,9 +54,13 @@ func newRuntimeHarness(t *testing.T, cueParameters ...json.RawMessage) *runtimeH
 	}
 	cues := make([]domain.Cue, 0, len(cueParameters))
 	for i, parameters := range cueParameters {
+		policy := json.RawMessage(`{}`)
+		if i < len(policies) && len(policies[i]) != 0 {
+			policy = policies[i]
+		}
 		cue, err := s.CreateCueWithActions(ctx, domain.Cue{
 			RevisionID: revision.ID, DisplayLabel: string(rune('1' + i)), Name: "Cue", OrderIndex: i + 1,
-			CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
+			CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: policy,
 		}, []domain.Action{{
 			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
 			Parameters: parameters, TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
@@ -71,6 +79,57 @@ func newRuntimeHarness(t *testing.T, cueParameters ...json.RawMessage) *runtimeH
 		t.Fatal(err)
 	}
 	return &runtimeHarness{store: s, service: New(s, registry), project: project, snapshot: published, cues: cues}
+}
+
+func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
+	h := newRuntimeHarnessWithPolicies(t,
+		[]json.RawMessage{json.RawMessage(`{"start_delay_ms":8000}`)},
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+	)
+	ctx := context.Background()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000901",
+	})
+	if started.Status != contracts.CommandCompleted { t.Fatalf("start=%+v", started) }
+	finished := make(chan contracts.CommandResult, 1)
+	go func() {
+		finished <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000000902",
+		})
+	}()
+	deadline := time.After(2 * time.Second)
+	for {
+		h.service.mu.Lock()
+		_, active := h.service.active[session.ID]
+		h.service.mu.Unlock()
+		if active { break }
+		select {
+		case <-deadline:
+			t.Fatal("delayed Cue never became active")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	began := time.Now()
+	stop := h.service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000903",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP during start delay=%+v", stop)
+	}
+	if time.Since(began) > 1500*time.Millisecond {
+		t.Fatal("STOP waited for the full pending start delay")
+	}
+	select {
+	case result := <-finished:
+		if result.Status != contracts.CommandCancelled {
+			t.Fatalf("GO after STOP=%+v, expected cancellation", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("delayed GO did not terminate on STOP")
+	}
 }
 
 func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
