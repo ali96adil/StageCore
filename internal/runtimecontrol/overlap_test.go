@@ -185,3 +185,54 @@ func TestOverlappingTargetRejectsSharedPhysicalTarget(t *testing.T) {
 	}
 }
 
+
+
+func TestQueueGoReturnsBeforeSlowActionAndAllowsNextGo(t *testing.T) {
+	h := overlapFixture(t)
+	ctx := context.Background()
+	session := startOverlapSession(t, h)
+	started := time.Now()
+	first := h.service.QueueGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000008302",
+	})
+	if first.Status != contracts.CommandAccepted {
+		t.Fatalf("first queue GO must report ACCEPTED: %+v", first)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("GO response waited for slow output: %s", elapsed)
+	}
+	waitForSelectedCue(t, h, session.ID, h.cues[0].ID)
+	second := h.service.QueueGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000008303",
+		ExpectedCurrentCueID: &h.cues[0].ID,
+	})
+	if second.Status != contracts.CommandAccepted {
+		t.Fatalf("next GO blocked despite independently running first: %+v", second)
+	}
+	waitForSelectedCue(t, h, session.ID, h.cues[1].ID)
+	if got := len(h.service.activeRunsForSession(session.ID)); got != 2 {
+		t.Fatalf("expected two ongoing Cue commands, got %d", got)
+	}
+	duplicate := h.service.QueueGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000008303",
+		ExpectedCurrentCueID: &h.cues[0].ID,
+	})
+	if duplicate.Status != contracts.CommandAccepted && duplicate.Status != contracts.CommandCompleted {
+		t.Fatalf("idempotent GO retry failed: %+v", duplicate)
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != 2 {
+		t.Fatalf("duplicate GO unexpectedly added execution: executions=%+v err=%v", executions, err)
+	}
+	stop := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000008304",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("stop all queued execution(s): %+v", stop)
+	}
+}
+
