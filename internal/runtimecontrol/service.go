@@ -509,10 +509,22 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	// Idempotent GO replay must be resolved before selecting another Cue.
 	// Otherwise retrying the final Cue can produce NO_NEXT_CUE rather than
 	// returning the stored terminal command result.
-	if _, found, err := s.store.FindCommandRecord(ctx, command); err != nil {
+	if record, found, err := s.store.FindCommandRecord(ctx, command); err != nil {
 		return failed(req.RequestID, "COMMAND_LOOKUP_FAILED")
 	} else if found {
-		return s.engine.ExecuteCueGo(ctx, session.ID, command)
+		// A retry during an in-flight GO is not a new request and must not
+		// advance the Cue or be reported as an error. Do not claim that
+		// current_cue_id was already advanced: the original GO may still
+		// be finalizing its durable selection.
+		if result, terminal, resultErr := s.store.StoredCommandResult(record); resultErr != nil {
+			return failed(req.RequestID, "COMMAND_RESULT_LOOKUP_FAILED")
+		} else if terminal {
+			return result
+		}
+		return contracts.CommandResult{
+			CommandID: record.CommandID, Status: contracts.CommandAccepted,
+			Payload: json.RawMessage(`{"already_accepted":true,"execution_continues":true}`),
+		}
 	}
 
 	// Resolve all linked Cue outputs while GO selection remains fenced.
