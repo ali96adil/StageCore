@@ -505,6 +505,14 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		OperatorNote: req.OperatorNote,
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
+	// Idempotent GO replay must be resolved before selecting another Cue.
+	// Otherwise retrying the final Cue can produce NO_NEXT_CUE rather than
+	// returning the stored terminal command result.
+	if _, found, err := s.store.FindCommandRecord(ctx, command); err != nil {
+		return failed(req.RequestID, "COMMAND_LOOKUP_FAILED")
+	} else if found {
+		return s.engine.ExecuteCueGo(ctx, session.ID, command)
+	}
 
 	// Resolve all linked Cue outputs while GO selection remains fenced.
 	// Same-target output overlap is rejected rather than silently racing
