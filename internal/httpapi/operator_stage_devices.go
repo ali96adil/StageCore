@@ -404,18 +404,19 @@ func WithOperatorStageDevices(
 				return
 			}
 			type inventoryDevice struct {
-				DeviceID      string                           `json:"device_id"`
-				DisplayName   string                           `json:"display_name"`
-				DeviceKind    deviceexperience.DeviceKind      `json:"device_kind"`
-				ProfileID     string                           `json:"profile_id,omitempty"`
-				ClientVersion string                           `json:"client_version,omitempty"`
-				Capabilities  []string                         `json:"capabilities,omitempty"`
-				Assignment    deviceexperience.AssignmentRecord `json:"assignment"`
-				Connection    deviceexperience.ConnectionState `json:"connection_state,omitempty"`
-				Readiness     deviceexperience.Readiness       `json:"readiness,omitempty"`
-				LiveScope     *devicechannel.V2RuntimeScope    `json:"live_scope,omitempty"`
-				Runtime       *deviceexperience.RuntimeState   `json:"runtime,omitempty"`
-				Enabled       bool                             `json:"enabled"`
+				DeviceID         string                             `json:"device_id"`
+				DisplayName      string                             `json:"display_name"`
+				DeviceKind       deviceexperience.DeviceKind        `json:"device_kind"`
+				ProfileID        string                             `json:"profile_id,omitempty"`
+				ProtocolVersion  string                             `json:"protocol_version"`
+				ClientVersion    string                             `json:"client_version,omitempty"`
+				Capabilities     []string                           `json:"capabilities,omitempty"`
+				Assignment       deviceexperience.AssignmentRecord  `json:"assignment"`
+				Connection       deviceexperience.ConnectionState   `json:"connection_state,omitempty"`
+				Readiness        deviceexperience.Readiness         `json:"readiness,omitempty"`
+				LiveScope        *devicechannel.V2RuntimeScope      `json:"live_scope,omitempty"`
+				Runtime          *deviceexperience.RuntimeState     `json:"runtime,omitempty"`
+				Enabled          bool                               `json:"enabled"`
 			}
 			out := make([]inventoryDevice, 0)
 			for _, item := range items {
@@ -430,7 +431,7 @@ func WithOperatorStageDevices(
 				view := inventoryDevice{
 					DeviceID: item.ID, DisplayName: item.DisplayName,
 					DeviceKind: item.Kind, ProfileID: item.ProfileID,
-					ClientVersion: item.ClientVersion,
+					ProtocolVersion: item.ProtocolVersion, ClientVersion: item.ClientVersion,
 					Capabilities: append([]string(nil), item.Capabilities...),
 					Assignment: assignment,
 					Enabled: item.Enabled,

@@ -1065,8 +1065,11 @@ func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.
 	}
 	var response struct {
 		Devices []struct {
-			DeviceID string `json:"device_id"`
-			Runtime *deviceexperience.RuntimeState `json:"runtime"`
+			DeviceID         string                          `json:"device_id"`
+			DeviceKind       deviceexperience.DeviceKind     `json:"device_kind"`
+			ProfileID        string                          `json:"profile_id"`
+			ProtocolVersion  string                          `json:"protocol_version"`
+			Runtime          *deviceexperience.RuntimeState  `json:"runtime"`
 		} `json:"devices"`
 	}
 	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
@@ -1075,6 +1078,11 @@ func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.
 	if len(response.Devices) != 1 || response.Devices[0].DeviceID != deviceID ||
 		response.Devices[0].Runtime == nil {
 		t.Fatalf("StageLaser inventory runtime=%+v", response.Devices)
+	}
+	if response.Devices[0].ProtocolVersion != deviceexperience.ProtocolVersion2 ||
+		response.Devices[0].DeviceKind != deviceexperience.DeviceGeneric ||
+		response.Devices[0].ProfileID != stagelaser.ProfileID {
+		t.Fatalf("StageLaser inventory identity/protocol incomplete for UI: %+v", response.Devices[0])
 	}
 	var got stagelaser.Observation
 	if err := json.Unmarshal(response.Devices[0].Runtime.ObservedState, &got); err != nil {
