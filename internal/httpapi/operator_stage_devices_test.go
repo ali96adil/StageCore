@@ -1065,11 +1065,11 @@ func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.
 	}
 	var response struct {
 		Devices []struct {
-			DeviceID        string                         `json:"device_id"`
-			DeviceKind      deviceexperience.DeviceKind        `json:"device_kind"`
-			ProfileID       string                         `json:"profile_id"`
-			ProtocolVersion string                         `json:"protocol_version"`
-			Runtime         *deviceexperience.RuntimeState `json:"runtime"`
+			DeviceID         string                          `json:"device_id"`
+			DeviceKind       deviceexperience.DeviceKind     `json:"device_kind"`
+			ProfileID        string                          `json:"profile_id"`
+			ProtocolVersion  string                          `json:"protocol_version"`
+			Runtime          *deviceexperience.RuntimeState  `json:"runtime"`
 		} `json:"devices"`
 	}
 	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
