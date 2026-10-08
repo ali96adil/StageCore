@@ -43,7 +43,7 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	observed := json.RawMessage(`{"logical_state":"OFF","arm_state":"DISARMED","state_quality":"TRACKED"}`)
+	observed := json.RawMessage(`{"logical_state":"OFF","boot_id":"boot-1","arm_state":"DISARMED","state_quality":"TRACKED"}`)
 	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
 		DeviceID: laserID, Connection: deviceexperience.ConnectionOnline,
 		Readiness: deviceexperience.ReadinessBlocker,
@@ -71,7 +71,7 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 		handler.ServeHTTP(res, req)
 		return res
 	}
-	payload := `{"visual_state":"ON","expected_device_reported_state":"OFF","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`
+	payload := `{"visual_state":"ON","expected_device_reported_state":"OFF","expected_device_boot_id":"boot-1","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`
 	if res := post(payload, false); res.Code == http.StatusCreated {
 		t.Fatalf("visual check accepted without CSRF: %s", res.Body.String())
 	}
@@ -89,13 +89,18 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 		if !result.AdvisoryOnly || result.CommandsEnabled ||
 			result.VisualCheck.VisualState != "ON" ||
 			result.VisualCheck.DeviceReportedState != "OFF" ||
+			result.VisualCheck.DeviceBootID != "boot-1" ||
 			result.VisualCheck.Comparison != "MISMATCH" {
 			t.Fatalf("unsafe visual response: %+v", result)
 		}
 	}
-	if res := post(`{"visual_state":"OFF","expected_device_reported_state":"ON","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`, true);
+	if res := post(`{"visual_state":"OFF","expected_device_reported_state":"ON","expected_device_boot_id":"boot-1","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`, true);
 		res.Code != http.StatusConflict {
 		t.Fatalf("stale expected device state should fail: %d %s", res.Code, res.Body.String())
+	}
+	if res := post(`{"visual_state":"OFF","expected_device_reported_state":"OFF","expected_device_boot_id":"old-boot","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`, true);
+		res.Code != http.StatusConflict {
+		t.Fatalf("stale boot visual check should fail: %d %s", res.Code, res.Body.String())
 	}
 	device, err := devices.GetDevice(ctx, laserID)
 	if err != nil {
