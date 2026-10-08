@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+// ONLINE is transport state, never proof of physical laser state or output authority.
+// The Stage Devices inventory must not reuse DMX/lighting status for a StageLaser.
+func TestStageLaserOnlineMessagingIsEmissionSafe(t *testing.T) {
+	js := string(mustReadOperatorContractFile(t, "static/phase4.js"))
+	for _, marker := range []string{
+		`stageLaserTransportOnly: "ONLINE confirms authenticated communication only.`,
+		`stageLaserTransportOnly: "ONLINE يثبت الاتصال الموثّق فقط؛`,
+		`stageLaserReadOnly: "StageLaser monitoring only;`,
+		`stageLaserReadOnly: "متابعة StageLaser فقط؛`,
+		`v2GenericHardwareUnverified:`,
+		`isStageLaser(device) ? \`<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>\` : ""`,
+		`stageLaser ? \`<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>\` : ""`,
+		`t("stageLaserReadOnly")`,
+		`device.profile_id === "stagecore.esp32-dmx-lighting-node" ? "v2HardwareUnverified" : "v2GenericHardwareUnverified"`,
+	} {
+		if !strings.Contains(js, marker) {
+			t.Fatalf("StageLaser profile-sensitive status missing %q", marker)
+		}
+	}
+	if strings.Count(js, "stageLaserTransportOnly:") != 2 {
+		t.Fatal("StageLaser transport-safety note must be translated in English and Arabic")
+	}
+}
+
 func TestStageDevicesSurfaceSupportsStageLaserSafeAssignmentAndTelemetry(t *testing.T) {
 	js := string(mustReadOperatorContractFile(t, "static/phase4.js"))
 
