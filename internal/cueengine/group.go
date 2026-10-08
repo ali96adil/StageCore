@@ -3,6 +3,7 @@ package cueengine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
@@ -112,7 +113,27 @@ func (e *Engine) executeCueGroup(
 	results := make(chan branchResult, len(group))
 	for _, cue := range group {
 		cue := cue
+		// Parse from the immutable published snapshot. Every linked Cue gets
+		// its own independent start delay measured from the same GO.
+		policy, err := cuegroup.Parse(cue.ExecutionPolicy)
+		if err != nil {
+			return domain.ExecutionFailed, cueStartedEventID, fmt.Errorf("Cue %s delay: %w", cue.Name, err)
+		}
 		go func() {
+			if policy.StartDelayMS > 0 {
+				timer := time.NewTimer(time.Duration(policy.StartDelayMS) * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+					return
+				case <-timer.C:
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+				return
+			}
 			result, last, err := e.executeActions(
 				ctx, sessionID, command, manifest, cueExecution, cueStartedEventID, cue.Actions,
 			)
