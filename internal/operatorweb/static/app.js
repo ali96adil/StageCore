@@ -449,7 +449,7 @@ async function renderCues(message = "", messageKind = "success") {
             <tr class="${cueRelationshipClass(cue, cueParents)}">
               <td>${esc(cue.order_index)}</td>
               <td>${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}</small></td>
+              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(cuePolicyObject(cue).start_delay_ms) + " ms" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
@@ -776,6 +776,7 @@ function openCueEditor(cue) {
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
+  el("cueStartDelayMS").value = String(cuePolicyObject(cue).start_delay_ms || 0);
   renderLinkedCuesEditor(cue);
   el("cueNotes").value = cue?.notes_summary || "";
   actionsEditor.innerHTML = "";
@@ -834,7 +835,17 @@ cueForm.addEventListener("submit", async (event) => {
       cue_type: "STANDARD",
       criticality: el("cueCriticality").value,
       enabled: el("cueEnabled").checked,
-      execution_policy: linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy")),
+      execution_policy: (() => {
+        const policy = linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy"));
+        const rawDelay = String(el("cueStartDelayMS").value || "0").trim();
+        const delayMS = Number(rawDelay);
+        if (!/^[0-9]+$/.test(rawDelay) || !Number.isSafeInteger(delayMS) || delayMS > 600000) {
+          throw new Error("Cue Start Delay must be an integer from 0 to 600000 milliseconds.");
+        }
+        if (delayMS) policy.start_delay_ms = delayMS;
+        else delete policy.start_delay_ms;
+        return policy;
+      })(),
       notes_summary: el("cueNotes").value.trim(),
       actions,
     };

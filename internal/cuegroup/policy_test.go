@@ -68,3 +68,31 @@ func TestValidateRejectsCueCyclesAndMultipleParents(t *testing.T) {
 		}
 	})
 }
+
+func TestCueStartDelayPolicyRange(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw string
+		want int64
+		ok bool
+	}{
+		{"unset", `{}`, 0, true},
+		{"immediate", `{"start_delay_ms":0}`, 0, true},
+		{"one and a half seconds", `{"start_delay_ms":1500}`, 1500, true},
+		{"maximum", `{"start_delay_ms":600000}`, 600000, true},
+		{"negative", `{"start_delay_ms":-1}`, 0, false},
+		{"too long", `{"start_delay_ms":600001}`, 0, false},
+		{"fraction", `{"start_delay_ms":1.5}`, 0, false},
+		{"string", `{"start_delay_ms":"100"}`, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := Parse(json.RawMessage(tc.raw))
+			if (err == nil) != tc.ok {
+				t.Fatalf("Parse(%s) err=%v, want ok=%v", tc.raw, err, tc.ok)
+			}
+			if tc.ok && policy.StartDelayMS != tc.want {
+				t.Fatalf("delay=%d, want %d", policy.StartDelayMS, tc.want)
+			}
+		})
+	}
+}

@@ -3,12 +3,28 @@ package cueengine
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 )
+
+// delayStopKey carries a STOP-only signal. It is distinct from ctx.Done:
+// cancelling the latter prevents durable execution and command finalization.
+type delayStopKey struct{}
+
+// WithDelayStop lets RuntimeControl interrupt a pending start delay without
+// cancelling database writes used to persist the Cue's terminal result.
+func WithDelayStop(ctx context.Context, stop <-chan struct{}) context.Context {
+	return context.WithValue(ctx, delayStopKey{}, stop)
+}
+
+func delayStopSignal(ctx context.Context) <-chan struct{} {
+	ch, _ := ctx.Value(delayStopKey{}).(<-chan struct{})
+	return ch
+}
 
 func resolveCueGroup(manifest snapshot.Manifest, root snapshot.Cue) ([]snapshot.Cue, error) {
 	byID := make(map[string]snapshot.Cue, len(manifest.Cues))
@@ -112,7 +128,37 @@ func (e *Engine) executeCueGroup(
 	results := make(chan branchResult, len(group))
 	for _, cue := range group {
 		cue := cue
+		// Parse from the immutable published snapshot. Every linked Cue gets
+		// its own independent start delay measured from the same GO.
+		policy, err := cuegroup.Parse(cue.ExecutionPolicy)
+		if err != nil {
+			return domain.ExecutionFailed, cueStartedEventID, fmt.Errorf("Cue %s delay: %w", cue.Name, err)
+		}
 		go func() {
+			stopDelay := delayStopSignal(ctx)
+			if policy.StartDelayMS > 0 {
+				timer := time.NewTimer(time.Duration(policy.StartDelayMS) * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+					return
+				case <-stopDelay:
+					results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+					return
+				case <-timer.C:
+				}
+			}
+			select {
+			case <-stopDelay:
+				results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+				return
+			default:
+			}
+			if err := ctx.Err(); err != nil {
+				results <- branchResult{result: domain.ExecutionCancelled, lastEventID: cueStartedEventID}
+				return
+			}
 			result, last, err := e.executeActions(
 				ctx, sessionID, command, manifest, cueExecution, cueStartedEventID, cue.Actions,
 			)
