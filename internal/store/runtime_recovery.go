@@ -136,6 +136,13 @@ func (s *Store) ReconcileInterruptedRuntimeForHub(ctx context.Context) (int64, e
 				WHERE result = 'RUNNING' AND session_id = ?`, nowUS, session.id); err != nil {
 				return 0, fmt.Errorf("reconcile interrupted cue executions: %w", err)
 			}
+			// Accepted async GO commands may have been acknowledged to the
+			// operator before actions finished (or even before execution row
+			// creation). Persist terminal cancellation on Hub restart: never
+			// return ACCEPTED forever or replay an interrupted output.
+			if err := cancelInterruptedCueGoCommandsTx(ctx, tx, session, nowUS); err != nil {
+				return 0, err
+			}
 			result, err := tx.ExecContext(ctx, `
 				UPDATE sessions SET ended_at_us = ?, status = 'ABORTED'
 				WHERE session_id = ? AND status = 'ACTIVE'`, nowUS, session.id)
@@ -185,6 +192,59 @@ func (s *Store) ReconcileInterruptedRuntimeForHub(ctx context.Context) (int64, e
 		return 0, fmt.Errorf("commit Hub runtime restart reconciliation: %w", err)
 	}
 	return reconciled, nil
+}
+
+// cancelInterruptedCueGoCommandsTx does not replay a GO, including one
+// accepted by the asynchronous operator endpoint. It writes a durable
+// terminal result inside the same transaction that aborts the Session.
+func cancelInterruptedCueGoCommandsTx(
+	ctx context.Context, tx *sql.Tx, session restartActiveSession, nowUS int64,
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT command_id FROM command_records
+		WHERE project_id = ? AND runtime_snapshot_id = ?
+		  AND command_type = 'cue.go' AND status = 'ACCEPTED'
+		ORDER BY command_id`, session.projectID, session.snapshotID)
+	if err != nil {
+		return fmt.Errorf("list interrupted GO commands: %w", err)
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan interrupted GO command: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate interrupted GO commands: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close interrupted GO command rows: %w", err)
+	}
+	for _, id := range ids {
+		body, err := json.Marshal(contracts.CommandResult{
+			CommandID: id, Status: contracts.CommandCancelled,
+			Error: &contracts.ContractError{
+				ErrorCode: "HUB_RESTART_INTERRUPTED",
+				Category: "RUNTIME",
+				Message: "Hub restarted before this GO finished; output execution is not replayed",
+				Retryable: false,
+				AffectedEntityID: session.id,
+			},
+		})
+		if err != nil { return fmt.Errorf("encode interrupted GO result: %w", err) }
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE command_records
+			SET status = 'CANCELLED', result_json = ?, updated_at_us = ?
+			WHERE command_id = ? AND status = 'ACCEPTED'`,
+			string(body), nowUS, id); err != nil {
+			return fmt.Errorf("cancel interrupted GO command %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func appendRuntimeRecoveryDecisionEventTx(ctx context.Context, tx *sql.Tx, nowUS int64, session restartActiveSession, evidence restartDecisionEvidence) error {
@@ -284,7 +344,14 @@ func hasRunningRuntimeWorkTx(ctx context.Context, tx *sql.Tx, sessionID string) 
 			(SELECT COUNT(*)
 			 FROM action_executions ae
 			 JOIN cue_executions ce ON ce.cue_execution_id = ae.cue_execution_id
-			 WHERE ce.session_id = ? AND ae.result = 'RUNNING')`, sessionID, sessionID).Scan(&count); err != nil {
+			 WHERE ce.session_id = ? AND ae.result = 'RUNNING') +
+			(SELECT COUNT(*)
+			 FROM command_records cr
+			 JOIN sessions se ON se.project_id = cr.project_id
+			                  AND se.runtime_snapshot_id = cr.runtime_snapshot_id
+			 WHERE se.session_id = ?
+			   AND cr.command_type = 'cue.go' AND cr.status = 'ACCEPTED')
+		`, sessionID, sessionID, sessionID).Scan(&count); err != nil {
 		return false, fmt.Errorf("check in-flight runtime work for restart continuity: %w", err)
 	}
 	return count > 0, nil
