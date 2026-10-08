@@ -18,6 +18,106 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Laser Visual Preflight", CreatedBy: "owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const laserID = "stagelaser-manual-check-01"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: laserID, Kind: deviceexperience.DeviceGeneric,
+		ProfileID: stagelaser.ProfileID, DisplayName: "Laser Manual Check",
+		Platform: "esp32", Architecture: "riscv32",
+		ClientVersion: "0.1.0-test",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: stagelaser.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observed := json.RawMessage(`{"logical_state":"OFF","arm_state":"DISARMED","state_quality":"TRACKED"}`)
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: laserID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker,
+		ObservedState: observed, NetworkState: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(h.auth, devices, runtime, stageStore)).Handler()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/" + laserID + "/stagelaser-visual-check"
+	post := func(body string, withCSRF bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "127.0.0.1:20201"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		if withCSRF {
+			req.Header.Set(csrfHeader, owner.CSRFToken)
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res
+	}
+	payload := `{"visual_state":"ON","expected_device_reported_state":"OFF","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`
+	if res := post(payload, false); res.Code == http.StatusCreated {
+		t.Fatalf("visual check accepted without CSRF: %s", res.Body.String())
+	}
+	if res := post(payload, true); res.Code != http.StatusCreated {
+		t.Fatalf("visual check POST=%d: %s", res.Code, res.Body.String())
+	} else {
+		var result struct {
+			AdvisoryOnly bool `json:"advisory_only"`
+			CommandsEnabled bool `json:"commands_enabled"`
+			VisualCheck deviceexperience.StageLaserVisualCheck `json:"visual_check"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if !result.AdvisoryOnly || result.CommandsEnabled ||
+			result.VisualCheck.VisualState != "ON" ||
+			result.VisualCheck.DeviceReportedState != "OFF" ||
+			result.VisualCheck.Comparison != "MISMATCH" {
+			t.Fatalf("unsafe visual response: %+v", result)
+		}
+	}
+	if res := post(`{"visual_state":"OFF","expected_device_reported_state":"ON","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`, true);
+		res.Code != http.StatusConflict {
+		t.Fatalf("stale expected device state should fail: %d %s", res.Code, res.Body.String())
+	}
+	device, err := devices.GetDevice(ctx, laserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if device.Runtime == nil || device.Runtime.Readiness != deviceexperience.ReadinessBlocker ||
+		device.Runtime.Connection != deviceexperience.ConnectionOnline {
+		t.Fatalf("visual check modified safety readiness: %+v", device.Runtime)
+	}
+	if string(device.Runtime.ObservedState) != string(observed) {
+		t.Fatalf("visual check modified observed_state: %s", device.Runtime.ObservedState)
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.RemoteAddr = "127.0.0.1:20202"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"comparison":"MISMATCH"`)) {
+		t.Fatalf("visual check GET=%d: %s", res.Code, res.Body.String())
+	}
+}
+
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
