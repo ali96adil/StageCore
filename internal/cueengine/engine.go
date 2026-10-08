@@ -18,6 +18,22 @@ import (
 
 const CueGoCommandType = "cue.go"
 
+// SelectionHook is called once after the session's current Cue is durably
+// advanced, before actions run. RuntimeControl uses it to release its short
+// per-session GO ordering barrier while prior Cue actions continue.
+type selectionHookKey struct{}
+
+func WithSelectionHook(ctx context.Context, hook func()) context.Context {
+	return context.WithValue(ctx, selectionHookKey{}, hook)
+}
+
+func notifySelection(ctx context.Context) {
+	hook, _ := ctx.Value(selectionHookKey{}).(func())
+	if hook != nil { hook() }
+}
+
+
+
 type CueGoPayload struct {
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	RequestedNextCueID   *string `json:"requested_next_cue_id"`
@@ -83,11 +99,9 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
 	}
-	if running, err := e.store.HasRunningCueExecution(ctx, sessionID); err != nil {
-		return internalFailure(command.CommandID, "RUNNING_EXECUTION_CHECK_FAILED", err)
-	} else if running {
-		return rejection(command.CommandID, "UNRESOLVED_EXECUTION", "VALIDATION", "session has a running cue execution", false, sessionID)
-	}
+	// Previous Cue executions may remain RUNNING. Serializing Cue selection
+	// is the responsibility of RuntimeControl's per-session GO barrier;
+	// actions and terminal result persistence remain independent.
 
 	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, command.RuntimeSnapshotID)
 	if err != nil {
@@ -134,6 +148,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
 	}
+	notifySelection(ctx)
 
 	cueResult, lastEventID, executionErr := e.executeCueGroup(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, group)
 	if executionErr != nil {
