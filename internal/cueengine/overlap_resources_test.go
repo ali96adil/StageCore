@@ -61,11 +61,12 @@ func TestOverlapResourcesFailClosedForUnknownAliasOrMalformedConfiguration(t *te
 	manifest := snapshot.Manifest{Targets: []snapshot.Target{
 		snapshotAlias("missing-metadata", `{}`),
 		snapshotAlias("invalid-osc-port", `{"osc":{"host":"127.0.0.1","port":0}}`),
+		snapshotAlias("dns-alias", `{"osc":{"host":"my-macbook.local","port":3546}}`),
 		snapshotAlias("malformed-devices", `{"device_ids":["tablet-1",null]}`),
 	}}
 	for _, ref := range []string{
 		"nonexistent", "", "missing-metadata", "invalid-osc-port",
-		"malformed-devices",
+		"dns-alias", "malformed-devices",
 	} {
 		got := outputResourceKeys(manifest, snapshot.Action{TargetRef: ref})
 		if !slices.Equal(got, []string{"*"}) {
