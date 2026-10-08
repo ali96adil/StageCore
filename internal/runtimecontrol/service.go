@@ -484,7 +484,10 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
 
 	done := make(chan struct{})
-	runCtx, cancel := context.WithCancel(ctx)
+	// STOP cancels only Cue delays. Command persistence must retain the live
+	// request context so terminal results can still be durably recorded.
+	delayStop, cancel := context.WithCancel(context.Background())
+	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
 	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
 	if existing, found := s.active[session.ID]; found {
