@@ -296,6 +296,15 @@ func (e *Engine) executeActions(
 		if !action.Enabled {
 			continue
 		}
+		// A STOP may arrive between completion of a previous action and
+		// dispatch of the next one. Do not start further output work.
+		select {
+		case <-delayStopSignal(ctx):
+			_, last, err := waitPending()
+			if err != nil { return domain.ExecutionFailed, last, err }
+			return domain.ExecutionCancelled, last, nil
+		default:
+		}
 		switch strings.ToUpper(action.ExecutionMode) {
 		case "PARALLEL":
 			started, err := e.startAction(ctx, sessionID, command, manifest, cueExecution, cueStartedEventID, action, true)
@@ -407,6 +416,17 @@ func (e *Engine) startAction(
 	return pendingAction{startedEventID: startedEvent.EventID, result: resultCh}, nil
 }
 
+// cueStopRequested checks the independent STOP signal without cancelling
+// the database context used to persist terminal execution state.
+func cueStopRequested(ctx context.Context) bool {
+	select {
+	case <-delayStopSignal(ctx):
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Engine) runAction(
 	parent context.Context,
 	sessionID string,
@@ -429,6 +449,16 @@ func (e *Engine) runAction(
 			AckLevel:        contracts.AckNone,
 			ErrorCode:       "INVALID_TIMEOUT_POLICY",
 			ResponseSummary: policyErr.Error(),
+		}
+	} else if cueStopRequested(parent) {
+		// STOP was requested after the action row was created but before
+		// capability dispatch. Persist an honest CANCELLED result without
+		// sending an external command.
+		executionResult = capability.Result{
+			Result: domain.ExecutionCancelled,
+			AckLevel: contracts.AckNone,
+			ErrorCode: "CANCELLED",
+			ResponseSummary: "Cue stopped before action dispatch",
 		}
 	} else {
 		executionResult = e.executor.Execute(actionCtx, capability.Request{
