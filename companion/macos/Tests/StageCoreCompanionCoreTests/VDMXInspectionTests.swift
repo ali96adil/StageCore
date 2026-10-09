@@ -154,7 +154,11 @@ final class VDMXInspectionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let app = root.appendingPathComponent("VDMX6.app", isDirectory: true)
         try makeApplicationBundle(at: app, version: "1.3.4")
-        let provider = VDMXInspectionProvider(applicationCandidates: [app])
+        // A running service on the developer Mac must not affect the negative case.
+        let provider = VDMXInspectionProvider(
+            applicationCandidates: [app],
+            bindingProbe: { _ in false }
+        )
 
         var withExtension = manifest(versionConstraint: "6.x-tested")
         withExtension["external_extensions"] = .array([.object([
