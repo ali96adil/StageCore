@@ -96,3 +96,27 @@ func TestDuplicateProjectAuthoringRemapsLinkedCuesAndAliases(t *testing.T) {
         t.Fatalf("duplicate inherited an active session: %v, %v", session, err)
     }
 }
+
+func TestDuplicateProjectAuthoringRollsBackOnInvalidLinkedCue(t *testing.T) {
+    ctx := context.Background()
+    s, handle := newStore(t)
+    source, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name:"Source",CreatedBy:"operator"})
+    if err != nil { t.Fatal(err) }
+    cue, err := s.CreateCueWithActions(ctx, domain.Cue{
+        RevisionID:revision.ID,DisplayLabel:"1",Name:"Broken Link",OrderIndex:1,Enabled:true,
+    },nil)
+    if err != nil { t.Fatal(err) }
+    if _, err := handle.DB.ExecContext(ctx,
+        `UPDATE cues SET execution_policy_json='{"linked_cue_ids":["missing-cue"]}' WHERE cue_id=?`, cue.ID); err != nil {
+        t.Fatal(err)
+    }
+    if _,_,err:=s.DuplicateProjectAuthoring(ctx,source.ID,"Should Roll Back","operator");err==nil {
+        t.Fatal("copy should fail on source Cue dangling reference")
+    }
+    var projectCount int
+    if err:=handle.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM projects`).Scan(&projectCount);err!=nil{t.Fatal(err)}
+    if projectCount!=1 { t.Fatalf("incomplete duplicate left behind: %d projects",projectCount) }
+    var revisionCount int
+    if err:=handle.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM project_revisions`).Scan(&revisionCount);err!=nil{t.Fatal(err)}
+    if revisionCount!=1 { t.Fatalf("incomplete duplicate left behind: %d revisions",revisionCount) }
+}
