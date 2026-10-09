@@ -1222,7 +1222,7 @@ async function goRuntime() {
 }
 
 async function stopCueRuntime() {
-  if (!confirm("STOP CUE only interrupts the currently running Cue/interruptible Actions. It does not guarantee blackout. Continue?")) return;
+  if (!confirm("STOP CUE interrupts ALL active Cues in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
@@ -1249,7 +1249,7 @@ function emergencyDomainSummary(payload) {
 
 async function setEmergencyBlackoutRuntime(enabled) {
   const warning = enabled
-    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt the active Cue and command managed Lighting, StageLaser, Tablet and Native Visual outputs to safe state. Audio and external VDMX/OSC will NOT be stopped."
+    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt all active Cues and command managed Lighting, StageLaser, Tablet and Native Visual outputs to safe state. Audio and external VDMX/OSC will NOT be stopped."
     : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting stays dark and StageLaser stays DISARMED/OFF until explicit Lighting / ARM / Laser Cue actions. GO will only unlock after the managed clear succeeds.";
   if (!confirm(warning)) return;
   try {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -27,6 +28,19 @@ type CueGoPayload struct {
 type Engine struct {
 	store    *store.Store
 	executor capability.Executor
+
+	// Serializes only Cue selection + persisted advancement, never action
+	// execution. Concurrent GO requests must not select the same next Cue.
+	advanceMu sync.Mutex
+}
+
+type concurrentCueGoKey struct{}
+
+// WithConcurrentCueGo permits overlap only for a Session whose earlier GO is
+// still tracked by RuntimeControl. It does not bypass orphan RUNNING rows after
+// a restart, nor any snapshot/current-Cue validation.
+func WithConcurrentCueGo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, concurrentCueGoKey{}, true)
 }
 
 func New(s *store.Store) *Engine {
@@ -70,6 +84,14 @@ func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command con
 }
 
 func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+	e.advanceMu.Lock()
+	launchLocked := true
+	defer func() {
+		if launchLocked {
+			e.advanceMu.Unlock()
+		}
+	}()
+
 	session, err := e.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return rejection(command.CommandID, "SESSION_NOT_FOUND", "VALIDATION", "session not found", false, sessionID)
@@ -83,10 +105,14 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
 	}
-	if running, err := e.store.HasRunningCueExecution(ctx, sessionID); err != nil {
-		return internalFailure(command.CommandID, "RUNNING_EXECUTION_CHECK_FAILED", err)
-	} else if running {
-		return rejection(command.CommandID, "UNRESOLVED_EXECUTION", "VALIDATION", "session has a running cue execution", false, sessionID)
+	// Reject an orphan RUNNING execution when the Hub no longer tracks it.
+	// Live overlapping GO calls are explicitly authorized by RuntimeControl.
+	if ctx.Value(concurrentCueGoKey{}) != true {
+		if running, err := e.store.HasRunningCueExecution(ctx, sessionID); err != nil {
+			return internalFailure(command.CommandID, "RUNNING_EXECUTION_CHECK_FAILED", err)
+		} else if running {
+			return rejection(command.CommandID, "UNRESOLVED_EXECUTION", "VALIDATION", "session has an unresolved cue execution from an earlier runtime", false, sessionID)
+		}
 	}
 
 	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, command.RuntimeSnapshotID)
@@ -134,6 +160,10 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
 	}
+	// A second GO may now select and launch the following Cue while this
+	// execution waits in its own delay or runs its independent Actions.
+	launchLocked = false
+	e.advanceMu.Unlock()
 
 	cueResult, lastEventID, executionErr := e.executeCueGroup(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, group)
 	if executionErr != nil {
