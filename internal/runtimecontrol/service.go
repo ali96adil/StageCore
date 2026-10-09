@@ -858,15 +858,24 @@ func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string)
 		s.executor.stop(run.correlationID)
 		if run.cancel != nil { run.cancel() }
 	}
-	timer := time.NewTimer(defaultStopWait)
-	defer timer.Stop()
+	return waitForActiveRunStops(ctx, runs, defaultStopWait)
+}
+
+// waitForActiveRunStops uses a level-triggered deadline (context.Done) rather
+// than reading time.Timer.C in a loop. A timer's single signal can otherwise
+// be consumed by a select racing with a just-completed Cue, leaving a later
+// unfinished Cue blocked forever after the timeout has already fired.
+func waitForActiveRunStops(ctx context.Context, runs []activeRun, timeout time.Duration) error {
+	bounded, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	for _, run := range runs {
 		select {
 		case <-run.done:
-		case <-timer.C:
+		case <-bounded.Done():
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("session stop was cancelled while waiting for Cue executions: %w", err)
+			}
 			return fmt.Errorf("%d active Cue execution(s) did not terminate within the bounded stop wait", len(runs))
-		case <-ctx.Done():
-			return fmt.Errorf("session stop was cancelled while waiting for Cue executions: %w", ctx.Err())
 		}
 	}
 	return nil
