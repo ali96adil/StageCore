@@ -9,6 +9,25 @@ import (
     "github.com/ali96adil/StageCore/internal/domain"
 )
 
+
+func duplicateSourceAliasesTx(ctx context.Context, tx *sql.Tx, sourceProjectID string) ([]domain.ProjectDeviceAlias, error) {
+    rows, err := tx.QueryContext(ctx, `SELECT alias_id, project_id, logical_name, logical_type, target_ref, group_name,
+        project_config_json FROM project_device_aliases WHERE project_id = ? ORDER BY logical_name`, sourceProjectID)
+    if err != nil { return nil, err }
+    defer rows.Close()
+    aliases := []domain.ProjectDeviceAlias{}
+    for rows.Next() {
+        var item domain.ProjectDeviceAlias
+        var config string
+        if err := rows.Scan(&item.ID, &item.ProjectID, &item.LogicalName, &item.LogicalType,
+            &item.TargetRef, &item.GroupName, &config); err != nil { return nil, err }
+        item.ProjectConfig = []byte(config)
+        aliases = append(aliases, item)
+    }
+    if err := rows.Err(); err != nil { return nil, err }
+    return aliases, nil
+}
+
 // duplicateMachineRolesTx copies authoring role definitions, not Companion
 // assignments, runtime leases or a previously published Snapshot requirement.
 func duplicateMachineRolesTx(ctx context.Context, tx *sql.Tx, sourceProjectID, newProjectID string, nowUS int64) (map[string]string, error) {
