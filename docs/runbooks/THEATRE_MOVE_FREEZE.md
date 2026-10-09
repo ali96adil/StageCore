@@ -7,7 +7,7 @@ This runbook is an **operator checklist**, not evidence of a physical installati
 - Require a green Core CI (including Go race tests and ARM64 build) for the exact Hub release revision.
 - Do not treat Draft PRs or unqualified StageLaser relay actuation as show-ready.
 - Preserve the existing Hub identity, DB, pairing, snapshots, operator permissions, and device credentials.
-- Keep an offline copy of the previously working release and a verified backup of /var/lib/stagecore before applying an update.
+- Keep an offline copy of the previously working release and a verified backup of /var/lib/stagecore before applying an update. A SQLite online backup covers the database only; a binaries/config archive does not include /var/lib/stagecore/vault or media. Inventory and back up Vault/media separately as needed; do not mistake a healthy DB for a complete show backup.
 - Run first in REHEARSAL, then perform explicit operator authorization for SHOW.
 
 ## Prepare the Linux ARM64 Hub bundle on a machine with Go
@@ -26,9 +26,12 @@ Copy the **entire** `dist/stagecore-linux-arm64` directory or `dist/stagecore-of
 BUNDLE="$PWD"
 cat "$BUNDLE/RELEASE_REVISION"
 (cd "$BUNDLE" && sha256sum -c SHA256SUMS)
-sudo "$BUNDLE/stagecore-setup" update --bundle "$BUNDLE" --listen 0.0.0.0:7840 --dry-run
+# Do NOT pass --listen: preserve the installed STAGECORE_LISTEN setting.
+# Theatre deployments may intentionally bind HTTP to 127.0.0.1:7840
+# while exposing separate authenticated/TLS operator ports.
+sudo "$BUNDLE/stagecore-setup" update --bundle "$BUNDLE" --dry-run
 # Review dry-run / active SHOW gate before proceeding:
-sudo "$BUNDLE/stagecore-setup" update --bundle "$BUNDLE" --listen 0.0.0.0:7840
+sudo "$BUNDLE/stagecore-setup" update --bundle "$BUNDLE"
 sudo systemctl is-active stagecore-hub.service
 curl -fsS http://127.0.0.1:7840/health/ready
 ```
