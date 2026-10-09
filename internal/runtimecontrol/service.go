@@ -599,8 +599,17 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		return finish(rejected(command.CommandID, "EMERGENCY_BLACKOUT_NOT_ACTIVE", "managed-output Emergency Blackout is not active", session.ID))
 	}
 
-	// Activation is latched durably BEFORE cancelling the current Cue or touching
-	// outputs. Any partial failure therefore keeps GO blocked across Hub restart.
+	// Block admission atomically before latching and snapshotting all active
+	// Cues. A GO which passed the earlier blackout read must still be fenced.
+	if req.Enabled {
+		if !s.beginStoppingCues(session.ID) {
+			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+		}
+		defer s.endStoppingCues(session.ID)
+	}
+
+	// Activation is latched durably BEFORE cancelling all active Cues or
+	// touching outputs. Any partial failure keeps GO blocked across restart.
 	if req.Enabled {
 		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, req.Issuer); err != nil {
 			return finish(resultFromStoreError(command.CommandID, "EMERGENCY_BLACKOUT_LATCH_FAILED", err, session.ID))
