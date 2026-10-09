@@ -628,6 +628,7 @@
           <button class="button ghost" data-stage-laser-visual-save="${esc(device.device_id)}"
             type="button" ${editable ? "" : "disabled"}>${esc(t("stageLaserVisualSave"))}</button>
           ${editable && device.assignment?.assignment_state === "ACTIVE" &&
+              device.assignment?.project_id === currentProjectID() &&
               connection === "ONLINE" ? `<button class="button ghost"
                 data-stage-laser-resync="${esc(device.device_id)}"
                 type="button">${esc(t("stageLaserResync"))}</button>` : ""}
