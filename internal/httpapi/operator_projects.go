@@ -56,6 +56,7 @@ type cueSummaryView struct {
 	DisplayLabel string `json:"display_label"`
 	Name         string `json:"name"`
 	OrderIndex   int    `json:"order_index"`
+	NotesSummary string `json:"notes_summary"`
 }
 
 type dashboardView struct {
@@ -283,5 +284,5 @@ func makeSessionView(session domain.Session) sessionView {
 }
 
 func makeCueSummary(cue domain.Cue) cueSummaryView {
-	return cueSummaryView{ID: cue.ID, DisplayLabel: cue.DisplayLabel, Name: cue.Name, OrderIndex: cue.OrderIndex}
+	return cueSummaryView{ID: cue.ID, DisplayLabel: cue.DisplayLabel, Name: cue.Name, OrderIndex: cue.OrderIndex, NotesSummary: cue.NotesSummary}
 }
