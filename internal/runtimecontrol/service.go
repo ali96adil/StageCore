@@ -63,7 +63,7 @@ type Service struct {
 	emergencySafety EmergencySafety
 
 	mu     sync.Mutex
-	active map[string]activeRun
+	active map[string]map[string]activeRun
 }
 
 type activeRun struct {
@@ -115,7 +115,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 	service := &Service{
 		store: s, executor: stoppable,
 		engine: cueengine.NewWithExecutor(s, stoppable),
-		active: make(map[string]activeRun),
+		active: make(map[string]map[string]activeRun),
 	}
 	for _, option := range options {
 		option(service)
@@ -490,19 +490,32 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
 	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
-	if existing, found := s.active[session.ID]; found {
+	runs := s.active[session.ID]
+	// Only overlap runs known to this live Hub. A RUNNING database row left by
+	// a crash still blocks the first GO until runtime recovery resolves it.
+	if len(runs) > 0 {
+		runCtx = cueengine.WithConcurrentCueGo(runCtx)
+	}
+	if runs == nil {
+		runs = make(map[string]activeRun)
+		s.active[session.ID] = runs
+	}
+	if _, duplicate := runs[req.RequestID]; duplicate {
 		s.mu.Unlock()
 		cancel()
-		return s.rejectWhileActive(ctx, command, existing)
+		return rejected(req.RequestID, "DUPLICATE_UNRESOLVED", "this Cue GO request is already active", req.RequestID)
 	}
-	s.active[session.ID] = run
+	runs[req.RequestID] = run
 	s.mu.Unlock()
 	defer func() {
 		cancel()
 		s.executor.clear(command.CorrelationID)
 		s.mu.Lock()
-		if current, ok := s.active[session.ID]; ok && current.requestID == req.RequestID {
-			delete(s.active, session.ID)
+		if current := s.active[session.ID]; current != nil {
+			delete(current, req.RequestID)
+			if len(current) == 0 {
+				delete(s.active, session.ID)
+			}
 		}
 		close(done)
 		s.mu.Unlock()
@@ -641,65 +654,72 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
 
-	s.mu.Lock()
-	run, ok := s.active[session.ID]
-	s.mu.Unlock()
-	if !ok {
+	runs := s.activeRunsForSession(session.ID)
+	if len(runs) == 0 {
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
 	}
-	s.executor.stop(run.correlationID)
-	if run.cancel != nil { run.cancel() }
+	s.interruptCueRuns(runs)
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
-	select {
-	case <-run.done:
-		payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "stop_confirmed": true})
-		return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
-	case <-timer.C:
-		return finish(contracts.CommandResult{
-			CommandID: command.CommandID, Status: contracts.CommandTimedOut,
-			Error: &contracts.ContractError{ErrorCode: "STOP_UNCONFIRMED", Category: "TIMEOUT", Message: "stop was requested but the active capability did not terminate within the bounded wait", Retryable: false, AffectedEntityID: session.ID},
-		})
-	case <-ctx.Done():
-		return finish(contracts.CommandResult{
-			CommandID: command.CommandID, Status: contracts.CommandCancelled,
-			Error: &contracts.ContractError{ErrorCode: "STOP_REQUEST_CANCELLED", Category: "CANCELLED", Message: "stop request context was cancelled", Retryable: false, AffectedEntityID: session.ID},
-		})
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-timer.C:
+			return finish(contracts.CommandResult{
+				CommandID: command.CommandID, Status: contracts.CommandTimedOut,
+				Error: &contracts.ContractError{ErrorCode: "STOP_UNCONFIRMED", Category: "TIMEOUT", Message: "STOP requested but not all active Cue executions terminated within the bounded wait", Retryable: false, AffectedEntityID: session.ID},
+			})
+		case <-ctx.Done():
+			return finish(contracts.CommandResult{
+				CommandID: command.CommandID, Status: contracts.CommandCancelled,
+				Error: &contracts.ContractError{ErrorCode: "STOP_REQUEST_CANCELLED", Category: "CANCELLED", Message: "stop request context was cancelled", Retryable: false, AffectedEntityID: session.ID},
+			})
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "stop_confirmed": true, "stopped_cue_count": len(runs)})
+	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
+}
+
+// activeRunsForSession snapshots every active Cue execution. STOP and session
+// shutdown target all of them; a later GO never implicitly stops an earlier one.
+func (s *Service) activeRunsForSession(sessionID string) []activeRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byRequest := s.active[sessionID]
+	runs := make([]activeRun, 0, len(byRequest))
+	for _, run := range byRequest {
+		runs = append(runs, run)
+	}
+	return runs
+}
+
+func (s *Service) interruptCueRuns(runs []activeRun) {
+	for _, run := range runs {
+		s.executor.stop(run.correlationID)
+		if run.cancel != nil {
+			run.cancel()
+		}
 	}
 }
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
-	s.mu.Lock()
-	run, ok := s.active[sessionID]
-	s.mu.Unlock()
-	if !ok {
+	runs := s.activeRunsForSession(sessionID)
+	if len(runs) == 0 {
 		return nil
 	}
-	s.executor.stop(run.correlationID)
-	if run.cancel != nil { run.cancel() }
+	s.interruptCueRuns(runs)
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
-	select {
-	case <-run.done:
-		return nil
-	case <-timer.C:
-		return fmt.Errorf("active Cue did not terminate within the bounded stop wait")
-	case <-ctx.Done():
-		return fmt.Errorf("session stop was cancelled while waiting for the active Cue: %w", ctx.Err())
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-timer.C:
+			return fmt.Errorf("not all active Cues terminated within the bounded stop wait")
+		case <-ctx.Done():
+			return fmt.Errorf("session stop was cancelled while waiting for the active Cues: %w", ctx.Err())
+		}
 	}
-}
-
-func (s *Service) rejectWhileActive(ctx context.Context, command contracts.CommandEnvelope, active activeRun) contracts.CommandResult {
-	if existing, terminal, ok := s.reserve(ctx, command); !ok {
-		return existing
-	} else if terminal {
-		return existing
-	}
-	result := rejected(command.CommandID, "UNRESOLVED_EXECUTION", "another Cue execution is still active for this Session", active.requestID)
-	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
-		return failed(command.CommandID, "COMMAND_FINISH_FAILED")
-	}
-	return result
+	return nil
 }
 
 func (s *Service) reserve(ctx context.Context, command contracts.CommandEnvelope) (contracts.CommandResult, bool, bool) {
