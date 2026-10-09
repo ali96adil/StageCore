@@ -1,6 +1,6 @@
 # Duplicate Project — data-integrity implementation contract
 
-Status: **specification and coverage gate; not an implemented duplicate API**. See #472.
+Status: **implemented in PR #473, under CI and code review; not deployed yet**. See #472.
 
 ## Semantics
 
@@ -71,3 +71,16 @@ automatically. Referencing a media asset never duplicates or deletes its bytes.
 
 This contract deliberately makes it **incorrect** to ship a simple
 CreateProject + copy-cues implementation as a full Project Duplicate.
+
+## Implementation in PR #473
+
+- Operator Projects screen: Duplicate Project button, proposed new name, explicit confirmation.
+- Permission-gated `POST /api/v1/projects/{project_id}/duplicate` responds with the fresh Project and Draft revision.
+- Transactional backend clone of current Draft/Validated authoring graph with fresh internal IDs and linked-Cue remapping.
+- Copies operator notes, project device aliases, Machine Role definitions, media assets/content versions/locations, role media requirements, live-video descriptors, Visual Engine settings and DMX authoring bindings.
+- JSON authoring fields with exact media asset/content version IDs are rewritten to newly copied media identities, including nested Cue action parameters. Shared content versions owned by other Projects remain references to that original immutable version.
+- DOES NOT copy Companion assignments, paired Stage Device ownership, active Sessions, Runtime Snapshots/history, runtime readiness/observations, blackout commands or safety authority. References to a source-owned physical lighting node in the copied authoring config require deliberate reassignment/review before publishing/show.
+- Project notes on historical Cues retain the note text, but detach historic Cue associations when those Cues are outside the current authoring revision.
+- Tests cover re-duplication into two independent Projects, validated source, Cue-linked group policies, Cue actions and Route remapping, cross-Project media references, nested media-ID JSON remapping, and transactional rollback on an invalid source link.
+
+Do not interpret GitHub CI as a real Stage Device or SHOW rehearsal test; local production deployment must follow the normal verified backup/transactional update workflow.
