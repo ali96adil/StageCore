@@ -301,6 +301,13 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	if duplicate {
 		return command, nil
 	}
+	// CreateCommand persists ACCEPTED before writing to the device socket.
+	// STOP or blackout can cancel the Cue during that DB/event work.
+	// Never send an ACCEPTED command whose originating operation already
+	// lost the cancellation race.
+	if cause := ctx.Err(); cause != nil {
+		return r.finishUndeliveredCommand(command, cause)
+	}
 
 	r.mu.Lock()
 	current := r.connections[command.DeviceID]
@@ -340,12 +347,51 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 		DeviceID:      command.DeviceID,
 		Command:       command.Envelope,
 	}
-	if err := current.send(message); err != nil {
+	// A second cancellation check is performed *while holding the socket
+	// writer lock*. This closes the interval where an earlier write blocks
+	// a later Cue's dispatch and STOP wins before that later write begins.
+	if err := current.sendContext(ctx, message); err != nil {
 		r.unbindCommand(command.Envelope.CommandID, current)
+		if cause := ctx.Err(); cause != nil {
+			return r.finishUndeliveredCommand(command, cause)
+		}
 		current.close()
 		return r.failCommand(ctx, command, "TRANSPORT_SEND_FAILED", err.Error())
 	}
 	return command, nil
+}
+
+// finishUndeliveredCommand is only called if the Hub did NOT send the
+// command. Persisting a terminal result prevents a future duplicate retry
+// from reviving the cancelled command; a late device ACK cannot change it.
+func (r *Runtime) finishUndeliveredCommand(command deviceexperience.DeviceCommand, cause error) (deviceexperience.DeviceCommand, error) {
+	status := contracts.CommandCancelled
+	code := "STAGE_DEVICE_COMMAND_CANCELLED"
+	category := "CANCELLED"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		status = contracts.CommandTimedOut
+		code = "STAGE_DEVICE_COMMAND_TIMED_OUT"
+		category = "TIMEOUT"
+	}
+	result, err := json.Marshal(contracts.CommandResult{
+		CommandID: command.Envelope.CommandID,
+		Status: status,
+		Error: &contracts.ContractError{
+			ErrorCode: code, Category: category,
+			Message: "Cue stopped before Stage Device socket dispatch: " + cause.Error(),
+			Retryable: false, AffectedEntityID: command.DeviceID,
+		},
+	})
+	if err != nil {
+		return deviceexperience.DeviceCommand{}, err
+	}
+	finishCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	completed, err := r.repository.CompleteCommand(finishCtx, command.Envelope.CommandID, status, result)
+	if err != nil {
+		return deviceexperience.DeviceCommand{}, fmt.Errorf("finish undelivered Stage Device command: %w", err)
+	}
+	return completed, nil
 }
 
 func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, session domain.CompanionRuntimeSession, token, remoteAddress string) {
@@ -991,11 +1037,18 @@ func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.Devi
 }
 
 func (c *connection) send(value any) error {
+	return c.sendContext(context.Background(), value)
+}
+
+func (c *connection) sendContext(ctx context.Context, value any) error {
 	if c == nil || c.ws == nil {
 		return errors.New("stage device connection unavailable")
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case <-c.closed:
 		return errors.New("stage device connection is closed")
