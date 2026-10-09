@@ -64,6 +64,9 @@ type Service struct {
 
 	mu     sync.Mutex
 	active map[string]map[string]activeRun
+	// Block GO while a STOP/Session exit is in flight so no new Cue is
+	// admitted after the STOP snapshot has been taken.
+	stopping map[string]bool
 }
 
 type activeRun struct {
@@ -116,6 +119,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		store: s, executor: stoppable,
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
+		stopping: make(map[string]bool),
 	}
 	for _, option := range options {
 		option(service)
@@ -284,6 +288,10 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
+	if !s.beginStoppingCues(session.ID) {
+		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+	}
+	defer s.endStoppingCues(session.ID)
 	if err := s.stopActiveCueForSession(ctx, session.ID); err != nil {
 		return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_CUE_UNCONFIRMED", err.Error(), session.ID))
 	}
@@ -343,6 +351,10 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
+	if !s.beginStoppingCues(session.ID) {
+		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+	}
+	defer s.endStoppingCues(session.ID)
 
 	cueStopErr := s.stopActiveCueForSession(ctx, session.ID)
 	reason := "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
@@ -490,6 +502,11 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
 	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
+	if s.stopping[session.ID] {
+		s.mu.Unlock()
+		cancel()
+		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
+	}
 	runs := s.active[session.ID]
 	// Only overlap runs known to this live Hub. A RUNNING database row left by
 	// a crash still blocks the first GO until runtime recovery resolves it.
@@ -654,6 +671,10 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
 
+	if !s.beginStoppingCues(session.ID) {
+		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+	}
+	defer s.endStoppingCues(session.ID)
 	runs := s.activeRunsForSession(session.ID)
 	if len(runs) == 0 {
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
@@ -678,6 +699,24 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	}
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "stop_confirmed": true, "stopped_cue_count": len(runs)})
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
+}
+
+// beginStoppingCues prevents newly admitted GO executions while STOP is
+// canceling its snapshot. It also fences a normal or forced Session exit.
+func (s *Service) beginStoppingCues(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] {
+		return false
+	}
+	s.stopping[sessionID] = true
+	return true
+}
+
+func (s *Service) endStoppingCues(sessionID string) {
+	s.mu.Lock()
+	delete(s.stopping, sessionID)
+	s.mu.Unlock()
 }
 
 // activeRunsForSession snapshots every active Cue execution. STOP and session
