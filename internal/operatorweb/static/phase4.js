@@ -28,7 +28,10 @@
       v2AssignedSnapshot: "Runtime Snapshot",
       v2ReusableNote: "This physical device is Hub-owned and reusable across Projects; assignment state controls which Project currently has authority.",
       v2BlockedStatus: "Hub assignment status",
-      v2HardwareUnverified: "Software-only status. Physical DMX and fixtures are NOT verified. Project commands remain disabled.",
+      v2HardwareUnverified: "Software-only status. Physical DMX and fixtures are NOT verified.",
+      v2CommandsEnabled: "Project commands enabled for the current authenticated Runtime Snapshot (physical output unverified).",
+      v2CommandsDisabled: "Project commands disabled for the current connection.",
+      v2CommandsUnknown: "Project command authority could not be verified.",
       v2GenericHardwareUnverified: "Software-only device report; physical outputs have not been verified. No output authority is implied.",
       v2CurrentSoftwareZero: "Device reported zero on the current authenticated connection",
       v2NoCurrentSoftwareZero: "No current-connection zero report",
@@ -242,7 +245,10 @@
       v2AssignedSnapshot: "Runtime Snapshot",
       v2ReusableNote: "هذا جهاز فعلي تابع للـHub وقابل لإعادة الاستخدام بين المشاريع؛ حالة التخصيص هي اللي تحدد أي مشروع عنده السلطة حالياً.",
       v2BlockedStatus: "حالة التخصيص في الـHub",
-      v2HardwareUnverified: "هاي حالة برمجية فقط؛ الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن. أوامر المشروع معطّلة.",
+      v2HardwareUnverified: "هاي حالة برمجية فقط؛ الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن.",
+      v2CommandsEnabled: "أوامر المشروع مفعّلة للـ Runtime Snapshot الحالي الموثّق (المخارج الفعلية بعد ما مفحوصة).",
+      v2CommandsDisabled: "أوامر المشروع معطّلة على الاتصال الحالي.",
+      v2CommandsUnknown: "تعذر التأكد من صلاحية أوامر المشروع.",
       v2GenericHardwareUnverified: "هاي قراءة برمجية فقط؛ المخرجات الفعلية للجهاز بعد ما متحققين منها، وما تعطي صلاحية لتشغيلها.",
       v2CurrentSoftwareZero: "الجهاز بلّغ عن صفر على الاتصال الموثّق الحالي",
       v2NoCurrentSoftwareZero: "ماكو تقرير صفر للاتصال الحالي",
@@ -748,6 +754,7 @@
           <div class="phase4-empty" role="status">
             <strong>${esc(t("v2BlockedStatus"))}: ${esc(v2Status?.status || "NOT_VERIFIED")}</strong>
             <p>${esc(v2Status?.software_zero_report_current_connection ? t("v2CurrentSoftwareZero") : t("v2NoCurrentSoftwareZero"))}</p>
+            <p>${esc(v2Status?.commands_enabled === true ? t("v2CommandsEnabled") : v2Status?.commands_enabled === false ? t("v2CommandsDisabled") : t("v2CommandsUnknown"))}</p>
             <p>${esc(t("v2HardwareUnverified"))}</p>
           </div>` : ""}
         ${device.protocol_version === "stagecore.device/2" &&
