@@ -286,3 +286,45 @@ func TestCanonicalOutputOwnershipRejectsSamePhysicalDeviceAcrossAliases(t *testi
 		})
 	}
 }
+
+
+func TestLightingFadeContinuesAfterMusicGoAtTenSecondEquivalent(t *testing.T) {
+	// Scaled theatre sequence: LX Fade starts at 0ms, Music GO at 100ms,
+	// LX finishes at 300ms. The second GO must not cancel or wait for LX.
+	h := newRuntimeHarness(t,
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":300}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":30}}`),
+	)
+	session := startOverlapSession(t, h)
+	first := runningGo(h, session.ID, "00000000-0000-7000-8000-000000008602")
+	waitForSelectedCue(t, h, session.ID, h.cues[0].ID)
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case result := <-first:
+		t.Fatalf("LX Fade unexpectedly finished before Music GO: %+v", result)
+	default:
+	}
+	second := runningGo(h, session.ID, "00000000-0000-7000-8000-000000008603")
+	waitForSelectedCue(t, h, session.ID, h.cues[1].ID)
+	select {
+	case result := <-second:
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("Music GO failed while LX still fading: %+v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Music GO waited for LX Fade to finish")
+	}
+	select {
+	case result := <-first:
+		t.Fatalf("LX Fade was interrupted or ended too soon: %+v", result)
+	default:
+	}
+	select {
+	case result := <-first:
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("LX Fade must complete after Music GO, got %+v", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LX Fade did not finish after Music GO")
+	}
+}
