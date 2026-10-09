@@ -62,11 +62,12 @@ type Service struct {
 	stopSafety      SessionStopSafety
 	emergencySafety EmergencySafety
 
-	mu     sync.Mutex
-	active map[string]map[string]activeRun
-	// Block GO while a STOP/Session exit is in flight so no new Cue is
-	// admitted after the STOP snapshot has been taken.
-	stopping map[string]bool
+	mu           sync.Mutex
+	active       map[string]map[string]activeRun
+	stopping     map[string]bool
+	nextSequence uint64
+	// Keep Cue selection ordering brief; do not hold while Actions run.
+	selectionMu  sync.Mutex
 }
 
 type activeRun struct {
@@ -74,6 +75,8 @@ type activeRun struct {
 	correlationID string
 	done          chan struct{}
 	cancel        context.CancelFunc
+	sequence      uint64
+	resources     []string
 }
 
 type StartRequest struct {
@@ -91,6 +94,7 @@ type CueRequest struct {
 	ExpectedCurrentCueID *string
 	RequestedCueID       *string
 	OperatorNote         *string
+	onSelected           func()
 }
 
 type StopRequest struct {
@@ -285,6 +289,10 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
@@ -348,6 +356,10 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
@@ -477,9 +489,19 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
 		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
 	}
+	// Multiple Cues may execute simultaneously, but selecting/advancing each
+	// one remains serialized to prevent two rapid GOs from selecting Cue N+1.
+	s.selectionMu.Lock()
+	var release sync.Once
+	unlock := func() { release.Do(s.selectionMu.Unlock) }
+	defer unlock()
+
 	session, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
+	}
+	if session.Status != domain.SessionActive {
+		return rejected(req.RequestID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID)
 	}
 	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
 	if err != nil {
@@ -494,64 +516,200 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		OperatorNote: req.OperatorNote,
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
+	// Idempotent GO replay must be resolved before selecting another Cue.
+	// Otherwise retrying the final Cue can produce NO_NEXT_CUE rather than
+	// returning the stored terminal command result.
+	if record, found, err := s.store.FindCommandRecord(ctx, command); err != nil {
+		return failed(req.RequestID, "COMMAND_LOOKUP_FAILED")
+	} else if found {
+		// A retry during an in-flight GO is not a new request and must not
+		// advance the Cue or be reported as an error. Do not claim that
+		// current_cue_id was already advanced: the original GO may still
+		// be finalizing its durable selection.
+		if result, terminal, resultErr := s.store.StoredCommandResult(record); resultErr != nil {
+			return failed(req.RequestID, "COMMAND_RESULT_LOOKUP_FAILED")
+		} else if terminal {
+			return result
+		}
+		return contracts.CommandResult{
+			CommandID: record.CommandID, Status: contracts.CommandAccepted,
+			Payload: json.RawMessage(`{"already_accepted":true,"execution_continues":true}`),
+		}
+	}
+
+	// Resolve all linked Cue outputs while GO selection remains fenced.
+	// Same-target output overlap is rejected rather than silently racing
+	// late old actions against a newer Cue's desired device state.
+	resources, previewRejected, previewErr := s.engine.PreviewCueOutputTargets(
+		ctx, session, cueengine.CueGoPayload{
+			ExpectedCurrentCueID: req.ExpectedCurrentCueID,
+			RequestedNextCueID: req.RequestedCueID,
+			OperatorNote: req.OperatorNote,
+		})
+	if previewErr != nil {
+		return failed(req.RequestID, "CUE_OUTPUT_PREVIEW_FAILED")
+	}
+	if previewRejected != nil {
+		previewRejected.CommandID = req.RequestID
+		return *previewRejected
+	}
 
 	done := make(chan struct{})
-	// STOP cancels only Cue delays. Command persistence must retain the live
-	// request context so terminal results can still be durably recorded.
 	delayStop, cancel := context.WithCancel(context.Background())
-	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
-	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
+	runCtx := cueengine.WithSelectionHook(cueengine.WithDelayStop(ctx, delayStop.Done()), func() {
+		unlock()
+		if req.onSelected != nil { req.onSelected() }
+	})
+
 	s.mu.Lock()
 	if s.stopping[session.ID] {
 		s.mu.Unlock()
 		cancel()
-		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
+		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "another Cue STOP is still resolving", session.ID)
 	}
-	runs := s.active[session.ID]
-	// Validate orphan RUNNING rows while holding the admission lock. The
-	// first admitted run may reach the engine after another concurrent GO;
-	// checking for orphans inside that first engine goroutine would race.
-	if len(runs) == 0 {
-		running, err := s.store.HasRunningCueExecution(ctx, session.ID)
-		if err != nil {
+	// An old RUNNING row after a Hub restart has no live executor owner.
+	// Never treat that orphan as permission to resume or dispatch outputs.
+	if len(s.active[session.ID]) == 0 {
+		unresolved, checkErr := s.store.HasRunningCueExecution(ctx, session.ID)
+		if checkErr != nil {
 			s.mu.Unlock()
 			cancel()
 			return failed(req.RequestID, "RUNNING_EXECUTION_CHECK_FAILED")
 		}
-		if running {
+		if unresolved {
 			s.mu.Unlock()
 			cancel()
-			return rejected(req.RequestID, "UNRESOLVED_EXECUTION", "a Cue execution from an earlier runtime is still unresolved", session.ID)
+			return rejected(req.RequestID, "UNRESOLVED_EXECUTION", "session has an unresolved Cue execution from an earlier runtime", session.ID)
 		}
 	}
-	// Every request admitted through this service uses its serialized,
-	// persisted admission decision. Direct CueEngine requests remain strict.
 	runCtx = cueengine.WithConcurrentCueGo(runCtx)
-	if runs == nil {
-		runs = make(map[string]activeRun)
-		s.active[session.ID] = runs
+	s.nextSequence++
+	run := activeRun{
+		requestID: req.RequestID, correlationID: command.CorrelationID,
+		done: done, cancel: cancel, sequence: s.nextSequence,
+		resources: resources,
 	}
-	if _, duplicate := runs[req.RequestID]; duplicate {
+	// Resource ownership is global to this Hub, not only to a Session.
+	// Two projects can refer to the same physical OSC endpoint or Companion.
+	for _, sessionRuns := range s.active {
+		for _, other := range sessionRuns {
+			if conflict := overlappingTarget(resources, other.resources); conflict != "" {
+				s.mu.Unlock()
+				cancel()
+				return s.rejectOutputConflict(ctx, command, other.requestID, conflict)
+			}
+		}
+	}
+	if s.active[session.ID] == nil {
+		s.active[session.ID] = make(map[string]activeRun)
+	}
+	if _, alreadyActive := s.active[session.ID][req.RequestID]; alreadyActive {
 		s.mu.Unlock()
 		cancel()
-		return rejected(req.RequestID, "DUPLICATE_UNRESOLVED", "this Cue GO request is already active", req.RequestID)
+		return rejected(req.RequestID, "DUPLICATE_UNRESOLVED", "Cue request is already in progress", req.RequestID)
 	}
-	runs[req.RequestID] = run
+	s.active[session.ID][req.RequestID] = run
 	s.mu.Unlock()
+
 	defer func() {
 		cancel()
 		s.executor.clear(command.CorrelationID)
 		s.mu.Lock()
-		if current := s.active[session.ID]; current != nil {
-			delete(current, req.RequestID)
-			if len(current) == 0 {
-				delete(s.active, session.ID)
-			}
+		delete(s.active[session.ID], req.RequestID)
+		if len(s.active[session.ID]) == 0 {
+			delete(s.active, session.ID)
 		}
 		close(done)
 		s.mu.Unlock()
 	}()
 	return s.engine.ExecuteCueGo(runCtx, session.ID, command)
+}
+
+// overlappingTarget is a conservative in-flight resource fence. Two Cues
+// writing one physical target cannot overlap while an earlier one is running.
+// Empty-resource Cues (e.g. sim.test-only) remain freely concurrent.
+func overlappingTarget(a, b []string) string {
+	for _, left := range a {
+		for _, right := range b {
+			if left == right || left == "*" || right == "*" {
+				if left == "*" || right == "*" { return "UNRESOLVED_TARGET" }
+				return left
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Service) rejectOutputConflict(
+	ctx context.Context, command contracts.CommandEnvelope, priorRequestID, target string,
+) contracts.CommandResult {
+	if existing, terminal, ok := s.reserve(ctx, command); !ok {
+		return existing
+	} else if terminal { return existing }
+	result := rejected(command.CommandID, "OUTPUT_BUSY",
+		"another Cue execution still controls this output target; wait or STOP the conflicting Cue",
+		target)
+	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		return failed(command.CommandID, "COMMAND_FINISH_FAILED")
+	}
+	return result
+}
+
+// QueueGo provides a fast, durable GO acceptance for the operator interface:
+// return ACCEPTED only after current_cue_id was persisted. The run continues
+// under Hub-owned context, independent from the original HTTP request.
+func (s *Service) QueueGo(ctx context.Context, req CueRequest) contracts.CommandResult {
+	if ctx == nil {
+		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "request context is missing", req.SessionID)
+	}
+	selected := make(chan struct{}, 1)
+	terminal := make(chan contracts.CommandResult, 1)
+	req.onSelected = func() {
+		select { case selected <- struct{}{}: default: }
+	}
+	go func() {
+		terminal <- s.Go(context.WithoutCancel(ctx), req)
+	}()
+	select {
+	case <-selected:
+		return contracts.CommandResult{
+			CommandID: req.RequestID, Status: contracts.CommandAccepted,
+			Payload: json.RawMessage(`{"cue_selected":true,"execution_continues":true}`),
+		}
+	case result := <-terminal:
+		return result
+	case <-ctx.Done():
+		// The Hub-owned operation may still complete; idempotent request_id is
+		// required for a retry. Never claim a cancelled HTTP request stopped GO.
+		return failed(req.RequestID, "GO_ACCEPTANCE_UNCONFIRMED")
+	}
+}
+
+// latestActiveRun is the last GO still running, NOT necessarily the latest
+// completed Cue. STOP CUE only cancels this execution. STOP SESSION and
+// Emergency Blackout cancel all outstanding executions.
+func (s *Service) latestActiveRun(sessionID string) (activeRun, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest activeRun
+	found := false
+	for _, run := range s.active[sessionID] {
+		if !found || run.sequence > latest.sequence {
+			latest = run
+			found = true
+		}
+	}
+	return latest, found
+}
+
+func (s *Service) activeRunsForSession(sessionID string) []activeRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runs := make([]activeRun, 0, len(s.active[sessionID]))
+	for _, run := range s.active[sessionID] {
+		runs = append(runs, run)
+	}
+	return runs
 }
 
 func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) contracts.CommandResult {
@@ -576,6 +734,10 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		}
 		return result
 	}
+	// Serialize GO selection against session shutdown and safety latch.
+	s.selectionMu.Lock()
+	defer s.selectionMu.Unlock()
+
 	if session.Status != domain.SessionActive {
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
@@ -694,15 +856,23 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
 
+	// Fence STOP selection against concurrent GO selection, but release
+	// before waiting for a long-running adapter. STOP applies to the latest
+	// *selected* Cue at this serialized point in time.
+	s.selectionMu.Lock()
 	if !s.beginStoppingCues(session.ID) {
-		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+		s.selectionMu.Unlock()
+		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP is still resolving", session.ID))
 	}
 	defer s.endStoppingCues(session.ID)
-	runs := s.activeRunsForSession(session.ID)
-	if len(runs) == 0 {
+	run, ok := s.latestActiveRun(session.ID)
+	if !ok {
+		s.selectionMu.Unlock()
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
 	}
-	s.interruptCueRuns(runs)
+	s.executor.stop(run.correlationID)
+	if run.cancel != nil { run.cancel() }
+	s.selectionMu.Unlock()
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	for _, run := range runs {
@@ -724,14 +894,13 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
 
-// beginStoppingCues prevents newly admitted GO executions while STOP is
-// canceling its snapshot. It also fences a normal or forced Session exit.
+// beginStoppingCues is a temporary admission fence for STOP LATEST CUE.
+// It remains latched until the pending STOP result is resolved, not merely
+// until its cancellation signal was sent. Independent earlier Cues continue.
 func (s *Service) beginStoppingCues(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping[sessionID] {
-		return false
-	}
+	if s.stopping[sessionID] { return false }
 	s.stopping[sessionID] = true
 	return true
 }
@@ -742,26 +911,38 @@ func (s *Service) endStoppingCues(sessionID string) {
 	s.mu.Unlock()
 }
 
-// activeRunsForSession snapshots every active Cue execution. STOP and session
-// shutdown target all of them; a later GO never implicitly stops an earlier one.
-func (s *Service) activeRunsForSession(sessionID string) []activeRun {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	byRequest := s.active[sessionID]
-	runs := make([]activeRun, 0, len(byRequest))
-	for _, run := range byRequest {
-		runs = append(runs, run)
+func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
+	runs := s.activeRunsForSession(sessionID)
+	if len(runs) == 0 {
+		return nil
 	}
-	return runs
-}
-
-func (s *Service) interruptCueRuns(runs []activeRun) {
+	// Stop *every* execution before waiting. The same bound applies to the
+	// whole batch; a slow older Cue cannot hide behind the current Cue.
 	for _, run := range runs {
 		s.executor.stop(run.correlationID)
-		if run.cancel != nil {
-			run.cancel()
+		if run.cancel != nil { run.cancel() }
+	}
+	return waitForActiveRunStops(ctx, runs, defaultStopWait)
+}
+
+// waitForActiveRunStops uses a level-triggered deadline (context.Done) rather
+// than reading time.Timer.C in a loop. A timer's single signal can otherwise
+// be consumed by a select racing with a just-completed Cue, leaving a later
+// unfinished Cue blocked forever after the timeout has already fired.
+func waitForActiveRunStops(ctx context.Context, runs []activeRun, timeout time.Duration) error {
+	bounded, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		case <-bounded.Done():
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("session stop was cancelled while waiting for Cue executions: %w", err)
+			}
+			return fmt.Errorf("%d active Cue execution(s) did not terminate within the bounded stop wait", len(runs))
 		}
 	}
+	return nil
 }
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
@@ -892,18 +1073,14 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		}
 		e.mu.Unlock()
 	}()
-	// STOP may have won the registration race; never call a device adapter
-	// with an already-cancelled execution context.
-	if err := executionCtx.Err(); err != nil {
-		result := domain.ExecutionCancelled
-		code := "CANCELLED"
-		if err == context.DeadlineExceeded {
-			result = domain.ExecutionTimedOut
-			code = "TIMED_OUT"
-		}
+	// If STOP already won the registration race, never invoke the device
+	// adapter at all. The adapter may not be cancellation-aware before its
+	// first network write. Cancellation after this check still requires
+	// adapter/device-level fencing and remains a release blocker.
+	if executionCtx.Err() != nil {
 		return capability.Result{
-			Result: result, AckLevel: contracts.AckNone,
-			ErrorCode: code, ResponseSummary: "Cue was stopped before capability dispatch",
+			Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+			ErrorCode: "CANCELLED", ResponseSummary: "Cue stopped before capability dispatch",
 		}
 	}
 	return e.inner.Execute(executionCtx, req)
@@ -911,13 +1088,13 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 
 func (e *stoppableExecutor) stop(correlationID string) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.stopped[correlationID] = true
-	cancels := make([]context.CancelFunc, 0, len(e.active[correlationID]))
+	// Latch and cancel every registered dispatch before releasing the
+	// registration lock. A concurrent Execute must observe STOP as soon as
+	// it acquires this lock; no registered context remains uncancelled.
+	// Device adapters still need their own pre-write cancellation fence.
 	for _, cancel := range e.active[correlationID] {
-		cancels = append(cancels, cancel)
-	}
-	e.mu.Unlock()
-	for _, cancel := range cancels {
 		cancel()
 	}
 }
