@@ -17,10 +17,12 @@ BEGIN
     END
     WHERE session_id = NEW.session_id;
 
-    -- Only the Cue still selected by the Operator is allowed to advance
-    -- runtime navigation on completion. A prior overlapping Cue cannot
-    -- reclaim the current position; this also preserves intentional JUMP.
-    -- A NULL current_cue_id retains the legacy terminal-first fallback.
+    -- Only the most recently launched Cue may advance runtime navigation on
+    -- terminal completion. This supports both the Operator GO/JUMP flow (which
+    -- selects on launch) and legacy integrations that record Cue completion
+    -- without calling SetSessionCurrentCue. Late completion of an older run
+    -- must never rewind the active position. SQLite rowid reflects durable
+    -- insertion order even when timestamps tie.
     UPDATE sessions
     SET current_cue_id = NEW.cue_id,
         next_cue_id = (
@@ -39,7 +41,13 @@ BEGIN
             LIMIT 1
         )
     WHERE session_id = NEW.session_id
-      AND (current_cue_id = NEW.cue_id OR current_cue_id IS NULL);
+      AND NEW.cue_execution_id = (
+          SELECT ce.cue_execution_id
+          FROM cue_executions ce
+          WHERE ce.session_id = NEW.session_id
+          ORDER BY ce.rowid DESC
+          LIMIT 1
+      );
 END;
 -- +goose StatementEnd
 
