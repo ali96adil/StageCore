@@ -74,3 +74,34 @@ func TestOverlapResourcesFailClosedForUnknownAliasOrMalformedConfiguration(t *te
 		}
 	}
 }
+
+func TestOverlapResourcesIncludeActionSelectedTabletRecipients(t *testing.T) {
+    manifest := snapshot.Manifest{Targets: []snapshot.Target{
+        snapshotAlias("tablet-controller-one", `{"device_id":"controller-a"}`),
+        snapshotAlias("tablet-controller-two", `{"device_id":"controller-b"}`),
+    }}
+    group := outputResourceKeys(manifest,snapshot.Action{
+        TargetRef:"tablet-controller-one",
+        Parameters:json.RawMessage(`{"device_ids":["tablet-a","tablet-b"],"mode":"PLAY"}`),
+    })
+    direct := outputResourceKeys(manifest,snapshot.Action{
+        TargetRef:"tablet-controller-two",
+        Parameters:json.RawMessage(`{"tablet_id":"tablet-b","mode":"BLACKOUT"}`),
+    })
+    if !slices.Contains(group,"device:tablet-b") || !slices.Contains(direct,"device:tablet-b") {
+        t.Fatalf("physical tablet overlap hidden by distinct target aliases: group=%v direct=%v",group,direct)
+    }
+    for _, bad := range []json.RawMessage{
+        json.RawMessage(`{"device_ids":[]}`),
+        json.RawMessage(`{"device_ids":["tablet-a",null]}`),
+        json.RawMessage(`{"tablet_id":""}`),
+        json.RawMessage(`{"stage_device_id":42}`),
+        json.RawMessage(`{"tablet_device_ids":[""]}`),
+        json.RawMessage(`not-json`),
+    } {
+        got:=outputResourceKeys(manifest,snapshot.Action{TargetRef:"tablet-controller-one",Parameters:bad})
+        if !slices.Equal(got,[]string{"*"}) {
+            t.Fatalf("malformed action-selected recipient must block all overlaps: params=%s got=%v",bad,got)
+        }
+    }
+}
