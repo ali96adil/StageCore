@@ -128,6 +128,12 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
     if err:=assetRows.Err();err!=nil{assetRows.Close();return err};assetRows.Close()
     versionIDs:=map[string]string{}
     mediaIDs:=map[string]string{}
+    // Machine Role IDs can appear in authored Cue and Route JSON as well as in
+    // execution-environment machine_role_id columns. The latter are remapped
+    // separately by the primary clone routine.
+    for original, copied := range roleIDs {
+        mediaIDs[original] = copied
+    }
     for _,a:=range assets{
         id,err:=stageid.New();if err!=nil{return err}
         mediaIDs[a.old]=id
@@ -188,24 +194,25 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
     }
 
     type video struct {
-        name,sourceClass,endpoint,caps,config string
+        oldID,name,sourceClass,endpoint,caps,config string
         deviceID,profileID,roleID sql.NullString
         required,desired int
     }
-    sourceRows,err:=tx.QueryContext(ctx,`SELECT name,source_class,execution_device_id,profile_id,endpoint_ref,
+    sourceRows,err:=tx.QueryContext(ctx,`SELECT source_id,name,source_class,execution_device_id,profile_id,endpoint_ref,
         capabilities_json,config_json,required,desired_enabled,execution_machine_role_id
         FROM live_video_sources WHERE project_id=?`,sourceProjectID)
     if err!=nil{return err}
     var sources []video
     for sourceRows.Next() {
         var v video
-        if err:=sourceRows.Scan(&v.name,&v.sourceClass,&v.deviceID,&v.profileID,&v.endpoint,
+        if err:=sourceRows.Scan(&v.oldID,&v.name,&v.sourceClass,&v.deviceID,&v.profileID,&v.endpoint,
           &v.caps,&v.config,&v.required,&v.desired,&v.roleID);err!=nil{sourceRows.Close();return err}
         sources=append(sources,v)
     }
     if err:=sourceRows.Err();err!=nil{sourceRows.Close();return err};sourceRows.Close()
     for _,v:=range sources{
         id,err:=stageid.New();if err!=nil{return err}
+        mediaIDs[v.oldID] = id
         var roleID any
         if v.roleID.Valid {
             mapped,ok:=roleIDs[v.roleID.String]
