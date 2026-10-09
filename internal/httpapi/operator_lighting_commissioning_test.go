@@ -176,9 +176,12 @@ func TestLightingCommissioningV2RoutesRequireAuthenticatedActiveSocket(t *testin
 	devices, err := deviceexperience.NewRepository(h.db.DB)
 	if err != nil { t.Fatal(err) }
 	const deviceID = "dmx-commissioning-v2"
-	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
-		ID: deviceID, ProfileID: lightingnode.ProfileID, Kind: deviceexperience.DeviceGeneric,
-		DisplayName: "V2 Lighting Node", ProtocolVersion: deviceexperience.ProtocolVersion2,
+	// Create the original Project-scoped binding through the supported v1
+	// authoring API, then migrate the real identity to projectless v2.
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "V2 Lighting Node",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
 		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
 	}); err != nil { t.Fatal(err) }
 	config := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
@@ -192,6 +195,9 @@ func TestLightingCommissioningV2RoutesRequireAuthenticatedActiveSocket(t *testin
 	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
 	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
 	if err != nil { t.Fatal(err) }
+	if _, err := devices.MigrateLegacyLightingToV2Blocked(ctx, deviceID, project.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
 	runtime := devicechannel.New(devices, nil)
 	defer runtime.Close()
 	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
@@ -211,7 +217,7 @@ func TestLightingCommissioningV2RoutesRequireAuthenticatedActiveSocket(t *testin
 	identifyPath := "/api/v1/projects/"+project.ID+"/lighting-controller/nodes/"+deviceID+"/identify"
 	applyPath := "/api/v1/projects/"+project.ID+"/lighting-controller/nodes/"+deviceID+"/apply-published-config"
 	if res := request(identifyPath, `{"alias":"front_warm","level":5,"duration_ms":500}`); res.Code != http.StatusNotFound {
-		t.Fatalf("unassigned identify must be denied, status=%d body=%s", res.Code, res.Body.String())
+		t.Fatalf("BLOCKED identify must be denied, status=%d body=%s", res.Code, res.Body.String())
 	}
 	if _, err := h.db.DB.ExecContext(ctx, `
 		UPDATE stage_device_assignments SET assignment_state='ACTIVE',
