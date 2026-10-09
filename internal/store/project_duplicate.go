@@ -85,7 +85,7 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
     aliases, err := duplicateSourceAliasesTx(ctx, tx, sourceProjectID)
     if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
 
-	if _, err := tx.ExecContext(ctx, "INSERT INTO projects (project_id,name,description,lifecycle_state,current_revision_id,created_at_us,updated_at_us) VALUES (?,?,?,'ACTIVE',NULL,?,?)", newProjectID, newName, project.Description, nowUS, nowUS); err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
+	if _, err := tx.ExecContext(ctx, "INSERT INTO projects (project_id,name,description,lifecycle_state,current_revision_id,default_venue_profile_id,created_at_us,updated_at_us) VALUES (?,?,?,'ACTIVE',NULL,?,?,?)", newProjectID, newName, project.Description, project.DefaultVenueProfileID, nowUS, nowUS); err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
     var currentRevisionID string
 	if err := tx.QueryRowContext(ctx, `SELECT current_revision_id FROM projects WHERE project_id = ?`, sourceProjectID).Scan(&currentRevisionID); err != nil {
 		if err == sql.ErrNoRows {
@@ -334,5 +334,5 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
     if err := tx.Commit(); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("commit draft fork: %w", err)
 	}
-return domain.Project{ID: newProjectID, Name: newName, Description: project.Description, LifecycleState: domain.ProjectActive, CurrentRevisionID: newRevisionID, CreatedAt: now, UpdatedAt: now}, domain.ProjectRevision{ID: newRevisionID, ProjectID: newProjectID, RevisionNumber: 1, Status: domain.RevisionDraft, CreatedAt: now, CreatedBy: createdBy, ChangeNote: "Duplicated from " + sourceProjectID}, nil
+return domain.Project{ID: newProjectID, Name: newName, Description: project.Description, LifecycleState: domain.ProjectActive, CurrentRevisionID: newRevisionID, DefaultVenueProfileID: project.DefaultVenueProfileID, CreatedAt: now, UpdatedAt: now}, domain.ProjectRevision{ID: newRevisionID, ProjectID: newProjectID, RevisionNumber: 1, Status: domain.RevisionDraft, CreatedAt: now, CreatedBy: createdBy, ChangeNote: "Duplicated from " + sourceProjectID}, nil
 }
