@@ -230,3 +230,65 @@ func TestSimultaneousGoRequestsSelectDistinctCues(t *testing.T) {
 		}
 	}
 }
+
+func TestLateOlderCueCompletionNeverRewindsSessionCursor(t *testing.T) {
+	h := newRuntimeHarnessWithPolicies(t,
+		[]json.RawMessage{
+			json.RawMessage(`{"start_delay_ms":2500}`),
+			json.RawMessage(`{}`),
+			json.RawMessage(`{}`),
+		},
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+	)
+	ctx := context.Background()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009031",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	firstDone := make(chan contracts.CommandResult, 1)
+	go func() {
+		firstDone <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000009032",
+		})
+	}()
+	waitForCueAdvancement(t, h, session.ID, h.cues[0].ID)
+
+	second := h.service.Go(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009033",
+	})
+	if second.Status != contracts.CommandCompleted {
+		t.Fatalf("second Cue did not finish before delayed first Cue: %+v", second)
+	}
+	select {
+	case premature := <-firstDone:
+		t.Fatalf("first Cue should still be pending when second finishes: %+v", premature)
+	default:
+	}
+	waitForCueAdvancement(t, h, session.ID, h.cues[1].ID)
+
+	select {
+	case result := <-firstDone:
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("late first Cue=%+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first delayed Cue did not complete")
+	}
+	state, err := h.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentCueID == nil || *state.CurrentCueID != h.cues[1].ID {
+		t.Fatalf("late Cue 1 completion rewound session current position: %+v", state.CurrentCueID)
+	}
+	if state.NextCueID == nil || *state.NextCueID != h.cues[2].ID {
+		t.Fatalf("late Cue 1 completion rewound session next Cue: %+v", state.NextCueID)
+	}
+}
