@@ -508,11 +508,25 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
 	}
 	runs := s.active[session.ID]
-	// Only overlap runs known to this live Hub. A RUNNING database row left by
-	// a crash still blocks the first GO until runtime recovery resolves it.
-	if len(runs) > 0 {
-		runCtx = cueengine.WithConcurrentCueGo(runCtx)
+	// Validate orphan RUNNING rows while holding the admission lock. The
+	// first admitted run may reach the engine after another concurrent GO;
+	// checking for orphans inside that first engine goroutine would race.
+	if len(runs) == 0 {
+		running, err := s.store.HasRunningCueExecution(ctx, session.ID)
+		if err != nil {
+			s.mu.Unlock()
+			cancel()
+			return failed(req.RequestID, "RUNNING_EXECUTION_CHECK_FAILED")
+		}
+		if running {
+			s.mu.Unlock()
+			cancel()
+			return rejected(req.RequestID, "UNRESOLVED_EXECUTION", "a Cue execution from an earlier runtime is still unresolved", session.ID)
+		}
 	}
+	// Every request admitted through this service uses its serialized,
+	// persisted admission decision. Direct CueEngine requests remain strict.
+	runCtx = cueengine.WithConcurrentCueGo(runCtx)
 	if runs == nil {
 		runs = make(map[string]activeRun)
 		s.active[session.ID] = runs
