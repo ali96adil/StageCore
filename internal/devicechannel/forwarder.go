@@ -48,6 +48,11 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	if f == nil || f.store == nil || f.repository == nil || f.dispatcher == nil {
 		return stageDeviceFailure("STAGE_DEVICE_FORWARDER_UNAVAILABLE", "Stage Device execution boundary is unavailable")
 	}
+	// STOP/Blackout must not create a new device command when cancellation
+	// is already visible at this boundary.
+	if err := ctx.Err(); err != nil {
+		return cancelledBeforeDispatch(err)
+	}
 	if req.Target == nil || !strings.EqualFold(strings.TrimSpace(req.Target.LogicalType), StageDeviceLogicalType) {
 		return stageDeviceFailure("STAGE_DEVICE_TARGET_INVALID", "Stage Device execution requires a stage_device target")
 	}
@@ -138,6 +143,11 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	waitCtx, cancel := context.WithDeadline(ctx, *deadline)
 	defer cancel()
 
+	// Snapshot/session resolution may have taken time while STOP or Blackout
+	// cancelled the parent Cue. Check again at the final dispatch boundary.
+	if err := waitCtx.Err(); err != nil {
+		return cancelledBeforeDispatch(err)
+	}
 	command, err := f.dispatcher.Dispatch(waitCtx, deviceexperience.CreateCommandInput{
 		ProjectID:         projectID,
 		SessionID:         sessionID,
@@ -177,6 +187,21 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 				return capabilityResultForDeviceCommand(current)
 			}
 		}
+	}
+}
+
+func cancelledBeforeDispatch(err error) capability.Result {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return capability.Result{
+			Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone,
+			ErrorCode: "STAGE_DEVICE_COMMAND_TIMED_OUT",
+			ResponseSummary: "Stage Device command deadline expired before dispatch",
+		}
+	}
+	return capability.Result{
+		Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+		ErrorCode: "STAGE_DEVICE_COMMAND_CANCELLED",
+		ResponseSummary: "Stage Device command cancelled before dispatch",
 	}
 }
 

@@ -892,6 +892,20 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		}
 		e.mu.Unlock()
 	}()
+	// STOP may have won the registration race; never call a device adapter
+	// with an already-cancelled execution context.
+	if err := executionCtx.Err(); err != nil {
+		result := domain.ExecutionCancelled
+		code := "CANCELLED"
+		if err == context.DeadlineExceeded {
+			result = domain.ExecutionTimedOut
+			code = "TIMED_OUT"
+		}
+		return capability.Result{
+			Result: result, AckLevel: contracts.AckNone,
+			ErrorCode: code, ResponseSummary: "Cue was stopped before capability dispatch",
+		}
+	}
 	return e.inner.Execute(executionCtx, req)
 }
 
