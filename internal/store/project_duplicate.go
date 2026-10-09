@@ -76,16 +76,14 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
 
-    // Preload aliases before starting the write transaction: avoid querying the
-    // pool from a second connection while the SQLite write lock is held.
-    aliases, err := s.ListAliases(ctx, sourceProjectID)
-    if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("begin draft fork: %w", err)
 	}
 	defer tx.Rollback()
+
+    aliases, err := duplicateSourceAliasesTx(ctx, tx, sourceProjectID)
+    if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
 
 	if _, err := tx.ExecContext(ctx, "INSERT INTO projects (project_id,name,description,lifecycle_state,current_revision_id,created_at_us,updated_at_us) VALUES (?,?,?,'ACTIVE',NULL,?,?)", newProjectID, newName, project.Description, nowUS, nowUS); err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
     var currentRevisionID string
