@@ -687,7 +687,7 @@
       </section>`;
   }
 
-  function deviceCard(device, v2Status = null, showLocked = false) {
+  function deviceCard(device, v2Status = null, showLocked = false, visualCheck = null, canPair = false) {
     const runtime = device.runtime || {};
     const assignment = device.assignment || {};
     const showRequirementKnown = device.protocol_version === "stagecore.device/2" &&
@@ -757,7 +757,7 @@
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
-        ${stageLaserVisualCheckMarkup(device, visualChecks[device.device_id], !assignmentLocked && canPair)}
+        ${stageLaserVisualCheckMarkup(device, visualCheck, !showLocked && canPair)}
         ${isStageLaser(device) ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
         ${setupAPMaintenanceMarkup(device)}
         ${firmwareMaintenanceMarkup(device)}
@@ -1009,7 +1009,7 @@
     };
     body.innerHTML = `
       ${devices.length
-        ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id], assignmentLocked)).join("")}</div>`
+        ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id], assignmentLocked, visualChecks[device.device_id], canPair)).join("")}</div>`
         : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
       <section aria-label="${esc(t("liveSourcesSection"))}">
         <h2>${esc(t("liveSourcesSection"))}</h2>
