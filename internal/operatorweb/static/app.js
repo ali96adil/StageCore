@@ -449,7 +449,7 @@ async function renderCues(message = "", messageKind = "success") {
             <tr class="${cueRelationshipClass(cue, cueParents)}">
               <td>${esc(cue.order_index)}</td>
               <td>${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(cuePolicyObject(cue).start_delay_ms) + " ms" : ""}</small></td>
+              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
@@ -776,7 +776,7 @@ function openCueEditor(cue) {
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
-  el("cueStartDelayMS").value = String(cuePolicyObject(cue).start_delay_ms || 0);
+  el("cueStartDelaySeconds").value = String(Number(cuePolicyObject(cue).start_delay_ms || 0) / 1000);
   renderLinkedCuesEditor(cue);
   el("cueNotes").value = cue?.notes_summary || "";
   actionsEditor.innerHTML = "";
@@ -837,10 +837,12 @@ cueForm.addEventListener("submit", async (event) => {
       enabled: el("cueEnabled").checked,
       execution_policy: (() => {
         const policy = linkedCuePolicyFromEditor(parseJSONField(el("cueExecutionPolicy").value, "Cue execution policy"));
-        const rawDelay = String(el("cueStartDelayMS").value || "0").trim();
-        const delayMS = Number(rawDelay);
-        if (!/^[0-9]+$/.test(rawDelay) || !Number.isSafeInteger(delayMS) || delayMS > 600000) {
-          throw new Error("Cue Start Delay must be an integer from 0 to 600000 milliseconds.");
+        const rawDelay = String(el("cueStartDelaySeconds").value || "0").trim();
+        const delaySeconds = Number(rawDelay);
+        const delayMS = Math.round(delaySeconds * 1000);
+        if (!/^[0-9]+(?:\.[0-9]{1,3})?$/.test(rawDelay) ||
+            !Number.isSafeInteger(delayMS) || delayMS > 600000) {
+          throw new Error("Cue Start Delay must be between 0 and 600 seconds (up to 3 decimal places).");
         }
         if (delayMS) policy.start_delay_ms = delayMS;
         else delete policy.start_delay_ms;
@@ -854,7 +856,7 @@ cueForm.addEventListener("submit", async (event) => {
       : `/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues`;
     await api(path, { method: cueID ? "PUT" : "POST", json: body });
     cueDialog.close();
-    await renderCues(cueID ? "Cue updated in Draft." : "Cue created in Draft.");
+    await renderCues(cueID ? "Cue updated in Draft. Publish a new Runtime Snapshot and start a new Rehearsal to apply the delay." : "Cue created in Draft. Publish a Runtime Snapshot and start a new Rehearsal to test it.");
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), "error");
   }
