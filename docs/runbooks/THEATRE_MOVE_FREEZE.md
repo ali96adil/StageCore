@@ -42,7 +42,7 @@ The transactional updater owns backup/rollback; preserve its printed rollback sn
 5. Tablets: all four pair/ACTIVE; media manifest present; Main, Overlay, Live, brightness/orientation and expected Cue actions checked.
 6. Camera relay/ESP32-CAM: MJPEG, multiple viewers, tablet Live display and reconnect checked.
 7. STOP CUE / STOP SESSION / Emergency Blackout: exercise with qualified safe loads and verify output state and terminal records. Do not assume a cancelled network request means a physical command was reversed.
-8. StageLaser: **NO-ACTUATION** until separate firmware, TLS bootstrap, relay hardware, and physical safety qualification. Missing StageLaser must remain nonblocking when optional.
+8. StageLaser: **REQUIRED for the user's laser scene**. Verify the exact previously qualified firmware image/build and installed hardware revision before replacing either. Confirm the assigned ACTIVE device, physical ON/OFF, bounded local FLASH (frequency 0.1–1 Hz, duration up to 60 s), FLASH STOP, and SAFE OFF with the operator's qualified safe setup. Record results. The repo's historical NO-ACTUATION builds and the separate Draft TLS bootstrap PR are **not** substitutes for the user's physically qualified build; never overwrite it with an unqualified candidate. Missing required StageLaser is a show blocker for the laser scene, not a warning to dismiss.
 9. Disconnect Mac/one optional tablet: operator should see a warning, not lose control of healthy required outputs; verify REHEARSAL GO behaviour.
 10. Make an offline backup of the final show project and media before leaving home; repeat readiness at the venue after reconnecting the network.
 
