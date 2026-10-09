@@ -23,6 +23,7 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
         if _,err:=h.DB.ExecContext(ctx,query,args...);err!=nil{t.Fatalf("SQL %s: %v",query,err)}
     }
     roleID:="00000000-0000-7000-8000-000000000301"
+    liveSourceID:="00000000-0000-7000-8000-000000000306"
     assetID:="00000000-0000-7000-8000-000000000302"
     versionID:="00000000-0000-7000-8000-000000000303"
     mediaHash:=strings.Repeat("a",64)
@@ -39,7 +40,7 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
     exec(`INSERT INTO media_locations
         (media_location_id,content_version_id,location_type,locator,status)
         VALUES ('00000000-0000-7000-8000-000000000304',?,'HUB','vault/a','AVAILABLE')`,versionID)
-    actionParams := `{"media_asset_id":"`+assetID+`","nested":{"content_version_id":"`+versionID+`"},"filename":"ambient.mp4"}`
+    actionParams := `{"media_asset_id":"`+assetID+`","nested":{"content_version_id":"`+versionID+`","live_source_id":"`+liveSourceID+`","machine_role_id":"`+roleID+`"},"filename":"ambient.mp4"}`
     exec(`INSERT INTO actions
         (action_id,cue_id,order_index,execution_mode,target_ref,capability_key,
          parameters_json,timeout_policy_json,error_policy_json,priority_class,enabled)
@@ -50,7 +51,7 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
         VALUES ('00000000-0000-7000-8000-000000000305',?,?,1,1)`,roleID,versionID)
     exec(`INSERT INTO live_video_sources
         (source_id,project_id,name,source_class,execution_machine_role_id,endpoint_ref,created_at_us,updated_at_us)
-        VALUES ('00000000-0000-7000-8000-000000000306',?,'Rear Camera','NETWORK_STREAM',?,'stagecam.local',1,1)`,src.ID,roleID)
+        VALUES (? ,?,'Rear Camera','NETWORK_STREAM',?,'stagecam.local',1,1)`,liveSourceID,src.ID,roleID)
     exec(`INSERT INTO operator_notes
         (note_id,project_id,cue_id,category,body,status,created_by,created_at_us,updated_at_us)
         VALUES ('00000000-0000-7000-8000-000000000307',?,?,'DIRECTION','Hold entrance','OPEN','operator',1,1)`,src.ID,cue.ID)
@@ -90,11 +91,17 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
     if err:=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM machine_role_media_requirements
         WHERE machine_role_id=? AND content_version_id=?`,role,newVersion).Scan(&matchingRequirements);err!=nil{t.Fatal(err)}
     if matchingRequirements!=1{t.Fatal("role media binding lost")}
-    var cameraRole string
+    var cameraRole, cameraSourceID string
     var executionDevice sql.NullString
-    if err:=h.DB.QueryRowContext(ctx,`SELECT execution_machine_role_id,execution_device_id FROM live_video_sources WHERE project_id=?`,
-        duplicate.ID).Scan(&cameraRole,&executionDevice);err!=nil{t.Fatal(err)}
-    if cameraRole!=role || executionDevice.Valid{t.Fatal("video source not remapped or hardware authority inherited")}
+    if err:=h.DB.QueryRowContext(ctx,`SELECT source_id,execution_machine_role_id,execution_device_id FROM live_video_sources WHERE project_id=?`,
+        duplicate.ID).Scan(&cameraSourceID,&cameraRole,&executionDevice);err!=nil{t.Fatal(err)}
+    if cameraRole!=role || executionDevice.Valid || cameraSourceID==liveSourceID {
+        t.Fatal("video source not remapped or hardware authority inherited")
+    }
+    if !strings.Contains(copiedParams,cameraSourceID) || !strings.Contains(copiedParams,role) ||
+       strings.Contains(copiedParams,liveSourceID) || strings.Contains(copiedParams,roleID) {
+        t.Fatalf("copied Cue action still references original live source/Machine Role IDs: %s",copiedParams)
+    }
     var noteCue,body string
     if err:=h.DB.QueryRowContext(ctx,`SELECT cue_id,body FROM operator_notes WHERE project_id=?`,duplicate.ID).Scan(&noteCue,&body);err!=nil{t.Fatal(err)}
     if noteCue==cue.ID || body!="Hold entrance"{t.Fatal("operator note not cloned correctly")}
