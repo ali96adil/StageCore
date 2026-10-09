@@ -1008,13 +1008,13 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 
 func (e *stoppableExecutor) stop(correlationID string) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.stopped[correlationID] = true
-	cancels := make([]context.CancelFunc, 0, len(e.active[correlationID]))
+	// Latch and cancel every registered dispatch before releasing the
+	// registration lock. A concurrent Execute must observe STOP as soon as
+	// it acquires this lock; no registered context remains uncancelled.
+	// Device adapters still need their own pre-write cancellation fence.
 	for _, cancel := range e.active[correlationID] {
-		cancels = append(cancels, cancel)
-	}
-	e.mu.Unlock()
-	for _, cancel := range cancels {
 		cancel()
 	}
 }
