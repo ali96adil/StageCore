@@ -67,6 +67,10 @@
       stageLaserVisualSave: "Record visual check",
       stageLaserVisualConfirm: "Record this independent visual observation without changing the laser's actual or logical state?",
       stageLaserVisualSaved: "Visual check recorded. Device control state unchanged.",
+      stageLaserResync: "Apply observed ON/OFF to device state",
+      stageLaserResyncConfirm: "I physically verified the CURRENT laser emission state. Update the software state only, with NO relay pulse? This does not turn the laser off.",
+      stageLaserResyncSent: "Manual state resync command sent. Refresh and check the device reports the new state.",
+      stageLaserResyncChoose: "Select physically observed ON or OFF first.",
       stageLaserVisualLast: "Last visual check",
       stageLaserVisualMismatch: "MISMATCH — operator saw a different state. Do not rely on software OFF.",
       stageLaserVisualMatch: "Visual observation matches the reported logical state; this does NOT prove fail-safe beam inhibition.",
@@ -284,6 +288,10 @@
       stageLaserVisualSave: "سجّل الفحص البصري",
       stageLaserVisualConfirm: "تسجيل المشاهدة فقط بدون تغيير الحالة الفعلية أو المنطقية لليزر؟",
       stageLaserVisualSaved: "تم تسجيل الفحص البصري؛ حالة التحكم بالجهاز ما تغيرت.",
+      stageLaserResync: "صحّح حالة الجهاز حسب ON/OFF المشاهدة",
+      stageLaserResyncConfirm: "تأكدت بعيني من حالة شعاع الليزر الحالية. نحدّث الحالة البرمجية فقط، بدون أي نبضة للريليه؟ هذا الإجراء ما يطفّي الليزر.",
+      stageLaserResyncSent: "انرسل أمر تصحيح الحالة. حدّث الصفحة وتأكد من الحالة المعلنة من الجهاز.",
+      stageLaserResyncChoose: "اختار الحالة الفعلية ON أو OFF أولاً.",
       stageLaserVisualLast: "آخر فحص بصري",
       stageLaserVisualMismatch: "اختلاف MISMATCH — الحالة المشاهدة تختلف عن حالة الجهاز. لا تعتمد على OFF البرمجية.",
       stageLaserVisualMatch: "الفحص البصري يطابق الحالة البرمجية، لكن هذا ما يثبت ضمان إيقاف الشعاع عند العطل.",
@@ -619,6 +627,10 @@
         <div class="phase4-actions">
           <button class="button ghost" data-stage-laser-visual-save="${esc(device.device_id)}"
             type="button" ${editable ? "" : "disabled"}>${esc(t("stageLaserVisualSave"))}</button>
+          ${editable && device.assignment?.assignment_state === "ACTIVE" &&
+              connection === "ONLINE" ? `<button class="button ghost"
+                data-stage-laser-resync="${esc(device.device_id)}"
+                type="button">${esc(t("stageLaserResync"))}</button>` : ""}
         </div>
       </section>`;
   }
@@ -1336,6 +1348,43 @@
             }) }
           );
           phase4Message(t("stageLaserVisualSaved"), "success");
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-stage-laser-resync]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const section = button.closest(".stage-laser-visual-check");
+        const deviceID = button.dataset.stageLaserResync || "";
+        const observedState = section?.querySelector(".stage-laser-visual-state")?.value || "UNKNOWN";
+        const expectedBootID = section?.dataset.bootId || "";
+        if (!deviceID || !["ON", "OFF"].includes(observedState) ||
+            !expectedBootID || expectedBootID === "UNKNOWN") {
+          phase4Message(t("stageLaserResyncChoose"), "warn");
+          return;
+        }
+        if (!window.confirm(t("stageLaserResyncConfirm"))) return;
+        button.disabled = true;
+        try {
+          await api(
+            `/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelaser-resync`,
+            { method: "POST", body: JSON.stringify({
+              state: observedState,
+              expected_boot_id: expectedBootID,
+              confirm: "PHYSICALLY_VERIFIED_STATE_RESYNC_SOFTWARE_ONLY",
+            }) }
+          );
+          phase4Message(t("stageLaserResyncSent"), "success");
           if (renderGeneration === stageDevicesRenderGeneration &&
               state.page === "devices" && currentProjectID() === projectID) {
             await renderStageDevices();
