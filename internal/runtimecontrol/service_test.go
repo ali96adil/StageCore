@@ -224,15 +224,26 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		running, err := h.store.HasRunningCueExecution(ctx, session.ID)
+		// A RUNNING Cue row is committed before the first action is
+		// persisted. Under -race, STOP can legitimately cancel during
+		// that gap and no action row exists. This test specifically
+		// verifies cancellation of an already-started action, so wait
+		// for the action execution record instead of just the Cue row.
+		executions, err := h.store.ListCueExecutions(ctx, session.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if running {
-			break
+		if len(executions) > 0 {
+			actions, err := h.store.ListActionExecutions(ctx, executions[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(actions) > 0 && actions[0].Result == domain.ExecutionRunning {
+				break
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("Cue did not enter RUNNING state before stop test deadline")
+			t.Fatal("Action did not enter RUNNING state before stop test deadline")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -18,6 +18,22 @@ import (
 
 const CueGoCommandType = "cue.go"
 
+// SelectionHook is called once after the session's current Cue is durably
+// advanced, before actions run. RuntimeControl uses it to release its short
+// per-session GO ordering barrier while prior Cue actions continue.
+type selectionHookKey struct{}
+
+func WithSelectionHook(ctx context.Context, hook func()) context.Context {
+	return context.WithValue(ctx, selectionHookKey{}, hook)
+}
+
+func notifySelection(ctx context.Context) {
+	hook, _ := ctx.Value(selectionHookKey{}).(func())
+	if hook != nil { hook() }
+}
+
+
+
 type CueGoPayload struct {
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	RequestedNextCueID   *string `json:"requested_next_cue_id"`
@@ -40,6 +56,43 @@ func NewWithExecutor(s *store.Store, executor capability.Executor) *Engine {
 		return New(s)
 	}
 	return &Engine{store: s, executor: executor}
+}
+
+// PreviewCueOutputTargets conservatively inventories output targets for the
+// next GO, including every linked Cue, before any actions are dispatched.
+// This enables RuntimeControl to reject overlapping writes to one target.
+// sim.test is a deterministic in-process simulator and has no physical output.
+func (e *Engine) PreviewCueOutputTargets(
+	ctx context.Context, session domain.Session, payload CueGoPayload,
+) ([]string, *contracts.CommandResult, error) {
+	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, session.RuntimeSnapshotID)
+	if err != nil { return nil, nil, err }
+	if runtimeSnapshot.Status != domain.SnapshotPublished {
+		failure := rejection("", "SNAPSHOT_NOT_PUBLISHED", "SNAPSHOT_MISMATCH",
+			"runtime snapshot not published", false, session.RuntimeSnapshotID)
+		return nil, &failure, nil
+	}
+	manifest, err := snapshot.Decode(runtimeSnapshot.Manifest)
+	if err != nil { return nil, nil, err }
+	selected, rejected := selectCue(manifest, session.CurrentCueID, payload)
+	if rejected != nil { return nil, rejected, nil }
+	group, err := resolveCueGroup(manifest, selected)
+	if err != nil {
+		failure := rejection("", "CUE_GROUP_INVALID", "VALIDATION", err.Error(), false, selected.ID)
+		return nil, &failure, nil
+	}
+	seen := map[string]struct{}{}
+	for _, cue := range group {
+		for _, action := range cue.Actions {
+			if !action.Enabled || action.CapabilityKey == "sim.test" { continue }
+			for _, target := range outputResourceKeys(manifest, action) {
+				seen[target] = struct{}{}
+			}
+		}
+	}
+	targets := make([]string, 0, len(seen))
+	for target := range seen { targets = append(targets, target) }
+	return targets, nil, nil
 }
 
 func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
@@ -83,11 +136,9 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
 	}
-	if running, err := e.store.HasRunningCueExecution(ctx, sessionID); err != nil {
-		return internalFailure(command.CommandID, "RUNNING_EXECUTION_CHECK_FAILED", err)
-	} else if running {
-		return rejection(command.CommandID, "UNRESOLVED_EXECUTION", "VALIDATION", "session has a running cue execution", false, sessionID)
-	}
+	// Previous Cue executions may remain RUNNING. Serializing Cue selection
+	// is the responsibility of RuntimeControl's per-session GO barrier;
+	// actions and terminal result persistence remain independent.
 
 	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, command.RuntimeSnapshotID)
 	if err != nil {
@@ -134,6 +185,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
 	}
+	notifySelection(ctx)
 
 	cueResult, lastEventID, executionErr := e.executeCueGroup(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, group)
 	if executionErr != nil {
@@ -243,6 +295,15 @@ func (e *Engine) executeActions(
 	for _, action := range actions {
 		if !action.Enabled {
 			continue
+		}
+		// A STOP may arrive between completion of a previous action and
+		// dispatch of the next one. Do not start further output work.
+		select {
+		case <-delayStopSignal(ctx):
+			_, last, err := waitPending()
+			if err != nil { return domain.ExecutionFailed, last, err }
+			return domain.ExecutionCancelled, last, nil
+		default:
 		}
 		switch strings.ToUpper(action.ExecutionMode) {
 		case "PARALLEL":
@@ -355,6 +416,17 @@ func (e *Engine) startAction(
 	return pendingAction{startedEventID: startedEvent.EventID, result: resultCh}, nil
 }
 
+// cueStopRequested checks the independent STOP signal without cancelling
+// the database context used to persist terminal execution state.
+func cueStopRequested(ctx context.Context) bool {
+	select {
+	case <-delayStopSignal(ctx):
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Engine) runAction(
 	parent context.Context,
 	sessionID string,
@@ -377,6 +449,16 @@ func (e *Engine) runAction(
 			AckLevel:        contracts.AckNone,
 			ErrorCode:       "INVALID_TIMEOUT_POLICY",
 			ResponseSummary: policyErr.Error(),
+		}
+	} else if cueStopRequested(parent) {
+		// STOP was requested after the action row was created but before
+		// capability dispatch. Persist an honest CANCELLED result without
+		// sending an external command.
+		executionResult = capability.Result{
+			Result: domain.ExecutionCancelled,
+			AckLevel: contracts.AckNone,
+			ErrorCode: "CANCELLED",
+			ResponseSummary: "Cue stopped before action dispatch",
 		}
 	} else {
 		executionResult = e.executor.Execute(actionCtx, capability.Request{
