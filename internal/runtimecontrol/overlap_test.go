@@ -328,3 +328,38 @@ func TestLightingFadeContinuesAfterMusicGoAtTenSecondEquivalent(t *testing.T) {
 		t.Fatal("LX Fade did not finish after Music GO")
 	}
 }
+
+
+func TestOverlappingGoRejectsWhileCueStopAdmissionFenceHeld(t *testing.T) {
+    h := overlapFixture(t)
+    session := startOverlapSession(t,h)
+    if !h.service.beginStoppingCues(session.ID) {
+        t.Fatal("could not enter STOP admission fence")
+    }
+    if h.service.beginStoppingCues(session.ID) {
+        t.Fatal("concurrent STOP must not take the same session STOP fence")
+    }
+    result := h.service.QueueGo(context.Background(),CueRequest{
+        SessionID:session.ID, Issuer:"owner",
+        RequestID:"00000000-0000-7000-8000-000000008997",
+    })
+    if result.Status != contracts.CommandRejected || result.Error == nil ||
+        result.Error.ErrorCode != "CUE_STOP_IN_PROGRESS" {
+        t.Fatalf("GO admitted during STOP fence: %+v",result)
+    }
+    h.service.endStoppingCues(session.ID)
+    goResult := h.service.QueueGo(context.Background(),CueRequest{
+        SessionID:session.ID, Issuer:"owner",
+        RequestID:"00000000-0000-7000-8000-000000008998",
+    })
+    if goResult.Status != contracts.CommandAccepted {
+        t.Fatalf("GO was permanently blocked after STOP finished: %+v",goResult)
+    }
+    stop := h.service.StopSession(context.Background(),StopRequest{
+        SessionID:session.ID, Issuer:"owner",
+        RequestID:"00000000-0000-7000-8000-000000008999",
+    })
+    if stop.Status != contracts.CommandCompleted {
+        t.Fatalf("could not stop admitted Cue after STOP-fence test: %+v",stop)
+    }
+}
