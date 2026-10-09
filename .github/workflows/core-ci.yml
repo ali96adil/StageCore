@@ -3,7 +3,7 @@ name: Core CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'ci/cue-overlap-qualification-20261009']
 
 # Keep the full matrix, race tests and ARM64 builds, but cancel superseded
 # runs when an in-progress PR receives a newer commit. Engineering batches
