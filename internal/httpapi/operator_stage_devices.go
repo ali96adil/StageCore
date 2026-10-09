@@ -1059,6 +1059,81 @@ func WithOperatorStageDevices(
 			})
 		}))
 
+		// An attended visual resync only corrects the software's logical state.
+		// It sends no GPIO pulse and does not claim the beam is inhibited. Never
+		// use this route to manufacture an ACTIVE assignment or bypass SHOW locks.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-resync", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if userauth.Authorize(session.User.Role, userauth.PermissionProjectEdit) != nil ||
+				userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGELASER_RESYNC_PERMISSION_REQUIRED"})
+				return
+			}
+			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deviceID := strings.TrimSpace(r.PathValue("device_id"))
+			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
+				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED"})
+				return
+			}
+			var input struct {
+				State          string `json:"state"`
+				ExpectedBootID string `json:"expected_boot_id"`
+				Confirm        string `json:"confirm"`
+			}
+			if !decodeBoundedJSON(w, r, &input) {
+				return
+			}
+			if (input.State != "ON" && input.State != "OFF") ||
+				input.Confirm != "PHYSICALLY_VERIFIED_STATE_RESYNC_SOFTWARE_ONLY" ||
+				strings.TrimSpace(input.ExpectedBootID) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_RESYNC_PHYSICAL_CONFIRMATION_REQUIRED"})
+				return
+			}
+			device, err := devices.GetDevice(r.Context(), deviceID)
+			if err != nil || !stageLaserAuthoringDevice(device, projectID) {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_ACTIVE_ASSIGNMENT_REQUIRED"})
+				return
+			}
+			if device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOnline {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_DEVICE_OFFLINE"})
+				return
+			}
+			var observed struct {
+				BootID string `json:"boot_id"`
+			}
+			if json.Unmarshal(device.Runtime.ObservedState, &observed) != nil ||
+				observed.BootID == "" || observed.BootID != input.ExpectedBootID {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_STALE_BOOT_RELOAD_REQUIRED"})
+				return
+			}
+			scope, online := runtime.CurrentV2Scope(device.ID)
+			if !online || !scope.CommandsEnabled ||
+				scope.ProjectID != projectID ||
+				scope.RuntimeSnapshotID != device.Assignment.RuntimeSnapshotID ||
+				scope.AssignmentEpoch != device.Assignment.Epoch {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_SCOPE_NOT_READY"})
+				return
+			}
+			payload, _ := json.Marshal(map[string]string{"state": input.State})
+			correlationID, _ := stageid.New()
+			deadline := time.Now().UTC().Add(10 * time.Second)
+			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+				ProjectID: projectID, DeviceID: device.ID,
+				RuntimeSnapshotID: device.Assignment.RuntimeSnapshotID,
+				CommandType: stagelaser.CommandStateResync,
+				Issuer: session.User.ID, CorrelationID: correlationID,
+				IdempotencyKey: "stagelaser-visual-resync:" + correlationID,
+				Priority: "P1", Payload: payload, DeadlineAt: &deadline,
+			})
+			if err != nil {
+				writeStageDeviceCommandError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"command": command,
+				"note": "SOFTWARE_STATE_RESYNC_ONLY_NO_RELAY_PULSE_OR_BEAM_OFF_PROOF",
+			})
+		}))
+
 		s.mux.HandleFunc("POST /api/v1/stage-devices/{device_id}/commands", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			device, err := devices.GetDevice(r.Context(), deviceID)
