@@ -66,6 +66,26 @@ func remapCopiedProjectMediaJSONTx(ctx context.Context, tx *sql.Tx, projectID, r
             if _,err:=tx.ExecContext(ctx,field.updateSQL,row.jsonText,row.id);err!=nil{return fmt.Errorf("rewrite %s: %w",field.label,err)}
         }
     }
+    // Some authoring references are stored as plain strings, not JSON.
+    // Rewrite only exact matches for identities cloned in this transaction;
+    // device IDs, external endpoints and logical aliases remain unchanged.
+    plainFields := []struct{ statement, scope string }{
+        {`UPDATE actions SET target_ref=? WHERE target_ref=?
+          AND cue_id IN (SELECT cue_id FROM cues WHERE revision_id=?)`, revisionID},
+        {`UPDATE input_definitions SET source_ref=? WHERE source_ref=?
+          AND revision_id=?`, revisionID},
+        {`UPDATE output_definitions SET target_ref=? WHERE target_ref=?
+          AND revision_id=?`, revisionID},
+        {`UPDATE project_device_aliases SET target_ref=? WHERE target_ref=?
+          AND project_id=?`, projectID},
+    }
+    for original, copied := range mediaIDs {
+        for _, field := range plainFields {
+            if _, err := tx.ExecContext(ctx, field.statement, copied, original, field.scope); err != nil {
+                return fmt.Errorf("remap exact authored target reference: %w", err)
+            }
+        }
+    }
     return nil
 }
 
