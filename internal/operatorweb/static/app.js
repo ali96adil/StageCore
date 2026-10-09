@@ -281,14 +281,49 @@ function renderProjects() {
         <article class="card project-card">
           <div><h2>${esc(project.name)}</h2><p class="muted">${esc(project.description || "No description")}</p></div>
           <div class="meta"><span>${esc(project.lifecycle_state)}</span><span>Updated ${esc(fmtDate(project.updated_at))}</span></div>
-          <button class="button primary open-project" data-project-id="${esc(project.project_id)}" type="button">Open Project</button>
+          <div class="row-actions">
+            <button class="button primary open-project" data-project-id="${esc(project.project_id)}" type="button">Open Project</button>
+            ${canEdit() ? `<button class="button duplicate-project" data-project-id="${esc(project.project_id)}" type="button">Duplicate Project</button>` : ""}
+          </div>
         </article>`).join("") : `<div class="empty">No Projects yet.</div>`}
     </div>`;
 
   content.querySelectorAll(".open-project").forEach((button) => {
     button.addEventListener("click", () => openProject(button.dataset.projectId));
   });
+  content.querySelectorAll(".duplicate-project").forEach((button) => {
+    button.addEventListener("click", () => duplicateProject(button.dataset.projectId, button));
+  });
   el("createProjectForm")?.addEventListener("submit", createProject);
+}
+
+async function duplicateProject(sourceID, button) {
+  const source = state.projects.find((project) => project.project_id === sourceID);
+  if (!source || !canEdit() || button.disabled) return;
+  const name = prompt(`Name for the duplicate of “${source.name}”:`, `${source.name} Copy`);
+  if (name === null) return;
+  const cleanName = name.trim();
+  if (!cleanName || cleanName.length > 160) {
+    setMessage(globalMessage, "Duplicate Project name must be 1–160 characters.", "error");
+    return;
+  }
+  if (!confirm(`Duplicate “${source.name}” as “${cleanName}”? Cues, notes and authoring settings will be copied. The new Project starts as an unpublished Draft; physical Stage Devices, Machine Role assignments and running Sessions are NOT transferred.`)) return;
+  button.disabled = true;
+  try {
+    const result = await api(`/api/v1/projects/${encodeURIComponent(sourceID)}/duplicate`, {
+      method: "POST",
+      json: { name: cleanName },
+    });
+    await loadProjects();
+    state.project = result.project;
+    updateWorkspaceProject();
+    await navigate("dashboard");
+    setMessage(globalMessage, "Project duplicated. Review device bindings and Publish a new Snapshot before starting a Session.", "success");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function createProject(event) {

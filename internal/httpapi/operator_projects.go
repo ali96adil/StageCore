@@ -17,6 +17,10 @@ type createProjectRequest struct {
 	Description string `json:"description"`
 }
 
+type duplicateProjectRequest struct {
+    Name string `json:"name"`
+}
+
 type projectView struct {
 	ID                string                  `json:"project_id"`
 	Name              string                  `json:"name"`
@@ -126,6 +130,33 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			"draft_revision": makeRevisionView(revision),
 		})
 	}))
+
+    mux.HandleFunc("POST /api/v1/projects/{project_id}/duplicate", withPermission(auth, userauth.PermissionProjectEdit,
+        func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+            var body duplicateProjectRequest
+            if !decodeBoundedJSON(w, r, &body) { return }
+            project, revision, err := projectStore.DuplicateProjectAuthoring(
+                r.Context(), strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(body.Name), session.User.ID,
+            )
+            if err != nil {
+                code, status := "PROJECT_DUPLICATE_FAILED", http.StatusServiceUnavailable
+                switch {
+                case errors.Is(err, domain.ErrInvalidInput):
+                    code, status = "PROJECT_DUPLICATE_INVALID", http.StatusBadRequest
+                case errors.Is(err, domain.ErrNotFound):
+                    code, status = "PROJECT_NOT_FOUND", http.StatusNotFound
+                case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrRevisionFrozen):
+                    code, status = "PROJECT_DUPLICATE_CONFLICT", http.StatusConflict
+                }
+                writeJSON(w, status, map[string]any{"error_code": code})
+                return
+            }
+            writeJSON(w, http.StatusCreated, map[string]any{
+                "project": makeProjectView(project),
+                "draft_revision": makeRevisionView(revision),
+            })
+        },
+    ))
 
 	mux.HandleFunc("GET /api/v1/projects/{project_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
