@@ -875,23 +875,24 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	s.selectionMu.Unlock()
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
-	for _, run := range runs {
-		select {
-		case <-run.done:
-		case <-timer.C:
-			return finish(contracts.CommandResult{
-				CommandID: command.CommandID, Status: contracts.CommandTimedOut,
-				Error: &contracts.ContractError{ErrorCode: "STOP_UNCONFIRMED", Category: "TIMEOUT", Message: "STOP requested but not all active Cue executions terminated within the bounded wait", Retryable: false, AffectedEntityID: session.ID},
-			})
-		case <-ctx.Done():
-			return finish(contracts.CommandResult{
-				CommandID: command.CommandID, Status: contracts.CommandCancelled,
-				Error: &contracts.ContractError{ErrorCode: "STOP_REQUEST_CANCELLED", Category: "CANCELLED", Message: "stop request context was cancelled", Retryable: false, AffectedEntityID: session.ID},
-			})
-		}
+	select {
+	case <-run.done:
+		payload, _ := json.Marshal(map[string]any{
+			"session_id": session.ID, "stop_confirmed": true,
+			"stopped_cue_count": 1, "stopped_request_id": run.requestID,
+		})
+		return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
+	case <-timer.C:
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID, Status: contracts.CommandTimedOut,
+			Error: &contracts.ContractError{ErrorCode: "STOP_UNCONFIRMED", Category: "TIMEOUT", Message: "STOP LATEST requested but the selected Cue did not terminate within the bounded wait", Retryable: false, AffectedEntityID: session.ID},
+		})
+	case <-ctx.Done():
+		return finish(contracts.CommandResult{
+			CommandID: command.CommandID, Status: contracts.CommandCancelled,
+			Error: &contracts.ContractError{ErrorCode: "STOP_REQUEST_CANCELLED", Category: "CANCELLED", Message: "stop request context was cancelled", Retryable: false, AffectedEntityID: session.ID},
+		})
 	}
-	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "stop_confirmed": true, "stopped_cue_count": len(runs)})
-	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
 
 // beginStoppingCues is a temporary admission fence for STOP LATEST CUE.
