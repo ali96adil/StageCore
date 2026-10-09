@@ -1,0 +1,97 @@
+package store_test
+
+import (
+    "context"
+    "database/sql"
+    "strings"
+    "testing"
+
+    "github.com/ali96adil/StageCore/internal/store"
+    "github.com/ali96adil/StageCore/internal/domain"
+)
+
+// This exercises persistent cross-domain authoring data, not just Cue names.
+func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
+    ctx:=context.Background()
+    s,h:=newStore(t)
+    src,rev,err:=s.CreateProject(ctx,store.CreateProjectParams{Name:"Source Production",Description:"Opening night",CreatedBy:"operator"})
+    if err!=nil {t.Fatal(err)}
+    cue,err:=s.CreateCueWithActions(ctx, makeTestDuplicateCue(rev.ID), nil)
+    if err!=nil {t.Fatal(err)}
+    exec:=func(query string,args ...any){
+        t.Helper()
+        if _,err:=h.DB.ExecContext(ctx,query,args...);err!=nil{t.Fatalf("SQL %s: %v",query,err)}
+    }
+    roleID:="00000000-0000-7000-8000-000000000301"
+    assetID:="00000000-0000-7000-8000-000000000302"
+    versionID:="00000000-0000-7000-8000-000000000303"
+    mediaHash:=strings.Repeat("a",64)
+    exec(`INSERT INTO machine_roles
+        (machine_role_id,project_id,role_key,display_name,required_capabilities_json,
+         required_runtime_snapshot_id,required_config_hash,required,created_at_us,updated_at_us)
+         VALUES (?,?,'VIDEO-VDMX','VDMX','["osc.send"]',NULL,'',1,1,1)`,roleID,src.ID)
+    exec(`INSERT INTO vault_objects (content_hash,size_bytes,relative_path,created_at_us) VALUES (?,4,'vault/a',1)`,mediaHash)
+    exec(`INSERT INTO media_assets (media_asset_id,project_id,name,asset_policy,created_at_us,updated_at_us)
+         VALUES (?,?,'Ambient Video','MANAGED',1,1)`,assetID,src.ID)
+    exec(`INSERT INTO media_content_versions
+         (content_version_id,media_asset_id,content_hash,original_filename,size_bytes,created_at_us)
+         VALUES (?,?,?,'ambient.mp4',4,1)`,versionID,assetID,mediaHash)
+    exec(`INSERT INTO media_locations
+        (media_location_id,content_version_id,location_type,locator,status)
+        VALUES ('00000000-0000-7000-8000-000000000304',?,'HUB','vault/a','AVAILABLE')`,versionID)
+    exec(`INSERT INTO machine_role_media_requirements
+        (media_requirement_id,machine_role_id,content_version_id,required,created_at_us)
+        VALUES ('00000000-0000-7000-8000-000000000305',?,?,1,1)`,roleID,versionID)
+    exec(`INSERT INTO live_video_sources
+        (source_id,project_id,name,source_class,execution_machine_role_id,endpoint_ref,created_at_us,updated_at_us)
+        VALUES ('00000000-0000-7000-8000-000000000306',?,'Rear Camera','NETWORK_STREAM',?,'stagecam.local',1,1)`,src.ID,roleID)
+    exec(`INSERT INTO operator_notes
+        (note_id,project_id,cue_id,category,body,status,created_by,created_at_us,updated_at_us)
+        VALUES ('00000000-0000-7000-8000-000000000307',?,?,'DIRECTION','Hold entrance','OPEN','operator',1,1)`,src.ID,cue.ID)
+    exec(`INSERT INTO visual_engine_revision_settings (revision_id,engine_mode,updated_by,updated_at_us)
+        VALUES (?,'NATIVE','operator',1)`,rev.ID)
+    exec(`INSERT INTO stage_devices
+        (device_id,project_id,device_kind,display_name,created_at_us,updated_at_us)
+        VALUES ('00000000-0000-7000-8000-000000000308',?,'GENERIC','DMX Stage Device',1,1)`,src.ID)
+    exec(`INSERT INTO lighting_node_revision_bindings
+        (revision_id,device_id,profile_id,configuration_json,aliases_json,updated_by,updated_at_us)
+        VALUES (?,'00000000-0000-7000-8000-000000000308','lighting','{}','{}','operator',1)`,rev.ID)
+
+    duplicate,draft,err:=s.DuplicateProjectAuthoring(ctx,src.ID,"Copy Production","operator")
+    if err!=nil{t.Fatal(err)}
+    if duplicate.ID==src.ID || draft.ID==rev.ID {t.Fatal("IDs reused")}
+
+    var role string
+    if err:=h.DB.QueryRowContext(ctx,`SELECT machine_role_id FROM machine_roles WHERE project_id=? AND role_key='VIDEO-VDMX'`,duplicate.ID).Scan(&role);err!=nil{t.Fatal(err)}
+    if role==roleID{t.Fatal("Machine Role ID reused")}
+    var newAsset,newVersion string
+    if err:=h.DB.QueryRowContext(ctx,`SELECT media_asset_id FROM media_assets WHERE project_id=?`,duplicate.ID).Scan(&newAsset);err!=nil{t.Fatal(err)}
+    if newAsset==assetID{t.Fatal("media asset ID reused")}
+    if err:=h.DB.QueryRowContext(ctx,`SELECT content_version_id FROM media_content_versions WHERE media_asset_id=?`,newAsset).Scan(&newVersion);err!=nil{t.Fatal(err)}
+    if newVersion==versionID{t.Fatal("content version ID reused")}
+    var matchingRequirements int
+    if err:=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM machine_role_media_requirements
+        WHERE machine_role_id=? AND content_version_id=?`,role,newVersion).Scan(&matchingRequirements);err!=nil{t.Fatal(err)}
+    if matchingRequirements!=1{t.Fatal("role media binding lost")}
+    var cameraRole string
+    var executionDevice sql.NullString
+    if err:=h.DB.QueryRowContext(ctx,`SELECT execution_machine_role_id,execution_device_id FROM live_video_sources WHERE project_id=?`,
+        duplicate.ID).Scan(&cameraRole,&executionDevice);err!=nil{t.Fatal(err)}
+    if cameraRole!=role || executionDevice.Valid{t.Fatal("video source not remapped or hardware authority inherited")}
+    var noteCue,body string
+    if err:=h.DB.QueryRowContext(ctx,`SELECT cue_id,body FROM operator_notes WHERE project_id=?`,duplicate.ID).Scan(&noteCue,&body);err!=nil{t.Fatal(err)}
+    if noteCue==cue.ID || body!="Hold entrance"{t.Fatal("operator note not cloned correctly")}
+    var mode string
+    if err:=h.DB.QueryRowContext(ctx,`SELECT engine_mode FROM visual_engine_revision_settings WHERE revision_id=?`,draft.ID).Scan(&mode);err!=nil{t.Fatal(err)}
+    if mode!="NATIVE"{t.Fatal("visual mode lost")}
+    var lightingCount int
+    if err:=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM lighting_node_revision_bindings WHERE revision_id=?`,draft.ID).Scan(&lightingCount);err!=nil{t.Fatal(err)}
+    if lightingCount!=1{t.Fatal("DMX authoring lost")}
+    var assigned string
+    if err:=h.DB.QueryRowContext(ctx,`SELECT project_id FROM stage_devices WHERE device_id='00000000-0000-7000-8000-000000000308'`).Scan(&assigned);err!=nil{t.Fatal(err)}
+    if assigned!=src.ID{t.Fatal("stage device ownership moved")}
+}
+
+func makeTestDuplicateCue(revisionID string) domain.Cue {
+    return domain.Cue{RevisionID:revisionID,Name:"Scene A",DisplayLabel:"A",OrderIndex:1,Enabled:true,NotesSummary:"Wait for lights"}
+}
