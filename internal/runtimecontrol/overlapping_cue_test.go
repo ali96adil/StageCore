@@ -281,7 +281,7 @@ func TestLateOlderCueCompletionNeverRewindsSessionCursor(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first delayed Cue did not complete")
 	}
-	state, err := h.store.GetSession(ctx, session.ID)
+	state, err := h.store.GetSessionFoundation(ctx, session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
