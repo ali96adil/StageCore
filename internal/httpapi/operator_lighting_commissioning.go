@@ -119,8 +119,17 @@ func WithOperatorLightingCommissioning(
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			device, err := devices.GetDevice(r.Context(), deviceID)
-			if err != nil || device.ProjectID != projectID || device.ProfileID != lightingnode.ProfileID {
+			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_DEVICE_NOT_FOUND"})
+				return
+			}
+			snapshotID, authorized := lightingCommissioningSnapshot(device, projectID)
+			if !authorized {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_DEVICE_NOT_FOUND"})
+				return
+			}
+			if !lightingCommissioningScopeReady(runtime, device, projectID, snapshotID) {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "LIGHTING_DEVICE_SCOPE_NOT_READY"})
 				return
 			}
 			published, err := stageStore.LatestPublishedRuntimeSnapshotForProject(r.Context(), projectID)
