@@ -835,7 +835,7 @@ function f002RenderStageLaserFields(composer) {
           <input id="f002StageLaserFrequency" type="number" min="0.1" max="1" step="0.1" value="1">
         </label>
         <label>Flash duration (seconds)
-          <input id="f002StageLaserDuration" type="number" min="0.001" max="60" step="0.1" value="8">
+          <input id="f002StageLaserDuration" type="number" min="0.1" max="60" step="0.1" value="8">
         </label>
       </div>
       <p class="muted">Mechanical relay V1 is limited to 0.1–1 Hz and 60 seconds. Flash timing runs locally on StageLaser.</p>`;
@@ -864,9 +864,9 @@ function f002StageLaserRequest(composer) {
     if (!Number.isFinite(frequency) || frequency < 0.1 || frequency > 1) {
       throw new Error("StageLaser mechanical relay flash must be 0.1–1 Hz.");
     }
-    if (!Number.isFinite(seconds) || seconds < 0.001 || seconds > 60 ||
+    if (!Number.isFinite(seconds) || seconds < 0.1 || seconds > 60 ||
         !Number.isSafeInteger(duration) || duration < 1 || duration > 60000) {
-      throw new Error("StageLaser flash duration must be between 0.001 and 60 seconds.");
+      throw new Error("StageLaser flash duration must be between 0.1 and 60 seconds.");
     }
     request.frequency_hz = frequency;
     request.duration_ms = duration;
