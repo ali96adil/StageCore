@@ -261,3 +261,57 @@ func TestForwarderRejectsInvalidStageLaserDesiredStateWithoutDispatch(t *testing
 		t.Fatal("invalid StageLaser state reached dispatcher")
 	}
 }
+
+func TestForwarderDoesNotDispatchAfterCueCancellation(t *testing.T) {
+	fixture := newForwarderFixture(t)
+	dispatches := 0
+	dispatcher := dispatchFunc(func(_ context.Context, _ deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		dispatches++
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	forwarder := devicechannel.NewForwarder(fixture.store, fixture.repository, dispatcher)
+	for _, tc := range []struct {
+		name     string
+		context  func() (context.Context, context.CancelFunc)
+		want     domain.ExecutionResult
+		wantCode string
+	}{
+		{
+			name: "stopped cue",
+			context: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+			want: domain.ExecutionCancelled,
+			wantCode: "STAGE_DEVICE_COMMAND_CANCELLED",
+		},
+		{
+			name: "expired cue deadline",
+			context: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			want: domain.ExecutionTimedOut,
+			wantCode: "STAGE_DEVICE_COMMAND_TIMED_OUT",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := tc.context()
+			defer cancel()
+			result := forwarder.Execute(ctx, stageDeviceRequest(fixture, "cancelled-"+tc.name))
+			if result.Result != tc.want || result.ErrorCode != tc.wantCode {
+				t.Fatalf("result=%+v want=%s/%s", result, tc.want, tc.wantCode)
+			}
+		})
+	}
+	if dispatches != 0 {
+		t.Fatalf("cancelled Cues dispatched %d device commands", dispatches)
+	}
+	var commands int
+	if err := fixture.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM stage_device_commands`).Scan(&commands); err != nil {
+		t.Fatal(err)
+	}
+	if commands != 0 {
+		t.Fatalf("cancelled Cues persisted %d device commands", commands)
+	}
+}
