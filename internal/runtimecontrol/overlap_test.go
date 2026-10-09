@@ -290,9 +290,9 @@ func TestCanonicalOutputOwnershipRejectsSamePhysicalDeviceAcrossAliases(t *testi
 
 func TestLightingFadeContinuesAfterMusicGoAtTenSecondEquivalent(t *testing.T) {
 	// Scaled theatre sequence: LX Fade starts at 0ms, Music GO at 100ms,
-	// LX finishes at 300ms. The second GO must not cancel or wait for LX.
+	// LX finishes at 1200ms. The second GO must not cancel or wait for LX.
 	h := newRuntimeHarness(t,
-		json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":300}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":1200}}`),
 		json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":30}}`),
 	)
 	session := startOverlapSession(t, h)
@@ -324,7 +324,7 @@ func TestLightingFadeContinuesAfterMusicGoAtTenSecondEquivalent(t *testing.T) {
 		if result.Status != contracts.CommandCompleted {
 			t.Fatalf("LX Fade must complete after Music GO, got %+v", result)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(4 * time.Second):
 		t.Fatal("LX Fade did not finish after Music GO")
 	}
 }
