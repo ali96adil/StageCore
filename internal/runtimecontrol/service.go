@@ -816,12 +816,18 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is not active", session.ID))
 	}
 
+	// Fence STOP selection against concurrent GO selection, but release
+	// before waiting for a long-running adapter. STOP applies to the latest
+	// *selected* Cue at this serialized point in time.
+	s.selectionMu.Lock()
 	run, ok := s.latestActiveRun(session.ID)
 	if !ok {
+		s.selectionMu.Unlock()
 		return finish(rejected(command.CommandID, "NO_RUNNING_CUE", "there is no running Cue to stop", session.ID))
 	}
 	s.executor.stop(run.correlationID)
 	if run.cancel != nil { run.cancel() }
+	s.selectionMu.Unlock()
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	select {
@@ -987,6 +993,16 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		}
 		e.mu.Unlock()
 	}()
+	// If STOP already won the registration race, never invoke the device
+	// adapter at all. The adapter may not be cancellation-aware before its
+	// first network write. Cancellation after this check still requires
+	// adapter/device-level fencing and remains a release blocker.
+	if executionCtx.Err() != nil {
+		return capability.Result{
+			Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+			ErrorCode: "CANCELLED", ResponseSummary: "Cue stopped before capability dispatch",
+		}
+	}
 	return e.inner.Execute(executionCtx, req)
 }
 
