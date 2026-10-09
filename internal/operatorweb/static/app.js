@@ -1189,7 +1189,7 @@ async function renderRuntime(startPolling = false) {
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
@@ -1201,7 +1201,7 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP LATEST CUE interrupts only the newest running Cue. STOP SESSION and EMERGENCY BLACKOUT stop all active Cues. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -1212,6 +1212,22 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    <section class="card">
+      <div class="section-title-row">
+        <div><h2>Running Cue Executions</h2><p class="muted">Older Cue actions may continue after the next GO. STOP LATEST targets the newest active execution; STOP SESSION and Emergency Blackout stop all.</p></div>
+      </div>
+      ${Array.isArray(runtime.running_executions) && runtime.running_executions.length ? `
+        <ul class="check-list">
+          ${runtime.running_executions.map((run) => {
+            const cue = runtimeCues.find((item) => item.cue_id === run.cue_id);
+            return `<li>
+              <strong>${esc(cue?.display_label || "")} · ${esc(cue?.name || run.cue_id)}</strong>
+              <span class="pill warn">RUNNING</span>
+              <small class="muted">${esc(run.cue_execution_id)} · ${esc(fmtDate(run.started_at))}</small>
+            </li>`;
+          }).join("")}
+        </ul>` : '<p class="muted">No currently running Cue executions.</p>'}
+    </section>
     ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
@@ -1255,14 +1271,14 @@ async function goRuntime() {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null },
+      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
 async function stopCueRuntime() {
-  if (!confirm("STOP CUE interrupts ALL active Cues in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
+  if (!confirm("STOP LATEST CUE cancels the newest running Cue only; older Cues may continue. This is not a blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
@@ -1326,6 +1342,7 @@ async function jumpRuntime() {
         request_id: requestID(), cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         confirm: true,
+        async: true,
       },
     });
     await renderRuntime(true);
