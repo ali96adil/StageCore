@@ -39,6 +39,12 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
     exec(`INSERT INTO media_locations
         (media_location_id,content_version_id,location_type,locator,status)
         VALUES ('00000000-0000-7000-8000-000000000304',?,'HUB','vault/a','AVAILABLE')`,versionID)
+    actionParams := `{"media_asset_id":"`+assetID+`","nested":{"content_version_id":"`+versionID+`"},"filename":"ambient.mp4"}`
+    exec(`INSERT INTO actions
+        (action_id,cue_id,order_index,execution_mode,target_ref,capability_key,
+         parameters_json,timeout_policy_json,error_policy_json,priority_class,enabled)
+         VALUES ('00000000-0000-7000-8000-000000000309',?,0,'SEQUENTIAL','VIDEO-VDMX',
+                 'video.source.open',?,'{}','{}','P1',1)`,cue.ID,actionParams)
     exec(`INSERT INTO machine_role_media_requirements
         (media_requirement_id,machine_role_id,content_version_id,required,created_at_us)
         VALUES ('00000000-0000-7000-8000-000000000305',?,?,1,1)`,roleID,versionID)
@@ -69,6 +75,17 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
     if newAsset==assetID{t.Fatal("media asset ID reused")}
     if err:=h.DB.QueryRowContext(ctx,`SELECT content_version_id FROM media_content_versions WHERE media_asset_id=?`,newAsset).Scan(&newVersion);err!=nil{t.Fatal(err)}
     if newVersion==versionID{t.Fatal("content version ID reused")}
+    copiedCues,err:=s.ListCues(ctx,draft.ID)
+    if err!=nil{t.Fatal(err)}
+    if len(copiedCues)!=1 || len(copiedCues[0].Actions)!=1 {
+        t.Fatalf("expected cloned media Cue action, got %+v",copiedCues)
+    }
+    copiedParams:=string(copiedCues[0].Actions[0].Parameters)
+    if !strings.Contains(copiedParams,newAsset) || !strings.Contains(copiedParams,newVersion) ||
+       strings.Contains(copiedParams,assetID) || strings.Contains(copiedParams,versionID) ||
+       !strings.Contains(copiedParams,"ambient.mp4") {
+        t.Fatalf("media IDs in cloned Cue action were not remapped: %s",copiedParams)
+    }
     var matchingRequirements int
     if err:=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM machine_role_media_requirements
         WHERE machine_role_id=? AND content_version_id=?`,role,newVersion).Scan(&matchingRequirements);err!=nil{t.Fatal(err)}
