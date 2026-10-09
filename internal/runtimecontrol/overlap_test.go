@@ -236,3 +236,53 @@ func TestQueueGoReturnsBeforeSlowActionAndAllowsNextGo(t *testing.T) {
 	}
 }
 
+
+
+func TestCanonicalOutputOwnershipRejectsSamePhysicalDeviceAcrossAliases(t *testing.T) {
+	// Two Cue aliases may independently reference the same physical device.
+	// RuntimeControl must arbitrate canonical resource keys, not alias labels.
+	tests := []struct {
+		name string
+		first []string
+		second []string
+		conflict string
+	}{
+		{
+			name: "two lighting aliases same stage device",
+			first: []string{"alias:front_warm", "device:dmx-node-a"},
+			second: []string{"alias:front_cold", "device:dmx-node-a"},
+			conflict: "device:dmx-node-a",
+		},
+		{
+			name: "two OSC aliases same endpoint",
+			first: []string{"alias:vdmx_main", "osc:192.168.3.15:3546"},
+			second: []string{"alias:vdmx_test", "osc:192.168.3.15:3546"},
+			conflict: "osc:192.168.3.15:3546",
+		},
+		{
+			name: "one tablet belongs to broadcast group",
+			first: []string{"alias:all_tablets", "device:tablet-a", "device:tablet-b"},
+			second: []string{"alias:tablet_b", "device:tablet-b"},
+			conflict: "device:tablet-b",
+		},
+		{
+			name: "unknown destination may share any other external output",
+			first: []string{"*"},
+			second: []string{"alias:laser-01", "device:stage-laser-01"},
+			conflict: "UNRESOLVED_TARGET",
+		},
+		{
+			name: "different physical devices remain concurrent",
+			first: []string{"alias:light_a", "device:dmx-node-a"},
+			second: []string{"alias:light_b", "device:dmx-node-b"},
+			conflict: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := overlappingTarget(tc.first, tc.second); got != tc.conflict {
+				t.Fatalf("physical conflict %q, want %q", got, tc.conflict)
+			}
+		})
+	}
+}
