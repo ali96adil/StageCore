@@ -64,6 +64,7 @@ type Service struct {
 
 	mu           sync.Mutex
 	active       map[string]map[string]activeRun
+	stopping     map[string]bool
 	nextSequence uint64
 	// Keep Cue selection ordering brief; do not hold while Actions run.
 	selectionMu  sync.Mutex
@@ -122,6 +123,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		store: s, executor: stoppable,
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
+		stopping: make(map[string]bool),
 	}
 	for _, option := range options {
 		option(service)
@@ -552,6 +554,27 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	})
 
 	s.mu.Lock()
+	if s.stopping[session.ID] {
+		s.mu.Unlock()
+		cancel()
+		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "another Cue STOP is still resolving", session.ID)
+	}
+	// An old RUNNING row after a Hub restart has no live executor owner.
+	// Never treat that orphan as permission to resume or dispatch outputs.
+	if len(s.active[session.ID]) == 0 {
+		unresolved, checkErr := s.store.HasRunningCueExecution(ctx, session.ID)
+		if checkErr != nil {
+			s.mu.Unlock()
+			cancel()
+			return failed(req.RequestID, "RUNNING_EXECUTION_CHECK_FAILED")
+		}
+		if unresolved {
+			s.mu.Unlock()
+			cancel()
+			return rejected(req.RequestID, "UNRESOLVED_EXECUTION", "session has an unresolved Cue execution from an earlier runtime", session.ID)
+		}
+	}
+	runCtx = cueengine.WithConcurrentCueGo(runCtx)
 	s.nextSequence++
 	run := activeRun{
 		requestID: req.RequestID, correlationID: command.CorrelationID,
@@ -820,6 +843,11 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	// before waiting for a long-running adapter. STOP applies to the latest
 	// *selected* Cue at this serialized point in time.
 	s.selectionMu.Lock()
+	if !s.beginStoppingCues(session.ID) {
+		s.selectionMu.Unlock()
+		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP is still resolving", session.ID))
+	}
+	defer s.endStoppingCues(session.ID)
 	run, ok := s.latestActiveRun(session.ID)
 	if !ok {
 		s.selectionMu.Unlock()
@@ -845,6 +873,23 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 			Error: &contracts.ContractError{ErrorCode: "STOP_REQUEST_CANCELLED", Category: "CANCELLED", Message: "stop request context was cancelled", Retryable: false, AffectedEntityID: session.ID},
 		})
 	}
+}
+
+// beginStoppingCues is a temporary admission fence for STOP LATEST CUE.
+// It remains latched until the pending STOP result is resolved, not merely
+// until its cancellation signal was sent. Independent earlier Cues continue.
+func (s *Service) beginStoppingCues(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] { return false }
+	s.stopping[sessionID] = true
+	return true
+}
+
+func (s *Service) endStoppingCues(sessionID string) {
+	s.mu.Lock()
+	delete(s.stopping, sessionID)
+	s.mu.Unlock()
 }
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
