@@ -222,17 +222,26 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 			SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000202",
 		})
 	}()
-	deadline := time.Now().Add(2 * time.Second)
+	// Wait for the interruptible Action to be persisted, not just the Cue.
+	// Under the race detector a STOP between Cue RUNNING and Action dispatch
+	// can validly cancel a Cue that has no ActionExecution row yet.
+	deadline := time.Now().Add(5 * time.Second)
 	for {
-		running, err := h.store.HasRunningCueExecution(ctx, session.ID)
+		executions, err := h.store.ListCueExecutions(ctx, session.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if running {
-			break
+		if len(executions) == 1 {
+			actions, err := h.store.ListActionExecutions(ctx, executions[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(actions) == 1 {
+				break
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("Cue did not enter RUNNING state before stop test deadline")
+			t.Fatal("Action did not enter persisted execution before stop test deadline")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
