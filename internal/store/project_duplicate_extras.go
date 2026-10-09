@@ -127,8 +127,10 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
     for assetRows.Next(){var a asset;if err:=assetRows.Scan(&a.old,&a.name,&a.policy);err!=nil{assetRows.Close();return err};assets=append(assets,a)}
     if err:=assetRows.Err();err!=nil{assetRows.Close();return err};assetRows.Close()
     versionIDs:=map[string]string{}
+    mediaIDs:=map[string]string{}
     for _,a:=range assets{
         id,err:=stageid.New();if err!=nil{return err}
+        mediaIDs[a.old]=id
         if _,err=tx.ExecContext(ctx,`INSERT INTO media_assets
             (media_asset_id,project_id,name,asset_policy,created_at_us,updated_at_us)
             VALUES (?,?,?,?,?,?)`,id,newProjectID,a.name,a.policy,nowUS,nowUS);err!=nil{return err}
@@ -145,6 +147,7 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
                 (content_version_id,media_asset_id,content_hash,original_filename,size_bytes,created_at_us)
                 VALUES (?,?,?,?,?,?)`,newVersion,id,v.hash,v.filename,v.size,nowUS);err!=nil{return err}
             versionIDs[v.old]=newVersion
+            mediaIDs[v.old]=newVersion
             type location struct {typ,locator,status string;verified sql.NullInt64}
             locations,err:=tx.QueryContext(ctx,`SELECT location_type,locator,status,verified_at_us FROM media_locations WHERE content_version_id=?`,v.old)
             if err!=nil{return err}
@@ -214,6 +217,8 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
             return fmt.Errorf("duplicate live source %s: %w",v.name,err)
         }
     }
+    if err := remapCopiedProjectMediaJSONTx(ctx,tx,newProjectID,newRevisionID,mediaIDs); err != nil {
+        return fmt.Errorf("remap copied Project media references: %w",err)
+    }
     return nil
 }
-
