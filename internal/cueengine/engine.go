@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -52,6 +53,9 @@ type CueGoPayload struct {
 type Engine struct {
 	store    *store.Store
 	executor capability.Executor
+	// Direct CueEngine callers require the same short selection fence as
+	// RuntimeControl callers; never serialize the entire Action duration.
+	advanceMu sync.Mutex
 }
 
 func New(s *store.Store) *Engine {
@@ -132,6 +136,11 @@ func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command con
 }
 
 func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+	e.advanceMu.Lock()
+	selectionHeld := true
+	defer func() {
+		if selectionHeld { e.advanceMu.Unlock() }
+	}()
 	session, err := e.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return rejection(command.CommandID, "SESSION_NOT_FOUND", "VALIDATION", "session not found", false, sessionID)
@@ -201,6 +210,10 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
 	}
+ 	// This Cue has been persistently selected. Actions and linked delays
+	// no longer hold the selection lock; the next GO may advance independently.
+	selectionHeld = false
+	e.advanceMu.Unlock()
 	notifySelection(ctx)
 
 	cueResult, lastEventID, executionErr := e.executeCueGroup(ctx, sessionID, command, manifest, cueExecution, cueStarted.EventID, group)
