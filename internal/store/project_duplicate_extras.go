@@ -3,7 +3,6 @@ package store
 import (
     "context"
     "database/sql"
-    "errors"
     "fmt"
 
     stageid "github.com/ali96adil/StageCore/internal/id"
@@ -190,7 +189,7 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
           (source_id,project_id,name,source_class,execution_device_id,profile_id,
            endpoint_ref,capabilities_json,config_json,required,desired_enabled,
            readiness,last_observed_at_us,created_at_us,updated_at_us,execution_machine_role_id)
-           VALUES (?,?,?,?,NULL,?,?,?,?,?,'UNKNOWN',NULL,?,?,?)`,
+           VALUES (?,?,?,?,NULL,?,?,?,?,?,?,'UNKNOWN',NULL,?,?,?)`,
           id,newProjectID,v.name,v.sourceClass,v.profileID,v.endpoint,v.caps,
           v.config,v.required,v.desired,nowUS,nowUS,roleID);err!=nil{
             return fmt.Errorf("duplicate live source %s: %w",v.name,err)
@@ -199,5 +198,3 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
     return nil
 }
 
-// compile-time type guard for errors used by this slice.
-var _ = errors.Is
