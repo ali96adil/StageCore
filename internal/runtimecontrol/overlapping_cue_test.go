@@ -163,3 +163,70 @@ func TestStopCancelsEveryOverlappingDelayedCue(t *testing.T) {
 		}
 	}
 }
+
+func TestSimultaneousGoRequestsSelectDistinctCues(t *testing.T) {
+	h := newRuntimeHarnessWithPolicies(t,
+		[]json.RawMessage{
+			json.RawMessage(`{"start_delay_ms":5000}`),
+			json.RawMessage(`{"start_delay_ms":5000}`),
+			json.RawMessage(`{"start_delay_ms":5000}`),
+		},
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+	)
+	ctx := context.Background()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009021",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	results := make(chan contracts.CommandResult, 3)
+	start := make(chan struct{})
+	for _, id := range []string{
+		"00000000-0000-7000-8000-000000009022",
+		"00000000-0000-7000-8000-000000009023",
+		"00000000-0000-7000-8000-000000009024",
+	} {
+		requestID := id
+		go func() {
+			<-start
+			results <- h.service.Go(ctx, CueRequest{SessionID: session.ID, Issuer: "owner", RequestID: requestID})
+		}()
+	}
+	close(start)
+	waitForCueAdvancement(t, h, session.ID, h.cues[2].ID)
+	if stop := h.service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009025",
+	}); stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP simultaneous Cues=%+v", stop)
+	}
+	for range 3 {
+		select {
+		case result := <-results:
+			if result.Status != contracts.CommandCancelled {
+				t.Fatalf("simultaneous GO returned %+v; expected cancelled delay", result)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("concurrent GO did not terminate")
+		}
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != 3 {
+		t.Fatalf("simultaneous GO must persist exactly three executions: %+v err=%v", executions, err)
+	}
+	seen := make(map[string]bool)
+	for _, execution := range executions {
+		if seen[execution.CueID] || execution.Result != domain.ExecutionCancelled {
+			t.Fatalf("Cue selected twice or failed to cancel: %+v", executions)
+		}
+		seen[execution.CueID] = true
+	}
+	for _, cue := range h.cues {
+		if !seen[cue.ID] {
+			t.Fatalf("missing distinct Cue: %s", cue.ID)
+		}
+	}
+}
