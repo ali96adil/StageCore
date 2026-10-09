@@ -46,6 +46,10 @@ jobs:
         run: swift --version
       - name: Build real macOS Companion executable
         run: swift build --package-path companion/macos
+      # Run the full suite on macOS: Linux cannot exercise Keychain, CoreMIDI,
+      # AVFoundation, or the VDMX inspection XCTest cases.
+      - name: Test full macOS Companion suite
+        run: swift test --package-path companion/macos
       - name: Run native Visual Engine renderer acceptance
         run: swift test --package-path companion/macos --filter NativeVisualRendererTests
       - name: Run >=2 GiB interrupted media resume acceptance
