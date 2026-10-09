@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestExtensionInstallRejectedDuringShowAndAllowedAfterExit(t *testing.T) {
 	if _, err := library.Register(ctx, pkg.ID, manifest, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	installer, err := extension.NewInstaller(library, t.TempDir())
+	installer, err := extension.NewInstaller(library, filepath.Join(t.TempDir(), "extensions"))
 	if err != nil {
 		t.Fatal(err)
 	}
