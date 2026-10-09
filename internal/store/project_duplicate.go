@@ -107,6 +107,9 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("insert draft successor: %w", err)
 	}
 
+    roleIDs, err := duplicateMachineRolesTx(ctx, tx, sourceProjectID, newProjectID, nowUS)
+    if err != nil { return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("duplicate roles: %w", err) }
+
 	for _, environment := range executionEnvironments {
 		newEnvironmentID, err := stageid.New()
 		if err != nil {
@@ -118,8 +121,10 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
 		}
 		var machineRoleID any
 		if environment.MachineRoleID != nil {
-			machineRoleID = *environment.MachineRoleID
-		}
+            mapped, ok := roleIDs[*environment.MachineRoleID]
+            if !ok { return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("%w: unrecognized Machine Role in execution environment", domain.ErrConflict) }
+            machineRoleID = mapped
+        }
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO execution_environment_manifests (
 				environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
@@ -324,6 +329,9 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
         if _, err := tx.ExecContext(ctx, "INSERT INTO project_device_aliases (alias_id,project_id,logical_name,logical_type,target_ref,group_name,project_config_json) VALUES (?,?,?,?,?,?,?)", aliasID, newProjectID, alias.LogicalName, alias.LogicalType, alias.TargetRef, alias.GroupName, string(alias.ProjectConfig)); err != nil {
             return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("duplicate alias: %w", err)
         }
+    }
+    if err := duplicateProjectExtrasTx(ctx, tx, sourceProjectID, newProjectID, source.ID, newRevisionID, createdBy, nowUS, cueIDs, roleIDs); err != nil {
+        return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("duplicate Project authoring extras: %w", err)
     }
     if err := tx.Commit(); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("commit draft fork: %w", err)
