@@ -1078,6 +1078,8 @@ async function renderRuntime(startPolling = false) {
   const runtimeCueParents = cueParentMapFor(runtimeCues);
   const currentCue = current ? (cueInList(runtimeCues, current.cue_id) || current) : null;
   const nextCue = next ? (cueInList(runtimeCues, next.cue_id) || next) : null;
+  // Notes belong to the published Runtime Snapshot, never unpublished Draft cues.
+  const runtimeCueNotes = (cue) => String(cue?.notes_summary || "").trim();
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
   const emergencyBlackout = !!runtime.managed_output_blackout;
@@ -1128,10 +1130,13 @@ async function renderRuntime(startPolling = false) {
           <p class="eyebrow">CURRENT CUE</p>
           <div class="current">${current ? `${esc(current.display_label)} · ${esc(current.name)}` : "—"}</div>
           ${currentCue ? `<div class="runtime-cue-links">${renderCueRelationship(currentCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
+          ${runtimeCueNotes(currentCue) ? `<p class="runtime-cue-operator-notes" aria-label="Current Cue notes"><strong>Notes:</strong> ${esc(runtimeCueNotes(currentCue))}</p>` : ""}
         </div>
         <div class="next">
-          <strong>Next:</strong> ${next ? `${esc(next.display_label)} · ${esc(next.name)}` : "—"}
+          <p class="eyebrow">NEXT CUE</p>
+          <div class="runtime-next-cue-name">${next ? `${esc(next.display_label)} · ${esc(next.name)}` : "—"}</div>
           ${nextCue ? `<div class="runtime-cue-links compact">${renderCueRelationship(nextCue, runtimeCues, runtimeCueParents, true)}</div>` : ""}
+          ${runtimeCueNotes(nextCue) ? `<p class="runtime-cue-operator-notes" aria-label="Next Cue notes"><strong>Notes:</strong> ${esc(runtimeCueNotes(nextCue))}</p>` : ""}
         </div>
       </section>
       <section class="runtime-controls">
