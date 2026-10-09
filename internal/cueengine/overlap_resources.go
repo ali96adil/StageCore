@@ -73,6 +73,43 @@ func outputResourceKeys(manifest snapshot.Manifest, action snapshot.Action) []st
 			add("device", id)
 		}
 	}
+	// Some Tablet/Stage Device actions select a subset of recipients in their
+	// parameters rather than in the target alias configuration. Excluding
+	// those IDs would let two disjoint-looking aliases command one physical
+	// device concurrently. Treat malformed overrides as unknown (wildcard),
+	// not as proof of separate resources.
+	if len(action.Parameters) > 0 {
+		var parameters map[string]json.RawMessage
+		if err := json.Unmarshal(action.Parameters, &parameters); err != nil {
+			return []string{"*"}
+		}
+		for _, field := range []string{
+			"device_id", "stage_device_id", "tablet_id", "target_device_id",
+		} {
+			if _, present := parameters[field]; present {
+				identity := str(parameters, field)
+				if identity == "" {
+					return []string{"*"}
+				}
+				add("device", identity)
+			}
+		}
+		for _, field := range []string{"device_ids", "tablet_device_ids"} {
+			if raw, present := parameters[field]; present {
+				var selected []string
+				if err := json.Unmarshal(raw, &selected); err != nil || len(selected) == 0 {
+					return []string{"*"}
+				}
+				for _, identity := range selected {
+					if strings.TrimSpace(identity) == "" {
+						return []string{"*"}
+					}
+					add("device", identity)
+				}
+			}
+		}
+	}
+
 	// Both OSC aliases may specify the exact same UDP endpoint inside a nested
 	// `osc` config. Normalized host:port is a shared output even when the
 	// aliases differ (for example, VDMX MAIN / VDMX TEST).
