@@ -174,7 +174,13 @@ func duplicateProjectExtrasTx(ctx context.Context, tx *sql.Tx,
     for _,r:=range requirements {
         role,ok:=roleIDs[r.oldRole];if !ok{return fmt.Errorf("%w: missing copied Machine Role",domain.ErrConflict)}
         version,ok:=versionIDs[r.oldVersion]
-        if !ok {return fmt.Errorf("%w: machine-role media must belong to the copied Project",domain.ErrConflict)}
+        if !ok {
+            // The source Role may legitimately reference a shared Media
+            // Content Version owned by another Project. Keep that immutable
+            // foreign reference rather than breaking a valid media requirement.
+            // Only source-owned Media gets independent new version IDs.
+            version=r.oldVersion
+        }
         id,err:=stageid.New();if err!=nil{return err}
         if _,err=tx.ExecContext(ctx,`INSERT INTO machine_role_media_requirements
             (media_requirement_id,machine_role_id,content_version_id,required,created_at_us)
