@@ -76,6 +76,11 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
 
+    // Preload aliases before starting the write transaction: avoid querying the
+    // pool from a second connection while the SQLite write lock is held.
+    aliases, err := s.ListAliases(ctx, sourceProjectID)
+    if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("begin draft fork: %w", err)
@@ -313,9 +318,7 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ?, updated_at_us = ? WHERE project_id = ?`, newRevisionID, nowUS, newProjectID); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("activate draft successor: %w", err)
 	}
-	aliases, err := s.ListAliases(ctx, sourceProjectID)
-    if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
-    for _, alias := range aliases {
+	for _, alias := range aliases {
         aliasID, err := stageid.New()
         if err != nil { return domain.Project{}, domain.ProjectRevision{}, err }
         if _, err := tx.ExecContext(ctx, "INSERT INTO project_device_aliases (alias_id,project_id,logical_name,logical_type,target_ref,group_name,project_config_json) VALUES (?,?,?,?,?,?,?)", aliasID, newProjectID, alias.LogicalName, alias.LogicalType, alias.TargetRef, alias.GroupName, string(alias.ProjectConfig)); err != nil {
