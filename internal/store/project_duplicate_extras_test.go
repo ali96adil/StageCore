@@ -112,3 +112,41 @@ func TestDuplicateProjectAuthoringProjectWideSettingsAndMedia(t *testing.T) {
 func makeTestDuplicateCue(revisionID string) domain.Cue {
     return domain.Cue{RevisionID:revisionID,Name:"Scene A",DisplayLabel:"A",OrderIndex:1,Enabled:true,NotesSummary:"Wait for lights"}
 }
+
+func TestDuplicateProjectPreservesSharedExternalMediaRequirement(t *testing.T) {
+    ctx:=context.Background()
+    s,h:=newStore(t)
+    library,_,err:=s.CreateProject(ctx,store.CreateProjectParams{Name:"Shared Media Library",CreatedBy:"operator"})
+    if err!=nil{t.Fatal(err)}
+    source,_,err:=s.CreateProject(ctx,store.CreateProjectParams{Name:"Source Show",CreatedBy:"operator"})
+    if err!=nil{t.Fatal(err)}
+    exec:=func(q string,args ...any){t.Helper();if _,err:=h.DB.ExecContext(ctx,q,args...);err!=nil{t.Fatal(err)}}
+    hash:=strings.Repeat("b",64)
+    asset:="00000000-0000-7000-8000-000000000411"
+    version:="00000000-0000-7000-8000-000000000412"
+    role:="00000000-0000-7000-8000-000000000413"
+    exec(`INSERT INTO vault_objects(content_hash,size_bytes,relative_path,created_at_us)
+        VALUES (?,3,'vault/shared',1)`,hash)
+    exec(`INSERT INTO media_assets(media_asset_id,project_id,name,asset_policy,created_at_us,updated_at_us)
+        VALUES (?,?,'Shared','MANAGED',1,1)`,asset,library.ID)
+    exec(`INSERT INTO media_content_versions(content_version_id,media_asset_id,content_hash,original_filename,size_bytes,created_at_us)
+        VALUES (?,?,?,'shared.mp4',3,1)`,version,asset,hash)
+    exec(`INSERT INTO machine_roles(machine_role_id,project_id,role_key,display_name,required_capabilities_json,
+         required_runtime_snapshot_id,required_config_hash,required,created_at_us,updated_at_us)
+         VALUES (?,?,'VIDEO-SHARED','Shared video','[]',NULL,'',1,1,1)`,role,source.ID)
+    exec(`INSERT INTO machine_role_media_requirements(media_requirement_id,machine_role_id,content_version_id,required,created_at_us)
+         VALUES ('00000000-0000-7000-8000-000000000414',?,?,1,1)`,role,version)
+    clone,_,err:=s.DuplicateProjectAuthoring(ctx,source.ID,"Copy of shared show","operator")
+    if err!=nil{t.Fatal(err)}
+    var newRole,newVersion string
+    err=h.DB.QueryRowContext(ctx,`SELECT machine_role_id FROM machine_roles WHERE project_id=?`,clone.ID).Scan(&newRole)
+    if err!=nil{t.Fatal(err)}
+    err=h.DB.QueryRowContext(ctx,`SELECT content_version_id FROM machine_role_media_requirements
+        WHERE machine_role_id=?`,newRole).Scan(&newVersion)
+    if err!=nil{t.Fatal(err)}
+    if newRole==role || newVersion!=version{t.Fatalf("external media reference corrupted: role=%s version=%s",newRole,newVersion)}
+    var copies int
+    err=h.DB.QueryRowContext(ctx,`SELECT COUNT(*) FROM media_assets WHERE project_id=?`,clone.ID).Scan(&copies)
+    if err!=nil{t.Fatal(err)}
+    if copies!=0{t.Fatalf("unexpected imported external media assets: %d",copies)}
+}
