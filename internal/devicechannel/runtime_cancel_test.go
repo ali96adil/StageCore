@@ -60,6 +60,9 @@ func TestCanceledAfterCommandPersistenceNeverReachesStageDeviceSocket(t *testing
     if command.Status!=contracts.CommandCancelled {
         t.Fatalf("cancelled before socket write must persist CANCELLED, got %s",command.Status)
     }
+    if !runtime.IsConnected(testDeviceID) {
+        t.Fatal("cancelling an undelivered Cue command must not disconnect a healthy Stage Device")
+    }
     stored,err:=repo.GetCommand(context.Background(),command.Envelope.CommandID)
     if err!=nil || stored.Status!=contracts.CommandCancelled {
         t.Fatalf("late command remains dispatchable: command=%+v err=%v",stored,err)
