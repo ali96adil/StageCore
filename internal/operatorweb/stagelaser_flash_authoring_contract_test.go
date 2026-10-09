@@ -13,7 +13,7 @@ func TestStageLaserFlashCueBuilderUsesSecondsAndBoundedLocalCommand(t *testing.T
 		`["LASER_FLASH_START", "Flash Start"]`,
 		`["LASER_FLASH_STOP", "Flash Stop"]`,
 		`Flash duration (seconds)`,
-		`min="0.001" max="60"`,
+		`min="0.1" max="60"`,
 		`Math.round(seconds * 1000)`,
 		`request.duration_ms = duration`,
 		`request.frequency_hz = frequency`,
