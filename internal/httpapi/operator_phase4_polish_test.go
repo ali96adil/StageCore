@@ -121,3 +121,35 @@ func TestPhase4StageDevicesGuardsMissingBodyAcrossAsyncRefresh(t *testing.T) {
 		}
 	}
 }
+
+func TestPhase4LightingShowsCurrentV2CommandAuthority(t *testing.T) {
+	handler := New(WithOperatorWeb()).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/phase4.js", nil)
+	req.RemoteAddr = "127.0.0.1:19110"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("phase4.js status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, required := range []string{
+		"v2Status?.commands_enabled === true",
+		"v2Status?.commands_enabled === false",
+		"v2CommandsEnabled",
+		"v2CommandsDisabled",
+		"v2CommandsUnknown",
+		"Physical DMX and fixtures are NOT verified.",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("phase4.js missing accurate Lighting command authority copy %q", required)
+		}
+	}
+	for _, stale := range []string{
+		"Physical DMX and fixtures are NOT verified. Project commands remain disabled.",
+		"الـDMX والإضاءة الفعلية بعدهن غير متحقق منهن. أوامر المشروع معطّلة.",
+	} {
+		if strings.Contains(body, stale) {
+			t.Fatalf("phase4.js still embeds unconditional disabled-command warning %q", stale)
+		}
+	}
+}
