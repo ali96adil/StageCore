@@ -945,26 +945,6 @@ func waitForActiveRunStops(ctx context.Context, runs []activeRun, timeout time.D
 	return nil
 }
 
-func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
-	runs := s.activeRunsForSession(sessionID)
-	if len(runs) == 0 {
-		return nil
-	}
-	s.interruptCueRuns(runs)
-	timer := time.NewTimer(defaultStopWait)
-	defer timer.Stop()
-	for _, run := range runs {
-		select {
-		case <-run.done:
-		case <-timer.C:
-			return fmt.Errorf("not all active Cues terminated within the bounded stop wait")
-		case <-ctx.Done():
-			return fmt.Errorf("session stop was cancelled while waiting for the active Cues: %w", ctx.Err())
-		}
-	}
-	return nil
-}
-
 func (s *Service) reserve(ctx context.Context, command contracts.CommandEnvelope) (contracts.CommandResult, bool, bool) {
 	record, reserved, err := s.store.ReserveCommand(ctx, command)
 	if err != nil {
