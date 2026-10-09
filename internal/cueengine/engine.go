@@ -21,6 +21,15 @@ const CueGoCommandType = "cue.go"
 // SelectionHook is called once after the session's current Cue is durably
 // advanced, before actions run. RuntimeControl uses it to release its short
 // per-session GO ordering barrier while prior Cue actions continue.
+type concurrentCueGoKey struct{}
+
+// WithConcurrentCueGo is issued only by RuntimeControl after its durable
+// admission and orphan-check fence. Direct CueEngine requests must still
+// reject orphan RUNNING rows left by a previous Hub lifetime.
+func WithConcurrentCueGo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, concurrentCueGoKey{}, true)
+}
+
 type selectionHookKey struct{}
 
 func WithSelectionHook(ctx context.Context, hook func()) context.Context {
@@ -136,9 +145,16 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
 	}
-	// Previous Cue executions may remain RUNNING. Serializing Cue selection
-	// is the responsibility of RuntimeControl's per-session GO barrier;
-	// actions and terminal result persistence remain independent.
+	// Only RuntimeControl can admit intentional overlap. Direct engine calls
+	// still reject unresolved executions without a live owning service.
+	if ctx.Value(concurrentCueGoKey{}) != true {
+		if running, checkErr := e.store.HasRunningCueExecution(ctx, sessionID); checkErr != nil {
+			return internalFailure(command.CommandID, "RUNNING_EXECUTION_CHECK_FAILED", checkErr)
+		} else if running {
+			return rejection(command.CommandID, "UNRESOLVED_EXECUTION", "VALIDATION",
+				"session contains an unowned RUNNING Cue execution", false, sessionID)
+		}
+	}
 
 	runtimeSnapshot, err := e.store.GetRuntimeSnapshot(ctx, command.RuntimeSnapshotID)
 	if err != nil {
