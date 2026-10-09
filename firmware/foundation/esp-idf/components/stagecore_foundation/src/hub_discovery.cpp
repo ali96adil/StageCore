@@ -1,6 +1,7 @@
 #include "hub_discovery.h"
 
 #include <array>
+#include <cerrno>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,9 @@
 #include "esp_netif.h"
 #include "esp_tls.h"
 #include "lwip/ip_addr.h"
+#include "lwip/sockets.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
 #include "mbedtls/ssl.h"
 #include "sha/sha_core.h"
 #include "mdns.h"
@@ -154,47 +158,117 @@ std::string hex_digest(const unsigned char digest[32]) {
   return out;
 }
 
+// This bootstrap does not send HTTP or other application data. The Gateway uses
+// a self-signed certificate, so the leaf is accepted *only* long enough to
+// calculate and compare its SHA-256 against the expected discovery/binding pin.
+// All subsequent HTTP/WebSocket traffic uses the pinned certificate as its CA.
+// A first-time mDNS advertisement is not a cryptographic trust anchor; enrollment
+// requires the operator to authenticate/approve the Hub identity separately.
+int certificate_socket_send(void *ctx, const unsigned char *buf, size_t len) {
+  return static_cast<int>(send(*static_cast<int *>(ctx), buf, len, 0));
+}
+
+int certificate_socket_recv(void *ctx, unsigned char *buf, size_t len) {
+  const int n = static_cast<int>(recv(*static_cast<int *>(ctx), buf, len, 0));
+  if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return MBEDTLS_ERR_SSL_TIMEOUT;
+  }
+  return n;
+}
+
 esp_err_t capture_pinned_certificate(const Candidate &candidate,
                                      std::vector<unsigned char> *der) {
-  if (der == nullptr) return ESP_ERR_INVALID_ARG;
+  if (der == nullptr || !valid_hex_sha256(candidate.tls_sha256)) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  der->clear();
 
-  esp_tls_t *tls = esp_tls_init();
-  if (tls == nullptr) return ESP_ERR_NO_MEM;
+  int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (fd < 0) return ESP_FAIL;
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(candidate.port);
+  if (inet_pton(AF_INET, candidate.address.c_str(), &address.sin_addr) != 1) {
+    close(fd);
+    return ESP_ERR_INVALID_ARG;
+  }
+  timeval timeout{};
+  timeout.tv_sec = 5;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
-  esp_tls_cfg_t cfg = {};
-  cfg.tls_version = ESP_TLS_VER_TLS_1_3;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context rng;
+  mbedtls_ssl_config conf;
+  mbedtls_ssl_context ssl;
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&rng);
+  mbedtls_ssl_config_init(&conf);
+  mbedtls_ssl_init(&ssl);
 
-  const int connected = esp_tls_conn_new_sync(
-      candidate.address.c_str(), static_cast<int>(candidate.address.size()),
-      candidate.port, &cfg, tls);
-  if (connected != 1) {
-    esp_tls_conn_destroy(tls);
-    ESP_LOGE(kTag, "TLS preflight failed for %s:%u",
-             candidate.address.c_str(), candidate.port);
-    return ESP_FAIL;
+  esp_err_t outcome = ESP_FAIL;
+  const char *personalization = "stagecore-hub-pin-bootstrap";
+  int rc = mbedtls_ctr_drbg_seed(
+      &rng, mbedtls_entropy_func, &entropy,
+      reinterpret_cast<const unsigned char *>(personalization),
+      std::strlen(personalization));
+  if (rc != 0) goto cleanup;
+  rc = mbedtls_ssl_config_defaults(
+      &conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
+      MBEDTLS_SSL_PRESET_DEFAULT);
+  if (rc != 0) goto cleanup;
+
+  // Verification is intentionally deferred *only* for this handshake so the
+  // self-signed leaf can be compared with the expected exact certificate pin.
+  // Do not transmit any application data before this check succeeds.
+  mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+  mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &rng);
+  rc = mbedtls_ssl_setup(&ssl, &conf);
+  if (rc != 0) goto cleanup;
+  rc = mbedtls_ssl_set_hostname(&ssl, candidate.host.c_str());
+  if (rc != 0) goto cleanup;
+  mbedtls_ssl_set_bio(&ssl, &fd, certificate_socket_send,
+                      certificate_socket_recv, nullptr);
+
+  if (connect(fd, reinterpret_cast<const sockaddr *>(&address),
+              sizeof(address)) != 0) {
+    goto cleanup;
+  }
+  do {
+    rc = mbedtls_ssl_handshake(&ssl);
+  } while (rc == MBEDTLS_ERR_SSL_WANT_READ ||
+           rc == MBEDTLS_ERR_SSL_WANT_WRITE);
+  if (rc != 0) goto cleanup;
+
+  {
+    const mbedtls_x509_crt *peer = mbedtls_ssl_get_peer_cert(&ssl);
+    if (peer == nullptr || peer->raw.p == nullptr || peer->raw.len == 0) {
+      goto cleanup;
+    }
+    unsigned char digest[32] = {};
+    esp_sha(SHA2_256, peer->raw.p, peer->raw.len, digest);
+    if (hex_digest(digest) != candidate.tls_sha256) {
+      ESP_LOGE(kTag, "TLS pin mismatch for discovered Hub");
+      outcome = ESP_ERR_INVALID_CRC;
+      goto cleanup;
+    }
+    der->assign(peer->raw.p, peer->raw.p + peer->raw.len);
+    outcome = ESP_OK;
   }
 
-  auto *ssl = static_cast<mbedtls_ssl_context *>(esp_tls_get_ssl_context(tls));
-  const mbedtls_x509_crt *peer = ssl != nullptr ? mbedtls_ssl_get_peer_cert(ssl) : nullptr;
-  if (peer == nullptr || peer->raw.p == nullptr || peer->raw.len == 0) {
-    esp_tls_conn_destroy(tls);
-    return ESP_FAIL;
+cleanup:
+  if (outcome == ESP_OK) {
+    ESP_LOGI(kTag, "TLS certificate SHA-256 pin verified");
+  } else if (outcome != ESP_ERR_INVALID_CRC) {
+    ESP_LOGE(kTag, "TLS preflight failed for %s:%u (mbedtls=%d)",
+             candidate.address.c_str(), candidate.port, rc);
   }
-
-  unsigned char digest[32] = {};
-  esp_sha(SHA2_256, peer->raw.p, peer->raw.len, digest);
-
-  const std::string actual = hex_digest(digest);
-  if (actual != candidate.tls_sha256) {
-    ESP_LOGE(kTag, "TLS pin mismatch for discovered Hub");
-    esp_tls_conn_destroy(tls);
-    return ESP_ERR_INVALID_CRC;
-  }
-
-  der->assign(peer->raw.p, peer->raw.p + peer->raw.len);
-  esp_tls_conn_destroy(tls);
-  ESP_LOGI(kTag, "TLS certificate SHA-256 pin verified");
-  return ESP_OK;
+  mbedtls_ssl_free(&ssl);
+  mbedtls_ssl_config_free(&conf);
+  mbedtls_ctr_drbg_free(&rng);
+  mbedtls_entropy_free(&entropy);
+  close(fd);
+  return outcome;
 }
 
 esp_err_t http_event(esp_http_client_event_t *event) {
