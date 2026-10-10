@@ -644,6 +644,7 @@ async function quickRunCueFromWorkspace(cueID) {
     if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
       state.cueRunCooldownUntil = Date.now() + 1500;
     }
+    state.cueRunInFlight = false; // release after Hub acceptance, not after workspace refresh
     await renderCues(`تم طلب تجربة الكيو: ${name}. تبقى البروفة فعّالة لحين الضغط على «إنهاء البروفة».`, "warn");
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
@@ -824,6 +825,7 @@ async function testCueFromWorkspace(cueID) {
     if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
       state.cueRunCooldownUntil = Date.now() + 1500;
     }
+    state.cueRunInFlight = false; // permit the next Cue while the previous refresh is pending
     await renderCues(`Requested Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
@@ -1629,6 +1631,7 @@ async function goRuntime() {
       state.runtimeGoCooldownUntil = Date.now() + 1500;
     }
     setMessage(globalMessage, `GO ${reply?.result?.status || "received"}. Check Current Cue and output results for actual completion.`, "success");
+    state.runtimeActionInFlight = false; // execution acceptance is not completion
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
