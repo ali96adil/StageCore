@@ -1,5 +1,7 @@
 "use strict";
 
+const runtimeUncertainCommandStorageKey = "stagecore.runtime.uncertain_command.v1";
+
 const state = {
   csrf: sessionStorage.getItem("stagecore_csrf") || "",
   user: null,
@@ -1503,8 +1505,6 @@ async function startRuntime(mode) {
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
 
-
-const runtimeUncertainCommandStorageKey = "stagecore.runtime.uncertain_command.v1";
 
 function loadRuntimeUncertainCommand() {
   try {
