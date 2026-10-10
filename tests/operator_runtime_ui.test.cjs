@@ -136,8 +136,8 @@ test("Two GO calls during the same unresolved request submit only one command", 
   };
   const first = f.context.goRuntime();
   const second = f.context.goRuntime();
-  await Promise.resolve();
-  await Promise.resolve();
+  // VM promises cross realms: flush the full microtask queue before asserting.
+  await new Promise(setImmediate);
   assert.equal(posted, 1);
   release({ result: { status: "ACCEPTED" } });
   await Promise.all([first, second]);
