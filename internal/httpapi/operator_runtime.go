@@ -50,6 +50,15 @@ type runtimeExecutionView struct {
 	CompletedAt *time.Time             `json:"completed_at"`
 }
 
+type runtimeActionFailureView struct {
+	CueID           string                 `json:"cue_id"`
+	ActionID        string                 `json:"action_id"`
+	Result          domain.ExecutionResult `json:"result"`
+	ErrorCode       string                 `json:"error_code,omitempty"`
+	ResponseSummary string                 `json:"response_summary,omitempty"`
+	StartedAt       time.Time              `json:"started_at"`
+}
+
 type runtimeStatusView struct {
 	Project         projectView           `json:"project"`
 	Mode            string                `json:"mode"`
@@ -60,6 +69,7 @@ type runtimeStatusView struct {
 	NextCue         *cueSummaryView       `json:"next_cue"`
 	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
 	RunningExecutions     []runtimeExecutionView `json:"running_executions"`
+	RecentActionFailures []runtimeActionFailureView `json:"recent_action_failures"`
 	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
 
@@ -324,6 +334,22 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 				CompletedAt: execution.CompletedAt,
 			})
 		}
+	}
+
+	// Output-level failures remain visible after subsequent successful Cues.
+	failures, err := projectStore.ListRecentActionFailures(r.Context(), active.ID, 8)
+	if err != nil { return runtimeStatusView{}, err }
+	cueByExecution := make(map[string]string, len(executions))
+	for _, execution := range executions { cueByExecution[execution.ID] = execution.CueID }
+	view.RecentActionFailures = make([]runtimeActionFailureView, 0, len(failures))
+	for _, item := range failures {
+		errorCode := ""
+		if item.ErrorCode != nil { errorCode = *item.ErrorCode }
+		view.RecentActionFailures = append(view.RecentActionFailures, runtimeActionFailureView{
+			CueID: cueByExecution[item.CueExecutionID], ActionID: item.ActionID,
+			Result: item.Result, ErrorCode: errorCode,
+			ResponseSummary: item.ResponseSummary, StartedAt: item.StartedAt,
+		})
 	}
 	if len(executions) > 0 {
 		last := executions[len(executions)-1]
