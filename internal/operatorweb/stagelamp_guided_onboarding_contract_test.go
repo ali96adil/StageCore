@@ -8,7 +8,10 @@ import (
 func TestStageLampGuidedDraftOnboardingNeverPublishesOrActuates(t *testing.T) {
     js := string(mustReadOperatorContractFile(t,"static/phase4.js"))
     begin := strings.Index(js,"body.querySelectorAll(\"[data-prepare-stagelamp]\")")
-    end := strings.Index(js,"body.querySelectorAll(\"[data-restore-lighting]\")",begin)
+    end := -1
+    if begin >= 0 {
+        if offset := strings.Index(js[begin:],"body.querySelectorAll(\"[data-restore-lighting]\")"); offset >= 0 { end = begin + offset }
+    }
     if begin<0 || end<=begin { t.Fatal("StageLamp Draft-only setup handler missing") }
     section:=js[begin:end]
     for _,must:=range []string{
@@ -31,7 +34,10 @@ func TestStageLampGuidedDraftOnboardingNeverPublishesOrActuates(t *testing.T) {
 func TestLightingRecoveryOnlyCallsAuditedSnapshotSync(t *testing.T) {
     js := string(mustReadOperatorContractFile(t,"static/phase4.js"))
     begin := strings.Index(js,"body.querySelectorAll(\"[data-restore-lighting]\")")
-    end := strings.Index(js,"body.querySelectorAll(\"[data-assign-stagelaser]\")",begin)
+    end := -1
+    if begin >= 0 {
+        if offset := strings.Index(js[begin:],"body.querySelectorAll(\"[data-assign-stagelaser]\")"); offset >= 0 { end = begin + offset }
+    }
     if begin<0 || end<=begin {t.Fatal("Lighting recovery handler missing")}
     section:=js[begin:end]
     for _,must:=range []string{
