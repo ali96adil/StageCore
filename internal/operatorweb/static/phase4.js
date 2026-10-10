@@ -81,6 +81,16 @@
       stageLaserAssigning: "Verifying DISARMED + OFF on the authenticated StageLaser…",
       stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
       stageLaserNoSnapshot: "Publish a Runtime Snapshot containing this StageLaser target before assignment.",
+      stageLampPrepareTarget: "Add StageLamp to Project Draft",
+      stageLampPrepareConfirm: "Prepare a Project Draft and add this StageLamp as a logical target? Existing Cues stay unchanged. You will still review, validate and publish manually; this does not activate the device.",
+      stageLampPrepared: "StageLamp target is in the Draft. Review Cues, then Validate and Publish Snapshot. Return here to assign the lamp.",
+      stageLampPrepareError: "Could not prepare StageLamp target",
+      lightingSyncDevice: "Reconnect Lighting to Snapshot",
+      lightingSyncConfirm: "Synchronize all managed devices represented in this Published Snapshot? Lighting may enter software blackout, and tablets may enter safe media while assignment changes. No active Session is allowed.",
+      lightingNotInSnapshot: "This Lighting Node has no binding in the Project configuration. Open Lighting Setup and restore its channel configuration, then publish.",
+      lightingSyncMissing: "The Published Snapshot has no matching Lighting binding. Open Lighting Setup, check the node configuration, and publish a new Snapshot.",
+      lightingSyncSuccess: "Lighting Node synchronized with Published Snapshot.",
+      lightingSyncFailed: "Lighting Node was not synchronized.",
       stageLaserAssignConfirm: "StageCore will require this StageLaser to prove DISARMED + OFF on its current authenticated connection. TRACKED means software state only unless physical feedback exists. Continue?",
       stageFirmwareMaintenance: "Firmware maintenance",
       stageFirmwareRegister: "Register QUALIFIED firmware",
@@ -302,6 +312,16 @@
       stageLaserAssigning: "جاري التحقق من DISARMED + OFF على اتصال StageLaser الموثق…",
       stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
       stageLaserNoSnapshot: "انشر Runtime Snapshot يحتوي هدف StageLaser هذا قبل التخصيص.",
+      stageLampPrepareTarget: "أضف المصباح للمشروع",
+      stageLampPrepareConfirm: "نضيف تعريف المصباح إلى مسودة المشروع تلقائياً، بدون تغيير الكيوهات أو تشغيل أي خرج. بعدين تراجع المسودة وتنشر Snapshot بنفسك. تكمل؟",
+      stageLampPrepared: "أضفت المصباح لمسودة المشروع. راجع الكيوهات واضغط Validate ثم Publish Snapshot، وارجع هنا حتى تخصّص المصباح.",
+      stageLampPrepareError: "تعذر تجهيز المصباح بالمشروع",
+      lightingSyncDevice: "استرجاع ربط الإضاءة",
+      lightingSyncConfirm: "راح تتزامن كل الأجهزة المدرجة بالـSnapshot. ممكن الإضاءة تنطفئ برمجياً والتابلت يدخل وضع آمن أثناء تغيير الربط. لازم ماكو بروفة أو عرض شغال. نكمل؟",
+      lightingNotInSnapshot: "عقدة الإضاءة مو موجودة بإعدادات المشروع. افتح Lighting Setup وتحقق من القنوات، بعدها انشر Snapshot جديد.",
+      lightingSyncMissing: "الـSnapshot المنشور ما بيه ربط لهذه الإضاءة. افتح Lighting Setup وتحقق من إعداد العقدة، ثم انشر Snapshot جديد.",
+      lightingSyncSuccess: "رجع ربط الإضاءة مع الـSnapshot المنشور.",
+      lightingSyncFailed: "ما اكتمل ربط الإضاءة.",
       stageLaserAssignConfirm: "تأكد أن مصباح StageLaser مطفي فعلياً. إذا حالته UNKNOWN وعندك فحص بصري OFF حديث لنفس إقلاع الجهاز، راح يُصحّح البرنامج حالة OFF بدون نبضة ريليه ثم يحاول التخصيص. تريد تكمل؟",
       stageFirmwareMaintenance: "صيانة الفيرموير",
       stageFirmwareRegister: "تسجيل Firmware بحالة QUALIFIED",
@@ -984,6 +1004,7 @@
       const canAssignTablet = reusableTablet &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
       const stageLaser = isStageLaser(device);
+      const unassignedLighting = device.profile_id === "stagecore.esp32-dmx-lighting-node" && unassigned;
       const assignableStageLaser = stageLaser && unassigned;
       const canAssignStageLaser = assignableStageLaser &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
@@ -1004,6 +1025,11 @@
           ${stageLaserVisualCheckMarkup(device, visualChecks[device.device_id], !assignmentLocked && canPair)}
           ${stageLaser ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
           ${setupAPMaintenanceMarkup(device)}
+          ${unassignedLighting && canPair ? `<div class="phase4-empty">
+            <button class="button primary" data-restore-lighting="${esc(device.device_id)}"
+              type="button" ${assignmentSnapshotID && !assignmentLocked ? "" : "disabled"}>${esc(t("lightingSyncDevice"))}</button>
+            <button class="button ghost" data-open-workspace="lighting-setup" type="button">${esc(t("openLightingSetup"))}</button>
+          </div>` : ""}
           ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
@@ -1017,6 +1043,7 @@
             </div>` : assignableStageLaser ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("stageLaserNoSnapshot"))}</p>
+              <button class="button ghost" data-prepare-stagelamp="${esc(device.device_id)}" type="button" ${!canPair || assignmentLocked ? "disabled" : ""}>${esc(t("stageLampPrepareTarget"))}</button>
               <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
                 data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
                 type="button" ${canAssignStageLaser ? "" : "disabled"}>
@@ -1392,6 +1419,100 @@
           }
         } catch (error) {
           phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    // Draft-only StageLamp onboarding. Explicit consent; no automatic publish,
+    // no device output, no assignment, and no DB surgery.
+    body.querySelectorAll("[data-prepare-stagelamp]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const deviceID = button.dataset.prepareStagelamp || "";
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(deviceID) ||
+            !window.confirm(t("stageLampPrepareConfirm"))) return;
+        button.disabled = true;
+        try {
+          let config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
+          const matches = (config.targets || []).filter((target) =>
+            String(target.logical_type || "").toLowerCase() === "stage_device" &&
+            String(target.configuration?.device_id || "").trim() === deviceID
+          );
+          if (matches.length === 0) {
+            if (config.revision?.status !== "DRAFT") {
+              await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration/draft`, { method: "POST" });
+              config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
+            }
+            const afterFork = (config.targets || []).some((target) =>
+              String(target.logical_type || "").toLowerCase() === "stage_device" &&
+              String(target.configuration?.device_id || "").trim() === deviceID
+            );
+            if (!afterFork) {
+              const proposed = `stage_lamp_${deviceID.slice(-6)}`;
+              const collision = (config.targets || []).some((target) => target.logical_name === proposed);
+              if (collision) throw new Error("A different target already uses the StageLamp name. Review Project Targets.");
+              await api(`/api/v1/projects/${encodeURIComponent(projectID)}/targets`, {
+                method: "POST",
+                json: {
+                  logical_name: proposed,
+                  logical_type: "stage_device",
+                  target_ref: deviceID,
+                  configuration: { device_id: deviceID },
+                },
+              });
+            }
+          } else if (config.revision?.status !== "DRAFT") {
+            phase4Message(t("stageLampPrepared"), "warn");
+            return;
+          }
+          const project = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`);
+          if (currentProjectID() === projectID) state.project = project.project;
+          await navigate("cues");
+          setMessage(globalMessage, t("stageLampPrepared"), "success");
+        } catch (error) {
+          phase4Message(`${t("stageLampPrepareError")}: ${errorMessage(error)}`, "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    // Reuse the audited snapshot sync path; do not construct a direct GPIO,
+    // DMX or lighting activation command from an unassigned inventory card.
+    body.querySelectorAll("[data-restore-lighting]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            !assignmentSnapshotID || assignmentLocked) return;
+        const deviceID = button.dataset.restoreLighting || "";
+        if (!deviceID) return;
+        button.disabled = true;
+        try {
+          const config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller`);
+          if (!(config.nodes || []).some((node) => node.device_id === deviceID)) {
+            phase4Message(t("lightingNotInSnapshot"), "warn");
+            return;
+          }
+          if (!window.confirm(t("lightingSyncConfirm"))) return;
+          const sync = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/sync-runtime-snapshot`, {
+            method: "POST",
+            json: { runtime_snapshot_id: assignmentSnapshotID },
+          });
+          const match = (sync.results || []).find((item) => item.device_id === deviceID);
+          if (!match) {
+            phase4Message(t("lightingSyncMissing"), "warn");
+          } else if (match.status === "SYNCED" || match.status === "ALREADY_SYNCED") {
+            await renderStageDevices();
+            phase4Message(t("lightingSyncSuccess"), "success");
+          } else {
+            phase4Message(`${t("lightingSyncFailed")} ${match.detail || ""}`, "error");
+          }
+        } catch (error) {
+          const detail = String(error?.payload?.detail || "").trim();
+          phase4Message(`${t("lightingSyncFailed")} ${detail || errorMessage(error)}`, "error");
+        } finally {
           if (button.isConnected) button.disabled = false;
         }
       });
