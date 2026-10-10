@@ -443,6 +443,8 @@ async function renderCues(message = "", messageKind = "success") {
   const runtimeCuesByID = new Map((runtime?.cues || []).map((cue) => [cue.cue_id, cue]));
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
+  const currentlyPublishedRevision = hasPublishedSnapshot &&
+    runtime.runtime_snapshot.revision_id === payload.revision?.revision_id;
   // Validation can leave a revision VALIDATED without publishing it.
   // Show Publish for that revision instead of incorrectly implying that the
   // operator must fork a new Draft. A published VALIDATED revision still
@@ -480,6 +482,7 @@ async function renderCues(message = "", messageKind = "success") {
         <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP CUE</button>
         <button id="cueCheckBlackoutButton" class="button danger" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">BLACKOUT</button>
         <button id="cueCheckClearButton" class="button ghost" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">CLEAR BLACKOUT</button>
+        ${canControl && runtime?.session?.type === "REHEARSAL" ? `<button id="cueCheckEndRehearsal" class="button" type="button">إنهاء البروفة</button>` : ""}
         <button id="cueCheckOpenRuntime" class="button" type="button">Open Runtime</button>
       </div>
       <p class="muted" style="margin-top:10px">
@@ -500,6 +503,7 @@ async function renderCues(message = "", messageKind = "success") {
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
                 <button class="button cue-inspect" data-id="${esc(cue.cue_id)}" type="button">فحص الكيو</button>
+                ${canControl ? `<button class="button cue-quick-run" data-id="${esc(cue.cue_id)}" type="button" ${!currentlyPublishedRevision || !runtimeCuesByID.has(cue.cue_id) || runtimeMode === "SHOW" || (runtime?.session && runtime?.session?.type !== "REHEARSAL") ? "disabled" : ""}>تجربة فعلية</button>` : ""}
                 ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode !== "REHEARSAL" || runtime?.session?.type !== "REHEARSAL" || runtimeBlackout ? "disabled" : ""} type="button">Run Cue in Rehearsal</button>` : ""}
                 ${canModify && hasDraft ? `
                   <button class="button cue-up" data-id="${esc(cue.cue_id)}" ${index === 0 ? "disabled" : ""} type="button">↑</button>
@@ -523,8 +527,10 @@ async function renderCues(message = "", messageKind = "success") {
   el("cueCheckStopButton")?.addEventListener("click", stopCueFromWorkspace);
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
+  el("cueCheckEndRehearsal")?.addEventListener("click", endCueCheckRehearsal);
   el("cueCheckOpenRuntime")?.addEventListener("click", () => navigate("runtime"));
   content.querySelectorAll(".cue-inspect").forEach((button) => button.addEventListener("click", () => inspectCueFromWorkspace(button.dataset.id)));
+  content.querySelectorAll(".cue-quick-run").forEach((button) => button.addEventListener("click", () => quickRunCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-test").forEach((button) => button.addEventListener("click", () => testCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
