@@ -38,7 +38,7 @@ func TestOperatorGoIsDebouncedWithoutWaitingForPriorExecution(t *testing.T) {
     app := string(mustReadOperatorContractFile(t, "static/app.js"))
     for _, marker := range []string{
         "runtimeGoCooldownUntil: 0",
-        "state.runtimeGoCooldownUntil = now + 1500;",
+        "state.runtimeGoCooldownUntil = Date.now() + 1500;",
         "async: true",
         "Date.now() < state.runtimeGoCooldownUntil",
     } {
