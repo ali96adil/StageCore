@@ -392,6 +392,62 @@ func WithOperatorStageDevices(
 		// An operator's visual inspection is a separate audited observation.
 		// It never calls the Stage Device runtime or changes logical state,
 		// safe-off proof, readiness, assignment, hardware output, or GO authority.
+		// StageLamp manual OFF is an attended device-maintenance action. It
+		// does not create a Cue, require or publish any Runtime Snapshot,
+		// claim physical feedback, or grant show-control authority.
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelamp/manual-off",
+			withPermission(auth, userauth.PermissionProjectEdit,
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+				if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil ||
+					userauth.Authorize(session.User.Role, userauth.PermissionRuntimeControl) != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGELAMP_MAINTENANCE_PERMISSION_REQUIRED"})
+					return
+				}
+				projectID, deviceID := strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(r.PathValue("device_id"))
+				if projectID == "" || deviceID == "" {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELAMP_MAINTENANCE_SCOPE_REQUIRED"})
+					return
+				}
+				if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+					writeProjectStoreError(w, err)
+					return
+				}
+				if active, err := stageStore.ActiveSessionForProject(r.Context(), projectID); err != nil || active != nil {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELAMP_MAINTENANCE_SESSION_ACTIVE_OR_UNAVAILABLE"})
+					return
+				}
+				var input struct {
+					VisualCheckID string `json:"visual_check_id"`
+					Confirm string `json:"confirm"`
+				}
+				if !decodeBoundedJSON(w, r, &input) { return }
+				if input.Confirm != "PULSE_ONCE_TO_TURN_OFF_OBSERVED_ON_LAMP" ||
+					strings.TrimSpace(input.VisualCheckID) == "" {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error":"STAGELAMP_MAINTENANCE_EXPLICIT_ON_CONFIRMATION_REQUIRED"})
+					return
+				}
+				requestID, err := stageid.New()
+				if err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error":"STAGELAMP_MAINTENANCE_REQUEST_UNAVAILABLE"})
+					return
+				}
+				result, err := runtime.StageLampManualOff(r.Context(), deviceID, projectID, strings.TrimSpace(input.VisualCheckID), requestID)
+				if err != nil {
+					writeJSON(w, http.StatusConflict, map[string]any{
+						"error":"STAGELAMP_MANUAL_OFF_NOT_CONFIRMED",
+						"detail":err.Error(),
+						"note":"CHECK_PHYSICAL_LAMP_AND_RECORD_NEW_ON_BEFORE_RETRY",
+					})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"result":result,
+					"software_off":true,
+					"physical_off_confirmed":false,
+					"note":"OPERATOR_MUST_VISUALLY_CONFIRM_PHYSICAL_LAMP_OFF",
+				})
+			}))
+
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-visual-check",
 			withPermission(auth, userauth.PermissionProjectRead,
 				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
