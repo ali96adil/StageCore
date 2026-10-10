@@ -350,21 +350,7 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 		if err != nil {
 			return runtimeStatusView{}, err
 		}
-		for j := len(actions) - 1; j >= 0 && len(view.RecentOutputFailures) < 8; j-- {
-			action := actions[j]
-			if action.Result != domain.ExecutionFailed && action.Result != domain.ExecutionTimedOut {
-				continue
-			}
-			failure := runtimeOutputFailureView{
-				CueExecutionID: cue.ID, CueID: cue.CueID,
-				ActionID: action.ActionID, Result: action.Result,
-				ResponseSummary: action.ResponseSummary, CompletedAt: action.CompletedAt,
-			}
-			if action.ErrorCode != nil {
-				failure.ErrorCode = *action.ErrorCode
-			}
-			view.RecentOutputFailures = append(view.RecentOutputFailures, failure)
-		}
+		view.RecentOutputFailures = appendRecentOutputFailures(view.RecentOutputFailures, cue, actions, 8)
 	}
 	if len(executions) > 0 {
 		last := executions[len(executions)-1]
@@ -374,6 +360,26 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 		}
 	}
 	return view, nil
+}
+
+// appendRecentOutputFailures is intentionally bounded and keeps fail-soft
+// Action failures even when the parent Cue result is COMPLETED.
+func appendRecentOutputFailures(dst []runtimeOutputFailureView, cue domain.CueExecution, actions []domain.ActionExecution, limit int) []runtimeOutputFailureView {
+    for j := len(actions) - 1; j >= 0 && len(dst) < limit; j-- {
+        action := actions[j]
+        if action.Result != domain.ExecutionFailed && action.Result != domain.ExecutionTimedOut {
+            continue
+        }
+        failure := runtimeOutputFailureView{
+            CueExecutionID: cue.ID, CueID: cue.CueID, ActionID: action.ActionID,
+            Result: action.Result, ResponseSummary: action.ResponseSummary, CompletedAt: action.CompletedAt,
+        }
+        if action.ErrorCode != nil {
+            failure.ErrorCode = *action.ErrorCode
+        }
+        dst = append(dst, failure)
+    }
+    return dst
 }
 
 func makeRuntimeCueSummaries(cues []domain.Cue) []cueSummaryView {
