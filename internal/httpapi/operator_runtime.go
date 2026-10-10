@@ -50,6 +50,19 @@ type runtimeExecutionView struct {
 	CompletedAt *time.Time             `json:"completed_at"`
 }
 
+// runtimeOutputFailureView retains bounded, persisted action failures even after
+// a subsequent Cue succeeds. A Cue may finish COMPLETED under CONTINUE while
+// one of its output Actions failed, so Cue result alone is insufficient.
+type runtimeOutputFailureView struct {
+    CueExecutionID string                 `json:"cue_execution_id"`
+    CueID          string                 `json:"cue_id"`
+    ActionID       string                 `json:"action_id"`
+    Result         domain.ExecutionResult `json:"result"`
+    ErrorCode      string                 `json:"error_code,omitempty"`
+    ResponseSummary string                `json:"response_summary,omitempty"`
+    CompletedAt    *time.Time             `json:"completed_at,omitempty"`
+}
+
 type runtimeStatusView struct {
 	Project         projectView           `json:"project"`
 	Mode            string                `json:"mode"`
@@ -60,6 +73,7 @@ type runtimeStatusView struct {
 	NextCue         *cueSummaryView       `json:"next_cue"`
 	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
 	RunningExecutions     []runtimeExecutionView `json:"running_executions"`
+	RecentOutputFailures  []runtimeOutputFailureView `json:"recent_output_failures"`
 	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
 
@@ -323,6 +337,33 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 				Result: execution.Result, StartedAt: execution.StartedAt,
 				CompletedAt: execution.CompletedAt,
 			})
+		}
+	}
+	// Bound extra SQLite reads on this polled endpoint. A fail-soft output
+	// failure remains visible after a later Cue completes successfully.
+	view.RecentOutputFailures = make([]runtimeOutputFailureView, 0)
+	inspected := 0
+	for i := len(executions) - 1; i >= 0 && inspected < 12 && len(view.RecentOutputFailures) < 8; i-- {
+		inspected++
+		cue := executions[i]
+		actions, err := projectStore.ListActionExecutions(r.Context(), cue.ID)
+		if err != nil {
+			return runtimeStatusView{}, err
+		}
+		for j := len(actions) - 1; j >= 0 && len(view.RecentOutputFailures) < 8; j-- {
+			action := actions[j]
+			if action.Result != domain.ExecutionFailed && action.Result != domain.ExecutionTimedOut {
+				continue
+			}
+			failure := runtimeOutputFailureView{
+				CueExecutionID: cue.ID, CueID: cue.CueID,
+				ActionID: action.ActionID, Result: action.Result,
+				ResponseSummary: action.ResponseSummary, CompletedAt: action.CompletedAt,
+			}
+			if action.ErrorCode != nil {
+				failure.ErrorCode = *action.ErrorCode
+			}
+			view.RecentOutputFailures = append(view.RecentOutputFailures, failure)
 		}
 	}
 	if len(executions) > 0 {
