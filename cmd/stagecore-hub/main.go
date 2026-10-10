@@ -139,11 +139,17 @@ func main() {
 		if err != nil || session == nil || session.RuntimeSnapshotID != strings.TrimSpace(*role.RequiredRuntimeSnapshotID) {
 			return
 		}
-		_ = runtimeControl.Go(ctx, runtimecontrol.CueRequest{
+		// VDMX/local OSC GO must release the Companion control-in-flight gate
+		// as soon as Cue selection is durably accepted, not after all Cue
+		// delays/Actions complete. Idempotency remains request.EventID.
+		result := runtimeControl.QueueGo(ctx, runtimecontrol.CueRequest{
 			SessionID: session.ID,
 			Issuer:    "companion.local_osc:" + request.CompanionID,
 			RequestID: request.EventID,
 		})
+		if result.Status != "ACCEPTED" && result.Status != "COMPLETED" {
+			logger.Warn("Companion local OSC GO not accepted", "companion_id", request.CompanionID, "request_id", request.EventID, "status", result.Status, "error", result.Error)
+		}
 	})
 
 	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin)
