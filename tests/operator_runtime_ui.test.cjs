@@ -217,3 +217,11 @@ test("Ambiguous Jump also prevents GO without a fresh explicit confirmation", as
   assert.equal(gos, 0, "cross-action blind retry must not advance next Cue");
   assert.equal(f.state.runtimeUncertainCommand.action, "JUMP");
 });
+
+test("Ambiguity banner is scoped to Runtime instead of the Projects template", () => {
+  const projects = source.indexOf("function renderProjects()");
+  const runtime = source.indexOf("async function renderRuntime(");
+  assert.ok(projects >= 0 && runtime > projects);
+  assert.doesNotMatch(source.slice(projects, runtime), /runtime-unverified-command/);
+  assert.match(source.slice(runtime), /runtime-unverified-command/);
+});
