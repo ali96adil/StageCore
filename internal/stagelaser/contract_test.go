@@ -158,3 +158,31 @@ func TestCanonicalCommandPayload(t *testing.T) {
 		t.Fatal("resync accepted UNKNOWN")
 	}
 }
+
+func TestFreshDeadlineRequiredForOutputEnablingCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		payload string
+		want    bool
+	}{
+		{"arm", CommandArm, "{}", true},
+		{"turn on", CommandSetOn, "{}", true},
+		{"flash start", CommandFlashStart, `{"frequency_hz":1,"duration_ms":8000}`, true},
+		{"resync ON", CommandStateResync, `{"state":"ON"}`, true},
+		{"resync OFF", CommandStateResync, `{"state":"OFF"}`, false},
+		{"off", CommandSetOff, "{}", false},
+		{"safe off", CommandSafeOff, "{}", false},
+		{"disarm", CommandDisarm, "{}", false},
+		{"flash stop", CommandFlashStop, "{}", false},
+		{"state read", CommandStateRead, "{}", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := RequiresFreshDeadline(test.command, []byte(test.payload)); got != test.want {
+				t.Fatalf("RequiresFreshDeadline(%s,%s)=%v want %v",
+					test.command, test.payload, got, test.want)
+			}
+		})
+	}
+}
