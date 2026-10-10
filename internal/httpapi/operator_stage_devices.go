@@ -426,12 +426,10 @@ func WithOperatorStageDevices(
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error":"STAGELAMP_MAINTENANCE_EXPLICIT_ON_CONFIRMATION_REQUIRED"})
 					return
 				}
-				requestID, err := stageid.New()
-				if err != nil {
-					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error":"STAGELAMP_MAINTENANCE_REQUEST_UNAVAILABLE"})
-					return
-				}
-				result, err := runtime.StageLampManualOff(r.Context(), deviceID, projectID, strings.TrimSpace(input.VisualCheckID), requestID)
+				// Reuse the durable visual-check UUID as the device replay key.
+				// Re-clicking OFF from the same observation cannot issue a second
+				// physical toggle even after a Hub restart or network timeout.
+				result, err := runtime.StageLampManualOff(r.Context(), deviceID, projectID, strings.TrimSpace(input.VisualCheckID), strings.TrimSpace(input.VisualCheckID))
 				if err != nil {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error":"STAGELAMP_MANUAL_OFF_NOT_CONFIRMED",
