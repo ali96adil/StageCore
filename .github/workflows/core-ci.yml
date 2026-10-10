@@ -33,9 +33,14 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Check Operator JS syntax
+      - name: Check Operator JS syntax and behavior
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/phase4.js
+          node --check internal/operatorweb/static/preflight.js
+          node --check tests/operator_runtime_ui.test.cjs
+          node --test tests/operator_runtime_ui.test.cjs
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
@@ -60,3 +65,43 @@ jobs:
           go build -o /tmp/stagecore-osc-plugin-arm64 ./cmd/stagecore-osc-plugin
           go build -o /tmp/stagecore-pairing-arm64 ./cmd/stagecore-pairing
           go build -o /tmp/stagecore-setup-arm64 ./cmd/stagecore-setup
+
+  # Build a downloadable ARM64 F-010 bundle on CI so the Raspberry Pi does
+  # NOT require a Go compiler. Artifact remains an uninstalled release candidate.
+  show-candidate-arm64-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # The default pull_request checkout is a synthetic merge commit.
+      # The Pi release artifact must be built from the actual PR head SHA.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Verify exact PR source
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git rev-parse HEAD
+      - name: Build full offline media and Pi ARM64 bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-release.sh "$RUNNER_TEMP/stagecore-release"
+          BUNDLE="$RUNNER_TEMP/stagecore-release/stagecore-linux-arm64"
+          test "$(cat "$BUNDLE/RELEASE_REVISION")" = "$(git rev-parse HEAD)"
+          (cd "$BUNDLE" && sha256sum -c SHA256SUMS)
+      - name: Upload Pi ARM64 StageCore F-010 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagecore-show-candidate-linux-arm64
+          path: ${{ runner.temp }}/stagecore-release/stagecore-linux-arm64.tar.gz
+          retention-days: 7
+          if-no-files-found: error

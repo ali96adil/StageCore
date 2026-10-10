@@ -16,7 +16,7 @@ func TestRuntimeUsesFailSoftDegradedOperationUX(t *testing.T) {
 		"WARN means degraded live operation is allowed",
 		"Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.",
 		"unless FAIL_CUE is explicit",
-		`id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""}`,
+		`id="startShowButton" class="button warn" ${!canControl || !snapshot || state.snapshotSyncInFlight || showBlocked || preflightUnavailable ? "disabled" : ""}`,
 		`return ["OWNER", "TECHNICIAN", "OPERATOR"].includes(state.user?.role)`,
 		"advisory for live start",
 		"groupRuntimeReadinessIssues",

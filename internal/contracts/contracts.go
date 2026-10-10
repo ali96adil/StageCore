@@ -31,6 +31,7 @@ const (
 type CommandEnvelope struct {
 	CommandID         string          `json:"command_id"`
 	CommandType       string          `json:"command_type"`
+	ControlGeneration int64           `json:"control_generation,omitempty"`
 	SchemaVersion     int             `json:"schema_version"`
 	IssuedAt          time.Time       `json:"issued_at"`
 	DeadlineAt        *time.Time      `json:"deadline_at,omitempty"`

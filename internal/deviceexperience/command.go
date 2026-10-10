@@ -94,6 +94,14 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if err != nil {
 		return DeviceCommand{}, false, err
 	}
+	// StageLaser v2 rejects an unbounded output-enabling frame. Ordinary
+	// Cue dispatch already provides its own deadline; direct operator commands
+	// require the same short expiry to prevent delayed ON/ARM/FLASH on reconnect.
+	// SAFE_OFF/DISARM/SET_OFF remain possible without a deadline.
+	if input.DeadlineAt == nil && stagelaser.RequiresFreshDeadline(input.CommandType, payload) {
+		deadline := now.Add(5 * time.Second)
+		input.DeadlineAt = &deadline
+	}
 	if err := r.validateLightingCommandAuthority(ctx, input, device, payload); err != nil {
 		return DeviceCommand{}, false, err
 	}
@@ -107,9 +115,39 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.Priority == "" {
 		input.Priority = "P1"
 	}
+	// Allocate generation in the same SQLite transaction as the ACCEPTED
+	// command. Both survive Hub restart, and a failed command insert never
+	// consumes an externally visible output generation. Legacy devices keep
+	// generation=0 and retain their existing wire protocol.
+	var generation int64
+	var commandTx *sql.Tx
+	var executor interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	} = r.db
+	if stagelaser.CommandCapability(input.CommandType) != "" {
+		commandTx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return DeviceCommand{}, false, fmt.Errorf("begin StageLaser command generation: %w", err)
+		}
+		defer func() {
+			if commandTx != nil {
+				_ = commandTx.Rollback()
+			}
+		}()
+		if err := commandTx.QueryRowContext(ctx, `
+			UPDATE stage_device_output_control_sequence
+			SET generation = generation + 1
+			WHERE singleton = 1 AND generation < 9007199254740991
+			RETURNING generation
+		`).Scan(&generation); err != nil {
+			return DeviceCommand{}, false, fmt.Errorf("allocate StageLaser command generation: %w", err)
+		}
+		executor = commandTx
+	}
 	envelope := contracts.CommandEnvelope{
 		CommandID:         commandID,
 		CommandType:       input.CommandType,
+		ControlGeneration: generation,
 		SchemaVersion:     contracts.SchemaVersion1,
 		IssuedAt:          now,
 		DeadlineAt:        input.DeadlineAt,
@@ -130,15 +168,20 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.SessionID != "" {
 		session = input.SessionID
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = executor.ExecContext(ctx, `
 		INSERT INTO stage_device_commands
 		(command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
-		 issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED')
+		 issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status, control_generation)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', ?)
 	`, commandID, input.ProjectID, session, input.DeviceID, input.CommandType,
 		input.RuntimeSnapshotID, now.UnixMicro(), deadline,
-		input.Issuer, input.CorrelationID, input.CausationID, input.Priority, input.IdempotencyKey, string(payload))
+		input.Issuer, input.CorrelationID, input.CausationID, input.Priority, input.IdempotencyKey, string(payload), generation)
 	if err != nil {
+		// Release the SQLite write transaction before any idempotent read.
+		if commandTx != nil {
+			_ = commandTx.Rollback()
+			commandTx = nil
+		}
 		if input.IdempotencyKey != "" {
 			existing, getErr := r.getCommandByIdempotency(ctx, input.DeviceID, input.IdempotencyKey)
 			if getErr == nil {
@@ -146,6 +189,12 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 			}
 		}
 		return DeviceCommand{}, false, fmt.Errorf("create stage device command: %w", err)
+	}
+	if commandTx != nil {
+		if err := commandTx.Commit(); err != nil {
+			return DeviceCommand{}, false, fmt.Errorf("commit StageLaser command generation: %w", err)
+		}
+		commandTx = nil
 	}
 	created := DeviceCommand{Envelope: envelope, SessionID: input.SessionID, DeviceID: input.DeviceID, Status: contracts.CommandAccepted}
 	if err := r.recordCommandEvent(ctx, created, "stage_device.command.accepted"); err != nil {
@@ -224,7 +273,7 @@ func (r *Repository) getCommandUnlocked(ctx context.Context, commandID string) (
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
-		       result_json, completed_at_us
+		       result_json, completed_at_us, control_generation
 		FROM stage_device_commands WHERE command_id = ?
 	`, strings.TrimSpace(commandID)))
 }
@@ -235,7 +284,7 @@ func (r *Repository) getCommandByIdempotency(ctx context.Context, deviceID, key 
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
-		       result_json, completed_at_us
+		       result_json, completed_at_us, control_generation
 		FROM stage_device_commands WHERE device_id = ? AND idempotency_key = ?
 	`, deviceID, key))
 }
@@ -307,7 +356,8 @@ func (r *Repository) scanCommand(row scanner) (DeviceCommand, error) {
 	err := row.Scan(&command.Envelope.CommandID, &command.Envelope.ProjectID, &session, &command.DeviceID,
 		&command.Envelope.CommandType, &command.Envelope.RuntimeSnapshotID, &issuedUS, &deadline, &command.Envelope.Issuer,
 		&command.Envelope.CorrelationID, &command.Envelope.CausationID, &command.Envelope.Priority,
-		&command.Envelope.IdempotencyKey, &payload, &command.Status, &result, &completed)
+		&command.Envelope.IdempotencyKey, &payload, &command.Status, &result, &completed,
+		&command.Envelope.ControlGeneration)
 	if err != nil {
 		return DeviceCommand{}, err
 	}

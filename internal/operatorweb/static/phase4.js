@@ -81,6 +81,50 @@
       stageLaserAssigning: "Verifying DISARMED + OFF on the authenticated StageLaser…",
       stageLaserAssigned: "StageLaser assignment committed. Waiting for its authenticated reconnect.",
       stageLaserNoSnapshot: "Publish a Runtime Snapshot containing this StageLaser target before assignment.",
+      stageLampManualOff: "TURN LAMP OFF (one pulse)",
+      stageLampManualOffConfirm: "I see the lamp ON right now. Send ONE momentary relay pulse to switch it OFF? This does not use a Runtime Snapshot. Do not retry if the result is uncertain.",
+      stageLampManualOffRequiresOn: "Observe ON, record it, then use this OFF button. No Runtime Snapshot required.",
+      stageLampManualOffRequiresFirmware: "Update the StageLamp firmware to enable standalone OFF.",
+      stageLampManualOffApplied: "One OFF pulse completed. Check the physical lamp and record OFF if dark.",
+      stageLampDefaultOff: "Default operating assumption: OFF (not a physical sensor reading).",
+      stageLampIndependentTitle: "Standalone lamp OFF · no assignment or Snapshot",
+      stageLampObserveOn: "I can see the lamp is ON — record ON",
+      stageLampObserveOff: "I can see the lamp is OFF — record OFF",
+      stageLampObserveOnConfirm: "Confirm you are looking at this physical lamp and it is emitting light right now. Recording ON does not pulse the relay.",
+      stageLampObserveOffConfirm: "Confirm you can physically see that this lamp is OFF. No relay pulse will be sent.",
+      stageLampObservedOnHint: "ON seen and recorded for this boot. You may press OFF once below.",
+      stageLampWaitingOnHint: "Leave it as assumed OFF unless you physically see it ON. If ON, record that first to unlock the one-pulse OFF button.",
+      stageLampNoAssignmentNeeded: "UNASSIGNED is normal for standalone maintenance; no Project assignment or Runtime Snapshot is necessary.",
+      stageLampAssumedOff: "Assumed OFF · not measured",
+      stageLampReportedState: "ESP reported state (diagnostic only)",
+      stageLampObservedSaved: "Physical observation saved. No relay pulse was sent.",
+      stageLampObserveOnlineRequired: "Device must be ONLINE with a current boot ID before recording ON.",
+      stageLampOnboardingTitle: "Connect StageLamp to your Show Cues",
+      stageLampOnboardingStepDraft: "Step 1 · Add this lamp as a Draft target; existing Cues remain unchanged.",
+      stageLampOnboardingStepPublish: "Step 2 · Review and publish a new Runtime Snapshot from Cues.",
+      stageLampOnboardingStepAssign: "Step 3 · With the real lamp visually OFF and DISARMED, assign it to the published Snapshot.",
+      stageLampOnboardingWaiting: "Assignment requires an ONLINE lamp and a published Project Snapshot containing its target.",
+      stageLampGoCues: "Open Cues / Publish Snapshot",
+      stageLampGoController: "Open StageLaser Controller",
+      stageLaserPage: "StageLaser",
+      stageLaserPageTitle: "StageLaser Controller",
+      stageLaserPageSub: "Project assignment, device status and Cue authoring for the official StageLaser Controller add-on.",
+      stageLaserPageNoAssigned: "No StageLaser is ACTIVE in this Project yet. Open Stage Devices to prepare its Draft target, publish a Snapshot, then explicitly assign it.",
+      stageLaserPageCueIntro: "Use the existing Cue Builder for StageLaser ON/OFF, ARM/DISARM, timed Flash and Safe Off. Actions may be combined with lighting, media and OSC in the same Cue.",
+      stageLaserPageCreateCue: "+ Create StageLaser Cue",
+      stageLaserPageOpenDevices: "Stage Devices / Assignment",
+      stageLaserPageNeedDraft: "Create a Project Draft in Cues before adding Actions.",
+      stageLaserPageState: "Assignment",
+      stageLampPrepareTarget: "Add StageLamp to Project Draft",
+      stageLampPrepareConfirm: "Prepare a Project Draft and add this StageLamp as a logical target? Existing Cues stay unchanged. You will still review, validate and publish manually; this does not activate the device.",
+      stageLampPrepared: "StageLamp target is in the Draft. Review Cues, then Validate and Publish Snapshot. Return here to assign the lamp.",
+      stageLampPrepareError: "Could not prepare StageLamp target",
+      lightingSyncDevice: "Reconnect Lighting to Snapshot",
+      lightingSyncConfirm: "Synchronize all managed devices represented in this Published Snapshot? Lighting may enter software blackout, and tablets may enter safe media while assignment changes. No active Session is allowed.",
+      lightingNotInSnapshot: "This Lighting Node has no binding in the Project configuration. Open Lighting Setup and restore its channel configuration, then publish.",
+      lightingSyncMissing: "The Published Snapshot has no matching Lighting binding. Open Lighting Setup, check the node configuration, and publish a new Snapshot.",
+      lightingSyncSuccess: "Lighting Node synchronized with Published Snapshot.",
+      lightingSyncFailed: "Lighting Node was not synchronized.",
       stageLaserAssignConfirm: "StageCore will require this StageLaser to prove DISARMED + OFF on its current authenticated connection. TRACKED means software state only unless physical feedback exists. Continue?",
       stageFirmwareMaintenance: "Firmware maintenance",
       stageFirmwareRegister: "Register QUALIFIED firmware",
@@ -276,12 +320,12 @@
       stageLaserLastCommand: "آخر أمر",
       stageLaserTracked: "TRACKED يعني حالة متتبعة برمجياً فقط، وليست تأكيداً فعلياً من الليزر.",
       stageLaserConfirmed: "الحالة مؤكدة بواسطة تغذية راجعة فعلية.",
-      stageLaserUnknown: "حالة الليزر غير معروفة أو تحتاج Resync. لا تفترض أنه مطفأ.",
-      stageLaserTransportOnly: "ONLINE يثبت الاتصال الموثّق فقط؛ مو إثبات لتأهيل الريليه أو انطفاء الشعاع أو أمان تشغيل الليزر. خلي انبعاث الليزر معطّلاً لحين اكتمال فحوص الأمان الفعلية.",
+      stageLaserUnknown: "حالة المصباح البرمجية غير معروفة وتحتاج تصحيح OFF/ON بعد المشاهدة.",
+      stageLaserTransportOnly: "StageLaser هو اسم مصباح المسرح داخل النظام. ONLINE يثبت الاتصال فقط، مو بالضرورة تشغيل الريليه أو صحة حالة ضوء المصباح. القاطع الرئيسي يبقى وسيلة الفصل الفعلي.",
       stageLaserReadOnly: "متابعة StageLaser فقط؛ ماكو أوامر لتشغيل الشعاع أو الريليه من هنا.",
       stageLaserVisualTitle: "الفحص البصري قبل البروفة أو العرض (تسجيل فقط)",
-      stageLaserVisualHint: "سجّل الحالة اللي تشوفها بعينك. هذا ما يرسل نبضة للريليه، وما يغيّر حالة المتحكم أو يثبت أمان إطفاء الشعاع أو يرفع منع العرض. الاختلاف يحتاج فحص.",
-      stageLaserVisualSelect: "حالة الليزر بالمشاهدة",
+      stageLaserVisualHint: "سجّل إذا المصباح مطفي أو شغال بعينك. هذا التسجيل وحده ما يضغط الريليه. عند أول تخصيص، فحص OFF الحديث لنفس إقلاع الجهاز يسمح للـESP بتصحيح UNKNOWN إلى OFF برمجياً بدون نبضة.",
+      stageLaserVisualSelect: "حالة المصباح بالمشاهدة",
       stageLaserVisualOn: "شغال ON — مشاهدة فعلية",
       stageLaserVisualOff: "مطفي OFF — مشاهدة فعلية",
       stageLaserVisualUnknown: "غير متأكد UNKNOWN",
@@ -289,11 +333,11 @@
       stageLaserVisualConfirm: "تسجيل المشاهدة فقط بدون تغيير الحالة الفعلية أو المنطقية لليزر؟",
       stageLaserVisualSaved: "تم تسجيل الفحص البصري؛ حالة التحكم بالجهاز ما تغيرت.",
       stageLaserResync: "صحّح حالة الجهاز حسب ON/OFF المشاهدة",
-      stageLaserResyncConfirm: "تأكدت بعيني من حالة شعاع الليزر الحالية. نحدّث الحالة البرمجية فقط، بدون أي نبضة للريليه؟ هذا الإجراء ما يطفّي الليزر.",
+      stageLaserResyncConfirm: "تأكدت بعيني من حالة المصباح الحالية. نحدّث الحالة البرمجية فقط بدون أي نبضة للريليه؟ هذا الإجراء ما يغيّر إضاءة المصباح.",
       stageLaserResyncSent: "انرسل أمر تصحيح الحالة. حدّث الصفحة وتأكد من الحالة المعلنة من الجهاز.",
       stageLaserResyncChoose: "اختار الحالة الفعلية ON أو OFF أولاً.",
       stageLaserVisualLast: "آخر فحص بصري",
-      stageLaserVisualMismatch: "اختلاف MISMATCH — الحالة المشاهدة تختلف عن حالة الجهاز. لا تعتمد على OFF البرمجية.",
+      stageLaserVisualMismatch: "اختلاف MISMATCH — حالة المصباح المشاهدة تختلف عن الحالة المسجلة. لا تعتمد على OFF البرمجية.",
       stageLaserVisualMatch: "الفحص البصري يطابق الحالة البرمجية، لكن هذا ما يثبت ضمان إيقاف الشعاع عند العطل.",
       stageLaserVisualUnverified: "المقارنة غير مؤكدة؛ لا تعتبر الليزر مطفياً.",
       stageLaserVisualStale: "الحالة اللي يرسلها الجهاز تغيرت بعد الفحص؛ أعد الفحص البصري.",
@@ -302,7 +346,51 @@
       stageLaserAssigning: "جاري التحقق من DISARMED + OFF على اتصال StageLaser الموثق…",
       stageLaserAssigned: "تم تثبيت تخصيص StageLaser. ننتظر إعادة اتصاله الموثقة.",
       stageLaserNoSnapshot: "انشر Runtime Snapshot يحتوي هدف StageLaser هذا قبل التخصيص.",
-      stageLaserAssignConfirm: "سيطلب StageCore من StageLaser إثبات DISARMED + OFF على اتصاله الموثق الحالي. TRACKED تعني حالة برمجية فقط ما لم توجد تغذية راجعة فعلية. هل تريد المتابعة؟",
+      stageLampManualOff: "أطفئ المصباح الآن (نبضة واحدة)",
+      stageLampManualOffConfirm: "أؤكد أن المصباح شغال ON بعيني هسه. نرسل نبضة لحظية واحدة حتى ينطفي؟ هذا مستقل عن Snapshot. إذا النتيجة مو مؤكدة، لا تعيد الضغط قبل المشاهدة.",
+      stageLampManualOffRequiresOn: "افتراض التشغيل OFF، لكن إذا شفت المصباح شغال سجّل ON، وبعدها يتفعل زر الإطفاء. بدون Snapshot.",
+      stageLampManualOffRequiresFirmware: "يحتاج المصباح تحديث الفيرموير حتى يشتغل الإطفاء المستقل.",
+      stageLampManualOffApplied: "اكتملت نبضة OFF واحدة. تأكد من المصباح بعينك وسجّل OFF إذا صار مطفي.",
+      stageLampDefaultOff: "الحالة المفترضة OFF دائماً (هذا افتراض، مو قراءة من المصباح).",
+      stageLampIndependentTitle: "إطفاء المصباح مستقل — بدون تعيين أو Snapshot",
+      stageLampObserveOn: "أشوف المصباح شغال ON — سجّل",
+      stageLampObserveOff: "أشوف المصباح مطفي OFF — سجّل",
+      stageLampObserveOnConfirm: "أكد أنك تشوف هذا المصباح شغال فعلياً هسه. تسجيل ON ما يرسل نبضة للريليه.",
+      stageLampObserveOffConfirm: "أكد أنك تشوف المصباح مطفي فعلياً. التسجيل ما يرسل أي نبضة.",
+      stageLampObservedOnHint: "انحفظت مشاهدة ON لنفس إقلاع الجهاز. تگدر تضغط زر الإطفاء مرة واحدة.",
+      stageLampWaitingOnHint: "اعتبره OFF. فقط إذا شفته شغال، اضغط سجّل ON، وبعدها يتفعّل إطفاء بنبضة واحدة.",
+      stageLampNoAssignmentNeeded: "حالة UNASSIGNED طبيعية لهذا الأمر اليدوي. لا تحتاج تعيين للجهاز ولا نشر Snapshot.",
+      stageLampAssumedOff: "الحالة المفترضة OFF · مو قياس فعلي",
+      stageLampReportedState: "تقرير الـESP (للمعلومات فقط)",
+      stageLampObservedSaved: "تم تسجيل المشاهدة بدون أي نبضة للريليه.",
+      stageLampObserveOnlineRequired: "لازم الجهاز ONLINE ومعه رقم إقلاع حالي قبل تسجيل ON.",
+      stageLampOnboardingTitle: "ربط المصباح بكيوهات العرض",
+      stageLampOnboardingStepDraft: "١ · أضف المصباح لمسودة المشروع، بدون تغيير الكيوهات الموجودة.",
+      stageLampOnboardingStepPublish: "٢ · راجع المسودة وانشر Runtime Snapshot جديد من صفحة Cues.",
+      stageLampOnboardingStepAssign: "٣ · بعد التأكد بعينك أنه مطفي وDISARMED، عيّنه للـSnapshot المنشور.",
+      stageLampOnboardingWaiting: "التعيين يحتاج الجهاز ONLINE وSnapshot منشور يحتوي هدف هذا المصباح.",
+      stageLampGoCues: "افتح Cues / نشر Snapshot",
+      stageLampGoController: "افتح التحكم بـ StageLaser",
+      stageLaserPage: "StageLaser",
+      stageLaserPageTitle: "التحكم بـ StageLaser",
+      stageLaserPageSub: "تعيين المصباح ومتابعة حالته وإنشاء كيوهات StageLaser من واجهة المشروع.",
+      stageLaserPageNoAssigned: "ماكو مصباح StageLaser معيّن ACTIVE لهذا المشروع. افتح أجهزة المسرح، أضفه للمسودة، انشر Snapshot، بعدها عيّنه يدوياً.",
+      stageLaserPageCueIntro: "من Cue Builder تكدر تضيف ON/OFF وARM/DISARM وFlash بمدة محددة وSafe Off، وتجمعها بكيو واحد ويه الإضاءة والفيديو والـOSC.",
+      stageLaserPageCreateCue: "+ إنشاء Cue للمصباح",
+      stageLaserPageOpenDevices: "أجهزة المسرح / التعيين",
+      stageLaserPageNeedDraft: "أنشئ مسودة مشروع من صفحة Cues أولاً حتى تگدر تضيف أكشنات.",
+      stageLaserPageState: "التعيين",
+      stageLampPrepareTarget: "أضف المصباح للمشروع",
+      stageLampPrepareConfirm: "نضيف تعريف المصباح إلى مسودة المشروع تلقائياً، بدون تغيير الكيوهات أو تشغيل أي خرج. بعدين تراجع المسودة وتنشر Snapshot بنفسك. تكمل؟",
+      stageLampPrepared: "أضفت المصباح لمسودة المشروع. راجع الكيوهات واضغط Validate ثم Publish Snapshot، وارجع هنا حتى تخصّص المصباح.",
+      stageLampPrepareError: "تعذر تجهيز المصباح بالمشروع",
+      lightingSyncDevice: "استرجاع ربط الإضاءة",
+      lightingSyncConfirm: "راح تتزامن كل الأجهزة المدرجة بالـSnapshot. ممكن الإضاءة تنطفئ برمجياً والتابلت يدخل وضع آمن أثناء تغيير الربط. لازم ماكو بروفة أو عرض شغال. نكمل؟",
+      lightingNotInSnapshot: "عقدة الإضاءة مو موجودة بإعدادات المشروع. افتح Lighting Setup وتحقق من القنوات، بعدها انشر Snapshot جديد.",
+      lightingSyncMissing: "الـSnapshot المنشور ما بيه ربط لهذه الإضاءة. افتح Lighting Setup وتحقق من إعداد العقدة، ثم انشر Snapshot جديد.",
+      lightingSyncSuccess: "رجع ربط الإضاءة مع الـSnapshot المنشور.",
+      lightingSyncFailed: "ما اكتمل ربط الإضاءة.",
+      stageLaserAssignConfirm: "تأكد أن مصباح StageLaser مطفي فعلياً. إذا حالته UNKNOWN وعندك فحص بصري OFF حديث لنفس إقلاع الجهاز، راح يُصحّح البرنامج حالة OFF بدون نبضة ريليه ثم يحاول التخصيص. تريد تكمل؟",
       stageFirmwareMaintenance: "صيانة الفيرموير",
       stageFirmwareRegister: "تسجيل Firmware بحالة QUALIFIED",
       stageFirmwareFile: "ملف Firmware .bin",
@@ -567,15 +655,19 @@
     const qualityNote = quality === "CONFIRMED"
       ? t("stageLaserConfirmed")
       : quality === "TRACKED" ? t("stageLaserTracked") : t("stageLaserUnknown");
+    const standaloneUnassigned = device.assignment?.assignment_state === "UNASSIGNED" &&
+      !device.assignment?.project_id && !device.assignment?.runtime_snapshot_id;
     return `
       <section class="phase4-empty stage-laser-status" role="status">
         <div class="phase4-status-row">
-          ${pulse(arm)} ${pulse(logical)} ${pulse(quality)}
+          ${pulse(arm)} ${standaloneUnassigned ? `<span class="muted">${esc(t("stageLampAssumedOff"))}</span>` : pulse(logical)}
+          ${standaloneUnassigned ? "" : pulse(quality)}
         </div>
         <dl class="phase4-kv">
           <div><dt>${esc(t("stageLaserArm"))}</dt><dd>${esc(arm)}</dd></div>
-          <div><dt>${esc(t("stageLaserState"))}</dt><dd>${esc(logical)}</dd></div>
-          <div><dt>${esc(t("stageLaserQuality"))}</dt><dd>${esc(quality)}</dd></div>
+          ${standaloneUnassigned ? `<div><dt>${esc(t("stageLampReportedState"))}</dt><dd>${esc(logical)} / ${esc(quality)}</dd></div>` :
+            `<div><dt>${esc(t("stageLaserState"))}</dt><dd>${esc(logical)}</dd></div>
+             <div><dt>${esc(t("stageLaserQuality"))}</dt><dd>${esc(quality)}</dd></div>`}
           ${compact ? "" : `
             <div><dt>${esc(t("stageLaserFirmware"))}</dt><dd>${esc(observed.firmware_version || device.client_version || "—")}</dd></div>
             <div><dt>${esc(t("stageLaserRSSI"))}</dt><dd>${Number.isFinite(rssi) ? `${esc(Math.round(rssi))} dBm` : "—"}</dd></div>
@@ -585,7 +677,8 @@
             <div><dt>${esc(t("stageLaserLastCommand"))}</dt><dd class="mono">${esc(lastCommand)}</dd></div>
           `}
         </dl>
-        <p class="${quality === "UNKNOWN" || observed.resync_required ? "message warn" : "muted"}">${esc(qualityNote)}</p>
+        ${standaloneUnassigned ? `<p class="muted">${esc(t("stageLampDefaultOff"))}</p>` :
+          `<p class="${quality === "UNKNOWN" || observed.resync_required ? "message warn" : "muted"}">${esc(qualityNote)}</p>`}
       </section>`;
   }
 
@@ -608,31 +701,61 @@
       : previous.comparison === "MATCH" ? t("stageLaserVisualMatch")
       : t("stageLaserVisualUnverified");
     const caution = !previous || stale || previous.comparison !== "MATCH";
+    const supportsManualOff = (device.capabilities || []).includes("stagelamp.maintenance.manual-off");
+    const recentON = Boolean(previous && !stale && previous.visual_state === "ON" &&
+      previous.check_id && Number.isFinite(Date.parse(previous.checked_at)) &&
+      Date.now() - Date.parse(previous.checked_at) >= 0 &&
+      Date.now() - Date.parse(previous.checked_at) <= 120000);
+    const isUnassigned = device.assignment?.assignment_state === "UNASSIGNED" &&
+      !device.assignment?.project_id && !device.assignment?.runtime_snapshot_id;
+    const canObserveNow = editable && connection === "ONLINE" &&
+      bootID !== "UNKNOWN" && Boolean(bootID);
+    const standaloneManual = isUnassigned;
     return `
       <section class="phase4-empty stage-laser-visual-check" data-stage-laser-visual-device="${esc(device.device_id)}"
         data-reported-state="${esc(reported)}" data-boot-id="${esc(bootID)}">
-        <strong>${esc(t("stageLaserVisualTitle"))}</strong>
-        <p class="muted">${esc(t("stageLaserVisualHint"))}</p>
-        <p class="${caution ? "message warn" : "muted"}" role="status">
-          ${previous ? esc(t("stageLaserVisualLast") + ": " + previous.visual_state + " / " + previous.device_reported_state + " · " + (previous.checked_at || "")) + " — " : ""}
-          ${esc(message)}
-        </p>
-        <label>${esc(t("stageLaserVisualSelect"))}
-          <select class="stage-laser-visual-state" ${editable ? "" : "disabled"}>
-            <option value="UNKNOWN">${esc(t("stageLaserVisualUnknown"))}</option>
-            <option value="OFF">${esc(t("stageLaserVisualOff"))}</option>
-            <option value="ON">${esc(t("stageLaserVisualOn"))}</option>
-          </select>
-        </label>
-        <div class="phase4-actions">
-          <button class="button ghost" data-stage-laser-visual-save="${esc(device.device_id)}"
-            type="button" ${editable ? "" : "disabled"}>${esc(t("stageLaserVisualSave"))}</button>
-          ${editable && device.assignment?.assignment_state === "ACTIVE" &&
-              device.assignment?.project_id === currentProjectID() &&
-              connection === "ONLINE" ? `<button class="button ghost"
-                data-stage-laser-resync="${esc(device.device_id)}"
-                type="button">${esc(t("stageLaserResync"))}</button>` : ""}
-        </div>
+        <strong>${esc(t(standaloneManual ? "stageLampIndependentTitle" : "stageLaserVisualTitle"))}</strong>
+        <p class="muted">${esc(standaloneManual ? t("stageLampDefaultOff") : t("stageLaserVisualHint"))}</p>
+        ${standaloneManual ? `
+          <p class="muted">${esc(t("stageLampNoAssignmentNeeded"))}</p>
+          <p class="${recentON ? "message warn" : "muted"}" role="status">
+            ${esc(recentON ? t("stageLampObservedOnHint") : t("stageLampWaitingOnHint"))}
+          </p>
+          <div class="phase4-actions">
+            <button class="button ghost" data-stagelamp-observe="ON"
+              data-stage-lamp-id="${esc(device.device_id)}"
+              type="button" ${canObserveNow ? "" : "disabled"}>${esc(t("stageLampObserveOn"))}</button>
+            <button class="button ghost" data-stagelamp-observe="OFF"
+              data-stage-lamp-id="${esc(device.device_id)}"
+              type="button" ${canObserveNow ? "" : "disabled"}>${esc(t("stageLampObserveOff"))}</button>
+            <button class="button primary" data-stagelamp-manual-off="${esc(device.device_id)}"
+              data-check-id="${esc(recentON ? previous.check_id : "")}"
+              type="button" ${recentON && supportsManualOff && canObserveNow ? "" : "disabled"}>${esc(t("stageLampManualOff"))}</button>
+          </div>
+          ${!supportsManualOff ? `<p class="message warn">${esc(t("stageLampManualOffRequiresFirmware"))}</p>` : ""}
+          ${connection !== "ONLINE" || bootID === "UNKNOWN" ? `<p class="message warn">${esc(t("stageLampObserveOnlineRequired"))}</p>` : ""}
+        ` : `
+          <p class="${caution ? "message warn" : "muted"}" role="status">
+            ${previous ? esc(t("stageLaserVisualLast") + ": " + previous.visual_state + " / " + previous.device_reported_state + " · " + (previous.checked_at || "")) + " — " : ""}
+            ${esc(message)}
+          </p>
+          <label>${esc(t("stageLaserVisualSelect"))}
+            <select class="stage-laser-visual-state" ${editable ? "" : "disabled"}>
+              <option value="UNKNOWN">${esc(t("stageLaserVisualUnknown"))}</option>
+              <option value="OFF">${esc(t("stageLaserVisualOff"))}</option>
+              <option value="ON">${esc(t("stageLaserVisualOn"))}</option>
+            </select>
+          </label>
+          <div class="phase4-actions">
+            <button class="button ghost" data-stage-laser-visual-save="${esc(device.device_id)}"
+              type="button" ${editable ? "" : "disabled"}>${esc(t("stageLaserVisualSave"))}</button>
+            ${editable && device.assignment?.assignment_state === "ACTIVE" &&
+                device.assignment?.project_id === currentProjectID() &&
+                connection === "ONLINE" ? `<button class="button ghost"
+                  data-stage-laser-resync="${esc(device.device_id)}"
+                  type="button">${esc(t("stageLaserResync"))}</button>` : ""}
+          </div>
+        `}
       </section>`;
   }
 
@@ -984,6 +1107,7 @@
       const canAssignTablet = reusableTablet &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
       const stageLaser = isStageLaser(device);
+      const unassignedLighting = device.profile_id === "stagecore.esp32-dmx-lighting-node" && unassigned;
       const assignableStageLaser = stageLaser && unassigned;
       const canAssignStageLaser = assignableStageLaser &&
         device.connection_state === "ONLINE" && assignmentSnapshotID && !assignmentLocked;
@@ -1004,6 +1128,28 @@
           ${stageLaserVisualCheckMarkup(device, visualChecks[device.device_id], !assignmentLocked && canPair)}
           ${stageLaser ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
           ${setupAPMaintenanceMarkup(device)}
+          ${unassignedLighting && canPair ? `<div class="phase4-empty">
+            <button class="button primary" data-restore-lighting="${esc(device.device_id)}"
+              type="button" ${assignmentSnapshotID && !assignmentLocked ? "" : "disabled"}>${esc(t("lightingSyncDevice"))}</button>
+            <button class="button ghost" data-open-workspace="lighting-setup" type="button">${esc(t("openLightingSetup"))}</button>
+          </div>` : ""}
+          ${stageLaser && unassigned ? `
+            <section class="phase4-empty" data-stagelamp-show-onboarding="${esc(device.device_id)}">
+              <strong>${esc(t("stageLampOnboardingTitle"))}</strong>
+              <p>${esc(t("stageLampOnboardingStepDraft"))}</p>
+              <p>${esc(t("stageLampOnboardingStepPublish"))}</p>
+              <p>${esc(t("stageLampOnboardingStepAssign"))}</p>
+              <div class="phase4-actions">
+                <button class="button ghost" data-prepare-stagelamp="${esc(device.device_id)}"
+                  type="button" ${!assignmentLocked && canPair ? "" : "disabled"}>${esc(t("stageLampPrepareTarget"))}</button>
+                <button class="button ghost" data-open-workspace="cues" type="button">${esc(t("stageLampGoCues"))}</button>
+                <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
+                  data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
+                  type="button" ${canAssignStageLaser ? "" : "disabled"}>${esc(t("stageLaserAssign"))}</button>
+                <button class="button ghost" data-open-workspace="stagelaser-controller" type="button">${esc(t("stageLampGoController"))}</button>
+              </div>
+              ${!canAssignStageLaser ? `<p class="muted">${esc(t("stageLampOnboardingWaiting"))}</p>` : ""}
+            </section>` : ""}
           ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
@@ -1014,16 +1160,8 @@
                 type="button" ${canAssignTablet ? "" : "disabled"}>
                 ${esc(t(activeElsewhere ? "v2MoveTablet" : "v2AssignTablet"))}
               </button>
-            </div>` : assignableStageLaser ? `
-            <div class="phase4-empty">
-              <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("stageLaserNoSnapshot"))}</p>
-              <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
-                data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
-                type="button" ${canAssignStageLaser ? "" : "disabled"}>
-                ${esc(t("stageLaserAssign"))}
-              </button>
             </div>` : stageLaser ? `
-            <div class="phase4-empty"><p>${esc(t("stageLaserReadOnly"))}</p></div>` : `
+            <div class="phase4-empty"><p>${esc(t("stageLampManualOffRequiresOn"))}</p></div>` : `
             <div class="phase4-empty"><p>${esc(t(device.profile_id === "stagecore.esp32-dmx-lighting-node" ? "v2HardwareUnverified" : "v2GenericHardwareUnverified"))}</p><p>${esc(t("v2NoControls"))}</p></div>`}
         </article>`;
     };
@@ -1325,6 +1463,85 @@
       });
     });
 
+    // Standalone lamp commissioning never asks for a Project assignment,
+    // Runtime Snapshot, or GPIO pulse. The operator may record only what
+    // they actually see; ON is a prerequisite for the separate OFF command.
+    body.querySelectorAll("[data-stagelamp-observe]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const section = button.closest(".stage-laser-visual-check");
+        const deviceID = button.dataset.stageLampId || "";
+        const visualState = button.dataset.stagelampObserve || "";
+        const expectedReported = section?.dataset.reportedState || "UNKNOWN";
+        const expectedBootID = section?.dataset.bootId || "UNKNOWN";
+        if (!section || !deviceID || !["ON", "OFF"].includes(visualState) ||
+            expectedBootID === "UNKNOWN") {
+          phase4Message(t("stageLampObserveOnlineRequired"), "warn");
+          return;
+        }
+        const prompt = visualState === "ON" ?
+          t("stageLampObserveOnConfirm") : t("stageLampObserveOffConfirm");
+        if (!window.confirm(prompt)) return;
+        button.disabled = true;
+        try {
+          await api(
+            `/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelaser-visual-check`,
+            {method:"POST", body:JSON.stringify({
+              visual_state:visualState,
+              expected_device_reported_state:expectedReported,
+              expected_device_boot_id:expectedBootID,
+              confirm:"RECORD_VISUAL_OBSERVATION_ONLY",
+            })},
+          );
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+          phase4Message(t("stageLampObservedSaved"), "success");
+        } catch (error) {
+          phase4Message(errorMessage(error), "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    body.querySelectorAll("[data-stagelamp-manual-off]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const deviceID = button.dataset.stagelampManualOff || "";
+        const visualCheckID = button.dataset.checkId || "";
+        if (!deviceID || !visualCheckID ||
+            !window.confirm(t("stageLampManualOffConfirm"))) return;
+        button.disabled = true;
+        try {
+          const response = await api(
+            `/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/stagelamp/manual-off`,
+            {method:"POST", body:JSON.stringify({
+              visual_check_id:visualCheckID,
+              confirm:"PULSE_ONCE_TO_TURN_OFF_OBSERVED_ON_LAMP",
+            })},
+          );
+          if (!response?.result || response.result.maintenance_state !== "APPLIED")
+            throw new Error("StageLamp OFF result was not acknowledged");
+          if (renderGeneration === stageDevicesRenderGeneration &&
+              state.page === "devices" && currentProjectID() === projectID) {
+            await renderStageDevices();
+          }
+          phase4Message(t("stageLampManualOffApplied"), "success");
+        } catch(error) {
+          const detail=String(error?.payload?.detail || "").trim();
+          phase4Message(detail ? `${errorMessage(error)} — ${detail}`
+            : errorMessage(error), "error");
+        }
+        // Deliberately never re-enable this button after uncertain/failed
+        // actuation. Re-observe the physical lamp and record a NEW ON.
+      });
+    });
+
     body.querySelectorAll("[data-stage-laser-visual-save]").forEach((button) => {
       button.addEventListener("click", async () => {
         if (renderGeneration !== stageDevicesRenderGeneration ||
@@ -1397,6 +1614,94 @@
       });
     });
 
+    // Draft-only StageLamp onboarding. Explicit consent; no automatic publish,
+    // no device output, no assignment, and no DB surgery.
+    body.querySelectorAll("[data-prepare-stagelamp]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            assignmentLocked) return;
+        const deviceID = button.dataset.prepareStagelamp || "";
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(deviceID) ||
+            !window.confirm(t("stageLampPrepareConfirm"))) return;
+        button.disabled = true;
+        try {
+          let config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
+          // Even when an older published revision already has this target,
+          // create a Draft so the operator can explicitly publish a fresh
+          // Runtime Snapshot. Published Snapshots are immutable.
+          if (config.revision?.status !== "DRAFT") {
+            await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration/draft`, { method: "POST" });
+            config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
+          }
+          const alreadyBound = (config.targets || []).some((target) =>
+            String(target.logical_type || "").toLowerCase() === "stage_device" &&
+            String(target.configuration?.device_id || "").trim() === deviceID
+          );
+          if (!alreadyBound) {
+            const proposed = `stage_lamp_${deviceID.slice(-6)}`;
+            const collision = (config.targets || []).some((target) => target.logical_name === proposed);
+            if (collision) throw new Error("A different target already uses the StageLamp name. Review Project Targets.");
+            await api(`/api/v1/projects/${encodeURIComponent(projectID)}/targets`, {
+              method: "POST",
+              json: {
+                logical_name: proposed,
+                logical_type: "stage_device",
+                target_ref: deviceID,
+                configuration: { device_id: deviceID },
+              },
+            });
+          }
+          const project = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`);
+          if (currentProjectID() === projectID) state.project = project.project;
+          await navigate("cues");
+          setMessage(globalMessage, t("stageLampPrepared"), "success");
+        } catch (error) {
+          phase4Message(`${t("stageLampPrepareError")}: ${errorMessage(error)}`, "error");
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
+    // Reuse the audited snapshot sync path; do not construct a direct GPIO,
+    // DMX or lighting activation command from an unassigned inventory card.
+    body.querySelectorAll("[data-restore-lighting]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
+            state.page !== "devices" || currentProjectID() !== projectID ||
+            !assignmentSnapshotID || assignmentLocked) return;
+        const deviceID = button.dataset.restoreLighting || "";
+        if (!deviceID) return;
+        button.disabled = true;
+        try {
+          const config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller`);
+          if (!(config.nodes || []).some((node) => node.device_id === deviceID)) {
+            phase4Message(t("lightingNotInSnapshot"), "warn");
+            return;
+          }
+          if (!window.confirm(t("lightingSyncConfirm"))) return;
+          const sync = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/sync-runtime-snapshot`, {
+            method: "POST",
+            json: { runtime_snapshot_id: assignmentSnapshotID },
+          });
+          const match = (sync.results || []).find((item) => item.device_id === deviceID);
+          if (!match) {
+            phase4Message(t("lightingSyncMissing"), "warn");
+          } else if (match.status === "SYNCED" || match.status === "ALREADY_SYNCED") {
+            await renderStageDevices();
+            phase4Message(t("lightingSyncSuccess"), "success");
+          } else {
+            phase4Message(`${t("lightingSyncFailed")} ${match.detail || ""}`, "error");
+          }
+        } catch (error) {
+          const detail = String(error?.payload?.detail || "").trim();
+          phase4Message(`${t("lightingSyncFailed")} ${detail || errorMessage(error)}`, "error");
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+
     body.querySelectorAll("[data-assign-stagelaser]").forEach((button) => {
       button.addEventListener("click", async () => {
         if (!button.isConnected || renderGeneration !== stageDevicesRenderGeneration ||
@@ -1423,7 +1728,10 @@
             await renderStageDevices();
           }
         } catch (error) {
-          phase4Message(errorMessage(error), "error");
+          const detail = typeof error?.payload?.detail === "string"
+            ? error.payload.detail.trim() : "";
+          phase4Message(detail ? `${errorMessage(error)} — ${detail}`
+            : errorMessage(error), "error");
           if (button.isConnected) button.disabled = false;
         }
       });
@@ -1808,12 +2116,70 @@
       : `<div class="phase4-empty">${esc(t("noNetwork"))}</div>`;
   }
 
+  // The official StageLaser add-on contributes Cue actions to the shared
+  // Cue Builder. This page supplies its missing visible entry point without
+  // adding a second execution transport or issuing any physical pulses.
+  async function renderStageLaserControllerPage() {
+    pageHeader(t("stageLaserPageTitle"), t("stageLaserPageSub"), renderStageLaserControllerPage);
+    const projectID = currentProjectID();
+    const results = await Promise.allSettled([
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/stagelaser-controller`),
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`),
+    ]);
+    if (state.page !== "stagelaser-controller" || currentProjectID() !== projectID) return;
+    const body = document.getElementById("phase4Body");
+    if (!body || !body.isConnected) return;
+    if (results[0].status !== "fulfilled") throw results[0].reason;
+    const devices = results[0].value.devices || [];
+    const hasDraft = results[1].status === "fulfilled" &&
+      results[1].value?.revision?.status === "DRAFT";
+    body.innerHTML = `
+      <section class="phase4-empty">
+        <strong>${esc(t("stageLaserPageCueIntro"))}</strong>
+        <div class="phase4-actions">
+          <button class="button primary" data-stagelaser-create-cue type="button"
+            ${devices.length && hasDraft && canEdit() ? "" : "disabled"}>${esc(t("stageLaserPageCreateCue"))}</button>
+          <button class="button ghost" data-stagelaser-open-devices type="button">${esc(t("stageLaserPageOpenDevices"))}</button>
+          <button class="button ghost" data-stagelaser-open-cues type="button">${esc(t("stageLampGoCues"))}</button>
+        </div>
+        ${!devices.length ? `<p class="message warn">${esc(t("stageLaserPageNoAssigned"))}</p>` : ""}
+        ${devices.length && !hasDraft ? `<p class="muted">${esc(t("stageLaserPageNeedDraft"))}</p>` : ""}
+      </section>
+      ${devices.length ? `<div class="phase4-grid">
+        ${devices.map(device => `
+          <article class="phase4-card">
+            <div class="phase4-card-head">
+              <h3>${esc(device.display_name || device.device_id)}</h3>
+              <div class="phase4-status-row">${pulse(device.assignment?.assignment_state || "UNKNOWN")} ${pulse(device.runtime?.connection_state || device.connection_state || "OFFLINE")}</div>
+            </div>
+            <p class="mono">${esc(device.device_id)}</p>
+            ${stageLaserTelemetryMarkup(device, true)}
+          </article>`).join("")}
+      </div>` : ""}
+    `;
+    body.querySelector("[data-stagelaser-open-devices]")?.addEventListener("click", () =>
+      renderPhase4Page("devices"));
+    body.querySelector("[data-stagelaser-open-cues]")?.addEventListener("click", () => navigate("cues"));
+    body.querySelector("[data-stagelaser-create-cue]")?.addEventListener("click", async () => {
+      await navigate("cues");
+      if (currentProjectID() !== projectID || state.page !== "cues") return;
+      document.getElementById("createCueButton")?.click();
+      const laser = document.getElementById("f002StageLaserDevice");
+      if (laser && devices.length) {
+        laser.value = devices[0].device_id;
+        laser.closest(".f002-builder")?.scrollIntoView({block:"center",behavior:"smooth"});
+        laser.focus();
+      }
+    });
+  }
+
   async function renderPhase4Page(page) {
     if (!state.project) return;
     setPage(page);
     setMessage(globalMessage, "");
     try {
       if (page === "devices") await renderStageDevices();
+      if (page === "stagelaser-controller") await renderStageLaserControllerPage();
       if (page === "callboard") await renderCallboard();
       if (page === "video") await renderLiveVideo();
       if (page === "network") await renderNetworkCockpit();
@@ -1828,6 +2194,7 @@
     const before = nav.querySelector('[data-page="cues"]');
     const items = [
       ["devices", t("devices")],
+      ["stagelaser-controller", t("stageLaserPage")],
       ["callboard", t("callboard")],
       ["video", t("video")],
       ["network", t("network")],
@@ -1912,7 +2279,7 @@
     document.getElementById("languageSelect")?.addEventListener("change", () => {
       document.querySelectorAll('[data-phase4-core-nav="true"]').forEach((button) => button.remove());
       installNavigation();
-      if (["devices", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
+      if (["devices", "stagelaser-controller", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
     });
   });
 })();
