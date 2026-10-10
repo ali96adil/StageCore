@@ -314,9 +314,9 @@ func CanonicalEmptyPayload() json.RawMessage {
 }
 
 // RequiresFreshDeadline identifies commands that can enable or reassert an
- // emitting state. The Hub supplies a short deadline even for direct operator
- // API commands so the ESP32 rejects stale frames after STOP/reconnect.
- // This is a timing guard, not an authenticated per-output generation fence.
+// emitting state. The Hub supplies a short deadline even for direct operator
+// API commands so the ESP32 rejects stale frames after STOP/reconnect.
+// This is a timing guard, not an authenticated per-output generation fence.
 func RequiresFreshDeadline(commandType string, payload json.RawMessage) bool {
 	switch strings.TrimSpace(commandType) {
 	case CommandArm, CommandSetOn, CommandFlashStart:
