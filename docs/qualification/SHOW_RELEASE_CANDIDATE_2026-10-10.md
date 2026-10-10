@@ -6,15 +6,18 @@ This is a pinned, reviewable release plan; it is **not** a production
 deployment authorization, an installed binary, or a claim of physical laser
 safety.
 
-## Pinned source candidates
+## Current verification — 2026-10-10
 
-| Component | Source | Exact SHA | Evidence |
+The table below is an **audit of software candidates**, not a list of approved installable show releases. Earlier pinned revisions in this document were superseded.
+
+| Component | Review-only candidate | Verification | Remaining gate |
 | --- | --- | --- | --- |
-| StageCore Hub (overlapping Cues) | `integration/cue-overlap-main-20261009`, Draft PR #475 | `bc06146a58e4096827116d110ce9c37f0bdddd67` | Prior code CI PASS: [run 38029139773](https://github.com/ali96adil/StageCore/actions/runs/38029139773); new code adds short Hub deadlines for enabling laser commands: [run 38031186058](https://github.com/ali96adil/StageCore/actions/runs/38031186058) pending at pin time |
-| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `dfb97b3c9c17707494d9f02c2667cf0b4b0ccedf` | Earlier no-actuation CI PASS [run 38030585778](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38030585778); new firmware rejects unbounded/future-dated enabling frames, native C++ tests added: [run 38031014333](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38031014333) pending at pin time |
+| StageCore Hub / Operator | `integration/cue-overlap-main-20261009` at `60c4ad93e6aca5c98a0ec7f21aca3b725fd4cac9`, parent [Draft #475](https://github.com/ali96adil/StageCore/pull/475) | Earlier merged head `5b5ff470` **PASS** full Go 1.26/Race + Go 1.27 + ARM64 [CI 38067617763](https://github.com/ali96adil/StageCore/actions/runs/38067617763); [PR #478](https://github.com/ali96adil/StageCore/pull/478) test-head `ce21a9a` **PASS** [CI 38068750870](https://github.com/ali96adil/StageCore/actions/runs/38068750870) | **Exact merged head** `60c4ad93` must pass independent [CI 38069924010](https://github.com/ali96adil/StageCore/actions/runs/38069924010), then paired protocol/device and attended physical tests |
+| StageLaser ESP32-C3 | [Draft firmware #56](https://github.com/ali96adil/StageCore-ESP32-StageLaser/pull/56) at `c5057005b0760c0fa8d0862b5373043d22330120` | Review-only source, no verified show-device install or beam-off failure tests | Must match Hub `control_generation` protocol; **no actuation build/no laser-connected flash** until power-loss, reset, network-loss and independent fail-off are physically proven |
+| Stage devices + Companion | Previously deployed, locally proven versions only (exact live image SHAs still to be gathered) | Prior operator-reported readiness is not the same as current end-to-end acceptance | Enumerate and qualify four tablets, DMX, camera relay, VDMX/Ableton Companion and STOP/Blackout under actual show load |
+| Current Raspberry Pi Hub | Earlier operator-reported installed candidate `e7fe98347` (confirm with `RELEASE_REVISION` and running binary before assumptions) | Historical `/health/ready` observed; **current running SHA not remotely verified** | Record actual deployed revision, save DB/media/config/rollback bundle; do not replace it for this draft |
 
-Both branches are review candidates. Neither is merged or installed by this
-document. A green CI is not proof of an installed device's readiness.
+**No code in this review document installs firmware or changes the live Pi.** In particular, CI success is not authorisation to merge parent #475 into `main` or to load the coupled Hub/StageLaser protocol onto the live show devices.
 
 ## Show-day operator scope
 
@@ -65,16 +68,10 @@ cold-start and rollback procedure. See StageLaser
 
 ## Additional release blockers
 
-- Hub and StageLaser now enforce short deadlines on output-enabling laser
-  commands, and StageLaser rejects implausibly future-dated enabling frames.
-  This closes some stale-command paths, **not** the full ordering problem.
-  Hub-to-device authenticated, persistent **per-output monotonic command
-  generation** remains incomplete. Timestamp watermarks alone cannot reject
-  every late or reordered command.
-- StageLaser TLS trust/pin bootstrap is still under separate review.
-- Hardware qualification and a complete end-to-end attended rehearsal have
-  not been recorded for these exact revisions.
+- **Software vs installed protocol:** the Hub integration branch implements persistent `control_generation` and Draft StageLaser firmware #56 implements matching validation. This closes a known software ordering gap *only for coordinated matching versions*. Those revisions are not yet shown to be installed or physically qualified together. Existing Stage Devices should not be assumed to enforce the new fencing.
+- StageLaser momentary toggle is not fail-off on ESP32-only power loss; an all-power manual disconnect alone does not provide independent automatic inhibition. StageLaser remains **excluded from show actuation** until a demonstrated hardware interlock/fail-off design passes the listed physical tests.
+- StageLaser TLS trust/pin bootstrap and any other firmware-specific blockers require exact-device verification.
+- No attended integrated rehearsal, verified backups or rollback procedure has been documented for the exact current Hub/peripheral candidate.
+- The latest CI run URL is a verification pointer, **not** a release artifact or install instruction.
 
-**Decision:** StageCore software is a CI-green review candidate; the
-combined StageCore + laser system is **NOT APPROVED FOR LIVE SHOW**.
-Do not promote either Draft PR or deploy a new image solely on this manifest.
+**Decision: SOFTWARE REVIEW CANDIDATE ONLY — NO LIVE SHOW AUTHORISATION.** Do not deploy the Draft integration head or change the show project on the basis of this document.
