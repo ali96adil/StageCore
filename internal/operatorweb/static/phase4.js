@@ -99,6 +99,22 @@
       stageLampReportedState: "ESP reported state (diagnostic only)",
       stageLampObservedSaved: "Physical observation saved. No relay pulse was sent.",
       stageLampObserveOnlineRequired: "Device must be ONLINE with a current boot ID before recording ON.",
+      stageLampOnboardingTitle: "Connect StageLamp to your Show Cues",
+      stageLampOnboardingStepDraft: "Step 1 · Add this lamp as a Draft target; existing Cues remain unchanged.",
+      stageLampOnboardingStepPublish: "Step 2 · Review and publish a new Runtime Snapshot from Cues.",
+      stageLampOnboardingStepAssign: "Step 3 · With the real lamp visually OFF and DISARMED, assign it to the published Snapshot.",
+      stageLampOnboardingWaiting: "Assignment requires an ONLINE lamp and a published Project Snapshot containing its target.",
+      stageLampGoCues: "Open Cues / Publish Snapshot",
+      stageLampGoController: "Open StageLaser Controller",
+      stageLaserPage: "StageLaser",
+      stageLaserPageTitle: "StageLaser Controller",
+      stageLaserPageSub: "Project assignment, device status and Cue authoring for the official StageLaser Controller add-on.",
+      stageLaserPageNoAssigned: "No StageLaser is ACTIVE in this Project yet. Open Stage Devices to prepare its Draft target, publish a Snapshot, then explicitly assign it.",
+      stageLaserPageCueIntro: "Use the existing Cue Builder for StageLaser ON/OFF, ARM/DISARM, timed Flash and Safe Off. Actions may be combined with lighting, media and OSC in the same Cue.",
+      stageLaserPageCreateCue: "+ Create StageLaser Cue",
+      stageLaserPageOpenDevices: "Stage Devices / Assignment",
+      stageLaserPageNeedDraft: "Create a Project Draft in Cues before adding Actions.",
+      stageLaserPageState: "Assignment",
       stageLampPrepareTarget: "Add StageLamp to Project Draft",
       stageLampPrepareConfirm: "Prepare a Project Draft and add this StageLamp as a logical target? Existing Cues stay unchanged. You will still review, validate and publish manually; this does not activate the device.",
       stageLampPrepared: "StageLamp target is in the Draft. Review Cues, then Validate and Publish Snapshot. Return here to assign the lamp.",
@@ -348,6 +364,22 @@
       stageLampReportedState: "تقرير الـESP (للمعلومات فقط)",
       stageLampObservedSaved: "تم تسجيل المشاهدة بدون أي نبضة للريليه.",
       stageLampObserveOnlineRequired: "لازم الجهاز ONLINE ومعه رقم إقلاع حالي قبل تسجيل ON.",
+      stageLampOnboardingTitle: "ربط المصباح بكيوهات العرض",
+      stageLampOnboardingStepDraft: "١ · أضف المصباح لمسودة المشروع، بدون تغيير الكيوهات الموجودة.",
+      stageLampOnboardingStepPublish: "٢ · راجع المسودة وانشر Runtime Snapshot جديد من صفحة Cues.",
+      stageLampOnboardingStepAssign: "٣ · بعد التأكد بعينك أنه مطفي وDISARMED، عيّنه للـSnapshot المنشور.",
+      stageLampOnboardingWaiting: "التعيين يحتاج الجهاز ONLINE وSnapshot منشور يحتوي هدف هذا المصباح.",
+      stageLampGoCues: "افتح Cues / نشر Snapshot",
+      stageLampGoController: "افتح التحكم بـ StageLaser",
+      stageLaserPage: "StageLaser",
+      stageLaserPageTitle: "التحكم بـ StageLaser",
+      stageLaserPageSub: "تعيين المصباح ومتابعة حالته وإنشاء كيوهات StageLaser من واجهة المشروع.",
+      stageLaserPageNoAssigned: "ماكو مصباح StageLaser معيّن ACTIVE لهذا المشروع. افتح أجهزة المسرح، أضفه للمسودة، انشر Snapshot، بعدها عيّنه يدوياً.",
+      stageLaserPageCueIntro: "من Cue Builder تكدر تضيف ON/OFF وARM/DISARM وFlash بمدة محددة وSafe Off، وتجمعها بكيو واحد ويه الإضاءة والفيديو والـOSC.",
+      stageLaserPageCreateCue: "+ إنشاء Cue للمصباح",
+      stageLaserPageOpenDevices: "أجهزة المسرح / التعيين",
+      stageLaserPageNeedDraft: "أنشئ مسودة مشروع من صفحة Cues أولاً حتى تگدر تضيف أكشنات.",
+      stageLaserPageState: "التعيين",
       stageLampPrepareTarget: "أضف المصباح للمشروع",
       stageLampPrepareConfirm: "نضيف تعريف المصباح إلى مسودة المشروع تلقائياً، بدون تغيير الكيوهات أو تشغيل أي خرج. بعدين تراجع المسودة وتنشر Snapshot بنفسك. تكمل؟",
       stageLampPrepared: "أضفت المصباح لمسودة المشروع. راجع الكيوهات واضغط Validate ثم Publish Snapshot، وارجع هنا حتى تخصّص المصباح.",
@@ -1101,6 +1133,23 @@
               type="button" ${assignmentSnapshotID && !assignmentLocked ? "" : "disabled"}>${esc(t("lightingSyncDevice"))}</button>
             <button class="button ghost" data-open-workspace="lighting-setup" type="button">${esc(t("openLightingSetup"))}</button>
           </div>` : ""}
+          ${stageLaser && unassigned ? `
+            <section class="phase4-empty" data-stagelamp-show-onboarding="${esc(device.device_id)}">
+              <strong>${esc(t("stageLampOnboardingTitle"))}</strong>
+              <p>${esc(t("stageLampOnboardingStepDraft"))}</p>
+              <p>${esc(t("stageLampOnboardingStepPublish"))}</p>
+              <p>${esc(t("stageLampOnboardingStepAssign"))}</p>
+              <div class="phase4-actions">
+                <button class="button ghost" data-prepare-stagelamp="${esc(device.device_id)}"
+                  type="button" ${!assignmentLocked && canPair ? "" : "disabled"}>${esc(t("stageLampPrepareTarget"))}</button>
+                <button class="button ghost" data-open-workspace="cues" type="button">${esc(t("stageLampGoCues"))}</button>
+                <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
+                  data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
+                  type="button" ${canAssignStageLaser ? "" : "disabled"}>${esc(t("stageLaserAssign"))}</button>
+                <button class="button ghost" data-open-workspace="stagelaser" type="button">${esc(t("stageLampGoController"))}</button>
+              </div>
+              ${!canAssignStageLaser ? `<p class="muted">${esc(t("stageLampOnboardingWaiting"))}</p>` : ""}
+            </section>` : ""}
           ${reusableTablet ? `
             <div class="phase4-empty">
               <p>${esc(assignmentSnapshotID ? t("v2TabletScope") + ": " + assignmentSnapshotID : t("v2TabletNoSnapshot"))}</p>
@@ -2067,12 +2116,70 @@
       : `<div class="phase4-empty">${esc(t("noNetwork"))}</div>`;
   }
 
+  // The official StageLaser add-on contributes Cue actions to the shared
+  // Cue Builder. This page supplies its missing visible entry point without
+  // adding a second execution transport or issuing any physical pulses.
+  async function renderStageLaserControllerPage() {
+    pageHeader(t("stageLaserPageTitle"), t("stageLaserPageSub"), renderStageLaserControllerPage);
+    const projectID = currentProjectID();
+    const results = await Promise.allSettled([
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/stagelaser-controller`),
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`),
+    ]);
+    if (state.page !== "stagelaser" || currentProjectID() !== projectID) return;
+    const body = document.getElementById("phase4Body");
+    if (!body || !body.isConnected) return;
+    if (results[0].status !== "fulfilled") throw results[0].reason;
+    const devices = results[0].value.devices || [];
+    const hasDraft = results[1].status === "fulfilled" &&
+      results[1].value?.revision?.status === "DRAFT";
+    body.innerHTML = `
+      <section class="phase4-empty">
+        <strong>${esc(t("stageLaserPageCueIntro"))}</strong>
+        <div class="phase4-actions">
+          <button class="button primary" data-stagelaser-create-cue type="button"
+            ${devices.length && hasDraft && canEdit() ? "" : "disabled"}>${esc(t("stageLaserPageCreateCue"))}</button>
+          <button class="button ghost" data-stagelaser-open-devices type="button">${esc(t("stageLaserPageOpenDevices"))}</button>
+          <button class="button ghost" data-stagelaser-open-cues type="button">${esc(t("stageLampGoCues"))}</button>
+        </div>
+        ${!devices.length ? `<p class="message warn">${esc(t("stageLaserPageNoAssigned"))}</p>` : ""}
+        ${devices.length && !hasDraft ? `<p class="muted">${esc(t("stageLaserPageNeedDraft"))}</p>` : ""}
+      </section>
+      ${devices.length ? `<div class="phase4-grid">
+        ${devices.map(device => `
+          <article class="phase4-card">
+            <div class="phase4-card-head">
+              <h3>${esc(device.display_name || device.device_id)}</h3>
+              <div class="phase4-status-row">${pulse(device.assignment?.assignment_state || "UNKNOWN")} ${pulse(device.runtime?.connection_state || device.connection_state || "OFFLINE")}</div>
+            </div>
+            <p class="mono">${esc(device.device_id)}</p>
+            ${stageLaserTelemetryMarkup(device, true)}
+          </article>`).join("")}
+      </div>` : ""}
+    `;
+    body.querySelector("[data-stagelaser-open-devices]")?.addEventListener("click", () =>
+      renderPhase4Page("devices"));
+    body.querySelector("[data-stagelaser-open-cues]")?.addEventListener("click", () => navigate("cues"));
+    body.querySelector("[data-stagelaser-create-cue]")?.addEventListener("click", async () => {
+      await navigate("cues");
+      if (currentProjectID() !== projectID || state.page !== "cues") return;
+      document.getElementById("createCueButton")?.click();
+      const laser = document.getElementById("f002StageLaserDevice");
+      if (laser && devices.length) {
+        laser.value = devices[0].device_id;
+        laser.closest(".f002-builder")?.scrollIntoView({block:"center",behavior:"smooth"});
+        laser.focus();
+      }
+    });
+  }
+
   async function renderPhase4Page(page) {
     if (!state.project) return;
     setPage(page);
     setMessage(globalMessage, "");
     try {
       if (page === "devices") await renderStageDevices();
+      if (page === "stagelaser") await renderStageLaserControllerPage();
       if (page === "callboard") await renderCallboard();
       if (page === "video") await renderLiveVideo();
       if (page === "network") await renderNetworkCockpit();
@@ -2087,6 +2194,7 @@
     const before = nav.querySelector('[data-page="cues"]');
     const items = [
       ["devices", t("devices")],
+      ["stagelaser", t("stageLaserPage")],
       ["callboard", t("callboard")],
       ["video", t("video")],
       ["network", t("network")],
@@ -2171,7 +2279,7 @@
     document.getElementById("languageSelect")?.addEventListener("change", () => {
       document.querySelectorAll('[data-phase4-core-nav="true"]').forEach((button) => button.remove());
       installNavigation();
-      if (["devices", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
+      if (["devices", "stagelaser", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
     });
   });
 })();
