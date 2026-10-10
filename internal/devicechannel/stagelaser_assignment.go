@@ -118,6 +118,7 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 		current.generation != generation ||
 		r.assignmentTransitions[input.DeviceID] ||
 		r.pendingStageLaserAssignments[input.DeviceID] != nil ||
+		r.pendingStageLampManualOff[input.DeviceID] != nil ||
 		r.pendingTabletAssignments[input.DeviceID] != nil ||
 		r.pendingLightingActivations[input.DeviceID] != nil ||
 		r.pendingBlackouts[input.DeviceID] != nil ||
