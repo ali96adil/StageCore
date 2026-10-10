@@ -1372,9 +1372,9 @@ async function renderRuntime(startPolling = false) {
         <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
       </section>`;
   content.innerHTML = `
-    ${state.runtimeUncertainCommand?.projectID === projectRef ? `<section class="card runtime-unverified-command" role="alert">
+    ${state.runtimeUncertainCommand ? `<section class="card runtime-unverified-command" role="alert">
       <h3>Previous ${esc(state.runtimeUncertainCommand.action)} response unknown</h3>
-      <p>That command may already have reached the Hub. Check Current / Next Cue before another GO or Jump. STOP and emergency controls remain available.</p>
+      <p>Project: ${esc(state.runtimeUncertainCommand.projectID)}. That command may already have reached the Hub. Check Current / Next Cue before another GO or Jump. STOP and emergency controls remain available.</p>
     </section>` : ""}
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
@@ -1566,7 +1566,13 @@ async function goRuntime() {
 
 function confirmPriorUncertainCueCommand(runtime, projectID) {
   const prior = state.runtimeUncertainCommand;
-  if (!prior || prior.projectID !== projectID) return true;
+  if (!prior) return true;
+  if (prior.projectID !== projectID) {
+    // Never discard an ambiguous command merely because the operator switched
+    // to a different Project. Resolve it in its original published Runtime.
+    setMessage(globalMessage, `Unconfirmed ${prior.action} in Project ${prior.projectID}. Return to that Project to verify its Current/Next Cue before another GO or Jump.`, "warn");
+    return false;
+  }
   const current = runtime.current_cue;
   const next = runtime.next_cue;
   const currentLabel = current ? `${current.display_label || ""} · ${current.name || ""}` : "—";
