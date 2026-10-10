@@ -10,8 +10,8 @@ safety.
 
 | Component | Source | Exact SHA | Evidence |
 | --- | --- | --- | --- |
-| StageCore Hub (overlapping Cues) | `integration/cue-overlap-main-20261009`, Draft PR #475 | `3b756639763400327dd7c9c5451affa51a441956` | Go 1.26/1.27, race and ARM64 CI PASS: [run 38025745113](https://github.com/ali96adil/StageCore/actions/runs/38025745113) |
-| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `0d647987c60f49834a09617d6d965d6ce62b421d` | Previous revision `fcbaaf28` FULL PASS: [run 38030215734](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38030215734). Current revision also prevents malformed duplicate-key emergency hints from superseding queued commands; new CI pending |
+| StageCore Hub (overlapping Cues) | `integration/cue-overlap-main-20261009`, Draft PR #475 | `bc06146a58e4096827116d110ce9c37f0bdddd67` | Prior code CI PASS: [run 38029139773](https://github.com/ali96adil/StageCore/actions/runs/38029139773); new code adds short Hub deadlines for enabling laser commands: [run 38031186058](https://github.com/ali96adil/StageCore/actions/runs/38031186058) pending at pin time |
+| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `dfb97b3c9c17707494d9f02c2667cf0b4b0ccedf` | Earlier no-actuation CI PASS [run 38030585778](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38030585778); new firmware rejects unbounded/future-dated enabling frames, native C++ tests added: [run 38031014333](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38031014333) pending at pin time |
 
 Both branches are review candidates. Neither is merged or installed by this
 document. A green CI is not proof of an installed device's readiness.
@@ -65,7 +65,10 @@ cold-start and rollback procedure. See StageLaser
 
 ## Additional release blockers
 
-- Hub-to-device authenticated, persistent **per-output monotonic command
+- Hub and StageLaser now enforce short deadlines on output-enabling laser
+  commands, and StageLaser rejects implausibly future-dated enabling frames.
+  This closes some stale-command paths, **not** the full ordering problem.
+  Hub-to-device authenticated, persistent **per-output monotonic command
   generation** remains incomplete. Timestamp watermarks alone cannot reject
   every late or reordered command.
 - StageLaser TLS trust/pin bootstrap is still under separate review.
