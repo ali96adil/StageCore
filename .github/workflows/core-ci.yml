@@ -33,9 +33,11 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Check Operator JS syntax
+      - name: Check all Operator JS syntax
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          set -euo pipefail
+          find internal/operatorweb/static -maxdepth 1 -name '*.js' -print0 | xargs -0 -n 1 node --check
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
