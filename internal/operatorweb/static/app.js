@@ -1558,9 +1558,7 @@ function rememberRuntimeUncertainCommand(command) {
 async function goRuntime() {
   // The 1.5-second guard prevents accidental double-clicks without waiting
   // for the previous Cue to finish. Output conflicts remain a Hub decision.
-  const now = Date.now();
-  if (state.runtimeActionInFlight || now < state.runtimeGoCooldownUntil) return;
-  state.runtimeGoCooldownUntil = now + 1500;
+  if (state.runtimeActionInFlight || Date.now() < state.runtimeGoCooldownUntil) return;
   state.runtimeActionInFlight = true;
   state.runtimeRenderGeneration += 1;
   if (el("goButton")) el("goButton").disabled = true;
@@ -1585,6 +1583,12 @@ async function goRuntime() {
       json: { request_id: commandID, expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
     rememberRuntimeUncertainCommand(null);
+    // Only a confirmed accepted/completed GO starts the double-click window.
+    // Network-ambiguous requests must still reach the explicit operator
+    // verification flow on the next attempt.
+    if (["ACCEPTED", "COMPLETED"].includes(reply?.result?.status)) {
+      state.runtimeGoCooldownUntil = Date.now() + 1500;
+    }
     setMessage(globalMessage, `GO ${reply?.result?.status || "received"}. Check Current Cue and output results for actual completion.`, "success");
     await renderRuntime(true);
   } catch (error) {
