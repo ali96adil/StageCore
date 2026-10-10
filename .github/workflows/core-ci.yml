@@ -40,7 +40,7 @@ jobs:
           find internal/operatorweb/static -maxdepth 1 -name '*.js' -print0 | xargs -0 -n 1 node --check
       - name: Operator GO recovery regressions
         if: matrix.go == '1.26.x'
-        run: node --test tests/runtime-operator-go.test.cjs
+        run: node --test tests/runtime-operator-*.test.cjs
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
