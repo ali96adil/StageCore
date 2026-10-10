@@ -14,8 +14,9 @@ function extract(begin, end) {
   return source.slice(i, j);
 }
 const functions = [
+  extract("const runtimeUncertainCommandStorageKey =", "const state = {"),
   extract("async function renderRuntime(", "async function startRuntime("),
-  extract("const runtimeUncertainCommandStorageKey =", "async function goRuntime("),
+  extract("function loadRuntimeUncertainCommand(", "async function goRuntime("),
   extract("async function goRuntime(", "async function stopCueRuntime("),
   extract("async function jumpRuntime(", "async function stopSessionRuntime("),
   extract("function startRuntimePolling(", "window.addEventListener("),
@@ -281,4 +282,10 @@ test("Completed response clears the persisted guard and malformed storage is ign
   assert.equal(storage.size, 0);
   storage.set("stagecore.runtime.uncertain_command.v1", "{invalid");
   assert.equal(f.context.loadRuntimeUncertainCommand(), null);
+});
+
+test("Persistence bootstrap key must exist before state restoration", () => {
+  const key = source.indexOf("const runtimeUncertainCommandStorageKey =");
+  const stateInit = source.indexOf("const state = {");
+  assert.ok(key >= 0 && stateInit > key, "restoring state must not hit temporal dead zone");
 });
