@@ -534,6 +534,103 @@ async function renderCues(message = "", messageKind = "success") {
   content.querySelectorAll(".cue-down").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, 1)));
 }
 
+
+async function inspectCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  const cue = cueByID(cueID);
+  const panel = document.getElementById("cueInspection");
+  if (!projectID || !cue || !panel) return;
+  panel.classList.remove("hidden");
+  panel.innerHTML = `<h3>فحص الكيو: ${esc(cue.display_label || "")} · ${esc(cue.name)}</h3>
+    <p class="muted">جاري قراءة معلومات الكيو والمخرجات. هذا فحص بدون تشغيل أي جهاز.</p>`;
+  panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+  try {
+    const [runtimeResult, configResult, devicesResult] = await Promise.allSettled([
+      api(`${base}/runtime`),
+      api(`${base}/configuration`),
+      api(`${base}/stage-devices`),
+    ]);
+    if (state.page !== "cues" || state.project?.project_id !== projectID || !panel.isConnected) return;
+    if (runtimeResult.status !== "fulfilled") throw runtimeResult.reason;
+    const runtime = runtimeResult.value;
+    const config = configResult.status === "fulfilled" ? configResult.value : null;
+    const assignedDevices = devicesResult.status === "fulfilled"
+      ? (devicesResult.value.devices || []) : [];
+    const snapshot = runtime.runtime_snapshot;
+    const matchingRevision = Boolean(snapshot && config &&
+      snapshot.revision_id === config.revision?.revision_id);
+    const publishedCue = (runtime.cues || []).some((item) => item.cue_id === cueID);
+    let report = null;
+    if (snapshot?.runtime_snapshot_id) {
+      try {
+        report = await api(`${base}/preflight?runtime_snapshot_id=${encodeURIComponent(snapshot.runtime_snapshot_id)}`);
+      } catch (_) {
+        // An unavailable whole-project report must not be presented as a PASS.
+      }
+    }
+    if (state.page !== "cues" || state.project?.project_id !== projectID || !panel.isConnected) return;
+    const aliases = config?.targets || [];
+    const actions = Array.isArray(cue.actions) ? cue.actions : [];
+    const enabledActions = actions.filter((action) => action.enabled !== false);
+    const deviceIDs = new Set();
+    const rows = actions.map((action, index) => {
+      const ref = String(action.target_ref || "");
+      const alias = aliases.find((candidate) =>
+        candidate.logical_name === ref || candidate.target_ref === ref);
+      const deviceID = String(alias?.configuration?.device_id || "");
+      if (deviceID) deviceIDs.add(deviceID);
+      const device = deviceID ? assignedDevices.find((candidate) => candidate.device_id === deviceID) : null;
+      const stateText = action.enabled === false ? "معطّل" :
+        deviceID && !device ? "جهاز غير معيّن لهذا المشروع أو غير متاح" :
+        deviceID && (device.runtime?.connection_state || device.connection_state) !== "ONLINE"
+          ? "الجهاز ليس ONLINE" :
+        deviceID ? "متصل — التنفيذ الفعلي غير مفحوص" :
+        alias ? "الهدف موجود — التنفيذ الفعلي غير مفحوص" :
+        "الهدف غير مؤكد من بيانات المشروع";
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${esc(action.capability_key || "—")}</td>
+        <td><span class="mono">${esc(ref || "—")}</span></td>
+        <td>${esc(stateText)}</td>
+      </tr>`;
+    }).join("");
+    const related = (report?.checks || []).filter((check) => deviceIDs.has(String(check.entity_id || "")));
+    const failures = related.filter((check) => check.status !== "PASS");
+    const scopeMessage = !snapshot
+      ? "لا يوجد Snapshot منشور. هذا فحص إعدادات فقط."
+      : !matchingRevision || !publishedCue
+        ? "هذا الكيو أو تعديلاته مو مطابقة للنسخة المنشورة؛ فحص النسخة الحالية فقط، بدون تشغيل."
+        : "هذا الكيو موجود بالـSnapshot المنشور.";
+    const preflightMessage = report
+      ? `فحص جاهزية المشروع العام: ${esc(report.status || "UNKNOWN")}. النتائج العامة ما تثبت نجاح تنفيذ هذا الكيو.`
+      : "فحص جاهزية المشروع غير متاح؛ لا نعتبره ناجحاً.";
+    panel.innerHTML = `
+      <div class="section-title-row">
+        <div><h3>فحص الكيو: ${esc(cue.display_label || "")} · ${esc(cue.name)}</h3>
+        <p class="muted">فحص قراءة فقط (Read-only): ما يشغّل ولا يوقف أي جهاز، وما يبدأ بروفة.</p></div>
+        ${pill("CHECK ONLY", "neutral")}
+      </div>
+      <p class="${matchingRevision && publishedCue ? "muted" : "message warn"}">${esc(scopeMessage)}</p>
+      <p>عدد الإجراءات: ${actions.length} · المفعّلة: ${enabledActions.length}</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الإجراء</th><th>المخرج</th><th>الفحص</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4">هذا الكيو ما بيه إجراءات.</td></tr>`}</tbody>
+      </table></div>
+      <p class="muted">${preflightMessage}</p>
+      ${failures.length ? `<ul class="validation-list">${failures.map((check) =>
+        `<li class="validation-item"><strong>${esc(check.status || "WARN")}</strong>
+        ${esc(check.summary || check.key || "Device issue")}</li>`).join("")}</ul>` : ""}
+      <p class="muted">للتنفيذ الفعلي استخدم زر تشغيل الكيو بالبروفة؛ الفحص أعلاه لا يرسل أوامر.</p>
+    `;
+  } catch (error) {
+    if (!panel.isConnected || state.page !== "cues" || state.project?.project_id !== projectID) return;
+    panel.innerHTML = `<h3>تعذّر فحص الكيو</h3>
+      <p class="message warn">${esc(errorMessage(error))}</p>
+      <p class="muted">ما انرسل أي أمر للمخرجات.</p>`;
+  }
+}
+
 async function testCueFromWorkspace(cueID) {
   try {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
