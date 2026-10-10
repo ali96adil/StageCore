@@ -14,6 +14,7 @@ const state = {
   runtimeRenderGeneration: 0,
   runtimeRefreshPending: false,
   runtimeActionInFlight: false,
+  runtimeUncertainCommand: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -268,6 +269,10 @@ function renderProjects() {
   setPage("projects");
   el("workspaceNav").classList.toggle("hidden", !state.project);
   content.innerHTML = `
+    ${state.runtimeUncertainCommand?.projectID === projectRef ? `<section class="card runtime-unverified-command" role="alert">
+      <h3>Previous ${esc(state.runtimeUncertainCommand.action)} response unknown</h3>
+      <p>That command may already have reached the Hub. Check Current / Next Cue before another GO or Jump. STOP and emergency controls remain available.</p>
+    </section>` : ""}
     <div class="page-head">
       <div><p class="eyebrow">PROJECTS</p><h1>StageCore Projects</h1><p>Local show-control projects on this Hub.</p></div>
     </div>
@@ -1507,6 +1512,7 @@ async function goRuntime() {
   try {
     const projectID = encodeURIComponent(state.project.project_id);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    if (!confirmPriorUncertainCueCommand(runtime, state.project.project_id)) return;
     const commandID = requestID(); // never auto-resend with a different ID
     submitted = true;
     const reply = await api(`/api/v1/projects/${projectID}/runtime/go`, {
@@ -1517,6 +1523,7 @@ async function goRuntime() {
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
+    if (uncertain) state.runtimeUncertainCommand = { projectID: state.project.project_id, action: "GO" };
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " GO may have reached the Hub. Verify Current/Next Cue before another GO; never blindly retry."
       : ""), "error");
@@ -1524,6 +1531,21 @@ async function goRuntime() {
     state.runtimeActionInFlight = false;
   }
 }
+
+function confirmPriorUncertainCueCommand(runtime, projectID) {
+  const prior = state.runtimeUncertainCommand;
+  if (!prior || prior.projectID !== projectID) return true;
+  const current = runtime.current_cue;
+  const next = runtime.next_cue;
+  const currentLabel = current ? `${current.display_label || ""} · ${current.name || ""}` : "—";
+  const nextLabel = next ? `${next.display_label || ""} · ${next.name || ""}` : "—";
+  // Never automatically re-send an ambiguous cue request. A fresh Runtime GET
+  // and an explicit operator acknowledgement are necessary to proceed.
+  if (!confirm(`Previous ${prior.action} may already have executed. Current Cue: ${currentLabel}. Next Cue: ${nextLabel}. Check the physical stage and confirm you intend a NEW command, not a retry.`)) return false;
+  state.runtimeUncertainCommand = null;
+  return true;
+}
+
 
 async function stopCueRuntime() {
   if (!confirm("STOP LATEST CUE cancels the newest running Cue only; older Cues may continue. This is not a blackout. Continue?")) return;
@@ -1588,6 +1610,7 @@ async function jumpRuntime() {
   try {
     const projectID = encodeURIComponent(state.project.project_id);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    if (!confirmPriorUncertainCueCommand(runtime, state.project.project_id)) return;
     const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
     if (!label) throw new Error("Selected Cue is not in the published Runtime Snapshot. Refresh before Jump.");
     if (!confirm(`Jump runtime to “${label.name}”? This is an explicit operator override.`)) return;
@@ -1606,6 +1629,7 @@ async function jumpRuntime() {
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
+    if (uncertain) state.runtimeUncertainCommand = { projectID: state.project.project_id, action: "JUMP" };
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " Jump may have reached the Hub. Verify Current Cue before retrying."
       : ""), "error");
