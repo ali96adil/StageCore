@@ -55,6 +55,7 @@ function harness(api) {
     runtimeReadinessGroupTitle: () => "",
     pill: (text) => String(text),
     esc: (v) => String(v ?? ""),
+    errorMessage: (error) => error.message,
     fmtDate: () => "-",
     startRuntimePolling: () => {},
   };
