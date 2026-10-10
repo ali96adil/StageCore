@@ -17,7 +17,7 @@ func TestStageLaserOnlineMessagingIsEmissionSafe(t *testing.T) {
 		`v2GenericHardwareUnverified:`,
 		`isStageLaser(device) ? `,
 		`stageLaser ? `,
-		`t("stageLaserReadOnly")`,
+		`t("stageLampManualOffRequiresOn")`,
 		`<p>${esc(t("stageLaserTransportOnly"))}</p>`,
 		`device.profile_id === "stagecore.esp32-dmx-lighting-node" ? "v2HardwareUnverified" : "v2GenericHardwareUnverified"`,
 	} {
