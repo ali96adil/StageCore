@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -203,6 +204,51 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 	if command.Envelope.CommandType != stagelaser.CommandSetOn ||
 		command.Envelope.RuntimeSnapshotID != snapshotID {
 		t.Fatalf("StageLaser command envelope=%+v", command.Envelope)
+	}
+	if command.Envelope.ControlGeneration <= 0 || command.Envelope.DeadlineAt == nil {
+		t.Fatalf("StageLaser ON must carry positive durable generation and deadline: %+v", command.Envelope)
+	}
+
+	// Emergency OFF must advance the output generation without requiring a
+	// deadline. Retries reuse the original generation, not a new authority.
+	offInput := deviceexperience.CreateCommandInput{
+		ProjectID: projectID, RuntimeSnapshotID: snapshotID, DeviceID: deviceID,
+		CommandType: stagelaser.CommandSafeOff, Issuer: "operator:test",
+		IdempotencyKey: "stage-laser-off-once", Payload: json.RawMessage(`{}`),
+	}
+	off, duplicate, err := repo.CreateCommand(ctx, offInput)
+	if err != nil || duplicate || off.Envelope.DeadlineAt != nil ||
+		off.Envelope.ControlGeneration <= command.Envelope.ControlGeneration {
+		t.Fatalf("StageLaser OFF did not advance generation: %+v reused=%v err=%v", off.Envelope, duplicate, err)
+	}
+	offRetry, duplicate, err := repo.CreateCommand(ctx, offInput)
+	if err != nil || !duplicate || offRetry.Envelope.CommandID != off.Envelope.CommandID ||
+		offRetry.Envelope.ControlGeneration != off.Envelope.ControlGeneration {
+		t.Fatalf("idempotent OFF allocated a different generation: %+v reused=%v err=%v", offRetry.Envelope, duplicate, err)
+	}
+
+	// A Hub restart constructs a fresh repository, but SQLite must continue
+	// above its previous output generation.
+	restarted, err := deviceexperience.NewRepository(handle.DB,
+		deviceexperience.WithClock(func() time.Time { return phase4Time }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, duplicate, err := restarted.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: projectID, RuntimeSnapshotID: snapshotID, DeviceID: deviceID,
+		CommandType: stagelaser.CommandSetOn, Issuer: "operator:test",
+		Payload: json.RawMessage(`{}`),
+	})
+	if err != nil || duplicate || third.Envelope.ControlGeneration <= off.Envelope.ControlGeneration {
+		t.Fatalf("generation rewound on repository restart: %+v reused=%v err=%v", third.Envelope, duplicate, err)
+	}
+	var persisted int64
+	if err := handle.DB.QueryRowContext(ctx,
+		`SELECT generation FROM stage_device_output_control_sequence WHERE singleton=1`).Scan(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted != third.Envelope.ControlGeneration {
+		t.Fatalf("persisted generation=%d want=%d", persisted, third.Envelope.ControlGeneration)
 	}
 }
 
