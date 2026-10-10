@@ -289,3 +289,19 @@ test("Persistence bootstrap key must exist before state restoration", () => {
   const stateInit = source.indexOf("const state = {");
   assert.ok(key >= 0 && stateInit > key, "restoring state must not hit temporal dead zone");
 });
+
+test("Switching Projects cannot overwrite an unresolved GO from another Project", async () => {
+  const f = fixture();
+  f.state.runtimeUncertainCommand = { projectID: "other-project", action: "GO" };
+  let sent = 0;
+  f.context.api = async (path, options) => {
+    if (options?.method === "POST") sent++;
+    return path.includes("/preflight") ? { status: "PASS", checks: [] } : f.runtime();
+  };
+  await f.context.renderRuntime();
+  assert.match(f.getHTML(), /Previous GO response unknown/);
+  assert.match(f.getHTML(), /other-project/);
+  await f.context.goRuntime();
+  assert.equal(sent, 0, "different Project cannot erase or bypass pending GO");
+  assert.equal(f.state.runtimeUncertainCommand.projectID, "other-project");
+});
