@@ -269,10 +269,6 @@ function renderProjects() {
   setPage("projects");
   el("workspaceNav").classList.toggle("hidden", !state.project);
   content.innerHTML = `
-    ${state.runtimeUncertainCommand?.projectID === projectRef ? `<section class="card runtime-unverified-command" role="alert">
-      <h3>Previous ${esc(state.runtimeUncertainCommand.action)} response unknown</h3>
-      <p>That command may already have reached the Hub. Check Current / Next Cue before another GO or Jump. STOP and emergency controls remain available.</p>
-    </section>` : ""}
     <div class="page-head">
       <div><p class="eyebrow">PROJECTS</p><h1>StageCore Projects</h1><p>Local show-control projects on this Hub.</p></div>
     </div>
@@ -1374,6 +1370,10 @@ async function renderRuntime(startPolling = false) {
         <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
       </section>`;
   content.innerHTML = `
+    ${state.runtimeUncertainCommand?.projectID === projectRef ? `<section class="card runtime-unverified-command" role="alert">
+      <h3>Previous ${esc(state.runtimeUncertainCommand.action)} response unknown</h3>
+      <p>That command may already have reached the Hub. Check Current / Next Cue before another GO or Jump. STOP and emergency controls remain available.</p>
+    </section>` : ""}
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
       <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}<span id="runtimeFreshness" class="muted" role="status">Hub updated: ${esc(fmtDate(new Date()))}</span></div>
