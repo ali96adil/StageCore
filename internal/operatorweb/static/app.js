@@ -443,6 +443,13 @@ async function renderCues(message = "", messageKind = "success") {
   const runtimeCuesByID = new Map((runtime?.cues || []).map((cue) => [cue.cue_id, cue]));
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
+  // Validation can leave a revision VALIDATED without publishing it.
+  // Show Publish for that revision instead of incorrectly implying that the
+  // operator must fork a new Draft. A published VALIDATED revision still
+  // requires a new Draft for edits.
+  const validatedUnpublished = payload.revision?.status === "VALIDATED" &&
+    runtime !== null &&
+    runtime?.runtime_snapshot?.revision_id !== payload.revision?.revision_id;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
   const cueParents = cueParentMap();
 
@@ -451,13 +458,16 @@ async function renderCues(message = "", messageKind = "success") {
       <div><p class="eyebrow">CUE WORKSPACE</p><h1>Cues</h1><p>Revision r${esc(payload.revision.revision_number)} · ${esc(payload.revision.status)}</p></div>
       <div class="toolbar">
         ${hasDraft ? `<button id="validateButton" class="button" type="button">Validate</button>` : ""}
-        ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
-        ${canModify && !hasDraft ? `<button id="createDraftButton" class="button primary" type="button">Create Draft</button>` : ""}
+        ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button>` : ""}
+        ${canModify && (hasDraft || validatedUnpublished) ? `<button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
+        ${canModify && !hasDraft ? `<button id="createDraftButton" class="button" type="button">Create Draft</button>` : ""}
         ${canModify && hasPublishedSnapshot ? `<button id="syncDevicesButton" class="button" ${runtimeMode !== "EDIT" ? "disabled" : ""} type="button">Sync Devices</button>` : ""}
       </div>
     </div>
     ${message ? `<div class="message ${cueMessageKind}">${esc(message)}</div>` : ""}
-    ${hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
+    ${validatedUnpublished ? `<section class="card"><h3>Validated revision awaiting Publish</h3>
+      <p class="muted">This validated revision is not the currently published Snapshot. Publish it to activate the configured StageLaser target. Use Create Draft only for further edits.</p></section>`
+      : hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
     <section class="card" style="margin-top:14px">
       <div class="section-title-row">
         <div>
