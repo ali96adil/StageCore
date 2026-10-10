@@ -8,8 +8,8 @@ import (
 func TestStageLaserControllerWorkspaceAndAssignmentEntry(t *testing.T) {
   js := string(mustReadOperatorContractFile(t, "static/phase4.js"))
   must := []string{
-    `["stagelaser", t("stageLaserPage")]`,
-    `if (page === "stagelaser") await renderStageLaserControllerPage();`,
+    `["stagelaser-controller", t("stageLaserPage")]`,
+    `if (page === "stagelaser-controller") await renderStageLaserControllerPage();`,
     "async function renderStageLaserControllerPage()",
     "/stagelaser-controller",
     "stageLaserPageNoAssigned",
