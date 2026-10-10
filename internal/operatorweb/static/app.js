@@ -1508,11 +1508,12 @@ async function goRuntime() {
   state.runtimeActionInFlight = true;
   state.runtimeRenderGeneration += 1;
   if (el("goButton")) el("goButton").disabled = true;
+  const actionProjectRef = state.project.project_id;
   let submitted = false;
   try {
-    const projectID = encodeURIComponent(state.project.project_id);
+    const projectID = encodeURIComponent(actionProjectRef);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
-    if (!confirmPriorUncertainCueCommand(runtime, state.project.project_id)) return;
+    if (!confirmPriorUncertainCueCommand(runtime, actionProjectRef)) return;
     const commandID = requestID(); // never auto-resend with a different ID
     submitted = true;
     const reply = await api(`/api/v1/projects/${projectID}/runtime/go`, {
@@ -1523,7 +1524,7 @@ async function goRuntime() {
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
-    if (uncertain) state.runtimeUncertainCommand = { projectID: state.project.project_id, action: "GO" };
+    if (uncertain) state.runtimeUncertainCommand = { projectID: actionProjectRef, action: "GO" };
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " GO may have reached the Hub. Verify Current/Next Cue before another GO; never blindly retry."
       : ""), "error");
@@ -1606,11 +1607,12 @@ async function jumpRuntime() {
   state.runtimeActionInFlight = true;
   state.runtimeRenderGeneration += 1;
   if (el("jumpButton")) el("jumpButton").disabled = true;
+  const actionProjectRef = state.project.project_id;
   let submitted = false;
   try {
-    const projectID = encodeURIComponent(state.project.project_id);
+    const projectID = encodeURIComponent(actionProjectRef);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
-    if (!confirmPriorUncertainCueCommand(runtime, state.project.project_id)) return;
+    if (!confirmPriorUncertainCueCommand(runtime, actionProjectRef)) return;
     const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
     if (!label) throw new Error("Selected Cue is not in the published Runtime Snapshot. Refresh before Jump.");
     if (!confirm(`Jump runtime to “${label.name}”? This is an explicit operator override.`)) return;
@@ -1629,7 +1631,7 @@ async function jumpRuntime() {
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
-    if (uncertain) state.runtimeUncertainCommand = { projectID: state.project.project_id, action: "JUMP" };
+    if (uncertain) state.runtimeUncertainCommand = { projectID: actionProjectRef, action: "JUMP" };
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " Jump may have reached the Hub. Verify Current Cue before retrying."
       : ""), "error");
