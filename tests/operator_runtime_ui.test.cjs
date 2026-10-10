@@ -305,3 +305,39 @@ test("Switching Projects cannot overwrite an unresolved GO from another Project"
   assert.equal(sent, 0, "different Project cannot erase or bypass pending GO");
   assert.equal(f.state.runtimeUncertainCommand.projectID, "other-project");
 });
+
+test("GO does not dispatch after navigating away while Runtime GET is unresolved", async () => {
+  const f = fixture();
+  let resolveRead;
+  let sent = 0;
+  f.context.api = (path, options) => {
+    if (options?.method === "POST") { sent++; return Promise.resolve({ result: { status: "ACCEPTED" } }); }
+    if (path.endsWith("/runtime")) return new Promise((resolve) => { resolveRead = resolve; });
+    return Promise.resolve({ status: "PASS", checks: [] });
+  };
+  const action = f.context.goRuntime();
+  f.state.page = "projects";
+  resolveRead(f.runtime());
+  await action;
+  assert.equal(sent, 0, "late runtime GET must never dispatch after leaving page");
+  assert.equal(f.state.runtimeUncertainCommand, null);
+});
+
+test("Jump cannot submit to an earlier Project after Project change during GET", async () => {
+  const f = fixture();
+  await f.context.renderRuntime();
+  f.nodes.get("jumpCueSelect").value = "B";
+  let resolveRead;
+  let sent = 0;
+  f.context.api = (path, options) => {
+    if (options?.method === "POST") { sent++; return Promise.resolve({ result: { status: "ACCEPTED" } }); }
+    if (path.endsWith("/runtime")) return new Promise((resolve) => { resolveRead = resolve; });
+    return Promise.resolve({ status: "PASS", checks: [] });
+  };
+  const action = f.context.jumpRuntime();
+  f.state.project = { project_id: "other-project" };
+  resolveRead(f.runtime());
+  await action;
+  assert.equal(sent, 0, "late Jump GET must never send to old Project");
+  assert.equal(f.state.runtimeUncertainCommand, null);
+});
