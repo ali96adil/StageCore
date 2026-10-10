@@ -1330,7 +1330,7 @@ async function renderRuntime(startPolling = false) {
   // An older poll must never overwrite newer GO/JUMP state or another page.
   if (renderGeneration !== state.runtimeRenderGeneration || state.page !== "runtime" || state.project?.project_id !== selectedProject) return;
   const preflight = preflightResult.report;
-  const preflightError = preflightResult.error;
+  const preflightError = preflightResult.error || (!preflight ? "Empty Preflight report" : null);
   state.runtimeLastRefreshAt = Date.now();
   state.runtimeLastRefreshError = "";
   const active = runtime.session;
