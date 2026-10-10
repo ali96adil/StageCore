@@ -1146,7 +1146,7 @@
                 <button class="button primary" data-assign-stagelaser="${esc(device.device_id)}"
                   data-assignment-epoch="${esc(assignment.assignment_epoch || 0)}"
                   type="button" ${canAssignStageLaser ? "" : "disabled"}>${esc(t("stageLaserAssign"))}</button>
-                <button class="button ghost" data-open-workspace="stagelaser" type="button">${esc(t("stageLampGoController"))}</button>
+                <button class="button ghost" data-open-workspace="stagelaser-controller" type="button">${esc(t("stageLampGoController"))}</button>
               </div>
               ${!canAssignStageLaser ? `<p class="muted">${esc(t("stageLampOnboardingWaiting"))}</p>` : ""}
             </section>` : ""}
@@ -2126,7 +2126,7 @@
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/stagelaser-controller`),
       api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`),
     ]);
-    if (state.page !== "stagelaser" || currentProjectID() !== projectID) return;
+    if (state.page !== "stagelaser-controller" || currentProjectID() !== projectID) return;
     const body = document.getElementById("phase4Body");
     if (!body || !body.isConnected) return;
     if (results[0].status !== "fulfilled") throw results[0].reason;
@@ -2179,7 +2179,7 @@
     setMessage(globalMessage, "");
     try {
       if (page === "devices") await renderStageDevices();
-      if (page === "stagelaser") await renderStageLaserControllerPage();
+      if (page === "stagelaser-controller") await renderStageLaserControllerPage();
       if (page === "callboard") await renderCallboard();
       if (page === "video") await renderLiveVideo();
       if (page === "network") await renderNetworkCockpit();
@@ -2194,7 +2194,7 @@
     const before = nav.querySelector('[data-page="cues"]');
     const items = [
       ["devices", t("devices")],
-      ["stagelaser", t("stageLaserPage")],
+      ["stagelaser-controller", t("stageLaserPage")],
       ["callboard", t("callboard")],
       ["video", t("video")],
       ["network", t("network")],
@@ -2279,7 +2279,7 @@
     document.getElementById("languageSelect")?.addEventListener("change", () => {
       document.querySelectorAll('[data-phase4-core-nav="true"]').forEach((button) => button.remove());
       installNavigation();
-      if (["devices", "stagelaser", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
+      if (["devices", "stagelaser-controller", "callboard", "video", "network"].includes(state.page)) renderPhase4Page(state.page);
     });
   });
 })();
