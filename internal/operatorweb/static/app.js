@@ -16,6 +16,10 @@ const state = {
   runtimeRenderGeneration: 0,
   runtimeRefreshPending: false,
   runtimeActionInFlight: false,
+  runtimeGoCooldownUntil: 0,
+  snapshotSyncInFlight: false,
+  navigationGeneration: 0,
+  cueRenderGeneration: 0,
   runtimeUncertainCommand: loadRuntimeUncertainCommand(),
 };
 
@@ -238,6 +242,7 @@ document.querySelectorAll("[data-page]").forEach((button) => {
 });
 
 function setPage(page) {
+  state.navigationGeneration += 1; // stale responses must not redraw pages we left
   state.runtimeRenderGeneration += 1; // fence stale Runtime responses after navigation
   state.page = page;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.remove("active"));
@@ -432,17 +437,26 @@ async function loadCues() {
 }
 
 async function renderCues(message = "", messageKind = "success") {
-  const payload = await loadCues();
+  if (state.page !== "cues" || !state.project?.project_id) return;
+  const projectRef = state.project.project_id;
+  const projectID = encodeURIComponent(projectRef);
+  const navigationGeneration = state.navigationGeneration;
+  const cueGeneration = ++state.cueRenderGeneration;
+  const payload = await api(`/api/v1/projects/${projectID}/cues`);
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
   if (hasDraft) {
-    try { validation = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/validation`); }
+    try { validation = await api(`/api/v1/projects/${projectID}/validation`); }
     catch (_) { validation = null; }
   }
   let runtime = null;
-  try { runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`); }
+  try { runtime = await api(`/api/v1/projects/${projectID}/runtime`); }
   catch (_) { runtime = null; }
 
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== navigationGeneration ||
+      state.cueRenderGeneration !== cueGeneration) return;
+  state.cues = payload.cues || [];
   state.validation = validation;
   const canModify = canEdit();
   const canControl = canRuntime();
@@ -1243,7 +1257,11 @@ async function syncDevicesFromWorkspace() {
 }
 
 async function publishDraft() {
+  if (state.snapshotSyncInFlight) return;
   if (!confirm("Publish this validated Draft and automatically synchronize all managed v2 Tablets and Lighting to the new immutable Runtime Snapshot? Devices may briefly enter safe-media / blackout while authority changes.")) return;
+  // Publishing changes device authority; wait for the managed synchronization
+  // request to finish before allowing a new Session in the same operator tab.
+  state.snapshotSyncInFlight = true;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/publish`, { method: "POST" });
     const snapshot = payload.runtime_snapshot;
@@ -1265,6 +1283,8 @@ async function publishDraft() {
     }
     setMessage(globalMessage, errorMessage(error), "error");
     try { await renderCues(); } catch (_) {}
+  } finally {
+    state.snapshotSyncInFlight = false;
   }
 }
 
@@ -1398,18 +1418,19 @@ async function renderRuntime(startPolling = false) {
       <section class="runtime-controls">
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
+          ${state.snapshotSyncInFlight ? `<div class="message warn">Snapshot device synchronization is in progress. Wait for the sync result and device readiness before starting a Session.</div>` : ""}
           <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
             <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
             <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
-          <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked || preflightUnavailable ? "disabled" : ""} type="button">Enter SHOW</button>
+          <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot || state.snapshotSyncInFlight ? "disabled" : ""} type="button">Start Rehearsal</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || state.snapshotSyncInFlight || showBlocked || preflightUnavailable ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeActionInFlight ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeActionInFlight || Date.now() < state.runtimeGoCooldownUntil ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
@@ -1484,6 +1505,10 @@ async function renderRuntime(startPolling = false) {
 }
 
 async function startRuntime(mode) {
+  if (state.snapshotSyncInFlight) {
+    setMessage(globalMessage, "Snapshot device synchronization is still in progress. Wait for the result before starting a Session.", "warn");
+    return;
+  }
   if (mode === "SHOW" && !confirm("Enter SHOW mode? Operational readiness warnings are advisory: healthy outputs continue, unavailable outputs stay visible as degraded, and their Actions do not stop later Actions unless FAIL_CUE is explicit. Structural Preflight BLOCK conditions still prevent SHOW entry.")) return;
   try {
     state.runtimeForceExitAvailable = false;
@@ -1531,7 +1556,11 @@ function rememberRuntimeUncertainCommand(command) {
 
 
 async function goRuntime() {
-  if (state.runtimeActionInFlight) return; // one click -> one command
+  // The 1.5-second guard prevents accidental double-clicks without waiting
+  // for the previous Cue to finish. Output conflicts remain a Hub decision.
+  const now = Date.now();
+  if (state.runtimeActionInFlight || now < state.runtimeGoCooldownUntil) return;
+  state.runtimeGoCooldownUntil = now + 1500;
   state.runtimeActionInFlight = true;
   state.runtimeRenderGeneration += 1;
   if (el("goButton")) el("goButton").disabled = true;
