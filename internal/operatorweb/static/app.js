@@ -499,6 +499,7 @@ async function renderCues(message = "", messageKind = "success") {
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
+                <button class="button cue-inspect" data-id="${esc(cue.cue_id)}" type="button">فحص الكيو</button>
                 ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode !== "REHEARSAL" || runtime?.session?.type !== "REHEARSAL" || runtimeBlackout ? "disabled" : ""} type="button">Run Cue in Rehearsal</button>` : ""}
                 ${canModify && hasDraft ? `
                   <button class="button cue-up" data-id="${esc(cue.cue_id)}" ${index === 0 ? "disabled" : ""} type="button">↑</button>
@@ -511,7 +512,8 @@ async function renderCues(message = "", messageKind = "success") {
             </tr>`).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    <section class="card hidden" id="cueInspection" role="status" aria-live="polite"></section>`;
 
   el("validateButton")?.addEventListener("click", validateDraft);
   el("createCueButton")?.addEventListener("click", () => openCueEditor(null));
@@ -522,6 +524,7 @@ async function renderCues(message = "", messageKind = "success") {
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
   el("cueCheckOpenRuntime")?.addEventListener("click", () => navigate("runtime"));
+  content.querySelectorAll(".cue-inspect").forEach((button) => button.addEventListener("click", () => inspectCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-test").forEach((button) => button.addEventListener("click", () => testCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
