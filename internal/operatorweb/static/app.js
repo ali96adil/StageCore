@@ -461,8 +461,8 @@ async function renderCues(message = "", messageKind = "success") {
     <section class="card" style="margin-top:14px">
       <div class="section-title-row">
         <div>
-          <h3>Cue Check</h3>
-          <p class="muted">Run one published Cue at a time for rehearsal checks without stepping through the full Cue list.</p>
+          <h3>Run Published Cue in Rehearsal</h3>
+          <p class="muted">Runs the complete published Cue only while an operator-started REHEARSAL is already active. This is NOT a signal-only test.</p>
         </div>
         ${pill(runtimeMode, runtimeMode === "SHOW" ? "bad" : runtimeMode === "REHEARSAL" ? "good" : "neutral")}
       </div>
@@ -473,7 +473,7 @@ async function renderCues(message = "", messageKind = "success") {
         <button id="cueCheckOpenRuntime" class="button" type="button">Open Runtime</button>
       </div>
       <p class="muted" style="margin-top:10px">
-        Test Cue starts a REHEARSAL automatically from EDIT and is blocked in SHOW. It always executes the matching Cue from the latest Published Runtime Snapshot. Draft-only or unpublished changes must be published before they can be tested here.
+        This action never starts a REHEARSAL or SHOW. Open Runtime and start REHEARSAL yourself before enabling this button. It runs the entire Cue (not just one output); use output-specific diagnostics for isolated checks. Draft-only changes must be published first.
       </p>
     </section>
     <div class="table-wrap" style="margin-top:14px">
@@ -489,7 +489,7 @@ async function renderCues(message = "", messageKind = "success") {
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
-                ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode === "SHOW" || runtimeBlackout ? "disabled" : ""} type="button">Test Cue</button>` : ""}
+                ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode !== "REHEARSAL" || runtime?.session?.type !== "REHEARSAL" || runtimeBlackout ? "disabled" : ""} type="button">Run Cue in Rehearsal</button>` : ""}
                 ${canModify && hasDraft ? `
                   <button class="button cue-up" data-id="${esc(cue.cue_id)}" ${index === 0 ? "disabled" : ""} type="button">↑</button>
                   <button class="button cue-down" data-id="${esc(cue.cue_id)}" ${index === state.cues.length - 1 ? "disabled" : ""} type="button">↓</button>
@@ -523,13 +523,19 @@ async function renderCues(message = "", messageKind = "success") {
 
 async function testCueFromWorkspace(cueID) {
   try {
-    let runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
-      setMessage(globalMessage, "Cue Check is blocked in SHOW. Use Runtime controls for live operation.", "warn");
+      setMessage(globalMessage, "Cue execution from Workspace is blocked in SHOW. Use Runtime controls for live operation.", "warn");
+      return;
+    }
+    // Deliberate operator-start only. Never POST /runtime/start from a Cue
+    // test: the localized label previously implied an isolated signal probe.
+    if (runtime.mode !== "REHEARSAL" || runtime.session?.type !== "REHEARSAL") {
+      setMessage(globalMessage, "Start REHEARSAL from Runtime before running an individual published Cue. This button cannot start a session.", "warn");
       return;
     }
     if (runtime.managed_output_blackout) {
-      setMessage(globalMessage, "Clear managed blackout before testing a Cue.", "warn");
+      setMessage(globalMessage, "Clear managed blackout before running a Cue.", "warn");
       return;
     }
     const publishedCue = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
@@ -537,45 +543,21 @@ async function testCueFromWorkspace(cueID) {
       setMessage(globalMessage, "This Cue is not in the latest Published Runtime Snapshot. Publish before testing it.", "warn");
       return;
     }
+    if (!confirm(`Execute ALL actions of published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” inside the CURRENT REHEARSAL? This is not a signal-only test.`)) return;
 
-    const startRehearsal = !runtime.session;
-    let startWarning = "";
-    const promptText = startRehearsal
-      ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
-      : `Test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now in the active REHEARSAL?`;
-    if (!confirm(promptText)) return;
-
-    if (startRehearsal) {
-      const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
-        method: "POST",
-        json: {
-          mode: "REHEARSAL",
-          name: `Cue Check · ${publishedCue.name} · ${new Date().toLocaleString()}`,
-          request_id: requestID(),
-        },
-      });
-      startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
-      runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    }
-    if (!runtime.session || runtime.session.type !== "REHEARSAL") {
-      setMessage(globalMessage, "Cue Check requires an active REHEARSAL Session.", "warn");
-      return;
-    }
-
+    // A late mode change is checked again by the Hub's runtime/jump
+    // authority gate, never by implicitly starting a new session here.
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
       method: "POST",
       json: {
         request_id: requestID(),
         cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
-        operator_note: "Cue Workspace individual Cue check",
+        operator_note: "Cue Workspace explicit REHEARSAL Cue execution",
         confirm: true,
       },
     });
-    await renderCues(
-      `Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}${startWarning ? ` · DEGRADED: ${startWarning}` : ""}`,
-      startWarning ? "warn" : "",
-    );
+    await renderCues(`Ran published Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
