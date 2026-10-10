@@ -11,7 +11,7 @@ safety.
 | Component | Source | Exact SHA | Evidence |
 | --- | --- | --- | --- |
 | StageCore Hub (overlapping Cues) | `integration/cue-overlap-main-20261009`, Draft PR #475 | `3b756639763400327dd7c9c5451affa51a441956` | Go 1.26/1.27, race and ARM64 CI PASS: [run 38025745113](https://github.com/ali96adil/StageCore/actions/runs/38025745113) |
-| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `7bef6e01cd166b4f96c23ce279136bb28fe60ea2` | Host tests PASS; no-actuation firmware CI [run 38028654541](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38028654541) pending at manifest creation |
+| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `fc75c98c656d1f9132d35fa572e024a6a36d510b` | Prior code revision \`7bef6e01\` FULL PASS [run 38028654541](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38028654541); current revision adds documentation only; latest CI must still complete |
 
 Both branches are review candidates. Neither is merged or installed by this
 document. A green CI is not proof of an installed device's readiness.
@@ -43,6 +43,10 @@ The laser is controlled by a **momentary toggle** relay. Releasing GPIO3
 only releases the relay contact: it does **not** guarantee the beam is OFF.
 A previously observed failure mode is loss of ESP32 power while an
 independently powered laser remains in its prior emission state.
+The operator has now confirmed a main switch that isolates both laser and
+ESP32, plus a separate **momentary toggle** laser pushbutton. The main switch
+is a manual all-power isolation device, not an automatic independent inhibit
+on ESP32-only failure.
 
 Until an independent, automatically effective beam inhibit/interlock is
 demonstrated on the installed hardware, **do not** enable laser actuation,
