@@ -49,7 +49,7 @@ function fixture() {
   const state = {
     project: { project_id: "p" }, page: "runtime", user: { role: "OWNER" },
     runtimeRenderGeneration: 0, runtimeRefreshPending: false, runtimeActionInFlight: false,
-    runtimeForceExitAvailable: false, runtimeTimer: null,
+    runtimeForceExitAvailable: false, runtimeTimer: null, runtimeUncertainCommand: null,
   };
   const cue = (id) => ({ cue_id: id, display_label: id, name: "Cue " + id, enabled: true });
   const runtime = () => ({
@@ -68,7 +68,8 @@ function fixture() {
     cueRelationshipLabel: () => "", renderCueRelationship: () => "",
     canRuntime: () => true, groupRuntimeReadinessIssues: () => [],
     runtimeReadinessGroupTitle: () => "",
-    setMessage: noop, requestID: () => "id", confirm: () => true, prompt: () => "FORCE",
+    setMessage: noop, errorMessage: (error) => error?.message || "Request failed",
+    requestID: () => "id", confirm: () => true, prompt: () => "FORCE",
     navigate: noop, startRuntime: noop, stopCueRuntime: noop, setProjectBlackoutRuntime: noop,
     setEmergencyBlackoutRuntime: noop, stopSessionRuntime: noop, forceStopSessionRuntime: noop,
     document: { hidden: false }, setInterval: (callback) => { interval = callback; return 1; },
@@ -156,4 +157,63 @@ test("Polling failure disables GO/Jump but does not disable STOP or blackout", a
   assert.match(f.nodes.get("runtimeFreshness").textContent, /Hub refresh FAILED/);
   assert.match(f.getHTML(), /STOP LATEST CUE/);
   assert.match(f.getHTML(), /EMERGENCY BLACKOUT/);
+});
+
+test("Ambiguous GO POST blocks the next GO until fresh cue verification and explicit acknowledgement", async () => {
+  const f = fixture();
+  let attempts = 0;
+  let reads = 0;
+  const confirmations = [];
+  f.context.confirm = (message) => { confirmations.push(message); return false; };
+  f.context.api = async (path, options) => {
+    if (path.endsWith("/runtime/go") && options?.method === "POST") {
+      attempts++;
+      if (attempts === 1) throw new Error("network connection lost");
+      return { result: { status: "ACCEPTED" } };
+    }
+    if (path.endsWith("/runtime")) reads++;
+    return path.includes("/preflight") ? { status: "PASS", checks: [] } : f.runtime();
+  };
+  await f.context.goRuntime();
+  assert.equal(attempts, 1);
+  assert.equal(f.state.runtimeUncertainCommand.action, "GO");
+
+  await f.context.renderRuntime();
+  assert.match(f.getHTML(), /Previous GO response unknown/);
+  await f.context.goRuntime();
+  assert.equal(attempts, 1, "no second GO without acknowledgement");
+  assert.ok(reads >= 2, "fresh runtime read before approval");
+  assert.match(confirmations[0], /Check the physical stage/);
+  assert.equal(f.state.runtimeUncertainCommand.action, "GO");
+
+  f.context.confirm = () => true;
+  await f.context.goRuntime();
+  assert.equal(attempts, 2, "explicit acknowledgement permits one new GO");
+  assert.equal(f.state.runtimeUncertainCommand, null);
+});
+
+test("Ambiguous Jump also prevents GO without a fresh explicit confirmation", async () => {
+  const f = fixture();
+  await f.context.renderRuntime();
+  f.nodes.get("jumpCueSelect").value = "B";
+  let jumps = 0;
+  let gos = 0;
+  let allow = true;
+  f.context.confirm = () => allow;
+  f.context.api = async (path, options) => {
+    if (options?.method === "POST" && path.endsWith("/runtime/jump")) {
+      jumps++;
+      throw new Error("socket closed");
+    }
+    if (options?.method === "POST" && path.endsWith("/runtime/go")) gos++;
+    return path.includes("/preflight") ? { status: "PASS", checks: [] }
+      : path.endsWith("/runtime/go") ? { result: { status: "ACCEPTED" } } : f.runtime();
+  };
+  await f.context.jumpRuntime();
+  assert.equal(jumps, 1);
+  assert.equal(f.state.runtimeUncertainCommand.action, "JUMP");
+  allow = false;
+  await f.context.goRuntime();
+  assert.equal(gos, 0, "cross-action blind retry must not advance next Cue");
+  assert.equal(f.state.runtimeUncertainCommand.action, "JUMP");
 });
