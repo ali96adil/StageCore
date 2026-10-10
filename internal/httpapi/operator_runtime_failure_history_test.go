@@ -7,6 +7,7 @@ import (
     "net/http/httptest"
     "testing"
 
+    "github.com/ali96adil/StageCore/internal/capability"
     "github.com/ali96adil/StageCore/internal/clock"
     "github.com/ali96adil/StageCore/internal/domain"
     "github.com/ali96adil/StageCore/internal/runtimecontrol"
@@ -21,7 +22,7 @@ func TestOperatorRuntimePreservesOutputFailureAfterLaterSuccess(t *testing.T) {
     ctx := context.Background()
     h := newAuthHarness(t)
     s := store.New(h.db.DB, clock.Real{})
-    runtime := runtimecontrol.New(s, nil)
+    runtime := runtimecontrol.New(s, capability.NewRegistry())
     handler := New(WithOperatorRuntime(h.auth, s, runtime)).Handler()
     owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
     if err != nil { t.Fatal(err) }
