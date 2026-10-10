@@ -1423,7 +1423,10 @@
             await renderStageDevices();
           }
         } catch (error) {
-          phase4Message(errorMessage(error), "error");
+          const detail = typeof error?.payload?.detail === "string"
+            ? error.payload.detail.trim() : "";
+          phase4Message(detail ? `${errorMessage(error)} — ${detail}`
+            : errorMessage(error), "error");
           if (button.isConnected) button.disabled = false;
         }
       });
