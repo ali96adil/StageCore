@@ -72,16 +72,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      # The default pull_request checkout is a synthetic merge commit.
+      # The Pi release artifact must be built from the actual PR head SHA.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
           cache: true
       - name: Verify exact PR source
         shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test -z "$(git status --porcelain --untracked-files=all)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
           git rev-parse HEAD
       - name: Build full offline media and Pi ARM64 bundle
         shell: bash
