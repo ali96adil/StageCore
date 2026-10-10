@@ -1437,36 +1437,30 @@
         button.disabled = true;
         try {
           let config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
-          const matches = (config.targets || []).filter((target) =>
+          // Even when an older published revision already has this target,
+          // create a Draft so the operator can explicitly publish a fresh
+          // Runtime Snapshot. Published Snapshots are immutable.
+          if (config.revision?.status !== "DRAFT") {
+            await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration/draft`, { method: "POST" });
+            config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
+          }
+          const alreadyBound = (config.targets || []).some((target) =>
             String(target.logical_type || "").toLowerCase() === "stage_device" &&
             String(target.configuration?.device_id || "").trim() === deviceID
           );
-          if (matches.length === 0) {
-            if (config.revision?.status !== "DRAFT") {
-              await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration/draft`, { method: "POST" });
-              config = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/configuration`);
-            }
-            const afterFork = (config.targets || []).some((target) =>
-              String(target.logical_type || "").toLowerCase() === "stage_device" &&
-              String(target.configuration?.device_id || "").trim() === deviceID
-            );
-            if (!afterFork) {
-              const proposed = `stage_lamp_${deviceID.slice(-6)}`;
-              const collision = (config.targets || []).some((target) => target.logical_name === proposed);
-              if (collision) throw new Error("A different target already uses the StageLamp name. Review Project Targets.");
-              await api(`/api/v1/projects/${encodeURIComponent(projectID)}/targets`, {
-                method: "POST",
-                json: {
-                  logical_name: proposed,
-                  logical_type: "stage_device",
-                  target_ref: deviceID,
-                  configuration: { device_id: deviceID },
-                },
-              });
-            }
-          } else if (config.revision?.status !== "DRAFT") {
-            phase4Message(t("stageLampPrepared"), "warn");
-            return;
+          if (!alreadyBound) {
+            const proposed = `stage_lamp_${deviceID.slice(-6)}`;
+            const collision = (config.targets || []).some((target) => target.logical_name === proposed);
+            if (collision) throw new Error("A different target already uses the StageLamp name. Review Project Targets.");
+            await api(`/api/v1/projects/${encodeURIComponent(projectID)}/targets`, {
+              method: "POST",
+              json: {
+                logical_name: proposed,
+                logical_type: "stage_device",
+                target_ref: deviceID,
+                configuration: { device_id: deviceID },
+              },
+            });
           }
           const project = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`);
           if (currentProjectID() === projectID) state.project = project.project;
