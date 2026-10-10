@@ -29,17 +29,32 @@ func (r *Runtime) stageLaserObservedOffResyncPermit(
     ctx context.Context, deviceID, projectID string,
 ) (string, bool) {
     device, err := r.repository.GetDevice(ctx, deviceID)
-    if err != nil || device.Assignment == nil ||
-        device.Assignment.State != "UNASSIGNED" ||
-        device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOnline {
+    if err != nil {
         return "", false
     }
     check, err := r.repository.LatestStageLaserVisualCheck(ctx, deviceID, projectID)
-    if err != nil || check == nil || check.VisualState != "OFF" ||
+    if err != nil {
+        return "", false
+    }
+    return stageLaserVisualOffResyncEligibility(device, check, time.Now().UTC())
+}
+
+func stageLaserVisualOffResyncEligibility(
+    device deviceexperience.Device,
+    check *deviceexperience.StageLaserVisualCheck,
+    now time.Time,
+) (string, bool) {
+    if device.Assignment == nil || device.Assignment.State != "UNASSIGNED" ||
+        device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOnline {
+        return "", false
+    }
+    if check == nil || check.DeviceID != device.ID ||
+        check.VisualState != "OFF" ||
         check.DeviceReportedState != "UNKNOWN" ||
         check.DeviceConnectionState != string(deviceexperience.ConnectionOnline) ||
         check.DeviceBootID == "" || check.DeviceBootID == "UNKNOWN" ||
-        time.Since(check.CheckedAt) < 0 || time.Since(check.CheckedAt) > stageLaserVisualOffMaxAge {
+        now.Before(check.CheckedAt) ||
+        now.Sub(check.CheckedAt) > stageLaserVisualOffMaxAge {
         return "", false
     }
     var observed struct {
