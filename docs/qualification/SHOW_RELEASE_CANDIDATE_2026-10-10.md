@@ -11,7 +11,7 @@ safety.
 | Component | Source | Exact SHA | Evidence |
 | --- | --- | --- | --- |
 | StageCore Hub (overlapping Cues) | `integration/cue-overlap-main-20261009`, Draft PR #475 | `3b756639763400327dd7c9c5451affa51a441956` | Go 1.26/1.27, race and ARM64 CI PASS: [run 38025745113](https://github.com/ali96adil/StageCore/actions/runs/38025745113) |
-| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `fc75c98c656d1f9132d35fa572e024a6a36d510b` | Prior code revision \`7bef6e01\` FULL PASS [run 38028654541](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38028654541); current revision adds documentation only; latest CI must still complete |
+| StageLaser ESP32-C3 | `fix/laser-safe-off-queue-fence-20261010`, Draft PR #56 | `fcbaaf2861f02ca22782eeea69205ecf74b1ecd3` | Prior code revision \`fc75c98c\` FULL PASS [run 38029127029](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38029127029); current code adds duplicate-key and integer-range validation; [run 38030215734](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38030215734) pending |
 
 Both branches are review candidates. Neither is merged or installed by this
 document. A green CI is not proof of an installed device's readiness.
