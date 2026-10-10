@@ -65,3 +65,31 @@ func TestSnapshotSyncGuardsOperatorSessionStart(t *testing.T) {
         }
     }
 }
+
+func TestCueWorkspacePhysicalRunsQueueAsynchronously(t *testing.T) {
+    app := string(mustReadOperatorContractFile(t, "static/app.js"))
+    cases := []struct{ begin, end string }{
+        {"async function quickRunCueFromWorkspace(", "async function endCueCheckRehearsal("},
+        {"async function testCueFromWorkspace(", "async function stopCueFromWorkspace("},
+    }
+    for _, tc := range cases {
+        start := strings.Index(app, tc.begin)
+        if start < 0 { t.Fatalf("missing Cue action %s", tc.begin) }
+        after := app[start:]
+        stop := strings.Index(after, tc.end)
+        if stop < 0 { t.Fatalf("missing Cue action boundary %s", tc.end) }
+        block := after[:stop]
+        for _, marker := range []string{
+            "async: true",
+            "state.cueRunInFlight = true;",
+            "state.cueRunInFlight = false;",
+            "state.cueRunCooldownUntil = Date.now() + 1500;",
+            "rememberRuntimeUncertainCommand({ projectID, action: \"JUMP\" });",
+            "confirmPriorUncertainCueCommand(runtime, projectID)",
+        } {
+            if !strings.Contains(block, marker) {
+                t.Errorf("%s must queue Cue safely: %q", tc.begin, marker)
+            }
+        }
+    }
+}
