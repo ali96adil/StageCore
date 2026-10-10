@@ -20,6 +20,8 @@ const state = {
   snapshotSyncInFlight: false,
   navigationGeneration: 0,
   cueRenderGeneration: 0,
+  cueRunInFlight: false,
+  cueRunCooldownUntil: 0,
   runtimeUncertainCommand: loadRuntimeUncertainCommand(),
 };
 
@@ -565,8 +567,11 @@ async function renderCues(message = "", messageKind = "success") {
 
 async function quickRunCueFromWorkspace(cueID) {
   const projectID = state.project?.project_id;
-  if (!projectID || state.page !== "cues") return;
+  if (!projectID || state.page !== "cues" || state.cueRunInFlight ||
+      Date.now() < state.cueRunCooldownUntil) return;
+  state.cueRunInFlight = true;
   let startedSession = false;
+  let submitted = false;
   try {
     const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
     const [config, runtime] = await Promise.all([
@@ -598,6 +603,7 @@ async function quickRunCueFromWorkspace(cueID) {
         `سيتم تنفيذ جميع إجراءات الكيو على الأجهزة الحقيقية، بما فيها الليزر إن وجد. ` +
         (willStart ? "سيبدأ StageCore جلسة REHEARSAL واضحة أولاً. " : "ستُستخدم جلسة REHEARSAL الحالية. ") +
         "الجلسة تبقى فعّالة إلى أن تنهيها يدوياً؛ تأكد من جاهزية الأجهزة ومنطقة الضوء وقاطع فصل الليزر.")) return;
+    if (!confirmPriorUncertainCueCommand(runtime, projectID)) return;
     if (willStart) {
       await api(`${base}/runtime/start`, {
         method: "POST",
@@ -620,22 +626,34 @@ async function quickRunCueFromWorkspace(cueID) {
         !(live.cues || []).some((item) => item.cue_id === cueID)) {
       throw new Error("الـSnapshot تغير، لم يُرسل أمر الكيو.");
     }
-    await api(`${base}/runtime/jump`, {
+    const commandID = requestID();
+    rememberRuntimeUncertainCommand({ projectID, action: "JUMP" });
+    submitted = true;
+    const result = await api(`${base}/runtime/jump`, {
       method: "POST",
       json: {
-        request_id: requestID(),
+        request_id: commandID,
         cue_id: cueID,
         expected_current_cue_id: live.current_cue?.cue_id || null,
         operator_note: "Cue Workspace explicitly confirmed quick physical test in REHEARSAL",
         confirm: true,
+        async: true,
       },
     });
+    rememberRuntimeUncertainCommand(null);
+    if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
+      state.cueRunCooldownUntil = Date.now() + 1500;
+    }
     await renderCues(`تم طلب تجربة الكيو: ${name}. تبقى البروفة فعّالة لحين الضغط على «إنهاء البروفة».`, "warn");
   } catch (error) {
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    if (submitted && !uncertain) rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage,
-      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}`,
+      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}${uncertain ? " — نتيجة JUMP مجهولة. افحص Current Cue قبل إعادة الطلب." : ""}`,
       "error");
     try { await renderCues(); } catch (_) {}
+  } finally {
+    state.cueRunInFlight = false;
   }
 }
 
@@ -756,8 +774,15 @@ async function inspectCueFromWorkspace(cueID) {
 }
 
 async function testCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  if (!projectID || state.page !== "cues" || state.cueRunInFlight ||
+      Date.now() < state.cueRunCooldownUntil) return;
+  state.cueRunInFlight = true;
+  let submitted = false;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`);
+    if (state.page !== "cues" || state.project?.project_id !== projectID) return;
+    if (!confirmPriorUncertainCueCommand(runtime, projectID)) return;
     if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
       setMessage(globalMessage, "Cue execution from Workspace is blocked in SHOW. Use Runtime controls for live operation.", "warn");
       return;
@@ -781,19 +806,33 @@ async function testCueFromWorkspace(cueID) {
 
     // A late mode change is checked again by the Hub's runtime/jump
     // authority gate, never by implicitly starting a new session here.
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
+    const commandID = requestID();
+    rememberRuntimeUncertainCommand({ projectID, action: "JUMP" });
+    submitted = true;
+    const result = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime/jump`, {
       method: "POST",
       json: {
-        request_id: requestID(),
+        request_id: commandID,
         cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         operator_note: "Cue Workspace explicit REHEARSAL Cue execution",
         confirm: true,
+        async: true,
       },
     });
-    await renderCues(`Ran published Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
+    rememberRuntimeUncertainCommand(null);
+    if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
+      state.cueRunCooldownUntil = Date.now() + 1500;
+    }
+    await renderCues(`Requested Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
   } catch (error) {
-    setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    if (submitted && !uncertain) rememberRuntimeUncertainCommand(null);
+    setMessage(globalMessage,
+      errorMessage(error) + (uncertain ? " — JUMP may have reached the Hub. Check Current Cue before another test." : ""),
+      error.status === 409 ? "warn" : "error");
+  } finally {
+    state.cueRunInFlight = false;
   }
 }
 
