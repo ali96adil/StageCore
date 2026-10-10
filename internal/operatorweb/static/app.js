@@ -16,6 +16,12 @@ const state = {
   runtimeRenderGeneration: 0,
   runtimeRefreshPending: false,
   runtimeActionInFlight: false,
+  runtimeGoCooldownUntil: 0,
+  snapshotSyncInFlight: false,
+  navigationGeneration: 0,
+  cueRenderGeneration: 0,
+  cueRunInFlight: false,
+  cueRunCooldownUntil: 0,
   runtimeUncertainCommand: loadRuntimeUncertainCommand(),
 };
 
@@ -238,6 +244,7 @@ document.querySelectorAll("[data-page]").forEach((button) => {
 });
 
 function setPage(page) {
+  state.navigationGeneration += 1; // stale responses must not redraw pages we left
   state.runtimeRenderGeneration += 1; // fence stale Runtime responses after navigation
   state.page = page;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.remove("active"));
@@ -432,17 +439,26 @@ async function loadCues() {
 }
 
 async function renderCues(message = "", messageKind = "success") {
-  const payload = await loadCues();
+  if (state.page !== "cues" || !state.project?.project_id) return;
+  const projectRef = state.project.project_id;
+  const projectID = encodeURIComponent(projectRef);
+  const navigationGeneration = state.navigationGeneration;
+  const cueGeneration = ++state.cueRenderGeneration;
+  const payload = await api(`/api/v1/projects/${projectID}/cues`);
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
   if (hasDraft) {
-    try { validation = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/validation`); }
+    try { validation = await api(`/api/v1/projects/${projectID}/validation`); }
     catch (_) { validation = null; }
   }
   let runtime = null;
-  try { runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`); }
+  try { runtime = await api(`/api/v1/projects/${projectID}/runtime`); }
   catch (_) { runtime = null; }
 
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== navigationGeneration ||
+      state.cueRenderGeneration !== cueGeneration) return;
+  state.cues = payload.cues || [];
   state.validation = validation;
   const canModify = canEdit();
   const canControl = canRuntime();
@@ -551,8 +567,11 @@ async function renderCues(message = "", messageKind = "success") {
 
 async function quickRunCueFromWorkspace(cueID) {
   const projectID = state.project?.project_id;
-  if (!projectID || state.page !== "cues") return;
+  if (!projectID || state.page !== "cues" || state.cueRunInFlight ||
+      Date.now() < state.cueRunCooldownUntil) return;
+  state.cueRunInFlight = true;
   let startedSession = false;
+  let submitted = false;
   try {
     const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
     const [config, runtime] = await Promise.all([
@@ -584,6 +603,7 @@ async function quickRunCueFromWorkspace(cueID) {
         `سيتم تنفيذ جميع إجراءات الكيو على الأجهزة الحقيقية، بما فيها الليزر إن وجد. ` +
         (willStart ? "سيبدأ StageCore جلسة REHEARSAL واضحة أولاً. " : "ستُستخدم جلسة REHEARSAL الحالية. ") +
         "الجلسة تبقى فعّالة إلى أن تنهيها يدوياً؛ تأكد من جاهزية الأجهزة ومنطقة الضوء وقاطع فصل الليزر.")) return;
+    if (!confirmPriorUncertainCueCommand(runtime, projectID)) return;
     if (willStart) {
       await api(`${base}/runtime/start`, {
         method: "POST",
@@ -606,22 +626,35 @@ async function quickRunCueFromWorkspace(cueID) {
         !(live.cues || []).some((item) => item.cue_id === cueID)) {
       throw new Error("الـSnapshot تغير، لم يُرسل أمر الكيو.");
     }
-    await api(`${base}/runtime/jump`, {
+    const commandID = requestID();
+    rememberRuntimeUncertainCommand({ projectID, action: "JUMP" });
+    submitted = true;
+    const result = await api(`${base}/runtime/jump`, {
       method: "POST",
       json: {
-        request_id: requestID(),
+        request_id: commandID,
         cue_id: cueID,
         expected_current_cue_id: live.current_cue?.cue_id || null,
         operator_note: "Cue Workspace explicitly confirmed quick physical test in REHEARSAL",
         confirm: true,
+        async: true,
       },
     });
+    rememberRuntimeUncertainCommand(null);
+    if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
+      state.cueRunCooldownUntil = Date.now() + 1500;
+    }
+    state.cueRunInFlight = false; // release after Hub acceptance, not after workspace refresh
     await renderCues(`تم طلب تجربة الكيو: ${name}. تبقى البروفة فعّالة لحين الضغط على «إنهاء البروفة».`, "warn");
   } catch (error) {
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    if (submitted && !uncertain) rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage,
-      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}`,
+      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}${uncertain ? " — نتيجة JUMP مجهولة. افحص Current Cue قبل إعادة الطلب." : ""}`,
       "error");
     try { await renderCues(); } catch (_) {}
+  } finally {
+    state.cueRunInFlight = false;
   }
 }
 
@@ -742,8 +775,15 @@ async function inspectCueFromWorkspace(cueID) {
 }
 
 async function testCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  if (!projectID || state.page !== "cues" || state.cueRunInFlight ||
+      Date.now() < state.cueRunCooldownUntil) return;
+  state.cueRunInFlight = true;
+  let submitted = false;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`);
+    if (state.page !== "cues" || state.project?.project_id !== projectID) return;
+    if (!confirmPriorUncertainCueCommand(runtime, projectID)) return;
     if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
       setMessage(globalMessage, "Cue execution from Workspace is blocked in SHOW. Use Runtime controls for live operation.", "warn");
       return;
@@ -767,19 +807,34 @@ async function testCueFromWorkspace(cueID) {
 
     // A late mode change is checked again by the Hub's runtime/jump
     // authority gate, never by implicitly starting a new session here.
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
+    const commandID = requestID();
+    rememberRuntimeUncertainCommand({ projectID, action: "JUMP" });
+    submitted = true;
+    const result = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime/jump`, {
       method: "POST",
       json: {
-        request_id: requestID(),
+        request_id: commandID,
         cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         operator_note: "Cue Workspace explicit REHEARSAL Cue execution",
         confirm: true,
+        async: true,
       },
     });
-    await renderCues(`Ran published Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
+    rememberRuntimeUncertainCommand(null);
+    if (["ACCEPTED", "COMPLETED"].includes(result?.result?.status)) {
+      state.cueRunCooldownUntil = Date.now() + 1500;
+    }
+    state.cueRunInFlight = false; // permit the next Cue while the previous refresh is pending
+    await renderCues(`Requested Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
   } catch (error) {
-    setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    if (submitted && !uncertain) rememberRuntimeUncertainCommand(null);
+    setMessage(globalMessage,
+      errorMessage(error) + (uncertain ? " — JUMP may have reached the Hub. Check Current Cue before another test." : ""),
+      error.status === 409 ? "warn" : "error");
+  } finally {
+    state.cueRunInFlight = false;
   }
 }
 
@@ -1243,7 +1298,11 @@ async function syncDevicesFromWorkspace() {
 }
 
 async function publishDraft() {
+  if (state.snapshotSyncInFlight) return;
   if (!confirm("Publish this validated Draft and automatically synchronize all managed v2 Tablets and Lighting to the new immutable Runtime Snapshot? Devices may briefly enter safe-media / blackout while authority changes.")) return;
+  // Publishing changes device authority; wait for the managed synchronization
+  // request to finish before allowing a new Session in the same operator tab.
+  state.snapshotSyncInFlight = true;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/publish`, { method: "POST" });
     const snapshot = payload.runtime_snapshot;
@@ -1265,6 +1324,8 @@ async function publishDraft() {
     }
     setMessage(globalMessage, errorMessage(error), "error");
     try { await renderCues(); } catch (_) {}
+  } finally {
+    state.snapshotSyncInFlight = false;
   }
 }
 
@@ -1398,18 +1459,19 @@ async function renderRuntime(startPolling = false) {
       <section class="runtime-controls">
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
+          ${state.snapshotSyncInFlight ? `<div class="message warn">Snapshot device synchronization is in progress. Wait for the sync result and device readiness before starting a Session.</div>` : ""}
           <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
             <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
             <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
-          <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked || preflightUnavailable ? "disabled" : ""} type="button">Enter SHOW</button>
+          <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot || state.snapshotSyncInFlight ? "disabled" : ""} type="button">Start Rehearsal</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || state.snapshotSyncInFlight || showBlocked || preflightUnavailable ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeActionInFlight ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeActionInFlight || Date.now() < state.runtimeGoCooldownUntil ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
@@ -1484,6 +1546,10 @@ async function renderRuntime(startPolling = false) {
 }
 
 async function startRuntime(mode) {
+  if (state.snapshotSyncInFlight) {
+    setMessage(globalMessage, "Snapshot device synchronization is still in progress. Wait for the result before starting a Session.", "warn");
+    return;
+  }
   if (mode === "SHOW" && !confirm("Enter SHOW mode? Operational readiness warnings are advisory: healthy outputs continue, unavailable outputs stay visible as degraded, and their Actions do not stop later Actions unless FAIL_CUE is explicit. Structural Preflight BLOCK conditions still prevent SHOW entry.")) return;
   try {
     state.runtimeForceExitAvailable = false;
@@ -1531,7 +1597,9 @@ function rememberRuntimeUncertainCommand(command) {
 
 
 async function goRuntime() {
-  if (state.runtimeActionInFlight) return; // one click -> one command
+  // The 1.5-second guard prevents accidental double-clicks without waiting
+  // for the previous Cue to finish. Output conflicts remain a Hub decision.
+  if (state.runtimeActionInFlight || Date.now() < state.runtimeGoCooldownUntil) return;
   state.runtimeActionInFlight = true;
   state.runtimeRenderGeneration += 1;
   if (el("goButton")) el("goButton").disabled = true;
@@ -1556,7 +1624,14 @@ async function goRuntime() {
       json: { request_id: commandID, expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
     rememberRuntimeUncertainCommand(null);
+    // Only a confirmed accepted/completed GO starts the double-click window.
+    // Network-ambiguous requests must still reach the explicit operator
+    // verification flow on the next attempt.
+    if (["ACCEPTED", "COMPLETED"].includes(reply?.result?.status)) {
+      state.runtimeGoCooldownUntil = Date.now() + 1500;
+    }
     setMessage(globalMessage, `GO ${reply?.result?.status || "received"}. Check Current Cue and output results for actual completion.`, "success");
+    state.runtimeActionInFlight = false; // execution acceptance is not completion
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);

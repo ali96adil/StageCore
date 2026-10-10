@@ -436,8 +436,13 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 };
 
 renderCues = async function f002RenderCues(message = "") {
+  const projectRef = state.project?.project_id;
+  const generation = state.navigationGeneration;
+  if (!projectRef || state.page !== "cues") return;
   await f002BaseRenderCues(message);
-  const projectID = encodeURIComponent(state.project.project_id);
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== generation) return;
+  const projectID = encodeURIComponent(projectRef);
   const [configuration, tabletController, lightingController, stageLaserController, machineRoles] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
@@ -445,6 +450,8 @@ renderCues = async function f002RenderCues(message = "") {
     f002Optional(`/api/v1/projects/${projectID}/stagelaser-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
   ]);
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== generation) return;
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
   state.f002Lighting = lightingController || { nodes: [] };
