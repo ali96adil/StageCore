@@ -541,6 +541,103 @@ async function renderCues(message = "", messageKind = "success") {
 }
 
 
+
+async function quickRunCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  if (!projectID || state.page !== "cues") return;
+  let startedSession = false;
+  try {
+    const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+    const [config, runtime] = await Promise.all([
+      api(`${base}/configuration`),
+      api(`${base}/runtime`),
+    ]);
+    if (state.page !== "cues" || state.project?.project_id !== projectID) return;
+    if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
+      setMessage(globalMessage, "التجربة الفعلية ممنوعة في SHOW. استخدم لوحة العرض للتحكم.", "warn");
+      return;
+    }
+    if (!runtime.runtime_snapshot ||
+        config.revision?.revision_id !== runtime.runtime_snapshot.revision_id) {
+      setMessage(globalMessage, "انشر التعديلات أولاً؛ التجربة الفعلية لا تستخدم المسودة.", "warn");
+      return;
+    }
+    const publishedCue = (runtime.cues || []).find((item) => item.cue_id === cueID);
+    if (!publishedCue) {
+      setMessage(globalMessage, "الكيو مو موجود بالـSnapshot المنشور.", "warn");
+      return;
+    }
+    if (runtime.session && runtime.session.type !== "REHEARSAL") {
+      setMessage(globalMessage, "لا يمكن بدء تجربة فعلية أثناء جلسة من نوع آخر.", "warn");
+      return;
+    }
+    const willStart = !runtime.session;
+    const name = `${publishedCue.display_label || ""} · ${publishedCue.name || ""}`;
+    if (!confirm(`تجربة فعلية للكيو “${name}”؟\\n\\n` +
+        `سيتم تنفيذ جميع إجراءات الكيو على الأجهزة الحقيقية، بما فيها الليزر إن وجد. ` +
+        (willStart ? "سيبدأ StageCore جلسة REHEARSAL واضحة أولاً. " : "ستُستخدم جلسة REHEARSAL الحالية. ") +
+        "الجلسة تبقى فعّالة إلى أن تنهيها يدوياً؛ تأكد من جاهزية الأجهزة ومنطقة الضوء وقاطع فصل الليزر.")) return;
+    if (willStart) {
+      await api(`${base}/runtime/start`, {
+        method: "POST",
+        json: {
+          request_id: requestID(),
+          mode: "REHEARSAL",
+          name: "Cue Quick Check",
+        },
+      });
+      startedSession = true;
+    }
+    const live = await api(`${base}/runtime`);
+    if (live.mode !== "REHEARSAL" || live.session?.type !== "REHEARSAL") {
+      throw new Error("لم تتأكد جلسة REHEARSAL؛ لم يُرسل أمر الكيو.");
+    }
+    if (live.managed_output_blackout) {
+      throw new Error("يوجد Blackout مفعل؛ ما انرسل أمر تشغيل الكيو.");
+    }
+    if (live.runtime_snapshot?.revision_id !== config.revision?.revision_id ||
+        !(live.cues || []).some((item) => item.cue_id === cueID)) {
+      throw new Error("الـSnapshot تغير، لم يُرسل أمر الكيو.");
+    }
+    await api(`${base}/runtime/jump`, {
+      method: "POST",
+      json: {
+        request_id: requestID(),
+        cue_id: cueID,
+        expected_current_cue_id: live.current_cue?.cue_id || null,
+        operator_note: "Cue Workspace explicitly confirmed quick physical test in REHEARSAL",
+        confirm: true,
+      },
+    });
+    await renderCues(`تم طلب تجربة الكيو: ${name}. تبقى البروفة فعّالة لحين الضغط على «إنهاء البروفة».`, "warn");
+  } catch (error) {
+    setMessage(globalMessage,
+      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}`,
+      "error");
+    try { await renderCues(); } catch (_) {}
+  }
+}
+
+async function endCueCheckRehearsal() {
+  const projectID = state.project?.project_id;
+  if (!projectID || !confirm("إنهاء جلسة REHEARSAL الحالية؟ هذه العملية تطبّق إجراءات إيقاف الجلسة، لكنها لا تُغني عن قاطع فصل الليزر.")) return;
+  try {
+    const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+    const runtime = await api(`${base}/runtime`);
+    if (runtime.session?.type !== "REHEARSAL") {
+      setMessage(globalMessage, "لا توجد بروفة فعّالة لإنهائها.", "warn");
+      return;
+    }
+    await api(`${base}/runtime/stop-session`, {
+      method: "POST",
+      json: { request_id: requestID() },
+    });
+    await renderCues("تم طلب إنهاء البروفة. تحقق من حالة المخرجات فعلياً.", "warn");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
+}
+
 async function inspectCueFromWorkspace(cueID) {
   const projectID = state.project?.project_id;
   const cue = cueByID(cueID);
