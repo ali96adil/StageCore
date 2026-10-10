@@ -95,6 +95,8 @@
       stageLampObservedOnHint: "ON seen and recorded for this boot. You may press OFF once below.",
       stageLampWaitingOnHint: "Leave it as assumed OFF unless you physically see it ON. If ON, record that first to unlock the one-pulse OFF button.",
       stageLampNoAssignmentNeeded: "UNASSIGNED is normal for standalone maintenance; no Project assignment or Runtime Snapshot is necessary.",
+      stageLampAssumedOff: "Assumed OFF · not measured",
+      stageLampReportedState: "ESP reported state (diagnostic only)",
       stageLampObservedSaved: "Physical observation saved. No relay pulse was sent.",
       stageLampObserveOnlineRequired: "Device must be ONLINE with a current boot ID before recording ON.",
       stageLampPrepareTarget: "Add StageLamp to Project Draft",
@@ -342,6 +344,8 @@
       stageLampObservedOnHint: "انحفظت مشاهدة ON لنفس إقلاع الجهاز. تگدر تضغط زر الإطفاء مرة واحدة.",
       stageLampWaitingOnHint: "اعتبره OFF. فقط إذا شفته شغال، اضغط سجّل ON، وبعدها يتفعّل إطفاء بنبضة واحدة.",
       stageLampNoAssignmentNeeded: "حالة UNASSIGNED طبيعية لهذا الأمر اليدوي. لا تحتاج تعيين للجهاز ولا نشر Snapshot.",
+      stageLampAssumedOff: "الحالة المفترضة OFF · مو قياس فعلي",
+      stageLampReportedState: "تقرير الـESP (للمعلومات فقط)",
       stageLampObservedSaved: "تم تسجيل المشاهدة بدون أي نبضة للريليه.",
       stageLampObserveOnlineRequired: "لازم الجهاز ONLINE ومعه رقم إقلاع حالي قبل تسجيل ON.",
       stageLampPrepareTarget: "أضف المصباح للمشروع",
@@ -619,15 +623,19 @@
     const qualityNote = quality === "CONFIRMED"
       ? t("stageLaserConfirmed")
       : quality === "TRACKED" ? t("stageLaserTracked") : t("stageLaserUnknown");
+    const standaloneUnassigned = device.assignment?.assignment_state === "UNASSIGNED" &&
+      !device.assignment?.project_id && !device.assignment?.runtime_snapshot_id;
     return `
       <section class="phase4-empty stage-laser-status" role="status">
         <div class="phase4-status-row">
-          ${pulse(arm)} ${pulse(logical)} ${pulse(quality)}
+          ${pulse(arm)} ${standaloneUnassigned ? `<span class="muted">${esc(t("stageLampAssumedOff"))}</span>` : pulse(logical)}
+          ${standaloneUnassigned ? "" : pulse(quality)}
         </div>
         <dl class="phase4-kv">
           <div><dt>${esc(t("stageLaserArm"))}</dt><dd>${esc(arm)}</dd></div>
-          <div><dt>${esc(t("stageLaserState"))}</dt><dd>${esc(logical)}</dd></div>
-          <div><dt>${esc(t("stageLaserQuality"))}</dt><dd>${esc(quality)}</dd></div>
+          ${standaloneUnassigned ? `<div><dt>${esc(t("stageLampReportedState"))}</dt><dd>${esc(logical)} / ${esc(quality)}</dd></div>` :
+            `<div><dt>${esc(t("stageLaserState"))}</dt><dd>${esc(logical)}</dd></div>
+             <div><dt>${esc(t("stageLaserQuality"))}</dt><dd>${esc(quality)}</dd></div>`}
           ${compact ? "" : `
             <div><dt>${esc(t("stageLaserFirmware"))}</dt><dd>${esc(observed.firmware_version || device.client_version || "—")}</dd></div>
             <div><dt>${esc(t("stageLaserRSSI"))}</dt><dd>${Number.isFinite(rssi) ? `${esc(Math.round(rssi))} dBm` : "—"}</dd></div>
@@ -637,7 +645,8 @@
             <div><dt>${esc(t("stageLaserLastCommand"))}</dt><dd class="mono">${esc(lastCommand)}</dd></div>
           `}
         </dl>
-        <p class="${quality === "UNKNOWN" || observed.resync_required ? "message warn" : "muted"}">${esc(qualityNote)}</p>
+        ${standaloneUnassigned ? `<p class="muted">${esc(t("stageLampDefaultOff"))}</p>` :
+          `<p class="${quality === "UNKNOWN" || observed.resync_required ? "message warn" : "muted"}">${esc(qualityNote)}</p>`}
       </section>`;
   }
 
