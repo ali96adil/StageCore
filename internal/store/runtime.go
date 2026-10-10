@@ -369,6 +369,41 @@ func (s *Store) ListActionExecutions(ctx context.Context, cueExecutionID string)
 	return out, rows.Err()
 }
 
+
+func (s *Store) ListRecentActionFailures(ctx context.Context, sessionID string, limit int) ([]domain.ActionExecution, error) {
+	if strings.TrimSpace(sessionID) == "" || limit < 1 || limit > 20 {
+		return nil, fmt.Errorf("%w: session and limit 1..20 required", domain.ErrInvalidInput)
+	}
+	// One bounded query per poll. CONTINUE failures are not hidden by a later successful Cue.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.action_execution_id, a.cue_execution_id, a.action_id, a.started_at_us,
+		       a.completed_at_us, a.result, a.latency_ms, a.response_summary, a.error_code
+		FROM action_executions a JOIN cue_executions c ON c.cue_execution_id = a.cue_execution_id
+		WHERE c.session_id = ? AND a.result IN ('FAILED', 'TIMED_OUT')
+		ORDER BY a.started_at_us DESC, a.action_execution_id DESC LIMIT ?`, sessionID, limit)
+	if err != nil { return nil, fmt.Errorf("list recent action failures: %w", err) }
+	defer rows.Close()
+	out := make([]domain.ActionExecution, 0, limit)
+	for rows.Next() {
+		var item domain.ActionExecution
+		var startedUS int64
+		var completedUS, latency sql.NullInt64
+		var errorCode sql.NullString
+		var result string
+		if err := rows.Scan(&item.ID, &item.CueExecutionID, &item.ActionID, &startedUS,
+			&completedUS, &result, &latency, &item.ResponseSummary, &errorCode); err != nil {
+			return nil, fmt.Errorf("scan recent action failure: %w", err)
+		}
+		item.StartedAt = clock.FromUnixMicros(startedUS)
+		if completedUS.Valid { t := clock.FromUnixMicros(completedUS.Int64); item.CompletedAt = &t }
+		if latency.Valid { v := latency.Int64; item.LatencyMS = &v }
+		if errorCode.Valid { v := errorCode.String; item.ErrorCode = &v }
+		item.Result = domain.ExecutionResult(result)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
 	if event.EventID == "" {
 		var err error

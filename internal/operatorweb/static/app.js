@@ -11,6 +11,9 @@ const state = {
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
+  runtimeRenderGeneration: 0,
+  runtimeRefreshPending: false,
+  runtimeActionInFlight: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -232,6 +235,7 @@ document.querySelectorAll("[data-page]").forEach((button) => {
 });
 
 function setPage(page) {
+  state.runtimeRenderGeneration += 1; // fence stale Runtime responses after navigation
   state.page = page;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.remove("active"));
   if (page === "projects") el("projectsNav").classList.add("active");
@@ -1295,11 +1299,21 @@ function runtimeReadinessGroupTitle(group) {
 }
 
 async function renderRuntime(startPolling = false) {
-  const projectID = encodeURIComponent(state.project.project_id);
-  const [runtime, preflight] = await Promise.all([
+  const projectRef = state.project?.project_id;
+  if (!projectRef) return;
+  const generation = ++state.runtimeRenderGeneration;
+  const projectID = encodeURIComponent(projectRef);
+  const [runtime, preflightResult] = await Promise.all([
     api(`/api/v1/projects/${projectID}/runtime`),
-    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
+    api(`/api/v1/projects/${projectID}/preflight`)
+      .then((report) => ({ report }))
+      .catch((error) => ({ error })),
   ]);
+  if (generation !== state.runtimeRenderGeneration ||
+      state.page !== "runtime" || state.project?.project_id !== projectRef) return;
+  const preflight = preflightResult.report || null;
+  const preflightUnavailable = !preflight;
+  const savedJump = el("jumpCueSelect")?.value || "";
   const active = runtime.session;
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
@@ -1318,7 +1332,12 @@ async function renderRuntime(startPolling = false) {
   const showBlocked = preflight?.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
   const runtimeIssueGroups = groupRuntimeReadinessIssues(preflight?.checks || []);
-  const runtimeIssueMarkup = runtimeIssueGroups.length
+  const runtimeIssueMarkup = preflightUnavailable
+    ? `<section class="card runtime-readiness-issues" role="alert">
+        <h3>Preflight unavailable — readiness UNKNOWN</h3>
+        <p class="muted">The readiness request failed. Missing checks are NOT a READY result. SHOW entry remains disabled until verification returns.</p>
+      </section>`
+    : runtimeIssueGroups.length
     ? `<section class="card runtime-readiness-issues">
         <div class="section-title-row">
           <div>
@@ -1352,7 +1371,7 @@ async function renderRuntime(startPolling = false) {
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
-      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}</div>
+      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}<span id="runtimeFreshness" class="muted" role="status">Hub updated: ${esc(fmtDate(new Date()))}</span></div>
     </div>
     <div class="runtime-hero">
       <section class="cue-focus">
@@ -1378,12 +1397,12 @@ async function renderRuntime(startPolling = false) {
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
-          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
+          <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked || preflightUnavailable ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeActionInFlight ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
@@ -1395,7 +1414,7 @@ async function renderRuntime(startPolling = false) {
               }).join("")}
             </select>
           </label>
-          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
+          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout || state.runtimeActionInFlight ? "disabled" : ""} type="button">Confirmed Jump</button>
           <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP LATEST CUE interrupts only the newest running Cue. STOP SESSION and EMERGENCY BLACKOUT stop all active Cues. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
@@ -1423,8 +1442,26 @@ async function renderRuntime(startPolling = false) {
           }).join("")}
         </ul>` : '<p class="muted">No currently running Cue executions.</p>'}
     </section>
+    <section class="card runtime-output-failures">
+      <div class="section-title-row"><div><h2>Recent output failures</h2>
+        <p class="muted">FAILED / TIMED_OUT Actions remain visible after later successful Cues. Other healthy outputs may continue.</p></div></div>
+      ${Array.isArray(runtime.recent_action_failures) && runtime.recent_action_failures.length
+        ? `<ul class="check-list">${runtime.recent_action_failures.map((failure) => {
+          const cue = runtimeCues.find((item) => item.cue_id === failure.cue_id);
+          return `<li><strong>${esc(cue?.name || failure.cue_id || "Cue")} · Action ${esc(failure.action_id)}</strong>
+            ${pill(failure.result, "bad")}
+            <small class="muted">${esc(failure.error_code || "Output failed")} · ${esc(fmtDate(failure.started_at))}</small>
+            ${failure.response_summary ? `<p class="muted">${esc(failure.response_summary)}</p>` : ""}</li>`;
+        }).join("")}</ul>`
+        : `<p class="muted">No recent FAILED / TIMED_OUT Actions recorded for this Session.</p>`}
+    </section>
     ${runtimeIssueMarkup}`;
 
+  // Preserve an operator's selection even if a polling response redraws the form.
+  const jumpSelect = el("jumpCueSelect");
+  if (jumpSelect && [...jumpSelect.options].some((option) => option.value === savedJump)) {
+    jumpSelect.value = savedJump;
+  }
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
@@ -1462,14 +1499,30 @@ async function startRuntime(mode) {
 }
 
 async function goRuntime() {
+  if (state.runtimeActionInFlight) return; // one click -> one command
+  state.runtimeActionInFlight = true;
+  state.runtimeRenderGeneration += 1;
+  if (el("goButton")) el("goButton").disabled = true;
+  let submitted = false;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
+    const projectID = encodeURIComponent(state.project.project_id);
+    const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    const commandID = requestID(); // never auto-resend with a different ID
+    submitted = true;
+    const reply = await api(`/api/v1/projects/${projectID}/runtime/go`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
+      json: { request_id: commandID, expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
+    setMessage(globalMessage, `GO ${reply?.result?.status || "received"}. Check Current Cue and output results for actual completion.`, "success");
     await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    setMessage(globalMessage, errorMessage(error) + (uncertain
+      ? " GO may have reached the Hub. Verify Current/Next Cue before another GO; never blindly retry."
+      : ""), "error");
+  } finally {
+    state.runtimeActionInFlight = false;
+  }
 }
 
 async function stopCueRuntime() {
@@ -1522,26 +1575,43 @@ async function setEmergencyBlackoutRuntime(enabled) {
 }
 
 async function jumpRuntime() {
+  if (state.runtimeActionInFlight) return;
   const cueID = el("jumpCueSelect")?.value;
   if (!cueID) {
     setMessage(globalMessage, "Choose a published Cue before Jump.", "warn");
     return;
   }
-  const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-  const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
-  if (!confirm(`Jump runtime to “${label?.name || cueID}”? This is an explicit operator override.`)) return;
+  state.runtimeActionInFlight = true;
+  state.runtimeRenderGeneration += 1;
+  if (el("jumpButton")) el("jumpButton").disabled = true;
+  let submitted = false;
   try {
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
+    const projectID = encodeURIComponent(state.project.project_id);
+    const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
+    if (!label) throw new Error("Selected Cue is not in the published Runtime Snapshot. Refresh before Jump.");
+    if (!confirm(`Jump runtime to “${label.name}”? This is an explicit operator override.`)) return;
+    const commandID = requestID();
+    submitted = true;
+    const reply = await api(`/api/v1/projects/${projectID}/runtime/jump`, {
       method: "POST",
       json: {
-        request_id: requestID(), cue_id: cueID,
+        request_id: commandID, cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         confirm: true,
         async: true,
       },
     });
+    setMessage(globalMessage, `Jump ${reply?.result?.status || "received"}. Confirm Current Cue before another operation.`, "success");
     await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    const uncertain = submitted && (!error.status || error.status >= 500);
+    setMessage(globalMessage, errorMessage(error) + (uncertain
+      ? " Jump may have reached the Hub. Verify Current Cue before retrying."
+      : ""), "error");
+  } finally {
+    state.runtimeActionInFlight = false;
+  }
 }
 
 async function stopSessionRuntime() {
@@ -1598,8 +1668,22 @@ async function setProjectBlackoutRuntime(enabled) {
 function startRuntimePolling() {
   stopRuntimePolling();
   state.runtimeTimer = setInterval(async () => {
-    if (state.page !== "runtime" || document.hidden) return;
-    try { await renderRuntime(false); } catch (_) {}
+    if (state.page !== "runtime" || document.hidden || state.runtimeRefreshPending || state.runtimeActionInFlight) return;
+    state.runtimeRefreshPending = true;
+    try {
+      await renderRuntime(false);
+    } catch (_) {
+      // Keep emergency controls reachable but disable GO/JUMP on stale data.
+      const notice = el("runtimeFreshness");
+      if (notice) {
+        notice.textContent = "Hub refresh FAILED — Cue state may be stale. GO/JUMP paused until reconnect.";
+        notice.className = "message error";
+      }
+      if (el("goButton")) el("goButton").disabled = true;
+      if (el("jumpButton")) el("jumpButton").disabled = true;
+    } finally {
+      state.runtimeRefreshPending = false;
+    }
   }, 1500);
 }
 
