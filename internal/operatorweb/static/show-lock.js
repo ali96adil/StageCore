@@ -43,9 +43,15 @@ renderConfiguration = async function stagecoreRenderConfigurationWithShowLock() 
 };
 
 renderCues = async function stagecoreRenderCuesWithShowLock(message = "") {
+  const projectRef = state.project?.project_id;
+  const generation = state.navigationGeneration;
+  if (!projectRef || state.page !== "cues") return;
   const lock = await stagecoreLoadShowConfigurationLock();
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== generation) return;
   await stagecoreBaseRenderCues(message);
-  if (!lock.locked) return;
+  if (state.page !== "cues" || state.project?.project_id !== projectRef ||
+      state.navigationGeneration !== generation || !lock.locked) return;
   el("createCueButton")?.remove();
   el("publishButton")?.remove();
   content.querySelectorAll(".cue-up, .cue-down, .cue-edit, .cue-toggle, .cue-duplicate, .cue-delete").forEach((button) => {
