@@ -46,5 +46,5 @@ A Hub `command.result=COMPLETED` is evidence of a device report, **not** proof o
 
 - Hub pre-socket cancellation and late-ACK/idempotency fencing: implemented in Draft PR #475 and tested in CI.
 - Device-side per-output monotonic generation, queued-command supersession and attended proof: **not implemented/qualified across all devices**.
-- StageLaser firmware audit: up to eight FIFO pending frames, persistent same-ID replay protection and assignment/connection epoch checks; FIFO can delay SAFE_OFF. Tracked at [StageLaser issue #55](https://github.com/ali96adil/StageCore-ESP32-StageLaser/issues/55).
+- StageLaser Draft PR #56 now reserves emergency queue capacity, prioritizes SAFE_OFF/DISARM over ordinary FIFO, cancels queued pre-emergency work, and persists an emergency issued-at watermark across reboot. Latest passing no-actuation firmware CI at `fc75c98c` is [run 38029127029](https://github.com/ali96adil/StageCore-ESP32-StageLaser/actions/runs/38029127029); newer command-envelope hardening is under CI. These protections are **unmerged, undeployed and not equivalent** to authenticated per-output generation. Tracked at [StageLaser issue #55](https://github.com/ali96adil/StageCore-ESP32-StageLaser/issues/55).
 - The live Raspberry Pi and all physical devices are unchanged by this document.
