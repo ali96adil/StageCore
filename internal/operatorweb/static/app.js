@@ -1540,6 +1540,11 @@ async function goRuntime() {
   try {
     const projectID = encodeURIComponent(actionProjectRef);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    // A delayed GET must not dispatch to the old Project after navigation.
+    if (state.page !== "runtime" || state.project?.project_id !== actionProjectRef) {
+      setMessage(globalMessage, "Runtime view or Project changed before the command was sent. No GO/JUMP was dispatched.", "warn");
+      return;
+    }
     if (!confirmPriorUncertainCueCommand(runtime, actionProjectRef)) return;
     const commandID = requestID(); // never auto-resend with a different ID
     // Mark unresolved BEFORE the HTTP write. A reload during an in-flight
@@ -1649,6 +1654,11 @@ async function jumpRuntime() {
   try {
     const projectID = encodeURIComponent(actionProjectRef);
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    // A delayed GET must not dispatch to the old Project after navigation.
+    if (state.page !== "runtime" || state.project?.project_id !== actionProjectRef) {
+      setMessage(globalMessage, "Runtime view or Project changed before the command was sent. No GO/JUMP was dispatched.", "warn");
+      return;
+    }
     if (!confirmPriorUncertainCueCommand(runtime, actionProjectRef)) return;
     const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
     if (!label) throw new Error("Selected Cue is not in the published Runtime Snapshot. Refresh before Jump.");
