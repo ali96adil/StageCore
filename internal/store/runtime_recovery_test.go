@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -227,5 +228,51 @@ func TestHubRestartSimulationWithoutCheckpointIsUnavailable(t *testing.T) {
 	}
 	if loaded.StateTruth.DesiredStateRef != nil || loaded.StateTruth.VerifiedStateRef != nil {
 		t.Fatalf("simulation without checkpoint must not advertise state refs: %+v", loaded.StateTruth)
+	}
+}
+
+
+func TestHubRestartCancelsAcceptedAsyncGoBeforeCueExecutionExists(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	snapshotValue, _ := createInternalRestartFixture(t, s, "INTERNAL")
+	session, err := s.CreateSession(ctx, snapshotValue.ID, domain.SessionRehearsal, "queued-go-before-execution")
+	if err != nil { t.Fatal(err) }
+
+	command := contracts.CommandEnvelope{
+		CommandID: "00000000-0000-7000-8000-000000006001",
+		CommandType: "cue.go", SchemaVersion: contracts.SchemaVersion1,
+		ProjectID: snapshotValue.ProjectID, RuntimeSnapshotID: snapshotValue.ID,
+		Issuer: "test.operator", Priority: "P1",
+		Payload: json.RawMessage(`{}`),
+	}
+	if _, reserved, err := s.ReserveCommand(ctx, command); err != nil || !reserved {
+		t.Fatalf("reserve GO err=%v reserved=%v", err, reserved)
+	}
+	reconciled, err := s.ReconcileInterruptedRuntimeForHub(ctx)
+	if err != nil || reconciled != 1 {
+		t.Fatalf("must abort INTERNAL rehearsal with accepted async GO, reconciled=%d err=%v", reconciled, err)
+	}
+	after, err := s.GetSession(ctx, session.ID)
+	if err != nil || after.Status != domain.SessionAborted {
+		t.Fatalf("reconciled Session=%+v err=%v", after, err)
+	}
+	record, found, err := s.FindCommandRecord(ctx, command)
+	if err != nil || !found {
+		t.Fatalf("find interrupted GO record: found=%v err=%v", found, err)
+	}
+	result, terminal, err := s.StoredCommandResult(record)
+	if err != nil || !terminal ||
+		result.Status != contracts.CommandCancelled || result.Error == nil ||
+		result.Error.ErrorCode != "HUB_RESTART_INTERRUPTED" {
+		t.Fatalf("GO result must be terminal CANCELLED, got=%+v terminal=%v err=%v", result, terminal, err)
+	}
+	_, retryReserved, err := s.ReserveCommand(ctx, command)
+	if err != nil || retryReserved {
+		t.Fatalf("retry after crash MUST NOT replay GO: reserved=%v err=%v", retryReserved, err)
+	}
+	executions, err := s.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != 0 {
+		t.Fatalf("restart replayed outputs: executions=%+v err=%v", executions, err)
 	}
 }

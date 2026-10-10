@@ -75,7 +75,7 @@ func TestNextGoOverlapsPendingDelayWithoutCancellingFirstCue(t *testing.T) {
 		t.Fatalf("first 5s-delay Cue terminated after second GO: %+v", r)
 	default:
 	}
-	stop := h.service.StopCue(ctx, StopRequest{
+	stop := h.service.StopSession(ctx, StopRequest{
 		SessionID: session.ID, Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000009004",
 	})
@@ -104,7 +104,7 @@ func TestNextGoOverlapsPendingDelayWithoutCancellingFirstCue(t *testing.T) {
 	}
 }
 
-func TestStopCancelsEveryOverlappingDelayedCue(t *testing.T) {
+func TestStopSessionCancelsEveryOverlappingDelayedCue(t *testing.T) {
 	h := newRuntimeHarnessWithPolicies(t,
 		[]json.RawMessage{
 			json.RawMessage(`{"start_delay_ms":5000}`),
@@ -136,12 +136,12 @@ func TestStopCancelsEveryOverlappingDelayedCue(t *testing.T) {
 		})
 	}()
 	waitForCueAdvancement(t, h, session.ID, h.cues[1].ID)
-	stop := h.service.StopCue(ctx, StopRequest{
+	stop := h.service.StopSession(ctx, StopRequest{
 		SessionID: session.ID, Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000009014",
 	})
 	if stop.Status != contracts.CommandCompleted {
-		t.Fatalf("STOP all overlapping Cues=%+v", stop)
+		t.Fatalf("STOP SESSION all overlapping Cues=%+v", stop)
 	}
 	for range 2 {
 		select {
@@ -198,10 +198,10 @@ func TestSimultaneousGoRequestsSelectDistinctCues(t *testing.T) {
 	}
 	close(start)
 	waitForCueAdvancement(t, h, session.ID, h.cues[2].ID)
-	if stop := h.service.StopCue(ctx, StopRequest{
+	if stop := h.service.StopSession(ctx, StopRequest{
 		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009025",
 	}); stop.Status != contracts.CommandCompleted {
-		t.Fatalf("STOP simultaneous Cues=%+v", stop)
+		t.Fatalf("STOP SESSION simultaneous Cues=%+v", stop)
 	}
 	for range 3 {
 		select {

@@ -443,6 +443,15 @@ async function renderCues(message = "", messageKind = "success") {
   const runtimeCuesByID = new Map((runtime?.cues || []).map((cue) => [cue.cue_id, cue]));
   const runtimeBlackout = !!runtime?.managed_output_blackout;
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
+  const currentlyPublishedRevision = hasPublishedSnapshot &&
+    runtime.runtime_snapshot.revision_id === payload.revision?.revision_id;
+  // Validation can leave a revision VALIDATED without publishing it.
+  // Show Publish for that revision instead of incorrectly implying that the
+  // operator must fork a new Draft. A published VALIDATED revision still
+  // requires a new Draft for edits.
+  const validatedUnpublished = payload.revision?.status === "VALIDATED" &&
+    runtime !== null &&
+    runtime?.runtime_snapshot?.revision_id !== payload.revision?.revision_id;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
   const cueParents = cueParentMap();
 
@@ -451,18 +460,21 @@ async function renderCues(message = "", messageKind = "success") {
       <div><p class="eyebrow">CUE WORKSPACE</p><h1>Cues</h1><p>Revision r${esc(payload.revision.revision_number)} · ${esc(payload.revision.status)}</p></div>
       <div class="toolbar">
         ${hasDraft ? `<button id="validateButton" class="button" type="button">Validate</button>` : ""}
-        ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button><button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
-        ${canModify && !hasDraft ? `<button id="createDraftButton" class="button primary" type="button">Create Draft</button>` : ""}
+        ${canModify && hasDraft ? `<button id="createCueButton" class="button" type="button">+ Cue</button>` : ""}
+        ${canModify && (hasDraft || validatedUnpublished) ? `<button id="publishButton" class="button primary" type="button">Publish Snapshot</button>` : ""}
+        ${canModify && !hasDraft ? `<button id="createDraftButton" class="button" type="button">Create Draft</button>` : ""}
         ${canModify && hasPublishedSnapshot ? `<button id="syncDevicesButton" class="button" ${runtimeMode !== "EDIT" ? "disabled" : ""} type="button">Sync Devices</button>` : ""}
       </div>
     </div>
     ${message ? `<div class="message ${cueMessageKind}">${esc(message)}</div>` : ""}
-    ${hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
+    ${validatedUnpublished ? `<section class="card"><h3>Validated revision awaiting Publish</h3>
+      <p class="muted">This validated revision is not the currently published Snapshot. Publish it to activate the configured StageLaser target. Use Create Draft only for further edits.</p></section>`
+      : hasDraft ? renderValidation(validation) : renderNoDraftState(canModify)}
     <section class="card" style="margin-top:14px">
       <div class="section-title-row">
         <div>
-          <h3>Cue Check</h3>
-          <p class="muted">Run one published Cue at a time for rehearsal checks without stepping through the full Cue list.</p>
+          <h3>Run Published Cue in Rehearsal</h3>
+          <p class="muted">Runs the complete published Cue only while an operator-started REHEARSAL is already active. This is NOT a signal-only test.</p>
         </div>
         ${pill(runtimeMode, runtimeMode === "SHOW" ? "bad" : runtimeMode === "REHEARSAL" ? "good" : "neutral")}
       </div>
@@ -470,10 +482,11 @@ async function renderCues(message = "", messageKind = "success") {
         <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP CUE</button>
         <button id="cueCheckBlackoutButton" class="button danger" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">BLACKOUT</button>
         <button id="cueCheckClearButton" class="button ghost" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">CLEAR BLACKOUT</button>
+        ${canControl && runtime?.session?.type === "REHEARSAL" ? `<button id="cueCheckEndRehearsal" class="button" type="button">إنهاء البروفة</button>` : ""}
         <button id="cueCheckOpenRuntime" class="button" type="button">Open Runtime</button>
       </div>
       <p class="muted" style="margin-top:10px">
-        Test Cue starts a REHEARSAL automatically from EDIT and is blocked in SHOW. It always executes the matching Cue from the latest Published Runtime Snapshot. Draft-only or unpublished changes must be published before they can be tested here.
+        This action never starts a REHEARSAL or SHOW. Open Runtime and start REHEARSAL yourself before enabling this button. It runs the entire Cue (not just one output); use output-specific diagnostics for isolated checks. Draft-only changes must be published first.
       </p>
     </section>
     <div class="table-wrap" style="margin-top:14px">
@@ -489,7 +502,9 @@ async function renderCues(message = "", messageKind = "success") {
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
               <td>${esc(cue.actions?.length || 0)}</td>
               <td><div class="row-actions">
-                ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode === "SHOW" || runtimeBlackout ? "disabled" : ""} type="button">Test Cue</button>` : ""}
+                <button class="button cue-inspect" data-id="${esc(cue.cue_id)}" type="button">فحص الكيو</button>
+                ${canControl ? `<button class="button cue-quick-run" data-id="${esc(cue.cue_id)}" type="button" ${!currentlyPublishedRevision || !runtimeCuesByID.has(cue.cue_id) || runtimeMode === "SHOW" || (runtime?.session && runtime?.session?.type !== "REHEARSAL") ? "disabled" : ""}>تجربة فعلية</button>` : ""}
+                ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode !== "REHEARSAL" || runtime?.session?.type !== "REHEARSAL" || runtimeBlackout ? "disabled" : ""} type="button">Run Cue in Rehearsal</button>` : ""}
                 ${canModify && hasDraft ? `
                   <button class="button cue-up" data-id="${esc(cue.cue_id)}" ${index === 0 ? "disabled" : ""} type="button">↑</button>
                   <button class="button cue-down" data-id="${esc(cue.cue_id)}" ${index === state.cues.length - 1 ? "disabled" : ""} type="button">↓</button>
@@ -501,7 +516,8 @@ async function renderCues(message = "", messageKind = "success") {
             </tr>`).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    <section class="card hidden" id="cueInspection" role="status" aria-live="polite"></section>`;
 
   el("validateButton")?.addEventListener("click", validateDraft);
   el("createCueButton")?.addEventListener("click", () => openCueEditor(null));
@@ -511,7 +527,10 @@ async function renderCues(message = "", messageKind = "success") {
   el("cueCheckStopButton")?.addEventListener("click", stopCueFromWorkspace);
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
+  el("cueCheckEndRehearsal")?.addEventListener("click", endCueCheckRehearsal);
   el("cueCheckOpenRuntime")?.addEventListener("click", () => navigate("runtime"));
+  content.querySelectorAll(".cue-inspect").forEach((button) => button.addEventListener("click", () => inspectCueFromWorkspace(button.dataset.id)));
+  content.querySelectorAll(".cue-quick-run").forEach((button) => button.addEventListener("click", () => quickRunCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-test").forEach((button) => button.addEventListener("click", () => testCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
@@ -521,15 +540,215 @@ async function renderCues(message = "", messageKind = "success") {
   content.querySelectorAll(".cue-down").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, 1)));
 }
 
+
+
+async function quickRunCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  if (!projectID || state.page !== "cues") return;
+  let startedSession = false;
+  try {
+    const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+    const [config, runtime] = await Promise.all([
+      api(`${base}/configuration`),
+      api(`${base}/runtime`),
+    ]);
+    if (state.page !== "cues" || state.project?.project_id !== projectID) return;
+    if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
+      setMessage(globalMessage, "التجربة الفعلية ممنوعة في SHOW. استخدم لوحة العرض للتحكم.", "warn");
+      return;
+    }
+    if (!runtime.runtime_snapshot ||
+        config.revision?.revision_id !== runtime.runtime_snapshot.revision_id) {
+      setMessage(globalMessage, "انشر التعديلات أولاً؛ التجربة الفعلية لا تستخدم المسودة.", "warn");
+      return;
+    }
+    const publishedCue = (runtime.cues || []).find((item) => item.cue_id === cueID);
+    if (!publishedCue) {
+      setMessage(globalMessage, "الكيو مو موجود بالـSnapshot المنشور.", "warn");
+      return;
+    }
+    if (runtime.session && runtime.session.type !== "REHEARSAL") {
+      setMessage(globalMessage, "لا يمكن بدء تجربة فعلية أثناء جلسة من نوع آخر.", "warn");
+      return;
+    }
+    const willStart = !runtime.session;
+    const name = `${publishedCue.display_label || ""} · ${publishedCue.name || ""}`;
+    if (!confirm(`تجربة فعلية للكيو “${name}”؟\\n\\n` +
+        `سيتم تنفيذ جميع إجراءات الكيو على الأجهزة الحقيقية، بما فيها الليزر إن وجد. ` +
+        (willStart ? "سيبدأ StageCore جلسة REHEARSAL واضحة أولاً. " : "ستُستخدم جلسة REHEARSAL الحالية. ") +
+        "الجلسة تبقى فعّالة إلى أن تنهيها يدوياً؛ تأكد من جاهزية الأجهزة ومنطقة الضوء وقاطع فصل الليزر.")) return;
+    if (willStart) {
+      await api(`${base}/runtime/start`, {
+        method: "POST",
+        json: {
+          request_id: requestID(),
+          mode: "REHEARSAL",
+          name: "Cue Quick Check",
+        },
+      });
+      startedSession = true;
+    }
+    const live = await api(`${base}/runtime`);
+    if (live.mode !== "REHEARSAL" || live.session?.type !== "REHEARSAL") {
+      throw new Error("لم تتأكد جلسة REHEARSAL؛ لم يُرسل أمر الكيو.");
+    }
+    if (live.managed_output_blackout) {
+      throw new Error("يوجد Blackout مفعل؛ ما انرسل أمر تشغيل الكيو.");
+    }
+    if (live.runtime_snapshot?.revision_id !== config.revision?.revision_id ||
+        !(live.cues || []).some((item) => item.cue_id === cueID)) {
+      throw new Error("الـSnapshot تغير، لم يُرسل أمر الكيو.");
+    }
+    await api(`${base}/runtime/jump`, {
+      method: "POST",
+      json: {
+        request_id: requestID(),
+        cue_id: cueID,
+        expected_current_cue_id: live.current_cue?.cue_id || null,
+        operator_note: "Cue Workspace explicitly confirmed quick physical test in REHEARSAL",
+        confirm: true,
+      },
+    });
+    await renderCues(`تم طلب تجربة الكيو: ${name}. تبقى البروفة فعّالة لحين الضغط على «إنهاء البروفة».`, "warn");
+  } catch (error) {
+    setMessage(globalMessage,
+      `${errorMessage(error)}${startedSession ? " — بدأت بروفة فحص وقد تكون ما زالت فعّالة. افتح Runtime أو أنهِ البروفة صراحة." : ""}`,
+      "error");
+    try { await renderCues(); } catch (_) {}
+  }
+}
+
+async function endCueCheckRehearsal() {
+  const projectID = state.project?.project_id;
+  if (!projectID || !confirm("إنهاء جلسة REHEARSAL الحالية؟ هذه العملية تطبّق إجراءات إيقاف الجلسة، لكنها لا تُغني عن قاطع فصل الليزر.")) return;
+  try {
+    const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+    const runtime = await api(`${base}/runtime`);
+    if (runtime.session?.type !== "REHEARSAL") {
+      setMessage(globalMessage, "لا توجد بروفة فعّالة لإنهائها.", "warn");
+      return;
+    }
+    await api(`${base}/runtime/stop-session`, {
+      method: "POST",
+      json: { request_id: requestID() },
+    });
+    await renderCues("تم طلب إنهاء البروفة. تحقق من حالة المخرجات فعلياً.", "warn");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  }
+}
+
+async function inspectCueFromWorkspace(cueID) {
+  const projectID = state.project?.project_id;
+  const cue = cueByID(cueID);
+  const panel = document.getElementById("cueInspection");
+  if (!projectID || !cue || !panel) return;
+  panel.classList.remove("hidden");
+  panel.innerHTML = `<h3>فحص الكيو: ${esc(cue.display_label || "")} · ${esc(cue.name)}</h3>
+    <p class="muted">جاري قراءة معلومات الكيو والمخرجات. هذا فحص بدون تشغيل أي جهاز.</p>`;
+  panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  const base = `/api/v1/projects/${encodeURIComponent(projectID)}`;
+  try {
+    const [runtimeResult, configResult, devicesResult] = await Promise.allSettled([
+      api(`${base}/runtime`),
+      api(`${base}/configuration`),
+      api(`${base}/stage-devices`),
+    ]);
+    if (state.page !== "cues" || state.project?.project_id !== projectID || !panel.isConnected) return;
+    if (runtimeResult.status !== "fulfilled") throw runtimeResult.reason;
+    const runtime = runtimeResult.value;
+    const config = configResult.status === "fulfilled" ? configResult.value : null;
+    const assignedDevices = devicesResult.status === "fulfilled"
+      ? (devicesResult.value.devices || []) : [];
+    const snapshot = runtime.runtime_snapshot;
+    const matchingRevision = Boolean(snapshot && config &&
+      snapshot.revision_id === config.revision?.revision_id);
+    const publishedCue = (runtime.cues || []).some((item) => item.cue_id === cueID);
+    let report = null;
+    if (snapshot?.runtime_snapshot_id) {
+      try {
+        report = await api(`${base}/preflight?runtime_snapshot_id=${encodeURIComponent(snapshot.runtime_snapshot_id)}`);
+      } catch (_) {
+        // An unavailable whole-project report must not be presented as a PASS.
+      }
+    }
+    if (state.page !== "cues" || state.project?.project_id !== projectID || !panel.isConnected) return;
+    const aliases = config?.targets || [];
+    const actions = Array.isArray(cue.actions) ? cue.actions : [];
+    const enabledActions = actions.filter((action) => action.enabled !== false);
+    const deviceIDs = new Set();
+    const rows = actions.map((action, index) => {
+      const ref = String(action.target_ref || "");
+      const alias = aliases.find((candidate) =>
+        candidate.logical_name === ref || candidate.target_ref === ref);
+      const deviceID = String(alias?.configuration?.device_id || "");
+      if (deviceID) deviceIDs.add(deviceID);
+      const device = deviceID ? assignedDevices.find((candidate) => candidate.device_id === deviceID) : null;
+      const stateText = action.enabled === false ? "معطّل" :
+        deviceID && !device ? "جهاز غير معيّن لهذا المشروع أو غير متاح" :
+        deviceID && (device.runtime?.connection_state || device.connection_state) !== "ONLINE"
+          ? "الجهاز ليس ONLINE" :
+        deviceID ? "متصل — التنفيذ الفعلي غير مفحوص" :
+        alias ? "الهدف موجود — التنفيذ الفعلي غير مفحوص" :
+        "الهدف غير مؤكد من بيانات المشروع";
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${esc(action.capability_key || "—")}</td>
+        <td><span class="mono">${esc(ref || "—")}</span></td>
+        <td>${esc(stateText)}</td>
+      </tr>`;
+    }).join("");
+    const related = (report?.checks || []).filter((check) => deviceIDs.has(String(check.entity_id || "")));
+    const failures = related.filter((check) => check.status !== "PASS");
+    const scopeMessage = !snapshot
+      ? "لا يوجد Snapshot منشور. هذا فحص إعدادات فقط."
+      : !matchingRevision || !publishedCue
+        ? "هذا الكيو أو تعديلاته مو مطابقة للنسخة المنشورة؛ فحص النسخة الحالية فقط، بدون تشغيل."
+        : "هذا الكيو موجود بالـSnapshot المنشور.";
+    const preflightMessage = report
+      ? `فحص جاهزية المشروع العام: ${esc(report.status || "UNKNOWN")}. النتائج العامة ما تثبت نجاح تنفيذ هذا الكيو.`
+      : "فحص جاهزية المشروع غير متاح؛ لا نعتبره ناجحاً.";
+    panel.innerHTML = `
+      <div class="section-title-row">
+        <div><h3>فحص الكيو: ${esc(cue.display_label || "")} · ${esc(cue.name)}</h3>
+        <p class="muted">فحص قراءة فقط (Read-only): ما يشغّل ولا يوقف أي جهاز، وما يبدأ بروفة.</p></div>
+        ${pill("CHECK ONLY", "neutral")}
+      </div>
+      <p class="${matchingRevision && publishedCue ? "muted" : "message warn"}">${esc(scopeMessage)}</p>
+      <p>عدد الإجراءات: ${actions.length} · المفعّلة: ${enabledActions.length}</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>الإجراء</th><th>المخرج</th><th>الفحص</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="4">هذا الكيو ما بيه إجراءات.</td></tr>`}</tbody>
+      </table></div>
+      <p class="muted">${preflightMessage}</p>
+      ${failures.length ? `<ul class="validation-list">${failures.map((check) =>
+        `<li class="validation-item"><strong>${esc(check.status || "WARN")}</strong>
+        ${esc(check.summary || check.key || "Device issue")}</li>`).join("")}</ul>` : ""}
+      <p class="muted">للتنفيذ الفعلي استخدم زر تشغيل الكيو بالبروفة؛ الفحص أعلاه لا يرسل أوامر.</p>
+    `;
+  } catch (error) {
+    if (!panel.isConnected || state.page !== "cues" || state.project?.project_id !== projectID) return;
+    panel.innerHTML = `<h3>تعذّر فحص الكيو</h3>
+      <p class="message warn">${esc(errorMessage(error))}</p>
+      <p class="muted">ما انرسل أي أمر للمخرجات.</p>`;
+  }
+}
+
 async function testCueFromWorkspace(cueID) {
   try {
-    let runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     if (runtime.mode === "SHOW" || runtime.session?.type === "SHOW") {
-      setMessage(globalMessage, "Cue Check is blocked in SHOW. Use Runtime controls for live operation.", "warn");
+      setMessage(globalMessage, "Cue execution from Workspace is blocked in SHOW. Use Runtime controls for live operation.", "warn");
+      return;
+    }
+    // Deliberate operator-start only. Never POST /runtime/start from a Cue
+    // test: the localized label previously implied an isolated signal probe.
+    if (runtime.mode !== "REHEARSAL" || runtime.session?.type !== "REHEARSAL") {
+      setMessage(globalMessage, "Start REHEARSAL from Runtime before running an individual published Cue. This button cannot start a session.", "warn");
       return;
     }
     if (runtime.managed_output_blackout) {
-      setMessage(globalMessage, "Clear managed blackout before testing a Cue.", "warn");
+      setMessage(globalMessage, "Clear managed blackout before running a Cue.", "warn");
       return;
     }
     const publishedCue = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
@@ -537,45 +756,21 @@ async function testCueFromWorkspace(cueID) {
       setMessage(globalMessage, "This Cue is not in the latest Published Runtime Snapshot. Publish before testing it.", "warn");
       return;
     }
+    if (!confirm(`Execute ALL actions of published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” inside the CURRENT REHEARSAL? This is not a signal-only test.`)) return;
 
-    const startRehearsal = !runtime.session;
-    let startWarning = "";
-    const promptText = startRehearsal
-      ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
-      : `Test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now in the active REHEARSAL?`;
-    if (!confirm(promptText)) return;
-
-    if (startRehearsal) {
-      const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
-        method: "POST",
-        json: {
-          mode: "REHEARSAL",
-          name: `Cue Check · ${publishedCue.name} · ${new Date().toLocaleString()}`,
-          request_id: requestID(),
-        },
-      });
-      startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
-      runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    }
-    if (!runtime.session || runtime.session.type !== "REHEARSAL") {
-      setMessage(globalMessage, "Cue Check requires an active REHEARSAL Session.", "warn");
-      return;
-    }
-
+    // A late mode change is checked again by the Hub's runtime/jump
+    // authority gate, never by implicitly starting a new session here.
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
       method: "POST",
       json: {
         request_id: requestID(),
         cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
-        operator_note: "Cue Workspace individual Cue check",
+        operator_note: "Cue Workspace explicit REHEARSAL Cue execution",
         confirm: true,
       },
     });
-    await renderCues(
-      `Testing published Cue: ${publishedCue.display_label || ""} · ${publishedCue.name}${startWarning ? ` · DEGRADED: ${startWarning}` : ""}`,
-      startWarning ? "warn" : "",
-    );
+    await renderCues(`Ran published Cue in REHEARSAL: ${publishedCue.display_label || ""} · ${publishedCue.name}`);
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
@@ -1189,7 +1384,7 @@ async function renderRuntime(startPolling = false) {
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
@@ -1201,7 +1396,7 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP LATEST CUE interrupts only the newest running Cue. STOP SESSION and EMERGENCY BLACKOUT stop all active Cues. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -1212,6 +1407,22 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    <section class="card">
+      <div class="section-title-row">
+        <div><h2>Running Cue Executions</h2><p class="muted">Older Cue actions may continue after the next GO. STOP LATEST targets the newest active execution; STOP SESSION and Emergency Blackout stop all.</p></div>
+      </div>
+      ${Array.isArray(runtime.running_executions) && runtime.running_executions.length ? `
+        <ul class="check-list">
+          ${runtime.running_executions.map((run) => {
+            const cue = runtimeCues.find((item) => item.cue_id === run.cue_id);
+            return `<li>
+              <strong>${esc(cue?.display_label || "")} · ${esc(cue?.name || run.cue_id)}</strong>
+              <span class="pill warn">RUNNING</span>
+              <small class="muted">${esc(run.cue_execution_id)} · ${esc(fmtDate(run.started_at))}</small>
+            </li>`;
+          }).join("")}
+        </ul>` : '<p class="muted">No currently running Cue executions.</p>'}
+    </section>
     ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
@@ -1255,14 +1466,14 @@ async function goRuntime() {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null },
+      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
 async function stopCueRuntime() {
-  if (!confirm("STOP CUE interrupts ALL active Cues in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
+  if (!confirm("STOP LATEST CUE cancels the newest running Cue only; older Cues may continue. This is not a blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
@@ -1326,6 +1537,7 @@ async function jumpRuntime() {
         request_id: requestID(), cue_id: cueID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         confirm: true,
+        async: true,
       },
     });
     await renderRuntime(true);

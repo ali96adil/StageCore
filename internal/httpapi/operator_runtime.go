@@ -22,6 +22,7 @@ type runtimeCommandRequest struct {
 	RequestID            string  `json:"request_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
+	Async                bool    `json:"async"`
 	Force                bool    `json:"force"`
 	Confirm              string  `json:"confirm"`
 }
@@ -38,6 +39,7 @@ type runtimeJumpRequest struct {
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
 	Confirm              bool    `json:"confirm"`
+	Async                bool    `json:"async"`
 }
 
 type runtimeExecutionView struct {
@@ -57,6 +59,7 @@ type runtimeStatusView struct {
 	CurrentCue      *cueSummaryView       `json:"current_cue"`
 	NextCue         *cueSummaryView       `json:"next_cue"`
 	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
+	RunningExecutions     []runtimeExecutionView `json:"running_executions"`
 	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
 
@@ -142,11 +145,17 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		request := runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, OperatorNote: body.OperatorNote,
-		})
-		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
+		}
+		if body.Async {
+			result := runtime.QueueGo(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusAccepted, result, nil)
+		} else {
+			result := runtime.Go(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
+		}
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/jump", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -167,11 +176,17 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		request := runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
-		})
-		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
+		}
+		if body.Async {
+			result := runtime.QueueGo(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusAccepted, result, map[string]any{"operation": "JUMP"})
+		} else {
+			result := runtime.Go(r.Context(), request)
+			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
+		}
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/project-blackout", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -299,6 +314,16 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	executions, err := projectStore.ListCueExecutions(r.Context(), active.ID)
 	if err != nil {
 		return runtimeStatusView{}, err
+	}
+	view.RunningExecutions = make([]runtimeExecutionView, 0)
+	for _, execution := range executions {
+		if execution.Result == domain.ExecutionRunning {
+			view.RunningExecutions = append(view.RunningExecutions, runtimeExecutionView{
+				ID: execution.ID, CueID: execution.CueID,
+				Result: execution.Result, StartedAt: execution.StartedAt,
+				CompletedAt: execution.CompletedAt,
+			})
+		}
 	}
 	if len(executions) > 0 {
 		last := executions[len(executions)-1]
