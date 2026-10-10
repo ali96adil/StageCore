@@ -11,6 +11,13 @@ const state = {
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
+  runtimeRenderGeneration: 0,
+  runtimeLastRefreshAt: 0,
+  runtimeLastRefreshError: "",
+  runtimeCanGo: false,
+  runtimeGoFlight: false,
+  runtimeGoUncertain: (() => { try { return JSON.parse(sessionStorage.getItem("stagecore_uncertain_go") || "null"); } catch (_) { return null; } })(),
+  runtimeJumpSelection: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -59,6 +66,19 @@ function requestID() {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+
+function setUncertainGO(value) {
+  state.runtimeGoUncertain = value;
+  if (value) sessionStorage.setItem("stagecore_uncertain_go", JSON.stringify(value));
+  else sessionStorage.removeItem("stagecore_uncertain_go");
+}
+
+function clearUncertainGO() {
+  if (!confirm("Clear the unconfirmed GO only after independently checking the current Cue and physical outputs. Clearing permits a NEW GO request; it does not cancel the old command. Continue?")) return;
+  setUncertainGO(null);
+  setMessage(globalMessage, "Unconfirmed GO record cleared by operator. Verify the current Cue before pressing GO.", "warn");
+  renderRuntime(true).catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
 }
 
 function setMessage(target, text, kind = "") {
@@ -232,6 +252,7 @@ document.querySelectorAll("[data-page]").forEach((button) => {
 });
 
 function setPage(page) {
+  if (state.page === "runtime" && page !== "runtime") state.runtimeRenderGeneration++;
   state.page = page;
   document.querySelectorAll(".nav-button").forEach((button) => button.classList.remove("active"));
   if (page === "projects") el("projectsNav").classList.add("active");
@@ -1295,11 +1316,23 @@ function runtimeReadinessGroupTitle(group) {
 }
 
 async function renderRuntime(startPolling = false) {
-  const projectID = encodeURIComponent(state.project.project_id);
-  const [runtime, preflight] = await Promise.all([
+  const selectedProject = state.project?.project_id;
+  if (!selectedProject) return;
+  const renderGeneration = ++state.runtimeRenderGeneration;
+  const projectID = encodeURIComponent(selectedProject);
+  const [runtime, preflightResult] = await Promise.all([
     api(`/api/v1/projects/${projectID}/runtime`),
-    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
+    api(`/api/v1/projects/${projectID}/preflight`).then(
+      (report) => ({ report, error: null }),
+      (error) => ({ report: null, error: errorMessage(error) }),
+    ),
   ]);
+  // An older poll must never overwrite newer GO/JUMP state or another page.
+  if (renderGeneration !== state.runtimeRenderGeneration || state.page !== "runtime" || state.project?.project_id !== selectedProject) return;
+  const preflight = preflightResult.report;
+  const preflightError = preflightResult.error;
+  state.runtimeLastRefreshAt = Date.now();
+  state.runtimeLastRefreshError = "";
   const active = runtime.session;
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
@@ -1315,9 +1348,12 @@ async function renderRuntime(startPolling = false) {
   const emergencyBlackout = !!runtime.managed_output_blackout;
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
-  const showBlocked = preflight?.status === "BLOCK";
+  // A failed Preflight request is UNKNOWN, not a successful readiness check.
+  const showBlocked = !preflight || preflight.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
   const runtimeIssueGroups = groupRuntimeReadinessIssues(preflight?.checks || []);
+  state.runtimeCanGo = !!(active && next && canControl && !emergencyBlackout);
+  if (state.runtimeJumpSelection?.sessionID !== active?.session_id) state.runtimeJumpSelection = null;
   const runtimeIssueMarkup = runtimeIssueGroups.length
     ? `<section class="card runtime-readiness-issues">
         <div class="section-title-row">
@@ -1347,7 +1383,7 @@ async function renderRuntime(startPolling = false) {
         </div>
       </section>`
     : `<section class="card runtime-readiness-issues">
-        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
+        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">${preflightError ? `Preflight is unavailable: ${esc(preflightError)}. A missing report is NOT a PASS.` : "No current Preflight issues."}</p></div>${pill(preflightError ? "UNKNOWN" : "READY", preflightError ? "warn" : "good")}</div>
       </section>`;
   content.innerHTML = `
     <div class="page-head">
@@ -1373,8 +1409,8 @@ async function renderRuntime(startPolling = false) {
         ${!active ? `
           <p class="muted">Runtime is in EDIT mode.</p>
           <div class="message ${preflight?.status === "BLOCK" ? "error" : preflight?.status === "WARN" ? "warn" : ""}">
-            <strong>Preflight: ${esc(preflight?.status || "UNKNOWN")}</strong>
-            <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
+            <strong>Preflight: ${esc(preflight?.status || "UNAVAILABLE")}</strong>
+            <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · ${preflightError ? " · Hub Preflight could not be checked; SHOW entry unavailable until refreshed." : " · advisory for live start"}</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
@@ -1383,7 +1419,7 @@ async function renderRuntime(startPolling = false) {
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!state.runtimeCanGo || state.runtimeGoFlight ? "disabled" : ""} type="button">${state.runtimeGoUncertain ? "RETRY SAME GO" : "GO"}</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
@@ -1397,12 +1433,14 @@ async function renderRuntime(startPolling = false) {
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
           <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP LATEST CUE interrupts only the newest running Cue. STOP SESSION and EMERGENCY BLACKOUT stop all active Cues. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+        ${state.runtimeGoUncertain ? `<div class="message warn" role="alert"><strong>GO outcome NOT confirmed.</strong> Do not press a fresh GO: retry retains the original request ID. Check the actual Cue and outputs first. <button id="clearUncertainGOButton" class="button ghost" type="button">Clear after independent verification</button></div>` : ""}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
         </div>
       </section>
     </div>
+    <div id="runtimeConnectionState" class="message ${preflightError ? "warn" : ""}" role="status">Hub Runtime refreshed ${esc(new Date(state.runtimeLastRefreshAt).toLocaleTimeString())}${preflightError ? ` · Preflight unavailable: ${esc(preflightError)}` : ""}</div>
     <div class="stat-grid">
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
@@ -1423,8 +1461,23 @@ async function renderRuntime(startPolling = false) {
           }).join("")}
         </ul>` : '<p class="muted">No currently running Cue executions.</p>'}
     </section>
+    ${Array.isArray(runtime.recent_output_failures) && runtime.recent_output_failures.length ? `<section class="card runtime-output-failures" role="status">
+      <div class="section-title-row"><div><h2>Recent failed output Actions</h2><p class="muted">Persisted fail-soft failures remain visible after later successful Cues. Healthy Actions can still continue; inspect each affected output.</p></div>${pill(`${runtime.recent_output_failures.length} FAILED`, "bad")}</div>
+      <ul class="check-list">${runtime.recent_output_failures.map((failure) => {
+        const cue = runtimeCues.find((item) => item.cue_id === failure.cue_id);
+        return `<li><strong>${esc(cue?.name || failure.cue_id)}</strong> · ${esc(failure.result)} · ${esc(failure.error_code || "OUTPUT_FAILURE")}<small class="muted">${esc(failure.response_summary || "")} · Action ${esc(failure.action_id)}</small></li>`;
+      }).join("")}</ul>
+    </section>` : ""}
     ${runtimeIssueMarkup}`;
 
+  const jumpSelect = el("jumpCueSelect");
+  if (jumpSelect && state.runtimeJumpSelection?.sessionID === active?.session_id) {
+    jumpSelect.value = state.runtimeJumpSelection.cueID;
+  }
+  jumpSelect?.addEventListener("change", () => {
+    state.runtimeJumpSelection = { sessionID: active.session_id, cueID: jumpSelect.value };
+  });
+  el("clearUncertainGOButton")?.addEventListener("click", clearUncertainGO);
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
@@ -1540,6 +1593,7 @@ async function jumpRuntime() {
         async: true,
       },
     });
+    state.runtimeJumpSelection = null;
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
@@ -1599,7 +1653,15 @@ function startRuntimePolling() {
   stopRuntimePolling();
   state.runtimeTimer = setInterval(async () => {
     if (state.page !== "runtime" || document.hidden) return;
-    try { await renderRuntime(false); } catch (_) {}
+    try { await renderRuntime(false); } catch (error) {
+      if (state.page !== "runtime") return;
+      state.runtimeLastRefreshError = errorMessage(error);
+      const indicator = el("runtimeConnectionState");
+      if (indicator) {
+        indicator.className = "message warn";
+        indicator.textContent = `Runtime connection FAILED: ${state.runtimeLastRefreshError}. Last confirmed refresh: ${state.runtimeLastRefreshAt ? new Date(state.runtimeLastRefreshAt).toLocaleTimeString() : "never"}. Do not assume the displayed Cue is current.`;
+      }
+    }
   }, 1500);
 }
 
