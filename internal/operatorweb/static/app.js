@@ -1515,16 +1515,56 @@ async function startRuntime(mode) {
 }
 
 async function goRuntime() {
+  // Do not dispatch two distinct GO requests while the outcome of one is unknown.
+  if (state.runtimeGoFlight || !canRuntime() || !state.project) return;
+  const projectID = state.project.project_id;
+  const previous = state.runtimeGoUncertain;
+  if (previous && previous.projectID !== projectID) {
+    setMessage(globalMessage, "An earlier GO for another Project is unconfirmed. Verify its outputs and clear it explicitly before operating a new Project.", "warn");
+    return;
+  }
+  if (previous && !confirm("Retry the SAME previously unconfirmed GO request ID? This will not intentionally advance to another Cue. Verify the current Cue and outputs before continuing.")) return;
+  state.runtimeGoFlight = true;
+  const button = el("goButton");
+  if (button) button.disabled = true;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
+    const runtime = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime`);
+    if (!runtime.session?.session_id) throw new Error("No active Runtime Session.");
+    if (previous && previous.sessionID !== runtime.session.session_id) {
+      setMessage(globalMessage, "An uncertain GO belongs to a different Session. Verify the former Session and clear the pending record manually; no new GO was sent.", "warn");
+      return;
+    }
+    if (!previous && (!runtime.next_cue || runtime.managed_output_blackout)) throw new Error("No available next Cue, or managed blackout is active.");
+    const command = previous || {
+      projectID, sessionID: runtime.session.session_id,
+      requestID: requestID(), expectedCurrentCueID: runtime.current_cue?.cue_id || null,
+    };
+    // Persist before POST: an HTTP timeout, lost acknowledgement or page reload
+    // must not cause the next click to generate a new request ID.
+    setUncertainGO(command);
+    const response = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/runtime/go`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
+      json: { request_id: command.requestID, expected_current_cue_id: command.expectedCurrentCueID, async: true },
     });
+    if (!["ACCEPTED", "COMPLETED"].includes(response?.result?.status)) {
+      throw new Error("GO was not confirmed as accepted; inspect Runtime before retrying.");
+    }
+    setUncertainGO(null);
+    setMessage(globalMessage, "GO accepted by Hub. This does not certify that every output completed; check running Cues and failed Actions.", "success");
     await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    const uncertain = !!state.runtimeGoUncertain;
+    setMessage(globalMessage, `${errorMessage(error)}${uncertain ? " GO acceptance is UNCONFIRMED. Retry uses the SAME request ID; inspect the Cue and physical outputs before any further GO." : ""}`, uncertain ? "warn" : "error");
+    try { await renderRuntime(true); } catch (_) {}
+  } finally {
+    state.runtimeGoFlight = false;
+    const currentButton = el("goButton");
+    if (currentButton) {
+      currentButton.disabled = !state.runtimeCanGo;
+      currentButton.textContent = state.runtimeGoUncertain ? "RETRY SAME GO" : "GO";
+    }
+  }
 }
-
 async function stopCueRuntime() {
   if (!confirm("STOP LATEST CUE cancels the newest running Cue only; older Cues may continue. This is not a blackout. Continue?")) return;
   try {
