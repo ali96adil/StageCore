@@ -33,7 +33,13 @@ func TestCueWorkspaceProvidesPublishedCueCheckControls(t *testing.T) {
 		t.Fatal("Cue Check must not imply that unpublished Draft behavior is executed")
 	}
 	start := strings.Index(js, "async function testCueFromWorkspace(cueID)")
-	end := strings.Index(js, "async function stopCueFromWorkspace()", start)
+	end := -1
+	if start >= 0 {
+		relativeEnd := strings.Index(js[start:], "async function stopCueFromWorkspace()")
+		if relativeEnd >= 0 {
+			end = start + relativeEnd
+		}
+	}
 	if start < 0 || end < 0 || start >= end {
 		t.Fatal("cannot identify Cue Workspace execution handler")
 	}
