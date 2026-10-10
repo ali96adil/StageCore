@@ -94,6 +94,14 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if err != nil {
 		return DeviceCommand{}, false, err
 	}
+	// StageLaser v2 rejects an unbounded output-enabling frame. Ordinary
+	// Cue dispatch already provides its own deadline; direct operator commands
+	// require the same short expiry to prevent delayed ON/ARM/FLASH on reconnect.
+	// SAFE_OFF/DISARM/SET_OFF remain possible without a deadline.
+	if input.DeadlineAt == nil && stagelaser.RequiresFreshDeadline(input.CommandType, payload) {
+		deadline := now.Add(5 * time.Second)
+		input.DeadlineAt = &deadline
+	}
 	if err := r.validateLightingCommandAuthority(ctx, input, device, payload); err != nil {
 		return DeviceCommand{}, false, err
 	}
