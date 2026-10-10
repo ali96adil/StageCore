@@ -15,12 +15,13 @@ function extract(begin, end) {
 }
 const functions = [
   extract("async function renderRuntime(", "async function startRuntime("),
+  extract("const runtimeUncertainCommandStorageKey =", "async function goRuntime("),
   extract("async function goRuntime(", "async function stopCueRuntime("),
   extract("async function jumpRuntime(", "async function stopSessionRuntime("),
   extract("function startRuntimePolling(", "window.addEventListener("),
 ].join("\n");
 
-function fixture() {
+function fixture(storage = new Map()) {
   const nodes = new Map();
   const freshNode = (value = "") => ({
     value, disabled: false, options: [], textContent: "", className: "",
@@ -60,8 +61,13 @@ function fixture() {
   });
   let interval;
   const noop = () => {};
+  const sessionStorage = {
+    getItem: (key) => storage.has(key) ? storage.get(key) : null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: (key) => storage.delete(key),
+  };
   const context = vm.createContext({
-    state, content, el: (id) => nodes.get(id) || null, globalMessage: freshNode(),
+    state, content, sessionStorage, el: (id) => nodes.get(id) || null, globalMessage: freshNode(),
     api: async (path) => path.includes("/preflight") ? { status: "PASS", checks: [] } : runtime(),
     esc: (s) => String(s ?? ""), fmtDate: (v) => String(v ?? ""), pill: (s) => String(s),
     cueParentMapFor: () => new Map(), cueInList: (all, id) => all.find((c) => c.cue_id === id),
@@ -76,7 +82,7 @@ function fixture() {
     clearInterval: noop,
   });
   vm.runInContext(functions, context, { filename: "app.js runtime functions" });
-  return { context, state, nodes, runtime, content, getHTML: () => html, getInterval: () => interval };
+  return { context, state, nodes, runtime, content, storage, getHTML: () => html, getInterval: () => interval };
 }
 
 test("Preserve Jump target during polling and persist failed output in the rendered session", async () => {
@@ -224,4 +230,55 @@ test("Ambiguity banner is scoped to Runtime instead of the Projects template", (
   assert.ok(projects >= 0 && runtime > projects);
   assert.doesNotMatch(source.slice(projects, runtime), /runtime-unverified-command/);
   assert.match(source.slice(runtime), /runtime-unverified-command/);
+});
+
+test("A tab reload while GO POST is unresolved preserves confirmation guard", async () => {
+  const f = fixture();
+  let release;
+  let sends = 0;
+  f.context.api = (path, options) => {
+    if (options?.method === "POST" && path.endsWith("/runtime/go")) {
+      sends++;
+      return new Promise((resolve) => { release = resolve; });
+    }
+    return Promise.resolve(path.includes("/preflight") ? { status: "PASS", checks: [] } : f.runtime());
+  };
+  const original = f.context.goRuntime();
+  await new Promise(setImmediate);
+  assert.equal(sends, 1);
+  const saved = [...f.storage.values()].find((value) => value.includes('"action":"GO"'));
+  assert.ok(saved, "pending GO must be written before network response");
+
+  const reloaded = fixture(f.storage);
+  reloaded.state.runtimeUncertainCommand = reloaded.context.loadRuntimeUncertainCommand();
+  assert.equal(reloaded.state.runtimeUncertainCommand.action, "GO");
+  await reloaded.context.renderRuntime();
+  assert.match(reloaded.getHTML(), /Previous GO response unknown/);
+
+  let secondSends = 0;
+  reloaded.context.confirm = () => false;
+  reloaded.context.api = async (path, options) => {
+    if (options?.method === "POST" && path.endsWith("/runtime/go")) secondSends++;
+    return path.includes("/preflight") ? { status: "PASS", checks: [] } : reloaded.runtime();
+  };
+  await reloaded.context.goRuntime();
+  assert.equal(secondSends, 0, "reloaded tab must not blindly advance Cue");
+  release({ result: { status: "ACCEPTED" } });
+  await original;
+});
+
+test("Completed response clears the persisted guard and malformed storage is ignored", async () => {
+  const storage = new Map();
+  const f = fixture(storage);
+  f.context.api = async (path, options) => {
+    if (options?.method === "POST" && path.endsWith("/runtime/go"))
+      return { result: { status: "ACCEPTED" } };
+    return path.includes("/preflight") ? { status: "PASS", checks: [] } : f.runtime();
+  };
+  await f.context.goRuntime();
+  assert.equal(f.state.runtimeUncertainCommand, null);
+  assert.equal(f.context.loadRuntimeUncertainCommand(), null);
+  assert.equal(storage.size, 0);
+  storage.set("stagecore.runtime.uncertain_command.v1", "{invalid");
+  assert.equal(f.context.loadRuntimeUncertainCommand(), null);
 });
