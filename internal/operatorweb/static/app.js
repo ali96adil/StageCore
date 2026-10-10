@@ -14,7 +14,7 @@ const state = {
   runtimeRenderGeneration: 0,
   runtimeRefreshPending: false,
   runtimeActionInFlight: false,
-  runtimeUncertainCommand: null,
+  runtimeUncertainCommand: loadRuntimeUncertainCommand(),
 };
 
 const el = (id) => document.getElementById(id);
@@ -1503,6 +1503,33 @@ async function startRuntime(mode) {
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
 
+
+const runtimeUncertainCommandStorageKey = "stagecore.runtime.uncertain_command.v1";
+
+function loadRuntimeUncertainCommand() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(runtimeUncertainCommandStorageKey) || "null");
+    if (saved && typeof saved.projectID === "string" && saved.projectID.length > 0 &&
+        (saved.action === "GO" || saved.action === "JUMP")) {
+      return { projectID: saved.projectID, action: saved.action };
+    }
+  } catch (_) {
+    // A broken or blocked session store must not interrupt the operator interface.
+  }
+  return null;
+}
+
+function rememberRuntimeUncertainCommand(command) {
+  state.runtimeUncertainCommand = command;
+  try {
+    if (command) sessionStorage.setItem(runtimeUncertainCommandStorageKey, JSON.stringify(command));
+    else sessionStorage.removeItem(runtimeUncertainCommandStorageKey);
+  } catch (_) {
+    // Retain the in-memory guard even when private-browsing storage is unavailable.
+  }
+}
+
+
 async function goRuntime() {
   if (state.runtimeActionInFlight) return; // one click -> one command
   state.runtimeActionInFlight = true;
@@ -1515,16 +1542,20 @@ async function goRuntime() {
     const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
     if (!confirmPriorUncertainCueCommand(runtime, actionProjectRef)) return;
     const commandID = requestID(); // never auto-resend with a different ID
+    // Mark unresolved BEFORE the HTTP write. A reload during an in-flight
+    // request must not silently grant the next GO.
+    rememberRuntimeUncertainCommand({ projectID: actionProjectRef, action: "GO" });
     submitted = true;
     const reply = await api(`/api/v1/projects/${projectID}/runtime/go`, {
       method: "POST",
       json: { request_id: commandID, expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
+    rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage, `GO ${reply?.result?.status || "received"}. Check Current Cue and output results for actual completion.`, "success");
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
-    if (uncertain) state.runtimeUncertainCommand = { projectID: actionProjectRef, action: "GO" };
+    if (!uncertain && submitted) rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " GO may have reached the Hub. Verify Current/Next Cue before another GO; never blindly retry."
       : ""), "error");
@@ -1543,7 +1574,7 @@ function confirmPriorUncertainCueCommand(runtime, projectID) {
   // Never automatically re-send an ambiguous cue request. A fresh Runtime GET
   // and an explicit operator acknowledgement are necessary to proceed.
   if (!confirm(`Previous ${prior.action} may already have executed. Current Cue: ${currentLabel}. Next Cue: ${nextLabel}. Check the physical stage and confirm you intend a NEW command, not a retry.`)) return false;
-  state.runtimeUncertainCommand = null;
+  rememberRuntimeUncertainCommand(null);
   return true;
 }
 
@@ -1617,6 +1648,7 @@ async function jumpRuntime() {
     if (!label) throw new Error("Selected Cue is not in the published Runtime Snapshot. Refresh before Jump.");
     if (!confirm(`Jump runtime to “${label.name}”? This is an explicit operator override.`)) return;
     const commandID = requestID();
+    rememberRuntimeUncertainCommand({ projectID: actionProjectRef, action: "JUMP" });
     submitted = true;
     const reply = await api(`/api/v1/projects/${projectID}/runtime/jump`, {
       method: "POST",
@@ -1627,11 +1659,12 @@ async function jumpRuntime() {
         async: true,
       },
     });
+    rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage, `Jump ${reply?.result?.status || "received"}. Confirm Current Cue before another operation.`, "success");
     await renderRuntime(true);
   } catch (error) {
     const uncertain = submitted && (!error.status || error.status >= 500);
-    if (uncertain) state.runtimeUncertainCommand = { projectID: actionProjectRef, action: "JUMP" };
+    if (!uncertain && submitted) rememberRuntimeUncertainCommand(null);
     setMessage(globalMessage, errorMessage(error) + (uncertain
       ? " Jump may have reached the Hub. Verify Current Cue before retrying."
       : ""), "error");
