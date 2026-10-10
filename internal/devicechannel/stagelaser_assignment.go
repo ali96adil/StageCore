@@ -19,6 +19,45 @@ import (
 var ErrStageLaserAssignmentNotVerified = errors.New("v2 StageLaser safe-off assignment not verified")
 
 const stageLaserAssignmentTimeout = 5 * time.Second
+const stageLaserVisualOffMaxAge = 15 * time.Minute
+
+// stageLaserObservedOffResyncPermit only authorizes an attended, non-actuating
+// logical OFF resync during the first assignment. A visual record on its own
+// never changes the device state; the operator must also explicitly start
+// the assignment handshake on the same authenticated v2 connection.
+func (r *Runtime) stageLaserObservedOffResyncPermit(
+    ctx context.Context, deviceID, projectID string,
+) (string, bool) {
+    device, err := r.repository.GetDevice(ctx, deviceID)
+    if err != nil || device.Assignment == nil ||
+        device.Assignment.State != "UNASSIGNED" ||
+        device.Runtime == nil || device.Runtime.Connection != deviceexperience.ConnectionOnline {
+        return "", false
+    }
+    check, err := r.repository.LatestStageLaserVisualCheck(ctx, deviceID, projectID)
+    if err != nil || check == nil || check.VisualState != "OFF" ||
+        check.DeviceReportedState != "UNKNOWN" ||
+        check.DeviceConnectionState != string(deviceexperience.ConnectionOnline) ||
+        check.DeviceBootID == "" || check.DeviceBootID == "UNKNOWN" ||
+        time.Since(check.CheckedAt) < 0 || time.Since(check.CheckedAt) > stageLaserVisualOffMaxAge {
+        return "", false
+    }
+    var observed struct {
+        BootID string `json:"boot_id"`
+        LogicalState string `json:"logical_state"`
+        ArmState string `json:"arm_state"`
+        PulseInProgress bool `json:"pulse_in_progress"`
+        ResyncRequired bool `json:"resync_required"`
+    }
+    if json.Unmarshal(device.Runtime.ObservedState, &observed) != nil ||
+        strings.TrimSpace(observed.BootID) != check.DeviceBootID ||
+        observed.LogicalState != "UNKNOWN" ||
+        observed.ArmState != "DISARMED" ||
+        observed.PulseInProgress || !observed.ResyncRequired {
+        return "", false
+    }
+    return observed.BootID, true
+}
 
 type pendingStageLaserAssignment struct {
 	connection   *connection
@@ -103,8 +142,15 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 			return deviceexperience.StageLaserAssignmentCommit{}, fmt.Errorf("%w: operator authorization changed: %v", ErrStageLaserAssignmentNotVerified, err)
 		}
 	}
+	// The authenticated request is the explicit second operator action;
+	// only a fresh OFF check for this same device boot can permit software
+	// state resync while UNKNOWN. The ESP still must validate the permit.
+	visualBootID, allowVisualOffResync := r.stageLaserObservedOffResyncPermit(
+		ctx, input.DeviceID, input.TargetProjectID)
 	if err := current.send(map[string]any{
 		"type": "stagelaser.assignment.prepare",
+		"visual_off_resync_allowed": allowVisualOffResync,
+		"visual_off_boot_id": visualBootID,
 		"schema_version": 2,
 		"device_id": input.DeviceID,
 		"assignment_id": assignmentID,
