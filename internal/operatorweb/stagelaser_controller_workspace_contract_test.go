@@ -31,8 +31,10 @@ func TestStageLaserControllerWorkspaceAndAssignmentEntry(t *testing.T) {
     if !strings.Contains(js, k) { t.Errorf("StageLaser workspace/assignment lacks %q",k) }
   }
   start := strings.Index(js, "async function renderStageLaserControllerPage()")
-  end := strings.Index(js, "async function renderPhase4Page(page)",start)
-  if start<0 || end<=start { t.Fatal("dedicated StageLaser page missing") }
+  if start<0 { t.Fatal("dedicated StageLaser page missing") }
+  next := strings.Index(js[start:], "async function renderPhase4Page(page)")
+  if next<0 { t.Fatal("dedicated StageLaser page boundary missing") }
+  end := start + next
   page := js[start:end]
   for _, no := range []string{
     "/stagelamp/manual-off", "/stagelaser-assignment", "LASER_TOGGLE",
