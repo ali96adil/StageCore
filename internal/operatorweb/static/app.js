@@ -11,6 +11,12 @@ const state = {
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
+  runtimeRenderSequence: 0,
+  runtimePreflightProjectID: null,
+  runtimePreflightReport: null,
+  runtimePreflightCheckedAt: 0,
+  runtimePreflightPending: null,
+  runtimeGoPending: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -1294,12 +1300,57 @@ function runtimeReadinessGroupTitle(group) {
   return summary;
 }
 
+// Preflight is relatively expensive. Revalidate periodically without blocking
+// Runtime navigation, cue painting, or GO. The Hub remains the authoritative
+// SHOW admission gate and stale/failed checks never imply READY.
+function runtimePreflightSnapshot(projectID) {
+  if (state.runtimePreflightProjectID !== projectID) {
+    state.runtimePreflightProjectID = projectID;
+    state.runtimePreflightReport = null;
+    state.runtimePreflightCheckedAt = 0;
+    state.runtimePreflightPending = null;
+  }
+
+  const now = Date.now();
+  if (!state.runtimePreflightPending &&
+      (state.runtimePreflightCheckedAt === 0 || now - state.runtimePreflightCheckedAt >= 10000)) {
+    state.runtimePreflightCheckedAt = now;
+    const pending = api(`/api/v1/projects/${encodeURIComponent(projectID)}/preflight`);
+    state.runtimePreflightPending = pending;
+    pending.then((report) => {
+      if (state.runtimePreflightProjectID !== projectID) return;
+      state.runtimePreflightReport = report;
+      if (state.page === "runtime" && state.project?.project_id === projectID) {
+        void renderRuntime(false).catch(() => {});
+      }
+    }).catch(() => {
+      if (state.runtimePreflightProjectID !== projectID) return;
+      state.runtimePreflightReport = null;
+      if (state.page === "runtime" && state.project?.project_id === projectID) {
+        void renderRuntime(false).catch(() => {});
+      }
+    }).finally(() => {
+      if (state.runtimePreflightPending === pending) state.runtimePreflightPending = null;
+    });
+  }
+  return state.runtimePreflightReport;
+}
+
+function recordRuntimePreflight(projectID, report) {
+  if (state.runtimePreflightProjectID !== projectID) return;
+  state.runtimePreflightReport = report;
+  state.runtimePreflightCheckedAt = Date.now();
+}
+
 async function renderRuntime(startPolling = false) {
-  const projectID = encodeURIComponent(state.project.project_id);
-  const [runtime, preflight] = await Promise.all([
-    api(`/api/v1/projects/${projectID}/runtime`),
-    api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
-  ]);
+  const activeProjectID = state.project.project_id;
+  const projectID = encodeURIComponent(activeProjectID);
+  const renderSequence = ++state.runtimeRenderSequence;
+  const preflight = runtimePreflightSnapshot(activeProjectID);
+  const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+  // An older slow poll must never overwrite a newer GO result or another page.
+  if (renderSequence !== state.runtimeRenderSequence ||
+      state.page !== "runtime" || state.project?.project_id !== activeProjectID) return;
   const active = runtime.session;
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
@@ -1315,7 +1366,7 @@ async function renderRuntime(startPolling = false) {
   const emergencyBlackout = !!runtime.managed_output_blackout;
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
-  const showBlocked = preflight?.status === "BLOCK";
+  const showBlocked = !preflight || preflight.status === "BLOCK";
   const runtimeIssues = (preflight?.checks || []).filter((check) => check.status !== "PASS");
   const runtimeIssueGroups = groupRuntimeReadinessIssues(preflight?.checks || []);
   const runtimeIssueMarkup = runtimeIssueGroups.length
@@ -1347,7 +1398,7 @@ async function renderRuntime(startPolling = false) {
         </div>
       </section>`
     : `<section class="card runtime-readiness-issues">
-        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">No current Preflight issues.</p></div>${pill("READY", "good")}</div>
+        <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">${preflight ? "No current Preflight issues." : "Checking live readiness. Runtime and GO stay responsive; SHOW admission requires a verified check."}</p></div>${pill(preflight ? "READY" : "UNKNOWN", preflight ? "good" : "warn")}</div>
       </section>`;
   content.innerHTML = `
     <div class="page-head">
@@ -1383,7 +1434,7 @@ async function renderRuntime(startPolling = false) {
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || state.runtimeGoPending ? "disabled" : ""} type="button">GO</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP LATEST CUE</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
@@ -1462,14 +1513,28 @@ async function startRuntime(mode) {
 }
 
 async function goRuntime() {
+  if (state.runtimeGoPending) return;
+  state.runtimeGoPending = true;
+  const button = el("goButton");
+  if (button) button.disabled = true;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
+    const projectID = encodeURIComponent(state.project.project_id);
+    // Preserve the server's expected-current-Cue fence, not a speculative
+    // local increment. The 202 response confirms durable Cue selection.
+    const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    await api(`/api/v1/projects/${projectID}/runtime/go`, {
       method: "POST",
       json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true },
     });
+    state.runtimeGoPending = false;
     await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    state.runtimeGoPending = false;
+    try { await renderRuntime(false); } catch (_) {}
+    setMessage(globalMessage, errorMessage(error), "error");
+  } finally {
+    state.runtimeGoPending = false;
+  }
 }
 
 async function stopCueRuntime() {
