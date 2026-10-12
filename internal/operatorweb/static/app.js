@@ -16,6 +16,7 @@ const state = {
   runtimePreflightReport: null,
   runtimePreflightCheckedAt: 0,
   runtimePreflightPending: null,
+  runtimePreflightEpoch: 0,
   runtimeGoPending: false,
 };
 
@@ -1306,6 +1307,7 @@ function runtimeReadinessGroupTitle(group) {
 function runtimePreflightSnapshot(projectID) {
   if (state.runtimePreflightProjectID !== projectID) {
     state.runtimePreflightProjectID = projectID;
+    ++state.runtimePreflightEpoch;
     state.runtimePreflightReport = null;
     state.runtimePreflightCheckedAt = 0;
     state.runtimePreflightPending = null;
@@ -1315,16 +1317,17 @@ function runtimePreflightSnapshot(projectID) {
   if (!state.runtimePreflightPending &&
       (state.runtimePreflightCheckedAt === 0 || now - state.runtimePreflightCheckedAt >= 10000)) {
     state.runtimePreflightCheckedAt = now;
+    const epoch = ++state.runtimePreflightEpoch;
     const pending = api(`/api/v1/projects/${encodeURIComponent(projectID)}/preflight`);
     state.runtimePreflightPending = pending;
     pending.then((report) => {
-      if (state.runtimePreflightProjectID !== projectID) return;
+      if (state.runtimePreflightProjectID !== projectID || state.runtimePreflightEpoch !== epoch) return;
       state.runtimePreflightReport = report;
       if (state.page === "runtime" && state.project?.project_id === projectID) {
         void renderRuntime(false).catch(() => {});
       }
     }).catch(() => {
-      if (state.runtimePreflightProjectID !== projectID) return;
+      if (state.runtimePreflightProjectID !== projectID || state.runtimePreflightEpoch !== epoch) return;
       state.runtimePreflightReport = null;
       if (state.page === "runtime" && state.project?.project_id === projectID) {
         void renderRuntime(false).catch(() => {});
@@ -1338,6 +1341,7 @@ function runtimePreflightSnapshot(projectID) {
 
 function recordRuntimePreflight(projectID, report) {
   if (state.runtimePreflightProjectID !== projectID) return;
+  ++state.runtimePreflightEpoch; // Never let an older background read replace this manual result.
   state.runtimePreflightReport = report;
   state.runtimePreflightCheckedAt = Date.now();
 }
@@ -1346,8 +1350,14 @@ async function renderRuntime(startPolling = false) {
   const activeProjectID = state.project.project_id;
   const projectID = encodeURIComponent(activeProjectID);
   const renderSequence = ++state.runtimeRenderSequence;
-  const preflight = runtimePreflightSnapshot(activeProjectID);
+  const cachedPreflight = runtimePreflightSnapshot(activeProjectID);
   const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+  const snapshotID = runtime.runtime_snapshot?.runtime_snapshot_id || null;
+  // A readiness report for a previous published Snapshot is NOT proof of
+  // readiness for the one presently selected by the Runtime.
+  const preflight = cachedPreflight &&
+    (cachedPreflight.runtime_snapshot_id || null) === snapshotID
+    ? cachedPreflight : null;
   // An older slow poll must never overwrite a newer GO result or another page.
   if (renderSequence !== state.runtimeRenderSequence ||
       state.page !== "runtime" || state.project?.project_id !== activeProjectID) return;
