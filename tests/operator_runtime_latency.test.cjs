@@ -140,3 +140,37 @@ test("Preflight navigation paints an immediate checking state", async () => {
   resolveScan();
   await operation;
 });
+
+test("ordinary Runtime polls preserve mounted GO and selected Jump", () => {
+  const code = section(app, "function patchActiveRuntimeView(markup) {",
+    "async function renderRuntime(startPolling = false) {");
+  const selectors = [
+    ".page-head", ".cue-focus", ".stat-grid",
+    ".runtime-running-executions", ".runtime-readiness-issues",
+  ];
+  const current = Object.fromEntries(selectors.map((name) => [name, { innerHTML: "old " + name }]));
+  const upcoming = Object.fromEntries(selectors.map((name) => [name, { innerHTML: "new " + name }]));
+  const go = { disabled: false, listener: "goRuntime" };
+  const jump = { value: "cue-42" };
+  const content = {
+    querySelector: (selector) => current[selector] || null,
+    // Deliberately fail if the helper attempts to remount the whole page.
+    set innerHTML(_) { throw new Error("Full Runtime DOM replacement"); },
+  };
+  const document = {
+    createElement: () => ({
+      set innerHTML(value) { assert.equal(value, "<updated-runtime>"); },
+      querySelector: (selector) => upcoming[selector] || null,
+    }),
+  };
+  const patch = new Function("document", "content", code + "\nreturn patchActiveRuntimeView;")(
+    document, content
+  );
+  assert.equal(patch("<updated-runtime>"), true);
+  for (const selector of selectors) {
+    assert.equal(current[selector].innerHTML, upcoming[selector].innerHTML);
+  }
+  assert.equal(go.listener, "goRuntime", "GO handler stays on its original button");
+  assert.equal(jump.value, "cue-42", "Jump selection is not cleared by a poll");
+  assert.equal(patch("<updated-runtime>"), true, "repeated polling stays in place");
+});
