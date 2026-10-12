@@ -23,6 +23,9 @@ func TestRuntimePreflightDoesNotBlockCueDisplayOrGo(t *testing.T) {
         "const renderSequence = ++state.runtimeRenderSequence",
         "renderSequence !== state.runtimeRenderSequence",
         "if (state.runtimeGoPending) return;",
+        "function patchActiveRuntimeView(markup)",
+        "state.runtimeViewKey === viewKey",
+        "patchActiveRuntimeView(runtimeMarkup)",
         "expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true",
     } {
         if !strings.Contains(js, marker) {
