@@ -13,8 +13,10 @@ func TestRuntimePreflightDoesNotBlockCueDisplayOrGo(t *testing.T) {
     for _, marker := range []string{
         "function runtimePreflightSnapshot(projectID)",
         "state.runtimePreflightPending",
+        "state.runtimePreflightEpoch !== epoch",
+        "const snapshotID = runtime.runtime_snapshot?.runtime_snapshot_id || null;",
         "now - state.runtimePreflightCheckedAt >= 10000",
-        "const preflight = runtimePreflightSnapshot(activeProjectID);",
+        "const cachedPreflight = runtimePreflightSnapshot(activeProjectID);",
         "const runtime = await api(",
         "const showBlocked = !preflight || preflight.status === \"BLOCK\";",
         "preflight ? \"READY\" : \"UNKNOWN\"",
@@ -44,6 +46,7 @@ func TestPreflightNavigationPaintsBeforeFullScan(t *testing.T) {
     for _, marker := range []string{
         "state.page !== \"preflight\" || state.project?.project_id !== projectID",
         "recordRuntimePreflight(projectID, report)",
+        "sequence !== state.preflightRenderSequence",
         "Readiness unavailable",
     } {
         if !strings.Contains(js, marker) {
