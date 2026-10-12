@@ -133,9 +133,11 @@ function storageCard(report) {
 
 async function renderPreflight() {
   const projectID = state.project?.project_id;
+  const sequence = ++state.preflightRenderSequence;
   const report = await loadPreflight();
-  // Discard readiness results from a page or Project we have already left.
-  if (state.page !== "preflight" || state.project?.project_id !== projectID) return;
+  // Discard older checks when Refresh is clicked again or the page changes.
+  if (sequence !== state.preflightRenderSequence ||
+      state.page !== "preflight" || state.project?.project_id !== projectID) return;
   recordRuntimePreflight(projectID, report);
   const blockers = (report.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (report.checks || []).filter((check) => check.status === "WARN").length;
@@ -183,9 +185,10 @@ navigate = async function stagecoreNavigate(page) {
       </div>
     </div>
     <section class="card"><p class="muted">Loading current Snapshot, Companion, media and storage checks…</p></section>`;
+  const expectedSequence = state.preflightRenderSequence + 1;
   try { await renderPreflight(); }
   catch (error) {
-    if (state.page !== "preflight") return;
+    if (state.page !== "preflight" || state.preflightRenderSequence !== expectedSequence) return;
     content.innerHTML = `<section class="card"><h2>Readiness unavailable</h2><p class="muted">Refresh Preflight to retry. SHOW entry is verified separately by the Hub.</p><button id="retryPreflight" class="button" type="button">Retry Preflight</button></section>`;
     el("retryPreflight")?.addEventListener("click", () => navigate("preflight"));
     setMessage(globalMessage, errorMessage(error), "error");
