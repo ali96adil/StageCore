@@ -19,6 +19,7 @@ const state = {
   runtimePreflightEpoch: 0,
   preflightRenderSequence: 0,
   runtimeGoPending: false,
+  runtimeViewKey: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -1347,6 +1348,39 @@ function recordRuntimePreflight(projectID, report) {
   state.runtimePreflightCheckedAt = Date.now();
 }
 
+// Keep the live GO, STOP and Jump controls mounted during ordinary polling.
+// Replacing the complete Runtime DOM every 1.5s can interrupt a pointer click
+// and reset a selected Jump. Refresh only read-only status panels when the
+// Session, Snapshot, and safety control state are unchanged.
+function patchActiveRuntimeView(markup) {
+  const nextView = document.createElement("div");
+  nextView.innerHTML = markup;
+  for (const selector of [
+    ".page-head",
+    ".cue-focus",
+    ".stat-grid",
+    ".runtime-running-executions",
+    ".runtime-readiness-issues",
+  ]) {
+    const current = content.querySelector(selector);
+    const incoming = nextView.querySelector(selector);
+    if (!current || !incoming) return false;
+  }
+  for (const selector of [
+    ".page-head",
+    ".cue-focus",
+    ".stat-grid",
+    ".runtime-running-executions",
+    ".runtime-readiness-issues",
+  ]) {
+    const current = content.querySelector(selector);
+    const incoming = nextView.querySelector(selector);
+    // Retain the outer nodes and all live interactive controls.
+    if (current.innerHTML !== incoming.innerHTML) current.innerHTML = incoming.innerHTML;
+  }
+  return true;
+}
+
 async function renderRuntime(startPolling = false) {
   const activeProjectID = state.project.project_id;
   const projectID = encodeURIComponent(activeProjectID);
@@ -1411,7 +1445,7 @@ async function renderRuntime(startPolling = false) {
     : `<section class="card runtime-readiness-issues">
         <div class="section-title-row"><div><h3>Runtime readiness</h3><p class="muted">${preflight ? "No current Preflight issues." : "Checking live readiness. Runtime and GO stay responsive; SHOW admission requires a verified check."}</p></div>${pill(preflight ? "READY" : "UNKNOWN", preflight ? "good" : "warn")}</div>
       </section>`;
-  content.innerHTML = `
+  const runtimeMarkup = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
       <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}</div>
@@ -1469,7 +1503,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
-    <section class="card">
+    <section class="card runtime-running-executions">
       <div class="section-title-row">
         <div><h2>Running Cue Executions</h2><p class="muted">Older Cue actions may continue after the next GO. STOP LATEST targets the newest active execution; STOP SESSION and Emergency Blackout stop all.</p></div>
       </div>
@@ -1486,6 +1520,21 @@ async function renderRuntime(startPolling = false) {
         </ul>` : '<p class="muted">No currently running Cue executions.</p>'}
     </section>
     ${runtimeIssueMarkup}`;
+
+  const viewKey = active && [
+    activeProjectID, active.session_id, snapshotID,
+    runtime.mode, emergencyBlackout, state.runtimeForceExitAvailable, canControl,
+  ].join("|");
+  if (viewKey && state.runtimeViewKey === viewKey && el("goButton") &&
+      patchActiveRuntimeView(runtimeMarkup)) {
+    // GO may have been disabled while its HTTP request was in flight.
+    const goButton = el("goButton");
+    goButton.disabled = !canControl || !next || emergencyBlackout || state.runtimeGoPending;
+    if (startPolling) startRuntimePolling();
+    return;
+  }
+  state.runtimeViewKey = viewKey || null;
+  content.innerHTML = runtimeMarkup;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
   el("startRehearsalButton")?.addEventListener("click", () => startRuntime("REHEARSAL"));
