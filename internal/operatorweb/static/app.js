@@ -17,6 +17,7 @@ const state = {
   runtimePreflightCheckedAt: 0,
   runtimePreflightPending: null,
   runtimePreflightEpoch: 0,
+  preflightRenderSequence: 0,
   runtimeGoPending: false,
 };
 
