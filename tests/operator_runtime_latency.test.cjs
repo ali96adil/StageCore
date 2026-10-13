@@ -280,3 +280,64 @@ test("a known acknowledged GO is not marked uncertain if UI refresh fails", asyn
   await go();
   assert.equal(state.runtimeUncertainCommand, null);
 });
+
+
+test("JUMP and GO share an in-flight safety fence", async () => {
+  const code = section(app, "async function jumpRuntime() {", "async function stopSessionRuntime() {");
+  const state = {
+    project: { project_id: "p1" }, runtimeGoPending: true,
+    runtimeJumpPending: false, runtimeUncertainCommand: null,
+  };
+  let calls = 0;
+  const controls = { jumpCueSelect: { value: "cue2" }, jumpButton: { disabled: false } };
+  const jump = new Function(
+    "state", "api", "el", "requestID", "renderRuntime", "setMessage",
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand",
+    "rememberRuntimeUncertainCommand", "confirm", code + "\nreturn jumpRuntime;"
+  )(state, () => { calls++; return Promise.resolve({}); }, (id) => controls[id],
+    () => "j1", () => Promise.resolve(), () => {}, {}, String,
+    () => true, (command) => { state.runtimeUncertainCommand = command; }, () => true);
+  await jump();
+  assert.equal(calls, 0, "Jump cannot pass a pending GO");
+  assert.equal(controls.jumpButton.disabled, false);
+
+  state.runtimeGoPending = false;
+  let complete;
+  const api = (url) => {
+    if (url.endsWith("/runtime")) return Promise.resolve({
+      current_cue: { cue_id: "cue1" },
+      cues: [{ cue_id: "cue2", name: "Next" }],
+    });
+    calls++;
+    return new Promise((resolve) => { complete = resolve; });
+  };
+  const jump2 = new Function(
+    "state", "api", "el", "requestID", "renderRuntime", "setMessage",
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand",
+    "rememberRuntimeUncertainCommand", "confirm", code + "\nreturn jumpRuntime;"
+  )(state, api, (id) => controls[id], () => "j2",
+    () => Promise.resolve(), () => {}, {}, String, () => true,
+    (command) => { state.runtimeUncertainCommand = command; }, () => true);
+  const first = jump2();
+  const second = jump2();
+  await drain();
+  assert.equal(calls, 1, "double-click must not dispatch duplicate Jump");
+  assert.equal(state.runtimeJumpPending, true);
+  complete({ result: { status: "ACCEPTED" } });
+  await Promise.all([first, second]);
+  assert.equal(state.runtimeJumpPending, false);
+  assert.equal(state.runtimeUncertainCommand, null);
+});
+
+test("unverified command from another Project cannot be silently cleared", () => {
+  const helper = section(app, "function loadRuntimeUncertainCommand() {", "function requestID() {");
+  const state = { runtimeUncertainCommand: { projectID: "show-A", action: "GO" } };
+  let confirmCount = 0, warning = "";
+  const verify = new Function("state", "setMessage", "globalMessage", "confirm",
+    helper + "\nreturn confirmPriorUncertainCueCommand;"
+  )(state, (_, message) => { warning = message; }, {}, () => { confirmCount++; return true; });
+  assert.equal(verify({ current_cue: null, next_cue: null }, "show-B"), false);
+  assert.equal(confirmCount, 0, "cross-Project bypass must not prompt to clear");
+  assert.deepEqual(state.runtimeUncertainCommand, { projectID: "show-A", action: "GO" });
+  assert.match(warning, /another Project/);
+});
