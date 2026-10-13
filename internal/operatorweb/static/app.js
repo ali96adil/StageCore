@@ -1393,6 +1393,21 @@ function recordRuntimePreflight(projectID, report) {
 function patchActiveRuntimeView(markup) {
   const nextView = document.createElement("div");
   nextView.innerHTML = markup;
+  // An uncertain network reply may add/remove this alert at any time.
+  // Update the notice separately: never remount STOP/Blackout controls for it.
+  const previousWarning = content.querySelector(".runtime-unverified-command");
+  const incomingWarning = nextView.querySelector(".runtime-unverified-command");
+  if (previousWarning && incomingWarning) {
+    if (previousWarning.innerHTML !== incomingWarning.innerHTML) {
+      previousWarning.innerHTML = incomingWarning.innerHTML;
+    }
+  } else if (previousWarning && !incomingWarning) {
+    previousWarning.remove();
+  } else if (!previousWarning && incomingWarning) {
+    const header = content.querySelector(".page-head");
+    if (!header) return false;
+    header.before(incomingWarning);
+  }
   for (const selector of [
     ".page-head",
     ".cue-focus",
@@ -1566,8 +1581,6 @@ async function renderRuntime(startPolling = false) {
   const viewKey = active && [
     activeProjectID, active.session_id, snapshotID,
     runtime.mode, emergencyBlackout, state.runtimeForceExitAvailable, canControl,
-    state.runtimeUncertainCommand?.projectID || "",
-    state.runtimeUncertainCommand?.action || "",
   ].join("|");
   if (viewKey && state.runtimeViewKey === viewKey && el("goButton") &&
       patchActiveRuntimeView(runtimeMarkup)) {
