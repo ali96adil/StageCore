@@ -13,6 +13,8 @@ func TestRuntimePreflightDoesNotBlockCueDisplayOrGo(t *testing.T) {
     for _, marker := range []string{
         "function runtimePreflightSnapshot(projectID)",
         "state.runtimePreflightPending",
+        "state.runtimePollingPending = true;",
+        "finally { state.runtimePollingPending = false; }",
         "state.runtimePreflightEpoch !== epoch",
         "const snapshotID = runtime.runtime_snapshot?.runtime_snapshot_id || null;",
         "now - state.runtimePreflightCheckedAt >= 10000",
