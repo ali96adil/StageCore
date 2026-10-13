@@ -12,6 +12,7 @@ const state = {
   cues: [],
   validation: null,
   runtimeTimer: null,
+  runtimePollingPending: false,
   runtimeForceExitAvailable: false,
   runtimeRenderSequence: 0,
   runtimePreflightProjectID: null,
@@ -1817,8 +1818,13 @@ async function setProjectBlackoutRuntime(enabled) {
 function startRuntimePolling() {
   stopRuntimePolling();
   state.runtimeTimer = setInterval(async () => {
-    if (state.page !== "runtime" || document.hidden) return;
-    try { await renderRuntime(false); } catch (_) {}
+    if (state.page !== "runtime" || document.hidden || state.runtimePollingPending) return;
+    // A slow Runtime GET must not start overlapping polls every 1.5s.
+    // Otherwise each newer render sequence can starve every older response.
+    state.runtimePollingPending = true;
+    try { await renderRuntime(false); }
+    catch (_) { /* retry on the next interval */ }
+    finally { state.runtimePollingPending = false; }
   }, 1500);
 }
 
