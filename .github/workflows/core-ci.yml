@@ -35,7 +35,13 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          node --check internal/operatorweb/static/phase4.js
+          node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/preflight.js
+      - name: Test Operator Runtime performance behavior
+        if: matrix.go == '1.26.x'
+        run: node --test tests/operator_runtime_latency.test.cjs
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
@@ -67,24 +73,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      # PR checkouts otherwise use refs/pull/N/merge, producing a synthetic
+      # RELEASE_REVISION which cannot be matched to the reviewed PR head.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
           cache: true
       - name: Verify exact PR source
         shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test -z "$(git status --porcelain --untracked-files=all)"
-          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "Exact source: $EXPECTED_SHA"
       - name: Build full offline media and Pi ARM64 bundle
         shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           bash scripts/build-release.sh "$RUNNER_TEMP/stagecore-release"
           BUNDLE="$RUNNER_TEMP/stagecore-release/stagecore-linux-arm64"
-          test "$(cat "$BUNDLE/RELEASE_REVISION")" = "$(git rev-parse HEAD)"
+          test "$(cat "$BUNDLE/RELEASE_REVISION")" = "$EXPECTED_SHA"
           (cd "$BUNDLE" && sha256sum -c SHA256SUMS)
       - name: Upload Pi ARM64 StageCore F-010 bundle
         uses: actions/upload-artifact@v4
