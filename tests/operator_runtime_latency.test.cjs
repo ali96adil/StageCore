@@ -86,7 +86,7 @@ test("failed scan never reports READY and can be retried", async () => {
 
 test("GO uses async durable selection and guards an in-flight double click", async () => {
   const code = section(app, "async function goRuntime() {", "async function stopCueRuntime() {");
-  const state = { project: { project_id: "p1" }, runtimeGoPending: false };
+  const state = { project: { project_id: "p1" }, runtimeGoPending: false, runtimeJumpPending: false, runtimeUncertainCommand: null };
   const button = { disabled: false };
   let goRequests = 0, runtimeRequests = 0, updates = 0, finishGo, lastGoBody;
   const api = (url, opts) => {
@@ -103,9 +103,9 @@ test("GO uses async durable selection and guards an in-flight double click", asy
   };
   const go = new Function(
     "state", "api", "el", "requestID", "renderRuntime", "setMessage",
-    "globalMessage", "errorMessage", code + "\nreturn goRuntime;"
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand", "rememberRuntimeUncertainCommand", code + "\nreturn goRuntime;"
   )(state, api, () => button, () => "idempotent-request", () => { updates++; return Promise.resolve(); },
-    () => {}, {}, (e) => String(e));
+    () => {}, {}, (e) => String(e), () => true, (command) => { state.runtimeUncertainCommand = command; });
 
   const first = go();
   const second = go();
@@ -120,6 +120,7 @@ test("GO uses async durable selection and guards an in-flight double click", asy
   await Promise.all([first, second]);
   assert.equal(updates, 1);
   assert.equal(state.runtimeGoPending, false);
+  assert.equal(state.runtimeUncertainCommand, null, "accepted GO must clear uncertainty");
 });
 
 test("Preflight navigation paints an immediate checking state", async () => {
@@ -173,4 +174,109 @@ test("ordinary Runtime polls preserve mounted GO and selected Jump", () => {
   assert.equal(go.listener, "goRuntime", "GO handler stays on its original button");
   assert.equal(jump.value, "cue-42", "Jump selection is not cleared by a poll");
   assert.equal(patch("<updated-runtime>"), true, "repeated polling stays in place");
+});
+
+
+test("unknown GO response survives a reload and blocks blind retry", async () => {
+  const helper = section(app, "function loadRuntimeUncertainCommand() {", "function requestID() {");
+  const goCode = section(app, "async function goRuntime() {", "async function stopCueRuntime() {");
+  const saved = new Map();
+  const sessionStorage = {
+    getItem: (k) => saved.get(k) || null,
+    setItem: (k, v) => saved.set(k, v),
+    removeItem: (k) => saved.delete(k),
+  };
+  const key = "stagecore.runtime.uncertain_command.v1";
+  const state = {
+    project: { project_id: "p1" }, runtimeGoPending: false,
+    runtimeJumpPending: false, runtimeUncertainCommand: null,
+  };
+  const helpers = new Function("sessionStorage", "state", "setMessage", "globalMessage", "confirm",
+    "const runtimeUncertainCommandStorageKey = 'stagecore.runtime.uncertain_command.v1';\n" +
+    helper + "\nreturn { load:loadRuntimeUncertainCommand, remember:rememberRuntimeUncertainCommand, verify:confirmPriorUncertainCueCommand };"
+  )(sessionStorage, state, () => {}, {}, () => true);
+
+  let postCount = 0;
+  const messages = [];
+  const api = (url) => {
+    if (url.endsWith("/runtime")) return Promise.resolve({
+      current_cue: { cue_id: "cue1", name: "Cue One" },
+      next_cue: { cue_id: "cue2", name: "Cue Two" },
+    });
+    if (url.endsWith("/runtime/go")) {
+      postCount++;
+      return Promise.reject(new Error("Connection lost after write"));
+    }
+    throw new Error(url);
+  };
+  let allowNext = false;
+  const go = new Function(
+    "state", "api", "el", "requestID", "renderRuntime", "setMessage",
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand", "rememberRuntimeUncertainCommand",
+    goCode + "\nreturn goRuntime;"
+  )(state, api, () => ({ disabled: false }), () => "request1",
+    () => Promise.resolve(), (target, msg) => messages.push(msg), {}, (e) => String(e),
+    (runtime, projectID) => {
+      const prior = state.runtimeUncertainCommand;
+      if (!prior) return true;
+      assert.equal(projectID, "p1");
+      if (!allowNext) return false;
+      helpers.remember(null);
+      return true;
+    }, helpers.remember);
+
+  await go();
+  assert.equal(postCount, 1);
+  assert.deepEqual(JSON.parse(saved.get(key)), { projectID: "p1", action: "GO" });
+  assert.match(messages.at(-1), /may have reached the Hub/);
+  assert.deepEqual(helpers.load(), { projectID: "p1", action: "GO" }, "reload must restore pending GO");
+
+  // A fresh read alone MUST NOT silently send the following cue.
+  await go();
+  assert.equal(postCount, 1, "unverified command prevents a second GO");
+
+  allowNext = true;
+  await go();
+  assert.equal(postCount, 2, "an explicit verification enables a NEW command");
+});
+
+test("a definite GO rejection clears pending ambiguity", async () => {
+  const goCode = section(app, "async function goRuntime() {", "async function stopCueRuntime() {");
+  const state = {
+    project: { project_id: "p1" }, runtimeGoPending: false,
+    runtimeJumpPending: false, runtimeUncertainCommand: null,
+  };
+  const go = new Function(
+    "state", "api", "el", "requestID", "renderRuntime", "setMessage",
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand", "rememberRuntimeUncertainCommand",
+    goCode + "\nreturn goRuntime;"
+  )(state, (url) => {
+    if (url.endsWith("/runtime")) return Promise.resolve({ current_cue: null });
+    return Promise.reject(Object.assign(new Error("definite rejection"), { status: 409 }));
+  }, () => ({ disabled: false }), () => "request1",
+  () => Promise.resolve(), () => {}, {}, (e) => String(e), () => true,
+  (command) => { state.runtimeUncertainCommand = command; });
+  await go();
+  assert.equal(state.runtimeUncertainCommand, null);
+});
+
+test("a known acknowledged GO is not marked uncertain if UI refresh fails", async () => {
+  const goCode = section(app, "async function goRuntime() {", "async function stopCueRuntime() {");
+  const state = {
+    project: { project_id: "p1" }, runtimeGoPending: false,
+    runtimeJumpPending: false, runtimeUncertainCommand: null,
+  };
+  const go = new Function(
+    "state", "api", "el", "requestID", "renderRuntime", "setMessage",
+    "globalMessage", "errorMessage", "confirmPriorUncertainCueCommand", "rememberRuntimeUncertainCommand",
+    goCode + "\nreturn goRuntime;"
+  )(state, (url) => url.endsWith("/runtime")
+    ? Promise.resolve({ current_cue: null })
+    : Promise.resolve({ result: { status: "ACCEPTED" } }),
+  () => ({ disabled: false }), () => "request1",
+  () => Promise.reject(new Error("Runtime refresh unavailable")),
+  () => {}, {}, (e) => String(e), () => true,
+  (command) => { state.runtimeUncertainCommand = command; });
+  await go();
+  assert.equal(state.runtimeUncertainCommand, null);
 });
