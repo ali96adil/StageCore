@@ -341,3 +341,45 @@ test("unverified command from another Project cannot be silently cleared", () =>
   assert.deepEqual(state.runtimeUncertainCommand, { projectID: "show-A", action: "GO" });
   assert.match(warning, /another Project/);
 });
+
+
+test("uncertain-command warning does not remount STOP or Blackout", () => {
+  const code = section(app, "function patchActiveRuntimeView(markup) {",
+    "async function renderRuntime(startPolling = false) {");
+  const selectors = [
+    ".page-head", ".cue-focus", ".stat-grid",
+    ".runtime-running-executions", ".runtime-readiness-issues",
+  ];
+  const mounted = Object.fromEntries(selectors.map((s) => [s, { innerHTML: s }]));
+  const stops = { stopButton: {}, emergencyBlackoutButton: {} };
+  let warning = null;
+  const header = mounted[".page-head"];
+  header.before = (node) => { warning = node; };
+  const content = {
+    querySelector: (selector) => selector === ".runtime-unverified-command" ? warning : (mounted[selector] || null),
+    set innerHTML(_) { throw new Error("Unsafe remount of live controls"); },
+  };
+  const document = {
+    createElement: () => {
+      let newWarning = null;
+      const next = Object.fromEntries(selectors.map((s) => [s, { innerHTML: s }]));
+      return {
+        set innerHTML(markup) {
+          if (markup.includes("WITH_WARNING")) {
+            newWarning = { innerHTML: "Check previous GO", remove: () => { warning = null; } };
+          }
+        },
+        querySelector: (selector) => selector === ".runtime-unverified-command" ? newWarning : (next[selector] || null),
+      };
+    },
+  };
+  const patch = new Function("document", "content", code + "\nreturn patchActiveRuntimeView;")(
+    document, content
+  );
+  assert.equal(patch("WITH_WARNING"), true);
+  assert.equal(warning?.innerHTML, "Check previous GO");
+  assert.equal(patch("WITHOUT_WARNING"), true);
+  assert.equal(warning, null);
+  assert.ok(stops.stopButton);
+  assert.ok(stops.emergencyBlackoutButton);
+});
