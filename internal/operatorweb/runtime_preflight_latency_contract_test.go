@@ -30,6 +30,8 @@ func TestRuntimePreflightDoesNotBlockCueDisplayOrGo(t *testing.T) {
         "state.runtimeJumpPending",
         "Previous ${esc(state.runtimeUncertainCommand.action)} response unknown",
         "function patchActiveRuntimeView(markup)",
+        "const previousWarning = content.querySelector(\".runtime-unverified-command\");",
+        "header.before(incomingWarning);",
         "state.runtimeViewKey === viewKey",
         "patchActiveRuntimeView(runtimeMarkup)",
         "expected_current_cue_id: runtime.current_cue?.cue_id || null, async: true",
