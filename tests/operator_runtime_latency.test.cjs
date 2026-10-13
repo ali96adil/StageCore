@@ -383,3 +383,36 @@ test("uncertain-command warning does not remount STOP or Blackout", () => {
   assert.ok(stops.stopButton);
   assert.ok(stops.emergencyBlackoutButton);
 });
+
+
+test("slow Runtime polls are serialized instead of starving live cue updates", async () => {
+  const code = section(app, "function startRuntimePolling() {", "function stopRuntimePolling() {");
+  const state = { page: "runtime", runtimeTimer: null, runtimePollingPending: false };
+  const document = { hidden: false };
+  let tick, calls = 0;
+  const pending = [];
+  const polling = new Function(
+    "state", "document", "renderRuntime", "stopRuntimePolling", "setInterval",
+    code + "\nreturn startRuntimePolling;"
+  )(state, document,
+    () => { calls++; return new Promise((resolve) => pending.push(resolve)); },
+    () => {},
+    (callback) => { tick = callback; return 1; }
+  );
+  polling();
+  const first = tick();
+  tick();
+  tick();
+  assert.equal(calls, 1, "slow GET must not spawn overlapping refreshes");
+  assert.equal(state.runtimePollingPending, true);
+  pending.shift()();
+  await first;
+  assert.equal(state.runtimePollingPending, false);
+  const second = tick();
+  assert.equal(calls, 2, "poll resumes immediately once the previous request finishes");
+  pending.shift()();
+  await second;
+  document.hidden = true;
+  await tick();
+  assert.equal(calls, 2, "hidden page does not poll");
+});
