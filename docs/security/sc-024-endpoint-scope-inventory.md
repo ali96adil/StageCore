@@ -33,13 +33,14 @@ Unwired primitives in `internal/httpapi/project_scope_read.go`:
 - `scopedProjectList(ctx, access, store, userID)` maps DB-derived **current** authorized ProjectIDs to Project data; if access/store unavailable, fails closed. No Project names of other Shows returned.
 - `withScopedProjectRead(...)` validates current browser session and checks `project.view` from live Project grants before a **ProjectID path read**. Unknown and unauthorized ProjectIDs return the **same 404** without a Project name or revision ID.
 - Tests register these on **test-only** `/probe/projects*` routes; no real route changes, Hub command wiring or runtime control changes. Tests cover Owner/global visibility, Operator Project A only, Viewer unassigned, direct-ID probe denial, revoke during an existing session, disabled account denial and nil ACL/store safety.
+- Additional `internal/projectaccess/resource_scope.go` read-only DB resolvers safely map **Cue→Revision→Project**, Revision→Project, Snapshot→Project and Session→Snapshot→Project. These never trust a request's alleged ProjectID as the child resource's owner. `CheckProjectResourceRead` requires the real owner to match the expected Project path, and checks the live `project.view` grant. Tests deliberately try to read Project B Cues, Revisions, Snapshots and Sessions beneath Project A routes, verifying denial. These are **NOT yet connected** to production endpoints or GO.
 
 **Do not wire this middleware to the Hub in isolation.** To protect all Projects we need a centrally applied, atomic cutover that protects *all* resource paths, including IDs which do not carry a ProjectID in the path, dynamic module/extension routes and device/service credentials. Do not infer Project ownership solely from a user-provided path or a file hash.
 
 ## Future rollout and safety
 
 1. Finish comprehensive generated endpoint policy map + static and dynamic route coverage checks.
-2. Canonical resolver(s): Cue→Revision→Project; Session→Runtime Snapshot→Project; device→assignment→Project; media asset/content version→Project; Show Capsule→source Project. Test foreign direct-ID access on every family.
+2. Complete canonical resolver(s): **Cue/Revision/Snapshot/Session ownership is now qualified read-only in this Draft**, but device→assignment→Project; media asset/content version→Project; Show Capsule→source Project and other derived IDs still require coverage. Test foreign direct-ID access on every family before any production cutover.
 3. Add Owner UI for prepared grants and show impact report comparing current all-Project roles with future assignments.
 4. Perform **atomic** enforcement cutover, with a feature/rollback gate that cannot be partially enabled for Project selector alone; no implicit Operator membership, and no Project cross-leak through SSE/audio/exports. Recheck revocation during active subscription and GO dispatch.
 5. Verify emergency blackout and stopping safety independent of ordinary GO authority; harden Pi 4 fallback and rollback, with tests in non-SHOW mode before merging or deployment.
