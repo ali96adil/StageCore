@@ -49,6 +49,8 @@ type DeckStatus struct {
 
 type Status struct {
 	MasterVolume float64               `json:"master_volume"`
+	OutputID     string                `json:"selected_output_id,omitempty"`
+	OutputError  string                `json:"output_error,omitempty"`
 	Decks        map[string]DeckStatus `json:"decks"`
 	Qualified    bool                  `json:"show_qualified"`
 	Note         string                `json:"note"`
@@ -59,6 +61,8 @@ type Controller struct {
 	root   string
 	sender Sender
 	master float64
+	output string
+	outputError string
 	decks  map[string]DeckStatus
 }
 
@@ -96,9 +100,11 @@ func (c *Controller) statusLocked() Status {
 	}
 	return Status{
 		MasterVolume: c.master,
+		OutputID: c.output,
+		OutputError: c.outputError,
 		Decks: copied,
 		Qualified: false,
-		Note: "REHEARSAL_PROTOTYPE_LOCAL_ACK_ONLY_NOT_AUDIO_DELIVERY_PROOF",
+		Note: "REHEARSAL_PROTOTYPE_LOCAL_ACK_ONLY_NOT_AUDIO_DELIVERY_PROOF; OUTPUT_UNSELECTED_USES_HOST_DEFAULT",
 	}
 }
 
