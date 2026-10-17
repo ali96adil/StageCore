@@ -71,3 +71,44 @@ func TestLocalIPCRejectsRawMPVInjectionAndOversize(t *testing.T) {
 		}
 	}
 }
+
+type testBluetooth struct {
+	devices []stageaudio.BluetoothDevice
+	connected bool
+}
+func (b *testBluetooth) PairedSpeakers(_ context.Context)([]stageaudio.BluetoothDevice,error){
+	return b.devices,nil
+}
+func (b *testBluetooth) ConnectPairedSpeaker(_ context.Context,address string)(stageaudio.BluetoothDevice,error){
+	b.connected=true
+	return stageaudio.BluetoothDevice{Address:address,Connected:true,Paired:true,AudioSink:true},nil
+}
+func localRequestWithBT(t *testing.T, c *stageaudio.Controller, bt localBluetooth, message string) reply {
+	t.Helper()
+	client,server:=net.Pipe()
+	go handleConnectionWithBluetooth(context.Background(),server,c,bt)
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(2*time.Second))
+	if _,err:=client.Write([]byte(message+"\n"));err!=nil{t.Fatal(err)}
+	var out reply
+	if err:=json.NewDecoder(bufio.NewReader(client)).Decode(&out);err!=nil{t.Fatal(err)}
+	return out
+}
+func TestBluetoothIPCLocalOnlyAndRequiresStoppedDecks(t *testing.T){
+	c:=newLocalController(t)
+	bt:=&testBluetooth{devices:[]stageaudio.BluetoothDevice{
+		{Address:"AA:BB:CC:DD:EE:FF",Name:"Stage Speaker",Paired:true,AudioSink:true},
+	}}
+	list:=localRequestWithBT(t,c,bt,`{"operation":"BT_DEVICES"}`)
+	if list.Error!=""||len(list.BluetoothDevices)!=1{t.Fatalf("list: %+v",list)}
+	command:=localRequestWithBT(t,c,bt,`{"operation":"BT_CONNECT","address":"AA:BB:CC:DD:EE:FF"}`)
+	if command.Error!=""||!bt.connected{t.Fatalf("connect: %+v",command)}
+	localRequest(t,c,`{"operation":"LOAD","deck":"A","file":"cue.wav"}`)
+	bt.connected=false
+	blocked:=localRequestWithBT(t,c,bt,`{"operation":"BT_CONNECT","address":"AA:BB:CC:DD:EE:FF"}`)
+	if blocked.Error!="STOP_AUDIO_BEFORE_BLUETOOTH_CONNECT"||bt.connected{
+		t.Fatalf("Bluetooth must not connect while deck loaded: %+v",blocked)
+	}
+	out:=localRequestWithBT(t,c,bt,`{"operation":"SELECT_OUTPUT","output_id":"fake-bluetooth"}`)
+	if out.Error!="LOCAL_OUTPUT_ROUTE_REJECTED"{t.Fatalf("invented sink accepted: %+v",out)}
+}
