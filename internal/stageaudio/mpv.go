@@ -91,15 +91,22 @@ func waitForMPV(socket string, done <-chan struct{}) error {
 
 func (b *MPVBackend) SocketDir() string { return b.dir }
 
+// Send acknowledges an allowlisted caller command; Query returns a bounded
+// mpv JSON data property for internal output discovery only.
 func (b *MPVBackend) Send(ctx context.Context, deck string, command []any) error {
+	_, err := b.Query(ctx, deck, command)
+	return err
+}
+
+func (b *MPVBackend) Query(ctx context.Context, deck string, command []any) (json.RawMessage, error) {
 	socket, ok := b.sockets[deck]
 	if !ok {
-		return ErrInvalidCommand
+		return nil, ErrInvalidCommand
 	}
 	dialer := net.Dialer{Timeout: 600 * time.Millisecond}
 	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
-		return fmt.Errorf("local mpv unavailable: %w", err)
+		return nil, fmt.Errorf("local mpv unavailable: %w", err)
 	}
 	defer conn.Close()
 	deadline := time.Now().Add(2 * time.Second)
@@ -107,30 +114,31 @@ func (b *MPVBackend) Send(ctx context.Context, deck string, command []any) error
 		deadline = when
 	}
 	if err := conn.SetDeadline(deadline); err != nil {
-		return err
+		return nil, err
 	}
 	id := b.nextID.Add(1)
 	if err := json.NewEncoder(conn).Encode(map[string]any{
 		"command": command, "request_id": id,
 	}); err != nil {
-		return fmt.Errorf("write local mpv command: %w", err)
+		return nil, fmt.Errorf("write local mpv command: %w", err)
 	}
 	decoder := json.NewDecoder(io.LimitReader(conn, 128<<10))
 	for {
 		var response struct {
 			RequestID int64  `json:"request_id"`
-			Error     string `json:"error"`
+			Error     string          `json:"error"`
+			Data      json.RawMessage `json:"data"`
 		}
 		if err := decoder.Decode(&response); err != nil {
-			return fmt.Errorf("read mpv response: %w", err)
+			return nil, fmt.Errorf("read mpv response: %w", err)
 		}
 		if response.RequestID != id {
 			continue // mpv also emits unrelated state events.
 		}
 		if response.Error != "success" {
-			return fmt.Errorf("mpv declined command: %s", response.Error)
+			return nil, fmt.Errorf("mpv declined command: %s", response.Error)
 		}
-		return nil
+		return response.Data, nil
 	}
 }
 
