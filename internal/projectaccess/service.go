@@ -214,3 +214,47 @@ func (s *Service) AccessibleProjectIDs(ctx context.Context, userID string) ([]st
 	if err:=rows.Err();err!=nil{return nil,err}
 	return ids,nil
 }
+
+
+// PermissionsForUser lists grants for exactly one Project/user. The caller
+// must be a currently enabled OWNER; a normal project.view grant is not
+// sufficient to inspect who has access. The returned list is not effective
+// browser authorization until the project-wide route cutover is complete.
+func (s *Service) PermissionsForUser(ctx context.Context, actingOwnerID, targetUserID, projectID string) ([]Permission, error) {
+	if s == nil || strings.TrimSpace(actingOwnerID)=="" ||
+		strings.TrimSpace(targetUserID)=="" || strings.TrimSpace(projectID)=="" {
+		return nil, ErrDenied
+	}
+	var role string
+	var enabled int
+	err:=s.db.QueryRowContext(ctx,
+		`SELECT role, enabled FROM local_users WHERE user_id=?`,actingOwnerID,
+	).Scan(&role,&enabled)
+	if errors.Is(err,sql.ErrNoRows){return nil,ErrDenied}
+	if err!=nil{return nil,fmt.Errorf("validate access manager: %w",err)}
+	if enabled!=1 || role!="OWNER"{return nil,ErrDenied}
+	var exists int
+	err=s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM projects WHERE project_id=?`,projectID).Scan(&exists)
+	if errors.Is(err,sql.ErrNoRows){return nil,ErrNotFound}
+	if err!=nil{return nil,fmt.Errorf("validate managed Project: %w",err)}
+	err=s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM local_users WHERE user_id=?`,targetUserID).Scan(&exists)
+	if errors.Is(err,sql.ErrNoRows){return nil,ErrNotFound}
+	if err!=nil{return nil,fmt.Errorf("validate grant target: %w",err)}
+	rows,err:=s.db.QueryContext(ctx,
+		`SELECT permission FROM project_permission_grants
+		 WHERE project_id=? AND user_id=? ORDER BY permission`,
+		projectID,targetUserID)
+	if err!=nil{return nil,fmt.Errorf("read managed Project grants: %w",err)}
+	defer rows.Close()
+	grants:=make([]Permission,0)
+	for rows.Next(){
+		var permission Permission
+		if err:=rows.Scan(&permission);err!=nil{return nil,err}
+		if !permissionSet[permission]{return nil,fmt.Errorf("stored Project capability invalid")}
+		grants=append(grants,permission)
+	}
+	if err:=rows.Err();err!=nil{return nil,err}
+	return grants,nil
+}
