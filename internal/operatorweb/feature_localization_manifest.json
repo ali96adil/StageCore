@@ -3,6 +3,18 @@
   "required_locales": ["en", "ar-IQ"],
   "features": [
     {
+      "feature_id": "CORE-CLOCK",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/clock-settings.js"],
+      "name": {"en": "Hub Date & Time Settings", "ar-IQ": "إعدادات ساعة الـ Hub والتاريخ"},
+      "summary": {"en": "Offline bilingual status of server time, RTC and NTP with browser comparison, without privileged time changes.", "ar-IQ": "مراقبة ثنائية اللغة للساعة وRTC وNTP دون إنترنت، ومقارنة وقت الهاتف دون تغيير ساعة النظام."},
+      "actions": [
+        {"action_id": "view-clock", "label": {"en": "View Hub Clock", "ar-IQ": "عرض ساعة الـ Hub"}},
+        {"action_id": "refresh-clock", "label": {"en": "Refresh Clock Status", "ar-IQ": "تحديث حالة الساعة"}}
+      ],
+      "ui_keys": ["title", "subtitle", "description", "server", "utc", "phone", "difference", "source", "rtc", "battery", "systemZone", "sample", "refresh", "unknown", "readonly", "wrongClock", "ago", "justNow"]
+    },
+    {
       "feature_id": "CORE-OPERATOR",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/app.js", "static/app.css"],
