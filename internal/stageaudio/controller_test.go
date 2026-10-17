@@ -68,9 +68,12 @@ func TestTwoDecksMixIndependentlyAndNeverAutoPlay(t *testing.T) {
 	if st.Qualified || !strings.Contains(st.Note, "NOT_AUDIO_DELIVERY_PROOF") {
 		t.Fatalf("transport ACK must not claim physical qualification: %+v", st)
 	}
-	cmd := sender.Calls[0]
-	if cmd.Deck != DeckA || cmd.Args[0] != "loadfile" || cmd.Args[2] != "replace" {
-		t.Fatalf("unexpected mpv load request: %+v", cmd)
+	paused := sender.Calls[0]
+	cmd := sender.Calls[1]
+	if paused.Deck != DeckA || paused.Args[0] != "set_property" ||
+		paused.Args[1] != "pause" || paused.Args[2] != true ||
+		cmd.Deck != DeckA || cmd.Args[0] != "loadfile" || cmd.Args[2] != "replace" {
+		t.Fatalf("LOAD must pause before swapping media: pause=%+v load=%+v", paused, cmd)
 	}
 	st = command(t, c, Request{Deck: DeckA, Operation: "STOP"})
 	if st.Decks[DeckA].File != "" || st.Decks[DeckA].Commanded != "STOPPED" ||
