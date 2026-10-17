@@ -13,6 +13,8 @@ const state = {
   runtimeForceExitAvailable: false,
 };
 
+let cueReorderBusy = false;
+
 const el = (id) => document.getElementById(id);
 const loginView = el("loginView");
 const appView = el("appView");
@@ -476,13 +478,24 @@ async function renderCues(message = "", messageKind = "success") {
         Test Cue starts a REHEARSAL automatically from EDIT and is blocked in SHOW. It always executes the matching Cue from the latest Published Runtime Snapshot. Draft-only or unpublished changes must be published before they can be tested here.
       </p>
     </section>
+    ${canModify && hasDraft && runtimeMode === "EDIT" && state.cues.length > 1 ? `
+      <div class="cue-reorder-toolbar" role="group" aria-label="Reorder draft Cues">
+        <label for="cueMoveID">Cue
+          <select id="cueMoveID">${state.cues.map((cue) => `<option value="${esc(cue.cue_id)}">${esc(cue.order_index)} · ${esc(cue.name)}</option>`).join("")}</select>
+        </label>
+        <label for="cueMovePosition">Move to position
+          <input id="cueMovePosition" type="number" inputmode="numeric" min="1" max="${state.cues.length}" step="1" value="1">
+        </label>
+        <button id="cueMoveApply" class="button primary" type="button">Move</button>
+        <small class="muted">Drag ⠿ to reorder with mouse/touch, or select a Cue and enter its position. Draft only — Publish separately.</small>
+      </div>` : ""}
     <div class="table-wrap" style="margin-top:14px">
-      <table>
+      <table class="cue-order-table">
         <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>Group</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
         <tbody>
           ${state.cues.length ? state.cues.map((cue, index) => `
-            <tr class="${cueRelationshipClass(cue, cueParents)}">
-              <td>${esc(cue.order_index)}</td>
+            <tr class="${cueRelationshipClass(cue, cueParents)}" data-cue-id="${esc(cue.cue_id)}">
+              <td class="cue-order-cell">${canModify && hasDraft && runtimeMode === "EDIT" && state.cues.length > 1 ? `<button class="cue-drag-handle" type="button" data-id="${esc(cue.cue_id)}" aria-label="Drag ${esc(cue.name)} to reorder" title="Drag to reorder">⠿</button>` : ""}<span>${esc(cue.order_index)}</span></td>
               <td>${esc(cue.display_label || "—")}</td>
               <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
@@ -519,6 +532,18 @@ async function renderCues(message = "", messageKind = "success") {
   content.querySelectorAll(".cue-delete").forEach((button) => button.addEventListener("click", () => deleteCue(button.dataset.id)));
   content.querySelectorAll(".cue-up").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, -1)));
   content.querySelectorAll(".cue-down").forEach((button) => button.addEventListener("click", () => moveCue(button.dataset.id, 1)));
+  if (canModify && hasDraft && runtimeMode === "EDIT") {
+    el("cueMoveApply")?.addEventListener("click", () => {
+      const id = el("cueMoveID")?.value;
+      const raw = el("cueMovePosition")?.value || "";
+      if (!/^\d+$/.test(raw)) {
+        setMessage(globalMessage, "Enter a whole-number Cue position.", "warn");
+        return;
+      }
+      void moveCueToPosition(id, Number(raw));
+    });
+    installCueDragReorder();
+  }
 }
 
 async function testCueFromWorkspace(cueID) {
@@ -967,6 +992,143 @@ async function deleteCue(id) {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(id)}?confirm=true`, { method: "DELETE" });
     await renderCues("Cue deleted from Draft.");
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+}
+
+// One insertion helper for pointer drag, numeric Move and keyboard-accessible controls.
+// It preserves Cue IDs; the existing Draft reorder endpoint owns persistence.
+function cueOrderIDsAfterMove(cues, cueID, position) {
+  const ids = cues.map((cue) => cue.cue_id);
+  if (!Number.isInteger(position) || position < 1 || position > ids.length) {
+    throw new Error(`Cue position must be between 1 and ${ids.length}.`);
+  }
+  const current = ids.indexOf(cueID);
+  if (current === -1) throw new Error("Cue is no longer in the list.");
+  ids.splice(current, 1);
+  ids.splice(position - 1, 0, cueID);
+  return ids;
+}
+
+async function moveCueToPosition(cueID, position) {
+  if (cueReorderBusy || state.page !== "cues" || !state.project || !canEdit()) return;
+  let ids;
+  try { ids = cueOrderIDsAfterMove(state.cues, cueID, position); }
+  catch (error) { setMessage(globalMessage, error.message, "warn"); return; }
+  const initialIDs = state.cues.map((cue) => cue.cue_id);
+  if (ids.every((id, index) => id === initialIDs[index])) return;
+  cueReorderBusy = true;
+  const projectID = encodeURIComponent(state.project.project_id);
+  try {
+    // Refuse a stale editor snapshot; no optimistic change to Published runtime.
+    const latest = await api(`/api/v1/projects/${projectID}/cues`);
+    const latestIDs = (latest.cues || []).map((cue) => cue.cue_id);
+    if (latest.revision?.status !== "DRAFT" || JSON.stringify(latestIDs) !== JSON.stringify(initialIDs)) {
+      await renderCues("Cue list changed in another editor. Reloaded before moving.", "warn");
+      return;
+    }
+    const runtime = await api(`/api/v1/projects/${projectID}/runtime`);
+    if ((runtime?.mode || "EDIT") !== "EDIT") {
+      await renderCues("Cue order can only be changed in EDIT mode.", "warn");
+      return;
+    }
+    await api(`/api/v1/projects/${projectID}/cues/reorder`, {
+      method: "POST",
+      json: { cue_ids: ids },
+    });
+    await renderCues(`Cue moved to position ${position}. Publish Snapshot when ready.`);
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  } finally {
+    cueReorderBusy = false;
+  }
+}
+
+// Pointer events work with touch and mouse without a remote JavaScript dependency.
+// A numeric position control remains available for long moves and accessibility.
+function installCueDragReorder() {
+  const tbody = content.querySelector(".cue-order-table tbody");
+  if (!tbody) return;
+  let drag = null;
+  let targetRow = null;
+  let scrollFrame = null;
+
+  function clearTarget() {
+    targetRow?.classList.remove("cue-drop-before", "cue-drop-after");
+    targetRow = null;
+  }
+  function updateTarget(x, y) {
+    if (!drag?.started) return;
+    const hit = document.elementFromPoint(x, y)?.closest("tr[data-cue-id]");
+    clearTarget();
+    if (!hit || !tbody.contains(hit) || hit.dataset.cueId === drag.cueID) {
+      drag.targetPosition = null;
+      return;
+    }
+    const rect = hit.getBoundingClientRect();
+    const after = y > rect.top + rect.height / 2;
+    const insertion = state.cues.findIndex((cue) => cue.cue_id === hit.dataset.cueId) + (after ? 1 : 0);
+    drag.targetPosition = insertion + 1 - (drag.sourceIndex < insertion ? 1 : 0);
+    if (drag.targetPosition === drag.sourceIndex + 1) {
+      drag.targetPosition = null;
+      return;
+    }
+    targetRow = hit;
+    hit.classList.add(after ? "cue-drop-after" : "cue-drop-before");
+  }
+  function autoScroll() {
+    scrollFrame = null;
+    if (!drag?.started) return;
+    const margin = 72;
+    const y = drag.lastY;
+    if (y < margin) window.scrollBy(0, -12);
+    if (y > window.innerHeight - margin) window.scrollBy(0, 12);
+    updateTarget(drag.lastX, drag.lastY);
+    scrollFrame = window.requestAnimationFrame(autoScroll);
+  }
+  function reset() {
+    if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
+    scrollFrame = null;
+    clearTarget();
+    tbody.querySelector(".cue-dragging")?.classList.remove("cue-dragging");
+    drag = null;
+  }
+  tbody.addEventListener("pointerdown", (event) => {
+    const handle = event.target.closest(".cue-drag-handle");
+    if (!handle || cueReorderBusy || (event.pointerType === "mouse" && event.button !== 0)) return;
+    const row = handle.closest("tr[data-cue-id]");
+    if (!row) return;
+    const sourceIndex = state.cues.findIndex((cue) => cue.cue_id === row.dataset.cueId);
+    if (sourceIndex === -1) return;
+    drag = {
+      pointerID: event.pointerId, cueID: row.dataset.cueId, sourceIndex,
+      originX: event.clientX, originY: event.clientY,
+      lastX: event.clientX, lastY: event.clientY,
+      started: false, targetPosition: null,
+    };
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  tbody.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerID) return;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    if (!drag.started && Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY) < 7) return;
+    if (!drag.started) {
+      drag.started = true;
+      tbody.querySelector(`tr[data-cue-id="${CSS.escape(drag.cueID)}"]`)?.classList.add("cue-dragging");
+      scrollFrame = window.requestAnimationFrame(autoScroll);
+    }
+    updateTarget(event.clientX, event.clientY);
+    event.preventDefault();
+  });
+  tbody.addEventListener("pointerup", (event) => {
+    if (!drag || event.pointerId !== drag.pointerID) return;
+    const cueID = drag.cueID;
+    const position = drag.targetPosition;
+    reset();
+    if (position !== null) void moveCueToPosition(cueID, position);
+  });
+  tbody.addEventListener("pointercancel", reset);
+  tbody.addEventListener("lostpointercapture", reset);
 }
 
 async function moveCue(id, delta) {
