@@ -42,3 +42,29 @@ func TestOfflineHubClockSettingsIsReadOnlyAndAvailableOutsideProject(t *testing.
 		t.Fatal("clock page must have a responsive layout")
 	}
 }
+
+
+func TestClockCorrectionPreviewHasNoApplyCapability(t *testing.T) {
+	js := string(mustReadOperatorContractFile(t, "static/clock-settings.js"))
+	for _, marker := range []string{
+		`clockPreviewProposal("PHONE", Date.now())`,
+		`clockPreviewProposal("MANUAL", manual)`,
+		`clockBaghdadManualMillis`,
+		`/api/v1/system/clock/preview`,
+		`clockPreviewResult`,
+	} {
+		if !strings.Contains(js, marker) {
+			t.Fatalf("phone/manual clock preview contract missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		`/api/v1/system/clock/adjust`,
+		`/api/v1/system/clock/apply`,
+		`/api/v1/system/time/set`,
+		`timedatectl set-time`,
+	} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("clock preview must not expose privileged adjustment: %q", forbidden)
+		}
+	}
+}

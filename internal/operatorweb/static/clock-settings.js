@@ -18,6 +18,10 @@ function clockUIStrings() {
     readonly: "Monitoring only — setting time from phone, manual entry and Mac Companion will come in a later safe phase.",
     wrongClock: "If the Pi time is wrong, keep SHOW disconnected until authorized recovery is available.",
     ago: "Last sampled", justNow: "Just now",
+    previewTitle: "Preview proposed time correction", previewHelp: "This is a DRY RUN. No Pi clock change is possible from this version. Phone time can be wrong.",
+    previewPhone: "Preview this phone's time", previewManual: "Preview manual Baghdad time", manualLabel: "Baghdad date and time (UTC+03:00)",
+    previewStatus: "PREVIEW ONLY — no changes applied", current: "Current Hub UTC", proposed: "Proposed UTC", delta: "Proposed − current",
+    activeSession: "Active runtime session", noSession: "None", blocked: "Active session: future clock correction must be blocked", unblocked: "No session is active, but applying remains unavailable.", invalidManual: "Enter a valid Baghdad date and time.",
   } : {
     title: "الساعة والتاريخ", subtitle: "إعدادات النظام — Raspberry Pi Hub",
     description: "الوقت المعروض هو وقت الـPi، وليس ساعة الهاتف. تعمل الصفحة من شبكة المسرح بدون ماك أو إنترنت.",
@@ -28,6 +32,10 @@ function clockUIStrings() {
     readonly: "مراقبة فقط حالياً — ضبط الوقت من الهاتف أو يدوياً أو من Mac Companion يضاف لاحقاً بعد فحوص الأمان.",
     wrongClock: "إذا ساعة الـPi غير صحيحة، لا تعتبرها متزامنة حتى يتم إصلاحها بطريقة مخوّلة.",
     ago: "آخر فحص", justNow: "الآن",
+    previewTitle: "معاينة تعديل الساعة", previewHelp: "هذه معاينة فقط ولا تغيّر ساعة الـPi. ممكن ساعة الهاتف نفسها تكون غير صحيحة.",
+    previewPhone: "معاينة الوقت من الهاتف", previewManual: "معاينة الوقت اليدوي", manualLabel: "التاريخ والوقت في بغداد (UTC+03:00)",
+    previewStatus: "معاينة فقط — لم يتغير الوقت", current: "وقت الـPi الحالي UTC", proposed: "الوقت المقترح UTC", delta: "فرق الوقت المقترح",
+    activeSession: "جلسة التشغيل الحالية", noSession: "لا توجد", blocked: "جلسة نشطة: تعديل الساعة مستقبلاً يكون محجوباً", unblocked: "لا توجد جلسة نشطة، لكن تطبيق الوقت غير متاح حالياً.", invalidManual: "أدخل تاريخاً ووقتاً صحيحين بتوقيت بغداد.",
   };
 }
 
@@ -127,6 +135,43 @@ async function refreshClockStatus() {
   }
 }
 
+// Preview NEVER applies time: the Hub has no privileged clock-adjust endpoint.
+async function clockPreviewProposal(source, unixMS) {
+  if (state.user?.role !== "OWNER" || state.page !== "clock") return;
+  const t = clockUIStrings();
+  const region = el("clockPreviewResult");
+  if (!region) return;
+  region.textContent = "…";
+  try {
+    const preview = await api("/api/v1/system/clock/preview", {
+      method: "POST", json: { source, proposed_unix_ms: unixMS },
+    });
+    if (state.page !== "clock" || !el("clockPreviewResult")) return;
+    const line = (label, value) => `${label}: ${value}`;
+    const difference = (preview.difference_ms / 1000).toFixed(1);
+    region.textContent = [
+      t.previewStatus,
+      line(t.current, preview.server_utc),
+      line(t.proposed, preview.proposed_utc),
+      line(t.delta, `${difference} s`),
+      line(t.activeSession, preview.active_session || t.noSession),
+      preview.runtime_blocked ? t.blocked : t.unblocked,
+    ].join("\n");
+  } catch (error) {
+    if (el("clockPreviewResult")) el("clockPreviewResult").textContent = errorMessage(error);
+  }
+}
+
+// Explicit Asia/Baghdad UTC+03:00 interpretation of a manual local-clock value.
+// This is a proposal preview, never clock authority; source is labelled.
+function clockBaghdadManualMillis(value) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value || "")) return null;
+  const parsed = Date.parse(`${value}:00+03:00`);
+  if (!Number.isFinite(parsed)) return null;
+  const recheck = new Date(parsed + 3 * 3600000).toISOString().slice(0, 16);
+  return recheck === value ? parsed : null;
+}
+
 function renderClockSettings() {
   const t = clockUIStrings();
   content.innerHTML = `
@@ -166,8 +211,30 @@ function renderClockSettings() {
       <p>${esc(t.readonly)}</p>
       <p class="muted">${esc(t.wrongClock)}</p>
     </article>
+    ${state.user?.role === "OWNER" ? `
+      <article class="card clock-preview-card">
+        <h2>${esc(t.previewTitle)}</h2>
+        <p class="muted">${esc(t.previewHelp)}</p>
+        <div class="clock-preview-buttons">
+          <button id="clockPreviewPhone" class="button primary" type="button">${esc(t.previewPhone)}</button>
+          <label for="clockManualBaghdad">${esc(t.manualLabel)}
+            <input id="clockManualBaghdad" type="datetime-local" step="60">
+          </label>
+          <button id="clockPreviewManual" class="button" type="button">${esc(t.previewManual)}</button>
+        </div>
+        <pre id="clockPreviewResult" class="clock-preview-output" aria-live="polite"></pre>
+      </article>` : ""}
   `;
   el("clockRefresh")?.addEventListener("click", () => { void refreshClockStatus(); });
+  el("clockPreviewPhone")?.addEventListener("click", () => { void clockPreviewProposal("PHONE", Date.now()); });
+  el("clockPreviewManual")?.addEventListener("click", () => {
+    const manual = clockBaghdadManualMillis(el("clockManualBaghdad")?.value);
+    if (manual === null) {
+      if (el("clockPreviewResult")) el("clockPreviewResult").textContent = t.invalidManual;
+      return;
+    }
+    void clockPreviewProposal("MANUAL", manual);
+  });
   clockPaintValues();
   void refreshClockStatus();
 }
