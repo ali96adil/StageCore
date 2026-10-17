@@ -65,7 +65,7 @@ func addV2TestAudit(t *testing.T, f *fixture, d v2TestDevice, projectID, snapsho
 	t.Helper()
 	ctx := context.Background()
 	auditID := fmt.Sprintf("11111111-2222-4333-8444-%012d", epoch*100+int64(len(d.id)))
-	hash := strings.Repeat("a", 64)
+	hash := strings.Repeat(string(rune('a'+epoch-2)), 64)
 	// This test only needs a unique legal UUID-shaped ID per device/epoch.
 	// The tuple is distinguished by a deterministic profile-specific suffix.
 	switch d.profile {
