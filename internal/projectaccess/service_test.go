@@ -43,11 +43,11 @@ func setup(t *testing.T) *fixture {
 	scoped,err:=projectaccess.New(h.DB)
 	if err!=nil{t.Fatal(err)}
 	projects:=store.New(h.DB,clock.Real{})
-	a,_,err:=projects.CreateProject(ctx,store.CreateProjectParams{Name:"قرية صالح",CreatedBy:owner.ID})
+	a,_,err:=projects.CreateProject(ctx,store.CreateProjectParams{Name:"قرية صالح",CreatedBy:owner})
 	if err!=nil{t.Fatal(err)}
-	b,_,err:=projects.CreateProject(ctx,store.CreateProjectParams{Name:"Another show",CreatedBy:owner.ID})
+	b,_,err:=projects.CreateProject(ctx,store.CreateProjectParams{Name:"Another show",CreatedBy:owner})
 	if err!=nil{t.Fatal(err)}
-	return &fixture{a:scoped,users:users,db:h,ownerID:owner.ID,
+	return &fixture{a:scoped,users:users,db:h,ownerID:owner,
 		operatorID:newUser("operator","OPERATOR"),technicianID:newUser("technician","TECHNICIAN"),
 		viewerID:newUser("viewer","VIEWER"),projectA:a.ID,projectB:b.ID}
 }
