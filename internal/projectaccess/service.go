@@ -94,6 +94,21 @@ func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserI
 	if err != nil { return fmt.Errorf("read target user: %w", err) }
 	if targetRole == "OWNER" { return fmt.Errorf("%w: Owner always has global access; never use a scoped grant", ErrInvalid) }
 	if targetEnabled != 1 { return ErrDenied }
+	// VIEWER is a strictly read-only account, even when an Owner specifies
+	// broader Project capabilities by mistake. Operators and Technicians may
+	// receive extra explicitly scoped rights, but not unknown role strings.
+	switch targetRole {
+	case "VIEWER":
+		for permission := range unique {
+			if permission != ProjectView && permission != MediaRead {
+				return fmt.Errorf("%w: VIEWER can only view assigned Project and media", ErrDenied)
+			}
+		}
+	case "OPERATOR", "TECHNICIAN":
+		// Capability allowlist still applies individually below.
+	default:
+		return ErrDenied
+	}
 
 	var exists int
 	err = tx.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE project_id = ?`, projectID).Scan(&exists)
@@ -144,13 +159,16 @@ func (s *Service) Check(ctx context.Context, userID, projectID string, permissio
 	var permitted int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT CASE WHEN u.role='OWNER' THEN 1
-			WHEN g.permission IS NOT NULL THEN 1 ELSE 0 END
+			WHEN u.role IN ('OPERATOR','TECHNICIAN') AND g.permission IS NOT NULL THEN 1
+			WHEN u.role='VIEWER' AND g.permission IS NOT NULL
+				AND ? IN ('project.view','media.read') THEN 1
+			ELSE 0 END
 		FROM local_users u
 		JOIN projects p ON p.project_id = ?
 		LEFT JOIN project_permission_grants g ON g.user_id=u.user_id
 			AND g.project_id=p.project_id AND g.permission=?
 		WHERE u.user_id=? AND u.enabled=1
-	`,projectID,string(permission),userID).Scan(&permitted)
+	`,string(permission),projectID,string(permission),userID).Scan(&permitted)
 	if errors.Is(err, sql.ErrNoRows) { return ErrDenied }
 	if err != nil { return fmt.Errorf("evaluate project access: %w",err) }
 	if permitted != 1 { return ErrDenied }
