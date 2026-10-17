@@ -82,8 +82,11 @@ func (s *Service) CheckProjectAccess(ctx context.Context,userID,projectID string
  err:=s.db.QueryRowContext(ctx,"SELECT role, enabled FROM local_users WHERE user_id = ?",userID).Scan(&role,&enabled)
  if errors.Is(err,sql.ErrNoRows){return ErrForbidden}
  if err!=nil{return err}
- if enabled!=1{return ErrForbidden}
+ if enabled!=1||!validRole(role){return ErrForbidden}
  if role==RoleOwner{return nil}
+ // Existing Viewer sessions must not retain destructive grants after a
+ // role downgrade, even before the Owner explicitly replaces their grant.
+ if role==RoleViewer && cap!=ProjectView && cap!=MediaRead{return ErrForbidden}
  var found int
  err=s.db.QueryRowContext(ctx,`
  SELECT 1 FROM project_user_memberships m
