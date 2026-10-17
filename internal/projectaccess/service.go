@@ -18,6 +18,7 @@ type Permission string
 const (
 	ProjectView       Permission = "project.view"
 	ProjectRename     Permission = "project.rename"
+	ProjectEdit       Permission = "project.edit"
 	CueEdit           Permission = "cue.edit"
 	MediaRead         Permission = "media.read"
 	MediaUpload       Permission = "media.upload"
@@ -27,14 +28,17 @@ const (
 	ShowGO            Permission = "show.go"
 	ShowEnterExit     Permission = "show.enter_exit"
 	DeviceConfigure   Permission = "device.configure"
+	LightingManual    Permission = "lighting.manual"
+	AudioControl      Permission = "audio.control"
 	CapsuleExport     Permission = "capsule.export"
 )
 
 var permissionSet = map[Permission]bool{
-	ProjectView: true, ProjectRename: true, CueEdit: true,
+	ProjectView: true, ProjectRename: true, ProjectEdit: true, CueEdit: true,
 	MediaRead: true, MediaUpload: true, MediaManage: true,
 	SnapshotPublish: true, RehearsalControl: true, ShowGO: true,
-	ShowEnterExit: true, DeviceConfigure: true, CapsuleExport: true,
+	ShowEnterExit: true, DeviceConfigure: true, LightingManual: true, AudioControl: true,
+	CapsuleExport: true,
 }
 
 var (
