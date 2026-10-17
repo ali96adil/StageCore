@@ -13,59 +13,103 @@ import (
 type ResourceKind string
 
 const (
-	ResourceCue       ResourceKind = "cue"
-	ResourceRevision  ResourceKind = "revision"
-	ResourceSnapshot  ResourceKind = "snapshot"
-	ResourceSession   ResourceKind = "session"
+	ResourceCue           ResourceKind = "cue"
+	ResourceRevision      ResourceKind = "revision"
+	ResourceSnapshot      ResourceKind = "snapshot"
+	ResourceSession       ResourceKind = "session"
+	ResourceMediaAsset    ResourceKind = "media_asset"
+	ResourceMediaVersion  ResourceKind = "media_content_version"
+	ResourceMediaLocation ResourceKind = "media_location"
 )
 
-// ResolveProjectForResource is a *read-only* scope resolver for future
-// per-Project route middleware. It never interprets resource IDs as a Project
-// identifier and never trusts user-provided ProjectID as proof of ownership.
-// Missing IDs return ErrNotFound; DB errors are not collapsed into approval.
+// ResolveProjectForResource is a read-only scope resolver for future
+// per-Project route middleware. It never interprets resource IDs as Project
+// identifiers and never trusts a user-provided ProjectID as ownership proof.
+// Missing IDs return ErrNotFound; database errors never grant access.
 //
-// WARNING: use for authorization of read routes only until session/GO
-// dispatch-time authority and revoke/SHOW race fencing are designed.
-func (s *Service) ResolveProjectForResource(ctx context.Context, kind ResourceKind, resourceID string) (string,error) {
-	if s==nil || s.db==nil{return "",ErrDenied}
-	resourceID=strings.TrimSpace(resourceID)
-	if resourceID==""{return "",ErrNotFound}
+// A raw Vault content hash is deliberately NOT a ResourceKind: the same blob
+// may be referenced from separate Projects. For any download, resolve through
+// the authorized media_asset_id/content_version_id, never just a hash.
+//
+// WARNING: qualification for read routes only. It is NOT yet installed in
+// production HTTP handlers and must not be used for GO/actuation authorization.
+func (s *Service) ResolveProjectForResource(ctx context.Context, kind ResourceKind, resourceID string) (string, error) {
+	if s == nil || s.db == nil {
+		return "", ErrDenied
+	}
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return "", ErrNotFound
+	}
+
 	var query string
 	switch kind {
 	case ResourceCue:
-		query=`SELECT r.project_id
-			FROM cues c JOIN project_revisions r ON r.revision_id=c.revision_id
-			WHERE c.cue_id=?`
+		query = `SELECT r.project_id
+			FROM cues c JOIN project_revisions r ON r.revision_id = c.revision_id
+			WHERE c.cue_id = ?`
 	case ResourceRevision:
-		query=`SELECT project_id FROM project_revisions WHERE revision_id=?`
+		query = `SELECT project_id FROM project_revisions WHERE revision_id = ?`
 	case ResourceSnapshot:
-		query=`SELECT project_id FROM runtime_snapshots WHERE runtime_snapshot_id=?`
+		query = `SELECT project_id FROM runtime_snapshots WHERE runtime_snapshot_id = ?`
 	case ResourceSession:
-		// Ensure a Session cannot ambiguously claim a Project that differs
-		// from the immutable Snapshot it references.
-		query=`SELECT s.project_id FROM sessions s
-			JOIN runtime_snapshots rs ON rs.runtime_snapshot_id=s.runtime_snapshot_id
-				AND rs.project_id=s.project_id
-			WHERE s.session_id=?`
+		// Do not accept a Session whose Project conflicts with its Snapshot.
+		query = `SELECT s.project_id FROM sessions s
+			JOIN runtime_snapshots rs ON rs.runtime_snapshot_id = s.runtime_snapshot_id
+				AND rs.project_id = s.project_id
+			WHERE s.session_id = ?`
+	case ResourceMediaAsset:
+		query = `SELECT project_id FROM media_assets WHERE media_asset_id = ?`
+	case ResourceMediaVersion:
+		query = `SELECT a.project_id FROM media_content_versions v
+			JOIN media_assets a ON a.media_asset_id = v.media_asset_id
+			WHERE v.content_version_id = ?`
+	case ResourceMediaLocation:
+		query = `SELECT a.project_id FROM media_locations l
+			JOIN media_content_versions v ON v.content_version_id = l.content_version_id
+			JOIN media_assets a ON a.media_asset_id = v.media_asset_id
+			WHERE l.media_location_id = ?`
 	default:
-		return "",ErrDenied
+		// This includes raw Vault hashes and device/capsule IDs, for which
+		// project ownership or operational authority is not yet qualified.
+		return "", ErrDenied
 	}
+
 	var projectID string
-	err:=s.db.QueryRowContext(ctx,query,resourceID).Scan(&projectID)
-	if errors.Is(err,sql.ErrNoRows){return "",ErrNotFound}
-	if err!=nil{return "",fmt.Errorf("resolve %s owning Project: %w",kind,err)}
-	if strings.TrimSpace(projectID)==""{return "",ErrDenied}
-	return projectID,nil
+	err := s.db.QueryRowContext(ctx, query, resourceID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve %s owning Project: %w", kind, err)
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return "", ErrDenied
+	}
+	return projectID, nil
 }
 
-// CheckProjectResourceRead is not a GO/Cue-write authorization API. For read
-// routes it combines a server-resolved child resource ID with the *current*
-// live Project capability, preventing an attacker from using a valid Cue or
-// Snapshot ID from another Project beneath their own ProjectID URL.
+// CheckProjectResourceRead verifies the actual resource owner AND the current
+// user's live grant. Media assets, versions and locations require media.read,
+// not merely project.view. The Check evaluator also requires project.view for
+// every non-Owner grant. This is an unwired qualification helper, not an HTTP
+// or raw-content-hash download authorization gate.
 func (s *Service) CheckProjectResourceRead(ctx context.Context, userID, expectedProjectID string, kind ResourceKind, resourceID string) error {
-	if strings.TrimSpace(expectedProjectID)=="" {return ErrDenied}
-	actual,err:=s.ResolveProjectForResource(ctx,kind,resourceID)
-	if err!=nil {return err}
-	if actual!=strings.TrimSpace(expectedProjectID){return ErrDenied}
-	return s.Check(ctx,userID,actual,ProjectView)
+	expectedProjectID = strings.TrimSpace(expectedProjectID)
+	if expectedProjectID == "" {
+		return ErrDenied
+	}
+	actual, err := s.ResolveProjectForResource(ctx, kind, resourceID)
+	if err != nil {
+		return err
+	}
+	if actual != expectedProjectID {
+		return ErrDenied
+	}
+	permission := ProjectView
+	switch kind {
+	case ResourceMediaAsset, ResourceMediaVersion, ResourceMediaLocation:
+		permission = MediaRead
+	}
+	return s.Check(ctx, userID, actual, permission)
 }
