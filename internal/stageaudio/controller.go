@@ -144,10 +144,17 @@ func (c *Controller) Execute(ctx context.Context, request Request) (Status, erro
 		if err != nil {
 			return c.statusLocked(), err
 		}
-		// mpv launches with --pause=yes and never autoplays an old file.
-		command = []any{"loadfile", path, "replace"}
+		// Replacing a file while playing must never implicitly start the new
+		// sound at full momentum. Set pause BEFORE the loadfile operation.
+		if err := c.send(ctx, name, []any{"set_property", "pause", true}); err != nil {
+			deck.LastError = "LOCAL_MPV_COMMAND_FAILED"
+			c.decks[name] = deck
+			return c.statusLocked(), err
+		}
+		// If the following load fails, the old deck was at least paused.
 		updated.File = filepath.Base(path)
 		updated.Commanded = "PAUSED"
+		command = []any{"loadfile", path, "replace"}
 	case "PLAY":
 		if deck.File == "" {
 			return c.statusLocked(), fmt.Errorf("%w: load a file before playing", ErrInvalidCommand)
@@ -185,6 +192,11 @@ func (c *Controller) Execute(ctx context.Context, request Request) (Status, erro
 	}
 	if err := c.send(ctx, name, command); err != nil {
 		deck.LastError = "LOCAL_MPV_COMMAND_FAILED"
+		if op == "LOAD" {
+			// mpv may have changed the old track while receiving loadfile.
+			// Explicitly avoid reporting either PLAYING or a confirmed load.
+			deck.Commanded = "UNKNOWN_RECONCILIATION_REQUIRED"
+		}
 		c.decks[name] = deck
 		return c.statusLocked(), err
 	}
