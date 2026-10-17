@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +27,8 @@ const maxCommandBytes = 4096
 
 type reply struct {
 	Status stageaudio.Status `json:"status"`
+	Outputs []stageaudio.AudioOutput `json:"outputs,omitempty"`
+	BluetoothDevices []stageaudio.BluetoothDevice `json:"bluetooth_devices,omitempty"`
 	Error  string            `json:"error,omitempty"`
 }
 
@@ -59,6 +62,7 @@ func main() {
 	}
 	fmt.Printf("StageAudio LOCAL REHEARSAL PROTOTYPE: %s\n", socket)
 	fmt.Println("SHOW UNQUALIFIED. No auto-play, network listener, or Hub Cue integration.")
+	bluez := stageaudio.NewBluetoothService()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -74,13 +78,22 @@ func main() {
 			log.Printf("local audio IPC accept: %v", err)
 			continue
 		}
-		go handleConnection(ctx, conn, controller)
+		go handleConnectionWithBluetooth(ctx, conn, controller, bluez)
 	}
 }
 
 func handleConnection(ctx context.Context, conn net.Conn, controller *stageaudio.Controller) {
+	handleConnectionWithBluetooth(ctx, conn, controller, nil)
+}
+
+type localBluetooth interface {
+	PairedSpeakers(context.Context) ([]stageaudio.BluetoothDevice, error)
+	ConnectPairedSpeaker(context.Context, string) (stageaudio.BluetoothDevice, error)
+}
+
+func handleConnectionWithBluetooth(ctx context.Context, conn net.Conn, controller *stageaudio.Controller, bluetooth localBluetooth) {
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return
 	}
 	// One typed JSON object per connection, with bounded request size and
@@ -102,8 +115,51 @@ func handleConnection(ctx context.Context, conn net.Conn, controller *stageaudio
 		_ = json.NewEncoder(conn).Encode(reply{Status: controller.Status(), Error: "INVALID_AUDIO_COMMAND"})
 		return
 	}
-	if request.Operation == "STATUS" {
+	// The first request is complete; do not time out a short, opt-in BlueZ
+	// connect simply because the client waited over 5 seconds.
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Now().Add(28 * time.Second))
+	op := strings.ToUpper(strings.TrimSpace(request.Operation))
+	if op == "STATUS" {
 		_ = json.NewEncoder(conn).Encode(reply{Status: controller.Status()})
+		return
+	}
+	if op == "OUTPUTS" {
+		qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		outputs, err := controller.Outputs(qctx)
+		out := reply{Status: controller.Status(), Outputs: outputs}
+		if err != nil { out.Error = "LOCAL_OUTPUT_DISCOVERY_UNAVAILABLE" }
+		_ = json.NewEncoder(conn).Encode(out)
+		return
+	}
+	if op == "SELECT_OUTPUT" {
+		qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		status, err := controller.SelectOutput(qctx, request.OutputID)
+		out := reply{Status: status}
+		if err != nil { out.Error = "LOCAL_OUTPUT_ROUTE_REJECTED" }
+		_ = json.NewEncoder(conn).Encode(out)
+		return
+	}
+	if op == "BT_DEVICES" || op == "BT_CONNECT" {
+		out := reply{Status: controller.Status()}
+		if bluetooth == nil {
+			out.Error = "BLUETOOTH_BACKEND_UNAVAILABLE"
+		} else if op == "BT_DEVICES" {
+			qctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			devices, err := bluetooth.PairedSpeakers(qctx)
+			if err != nil { out.Error = "BLUETOOTH_DISCOVERY_UNAVAILABLE" } else { out.BluetoothDevices = devices }
+		} else if !controller.OutputChangeAllowed() {
+			out.Error = "STOP_AUDIO_BEFORE_BLUETOOTH_CONNECT"
+		} else {
+			qctx, cancel := context.WithTimeout(ctx, 23*time.Second)
+			defer cancel()
+			device, err := bluetooth.ConnectPairedSpeaker(qctx, request.Address)
+			if err != nil { out.Error = "BLUETOOTH_CONNECT_FAILED" } else { out.BluetoothDevices = []stageaudio.BluetoothDevice{device} }
+		}
+		_ = json.NewEncoder(conn).Encode(out)
 		return
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)

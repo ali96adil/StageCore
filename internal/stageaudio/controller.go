@@ -35,6 +35,8 @@ type Request struct {
 	Deck      string   `json:"deck,omitempty"`
 	Operation string   `json:"operation"`
 	File      string   `json:"file,omitempty"`
+	OutputID  string   `json:"output_id,omitempty"`
+	Address   string   `json:"address,omitempty"`
 	Volume    *float64 `json:"volume,omitempty"`
 	Loop      *bool    `json:"loop,omitempty"`
 }
@@ -49,6 +51,8 @@ type DeckStatus struct {
 
 type Status struct {
 	MasterVolume float64               `json:"master_volume"`
+	OutputID     string                `json:"selected_output_id,omitempty"`
+	OutputError  string                `json:"output_error,omitempty"`
 	Decks        map[string]DeckStatus `json:"decks"`
 	Qualified    bool                  `json:"show_qualified"`
 	Note         string                `json:"note"`
@@ -59,6 +63,8 @@ type Controller struct {
 	root   string
 	sender Sender
 	master float64
+	output string
+	outputError string
 	decks  map[string]DeckStatus
 }
 
@@ -83,6 +89,19 @@ func NewController(mediaRoot string, sender Sender) (*Controller, error) {
 	}, nil
 }
 
+// OutputChangeAllowed is a conservative safety gate shared by Bluetooth
+// connection and speaker routing. Even PAUSED tracks must be stopped first.
+func (c *Controller) OutputChangeAllowed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, name := range []string{DeckA, DeckB} {
+		if c.decks[name].Commanded != "STOPPED" {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Controller) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -96,9 +115,11 @@ func (c *Controller) statusLocked() Status {
 	}
 	return Status{
 		MasterVolume: c.master,
+		OutputID: c.output,
+		OutputError: c.outputError,
 		Decks: copied,
 		Qualified: false,
-		Note: "REHEARSAL_PROTOTYPE_LOCAL_ACK_ONLY_NOT_AUDIO_DELIVERY_PROOF",
+		Note: "REHEARSAL_PROTOTYPE_LOCAL_ACK_ONLY_NOT_AUDIO_DELIVERY_PROOF; OUTPUT_UNSELECTED_USES_HOST_DEFAULT",
 	}
 }
 
