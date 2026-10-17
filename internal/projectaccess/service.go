@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 )
 
 type Permission string
@@ -63,6 +65,18 @@ func New(db *sql.DB) (*Service, error) {
 // This method is not an HTTP endpoint: a separate authenticated Owner-only,
 // audited route must be reviewed before it is exposed to operators.
 func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission) error {
+	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, nil)
+}
+
+// SetPermissionsAudited requires an audit record in the same database
+// transaction as the grant mutation. It must be used by the Owner HTTP API,
+// unlike the internal fixture helper above; on failure nothing is committed.
+func (s *Service) SetPermissionsAudited(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission, audit *securityaudit.Service) error {
+	if audit == nil { return ErrInvalid }
+	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, audit)
+}
+
+func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission, audit *securityaudit.Service) error {
 	if s == nil { return ErrInvalid }
 	actingOwnerID = strings.TrimSpace(actingOwnerID)
 	targetUserID = strings.TrimSpace(targetUserID)
@@ -123,6 +137,7 @@ func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserI
 		if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE project_id = ? AND user_id = ?`, projectID, targetUserID); err != nil {
 			return fmt.Errorf("remove project membership: %w", err)
 		}
+		if err := writeGrantAudit(ctx, tx, audit, actingOwnerID, targetUserID, projectID, nil); err != nil { return err }
 		return tx.Commit()
 	}
 	nowUS := s.now().UTC().UnixMicro()
@@ -147,7 +162,24 @@ func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserI
 			return fmt.Errorf("grant project permission: %w", err)
 		}
 	}
+	if err := writeGrantAudit(ctx, tx, audit, actingOwnerID, targetUserID, projectID, keys); err != nil { return err }
 	if err := tx.Commit(); err != nil { return fmt.Errorf("commit project grants: %w", err) }
+	return nil
+}
+
+// writeGrantAudit runs BEFORE the grant transaction commits; on failure the
+// caller's deferred Rollback undoes the grants as well.
+func writeGrantAudit(ctx context.Context, tx *sql.Tx, audit *securityaudit.Service,
+	actingOwnerID, targetUserID, projectID string, granted []string) error {
+	if audit == nil { return nil } // Internal migration fixture only.
+	if granted == nil { granted = []string{} }
+	_, err := audit.AppendTx(ctx, tx, securityaudit.Event{
+		EventType: "project.permissions.replace", ActorUserID: actingOwnerID,
+		ResourceType: "project", ResourceID: projectID,
+		Result: securityaudit.ResultSuccess,
+		Metadata: map[string]any{"target_user_id": targetUserID, "permissions": granted},
+	})
+	if err != nil { return fmt.Errorf("atomic project permissions audit failed: %w", err) }
 	return nil
 }
 
