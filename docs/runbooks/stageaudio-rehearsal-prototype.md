@@ -67,6 +67,18 @@ printf '%s\n' '{"operation":"SELECT_OUTPUT","output_id":"pulse/bluez_output.AA_B
 
 These examples are **illustrative output IDs only**; actual naming depends on PipeWire/PulseAudio versions, available profiles and mpv audio driver. The service queries `mpv` `audio-device-list`, never changes the system-wide default sink, and sets both audio decks explicitly only when stopped. Errors or a partially applied route are surfaced and require operator review. Bluetooth disconnect is **not** an authorization to fail over to 3.5 mm while playing. The player still is **not integrated with the Hub, phone UI or Cues** in this stacked PR. No SHOW qualification.
 
+## StageCore Operator phone UI — optional Hub bridge (stacked Draft PR)
+
+The optional StageAudio phone UI appears in the top-level `Audio / الصوت` navigation in StageCore Operator after this PR is **built, merged and explicitly deployed**. It is not present on the Pi 4 installation yet. The page connects to authenticated HTTPS Hub API only; it does not connect directly to mpv, BlueZ or the unix control socket.
+
+The Hub exposes `GET /api/v1/system/audio/status`, `/outputs`, `/bluetooth`, `/media` (authenticated `project.read`) and `POST /api/v1/system/audio/command` (authenticated `runtime.control`, same-origin CSRF). The command API accepts only typed deck operations LOAD/PLAY/PAUSE/STOP/VOLUME/LOOP, MASTER_VOLUME, SELECT_OUTPUT and BT_CONNECT. An active SHOW or unknown session state must reject all commands. Owner/Technician/Operator can control; Viewer is read-only. No direct remote mpv JSON IPC or shell is exposed.
+
+**Default is OFF:** when `STAGECORE_AUDIO_SOCKET` is empty, the Hub creates no sound player and the Audio page shows the sidecar as unavailable; StageCore GO is unaffected. A trusted operator must manually start `stagecore-audio` and explicitly set `STAGECORE_AUDIO_SOCKET=/absolute/private/path/control.sock` on the Hub process *only after safe offline hardware testing and approval*. Socket is root-owned or same-service-user private mode 0600 inside 0700 directory; Hub can only connect if its Unix account has filesystem access. Never chmod 0777, move socket to public shared directories, or expose over TCP. The prototype prints a per-run ephemeral socket path, so the opted-in Hub configuration would need to be updated after service restart; stable supervised runtime socket design is a later task.
+
+A **media list** reads only WAV/MP3/FLAC regular files in the trusted sidecar media folder. The phone UI does not yet support uploads, remote URLs or arbitrary file paths. Files keep playing when the phone sleeps/disconnects, because playback runs in Pi 4 sidecar, but status reflects local player command acknowledgements rather than verified speaker output. Bluetooth pairing is manual/physical for now; on the page the operator can list/connect *previously paired* A2DP speakers then select a real enumerated output. Both decks must be STOPPED before connecting or changing outputs.
+
+The Hub checks the authoritative active operational session before each request, and blocks SHOW. This is a prototype safety guard **not an atomic barrier** against a SHOW starting concurrently with a delayed audio command; approval for real shows requires a shared runtime authority fence in both the Hub and sidecar. Until that exists, **do not run or enable StageAudio during a live SHOW**.
+
 ## Next reviewed PRs
 
 - Establish headless Pi 4 output/mixer configuration and actual two-deck playback reliability, including verified Bluetooth A2DP and wired 3.5mm; reject any option that competes with GO/lighting safety.
