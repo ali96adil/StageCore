@@ -77,10 +77,10 @@ func TestRenameOriginalAndDuplicatedProjectPreservesStableReferences(t *testing.
 	if actual.CurrentRevisionID!=revision.ID || actual.ID!=original.ID{
 		t.Fatalf("metadata rename changed immutable identifiers: %+v",actual)
 	}
-	snapshots,err:=projectStore.ListRuntimeSnapshots(ctx,original.ID)
+	stillPublished,err:=projectStore.GetRuntimeSnapshot(ctx,published.ID)
 	if err!=nil{t.Fatal(err)}
-	if len(snapshots)==0 || snapshots[len(snapshots)-1].ID!=published.ID{
-		t.Fatalf("published snapshot changed or disappeared: %+v",snapshots)
+	if stillPublished.ID!=published.ID || stillPublished.RevisionID!=revision.ID{
+		t.Fatalf("published snapshot changed or disappeared: %+v",stillPublished)
 	}
 	cues,err:=projectStore.ListCues(ctx,revision.ID)
 	if err!=nil{t.Fatal(err)}
