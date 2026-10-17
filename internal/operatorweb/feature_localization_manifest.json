@@ -12,7 +12,7 @@
         {"action_id": "view-clock", "label": {"en": "View Hub Clock", "ar-IQ": "عرض ساعة الـ Hub"}},
         {"action_id": "refresh-clock", "label": {"en": "Refresh Clock Status", "ar-IQ": "تحديث حالة الساعة"}}
       ],
-      "ui_keys": ["title", "subtitle", "description", "server", "utc", "phone", "difference", "source", "rtc", "battery", "systemZone", "sample", "refresh", "unknown", "readonly", "wrongClock", "ago", "justNow"]
+      "ui_keys": ["title", "subtitle", "description", "server", "utc", "phone", "difference", "source", "rtc", "battery", "systemZone", "sample", "refresh", "unknown", "readonly", "wrongClock", "ago", "justNow", "previewTitle", "previewHelp", "previewPhone", "previewManual", "manualLabel", "previewStatus", "current", "proposed", "delta", "activeSession", "noSession", "blocked", "unblocked", "invalidManual"]
     },
     {
       "feature_id": "CORE-OPERATOR",
