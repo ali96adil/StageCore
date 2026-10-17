@@ -3,6 +3,71 @@
   "required_locales": ["en", "ar-IQ"],
   "features": [
     {
+      "feature_id": "CORE-STAGEAUDIO",
+      "localization_mode": "keyed",
+      "owner_assets": [
+        "static/stageaudio.js"
+      ],
+      "name": {
+        "en": "StageAudio Offline Rehearsal Player",
+        "ar-IQ": "StageAudio مشغل صوت البروفات المحلي"
+      },
+      "summary": {
+        "en": "Offline bilingual phone controls for a safely isolated Pi 4 two-deck rehearsal player, wired analog and paired Bluetooth outputs.",
+        "ar-IQ": "واجهة عربية وإنكليزية من الهاتف لمشغل صوت البروفات على Pi 4 بطبقتين مستقلتين ومخارج سلكية وBluetooth مقترنة."
+      },
+      "actions": [
+        {
+          "action_id": "inspect-audio",
+          "label": {
+            "en": "Inspect Audio Outputs",
+            "ar-IQ": "عرض مخارج الصوت"
+          }
+        },
+        {
+          "action_id": "control-decks",
+          "label": {
+            "en": "Control Rehearsal Layers",
+            "ar-IQ": "التحكم بطبقات صوت البروفة"
+          }
+        }
+      ],
+      "ui_keys": [
+        "title",
+        "description",
+        "unavailable",
+        "showLock",
+        "viewer",
+        "note",
+        "refresh",
+        "decks",
+        "output",
+        "select",
+        "stopFirst",
+        "none",
+        "bluetooth",
+        "connected",
+        "paired",
+        "connect",
+        "scan",
+        "noBT",
+        "files",
+        "noFiles",
+        "load",
+        "play",
+        "pause",
+        "stop",
+        "loop",
+        "volume",
+        "master",
+        "state",
+        "stopped",
+        "playing",
+        "paused",
+        "notReady"
+      ]
+    },
+    {
       "feature_id": "CORE-OPERATOR",
       "localization_mode": "legacy-source-text",
       "owner_assets": ["static/app.js", "static/app.css"],
