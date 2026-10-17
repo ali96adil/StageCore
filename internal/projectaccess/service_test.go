@@ -174,3 +174,40 @@ func TestProjectCopyDoesNotInheritMembership(t *testing.T) {
 	list,err:=f.a.AccessibleProjectIDs(ctx,f.viewerID)
 	if err!=nil||len(list)!=1||list[0]!=f.projectA{t.Fatalf("duplicate leaked old membership: %+v %v",list,err)}
 }
+
+
+func TestViewerCannotReceiveOrExerciseActuatingProjectPermissions(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	for _, denied := range []projectaccess.Permission{
+		projectaccess.CueEdit, projectaccess.MediaUpload, projectaccess.MediaManage,
+		projectaccess.SnapshotPublish, projectaccess.RehearsalControl,
+		projectaccess.ShowGO, projectaccess.ShowEnterExit, projectaccess.DeviceConfigure,
+		projectaccess.ProjectRename, projectaccess.CapsuleExport,
+	} {
+		if err := f.a.SetPermissions(ctx, f.ownerID, f.viewerID, f.projectA,
+			[]projectaccess.Permission{projectaccess.ProjectView, denied}); !errors.Is(err, projectaccess.ErrDenied) {
+			t.Fatalf("VIEWER received forbidden grant %s: %v", denied, err)
+		}
+	}
+	// Owner may still explicitly grant read-only access for a show.
+	if err := f.a.SetPermissions(ctx, f.ownerID, f.viewerID, f.projectA,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	allow(t, f, f.viewerID, f.projectA, projectaccess.ProjectView)
+	allow(t, f, f.viewerID, f.projectA, projectaccess.MediaRead)
+	deny(t, f, f.viewerID, f.projectA, projectaccess.ShowGO)
+	deny(t, f, f.viewerID, f.projectB, projectaccess.ProjectView)
+
+	// Even if a rogue migration/DB tool puts an inconsistent capability row
+	// into the grants table, the effective authorization checks the live role.
+	if _, err := f.db.DB.ExecContext(ctx,
+		`INSERT INTO project_permission_grants
+		  (project_id,user_id,permission,granted_by_user_id,granted_at_us)
+		  VALUES(?,?,?,?,1)`,
+		f.projectA, f.viewerID, string(projectaccess.ShowGO), f.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	deny(t, f, f.viewerID, f.projectA, projectaccess.ShowGO)
+}
