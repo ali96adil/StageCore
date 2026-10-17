@@ -36,24 +36,38 @@ func (s *Store) SetLightingNodeBinding(ctx context.Context, revisionID string, b
 		return lightingnode.ProjectBinding{}, err
 	}
 
-	var deviceProjectID sql.NullString
-	var profileID sql.NullString
+	var deviceProjectID, profileID sql.NullString
+	var assignmentProjectID, assignmentState, protocolVersion string
 	var enabled int
-	err = s.db.QueryRowContext(ctx,
-		"SELECT project_id, profile_id, enabled FROM stage_devices WHERE device_id = ?",
-		binding.DeviceID,
-	).Scan(&deviceProjectID, &profileID, &enabled)
+	err = s.db.QueryRowContext(ctx, `
+		SELECT d.project_id, d.profile_id, d.enabled, d.protocol_version,
+		       COALESCE(a.project_id, ''), COALESCE(a.assignment_state, '')
+		FROM stage_devices d
+		LEFT JOIN stage_device_assignments a ON a.device_id = d.device_id
+		WHERE d.device_id = ?
+	`, binding.DeviceID).Scan(&deviceProjectID, &profileID, &enabled,
+		&protocolVersion, &assignmentProjectID, &assignmentState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return lightingnode.ProjectBinding{}, domain.ErrNotFound
 	}
 	if err != nil {
 		return lightingnode.ProjectBinding{}, fmt.Errorf("read lighting Stage Device: %w", err)
 	}
-	if enabled != 1 || !deviceProjectID.Valid || strings.TrimSpace(deviceProjectID.String) != revision.ProjectID {
-		return lightingnode.ProjectBinding{}, fmt.Errorf("%w: lighting Stage Device must be enabled and belong to the same project", domain.ErrConflict)
-	}
 	if !profileID.Valid || strings.TrimSpace(profileID.String) != lightingnode.ProfileID {
 		return lightingnode.ProjectBinding{}, fmt.Errorf("%w: Stage Device is not paired as profile %s", domain.ErrConflict, lightingnode.ProfileID)
+	}
+	// V2 is projectless by design; the Hub-owned assignment is authoritative
+	// for Draft authoring. This check grants NO runtime device command authority.
+	ownsProject := false
+	switch protocolVersion {
+	case "stagecore.device/1":
+		ownsProject = deviceProjectID.Valid && strings.TrimSpace(deviceProjectID.String) == revision.ProjectID
+	case "stagecore.device/2":
+		ownsProject = !deviceProjectID.Valid && assignmentProjectID == revision.ProjectID &&
+			(assignmentState == "BLOCKED" || assignmentState == "ACTIVE")
+	}
+	if enabled != 1 || !ownsProject {
+		return lightingnode.ProjectBinding{}, fmt.Errorf("%w: lighting Stage Device must be enabled and assigned to the same project", domain.ErrConflict)
 	}
 
 	binding.RevisionID = revision.ID
