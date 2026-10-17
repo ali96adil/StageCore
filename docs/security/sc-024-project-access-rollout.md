@@ -12,6 +12,7 @@ Existing StageCore `userauth.Authorize(role, permission)` is a global permission
 | --- | --- | --- |
 | `project.view` | Find/open the Project's overview | Denied |
 | `project.rename` | Rename Project | Denied |
+| `project.edit` | Edit Project configuration and metadata | Denied |
 | `cue.edit` | Edit Draft Cue | Denied |
 | `media.read` | Read Vault-scoped files | Denied |
 | `media.upload` | Import media to Project Vault | Denied |
@@ -21,11 +22,17 @@ Existing StageCore `userauth.Authorize(role, permission)` is a global permission
 | `show.go` | Execute GO | Denied |
 | `show.enter_exit` | Start/end Show Mode | Denied |
 | `device.configure` | Change assigned devices | Denied |
+| `lighting.manual` | Operator manual lighting controls | Denied |
+| `audio.control` | StageAudio rehearsal player commands | Denied |
 | `capsule.export` | Export Project show capsule | Denied |
 
-All non-OWNER capabilities must be explicitly granted by an **enabled current OWNER**. Every non-empty membership must include `project.view`. The Owner's authority is universal and is obtained from the **current database role**, not an earlier browser-session claim. Non-owner OPERATOR/TECHNICIAN/VIEWER are all restricted in this future policy, regardless of former global-role privileges. No grants are copied when a Project is duplicated. A disabled user has no access; grant replacement/revocation is immediately reflected by uncached queries. Grants survive account disabling and would become effective again if the same account is re-enabled; Owner should review before enabling. A later change may intentionally revoke grants on account disable after explicit approval.
+All non-OWNER capabilities must be explicitly granted by an **enabled current OWNER**. Every non-empty membership must include `project.view`. A `VIEWER` role has a separate hard ceiling: only `project.view` and `media.read` are permitted, even if an unexpected DB grant for GO or device control exists; an `OPERATOR` or `TECHNICIAN` may receive additional scoped permissions only when explicitly granted. The Owner's authority is universal and is obtained from the **current database role**, not an earlier browser-session claim. Non-owner OPERATOR/TECHNICIAN/VIEWER are all restricted in this future policy, regardless of former global-role privileges. No grants are copied when a Project is duplicated. A disabled user has no access; grant replacement/revocation is immediately reflected by uncached queries. Grants survive account disabling and would become effective again if the same account is re-enabled; Owner should review before enabling. A later change may intentionally revoke grants on account disable after explicit approval.
 
 **No automatic migration of historic OPERATOR accounts to full access** should occur. The future cutover must provide an Owner-controlled permissions review and rehearsed rollback plan so operators do not lose emergency SHOW access unexpectedly.
+
+## Duplicate foundation branches
+
+The earlier [Draft #517](https://github.com/ali96adil/StageCore/pull/517) and this [Draft #518](https://github.com/ali96adil/StageCore/pull/518) were developed as alternative implementations of migration **#53**, NOT additive migrations. The intended canonical model for further development is this PR's explicit memberships + grants. Never merge both migrations, nor deploy an arbitrary migration #53 before reviewing which schema was selected. #517 must remain an alternative reference until reconciled/closed after explicit review.
 
 ## Persistence
 
