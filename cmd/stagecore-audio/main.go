@@ -43,15 +43,18 @@ func main() {
 	defer backend.Close()
 	controller, err := stageaudio.NewController(*mediaRoot, backend)
 	if err != nil {
+		_ = backend.Close()
 		log.Fatal(err)
 	}
 	socket := filepath.Join(backend.SocketDir(), "control.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
+		_ = backend.Close()
 		log.Fatal(err)
 	}
 	defer listener.Close()
 	if err := os.Chmod(socket, 0600); err != nil {
+		_ = backend.Close()
 		log.Fatal(err)
 	}
 	fmt.Printf("StageAudio LOCAL REHEARSAL PROTOTYPE: %s\n", socket)
