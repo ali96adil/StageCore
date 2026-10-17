@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -80,7 +82,12 @@ func handleConnection(ctx context.Context, conn net.Conn, controller *stageaudio
 	}
 	// One typed JSON object per connection, with bounded request size and
 	// strict field validation. Never forward caller-supplied raw mpv arrays.
-	decoder := json.NewDecoder(io.LimitReader(conn, maxCommandBytes+1))
+	line, readErr := bufio.NewReader(io.LimitReader(conn, maxCommandBytes+2)).ReadBytes('\n')
+	if readErr != nil || len(line) > maxCommandBytes {
+		_ = json.NewEncoder(conn).Encode(reply{Status: controller.Status(), Error: "INVALID_AUDIO_COMMAND"})
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(line))
 	decoder.DisallowUnknownFields()
 	var request stageaudio.Request
 	if err := decoder.Decode(&request); err != nil {
