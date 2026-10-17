@@ -21,6 +21,10 @@ type duplicateProjectRequest struct {
     Name string `json:"name"`
 }
 
+type renameProjectRequest struct {
+	Name string `json:"name"`
+}
+
 type projectView struct {
 	ID                string                  `json:"project_id"`
 	Name              string                  `json:"name"`
@@ -157,6 +161,32 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
             })
         },
     ))
+
+	// Metadata-only rename: never mutates a Revision, Runtime Snapshot,
+	// Cue, Vault object or a running Session. Role permission/CSRF is enforced
+	// by the existing Operator session middleware.
+	mux.HandleFunc("PATCH /api/v1/projects/{project_id}", withPermission(auth, userauth.PermissionProjectEdit,
+		func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			var body renameProjectRequest
+			if !decodeBoundedJSON(w, r, &body) {
+				return
+			}
+			project, err := projectStore.RenameProject(r.Context(), r.PathValue("project_id"), body.Name)
+			if err != nil {
+				code, status := "PROJECT_RENAME_FAILED", http.StatusServiceUnavailable
+				switch {
+				case errors.Is(err, domain.ErrInvalidInput):
+					code, status = "PROJECT_NAME_INVALID", http.StatusBadRequest
+				case errors.Is(err, domain.ErrNotFound):
+					code, status = "PROJECT_NOT_FOUND", http.StatusNotFound
+				}
+				writeJSON(w, status, map[string]any{"error_code": code})
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]any{"project": makeProjectView(project)})
+		},
+	))
 
 	mux.HandleFunc("GET /api/v1/projects/{project_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
