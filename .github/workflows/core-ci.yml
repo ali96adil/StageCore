@@ -33,9 +33,12 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Check Operator JS syntax
+      - name: Check Operator JS syntax and Cue reorder contract
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/phase4.js
+          node --test tests/cue_reorder_ui.test.cjs
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
