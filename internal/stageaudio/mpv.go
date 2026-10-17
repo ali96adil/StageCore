@@ -49,7 +49,7 @@ func NewMPVBackend(runtimeRoot string) (*MPVBackend, error) {
 		socket := filepath.Join(dir, "mpv-"+deck+".sock")
 		cmd := exec.Command(executable,
 			"--no-config", "--load-scripts=no", "--no-video", "--no-terminal",
-			"--idle=yes", "--pause=yes", "--force-window=no", "--audio-display=no",
+			"--idle=yes", "--pause=yes", "--volume=49", "--force-window=no", "--audio-display=no",
 			"--input-ipc-server="+socket)
 		cmd.Stdout = io.Discard
 		cmd.Stderr = io.Discard
