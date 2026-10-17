@@ -163,9 +163,17 @@ func (s *Service) Check(ctx context.Context, userID, projectID string, permissio
 	var permitted int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT CASE WHEN u.role='OWNER' THEN 1
-			WHEN u.role IN ('OPERATOR','TECHNICIAN') AND g.permission IS NOT NULL THEN 1
+			WHEN u.role IN ('OPERATOR','TECHNICIAN') AND g.permission IS NOT NULL
+				AND EXISTS (SELECT 1 FROM project_permission_grants view_grant
+					WHERE view_grant.project_id=p.project_id
+						AND view_grant.user_id=u.user_id
+						AND view_grant.permission='project.view') THEN 1
 			WHEN u.role='VIEWER' AND g.permission IS NOT NULL
-				AND ? IN ('project.view','media.read') THEN 1
+				AND ? IN ('project.view','media.read')
+				AND EXISTS (SELECT 1 FROM project_permission_grants view_grant
+					WHERE view_grant.project_id=p.project_id
+						AND view_grant.user_id=u.user_id
+						AND view_grant.permission='project.view') THEN 1
 			ELSE 0 END
 		FROM local_users u
 		JOIN projects p ON p.project_id = ?
