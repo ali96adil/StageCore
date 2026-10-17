@@ -16,7 +16,7 @@
 - Missing/null/invalid field cannot be interpreted as revoke.
 - Requests rejected while **any REHEARSAL or SHOW session is operational**; unknown session state fails closed.
 - `project.view` must accompany any nonempty permission set. Enabled target must be OPERATOR or TECHNICIAN for control operations; VIEWER may receive only project.view/media.read. OWNER accounts are not grant targets. No permission copied on Project duplication.
-- All changes are written transactionally by `SetPermissionsAudited`: the new `securityaudit.AppendTx` adds a `project.permissions.replace` event **within the same SQLite transaction**, including the target user and exact grant set, so if auditing fails the mutation is rolled back. The existing standalone `securityaudit.Append` behavior stays unchanged.
+- All changes are written transactionally by `SetPermissionsAudited`: `securityaudit.Prepare` validates and redacts the event **before** opening a SQLite writer transaction, then `securityaudit.AppendPreparedTx` writes the `project.permissions.replace` audit record **within that same grant transaction**, including the target user and exact grant set. If auditing fails the mutation is rolled back. This pre-redaction ordering is required because StageCore uses a single-connection SQLite pool and Secret Store redaction may query the database. The existing standalone `securityaudit.Append` behavior stays unchanged.
 
 No `DELETE` endpoint is needed: explicit `PUT []` revokes. This route does not enumerate all users; the existing Owner user-management route lists accounts.
 
