@@ -193,6 +193,12 @@ tr:last-child td { border-bottom: 0; }
 .clock-big-value { display: block; font-size: clamp(1.12rem, 2.6vw, 1.9rem); font-variant-numeric: tabular-nums; line-height: 1.5; }
 .clock-read-only { margin-top: 14px; border: 1px solid var(--line); }
 .clock-read-only p { line-height: 1.6; }
+.clock-preview-card { margin-top: 14px; }
+.clock-preview-buttons { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 12px; }
+.clock-preview-buttons label { display: grid; gap: 6px; max-width: 100%; }
+.clock-preview-buttons input { min-width: 0; width: min(100%, 250px); }
+.clock-preview-output { margin-top: 14px; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; direction: ltr; unicode-bidi: plaintext; background: var(--panel-2); border-radius: 8px; font-size: .9rem; }
+
 @media (max-width: 680px) { .clock-status-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .cue-link-cell { min-width: 230px; }
