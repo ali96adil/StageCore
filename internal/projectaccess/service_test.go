@@ -180,10 +180,11 @@ func TestViewerCannotReceiveOrExerciseActuatingProjectPermissions(t *testing.T) 
 	f := setup(t)
 	ctx := context.Background()
 	for _, denied := range []projectaccess.Permission{
-		projectaccess.CueEdit, projectaccess.MediaUpload, projectaccess.MediaManage,
+		projectaccess.ProjectEdit, projectaccess.CueEdit, projectaccess.MediaUpload, projectaccess.MediaManage,
 		projectaccess.SnapshotPublish, projectaccess.RehearsalControl,
 		projectaccess.ShowGO, projectaccess.ShowEnterExit, projectaccess.DeviceConfigure,
 		projectaccess.ProjectRename, projectaccess.CapsuleExport,
+		projectaccess.AudioControl, projectaccess.LightingManual,
 	} {
 		if err := f.a.SetPermissions(ctx, f.ownerID, f.viewerID, f.projectA,
 			[]projectaccess.Permission{projectaccess.ProjectView, denied}); !errors.Is(err, projectaccess.ErrDenied) {
