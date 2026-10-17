@@ -44,9 +44,32 @@ printf '%s\n' '{"operation":"STATUS"}' | socat - UNIX-CONNECT:/private/path/cont
 
 **Note:** commands use a single line of JSON and close after a single response. The status reports the **commanded state**, not confirmed audible output. Two-deck Master changes are not physically atomic; a failed second deck reports `MASTER_VOLUME_PARTIALLY_APPLIED_RECONCILIATION_REQUIRED` rather than pretending both changed.
 
+## Bluetooth A2DP and wired output selection (stacked Bluetooth prototype)
+
+**StageAudio now has explicit support for BOTH the Pi 4 3.5 mm analog output and a paired Bluetooth A2DP speaker**, subject to actual available devices on the headless Pi audio server. The analog plug remains the low-latency rehearsal choice; Bluetooth can lag and unexpectedly disconnect. This is a **choose one output at a time** model, *not* synchronized dual output to wired + Bluetooth at once.
+
+**Prerequisites to physically qualify later:**
+- Pi 4's BlueZ controller / `bluetoothctl`, `mpv`, and working audio stack with A2DP support (`pipewire` + `wireplumber` and `pipewire-pulse`, or an equivalent correctly installed PulseAudio service); the final headless configuration must be inspected first. Do not install packages on the live Pi without approval.
+- **Initial pairing is deliberately separate** from StageAudio's prototype socket commands, since Bluetooth pairing can require PIN/passkey or confirming a physical speaker. Pair once interactively with BlueZ under an authorized Pi account, e.g. using `bluetoothctl`: choose an agent, start a short scan, verify the speaker's Bluetooth address/identity, `pair <MAC>` with explicit confirmation, stop the scan. Trust changes are never performed by StageAudio automatically. The authenticated browser pairing wizard is a later PR.
+- Both `mpv` decks need to be idle/**STOPPED** for routing or connecting a speaker. If a deck has any media loaded, issue `STOP` for A and B (not only `PAUSE`) before changing output; reload and play manually after switching.
+- Bluetooth is not auto-selected after connecting; `OUTPUTS` must report the newly created **actual A2DP sink**. If it doesn't appear, display unavailable rather than silently choosing analog.
+
+Typed local commands (use the same private Unix socket from the prior section):
+
+```bash
+printf '%s\n' '{"operation":"BT_DEVICES"}' | socat - UNIX-CONNECT:/private/path/control.sock
+printf '%s\n' '{"operation":"BT_CONNECT","address":"AA:BB:CC:DD:EE:FF"}' | socat - UNIX-CONNECT:/private/path/control.sock
+printf '%s\n' '{"operation":"OUTPUTS"}' | socat - UNIX-CONNECT:/private/path/control.sock
+# Copy the exact A2DP output_id from OUTPUTS, do not fabricate IDs from MACs.
+printf '%s\n' '{"operation":"SELECT_OUTPUT","output_id":"pulse/bluez_output.AA_BB_CC_DD_EE_FF.a2dp-sink"}' | socat - UNIX-CONNECT:/private/path/control.sock
+# Or select the actual analog/headphone output_id returned by OUTPUTS.
+```
+
+These examples are **illustrative output IDs only**; actual naming depends on PipeWire/PulseAudio versions, available profiles and mpv audio driver. The service queries `mpv` `audio-device-list`, never changes the system-wide default sink, and sets both audio decks explicitly only when stopped. Errors or a partially applied route are surfaced and require operator review. Bluetooth disconnect is **not** an authorization to fail over to 3.5 mm while playing. The player still is **not integrated with the Hub, phone UI or Cues** in this stacked PR. No SHOW qualification.
+
 ## Next reviewed PRs
 
-- Establish headless Pi 4 output/mixer configuration and actual two-deck playback reliability; reject any option that competes with GO/lighting safety.
+- Establish headless Pi 4 output/mixer configuration and actual two-deck playback reliability, including verified Bluetooth A2DP and wired 3.5mm; reject any option that competes with GO/lighting safety.
 - Design Hub-owned, authenticated project media import with quota, checksum and durable file IDs.
 - Build Operator browser controls (iPhone/tablet) with authorization and read-only actual backend diagnostics; add secure sidecar IPC integration without permitting arbitrary mpv commands.
 - Implement explicit `REHEARSAL_AUDIO_MODE=LOCAL` cue mappings; no automatic Ableton retries or failback and no replay on reconnect.
