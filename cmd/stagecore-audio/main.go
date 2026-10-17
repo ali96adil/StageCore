@@ -28,6 +28,7 @@ const maxCommandBytes = 4096
 type reply struct {
 	Status stageaudio.Status `json:"status"`
 	Outputs []stageaudio.AudioOutput `json:"outputs,omitempty"`
+	Media []string `json:"media,omitempty"`
 	BluetoothDevices []stageaudio.BluetoothDevice `json:"bluetooth_devices,omitempty"`
 	Error  string            `json:"error,omitempty"`
 }
@@ -122,6 +123,13 @@ func handleConnectionWithBluetooth(ctx context.Context, conn net.Conn, controlle
 	op := strings.ToUpper(strings.TrimSpace(request.Operation))
 	if op == "STATUS" {
 		_ = json.NewEncoder(conn).Encode(reply{Status: controller.Status()})
+		return
+	}
+	if op == "FILES" {
+		files, err := controller.MediaFiles()
+		out := reply{Status: controller.Status(), Media: files}
+		if err != nil { out.Error = "LOCAL_AUDIO_MEDIA_UNAVAILABLE" }
+		_ = json.NewEncoder(conn).Encode(out)
 		return
 	}
 	if op == "OUTPUTS" {
