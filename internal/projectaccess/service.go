@@ -65,7 +65,7 @@ func New(db *sql.DB) (*Service, error) {
 // This method is not an HTTP endpoint: a separate authenticated Owner-only,
 // audited route must be reviewed before it is exposed to operators.
 func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission) error {
-	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, nil)
+	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, nil, nil)
 }
 
 // SetPermissionsAudited requires an audit record in the same database
@@ -73,10 +73,21 @@ func (s *Service) SetPermissions(ctx context.Context, actingOwnerID, targetUserI
 // unlike the internal fixture helper above; on failure nothing is committed.
 func (s *Service) SetPermissionsAudited(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission, audit *securityaudit.Service) error {
 	if audit == nil { return ErrInvalid }
-	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, audit)
+	// Secret Store redaction queries SQLite. StageCore has one DB connection,
+	// therefore prepare audit metadata BEFORE opening the grant transaction.
+	grantNames := make([]string, 0, len(permissions))
+	for _, permission := range permissions { grantNames = append(grantNames, string(permission)) }
+	sort.Strings(grantNames)
+	prepared, err := audit.Prepare(ctx, securityaudit.Event{
+		EventType: "project.permissions.replace", ActorUserID: actingOwnerID,
+		ResourceType: "project", ResourceID: projectID, Result: securityaudit.ResultSuccess,
+		Metadata: map[string]any{"target_user_id": targetUserID, "permissions": grantNames},
+	})
+	if err != nil { return fmt.Errorf("prepare Project access audit: %w", err) }
+	return s.setPermissions(ctx, actingOwnerID, targetUserID, projectID, permissions, audit, &prepared)
 }
 
-func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission, audit *securityaudit.Service) error {
+func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserID, projectID string, permissions []Permission, audit *securityaudit.Service, prepared *securityaudit.PreparedEvent) error {
 	if s == nil { return ErrInvalid }
 	actingOwnerID = strings.TrimSpace(actingOwnerID)
 	targetUserID = strings.TrimSpace(targetUserID)
@@ -137,7 +148,7 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 		if _, err := tx.ExecContext(ctx, `DELETE FROM project_memberships WHERE project_id = ? AND user_id = ?`, projectID, targetUserID); err != nil {
 			return fmt.Errorf("remove project membership: %w", err)
 		}
-		if err := writeGrantAudit(ctx, tx, audit, actingOwnerID, targetUserID, projectID, nil); err != nil { return err }
+		if err := writeGrantAudit(ctx, tx, audit, prepared); err != nil { return err }
 		return tx.Commit()
 	}
 	nowUS := s.now().UTC().UnixMicro()
@@ -162,7 +173,7 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 			return fmt.Errorf("grant project permission: %w", err)
 		}
 	}
-	if err := writeGrantAudit(ctx, tx, audit, actingOwnerID, targetUserID, projectID, keys); err != nil { return err }
+	if err := writeGrantAudit(ctx, tx, audit, prepared); err != nil { return err }
 	if err := tx.Commit(); err != nil { return fmt.Errorf("commit project grants: %w", err) }
 	return nil
 }
@@ -170,15 +181,10 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 // writeGrantAudit runs BEFORE the grant transaction commits; on failure the
 // caller's deferred Rollback undoes the grants as well.
 func writeGrantAudit(ctx context.Context, tx *sql.Tx, audit *securityaudit.Service,
-	actingOwnerID, targetUserID, projectID string, granted []string) error {
+	prepared *securityaudit.PreparedEvent) error {
 	if audit == nil { return nil } // Internal migration fixture only.
-	if granted == nil { granted = []string{} }
-	_, err := audit.AppendTx(ctx, tx, securityaudit.Event{
-		EventType: "project.permissions.replace", ActorUserID: actingOwnerID,
-		ResourceType: "project", ResourceID: projectID,
-		Result: securityaudit.ResultSuccess,
-		Metadata: map[string]any{"target_user_id": targetUserID, "permissions": granted},
-	})
+	if prepared == nil { return ErrInvalid }
+	_, err := audit.AppendPreparedTx(ctx, tx, *prepared)
 	if err != nil { return fmt.Errorf("atomic project permissions audit failed: %w", err) }
 	return nil
 }
