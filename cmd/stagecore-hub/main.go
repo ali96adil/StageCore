@@ -289,6 +289,7 @@ func main() {
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorProjectAccess(userAuth),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorShowTemplates(userAuth, showTemplates),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
