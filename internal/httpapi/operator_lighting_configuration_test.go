@@ -236,3 +236,143 @@ func TestOperatorLightingConfigurationWriteBlockedDuringShow(t *testing.T) {
 		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
 	}
 }
+
+
+func TestLightingConfigurationWritableUsesV2AssignmentNotLegacyProjectID(t *testing.T) {
+	const projectID = "project-a"
+	v1 := deviceexperience.Device{
+		ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		ProjectID: projectID,
+	}
+	if !lightingConfigurationWritable(v1, projectID) || lightingConfigurationWritable(v1, "other") {
+		t.Fatal("v1 lighting device must use legacy ProjectID")
+	}
+	for _, state := range []string{"BLOCKED", "ACTIVE"} {
+		v2 := deviceexperience.Device{
+			ProfileID: lightingnode.ProfileID,
+			ProtocolVersion: deviceexperience.ProtocolVersion2,
+			Enabled: true,
+			Assignment: &deviceexperience.AssignmentRecord{ProjectID: projectID, State: state},
+		}
+		if !lightingConfigurationWritable(v2, projectID) {
+			t.Fatalf("v2 assignment %s should permit Draft authoring", state)
+		}
+		if lightingConfigurationWritable(v2, "other") {
+			t.Fatalf("v2 assignment %s must not permit cross-Project write", state)
+		}
+		v2.ProjectID = projectID
+		if lightingConfigurationWritable(v2, projectID) {
+			t.Fatal("v2 must not accept legacy project ownership")
+		}
+	}
+	for _, state := range []string{"UNASSIGNED", "PREPARING", "LEGACY", ""} {
+		v2 := deviceexperience.Device{
+			ProfileID: lightingnode.ProfileID,
+			ProtocolVersion: deviceexperience.ProtocolVersion2,
+			Enabled: true,
+			Assignment: &deviceexperience.AssignmentRecord{ProjectID: projectID, State: state},
+		}
+		if lightingConfigurationWritable(v2, projectID) {
+			t.Fatalf("v2 %q must not allow configuration write", state)
+		}
+	}
+	if lightingConfigurationWritable(deviceexperience.Device{
+		ProfileID: lightingnode.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true,
+	}, projectID) {
+		t.Fatal("missing v2 assignment must never authorize authoring")
+	}
+}
+
+func TestOperatorLightingConfigurationCanWriteAndDeleteMigratedV2Draft(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "V2 Authoring", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	other, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Other Project", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	const deviceID = "lighting-v2-edit"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "V2 Draft Lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil { t.Fatal(err) }
+
+	first := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
+		ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Warm",
+		Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+	}}}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, lightingnode.ProjectBinding{
+		DeviceID: deviceID, ProfileID: lightingnode.ProfileID, Configuration: first,
+		Aliases: map[string]string{"front_warm": "warm_a"},
+	}, "owner"); err != nil { t.Fatal(err) }
+	if _, err := devices.MigrateLegacyLightingToV2Blocked(ctx, deviceID, project.ID, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.GetDevice(ctx, deviceID)
+	if err != nil { t.Fatal(err) }
+	if device.ProtocolVersion != deviceexperience.ProtocolVersion2 || device.ProjectID != "" ||
+		device.Assignment == nil || device.Assignment.State != "BLOCKED" || device.Assignment.ProjectID != project.ID {
+		t.Fatalf("expected projectless v2 with Hub-owned BLOCKED assignment: %+v", device)
+	}
+
+	credential, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	handler := New(WithOperatorLightingController(h.auth, devices, stageStore)).Handler()
+	next := first
+	next.Channels = append(append([]lightingnode.ChannelConfig(nil), first.Channels...),
+		lightingnode.ChannelConfig{
+			ChannelKey: "cold_b", ChannelNumber: 3, DisplayName: "Cold",
+			Kind: lightingnode.ChannelColdWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+		})
+	body, _ := json.Marshal(lightingConfigurationRequest{
+		Configuration: next, Aliases: map[string]string{"front_warm": "warm_a", "front_cold": "cold_b"},
+	})
+	request := func(method, projectID, suffix string, data []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method,
+			"/api/v1/projects/"+projectID+"/lighting-controller/configuration/"+deviceID+suffix,
+			bytes.NewReader(data))
+		req.RemoteAddr = "127.0.0.1:19512"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeader, credential.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		return resp
+	}
+	if response := request(http.MethodPut, other.ID, "", body); response.Code != http.StatusBadRequest {
+		t.Fatalf("v2 cross-project save status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := request(http.MethodPut, project.ID, "", body); response.Code != http.StatusOK {
+		t.Fatalf("v2 save status=%d body=%s", response.Code, response.Body.String())
+	}
+	updatedProject, err := stageStore.GetProject(ctx, project.ID)
+	if err != nil { t.Fatal(err) }
+	bindings, err := stageStore.ListLightingNodeBindings(ctx, updatedProject.CurrentRevisionID)
+	if err != nil { t.Fatal(err) }
+	if len(bindings) != 1 || len(bindings[0].Configuration.Channels) != 2 ||
+		bindings[0].Aliases["front_cold"] != "cold_b" {
+		t.Fatalf("v2 Draft save did not preserve new channel/alias: %+v", bindings)
+	}
+	assignment, err := devices.GetAssignmentRecord(ctx, deviceID)
+	if err != nil { t.Fatal(err) }
+	if assignment.State != "BLOCKED" || assignment.ProjectID != project.ID || assignment.RuntimeSnapshotID != "" {
+		t.Fatalf("Draft edit must not activate or transfer v2 Lighting device: %+v", assignment)
+	}
+	if response := request(http.MethodDelete, other.ID, "?confirm=true", nil); response.Code != http.StatusNotFound {
+		t.Fatalf("v2 cross-project delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := request(http.MethodDelete, project.ID, "?confirm=true", nil); response.Code != http.StatusNoContent {
+		t.Fatalf("v2 authorized delete status=%d body=%s", response.Code, response.Body.String())
+	}
+	bindings, err = stageStore.ListLightingNodeBindings(ctx, updatedProject.CurrentRevisionID)
+	if err != nil { t.Fatal(err) }
+	if len(bindings) != 0 { t.Fatalf("Draft delete left bindings: %+v", bindings) }
+}
