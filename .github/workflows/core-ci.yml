@@ -35,7 +35,9 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          node --check internal/operatorweb/static/phase4.js
+          node --check internal/operatorweb/static/clock-settings.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
