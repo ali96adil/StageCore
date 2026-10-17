@@ -27,6 +27,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/livereconcile"
 	"github.com/ali96adil/StageCore/internal/preflight"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
@@ -289,6 +290,7 @@ func main() {
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorProjectGrantsStaging(userAuth, projectaccess.New(application.DB.DB)),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorShowTemplates(userAuth, showTemplates),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
