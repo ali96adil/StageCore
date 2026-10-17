@@ -95,7 +95,7 @@ func registerOperatorLightingConfigurationRoutes(
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_DEVICE_NOT_FOUND"})
 			return
 		}
-		if device.ProjectID != projectID || device.ProfileID != lightingnode.ProfileID {
+		if !lightingConfigurationWritable(device, projectID) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_DEVICE_INVALID"})
 			return
 		}
@@ -154,7 +154,7 @@ func registerOperatorLightingConfigurationRoutes(
 			return
 		}
 		device, err := devices.GetDevice(r.Context(), deviceID)
-		if err != nil || device.ProjectID != projectID || device.ProfileID != lightingnode.ProfileID {
+		if err != nil || !lightingConfigurationWritable(device, projectID) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_DEVICE_NOT_FOUND"})
 			return
 		}
@@ -173,6 +173,28 @@ func registerOperatorLightingConfigurationRoutes(
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+}
+
+// lightingConfigurationWritable authorizes Draft-only lighting authoring by the
+// device's authoritative Project assignment, not the legacy project_id column.
+// V2 devices intentionally have an empty legacy ProjectID; BLOCKED and ACTIVE
+// assignments may edit drafts, but transfers in PREPARING and unassigned nodes
+// must not gain write authority. This never grants runtime DMX command authority.
+func lightingConfigurationWritable(device deviceexperience.Device, projectID string) bool {
+	if strings.TrimSpace(projectID) == "" || device.ProfileID != lightingnode.ProfileID {
+		return false
+	}
+	switch device.ProtocolVersion {
+	case deviceexperience.ProtocolVersion1:
+		return device.ProjectID == projectID
+	case deviceexperience.ProtocolVersion2:
+		assignment := device.Assignment
+		return device.Enabled && device.ProjectID == "" && assignment != nil &&
+			assignment.ProjectID == projectID &&
+			(assignment.State == "BLOCKED" || assignment.State == "ACTIVE")
+	default:
+		return false
+	}
 }
 
 func lightingConfigurationNodes(bindings []lightingnode.ProjectBinding, all []deviceexperience.Device) []lightingConfigurationNodeView {
