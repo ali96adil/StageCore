@@ -21,6 +21,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /extensions.css", serveOperatorAsset("extensions.css", "text/css; charset=utf-8", false))
 		s.mux.HandleFunc("GET /phase4.css", serveOperatorAssetBundle([]string{"phase4.css", "tablet-controller.css", "tablet-authoring.css", "lighting-authoring.css", "lighting-configuration.css", "visual-engine.css", "assistant-workspace.css"}, "text/css; charset=utf-8"))
 		s.mux.HandleFunc("GET /app.js", serveOperatorAsset("app.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /clock-settings.js", serveOperatorAsset("clock-settings.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /bootstrap.js", serveOperatorAsset("bootstrap.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /preflight.js", serveOperatorAsset("preflight.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /memory.js", serveOperatorAsset("memory.js", "application/javascript; charset=utf-8", false))
