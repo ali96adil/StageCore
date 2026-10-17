@@ -87,6 +87,19 @@ func NewController(mediaRoot string, sender Sender) (*Controller, error) {
 	}, nil
 }
 
+// OutputChangeAllowed is a conservative safety gate shared by Bluetooth
+// connection and speaker routing. Even PAUSED tracks must be stopped first.
+func (c *Controller) OutputChangeAllowed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, name := range []string{DeckA, DeckB} {
+		if c.decks[name].Commanded != "STOPPED" {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Controller) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
