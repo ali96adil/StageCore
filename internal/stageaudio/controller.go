@@ -35,6 +35,8 @@ type Request struct {
 	Deck      string   `json:"deck,omitempty"`
 	Operation string   `json:"operation"`
 	File      string   `json:"file,omitempty"`
+	OutputID  string   `json:"output_id,omitempty"`
+	Address   string   `json:"address,omitempty"`
 	Volume    *float64 `json:"volume,omitempty"`
 	Loop      *bool    `json:"loop,omitempty"`
 }
