@@ -95,6 +95,9 @@ func (s *Service) ListScopedProjectFiles(
 	if err := rows.Err(); err != nil {
 		return ProjectFileWorkspace{}, fmt.Errorf("iterate Project Files: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return ProjectFileWorkspace{}, fmt.Errorf("close Project Files cursor: %w", err)
+	}
 	// Revalidate grants after reading. Future streaming endpoints also need
 	// live per-chunk authorization and a fully reviewed revocation fence.
 	if err := s.Check(ctx, userID, projectID, MediaRead); err != nil {
