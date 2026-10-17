@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
-	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -127,6 +126,3 @@ func TestScopedProjectListRejectsUnconfiguredSecurityGate(t *testing.T) {
 	if err==nil{t.Fatal("nil Project Store silently returned all Projects")}
 }
 
-// Static naming reference for tests: Project IDs are stable references and
-// must not be inferred from the display name or mutable revisions.
-var _ domain.Project
