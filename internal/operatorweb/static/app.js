@@ -536,7 +536,7 @@ async function renderCues(message = "", messageKind = "success") {
     el("cueMoveApply")?.addEventListener("click", () => {
       const id = el("cueMoveID")?.value;
       const raw = el("cueMovePosition")?.value || "";
-      if (!/^\\d+$/.test(raw)) {
+      if (!/^\d+$/.test(raw)) {
         setMessage(globalMessage, "Enter a whole-number Cue position.", "warn");
         return;
       }
