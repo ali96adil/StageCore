@@ -27,6 +27,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/livereconcile"
 	"github.com/ali96adil/StageCore/internal/preflight"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
@@ -71,6 +72,11 @@ func main() {
 	userAuth, err := userauth.New(application.DB.DB)
 	if err != nil {
 		logger.Error("browser authentication startup failed", "error", err)
+		os.Exit(1)
+	}
+	projectAccess, err := projectaccess.New(application.DB.DB)
+	if err != nil {
+		logger.Error("Project permission preparation unavailable", "error", err)
 		os.Exit(1)
 	}
 	publisher := publish.New(application.Store, application.Capabilities)
@@ -289,6 +295,7 @@ func main() {
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
 		httpapi.WithOperatorProjects(userAuth, application.Store),
+		httpapi.WithOperatorProjectAccess(userAuth, projectAccess, application.Store, application.SecurityAudit),
 		httpapi.WithOperatorDeviceProfiles(userAuth, deviceProfiles),
 		httpapi.WithOperatorShowTemplates(userAuth, showTemplates),
 		httpapi.WithOperatorExtensionLibrary(userAuth, extensionLibrary, application.SecurityAudit),
