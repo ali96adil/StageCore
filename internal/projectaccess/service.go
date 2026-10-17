@@ -234,11 +234,12 @@ func (s *Service) AccessibleProjectIDs(ctx context.Context, userID string) ([]st
 		SELECT p.project_id FROM projects p
 		JOIN local_users u ON u.user_id=? AND u.enabled=1
 		WHERE u.role='OWNER'
-			OR EXISTS (
-				SELECT 1 FROM project_permission_grants g
-				WHERE g.project_id=p.project_id AND g.user_id=u.user_id
-					AND g.permission='project.view'
-			)
+			OR (u.role IN ('OPERATOR','TECHNICIAN','VIEWER')
+				AND EXISTS (
+					SELECT 1 FROM project_permission_grants g
+					WHERE g.project_id=p.project_id AND g.user_id=u.user_id
+						AND g.permission='project.view'
+				))
 		ORDER BY p.name COLLATE NOCASE, p.project_id
 	`,userID)
 	if err!=nil {return nil,fmt.Errorf("list scoped projects: %w",err)}
