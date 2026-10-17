@@ -285,6 +285,7 @@ func main() {
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
+		httpapi.WithOperatorClockStatus(userAuth, nil),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
