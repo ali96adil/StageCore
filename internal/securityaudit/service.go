@@ -73,7 +73,26 @@ func New(database *sql.DB, secrets *secretstore.Service, options ...Option) (*Se
 	return s, nil
 }
 
+// Append writes an audit event immediately.
 func (s *Service) Append(ctx context.Context, event Event) (Record, error) {
+	if s == nil || s.db == nil { return Record{}, fmt.Errorf("audit service unavailable") }
+	return s.appendWithExecutor(ctx, s.db, event)
+}
+
+// AppendTx writes the same redacted audit event *inside* a caller's SQL
+// transaction. It is used for security-sensitive Project grant mutations so
+// an audit failure rolls the grant change back instead of leaving an
+// unrecorded privilege change.
+func (s *Service) AppendTx(ctx context.Context, tx *sql.Tx, event Event) (Record, error) {
+	if s == nil || tx == nil { return Record{}, fmt.Errorf("audit transaction unavailable") }
+	return s.appendWithExecutor(ctx, tx, event)
+}
+
+type auditExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func (s *Service) appendWithExecutor(ctx context.Context, executor auditExecutor, event Event) (Record, error) {
 	event.EventType = strings.TrimSpace(event.EventType)
 	if event.EventType == "" || len(event.EventType) > 128 {
 		return Record{}, fmt.Errorf("audit event type is required")
@@ -100,7 +119,7 @@ func (s *Service) Append(ctx context.Context, event Event) (Record, error) {
 		return Record{}, err
 	}
 	now := s.now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := executor.ExecContext(ctx, `
 		INSERT INTO security_audit_records
 		(audit_id, event_type, occurred_at_us, actor_user_id, actor_username, source,
 		 resource_type, resource_id, result, reason, correlation_id, metadata_json)
