@@ -21,9 +21,13 @@ type hubFakeRuntime struct{
  online bool
  report devicechannel.V2SoftwareLevels
  hasReport bool
+ activityAt time.Time
+ activityGeneration int64
+ hasActivity bool
 }
 func(f *hubFakeRuntime)CurrentV2Scope(string)(devicechannel.V2RuntimeScope,bool){return f.scope,f.online}
 func(f *hubFakeRuntime)LatestV2SoftwareLevels(string)(devicechannel.V2SoftwareLevels,bool){return f.report,f.hasReport}
+func(f *hubFakeRuntime)CurrentV2TransportActivity(string)(time.Time,int64,bool){return f.activityAt,f.activityGeneration,f.hasActivity}
 
 func TestHubEvidenceDoesNotInventPhysicalSafetyOrHeartbeat(t *testing.T){
  now:=time.Date(2026,10,18,12,0,0,0,time.UTC)
@@ -50,6 +54,14 @@ func TestHubEvidenceDoesNotInventPhysicalSafetyOrHeartbeat(t *testing.T){
   v.CommandsEnabled||v.SoftwareReportCurrent{
   t.Fatalf("socket only claimed applied output state: %+v %v",v,err)
  }
+ if v.TransportActivityRecent||v.DeviceHeartbeatVerified {t.Fatalf("socket alone marked heartbeat fresh: %+v",v)}
+ r.activityAt=now
+ r.activityGeneration=11
+ r.hasActivity=true
+ v,err=h.Read(ctx,"project-a","dmx-a")
+ if err!=nil||!v.TransportActivityRecent||v.DeviceHeartbeatVerified||v.SoftwareReportCurrent{
+  t.Fatalf("recent activity must not verify heartbeat or outputs: %+v %v",v,err)
+ }
  r.hasReport=true
  r.report=devicechannel.V2SoftwareLevels{
   DeviceID:"dmx-a",ProjectID:"project-a",AssignmentState:"ACTIVE",
@@ -75,6 +87,23 @@ func TestHubEvidenceDoesNotInventPhysicalSafetyOrHeartbeat(t *testing.T){
  v,err=h.Read(ctx,"project-a","dmx-a")
  if err!=nil||v.SoftwareReportCurrent{t.Fatalf("previous socket report accepted: %+v %v",v,err)}
  r.report.ConnectionGeneration=11
+ r.activityGeneration=10
+ v,err=h.Read(ctx,"project-a","dmx-a")
+ if err!=nil||v.TransportActivityRecent||v.SoftwareReportCurrent {
+  t.Fatalf("old connection activity accepted: %+v %v",v,err)
+ }
+ r.activityGeneration=11
+ r.activityAt=now.Add(-31*time.Second)
+ v,err=h.Read(ctx,"project-a","dmx-a")
+ if err!=nil||v.Condition!=HeartbeatStale||v.TransportActivityRecent||v.SoftwareReportCurrent{
+  t.Fatalf("stale socket activity accepted: %+v %v",v,err)
+ }
+ r.activityAt=now.Add(time.Second)
+ v,err=h.Read(ctx,"project-a","dmx-a")
+ if err!=nil||v.Condition!=ClockUncertain||v.TransportActivityRecent{
+  t.Fatalf("future socket activity trusted: %+v %v",v,err)
+ }
+ r.activityAt=now
  r.scope.ProjectID="project-b"
  v,err=h.Read(ctx,"project-a","dmx-a")
  if err!=nil||v.SocketCurrent||v.SoftwareReportCurrent||v.CommandsEnabled{
