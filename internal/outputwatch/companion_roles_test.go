@@ -76,32 +76,32 @@ func TestCompanionProjectEvidenceSeparatesTransportHeartbeatReadinessAndMIDIOSC(
  c:=store.companions["companion-a"]
  c.LastSeenAt=now.Add(-11*time.Second)
  store.companions["companion-a"]=c
- if v=get().Roles[0];v.Condition!="STALE"||v.ScopeVerified{
-  t.Fatalf("stale Companion accepted %+v",v)
+ if roleState:=get().Roles[0];roleState.Condition!="STALE"||roleState.ScopeVerified{
+  t.Fatalf("stale Companion accepted %+v",roleState)
  }
  c.LastSeenAt=now.Add(time.Second)
  store.companions["companion-a"]=c
- if v=get().Roles[0];v.Condition!="CLOCK_UNCERTAIN"{
-  t.Fatalf("future timestamp accepted %+v",v)
+ if roleState:=get().Roles[0];roleState.Condition!="CLOCK_UNCERTAIN"{
+  t.Fatalf("future timestamp accepted %+v",roleState)
  }
  c.LastSeenAt=now
  other:="snapshot-b"
  c.AppliedRuntimeSnapshotID=&other
  store.companions["companion-a"]=c
- if v=get().Roles[0];v.Condition!="MISMATCH"||v.ScopeVerified{
-  t.Fatalf("wrong Snapshot accepted %+v",v)
+ if roleState:=get().Roles[0];roleState.Condition!="MISMATCH"||roleState.ScopeVerified{
+  t.Fatalf("wrong Snapshot accepted %+v",roleState)
  }
  c.AppliedRuntimeSnapshotID=&snapshot
  c.Readiness=domain.CompanionReadinessDegraded
  store.companions["companion-a"]=c
- if v=get().Roles[0];v.Condition!="DEGRADED"||v.ScopeVerified{
-  t.Fatalf("degraded Companion counted ready %+v",v)
+ if roleState:=get().Roles[0];roleState.Condition!="DEGRADED"||roleState.ScopeVerified{
+  t.Fatalf("degraded Companion counted ready %+v",roleState)
  }
  c.Readiness=domain.CompanionReadinessReady
  c.TrustState=domain.CompanionRevoked
  store.companions["companion-a"]=c
- if v=get().Roles[0];v.Condition!="UNTRUSTED"||v.TransportConnected{
-  t.Fatalf("revoked Companion retains trusted state %+v",v)
+ if roleState:=get().Roles[0];roleState.Condition!="UNTRUSTED"||roleState.TransportConnected{
+  t.Fatalf("revoked Companion retains trusted state %+v",roleState)
  }
 }
 func TestCompanionRoleInventoryExcludesForeignProjectsAndTruncation(t *testing.T){
