@@ -243,6 +243,30 @@ func (r *Runtime) CurrentV2Scope(deviceID string) (V2RuntimeScope, bool) {
 	}, true
 }
 
+// CurrentV2TransportActivity is a read-only view of the last inbound
+// websocket frame on the exact currently registered authenticated v2
+// connection. This is transport activity, NOT a device heartbeat,
+// application command ACK, output-state evidence or GO permission.
+// Callers must compare the returned generation with CurrentV2Scope
+// because a reconnect may occur between the two observations.
+func (r *Runtime) CurrentV2TransportActivity(deviceID string) (time.Time, int64, bool) {
+	if r == nil { return time.Time{}, 0, false }
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed { return time.Time{}, 0, false }
+	current := r.connections[strings.TrimSpace(deviceID)]
+	if current == nil || current.protocolVersion != deviceexperience.ProtocolVersion2 ||
+		current.generation <= 0 { return time.Time{}, 0, false }
+	select {
+	case <-current.closed:
+		return time.Time{}, 0, false
+	default:
+	}
+	ns := current.lastActivity.Load()
+	if ns <= 0 { return time.Time{}, current.generation, false }
+	return time.Unix(0, ns).UTC(), current.generation, true
+}
+
 func (r *Runtime) CurrentV2Generation(deviceID string) (int64, bool) {
 	if r == nil {
 		return 0, false
