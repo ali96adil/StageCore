@@ -51,6 +51,13 @@ func TestCutoverPreviewOwnerOnlyReadOnlyAndLossesReflectLiveGrants(t *testing.T)
 	report,err=f.a.PreviewProjectCutover(ctx,f.ownerID)
 	if err!=nil{t.Fatal(err)}
 	operator=find(f.operatorID,report)
+	if operator.PreparedStopGrantedProjects!=0 || operator.PreparedBlackoutEngageGrantedProjects!=0 ||
+		len(operator.GOWithoutIndependentSafety)!=1 || operator.GOWithoutIndependentSafety[0].ProjectID!=f.projectA {
+		t.Fatalf("GO without independent STOP/blackout was not flagged: %+v", operator)
+	}
+	var unsafeGrantFlag bool
+	for _,blocker:=range report.Blockers {if blocker=="GO_WITHOUT_INDEPENDENT_STOP_AND_BLACKOUT_GRANTS" {unsafeGrantFlag=true}}
+	if !unsafeGrantFlag {t.Fatalf("GO risk blocker missing: %+v",report.Blockers)}
 	if operator.PreparedVisibleProjects!=1||operator.PreparedGOPermittedProjects!=1||
 		len(operator.WillLoseProjectView)!=1||operator.WillLoseProjectView[0].ProjectID!=f.projectB||
 		len(operator.WillLoseGORoleEligibility)!=1||operator.WillLoseGORoleEligibility[0].ProjectID!=f.projectB{
