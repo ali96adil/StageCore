@@ -36,7 +36,7 @@ func TestSC024RuntimeGOStopEmergencyBoundaryIsExplicitlyUnchanged(t *testing.T) 
 		"runtime.Go(",
 		"runtime.ProjectBlackout(",
 		"runtime.EmergencyBlackout(",
-		"runtime.Stop(",
+		"runtime.StopCue(",
 	} {
 		if !strings.Contains(source,required) {
 			t.Errorf("legacy GO/STOP safety operation removed/changed: %s",required)
