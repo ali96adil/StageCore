@@ -36,9 +36,7 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`en:`,
 		`الملفات`,
 		`read-only`,
-		`escape`, // ensure this test catches accidental source removal below
 	} {
-		if required == `escape` {continue}
 		if !strings.Contains(source,required) {
 			t.Errorf("Project Files safety/locale contract missing %q",required)
 		}
