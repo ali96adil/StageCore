@@ -91,7 +91,7 @@ func NewReceiverReceiptTracker(now func()time.Time)*ReceiverReceiptTracker{
 func(t *ReceiverReceiptTracker)BindQualified(s ReceiverScope)error{
  if t==nil||!s.valid(){return ErrReceiptUntrusted}
  t.mu.Lock();defer t.mu.Unlock()
- if t.bound&&(s.ConnectionGeneration<=t.scope.ConnectionGeneration||
+ if t.scope.ConnectionGeneration>0&&(s.ConnectionGeneration<=t.scope.ConnectionGeneration||
   s.ProjectID!=t.scope.ProjectID||s.CompanionID!=t.scope.CompanionID||
   s.ReceiverInstanceID!=t.scope.ReceiverInstanceID||
   s.Kind!=t.scope.Kind||s.MachineRoleID!=t.scope.MachineRoleID){
