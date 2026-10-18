@@ -41,6 +41,9 @@ type CutoverUserImpact struct {
 	WillLoseProjectView []CutoverProjectLoss `json:"will_lose_project_view"`
 	LegacyGOPermittedProjects int `json:"legacy_go_role_eligible_projects"`
 	PreparedGOPermittedProjects int `json:"prepared_go_granted_projects"`
+	PreparedStopGrantedProjects int `json:"prepared_stop_granted_projects"`
+	PreparedBlackoutEngageGrantedProjects int `json:"prepared_blackout_engage_granted_projects"`
+	GOWithoutIndependentSafety []CutoverProjectLoss `json:"go_without_independent_safety"`
 	WillLoseGORoleEligibility []CutoverProjectLoss `json:"will_lose_go_role_eligibility"`
 }
 
@@ -166,6 +169,7 @@ func (s *Service) PreviewProjectCutover(ctx context.Context, actingOwnerID strin
 			UserID:u.id,Username:u.username,Role:u.role,Enabled:u.enabled,
 			WillLoseProjectView:make([]CutoverProjectLoss,0),
 			WillLoseGORoleEligibility:make([]CutoverProjectLoss,0),
+			GOWithoutIndependentSafety:make([]CutoverProjectLoss,0),
 		}
 		legacyView:=u.enabled && userauth.Authorize(u.role,userauth.PermissionProjectRead)==nil
 		legacyGO:=u.enabled && userauth.Authorize(u.role,userauth.PermissionRuntimeControl)==nil
@@ -175,10 +179,17 @@ func (s *Service) PreviewProjectCutover(ctx context.Context, actingOwnerID strin
 			roleAllows:=u.enabled && (u.role==userauth.RoleOperator||u.role==userauth.RoleTechnician||u.role==userauth.RoleViewer)
 			preparedView:=isOwner || (roleAllows && caps[ProjectView])
 			preparedGO:=isOwner || (roleAllows && u.role!=userauth.RoleViewer && caps[ProjectView] && caps[ShowGO])
+			preparedStop:=isOwner || (roleAllows && u.role!=userauth.RoleViewer && caps[ProjectView] && caps[ShowStop])
+			preparedBlackout:=isOwner || (roleAllows && u.role!=userauth.RoleViewer && caps[ProjectView] && caps[ShowBlackoutEngage])
 			if legacyView {impact.LegacyVisibleProjects++}
 			if preparedView {impact.PreparedVisibleProjects++}
 			if legacyGO {impact.LegacyGOPermittedProjects++}
 			if preparedGO {impact.PreparedGOPermittedProjects++}
+			if preparedStop {impact.PreparedStopGrantedProjects++}
+			if preparedBlackout {impact.PreparedBlackoutEngageGrantedProjects++}
+			if preparedGO && (!preparedStop || !preparedBlackout) {
+				impact.GOWithoutIndependentSafety=append(impact.GOWithoutIndependentSafety,CutoverProjectLoss{ProjectID:p.id,ProjectName:p.name})
+			}
 			if legacyView && !preparedView {
 				impact.WillLoseProjectView=append(impact.WillLoseProjectView,CutoverProjectLoss{ProjectID:p.id,ProjectName:p.name})
 			}
@@ -186,11 +197,19 @@ func (s *Service) PreviewProjectCutover(ctx context.Context, actingOwnerID strin
 				impact.WillLoseGORoleEligibility=append(impact.WillLoseGORoleEligibility,CutoverProjectLoss{ProjectID:p.id,ProjectName:p.name})
 			}
 		}
+		if len(impact.GOWithoutIndependentSafety)>0 {
+			result.Blockers=append(result.Blockers,"GO_WITHOUT_INDEPENDENT_STOP_AND_BLACKOUT_GRANTS")
+		}
 		result.Users=append(result.Users,impact)
 	}
 	// Report ordering is tied to the query's stable username ordering, and
 	// the nested Project losses are sorted by Project name/id.
 	sort.Strings(result.Blockers)
+	uniqueBlockers:=result.Blockers[:0]
+	for _,blocker:=range result.Blockers {
+		if len(uniqueBlockers)==0 || uniqueBlockers[len(uniqueBlockers)-1]!=blocker {uniqueBlockers=append(uniqueBlockers,blocker)}
+	}
+	result.Blockers=uniqueBlockers
 	if err:=tx.Commit();err!=nil{return CutoverImpactPreview{},fmt.Errorf("close cutover preview transaction: %w",err)}
 	return result,nil
 }
