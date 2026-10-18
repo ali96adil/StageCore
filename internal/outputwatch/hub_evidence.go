@@ -19,6 +19,7 @@ type CurrentHubEvidence struct {
  }
  Runtime interface {
   CurrentV2Scope(string)(devicechannel.V2RuntimeScope,bool)
+  CurrentV2TransportActivity(string)(time.Time,int64,bool)
   LatestV2SoftwareLevels(string)(devicechannel.V2SoftwareLevels,bool)
  }
  Now func()time.Time
@@ -30,6 +31,9 @@ type HubDeviceView struct {
  Condition Condition `json:"condition"`
  Reason string `json:"reason"`
  SocketCurrent bool `json:"authenticated_socket_current"`
+ TransportActivityRecent bool `json:"transport_activity_recent"`
+ TransportActivityAgeSeconds int64 `json:"transport_activity_age_seconds,omitempty"`
+ DeviceHeartbeatVerified bool `json:"device_heartbeat_verified"`
  SoftwareReportCurrent bool `json:"software_report_current"`
  SoftwareZeroReported bool `json:"software_zero_reported"`
  PhysicalOutputVerified bool `json:"physical_output_verified"`
@@ -57,12 +61,31 @@ func (h CurrentHubEvidence) Read(ctx context.Context,projectID,deviceID string)(
  }
  v.SocketCurrent=true
  v.Reason="Current socket matched; no verified software report"
+ now:=time.Now().UTC()
+ if h.Now!=nil {now=h.Now().UTC()}
+ activityAt,generation,hasActivity:=h.Runtime.CurrentV2TransportActivity(deviceID)
+ if !hasActivity||generation!=scope.Generation{
+  v.Reason="No same-generation transport activity; device heartbeat UNKNOWN"
+  return v,nil
+ }
+ activityAge:=now.Sub(activityAt)
+ if activityAge<0{
+  v.Condition=ClockUncertain
+  v.Reason="Socket activity timestamp is in the future; clock uncertain"
+  return v,nil
+ }
+ if activityAge>30*time.Second{
+  v.Condition=HeartbeatStale
+  v.Reason="Current socket transport activity stale; device heartbeat UNKNOWN"
+  return v,nil
+ }
+ v.TransportActivityRecent=true
+ v.TransportActivityAgeSeconds=int64(activityAge/time.Second)
+ v.Reason="Recent authenticated-socket transport activity; device heartbeat and outputs UNKNOWN"
  report,ok:=h.Runtime.LatestV2SoftwareLevels(deviceID)
  if !ok||report.ProjectID!=projectID||report.AssignmentEpoch!=a.Epoch||
   report.ConnectionGeneration!=scope.Generation||report.AssignmentState!="ACTIVE"||
   report.PhysicalOutputVerified||report.CommandsEnabled||len(report.ChannelLevels)==0{return v,nil}
- now:=time.Now().UTC()
- if h.Now!=nil{now=h.Now().UTC()}
  age:=now.Sub(report.ObservedAt)
  if report.ObservedAt.IsZero()||age<0||age>5*time.Second{return v,nil}
  v.Condition=SoftwareReportCurrent
