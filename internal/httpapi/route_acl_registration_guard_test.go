@@ -146,6 +146,7 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 		"WithScopedProjectFilesRead",
 		"WithScopedLocalCapsuleExports",
 		"WithOwnerCapsuleImportReview",
+		"WithOwnerProjectCutoverPreview",
 	}
 	for _, pattern := range []string{
 		filepath.Join("..", "..", "cmd", "stagecore-hub", "*.go"),
