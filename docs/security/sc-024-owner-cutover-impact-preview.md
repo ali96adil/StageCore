@@ -32,6 +32,12 @@ For each Owner-visible account, the report includes:
 - Owner retains complete access. Disabled accounts have zero current or
   prepared effective access. VIEWER is never eligible for GO; a stale or
   malicious stored grant must not override the role ceiling.
+- Prepared independent safety coverage: number of Projects with
+  `show.stop` and `show.blackout.engage` grants, and an explicit
+  `go_without_independent_safety` Project list for users whose prepared
+  GO access has no matching STOP or blackout engagement capability. These
+  trigger the `GO_WITHOUT_INDEPENDENT_STOP_AND_BLACKOUT_GRANTS` blocker,
+  never automatic safety escalation.
 - Per-user and Project rows are consistently read from a **single SQLite
   read-only transaction**. Reads are bounded to 128 users, 128 Projects,
   and 4,096 user-Project combinations. A larger instance fails with
