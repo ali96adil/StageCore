@@ -81,6 +81,16 @@ to the existing Hub command journal.
 - Concurrent outdated socket callbacks leave the current scope intact
   under Go race checks.
 
+## Lighting simulator integration
+
+A separate regression (`internal/outputwatch/lighting_simulator_integration_test.go`)
+uses StageCore's existing Lighting Node simulator with a nonzero level.
+Simulated disconnection leaves that level at its prior value, proving a
+link failure must **not** be labeled blackout. The passive monitor reports
+DISCONNECTED/UNCONFIRMED and never claims a physical zero; reattachment
+requires fresh generation and observation. Neither the simulator nor the
+watchdog automatically replays the old command ID on reconnect.
+
 **This phase does not send physical commands or drive the hardware.**
 Actual ESP32 firmware watchdog behavior, Companion MIDI/OSC stop
 acknowledgments, audio mixer fallback, and physical DMX zero validation
