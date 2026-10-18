@@ -18,7 +18,8 @@ them directly to `main` out of order or cherry-pick randomly.
 | 6 | #524 | #523 branch | Vault media-version/hash read qualifier + SSE audit | Draft |
 | 7 | #525 | #524 branch | Virtual Project Files + local Capsule export qualifier | Draft |
 | 8 | #526 | #525 branch | Opt-in Files read-only UI + scoped browser API | Draft |
-| 9 | current | #526 branch | Opt-in scoped verified local Capsule exports inventory | Draft |
+| 9 | #527 | #526 branch | Opt-in scoped verified local Capsule exports inventory | Draft |
+| 10 | #528 | #527 branch | Owner-only verified Capsule import inventory and read-only plan | Draft |
 
 **Conflict:** #517 and #519 are **alternative** Project grants foundations
 that compete with canonical #518 and use an incompatible Goose migration 53.
@@ -43,7 +44,7 @@ the canonical design is reviewed and selected by the Owner.
 
 1. Freeze new overlapping ACL schema variants. Preserve a **single** chosen
    migration chain with unique Goose numbering.
-2. Review all nine incremental scoped-security PRs as one logical security
+2. Review all ten incremental scoped-security PRs as one logical security
    programme: each has local tests, but only the final, system-wide route
    matrix can prevent cross-route bypass. Verify parent/head SHAs and all
    CI jobs in the selected integration commit.
