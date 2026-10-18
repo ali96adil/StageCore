@@ -28,6 +28,8 @@ const (
 	SnapshotPublish   Permission = "snapshot.publish"
 	RehearsalControl  Permission = "rehearsal.control"
 	ShowGO            Permission = "show.go"
+	ShowStop          Permission = "show.stop"
+	ShowBlackoutEngage Permission = "show.blackout.engage"
 	ShowEnterExit     Permission = "show.enter_exit"
 	DeviceConfigure   Permission = "device.configure"
 	LightingManual    Permission = "lighting.manual"
@@ -39,6 +41,7 @@ var permissionSet = map[Permission]bool{
 	ProjectView: true, ProjectRename: true, ProjectEdit: true, CueEdit: true,
 	MediaRead: true, MediaUpload: true, MediaManage: true,
 	SnapshotPublish: true, RehearsalControl: true, ShowGO: true,
+	ShowStop: true, ShowBlackoutEngage: true,
 	ShowEnterExit: true, DeviceConfigure: true, LightingManual: true, AudioControl: true,
 	CapsuleExport: true,
 }
