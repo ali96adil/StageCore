@@ -32,7 +32,7 @@ the canonical design is reviewed and selected by the Owner.
 
 **[PR #530](https://github.com/ali96adil/StageCore/pull/530)** is one **DRAFT** review target from current `main`, collecting the entire canonical security stack without merging its individual Draft PRs. Its base was compared to `main` on 2026-10-18 (`behind_by=0` at that check). It remains NOT READY TO MERGE because global Project ACL enforcement, complete direct-ID probe tests, emergency STOP and migration preflight are missing.
 
-Integration-specific audit: **263 HTTP registrations, 17 dynamic** (including opt-in Owner cutover preview); reviewed source digest `020f31c26aa310dda07a8139a7fa9ffaebb092caf2408891b8c494fe86e70db3`. Added an HTTP route for embedded `/project-files.js` absent in #526 and an actual Hub asset response test. See `docs/security/sc-024-dynamic-route-audit-17.md`.
+Integration-specific audit: **264 HTTP registrations, 17 dynamic** (including opt-in Owner cutover preview); reviewed source digest `40d080078ec5b01499da850e071e8efe2d7cbe32ea6a7885973b24ecf6e3771f`. Added an HTTP route for embedded `/project-files.js` absent in #526 and an actual Hub asset response test. See `docs/security/sc-024-dynamic-route-audit-17.md`.
 
 The previous #529 Go 1.26 `-race` job exceeded Go's 10-minute package deadline while SQLite fixtures were running, with no `DATA RACE` report. Integration PR #530 runs the **same entire test matrix** with bounded race package parallelism and a 15-minute per-package test budget. This CI-level change is under review, not permission to ignore hangs; a second timeout remains blocking.
 
