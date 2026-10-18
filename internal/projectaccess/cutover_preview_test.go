@@ -18,6 +18,11 @@ func TestCutoverPreviewOwnerOnlyReadOnlyAndLossesReflectLiveGrants(t *testing.T)
 	}
 	report,err:=f.a.PreviewProjectCutover(ctx,f.ownerID)
 	if err!=nil {t.Fatal(err)}
+	var independentStopGate bool
+	for _, gate := range report.Blockers {
+		if gate == "INDEPENDENT_OFFLINE_STOP_PHYSICAL_QUALIFICATION_REQUIRED" { independentStopGate = true }
+	}
+	if !independentStopGate { t.Fatalf("unsafe cutover preview missing independent offline stop qualification: %+v",report.Blockers) }
 	if !report.ReadOnly||report.Enforced||report.ReadyForCutover||
 		report.Status!="BLOCKED_SECURITY_CUTOVER_INCOMPLETE" ||
 		report.ProjectCount!=2||report.UserCount!=4||len(report.Blockers)<4 {
