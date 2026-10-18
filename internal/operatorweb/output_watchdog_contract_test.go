@@ -23,6 +23,15 @@ func TestOutputWatchPreviewIsScopedBilingualAndNeverActuates(t *testing.T){
   `اقرأ حالة مراقبة المخرجات`,
   `Physical outputs UNKNOWN`,
   `target.innerHTML`,
+  `data-output-summary`,
+  `outputWatchSummary:`,
+  `ملخص مراقبة مخارج المشروع`,
+  `view.device_heartbeat_verified === false`,
+  `view.transport_activity_recent === true`,
+  `view.software_report_current === true`,
+  `eligible.length > 40`,
+  `start += 4`,
+  `device.assignment?.project_id === projectID`,
  }{
   if !strings.Contains(s,expected){t.Errorf("missing safe watchdog UI contract %s",expected)}
  }
@@ -36,4 +45,23 @@ func TestOutputWatchPreviewIsScopedBilingualAndNeverActuates(t *testing.T){
  }{
   if strings.Contains(callback,unsafe){t.Errorf("non-read-only action in watchdog UI: %s",unsafe)}
  }
+}
+
+func TestOutputWatchProjectSummaryNeverPollsOrDispatches(t *testing.T) {
+ b,err:=Read("phase4.js")
+ if err!=nil {t.Fatal(err)}
+ s:=string(b)
+ start:=strings.Index(s,`body.querySelector("[data-output-summary]")`)
+ end:=strings.Index(s,`body.querySelectorAll("[data-output-watch]")`)
+ if start<0 || end<=start {t.Fatal("missing bounded Output Watch summary handler")}
+ callback:=s[start:end]
+ for _,allowed:=range []string{
+  `Promise.all(batch.map`,`/output-watch`,`automated_replay === false`,
+  `currentProjectID() !== projectID`,`physical_status === "UNKNOWN"`,
+  `transport_activity_recent === true`,`software_report_current === true`,
+ } {if !strings.Contains(callback,allowed){t.Errorf("missing summary guard %s",allowed)}}
+ for _,disallowed:=range []string{
+  `method: "POST"`,`method: "PUT"`,`method: "DELETE"`,
+  `issueCommand(`,`/runtime/go`,`/runtime/stop`,`setInterval(`,
+ }{if strings.Contains(callback,disallowed){t.Errorf("unsafe summary action %s",disallowed)}}
 }
