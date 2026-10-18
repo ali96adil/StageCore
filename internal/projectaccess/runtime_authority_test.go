@@ -16,17 +16,23 @@ func TestUnwiredRuntimeAuthorityBindsProjectSessionSnapshotAndIndependentSafety(
 	f:=setup(t)
 	ctx:=context.Background()
 	st:=store.New(f.db.DB,clock.Real{})
+	publishedSnapshots:=make(map[string]string)
 	createSession:=func(projectID string, mode domain.SessionType) string {
 		t.Helper()
-		var revisionID string
-		err:=f.db.DB.QueryRowContext(ctx,
-			`SELECT revision_id FROM project_revisions WHERE project_id=? LIMIT 1`,
-			projectID).Scan(&revisionID)
-		if err!=nil {t.Fatal(err)}
-		if err:=st.SetRevisionStatus(ctx,revisionID,domain.RevisionValidated);err!=nil{t.Fatal(err)}
-		snap,_,err:=snapshot.NewBuilder(st).Create(ctx,revisionID,"owner")
-		if err!=nil {t.Fatal(err)}
-		session,err:=st.CreateSession(ctx,snap.ID,mode,"auth-check")
+		snapshotID:=publishedSnapshots[projectID]
+		if snapshotID=="" {
+			var revisionID string
+			err:=f.db.DB.QueryRowContext(ctx,
+				`SELECT revision_id FROM project_revisions WHERE project_id=? LIMIT 1`,
+				projectID).Scan(&revisionID)
+			if err!=nil {t.Fatal(err)}
+			if err:=st.SetRevisionStatus(ctx,revisionID,domain.RevisionValidated);err!=nil{t.Fatal(err)}
+			snap,_,err:=snapshot.NewBuilder(st).Create(ctx,revisionID,"owner")
+			if err!=nil {t.Fatal(err)}
+			snapshotID=snap.ID
+			publishedSnapshots[projectID]=snapshotID
+		}
+		session,err:=st.CreateSession(ctx,snapshotID,mode,"auth-check")
 		if err!=nil {t.Fatal(err)}
 		return session.ID
 	}
