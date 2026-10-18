@@ -45,7 +45,12 @@ jobs:
         run: go vet ./...
       - name: Race tests
         if: matrix.go == '1.26.x'
-        run: go test -race ./...
+        # SQLite-heavy httpapi fixtures can exceed Go's default 10-minute
+        # package timeout when dozens of race-instrumented packages run
+        # concurrently on a loaded hosted runner. Bound package concurrency
+        # and give the SAME race assertions a measured 15-minute budget.
+        # Do not skip packages, use -short, or suppress race failures.
+        run: go test -race -p 4 -timeout 15m ./...
       - name: Linux ARM64 CGo-free product builds
         if: matrix.go == '1.26.x'
         env:
