@@ -35,7 +35,7 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`"ar-IQ":`,
 		`en:`,
 		`الملفات`,
-		`read-only`,
+		`Read-only`,
 	} {
 		if !strings.Contains(source,required) {
 			t.Errorf("Project Files safety/locale contract missing %q",required)
