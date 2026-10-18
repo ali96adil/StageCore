@@ -11,6 +11,13 @@
       video: "Live Video",
       network: "Network Cockpit",
       devicesTitle: "Stage Devices and Cameras",
+      outputWatchLabel: "Read output watchdog",
+      outputWatchUnavailable: "Output observation unavailable or not enabled. Physical status UNKNOWN.",
+      outputWatchPhysical: "Physical outputs UNKNOWN — software reports cannot verify real DMX, sound or light.",
+      outputWatchSocket: "Authenticated socket",
+      outputWatchSoftware: "Fresh software report",
+      outputWatchZero: "Software reported zero",
+      outputWatchNoControl: "Read-only monitoring; no commands or automatic replay.",
       devicesSub: "Paired devices and live camera sources appear here automatically. Normal operation never requires manual IP addresses or raw OSC.",
       callboardTitle: "Stage Display / Callboard",
       callboardSub: "Send messages, countdowns and alerts to one display, a group, or every display.",
@@ -232,6 +239,13 @@
       video: "الفيديو الحي",
       network: "شبكة المسرح",
       devicesTitle: "أجهزة المسرح والكاميرات",
+      outputWatchLabel: "اقرأ حالة مراقبة المخرجات",
+      outputWatchUnavailable: "مراقبة المخرجات غير متاحة أو غير مفعّلة. الحالة الفعلية غير معروفة.",
+      outputWatchPhysical: "حالة المخرجات الفعلية غير معروفة؛ تقرير الجهاز البرمجي لا يثبت حالة الضوء أو الصوت.",
+      outputWatchSocket: "اتصال موثّق",
+      outputWatchSoftware: "تقرير برمجي حديث",
+      outputWatchZero: "صفر حسب تقرير الجهاز",
+      outputWatchNoControl: "مراقبة للقراءة فقط، بدون أوامر أو إعادة تشغيل تلقائية.",
       devicesSub: "الأجهزة المقترنة ومصادر الكاميرا الحية تظهر هنا تلقائياً. التشغيل الطبيعي لا يحتاج IP يدوي ولا أوامر OSC خام.",
       callboardTitle: "شاشة المسرح / Callboard",
       callboardSub: "أرسل رسالة أو عدّاً تنازلياً أو تنبيهاً لشاشة واحدة أو مجموعة أو لكل الشاشات.",
@@ -776,6 +790,12 @@
             <button class="button ghost" data-live-diagnostic-device="${esc(device.device_id)}" type="button">${esc(t("liveDiagnostic"))}</button>
             <div class="phase4-lighting-diagnostic-result" role="status" aria-live="polite"></div>
           </section>` : ""}
+        ${device.protocol_version === "stagecore.device/2" &&
+          assignment.assignment_state === "ACTIVE" && assignment.project_id === currentProjectID() ? `
+          <section class="phase4-output-watch" data-output-watch-section="${esc(device.device_id)}">
+            <button class="button ghost" data-output-watch="${esc(device.device_id)}" type="button">${esc(t("outputWatchLabel"))}</button>
+            <div class="phase4-output-watch-result" role="status" aria-live="polite"></div>
+          </section>` : ""}
         ${stageLaserTelemetryMarkup(device)}
         ${stageLaserVisualCheckMarkup(device, visualCheck, !showLocked && canPair)}
         ${isStageLaser(device) ? `<div class="phase4-empty" role="status"><p>${esc(t("stageLaserTransportOnly"))}</p></div>` : ""}
@@ -1046,6 +1066,44 @@
           ? `<div class="phase4-grid">${inventory.map(inventoryCard).join("")}</div>`
           : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
+
+    body.querySelectorAll("[data-output-watch]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const deviceID = button.dataset.outputWatch || "";
+        const target = button.closest(".phase4-output-watch")?.querySelector(".phase4-output-watch-result");
+        if (!deviceID || !target) return;
+        button.disabled = true;
+        try {
+          const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(deviceID)}/output-watch`);
+          if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
+              currentProjectID() !== projectID || !target.isConnected) return;
+          const view = payload?.view || {};
+          const allowed = ["DISCONNECTED", "AWAITING_FRESH_REPORT", "SOFTWARE_REPORT_CURRENT"];
+          const accepted = payload?.read_only === true && payload?.automated_replay === false &&
+            payload?.physical_status === "UNKNOWN" && payload?.scope === "PROJECT_DEVICE" &&
+            view.project_id === projectID && view.device_id === deviceID &&
+            view.physical_output_verified === false && view.commands_enabled === false &&
+            allowed.includes(view.condition);
+          if (!accepted) throw new Error("Invalid non-actuating output observation");
+          target.innerHTML = `<div class="phase4-empty" role="status">
+            <div class="phase4-status-row">${pulse(view.condition)}</div>
+            <p>${esc(t("outputWatchPhysical"))}</p>
+            <dl class="phase4-kv">
+              <div><dt>${esc(t("outputWatchSocket"))}</dt><dd>${esc(view.authenticated_socket_current === true ? "YES" : "UNKNOWN")}</dd></div>
+              <div><dt>${esc(t("outputWatchSoftware"))}</dt><dd>${esc(view.software_report_current === true ? "YES" : "UNKNOWN")}</dd></div>
+              <div><dt>${esc(t("outputWatchZero"))}</dt><dd>${esc(view.software_report_current === true && view.software_zero_reported === true ? "REPORTED" : "UNKNOWN")}</dd></div>
+            </dl><p class="muted">${esc(t("outputWatchNoControl"))}</p>
+          </div>`;
+        } catch (_) {
+          if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" &&
+              currentProjectID() === projectID && target.isConnected) {
+            target.innerHTML = `<p class="message warn">${esc(t("outputWatchUnavailable"))}</p>`;
+          }
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
 
     body.querySelectorAll("[data-open-workspace]").forEach((button) => {
       button.addEventListener("click", () => {
