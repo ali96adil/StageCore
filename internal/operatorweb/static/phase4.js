@@ -12,6 +12,9 @@
       network: "Network Cockpit",
       devicesTitle: "Stage Devices and Cameras",
       outputWatchLabel: "Read output watchdog",
+      outputWatchSummary: "Read project output summary",
+      outputWatchSummaryNote: "Current v2 sockets only. No verified device heartbeat, physical output state, or Companion/OSC confirmation.",
+      outputWatchSummaryUnavailable: "Summary is unavailable; output state UNKNOWN.",
       outputWatchUnavailable: "Output observation unavailable or not enabled. Physical status UNKNOWN.",
       outputWatchPhysical: "Physical outputs UNKNOWN — software reports cannot verify real DMX, sound or light.",
       outputWatchSocket: "Authenticated socket",
@@ -240,6 +243,9 @@
       network: "شبكة المسرح",
       devicesTitle: "أجهزة المسرح والكاميرات",
       outputWatchLabel: "اقرأ حالة مراقبة المخرجات",
+      outputWatchSummary: "ملخص مراقبة مخارج المشروع",
+      outputWatchSummaryNote: "اتصالات v2 فقط؛ بدون تأكيد Heartbeat خاص بالجهاز أو حالة المخرجات الفعلية أو Companion وOSC.",
+      outputWatchSummaryUnavailable: "الملخص غير متاح؛ حالة المخرجات الفعلية غير معروفة.",
       outputWatchUnavailable: "مراقبة المخرجات غير متاحة أو غير مفعّلة. الحالة الفعلية غير معروفة.",
       outputWatchPhysical: "حالة المخرجات الفعلية غير معروفة؛ تقرير الجهاز البرمجي لا يثبت حالة الضوء أو الصوت.",
       outputWatchSocket: "اتصال موثّق",
@@ -1048,6 +1054,11 @@
         </article>`;
     };
     body.innerHTML = `
+      <section class="phase4-empty phase4-output-summary" role="region" aria-label="${esc(t("outputWatchSummary"))}">
+        <button class="button ghost" data-output-summary type="button">${esc(t("outputWatchSummary"))}</button>
+        <p class="muted">${esc(t("outputWatchSummaryNote"))}</p>
+        <div class="phase4-output-summary-result" role="status" aria-live="polite"></div>
+      </section>
       ${devices.length
         ? `<div class="phase4-grid">${devices.map((device) => deviceCard(device, statuses[device.device_id], assignmentLocked, visualChecks[device.device_id], canPair)).join("")}</div>`
         : `<div class="phase4-empty">${esc(t("noDevices"))}</div>`}
@@ -1067,6 +1078,73 @@
           : `<div class="phase4-empty">${esc(t("v2InventoryEmpty"))}</div>`}
       </section>` : ""}`;
 
+    body.querySelector("[data-output-summary]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const target = button.closest(".phase4-output-summary")?.querySelector(".phase4-output-summary-result");
+      if (!target || !target.isConnected) return;
+      const eligible = devices.filter((device) => device.enabled !== false &&
+        device.protocol_version === "stagecore.device/2" &&
+        device.assignment?.assignment_state === "ACTIVE" &&
+        device.assignment?.project_id === projectID);
+      // Fail closed on a truncated inventory. One explicit user click, no
+      // timer, no background polling and no output/command mutation.
+      if (eligible.length > 40) {
+        target.textContent = t("outputWatchSummaryUnavailable");
+        return;
+      }
+      button.disabled = true;
+      target.textContent = "…";
+      try {
+        const records = [];
+        for (let start = 0; start < eligible.length; start += 4) {
+          const batch = eligible.slice(start, start + 4);
+          const result = await Promise.all(batch.map(async (device) => {
+            try {
+              const response = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/stage-devices/${encodeURIComponent(device.device_id)}/output-watch`);
+              const view = response?.view || {};
+              const valid = response?.read_only === true &&
+                response?.scope === "PROJECT_DEVICE" &&
+                response?.physical_status === "UNKNOWN" &&
+                response?.automated_replay === false &&
+                view.project_id === projectID && view.device_id === device.device_id &&
+                view.physical_output_verified === false && view.commands_enabled === false &&
+                view.device_heartbeat_verified === false &&
+                ["DISCONNECTED", "AWAITING_FRESH_REPORT", "SOFTWARE_REPORT_CURRENT", "HEARTBEAT_STALE", "CLOCK_UNCERTAIN"].includes(view.condition);
+              return { name: device.display_name || device.device_id,
+                condition: valid ? view.condition : "UNKNOWN",
+                transportRecent: valid && view.transport_activity_recent === true,
+                softwareCurrent: valid && view.software_report_current === true };
+            } catch (_) {
+              return { name: device.display_name || device.device_id, condition: "UNKNOWN",
+                transportRecent: false, softwareCurrent: false };
+            }
+          }));
+          records.push(...result);
+          if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
+              currentProjectID() !== projectID || !target.isConnected) return;
+        }
+        if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
+            currentProjectID() !== projectID || !target.isConnected) return;
+        const recent = records.filter((record) => record.transportRecent).length;
+        const software = records.filter((record) => record.softwareCurrent).length;
+        const unqualified = Math.max(0, devices.length - eligible.length);
+        target.innerHTML = `<div class="phase4-empty">
+          <strong>${esc(String(eligible.length))} V2 ACTIVE · ${esc(String(recent))} transport recent · ${esc(String(software))} software reports</strong>
+          <p class="muted">${esc(t("outputWatchPhysical"))} · ${esc(String(unqualified))} devices not covered by this V2 read.</p>
+          <div class="phase4-kv">${records.map((record) =>
+            `<div><dt>${esc(record.name)}</dt><dd>${pulse(record.condition)}</dd></div>`).join("")}</div>
+          <p class="muted">${esc(t("outputWatchNoControl"))}</p>
+        </div>`;
+      } catch (_) {
+        if (renderGeneration === stageDevicesRenderGeneration && state.page === "devices" &&
+            currentProjectID() === projectID && target.isConnected) {
+          target.textContent = t("outputWatchSummaryUnavailable");
+        }
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
+    });
+
     body.querySelectorAll("[data-output-watch]").forEach((button) => {
       button.addEventListener("click", async () => {
         const deviceID = button.dataset.outputWatch || "";
@@ -1078,7 +1156,7 @@
           if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
               currentProjectID() !== projectID || !target.isConnected) return;
           const view = payload?.view || {};
-          const allowed = ["DISCONNECTED", "AWAITING_FRESH_REPORT", "SOFTWARE_REPORT_CURRENT"];
+          const allowed = ["DISCONNECTED", "AWAITING_FRESH_REPORT", "SOFTWARE_REPORT_CURRENT", "HEARTBEAT_STALE", "CLOCK_UNCERTAIN"];
           const accepted = payload?.read_only === true && payload?.automated_replay === false &&
             payload?.physical_status === "UNKNOWN" && payload?.scope === "PROJECT_DEVICE" &&
             view.project_id === projectID && view.device_id === deviceID &&
