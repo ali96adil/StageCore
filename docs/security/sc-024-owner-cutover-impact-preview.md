@@ -63,6 +63,11 @@ The report always contains blockers for:
   must be secured at a **single** cutover point.
 - Emergency STOP/blackout must have independent authority; do not let
   revoking ordinary `show.go` strand a live operator's safety controls.
+- A physically qualified, on-site independent safety stop/interlock is still
+  required for relevant equipment when browser, network, Hub and Companion
+  are unavailable. The preview includes
+  `INDEPENDENT_OFFLINE_STOP_PHYSICAL_QUALIFICATION_REQUIRED` as a hard blocker;
+  software acknowledgement must not clear this without attended evidence.
 - Show Capsules, imported restore, events/SSE, Companion/device download
   boundaries must be covered by the same threat model.
 - Owner reviewed grant impact, durable backups, rollback path and
