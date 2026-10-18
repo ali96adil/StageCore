@@ -3,13 +3,14 @@
 **Review date:** 2026-10-18. **Status:** checked against source,
 not authorized for production cutover.
 
-Source inventory on #529 found 261 `HandleFunc`/`Handle` call sites,
+Source inventory on integration #530 found 262 `HandleFunc`/`Handle` call sites,
 including **17 non-literal registered expressions**. This document
 resolves *all 17* to the path constructed in its declaring source.
 Names within braces are Go ServeMux path variables, not user grants.
-A new literal `GET /project-files.js` was also found missing in
-the integration audit and added separately. The route inventory digest
-must be regenerated and approved after that correction.
+The missing literal `GET /project-files.js` was added in the integration
+review; the updated 262-registration SHA-256 is
+`37853db9ba6cd95c5ee9ab7ea6dd2858236cd0cb699672fa73a8850fed0f82c0`.
+It remains one of the static registrations, not an extra dynamic route.
 
 ## Resolved routes
 
