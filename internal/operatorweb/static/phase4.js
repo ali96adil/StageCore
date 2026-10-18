@@ -15,6 +15,10 @@
       outputWatchSummary: "Read project output summary",
       outputWatchSummaryNote: "Current v2 sockets only. No verified device heartbeat, physical output state, or Companion/OSC confirmation.",
       outputWatchSummaryUnavailable: "Summary is unavailable; output state UNKNOWN.",
+      companionWatchSummary: "Companion / Ableton / VDMX role observations",
+      companionWatchUnavailable: "Companion role watch unavailable (not enabled); OSC/MIDI outputs UNKNOWN.",
+      companionWatchNoRoles: "No Companion Machine Roles in this Project.",
+      companionWatchNoExecution: "READY means Companion role readiness only. Ableton playback and VDMX OSC receipt unconfirmed.",
       outputWatchUnavailable: "Output observation unavailable or not enabled. Physical status UNKNOWN.",
       outputWatchPhysical: "Physical outputs UNKNOWN — software reports cannot verify real DMX, sound or light.",
       outputWatchSocket: "Authenticated socket",
@@ -246,6 +250,10 @@
       outputWatchSummary: "ملخص مراقبة مخارج المشروع",
       outputWatchSummaryNote: "اتصالات v2 فقط؛ بدون تأكيد Heartbeat خاص بالجهاز أو حالة المخرجات الفعلية أو Companion وOSC.",
       outputWatchSummaryUnavailable: "الملخص غير متاح؛ حالة المخرجات الفعلية غير معروفة.",
+      companionWatchSummary: "مراقبة Companion وأدوار Ableton وVDMX",
+      companionWatchUnavailable: "مراقبة Companion غير متاحة أو غير مفعّلة؛ نتائج OSC وMIDI غير معروفة.",
+      companionWatchNoRoles: "لا توجد أدوار Companion لهذا المشروع.",
+      companionWatchNoExecution: "READY تعني جاهزية دور Companion فقط؛ تشغيل Ableton واستلام VDMX للـOSC غير مؤكدين.",
       outputWatchUnavailable: "مراقبة المخرجات غير متاحة أو غير مفعّلة. الحالة الفعلية غير معروفة.",
       outputWatchPhysical: "حالة المخرجات الفعلية غير معروفة؛ تقرير الجهاز البرمجي لا يثبت حالة الضوء أو الصوت.",
       outputWatchSocket: "اتصال موثّق",
@@ -1125,6 +1133,35 @@
         }
         if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
             currentProjectID() !== projectID || !target.isConnected) return;
+        // Companion roles come only from the selected Project's opt-in GET
+        // boundary. A missing endpoint is UNKNOWN, never "zero roles".
+        let companionMarkup = `<p class="message warn">${esc(t("companionWatchUnavailable"))}</p>`;
+        try {
+          const comp = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/companion-output-watch`);
+          if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
+              currentProjectID() !== projectID || !target.isConnected) return;
+          const valid = comp?.schema_version === 1 && comp?.project_id === projectID &&
+            comp?.read_only === true && comp?.automated_replay === false &&
+            comp?.physical_status === "UNKNOWN" && Array.isArray(comp?.roles) &&
+            comp.roles.length <= 64 && comp.roles.every((role) =>
+              typeof role.machine_role_id === "string" &&
+              typeof role.role_key === "string" &&
+              role.midi_execution_confirmed === false &&
+              role.osc_delivery_confirmed === false &&
+              role.physical_output_verified === false &&
+              ["UNASSIGNED", "UNKNOWN", "UNTRUSTED", "OFFLINE", "CLOCK_UNCERTAIN", "STALE", "DEGRADED", "MISMATCH", "COMPANION_READY"].includes(role.condition));
+          if (valid) {
+            companionMarkup = comp.roles.length
+              ? `<div class="phase4-kv">${comp.roles.map((role) =>
+                  `<div><dt>${esc(role.display_name || role.role_key)}</dt>
+                    <dd>${pulse(role.condition)} · ${esc(role.output_class || "OTHER")}</dd></div>`).join("")}</div>`
+              : `<p class="muted">${esc(t("companionWatchNoRoles"))}</p>`;
+          }
+        } catch (_) {
+          // Missing opt-in API or revoked grants cannot be shown as READY.
+        }
+        if (renderGeneration !== stageDevicesRenderGeneration || state.page !== "devices" ||
+            currentProjectID() !== projectID || !target.isConnected) return;
         const recent = records.filter((record) => record.transportRecent).length;
         const software = records.filter((record) => record.softwareCurrent).length;
         const unqualified = Math.max(0, devices.length - eligible.length);
@@ -1133,6 +1170,9 @@
           <p class="muted">${esc(t("outputWatchPhysical"))} · ${esc(String(unqualified))} devices not covered by this V2 read.</p>
           <div class="phase4-kv">${records.map((record) =>
             `<div><dt>${esc(record.name)}</dt><dd>${pulse(record.condition)}</dd></div>`).join("")}</div>
+          <h3>${esc(t("companionWatchSummary"))}</h3>
+          ${companionMarkup}
+          <p class="muted">${esc(t("companionWatchNoExecution"))}</p>
           <p class="muted">${esc(t("outputWatchNoControl"))}</p>
         </div>`;
       } catch (_) {
