@@ -27,6 +27,15 @@ that compete with canonical #518 and use an incompatible Goose migration 53.
 Do not combine these alternatives; explicitly close/supersede only after
 the canonical design is reviewed and selected by the Owner.
 
+
+## Unified integration preview
+
+**[PR #530](https://github.com/ali96adil/StageCore/pull/530)** is one **DRAFT** review target from current `main`, collecting the entire canonical security stack without merging its individual Draft PRs. Its base was compared to `main` on 2026-10-18 (`behind_by=0` at that check). It remains NOT READY TO MERGE because global Project ACL enforcement, complete direct-ID probe tests, emergency STOP and migration preflight are missing.
+
+Integration-specific audit: **262 HTTP registrations, 17 dynamic**; reviewed source digest `37853db9ba6cd95c5ee9ab7ea6dd2858236cd0cb699672fa73a8850fed0f82c0`. Added an HTTP route for embedded `/project-files.js` absent in #526 and an actual Hub asset response test. See `docs/security/sc-024-dynamic-route-audit-17.md`.
+
+The previous #529 Go 1.26 `-race` job exceeded Go's 10-minute package deadline while SQLite fixtures were running, with no `DATA RACE` report. Integration PR #530 runs the **same entire test matrix** with bounded race package parallelism and a 15-minute per-package test budget. This CI-level change is under review, not permission to ignore hangs; a second timeout remains blocking.
+
 ## Other open post-show feature families are separate integration lanes
 
 - #506 → #507 → #508: StageAudio local two-deck engine + wired/Bluetooth
