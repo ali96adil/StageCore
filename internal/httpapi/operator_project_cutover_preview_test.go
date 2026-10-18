@@ -66,6 +66,21 @@ func TestOwnerCutoverPreviewOptInPrivateAndNeverEnablesACL(t *testing.T) {
 		}
 	}
 	if !foundOp{t.Fatal("Operator impact missing")}
+	// Active SHOW blocks any future cutover; this preview does not try
+	// to stop SHOW or mutate the permissions behind the running operator.
+	startShowSession(t,context.Background(),f.projects)
+	active:=get(opt,f.owner.Token,url,"127.0.0.1:14200")
+	if active.Code!=http.StatusOK {t.Fatalf("Owner active-show review=%d",active.Code)}
+	var activeReport projectaccess.CutoverImpactPreview
+	if err:=json.Unmarshal(active.Body.Bytes(),&activeReport);err!=nil {t.Fatal(err)}
+	if activeReport.ActiveOperationalSession!="SHOW"||activeReport.ReadyForCutover{
+		t.Fatalf("active SHOW wrongly marked cutover-safe: %+v",activeReport)
+	}
+	var showBlocked bool
+	for _,code:=range activeReport.Blockers {
+		if code=="ACTIVE_OPERATIONAL_SESSION_BLOCKS_CUTOVER" {showBlocked=true}
+	}
+	if !showBlocked {t.Fatalf("SHOW missing from blockers: %+v",activeReport.Blockers)}
 	// GET preview must not grant or revoke in either Project and cannot
 	// claim a runtime authorization cutover has occurred.
 	for _,p:=range []string{f.projectID,f.otherID}{
