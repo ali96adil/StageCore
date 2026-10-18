@@ -36,6 +36,21 @@ simulations, timecode, timing, HA, StageAudio (stacked #506–#508),
 software/firmware downloads, backup operations, setup/bootstrap, QLC+/USB
 DMX integration and all dynamically registered module/extension routes.
 
+## First source baseline (Go 1.27 CI discovery)
+
+The AST registration scan found **261 Go HTTP registration call sites** across
+`internal/httpapi` on the #529 stacked branch, including **17 dynamic
+registration expressions**. Reviewed source fingerprint:
+`405e90a0d0e52d96171fccfe54db8650356b584aff17f843fb4d808ce9f4ee39`.
+
+The inventory counts **registrations**, not unique routable URLs: some
+routes are conditionally registered, some alternate options declare the
+same pattern, and dynamic expressions may cover multiple real URLs.
+The count also includes static Operator Web assets and device/service routes;
+it does **not** mean 261 Project-scoped endpoints. Every one of the 17 dynamic
+expressions, including execution-environment patterns and Owner-grants
+patterns, needs effective resolved-route testing before ACL cutover.
+
 ## New CI gate
 
 `internal/httpapi/route_acl_registration_guard_test.go` parses all Go
