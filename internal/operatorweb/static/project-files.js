@@ -8,27 +8,15 @@ const scFileCopy = {
   nav: { en: "Files", "ar-IQ": "الملفات" },
   title: { en: "Project Files", "ar-IQ": "ملفات المشروع" },
   eyebrow: { en: "PROJECT MEDIA", "ar-IQ": "وسائط المشروع" },
-  description: {
-    en: "Files referenced by this Project. Read-only: uploads, downloads and deletions are not enabled yet.",
-    "ar-IQ": "الملفات المرتبطة بهذا المشروع. العرض للقراءة فقط؛ الرفع والتنزيل والحذف غير مفعّلة حالياً.",
-  },
+  description: { en: "Files referenced by this Project. Read-only: uploads, downloads and deletions are not enabled yet.", "ar-IQ": "الملفات المرتبطة بهذا المشروع. العرض للقراءة فقط؛ الرفع والتنزيل والحذف غير مفعّلة حالياً." },
   refresh: { en: "Refresh", "ar-IQ": "تحديث" },
   name: { en: "Name", "ar-IQ": "الاسم" },
   type: { en: "Type", "ar-IQ": "النوع" },
   size: { en: "Size", "ar-IQ": "الحجم" },
   policy: { en: "Storage policy", "ar-IQ": "سياسة التخزين" },
-  empty: {
-    en: "No media is registered for this Project yet.",
-    "ar-IQ": "ماكو ملفات وسائط مسجّلة لهذا المشروع لحد الآن.",
-  },
-  unavailable: {
-    en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.",
-    "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى.",
-  },
-  pagination: {
-    en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.",
-    "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان.",
-  },
+  empty: { en: "No media is registered for this Project yet.", "ar-IQ": "ماكو ملفات وسائط مسجّلة لهذا المشروع لحد الآن." },
+  unavailable: { en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.", "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى." },
+  pagination: { en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.", "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان." },
   other: { en: "Other", "ar-IQ": "أخرى" },
 };
 function scFileT(key) {
