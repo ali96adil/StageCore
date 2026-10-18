@@ -29,6 +29,7 @@ func WithOperatorWeb() Option {
 		s.mux.HandleFunc("GET /show-lock.js", serveOperatorAsset("show-lock.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /timecode.js", serveOperatorAsset("timecode.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /timing-intelligence.js", serveOperatorAsset("timing-intelligence.js", "application/javascript; charset=utf-8", false))
+		s.mux.HandleFunc("GET /project-files.js", serveOperatorAsset("project-files.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-capsules.js", serveOperatorAsset("show-capsules.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-capsules-nav.js", serveOperatorAsset("show-capsules-nav.js", "application/javascript; charset=utf-8", false))
 		s.mux.HandleFunc("GET /show-templates.js", serveOperatorAsset("show-templates.js", "application/javascript; charset=utf-8", false))
