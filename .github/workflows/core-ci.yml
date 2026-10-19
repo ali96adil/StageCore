@@ -44,6 +44,8 @@ jobs:
           node --check tools/receiver-ack-lab/app_observer.js
           node --check tools/receiver-ack-lab/max_receiver_bridge.js
           node --test tools/receiver-ack-lab/app_observer.test.js tools/receiver-ack-lab/max_receiver_bridge.test.js tools/receiver-ack-lab/patch_structure.test.js
+          node --check tools/receiver-ack-lab/vdmx_oscquery_readback.js
+          node --test tools/receiver-ack-lab/vdmx_oscquery_readback.test.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
