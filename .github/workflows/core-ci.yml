@@ -36,6 +36,26 @@ jobs:
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
         run: node --check internal/operatorweb/static/phase4.js
+      - name: Receiver OSC acknowledgment lab interoperability
+        if: matrix.go == '1.26.x'
+        run: |
+          node --check tools/receiver-ack-lab/receiver_ack.js
+          node tools/receiver-ack-lab/receiver_ack.js --self-test
+          node --check tools/receiver-ack-lab/app_observer.js
+          node --check tools/receiver-ack-lab/max_receiver_bridge.js
+          node --test tools/receiver-ack-lab/app_observer.test.js tools/receiver-ack-lab/max_receiver_bridge.test.js tools/receiver-ack-lab/patch_structure.test.js
+          node --check tools/receiver-ack-lab/vdmx_oscquery_readback.js
+          node --test tools/receiver-ack-lab/vdmx_oscquery_readback.test.js
+          node --check tools/receiver-ack-lab/vdmx_readback_session.js
+          node --test tools/receiver-ack-lab/vdmx_readback_session.test.js
+          node --check tools/receiver-ack-lab/vdmx_readback_fixture_cli.js
+          node --test tools/receiver-ack-lab/vdmx_readback_fixture_cli.test.js
+          node --check tools/receiver-ack-lab/vdmx_loopback_read.js
+          node --test tools/receiver-ack-lab/vdmx_loopback_read.test.js
+          node --check tools/receiver-ack-lab/vdmx_manual_compare.js
+          node --test tools/receiver-ack-lab/vdmx_manual_compare.test.js
+          node --check tools/receiver-ack-lab/vdmx_oscquery_path.js
+          node --test tools/receiver-ack-lab/vdmx_spaced_path.test.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
@@ -45,7 +65,12 @@ jobs:
         run: go vet ./...
       - name: Race tests
         if: matrix.go == '1.26.x'
-        run: go test -race ./...
+        # SQLite-heavy httpapi fixtures can exceed Go's default 10-minute
+        # package timeout when dozens of race-instrumented packages run
+        # concurrently on a loaded hosted runner. Bound package concurrency
+        # and give the SAME race assertions a measured 15-minute budget.
+        # Do not skip packages, use -short, or suppress race failures.
+        run: go test -race -p 4 -timeout 15m ./...
       - name: Linux ARM64 CGo-free product builds
         if: matrix.go == '1.26.x'
         env:

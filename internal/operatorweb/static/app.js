@@ -127,6 +127,7 @@ function showLogin(message = "") {
   stopRuntimePolling();
   state.user = null;
   state.project = null;
+  if (typeof scFilesUpdateForProject === "function") scFilesUpdateForProject("");
   loginView.classList.remove("hidden");
   appView.classList.add("hidden");
   el("userArea").classList.add("hidden");
@@ -245,6 +246,7 @@ async function navigate(page) {
   setMessage(globalMessage, "");
   try {
     if (page === "dashboard") await renderDashboard();
+    if (page === "files") await renderScopedProjectFiles();
     if (page === "cues") await renderCues();
     if (page === "runtime") await renderRuntime(true);
   } catch (error) {
@@ -357,6 +359,7 @@ async function openProject(projectID) {
 function updateWorkspaceProject() {
   el("workspaceNav").classList.remove("hidden");
   el("workspaceProjectName").textContent = state.project?.name || "Project";
+  if (typeof scFilesUpdateForProject === "function") scFilesUpdateForProject(state.project?.project_id || "");
 }
 
 function pill(text, kind = "neutral") {
