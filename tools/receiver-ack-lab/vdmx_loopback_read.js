@@ -66,6 +66,15 @@ function getLoopbackControl({ port, target }, transport = http) {
         fail();
         return;
       }
+      // Reject advertised oversize bodies before allocating payload buffers.
+      const announced = response.headers["content-length"];
+      if (announced !== undefined &&
+          (!/^[0-9]+$/.test(String(announced)) ||
+           Number(announced) > MAX_BODY_BYTES)) {
+        response.destroy();
+        fail();
+        return;
+      }
       let length = 0;
       const parts = [];
       response.on("data", (part) => {
@@ -83,6 +92,12 @@ function getLoopbackControl({ port, target }, transport = http) {
         settled = true;
         try {
           const json = JSON.parse(Buffer.concat(parts).toString("utf8"));
+          // A GET of the exact OSCQuery method must report that method.
+          // A server returning a different/root address is not evidence.
+          if (!json || typeof json !== "object" || Array.isArray(json) ||
+              json.FULL_PATH !== target) {
+            throw new Error("wrong OSCQuery FULL_PATH");
+          }
           const control = readVDMXPublishedControl(json, target);
           resolve({
             schema_version: 1,
