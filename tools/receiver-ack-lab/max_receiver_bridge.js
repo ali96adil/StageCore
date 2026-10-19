@@ -4,6 +4,7 @@
 // file writes, or Cue dispatch. Keep disabled unless explicitly enabled
 // in a non-show lab. This does not prove who supplied a Max message.
 const { AppObserverLab, LIVE_SLOT, VDMX_PROPERTY } = require("./app_observer");
+const crypto = require("node:crypto");
 
 function parsePrimitive(raw) {
   const v = JSON.parse(String(raw));
@@ -51,6 +52,33 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
       }
     };
   }
+  // LAB_ONLY fixture. This does not use real Project, Companion, Cue,
+  // Execution or Snapshot IDs, cannot authenticate with a Hub and is
+  // not usable for runtime GO. Requires a current local Track 0 baseline.
+  maxApi.addHandler("stagecore_arm_live_fixture", safeHandler(async (slotRaw) => {
+    const slot = Number(slotRaw);
+    if (!Number.isSafeInteger(slot) || slot < 0 || slot > 256 ||
+        !liveLast.has(0)) throw new Error("lab fixture needs Live Track 0 baseline");
+    const nowMs = now();
+    const labID = crypto.randomUUID();
+    tracker.arm({
+      receipt: {
+        project_id: "LAB_ONLY", runtime_snapshot_id: "LAB_ONLY",
+        machine_role_id: "LAB_TRACK_0", companion_id: "LAB_ONLY",
+        receiver_instance_id: "LAB_MAX_SCRIPT", kind: "ABLETON",
+        connection_generation: "1",
+        execution_id: labID, cue_id: "LAB_ONLY",
+        challenge: crypto.randomBytes(20).toString("hex"),
+      },
+      expect: { source: LIVE_SLOT, track_index: 0,
+        playing_slot_index: slot },
+      expires_at_ms: nowMs + 10000,
+    });
+    observerEpoch += 1;
+    if (typeof maxApi.post === "function") {
+      await maxApi.post("StageCore LAB_ONLY: manually arm Live Track 0; no commands sent");
+    }
+  }));
   maxApi.addHandler("stagecore_arm_json", safeHandler(async (...parts) => {
     // Node for Max may pass a serialized JSON Max symbol as one atom, or
     // split whitespace-delimited atoms. Treat both as one lab document.
@@ -109,16 +137,21 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
 }
 
 function startLabAdapter() {
-  if (process.env.STAGECORE_ACK_LAB_ENABLED !== "1" ||
+  const explicitlyStarted = process.argv.includes("--lab") ||
+    process.env.STAGECORE_ACK_LAB_ENABLED === "1";
+  if (!explicitlyStarted ||
       !["max", "maxforlive"].includes(process.env.MAX_ENV)) {
-    throw new Error("StageCore receiver lab requires explicit Max lab enablement");
+    throw new Error("StageCore receiver lab requires manual script start --lab inside Max");
   }
+  // By default, this test-only process gets a NEW non-exported key.
+  // Its signature is deliberately unusable by any Hub-side verifier.
   const hex = process.env.STAGECORE_LAB_RECEIVER_KEY_HEX || "";
-  if (!/^(?:[0-9a-fA-F]{2}){32,}$/.test(hex)) {
-    throw new Error("StageCore receiver lab needs a private 32+ byte test key");
+  if (hex && !/^(?:[0-9a-fA-F]{2}){32,}$/.test(hex)) {
+    throw new Error("StageCore receiver lab key must have >=32 bytes");
   }
+  const key = hex ? Buffer.from(hex, "hex") : crypto.randomBytes(32);
   const maxApi = require("max-api");
-  const tracker = new AppObserverLab({ key: Buffer.from(hex, "hex") });
+  const tracker = new AppObserverLab({ key });
   registerMaxBridge(maxApi, tracker);
 }
 if (require.main === module) startLabAdapter();
