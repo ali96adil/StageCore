@@ -15,6 +15,18 @@ const MAX_BODY_BYTES = 65536;
 const TIMEOUT_MS = 1800;
 const TEST_CONFIRMATION = "STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT";
 
+// Shared criteria for the CLI and its exported diagnostic helper.
+// No future caller may turn this into a general-purpose HTTP fetcher.
+function validPort(port) {
+  return Number.isSafeInteger(port) && port >= 1024 && port <= 65535;
+}
+function validPath(path) {
+  return typeof path === "string" &&
+    new RegExp("^/[A-Za-z0-9_/-]{1,120}$").test(path) &&
+    !path.endsWith("/") && !path.includes("//") &&
+    !path.includes("/../") && !path.includes("/./");
+}
+
 function parseArgs(argv, env = process.env) {
   if (!Array.isArray(argv) || argv.length !== 4 ||
       argv[0] !== "--port" || argv[2] !== "--path" ||
@@ -26,12 +38,7 @@ function parseArgs(argv, env = process.env) {
     throw new Error("invalid explicit OSCQuery port");
   }
   const port = Number(rawPort);
-  if (port < 1024 || port > 65535 ||
-      typeof target !== "string" ||
-      !/^\/[A-Za-z0-9_/-]{1,120}$/.test(target) ||
-      target.includes("//") || target.includes("/../") ||
-      target.endsWith("/") || target.includes("?") ||
-      target.includes("#")) {
+  if (!validPort(port) || !validPath(target)) {
     throw new Error("invalid OSCQuery port or exact published path");
   }
   return { port, target };
@@ -39,7 +46,13 @@ function parseArgs(argv, env = process.env) {
 
 // No URL argument and no configurable hostname = no remote requests,
 // redirects to the LAN, credential URLs or hostname/DNS rebinding.
-function getLoopbackControl({ port, target }, transport = http) {
+function getLoopbackControl(options, transport = http) {
+  // parseArgs is not a sufficient guard for direct library callers.
+  if (!options || typeof options !== "object" ||
+      !validPort(options.port) || !validPath(options.target)) {
+    return Promise.reject(new Error("invalid loopback OSCQuery request; state UNKNOWN"));
+  }
+  const { port, target } = options;
   return new Promise((resolve, reject) => {
     let settled = false;
     function fail() {
