@@ -187,3 +187,35 @@ test("declared Content-Length above 64 KiB is rejected immediately",async(t)=>{
   });
   await assert.rejects(getLoopbackControl({port,target}),/UNKNOWN/);
 });
+
+
+test("exported diagnostic rejects unvalidated port/path without making any request",async()=>{
+  let called=0;
+  const fake={request(){called++;throw new Error("unsafe network invocation")}};
+  const invalid=[
+    {port:80,target},
+    {port:0,target},
+    {port:65536,target},
+    {port:"9123",target},
+    {port:9123,target:"http://127.0.0.1:9123/admin"},
+    {port:9123,target:"/config?HOST_INFO"},
+    {port:9123,target:"/../../private"},
+    {port:9123,target:"/bad//path"},
+    null,
+  ];
+  for(const options of invalid){
+    await assert.rejects(getLoopbackControl(options,fake),/UNKNOWN/);
+  }
+  assert.equal(called,0,"invalid direct caller opened a socket");
+});
+
+test("a legitimate single scalar OSCQuery VALUE is readable without a Cue claim",async(t)=>{
+  const port=await mockServer(t,(_,res)=>{
+    res.writeHead(200,{"Content-Type":"application/json"});
+    res.end(JSON.stringify({FULL_PATH:target,TYPE:"f",VALUE:0.45}));
+  });
+  const view=await getLoopbackControl({port,target});
+  assert.equal(view.published_value,0.45);
+  assert.equal(view.historical_cue_execution_confirmed,false);
+  assert.equal(view.physical_video_output_verified,false);
+});
