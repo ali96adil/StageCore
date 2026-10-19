@@ -10,6 +10,7 @@
 // video verified or app receipt confirmed based on this diagnostic.
 const http = require("node:http");
 const { readVDMXPublishedControl } = require("./vdmx_oscquery_readback");
+const { validPublishedPath, encodePublishedGETPath } = require("./vdmx_oscquery_path");
 
 const MAX_BODY_BYTES = 65536;
 const TIMEOUT_MS = 1800;
@@ -20,13 +21,6 @@ const TEST_CONFIRMATION = "STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT";
 function validPort(port) {
   return Number.isSafeInteger(port) && port >= 1024 && port <= 65535;
 }
-function validPath(path) {
-  return typeof path === "string" &&
-    new RegExp("^/[A-Za-z0-9_/-]{1,120}$").test(path) &&
-    !path.endsWith("/") && !path.includes("//") &&
-    !path.includes("/../") && !path.includes("/./");
-}
-
 function parseArgs(argv, env = process.env) {
   if (!Array.isArray(argv) || argv.length !== 4 ||
       argv[0] !== "--port" || argv[2] !== "--path" ||
@@ -38,7 +32,7 @@ function parseArgs(argv, env = process.env) {
     throw new Error("invalid explicit OSCQuery port");
   }
   const port = Number(rawPort);
-  if (!validPort(port) || !validPath(target)) {
+  if (!validPort(port) || !validPublishedPath(target)) {
     throw new Error("invalid OSCQuery port or exact published path");
   }
   return { port, target };
@@ -64,7 +58,10 @@ function getLoopbackControl(options, transport = http) {
       host: "127.0.0.1",
       family: 4,
       port,
-      path: target,
+      // OSCQuery FULL_PATH stays raw in JSON; HTTP path must encode spaces.
+      // encodeURIComponent per segment preserves "/" delimiters and
+      // forbids URLs, escapes, query strings, fragments and traversal.
+      path: encodePublishedGETPath(target),
       method: "GET",
       agent: false,
       headers: { Accept: "application/json", Connection: "close" },
