@@ -95,3 +95,34 @@ test("Node for Max bridge never opens sockets or loads a real receiver key by it
     assert.equal(source.includes(forbidden), false, "unexpected output dispatch in lab bridge");
   }
 });
+
+
+test("live API Track rebinding clears baseline and cancels an armed lab Execution", async () => {
+  const f = fixture();
+  await f.max.handlers.stagecore_live_slot(0, -1);
+  await f.arm();
+  await f.max.handlers.stagecore_reset_observer(); // live.path changed object ID
+  await f.max.handlers.stagecore_live_slot(0, 3); // new initial value
+  assert.equal(f.max.output.length, 0, "new Live object baseline must not sign");
+  assert.equal(f.tracker.status().pending, false);
+  const next = { ...f.receipt, execution_id: "ex-after-rebind",
+    challenge: "fresh-rebind-2026-001" };
+  await f.max.handlers.stagecore_arm_json(JSON.stringify({
+    receipt: next, expect: f.expect, expires_at_ms: 1_800_000_003_000,
+  }));
+  await f.max.handlers.stagecore_live_slot(0, 2);
+  assert.equal(f.max.output.length, 0);
+  await f.max.handlers.stagecore_live_slot(0, 3);
+  assert.equal(f.max.output.length, 2);
+});
+
+test("arm handler reassembles whitespace-split JSON Max symbols without dispatch", async () => {
+  const f = fixture();
+  const document = JSON.stringify({
+    receipt: f.receipt, expect: f.expect, expires_at_ms: 1_800_000_003_000,
+  }, null, 2);
+  await f.max.handlers.stagecore_arm_json(...document.split(/\s+/));
+  assert.equal(f.tracker.status().pending, true);
+  assert.equal(f.max.output.length, 0);
+  assert.equal(f.max.logs.length, 0);
+});
