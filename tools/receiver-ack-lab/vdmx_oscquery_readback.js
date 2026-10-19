@@ -17,36 +17,40 @@ function validPath(path) {
     !path.endsWith("/");
 }
 function singleValue(node) {
-  // OSCQuery's ACCESS is OPTIONAL. If omitted, the proposal assumes
-  // the value is readable whenever VALUE is published. If ACCESS is
-  // explicitly provided, its integer readable bit must be set.
-  const readable = node && (node.ACCESS === undefined
-    ? Array.isArray(node.VALUE)
+  // OSCQuery permits a scalar VALUE for one argument as well as the
+  // one-element array representation. Never collapse a multi-value
+  // parameter: this observer supports exactly one typed argument.
+  const present = node && Object.prototype.hasOwnProperty.call(node, "VALUE");
+  const allowed = node && (node.ACCESS === undefined
+    ? present
     : Number.isInteger(node.ACCESS) && node.ACCESS >= 0 &&
       node.ACCESS <= 3 && (node.ACCESS & 1) === 1);
-  if (readable && Array.isArray(node.VALUE) && node.VALUE.length === 1 &&
-      typeof node.TYPE === "string" && node.TYPE.length === 1) {
-    const value = node.VALUE[0];
-    if (["f", "d"].includes(node.TYPE)) {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error("invalid finite floating point OSCQuery value");
-      }
-    } else if (["i", "h"].includes(node.TYPE)) {
-      if (!Number.isSafeInteger(value)) throw new Error("invalid OSCQuery integer");
-    } else if (node.TYPE === "s") {
-      if (typeof value !== "string" || value.length > 256) {
-        throw new Error("invalid OSCQuery string");
-      }
-    } else if (node.TYPE === "T") {
-      if (value !== true) throw new Error("invalid OSCQuery TRUE");
-    } else if (node.TYPE === "F") {
-      if (value !== false) throw new Error("invalid OSCQuery FALSE");
-    } else {
-      throw new Error("unsupported OSCQuery type for lab");
-    }
-    return value;
+  if (!allowed || !present || typeof node.TYPE !== "string" ||
+      node.TYPE.length !== 1) {
+    throw new Error("OSCQuery node is missing readable single VALUE/TYPE");
   }
-  throw new Error("OSCQuery node is missing readable single VALUE/TYPE");
+  if (Array.isArray(node.VALUE) && node.VALUE.length !== 1) {
+    throw new Error("OSCQuery node is missing readable single VALUE/TYPE");
+  }
+  const value = Array.isArray(node.VALUE) ? node.VALUE[0] : node.VALUE;
+  if (["f", "d"].includes(node.TYPE)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error("invalid finite floating point OSCQuery value");
+    }
+  } else if (["i", "h"].includes(node.TYPE)) {
+    if (!Number.isSafeInteger(value)) throw new Error("invalid OSCQuery integer");
+  } else if (node.TYPE === "s") {
+    if (typeof value !== "string" || value.length > 256) {
+      throw new Error("invalid OSCQuery string");
+    }
+  } else if (node.TYPE === "T") {
+    if (value !== true) throw new Error("invalid OSCQuery TRUE");
+  } else if (node.TYPE === "F") {
+    if (value !== false) throw new Error("invalid OSCQuery FALSE");
+  } else {
+    throw new Error("unsupported OSCQuery type for lab");
+  }
+  return value;
 }
 
 // OSCQuery FULL_PATH + CONTENTS tree, as documented by VIDVOX's
