@@ -319,7 +319,7 @@
         "patchline": {
           "source": [
             "path",
-            0
+            1
           ],
           "destination": [
             "track_identity",
