@@ -46,8 +46,13 @@ async function compareManual({ port, target }, {
       typeof now !== "function" || typeof read !== "function") {
     throw new Error("manual disposable VDMX test confirmation required");
   }
-  // parseArgs is the sole shared allowlist for CLI and this helper.
-  // Even a directly invoked helper must not bypass port/path checks.
+  // Do NOT coerce an untrusted direct-call port with String(port).
+  // The helper's port is an integer, just like getLoopbackControl.
+  // CLI parseArgs handles converting a strictly validated decimal.
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
+    throw new Error("invalid direct-call OSCQuery comparison port");
+  }
+  // parseArgs is the sole shared path allowlist for CLI and helper.
   parseArgs(["--port", String(port), "--path", target], {
     STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT: "1",
   });
