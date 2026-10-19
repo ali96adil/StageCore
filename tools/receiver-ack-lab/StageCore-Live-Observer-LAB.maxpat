@@ -93,21 +93,8 @@
           "text": "live.observer playing_slot_index",
           "patching_rect": [
             40,
-            251,
-            205,
-            22
-          ]
-        }
-      },
-      {
-        "box": {
-          "id": "route",
-          "maxclass": "newobj",
-          "text": "route playing_slot_index",
-          "patching_rect": [
-            40,
-            293,
-            208,
+            288,
+            210,
             22
           ]
         }
@@ -119,8 +106,8 @@
           "text": "prepend stagecore_live_slot 0",
           "patching_rect": [
             40,
-            338,
-            230,
+            342,
+            235,
             22
           ]
         }
@@ -129,7 +116,7 @@
         "box": {
           "id": "manual",
           "maxclass": "comment",
-          "text": "Manual lab arm metadata (one JSON string) enters at the inlet; no automatic cue arming.",
+          "text": "Lab-only metadata inlet (JSON symbol/string), routed to stagecore_arm_json. No automatic arming.",
           "patching_rect": [
             382,
             112,
@@ -157,8 +144,8 @@
           "text": "script start",
           "patching_rect": [
             390,
-            234,
-            96,
+            265,
+            95,
             22
           ]
         }
@@ -170,8 +157,8 @@
           "text": "script stop",
           "patching_rect": [
             505,
-            234,
-            90,
+            265,
+            92,
             22
           ]
         }
@@ -183,8 +170,8 @@
           "text": "node.script max_receiver_bridge.js @autostart 0",
           "patching_rect": [
             390,
-            302,
-            430,
+            335,
+            440,
             24
           ]
         }
@@ -196,8 +183,8 @@
           "text": "print stagecore_ack_lab",
           "patching_rect": [
             390,
-            356,
-            185,
+            383,
+            190,
             22
           ]
         }
@@ -209,9 +196,48 @@
           "text": "ACK outputs are BASE64 fixtures ONLY. Do not connect this outlet to udpsend, OSC GO, audio, light, or an armed production StageCore input.",
           "patching_rect": [
             390,
-            397,
-            448,
-            72
+            428,
+            440,
+            75
+          ]
+        }
+      },
+      {
+        "box": {
+          "id": "track_identity",
+          "maxclass": "newobj",
+          "text": "t l b",
+          "patching_rect": [
+            40,
+            249,
+            60,
+            22
+          ]
+        }
+      },
+      {
+        "box": {
+          "id": "identity_reset",
+          "maxclass": "message",
+          "text": "stagecore_reset_observer",
+          "patching_rect": [
+            115,
+            249,
+            210,
+            22
+          ]
+        }
+      },
+      {
+        "box": {
+          "id": "arm_prefix",
+          "maxclass": "newobj",
+          "text": "prepend stagecore_arm_json",
+          "patching_rect": [
+            392,
+            209,
+            220,
+            22
           ]
         }
       }
@@ -244,67 +270,7 @@
       {
         "patchline": {
           "source": [
-            "path",
-            0
-          ],
-          "destination": [
-            "observer",
-            1
-          ]
-        }
-      },
-      {
-        "patchline": {
-          "source": [
-            "observer",
-            0
-          ],
-          "destination": [
-            "route",
-            0
-          ]
-        }
-      },
-      {
-        "patchline": {
-          "source": [
-            "route",
-            0
-          ],
-          "destination": [
             "pre",
-            0
-          ]
-        }
-      },
-      {
-        "patchline": {
-          "source": [
-            "route",
-            1
-          ],
-          "destination": [
-            "pre",
-            0
-          ]
-        }
-      },
-      {
-        "patchline": {
-          "source": [
-            "pre",
-            0
-          ],
-          "destination": [
-            "node",
-            0
-          ]
-        }
-      },
-      {
-        "patchline": {
-          "source": [
-            "arm",
             0
           ],
           "destination": [
@@ -345,6 +311,90 @@
           ],
           "destination": [
             "print",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "path",
+            0
+          ],
+          "destination": [
+            "track_identity",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "track_identity",
+            0
+          ],
+          "destination": [
+            "observer",
+            1
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "track_identity",
+            1
+          ],
+          "destination": [
+            "identity_reset",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "identity_reset",
+            0
+          ],
+          "destination": [
+            "node",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "observer",
+            0
+          ],
+          "destination": [
+            "pre",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "arm",
+            0
+          ],
+          "destination": [
+            "arm_prefix",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "arm_prefix",
+            0
+          ],
+          "destination": [
+            "node",
             0
           ]
         }
