@@ -43,7 +43,7 @@ function parseArgs(argv, env = process.env) {
 function getLoopbackControl(options, transport = http) {
   // parseArgs is not a sufficient guard for direct library callers.
   if (!options || typeof options !== "object" ||
-      !validPort(options.port) || !validPath(options.target)) {
+      !validPort(options.port) || !validPublishedPath(options.target)) {
     return Promise.reject(new Error("invalid loopback OSCQuery request; state UNKNOWN"));
   }
   const { port, target } = options;
