@@ -37,7 +37,13 @@ test("read-only and read-write published values are both readable", () => {
   assert.equal(readVDMXPublishedControl(data,target).value,0);
   leaf.ACCESS=2;
   assert.throws(()=>readVDMXPublishedControl(data,target),/readable/);
-  leaf.ACCESS=undefined;
+  // OSCQuery ACCESS is optional: explicit published VALUE defaults to
+  // readable when the server omits the ACCESS metadata.
+  delete leaf.ACCESS;
+  assert.equal(readVDMXPublishedControl(data,target).value,0);
+  leaf.ACCESS=0;
+  assert.throws(()=>readVDMXPublishedControl(data,target),/readable/);
+  leaf.ACCESS=null;
   assert.throws(()=>readVDMXPublishedControl(data,target),/readable/);
 });
 test("does not substitute an OSC input destination for a published VDMX state",()=>{
