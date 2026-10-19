@@ -25,10 +25,14 @@ opt-in, one-shot local diagnostic (no automatic polling). It:
 - Contacts **only** \`127.0.0.1\` over HTTP, using a single GET, with
   an overall 1.8-second deadline. Does not take a user URL, hostname,
   DNS target or proxy; cannot follow an HTTP redirect.
-- Requires a direct 200 JSON reply, refuses compressed/oversized
-  responses and bounds reply bytes to 64 KiB. Rejects a Control
-  Surface value without the expected FULL_PATH, readable ACCESS,
-  scalar TYPE and valid VALUE.
+- Requires a direct 200 JSON reply with the **exact requested
+  FULL_PATH** (not a substituted root/other-tree response), refuses
+  compressed/oversized responses and bounds advertised and received
+  reply bytes to 64 KiB. Rejects unsupported scalar TYPE or invalid
+  VALUE and an explicitly unreadable ACCESS (0 or 2).
+- The OSCQuery specification makes ACCESS optional: when omitted,
+  a well-typed, explicitly published single VALUE remains readable.
+  This applies to diagnostic GET only, never sending or writing.
 - Prints only a narrow diagnostic: property path, reported value,
   local capture timestamp and **all** trust/execution/physical-output
   and control-authority flags set to false.
@@ -95,6 +99,8 @@ server in the CI runner, **not a real VDMX server**. It exercises:
 - No redirect following, invalid path or content type, malformed
   JSON, compressed response and oversized payload.
 - Connection refused returning UNKNOWN, no fallback to remote IP.
+- Exact-method FULL_PATH rather than substituted root tree, absent
+  optional ACCESS with typed VALUE, and declared oversized Content-Length.
 
 Run the source-only verification without VDMX:
 
