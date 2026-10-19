@@ -75,7 +75,7 @@ test("cancellation and clock rollback fail closed without command replay", () =>
   assert.throws(() => f.tracker.arm(f.command()), /already observed/i);
   f.advance(-1);
   assert.throws(() => f.tracker.status(), /clock uncertain/);
-  assert.equal(f.tracker.observe(f.event(2)).length, 0); // no pending
+  assert.throws(() => f.tracker.observe(f.event(2)), /clock uncertain/);
 });
 
 test("input validation prevents unsupported or unbounded observations", () => {
