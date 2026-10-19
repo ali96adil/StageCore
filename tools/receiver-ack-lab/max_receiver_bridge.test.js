@@ -177,3 +177,39 @@ test("late asynchronous Max outlet cannot emit second ACK after track rebinding"
     "late APPLIED output survived changed Live Track identity");
   assert.equal(f.tracker.status().pending, false);
 });
+
+
+test("one-click LAB_ONLY fixture needs a baseline and emits no command on arm", async () => {
+  const f = fixture();
+  await f.max.handlers.stagecore_arm_live_fixture(3);
+  assert.equal(f.tracker.status().pending, false);
+  assert.equal(f.max.output.length, 0);
+  assert.equal(f.max.logs.length, 1);
+  await f.max.handlers.stagecore_live_slot(0, -1); // initial baseline
+  await f.max.handlers.stagecore_arm_live_fixture(3);
+  assert.equal(f.tracker.status().pending, true);
+  assert.equal(f.max.output.length, 0, "arming must never play or ACK");
+  await f.max.handlers.stagecore_live_slot(0, 2);
+  assert.equal(f.max.output.length, 0);
+  await f.max.handlers.stagecore_live_slot(0, 3);
+  assert.equal(f.max.output.length, 2);
+  for (const result of f.max.output) {
+    assert.equal(result[0], "stagecore_ack_lab_base64");
+    const packet = Buffer.from(result[1], "base64");
+    assert(packet.includes(Buffer.from("LAB_ONLY")));
+    assert.equal(packet.includes(Buffer.from("project-1")), false);
+  }
+  assert.equal(f.tracker.status().commandsEnabled, false);
+  assert.equal(f.tracker.status().networkEnabled, false);
+});
+
+test("one-click LAB_ONLY fixture rejects unsupported slots without signing", async () => {
+  const f = fixture();
+  await f.max.handlers.stagecore_live_slot(0, -1);
+  await f.max.handlers.stagecore_arm_live_fixture(-1);
+  await f.max.handlers.stagecore_arm_live_fixture(9999);
+  await f.max.handlers.stagecore_arm_live_fixture("not_a_slot");
+  assert.equal(f.tracker.status().pending, false);
+  assert.equal(f.max.logs.length, 3);
+  assert.equal(f.max.output.length, 0);
+});
