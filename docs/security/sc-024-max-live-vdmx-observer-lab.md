@@ -3,7 +3,7 @@
 **2026-10-19 — Integration PR #530, Draft, NON-SHOW, NOT WIRED.**
 
 This phase is a real **source-level laboratory prototype**, not an
-installed Max for Live \`.amxd\` or a working VDMX output monitor.
+installed Max for Live `.amxd` or a working VDMX output monitor.
 The current StageCore Companion still sends its original OSC/MIDI
 commands unchanged; this work never starts a UDP server or connects
 an acknowledgment to the Hub. Nothing is installed on the theater Pi.
@@ -15,8 +15,8 @@ by the OS is **TRANSPORT_ONLY**. Even hearing an incoming OSC message
 in a patch is *not* proof of playback.
 
 Cycling '74's Live Object Model exposes a Track's observable
-\`playing_slot_index\` (zero-based, negative values mean special
-stop/arrangement conditions). The \`live.observer\` Max object
+`playing_slot_index` (zero-based, negative values mean special
+stop/arrangement conditions). The `live.observer` Max object
 notifies listeners about current or changed properties. Its first
 value after subscription can be an *existing* value, not a new Cue
 execution. See the official Track/Live API and node.script docs.
@@ -35,44 +35,69 @@ provide a verified VDMX 6 published-output watcher**.
 
 ## New lab files
 
-- \`tools/receiver-ack-lab/app_observer.js\`: one-command-at-a-time
+- `tools/receiver-ack-lab/app_observer.js`: one-command-at-a-time
   explicit observation gate. A caller arms an exact Cue/Execution/Role/
   Snapshot/Receiver metadata and a target (Live Track + playing clip
   slot, or VDMX output property + expected primitive value). Arming
   alone NEVER emits ACK. Only a matching **fresh, post-arm change**
   generates the two existing, per-instance HMAC-signed receipt
   messages: APP_REPORTED_RECEIVED, then APP_REPORTED_APPLIED.
-- \`tools/receiver-ack-lab/max_receiver_bridge.js\`: optional
-  \`node.script\` handlers \`stagecore_arm_json\`,
-  \`stagecore_live_slot\`, \`stagecore_vdmx_property\`,
-  \`stagecore_cancel\`. First property report is only a baseline;
+- `tools/receiver-ack-lab/max_receiver_bridge.js`: optional
+  `node.script` handlers `stagecore_arm_json`,
+  `stagecore_live_slot`, `stagecore_vdmx_property`,
+  `stagecore_cancel` and `stagecore_reset_observer`. A new Live API
+  object ID invokes the reset handler to clear all property baselines
+  and cancel any pending arm. First property report is only a baseline;
   repeated/unrelated values cannot sign anything. This adapter can
   produce a base64 OSC **lab fixture to Max's outlet** but has no
   outbound OSC transport. It fails closed on malformed data.
-- \`tools/receiver-ack-lab/StageCore-Live-Observer-LAB.maxpat\`:
-  JSON Max patch template with a \`live.thisdevice\` →
-  \`live.path live_set tracks 0\` →
-  \`live.observer playing_slot_index\` chain and a manual
-  \`node.script max_receiver_bridge.js @autostart 0\` control.
-  No \`udpsend\`, \`midiout\`, \`dac~\`, live.fire or GO route is present.
+- `tools/receiver-ack-lab/StageCore-Live-Observer-LAB.maxpat`:
+  JSON Max patch template with a `live.thisdevice` →
+  `live.path live_set tracks 0` →
+  `t l b` (reset on new Live object ID before binding the observer) →
+  `live.observer playing_slot_index` → `prepend stagecore_live_slot 0` →
+  manually started `node.script max_receiver_bridge.js @autostart 0`.
+  The separate manual inlet uses `prepend stagecore_arm_json`
+  to name the JSON metadata message. Cycling ’74 documents that
+  `live.observer` sends a **bare property value** through its left outlet,
+  so no `route playing_slot_index` belongs on that path.
+  No `udpsend`, `midiout`, `dac~`, live.fire or GO route is present.
   This source patch has not been opened or validated inside Live on a
-  macOS machine; it is **not** a packaged Max for Live \`.amxd\`.
-- Offline tests: \`app_observer.test.js\`,
-  \`max_receiver_bridge.test.js\` and \`patch_structure.test.js\`.
+  macOS machine; it is **not** a packaged Max for Live `.amxd`.
+- Offline tests: `app_observer.test.js`,
+  `max_receiver_bridge.test.js` and `patch_structure.test.js`.
   The Core CI checks syntax and runs these with Node's built-in test
   runner; they require neither Live nor VDMX.
+
+## Live API lab correctness repairs
+
+The first Phase 5K CI exposed a false positive in the Max patch structure
+test: a **comment** mentioned `udpsend` as a prohibition. The corrected
+test checks executable Max object boxes instead. Additional tests protect
+the observer path against a redundant property-name router and ensure
+manual JSON arms reach `stagecore_arm_json`.
+
+A Live API Track ID change can produce an old/current baseline value.
+The `t l b` reset message cancels a pending lab arm and clears Node's
+Track baseline before binding the replacement ID. In Max's right-to-left
+trigger ordering, reset is sent first. Node tests qualify this but
+the connection is still **untested in Max/Live itself**.
+
+Track 0 is hard-coded in this prototype. Manual Scene launches,
+multiple-Track Scenes, negative Stop Clip indices and asynchronous
+observations must not be treated as proven StageCore Cue causation.
 
 ## Try the non-network tests first
 
 From a developer checkout:
 
-\`\`\`sh
+```sh
 node --check tools/receiver-ack-lab/app_observer.js
 node --check tools/receiver-ack-lab/max_receiver_bridge.js
 node --test tools/receiver-ack-lab/app_observer.test.js \
   tools/receiver-ack-lab/max_receiver_bridge.test.js \
   tools/receiver-ack-lab/patch_structure.test.js
-\`\`\`
+```
 
 No Max or receiver credentials are required for these tests. The
 deterministic golden HMAC key in the earlier Phase 5J example is
@@ -84,28 +109,28 @@ stage device or inside a real Live set.
 1. On a dedicated **test** Mac, open a separate disposable Ableton
    Live Set. Keep show projects, actual OSC output ports, audio levels,
    and lighting hardware disconnected from this experiment.
-2. Load the provided \`.maxpat\` as a patch within a temporary
+2. Load the provided `.maxpat` as a patch within a temporary
    Max for Live device in the Live editor, with
-   \`max_receiver_bridge.js\`, \`app_observer.js\` and
-   \`receiver_ack.js\` available as relative dependencies.
+   `max_receiver_bridge.js`, `app_observer.js` and
+   `receiver_ack.js` available as relative dependencies.
 3. Start Max/Live in an isolated lab environment supplying the
-   opt-in environment flag \`STAGECORE_ACK_LAB_ENABLED=1\` and an
+   opt-in environment flag `STAGECORE_ACK_LAB_ENABLED=1` and an
    independently generated random 32-byte-or-longer hex key in
-   \`STAGECORE_LAB_RECEIVER_KEY_HEX\`. Do **not** save or screenshot
+   `STAGECORE_LAB_RECEIVER_KEY_HEX`. Do **not** save or screenshot
    that key in Live Sets, Max patches, shells with shared histories,
    GitHub, or operator screens.
-4. Manually start \`node.script\`. There is no autostart, command
-   reception, or automatic \`arm\`; the
-   \`stagecore_arm_json\` input requires explicitly supplied
+4. Manually start `node.script`. There is no autostart, command
+   reception, or automatic `arm`; the
+   `stagecore_arm_json` input requires explicitly supplied
    **lab-only** Project/Snapshot/Role/Companion/Receiver/Cue/Execution
    identity, unique challenge, a strictly increasing generation, a
-   bounded \`expires_at_ms\`, and an expected
-   \`LIVE_TRACK_PLAYING_SLOT\` target.
-5. Observe actual Track 0 \`playing_slot_index\` notifications with
+   bounded `expires_at_ms`, and an expected
+   `LIVE_TRACK_PLAYING_SLOT` target.
+5. Observe actual Track 0 `playing_slot_index` notifications with
    the patch. It must receive a baseline first; then a fresh
    transition to the *armed* slot can produce two signed OSC packets
    **in base64 on Max's outlet only**. It does not send them anywhere.
-6. Do not connect the outlet to \`udpsend\`, \`stagecore/go\`, or a
+6. Do not connect the outlet to `udpsend`, `stagecore/go`, or a
    production Hub; do not install this patch into the theater's
    Ableton show until its security and state semantics are reviewed.
 
@@ -127,7 +152,7 @@ Max's initial property read or from any generic incoming OSC route.
   actual offline Pi/Mac deployments need a proper monotonic clock,
   Session epoch, explicit deadline reconciliation and clock
   uncertainty handling.
-- Its \`change: true\` marker comes from an in-process adapter
+- Its `change: true` marker comes from an in-process adapter
   observing differences, **not** a cryptographically verified
   Max/VDMX API transition. Other actors can change a playing slot.
 - No authenticated Host-to-Max or Host-to-VDMX command metadata,
@@ -135,8 +160,8 @@ Max's initial property read or from any generic incoming OSC route.
   no active per-Project authorization cutover, no physically verified
   playback/stopping, and no automatic retry.
 - All acknowledgments remain APPLICATION-REPORTED only.
-  \`physical_output_verified=false\` and
-  \`commands_enabled=false\` are mandatory. Never clear blackout,
+  `physical_output_verified=false` and
+  `commands_enabled=false` are mandatory. Never clear blackout,
   launch/stop a Cue, or change GO admission on a lab receipt.
 
 **Status:** Draft prototype with offline tests; not ready for
