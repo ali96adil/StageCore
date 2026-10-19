@@ -44,6 +44,11 @@ test("observer and node.script remain connected without mandatory send", () => {
   assert(edge("m4l", "defer"));
   assert(edge("defer", "path"));
   assert(edge("path", "track_identity"));
+  // Cycling '74: live.path outlet 1 tracks the path (Track 0) across
+  // reorder; outlet 0 would stay attached to the original Track.
+  const bound = patch.lines.find(({ patchline }) =>
+    patchline.source[0] === "path" && patchline.destination[0] === "track_identity");
+  assert.equal(bound.patchline.source[1], 1);
   assert(edge("track_identity", "observer"));
   assert(edge("track_identity", "identity_reset"));
   assert(edge("identity_reset", "node"));
