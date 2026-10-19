@@ -144,3 +144,26 @@ func TestSignedReceiverAckNeverDispatchesToHardware(t *testing.T){
  // Session state mutation exists in this codec.
  _=time.Second
 }
+
+func TestReceiverAckMatchesNodeForMaxGoldenFixture(t *testing.T) {
+ key:=bytes.Repeat([]byte{0x42},32) // lab-only deterministic test key
+ n:=ReceiverNotice{
+  Scope:ReceiverScope{
+   ProjectID:"project-a",RuntimeSnapshotID:"snapshot-a",MachineRoleID:"ableton",
+   CompanionID:"companion-a",ReceiverInstanceID:"max4live-instrument-a",
+   Kind:ReceiverAbleton,ConnectionGeneration:12,
+  },
+  ExecutionID:"exec-a",CueID:"cue-7",Challenge:"nonce-unique-abcdef-2026",
+  Sequence:1,Status:ReceiptAppReceived,
+ }
+ packet,err:=EncodeSignedReceiverAck(n,key)
+ if err!=nil{t.Fatal(err)}
+ message,err:=osc.DecodeMessage(packet)
+ if err!=nil{t.Fatal(err)}
+ const nodeExpected="8fc1a6d833f708cdb3e7d622cf8e91f973b49e5d9d11563033d4f56b93ea556f"
+ if got:=message.Arguments[len(message.Arguments)-1].Value;got!=nodeExpected {
+  t.Fatalf("Node for Max app receiver fixture signature mismatch: %v",got)
+ }
+ observed,err:=DecodeVerifiedReceiverAck(packet,key)
+ if err!=nil||observed!=n{t.Fatalf("Node fixture cannot be read: %+v %v",observed,err)}
+}
