@@ -78,8 +78,12 @@ the observer path against a redundant property-name router and ensure
 manual JSON arms reach `stagecore_arm_json`.
 
 A Live API Track ID change can produce an old/current baseline value.
-The `t l b` reset message cancels a pending lab arm and clears Node's
-Track baseline before binding the replacement ID. In Max's right-to-left
+The `live.path` **middle outlet** (outlet index 1) follows the **path**
+`live_set tracks 0` when Tracks are reordered. The left outlet instead
+sticks with an original Track ID; using it could silently monitor the
+wrong Track after reordering. The `t l b` reset message cancels a
+pending lab arm and clears Node's Track baseline before binding the
+replacement ID. In Max's right-to-left
 trigger ordering, reset is sent first. Node tests qualify this but
 the connection is still **untested in Max/Live itself**.
 
