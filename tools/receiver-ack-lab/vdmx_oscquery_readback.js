@@ -17,10 +17,15 @@ function validPath(path) {
     !path.endsWith("/");
 }
 function singleValue(node) {
-  if (node && Array.isArray(node.VALUE) && node.VALUE.length === 1 &&
-      typeof node.TYPE === "string" && node.TYPE.length === 1 &&
-      (node.ACCESS & 1) === 1 && Number.isInteger(node.ACCESS) &&
-      node.ACCESS >= 0 && node.ACCESS <= 3) {
+  // OSCQuery's ACCESS is OPTIONAL. If omitted, the proposal assumes
+  // the value is readable whenever VALUE is published. If ACCESS is
+  // explicitly provided, its integer readable bit must be set.
+  const readable = node && (node.ACCESS === undefined
+    ? Array.isArray(node.VALUE)
+    : Number.isInteger(node.ACCESS) && node.ACCESS >= 0 &&
+      node.ACCESS <= 3 && (node.ACCESS & 1) === 1);
+  if (readable && Array.isArray(node.VALUE) && node.VALUE.length === 1 &&
+      typeof node.TYPE === "string" && node.TYPE.length === 1) {
     const value = node.VALUE[0];
     if (["f", "d"].includes(node.TYPE)) {
       if (typeof value !== "number" || !Number.isFinite(value)) {
