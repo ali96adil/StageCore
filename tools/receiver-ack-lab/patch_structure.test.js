@@ -23,7 +23,8 @@ test("maxpat is a safe non-playing observer patch with explicit start", () => {
   assert(found.includes("prepend stagecore_arm_json"));
   assert(found.includes("prepend stagecore_live_slot 0"));
   assert(found.includes("node.script max_receiver_bridge.js @autostart 0"));
-  assert(found.includes("script start"));
+  assert(found.includes("script start --lab"));
+  assert(found.includes("stagecore_arm_live_fixture 3"));
   assert(found.includes("script stop"));
   // Documentation-only warning comments legitimately mention forbidden
   // object names. Inspect executable objects, not their cautionary text.
@@ -57,4 +58,5 @@ test("observer and node.script remain connected without mandatory send", () => {
   assert(edge("node", "print"));
   assert(edge("arm", "arm_prefix"));
   assert(edge("arm_prefix", "node"));
+  assert(edge("lab_arm_fixture", "node"));
 });
