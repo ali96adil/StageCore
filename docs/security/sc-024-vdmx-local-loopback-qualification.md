@@ -87,6 +87,74 @@ runtime/snapshot/Cue/Execution correlation, replay fencing and
 an output-specific state readback. A bare OSCQuery GET cannot satisfy
 these requirements.
 
+## Phase 5P — one interactive command to compare two manual values
+
+\`tools/receiver-ack-lab/vdmx_manual_compare.js\` reuses the validated
+\`getLoopbackControl\` helper, without copying another HTTP client.
+It is a **manual, disposable-project-only, two-GET comparison**, not
+continuous monitoring and not a receiver ACK. No new server or
+authorization route was added.
+
+Before running it, use VDMX's documented OSCQuery browser to establish
+the actual **loopback HTTP TCP port** and published control FULL_PATH.
+Never substitute the show's OSC input port 3555 or use a production
+VDMX project. The same explicit environment opt-in applies:
+
+\`\`\`bash
+STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT=1 \
+  node tools/receiver-ack-lab/vdmx_manual_compare.js \
+  --port YOUR_TEST_OSCQUERY_TCP_PORT \
+  --path /Your_Disposable_Control_Surface/Test_Slider
+\`\`\`
+
+On an **interactive macOS terminal**, the tool performs the first GET,
+asks you to change only the disposable slider in VDMX, then performs
+the second GET **only when you press Enter**. It will not automatically
+send MIDI, OSC, POST, SET, Cue, or GO. It never discovers a host or
+port; it uses the same 127.0.0.1-only allowlist and HTTP-size/time
+limits as \`vdmx_loopback_read.js\`. The manual comparison window is
+capped at **two minutes**, and the terminal is required; piped or
+unattended use is rejected.
+
+The result explicitly distinguishes:
+- \`PUBLISHED_CONTROL_VALUE_DIFFERED\`: the two reported software
+  values differed after the operator's manual intervention;
+- \`NO_VALUE_DIFFERENCE_OBSERVED\`: the two readings were identical;
+- \`INCONCLUSIVE_TYPE_CHANGED\`: the published scalar type changed,
+  so the observations are not comparable.
+
+If **either** read fails, if the required human confirmation is
+missing, if the local clock goes backwards, or if the two-minute
+window expires, **no comparison is published**; the tool reports
+UNKNOWN. All positive results still force
+\`receiver_authenticated:false\`,
+\`application_cue_acknowledged:false\`,
+\`change_caused_by_stagecore_verified:false\`,
+\`physical_video_output_verified:false\`,
+\`commands_enabled:false\` and \`automatic_replay:false\`.
+
+Why the restrictions: an unauthenticated local process can impersonate
+the test OSCQuery service, a human may move the slider, and even a
+correct VDMX Control Surface slider is not an independent camera/screen
+verification. Two matching values do not prove that the video is
+visible; two different values do not prove a StageCore Cue caused them.
+
+Unit tests use a **synthetic loopback HTTP server** and a suspended
+confirmation callback. They assert only one GET occurs before the
+manual action, exactly one more occurs afterward, and cancellation,
+bad source, mismatched path, changed type, unsafe port/URL and clock
+problems fail closed.
+
+Offline development verification:
+
+\`\`\`bash
+node --check tools/receiver-ack-lab/vdmx_manual_compare.js
+node --test tools/receiver-ack-lab/vdmx_manual_compare.test.js
+\`\`\`
+
+**This has not been executed against VDMX 6 on the user's Mac.**
+No StageCore Hub/Companion/production environment changes.
+
 ## Phase 5O compatibility and direct-call hardening
 
 The source-only audit added two compatibility/security guards before an
