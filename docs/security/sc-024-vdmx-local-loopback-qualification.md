@@ -87,6 +87,30 @@ runtime/snapshot/Cue/Execution correlation, replay fencing and
 an output-specific state readback. A bare OSCQuery GET cannot satisfy
 these requirements.
 
+## Phase 5O compatibility and direct-call hardening
+
+The source-only audit added two compatibility/security guards before an
+attended VDMX trial:
+
+- Both the CLI and the exported `getLoopbackControl` helper independently
+  validate **an integer TCP port 1024–65535** and an explicit,
+  ASCII-only published OSCQuery FULL_PATH. A developer importing the
+  helper directly cannot bypass the port/path restrictions and make
+  an accidental request to port 80 or to an arbitrary URL. Its HTTP
+  destination remains hard-coded to `127.0.0.1`. This does not
+  authenticate the local process answering on the port.
+- The OSCQuery proposal permits a scalar `VALUE` when appropriate.
+  This laboratory decoder now accepts **one scalar** or a
+  **one-element array** for a single supported `TYPE`, while rejecting
+  multi-argument arrays, unsupported types, write-only ACCESS, and
+  non-finite numeric values. Optional ACCESS remains readable when
+  a VALUE is actually published. Nothing enables SET/POST or OSC send.
+
+Additional localhost fake-server tests verify that invalid internal
+API arguments cause **zero network requests**, and that a single
+scalar JSON VALUE remains a mere published software-control report.
+No sound/video/receiver confirmation can be derived from this.
+
 ## Offline test matrix
 
 \`vdmx_loopback_read.test.js\` uses a fake local \`127.0.0.1\` HTTP
