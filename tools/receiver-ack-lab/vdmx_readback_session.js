@@ -6,6 +6,7 @@
 // itself and peer IP/port DO NOT authenticate the sender.
 // No WebSocket/HTTP I/O, command dispatch, auto-replay or Cue ACK.
 const { readVDMXPublishedControl } = require("./vdmx_oscquery_readback");
+const { validPublishedPath } = require("./vdmx_oscquery_path");
 
 const MAX_AGE_MS = 5000;
 const MAX_NOTIFICATION_BYTES = 4096;
@@ -32,10 +33,7 @@ function pathTouchesTarget(path, target) {
 }
 class VDMXOfflineReadbackSession {
   constructor({ targetPath, now = Date.now, maxAgeMs = MAX_AGE_MS }) {
-    if (typeof targetPath !== "string" ||
-        !/^\/[A-Za-z0-9_/-]{1,120}$/.test(targetPath) ||
-        targetPath.includes("//") || targetPath.includes("/../") ||
-        targetPath.endsWith("/") || typeof now !== "function" ||
+    if (!validPublishedPath(targetPath) || typeof now !== "function" ||
         !Number.isSafeInteger(maxAgeMs) || maxAgeMs <= 0 ||
         maxAgeMs > 30000) {
       throw new Error("invalid offline VDMX readback settings");
@@ -144,9 +142,7 @@ class VDMXOfflineReadbackSession {
     } else {
       paths = [message.DATA];
     }
-    if (paths.some((p) => typeof p !== "string" ||
-        !(p === "/" || /^\/[A-Za-z0-9_/-]{1,120}$/.test(p)) ||
-        p.includes("//") || p.includes("/../") || p.endsWith("/") && p !== "/")) {
+    if (paths.some((p) => !validPublishedPath(p, true))) {
       this.invalidate("MALFORMED_OSCQUERY_NOTIFICATION");
       throw new Error("invalid changed OSCQuery path");
     }
