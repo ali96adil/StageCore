@@ -99,3 +99,27 @@ test("independent OSCQuery state cannot by itself trigger signed ACK",()=>{
     change:true,observation_sequence:1,observed_at_ms:now,
   }),[]);
 });
+
+
+test("OSCQuery scalar VALUE and one-element VALUE array agree for one typed control",()=>{
+  const data=oscQueryFixture();
+  const leaf=data.CONTENTS.StageCore_Lab.CONTENTS.layer_opacity;
+  leaf.VALUE=0.25;
+  assert.equal(readVDMXPublishedControl(data,target).value,0.25);
+  delete leaf.ACCESS;
+  assert.equal(readVDMXPublishedControl(data,target).value,0.25);
+  leaf.VALUE=[0.25];
+  assert.equal(readVDMXPublishedControl(data,target).value,0.25);
+  leaf.VALUE=[0.25,0.50];
+  assert.throws(()=>readVDMXPublishedControl(data,target),/single/);
+  leaf.TYPE="ff";leaf.VALUE=0.25;
+  assert.throws(()=>readVDMXPublishedControl(data,target),/single/);
+  leaf.TYPE="s";leaf.VALUE="lab-scene";
+  assert.equal(readVDMXPublishedControl(data,target).value,"lab-scene");
+  leaf.TYPE="T";leaf.VALUE=true;
+  assert.equal(readVDMXPublishedControl(data,target).value,true);
+  leaf.TYPE="F";leaf.VALUE=false;
+  assert.equal(readVDMXPublishedControl(data,target).value,false);
+  leaf.VALUE=null;
+  assert.throws(()=>readVDMXPublishedControl(data,target),/FALSE/);
+});
