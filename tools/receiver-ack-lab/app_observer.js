@@ -81,7 +81,10 @@ class AppObserverLab {
     }
     if (!event || typeof event !== "object" || Array.isArray(event) ||
         !Number.isSafeInteger(event.observation_sequence) ||
-        event.observation_sequence <= pending.lastObservationSequence) {
+        event.observation_sequence <= pending.lastObservationSequence ||
+        event.change !== true || !Number.isSafeInteger(event.observed_at_ms) ||
+        event.observed_at_ms < pending.armedAt ||
+        event.observed_at_ms > instant || instant - event.observed_at_ms > 1000) {
       return [];
     }
     const expectation = pending.expectation;
