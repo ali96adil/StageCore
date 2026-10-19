@@ -23,15 +23,19 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
   const liveLast = new Map();
   const vdmxLast = new Map();
   let sequence = 0;
+  let observerEpoch = 0;
   async function maybeObserve(input) {
     sequence += 1;
     const packets = tracker.observe({
       ...input, observation_sequence: sequence,
       observed_at_ms: now(), change: true,
     });
-    // The Max outlet gives a lab fixture only. NO transport to Hub, no
-    // hidden socket. Other Max objects MUST NOT forward this to a show.
+    // Max callbacks are async. A cancel/Track rebinding may arrive while
+    // the first outlet is still pending. Never emit a second stale packet
+    // after the observer epoch changes; no callback sends network traffic.
+    const epoch = observerEpoch;
     for (const packet of packets) {
+      if (epoch !== observerEpoch) break;
       await maxApi.outlet("stagecore_ack_lab_base64", packet.toString("base64"));
     }
   }
@@ -55,10 +59,12 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
     if (Buffer.byteLength(raw, "utf8") > 4096) throw new Error("lab arm too large");
     const data = JSON.parse(raw);
     tracker.arm(data); // no signed ACK, no command
+    observerEpoch += 1;
   }));
   maxApi.addHandler("stagecore_reset_observer", safeHandler(async () => {
     // Called on Live API object-ID rebinding (different Live Set/Track).
     // No stale baseline or in-flight command can survive reattachment.
+    observerEpoch += 1;
     liveLast.clear();
     vdmxLast.clear();
     tracker.cancel();
@@ -97,6 +103,7 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
     await maybeObserve({ source: VDMX_PROPERTY, property, value });
   }));
   maxApi.addHandler("stagecore_cancel", safeHandler(async () => {
+    observerEpoch += 1;
     tracker.cancel();
   }));
 }
