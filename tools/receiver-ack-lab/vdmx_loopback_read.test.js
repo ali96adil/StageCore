@@ -153,3 +153,37 @@ test("CLI source cannot accept remote addresses, credentials, or output commands
   assert.equal(source.includes("execFile("), false);
   assert.equal(source.includes("method: \"POST\""), false);
 });
+
+
+test("exact-method GET refuses a root subtree substituted for requested property",async(t)=>{
+  const port=await mockServer(t,(_,res)=>{
+    res.writeHead(200,{"Content-Type":"application/json"});
+    res.end(JSON.stringify({FULL_PATH:"/",CONTENTS:{
+      StageCore_Lab:{FULL_PATH:"/StageCore_Lab",CONTENTS:{
+        layer_opacity:leaf(0.75),
+      }},
+    }}));
+  });
+  await assert.rejects(getLoopbackControl({port,target}),/UNKNOWN/);
+});
+
+test("OSCQuery can omit optional ACCESS when it explicitly publishes typed VALUE",async(t)=>{
+  const port=await mockServer(t,(_,res)=>{
+    res.writeHead(200,{"Content-Type":"application/json"});
+    const data=leaf(0.25);
+    delete data.ACCESS;
+    res.end(JSON.stringify(data));
+  });
+  const result=await getLoopbackControl({port,target});
+  assert.equal(result.published_value,0.25);
+  assert.equal(result.physical_video_output_verified,false);
+});
+
+test("declared Content-Length above 64 KiB is rejected immediately",async(t)=>{
+  const port=await mockServer(t,(_,res)=>{
+    res.writeHead(200,{"Content-Type":"application/json",
+      "Content-Length":String(70000)});
+    res.write("{");
+  });
+  await assert.rejects(getLoopbackControl({port,target}),/UNKNOWN/);
+});
