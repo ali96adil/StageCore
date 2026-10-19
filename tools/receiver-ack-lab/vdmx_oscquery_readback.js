@@ -6,15 +6,10 @@
 const MAX_JSON_BYTES = 65536;
 const MAX_DEPTH = 12;
 const MAX_NODES = 256;
-const NODE_PATH = /^\/[A-Za-z0-9_/-]{1,120}$/;
+const { validPublishedPath, validChildName } = require("./vdmx_oscquery_path");
 
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
-}
-function validPath(path) {
-  return typeof path === "string" && NODE_PATH.test(path) &&
-    !path.includes("//") && !path.includes("/../") &&
-    !path.endsWith("/");
 }
 function singleValue(node) {
   // OSCQuery permits a scalar VALUE for one argument as well as the
@@ -58,7 +53,7 @@ function singleValue(node) {
 // Limit recursion and size to protect the future receiving-app adapter.
 // This function accepts already-obtained JSON, NEVER accesses network.
 function readVDMXPublishedControl(snapshot, targetPath) {
-  if (!validPath(targetPath) || !snapshot || typeof snapshot !== "object" ||
+  if (!validPublishedPath(targetPath) || !snapshot || typeof snapshot !== "object" ||
       Array.isArray(snapshot)) throw new Error("invalid OSCQuery root/target");
 
   const bytes = Buffer.byteLength(JSON.stringify(snapshot), "utf8");
@@ -86,11 +81,11 @@ function readVDMXPublishedControl(snapshot, targetPath) {
     const keys = Object.keys(node.CONTENTS);
     if (keys.length > MAX_NODES) throw new Error("OSCQuery too many children");
     for (const key of keys) {
-      if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) {
+      if (!validChildName(key)) {
         throw new Error("invalid OSCQuery CONTENTS child");
       }
       const childPath = expected === "/" ? "/" + key : expected + "/" + key;
-      if (!validPath(childPath)) throw new Error("invalid OSCQuery child path");
+      if (!validPublishedPath(childPath)) throw new Error("invalid OSCQuery child path");
       // Traverse only the selected target's ancestors; don't need to
       // trust unrelated published controls in an untrusted fixture.
       if (targetPath === childPath || targetPath.startsWith(childPath + "/")) {
@@ -100,7 +95,7 @@ function readVDMXPublishedControl(snapshot, targetPath) {
     return null;
   }
   if (snapshot.FULL_PATH !== "/" &&
-      !validPath(snapshot.FULL_PATH)) throw new Error("invalid OSCQuery root path");
+      !validPublishedPath(snapshot.FULL_PATH)) throw new Error("invalid OSCQuery root path");
   if (snapshot.FULL_PATH !== "/" &&
       !(targetPath === snapshot.FULL_PATH ||
         targetPath.startsWith(snapshot.FULL_PATH + "/"))) {
