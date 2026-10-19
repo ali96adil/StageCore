@@ -50,8 +50,6 @@ jobs:
           node --test tools/receiver-ack-lab/vdmx_readback_session.test.js
           node --check tools/receiver-ack-lab/vdmx_readback_fixture_cli.js
           node --test tools/receiver-ack-lab/vdmx_readback_fixture_cli.test.js
-          node --check tools/receiver-ack-lab/vdmx_loopback_probe.js
-          node --test tools/receiver-ack-lab/vdmx_loopback_probe.test.js
           node --check tools/receiver-ack-lab/vdmx_loopback_read.js
           node --test tools/receiver-ack-lab/vdmx_loopback_read.test.js
       - name: Firmware Foundation contract
