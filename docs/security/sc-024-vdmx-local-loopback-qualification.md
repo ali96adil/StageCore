@@ -87,6 +87,73 @@ runtime/snapshot/Cue/Execution correlation, replay fencing and
 an output-specific state readback. A bare OSCQuery GET cannot satisfy
 these requirements.
 
+## Phase 5Q — verified VIDVOX Control Surface path with spaces
+
+On a user's **development macOS machine**, VDMX6 returned
+`HTTP/1.1 200` to the local OSCQuery `?HOST_INFO` query on TCP
+**2345**, with `NAME: VDMX6-OSCQuery`, `OSC_PORT: 3546`
+(UDP) and `VALUE: true` in its advertised extensions. Listing
+the root OSCQuery tree returned an actual published slider:
+
+```text
+FULL_PATH: /OSCQUERY/Control Surface/Slider
+TYPE: f
+ACCESS: absent (optional)
+```
+
+The published address has an **interior ASCII space** in
+`Control Surface`. Previous Phase 5N's conservative parser
+incorrectly rejected it; passing a literal space to Node's
+HTTP request path would also fail. Phase 5Q shares a single
+conservative OSCQuery path validator across the GET diagnostic,
+read-only tree parser, and lifecycle/session model. The raw JSON
+FULL_PATH remains unchanged, while the GET line encodes each
+segment separately:
+
+```text
+GET /OSCQUERY/Control%20Surface/Slider HTTP/1.1
+```
+
+The decoder rejects percent signs in user-provided path values
+(including `%20`, to prevent double-encoding), traversal,
+queries, URL fragments, control characters and ambiguous/empty
+segments. The HTTP client's URL-decoded JSON `FULL_PATH` must still
+match the original exact published name. Synthetic localhost tests
+exercise that **same observed VDMX path** against the GET client,
+tree parser, manual before/after comparison and readback lifecycle.
+
+**Important safety:** VDMX was reported listening on
+`TCP *:2345` (all IPv4 interfaces), not necessarily localhost-only.
+The local read tool still connects to `127.0.0.1:2345`, but this
+does NOT make VDMX's server private; verify the Mac's local firewall
+and OSCQuery exposure before enabling its publication on a shared
+theater network. No changes to VDMX OSC UDP ports 3546 or 3555
+are authorized or needed.
+
+After confirming it really is a **disposable** project, and updating
+your **separate** `StageCore-VDMX-Lab` clone to the latest Draft
+branch, the attended one-shot diagnostic is:
+
+```sh
+STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT=1 \
+  node tools/receiver-ack-lab/vdmx_loopback_read.js \
+  --port 2345 --path '/OSCQUERY/Control Surface/Slider'
+```
+
+For the manual two-GET test:
+
+```sh
+STAGECORE_VDMX_DISPOSABLE_TEST_PROJECT=1 \
+  node tools/receiver-ack-lab/vdmx_manual_compare.js \
+  --port 2345 --path '/OSCQUERY/Control Surface/Slider'
+```
+
+Manually move only the disposable slider between the two reads,
+then press Enter. These commands read **published software-control
+values only**; no OSC send, Scene launch, Show GO, video proof or
+App ACK is involved. Their code was **not executed on the user's
+Mac against VDMX 6** when this document was authored.
+
 ## Phase 5P — one interactive command to compare two manual values
 
 \`tools/receiver-ack-lab/vdmx_manual_compare.js\` reuses the validated
