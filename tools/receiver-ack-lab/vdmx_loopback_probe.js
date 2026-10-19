@@ -35,6 +35,7 @@ function getLocalControl({ port, targetPath, transport = http, timeoutMs = TIMEO
     let size = 0;
     const chunks = [];
     let request;
+    let deadline;
     const finish = (error, result) => {
       if (done) return;
       done = true;
@@ -116,7 +117,7 @@ function getLocalControl({ port, targetPath, transport = http, timeoutMs = TIMEO
       finish(error);
       return;
     }
-    const deadline = setTimeout(() => {
+    deadline = setTimeout(() => {
       finish(new Error("OSCQuery GET timed out"));
       request.destroy();
     }, timeoutMs);
