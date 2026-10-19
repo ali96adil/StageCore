@@ -22,7 +22,12 @@ test("maxpat is a safe non-playing observer patch with explicit start", () => {
   assert(found.includes("node.script max_receiver_bridge.js @autostart 0"));
   assert(found.includes("script start"));
   assert(found.includes("script stop"));
-  const all = JSON.stringify(patch);
+  // Documentation-only warning comments legitimately mention forbidden
+  // object names. Inspect executable objects, not their cautionary text.
+  const all = patch.boxes
+    .filter(({ box }) => box.maxclass !== "comment")
+    .map(({ box }) => String(box.text || ""))
+    .join(" ");
   for (const forbidden of ["udpsend", "midiout", "dac~", "ezdac~", "live.object fire",
     "stagecore/go", "stagecore/stop", "autostart 1"]) {
     assert.equal(all.includes(forbidden), false,
