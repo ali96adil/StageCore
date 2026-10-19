@@ -116,7 +116,7 @@
         "box": {
           "id": "manual",
           "maxclass": "comment",
-          "text": "Lab-only metadata inlet (JSON symbol/string), routed to stagecore_arm_json. No automatic arming.",
+          "text": "LAB ONLY: click script start --lab, then press Clip Slot 3 fixture after first baseline. No GO/audio/video/MIDI/OSC control.",
           "patching_rect": [
             382,
             112,
@@ -141,11 +141,11 @@
         "box": {
           "id": "start",
           "maxclass": "message",
-          "text": "script start",
+          "text": "script start --lab",
           "patching_rect": [
             390,
             265,
-            95,
+            150,
             22
           ]
         }
@@ -156,9 +156,9 @@
           "maxclass": "message",
           "text": "script stop",
           "patching_rect": [
-            505,
+            556,
             265,
-            92,
+            90,
             22
           ]
         }
@@ -237,6 +237,19 @@
             392,
             209,
             220,
+            22
+          ]
+        }
+      },
+      {
+        "box": {
+          "id": "lab_arm_fixture",
+          "maxclass": "message",
+          "text": "stagecore_arm_live_fixture 3",
+          "patching_rect": [
+            390,
+            240,
+            260,
             22
           ]
         }
@@ -391,6 +404,18 @@
         "patchline": {
           "source": [
             "arm_prefix",
+            0
+          ],
+          "destination": [
+            "node",
+            0
+          ]
+        }
+      },
+      {
+        "patchline": {
+          "source": [
+            "lab_arm_fixture",
             0
           ],
           "destination": [
