@@ -47,14 +47,30 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
       }
     };
   }
-  maxApi.addHandler("stagecore_arm_json", safeHandler(async (raw) => {
-    const data = JSON.parse(String(raw));
+  maxApi.addHandler("stagecore_arm_json", safeHandler(async (...parts) => {
+    // Node for Max may pass a serialized JSON Max symbol as one atom, or
+    // split whitespace-delimited atoms. Treat both as one lab document.
+    // Never accept credentials through this handler.
+    const raw = parts.map((part) => String(part)).join(" ");
+    if (Buffer.byteLength(raw, "utf8") > 4096) throw new Error("lab arm too large");
+    const data = JSON.parse(raw);
     tracker.arm(data); // no signed ACK, no command
+  }));
+  maxApi.addHandler("stagecore_reset_observer", safeHandler(async () => {
+    // Called on Live API object-ID rebinding (different Live Set/Track).
+    // No stale baseline or in-flight command can survive reattachment.
+    liveLast.clear();
+    vdmxLast.clear();
+    tracker.cancel();
   }));
   maxApi.addHandler("stagecore_live_slot", safeHandler(async (track, slot) => {
     const trackIndex = Number(track), playingSlotIndex = Number(slot);
     if (!Number.isSafeInteger(trackIndex) || trackIndex < 0 ||
-        !Number.isSafeInteger(playingSlotIndex)) return;
+        trackIndex > 1024 || !Number.isSafeInteger(playingSlotIndex)) return;
+    if (!liveLast.has(trackIndex) && liveLast.size >= 1024) {
+      tracker.cancel();
+      return;
+    }
     // live.observer sends its current value upon subscription/bang. That
     // first baseline MUST NEVER generate a RECEIVED or APPLIED receipt.
     const previous = liveLast.get(trackIndex);
@@ -71,6 +87,10 @@ function registerMaxBridge(maxApi, tracker, now = Date.now) {
     // Input MUST come from an application-side published property
     // observer, NOT from the UDP packet receive path.
     const value = parsePrimitive(rawValue);
+    if (!vdmxLast.has(property) && vdmxLast.size >= 512) {
+      tracker.cancel();
+      return;
+    }
     const prev = vdmxLast.get(property);
     vdmxLast.set(property, value);
     if (prev === undefined || prev === value) return;
