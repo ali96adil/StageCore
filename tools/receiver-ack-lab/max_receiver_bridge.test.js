@@ -126,3 +126,54 @@ test("arm handler reassembles whitespace-split JSON Max symbols without dispatch
   assert.equal(f.max.output.length, 0);
   assert.equal(f.max.logs.length, 0);
 });
+
+
+test("late asynchronous Max outlet cannot emit second ACK after cancel", async () => {
+  const f = fixture();
+  let releaseFirst;
+  const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+  let entered;
+  const firstEntered = new Promise((resolve) => { entered = resolve; });
+  f.max.outlet = async (...args) => {
+    f.max.output.push(args);
+    if (f.max.output.length === 1) {
+      entered();
+      await firstPending;
+    }
+  };
+  await f.max.handlers.stagecore_live_slot(0, -1);
+  await f.arm();
+  const event = f.max.handlers.stagecore_live_slot(0, 3);
+  await firstEntered;
+  assert.equal(f.max.output.length, 1);
+  await f.max.handlers.stagecore_cancel();
+  releaseFirst();
+  await event;
+  assert.equal(f.max.output.length, 1,
+    "old lab application APPLIED receipt escaped after cancel");
+});
+
+test("late asynchronous Max outlet cannot emit second ACK after track rebinding", async () => {
+  const f = fixture();
+  let releaseFirst;
+  const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+  let entered;
+  const firstEntered = new Promise((resolve) => { entered = resolve; });
+  f.max.outlet = async (...args) => {
+    f.max.output.push(args);
+    if (f.max.output.length === 1) {
+      entered();
+      await firstPending;
+    }
+  };
+  await f.max.handlers.stagecore_live_slot(0, -1);
+  await f.arm();
+  const event = f.max.handlers.stagecore_live_slot(0, 3);
+  await firstEntered;
+  await f.max.handlers.stagecore_reset_observer();
+  releaseFirst();
+  await event;
+  assert.equal(f.max.output.length, 1,
+    "late APPLIED output survived changed Live Track identity");
+  assert.equal(f.tracker.status().pending, false);
+});
