@@ -48,6 +48,8 @@ jobs:
           node --test tools/receiver-ack-lab/vdmx_oscquery_readback.test.js
           node --check tools/receiver-ack-lab/vdmx_readback_session.js
           node --test tools/receiver-ack-lab/vdmx_readback_session.test.js
+          node --check tools/receiver-ack-lab/vdmx_readback_fixture_cli.js
+          node --test tools/receiver-ack-lab/vdmx_readback_fixture_cli.test.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
