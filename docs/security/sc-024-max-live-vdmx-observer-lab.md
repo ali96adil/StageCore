@@ -117,23 +117,27 @@ stage device or inside a real Live set.
    Max for Live device in the Live editor, with
    `max_receiver_bridge.js`, `app_observer.js` and
    `receiver_ack.js` available as relative dependencies.
-3. Start Max/Live in an isolated lab environment supplying the
-   opt-in environment flag `STAGECORE_ACK_LAB_ENABLED=1` and an
-   independently generated random 32-byte-or-longer hex key in
-   `STAGECORE_LAB_RECEIVER_KEY_HEX`. Do **not** save or screenshot
-   that key in Live Sets, Max patches, shells with shared histories,
-   GitHub, or operator screens.
-4. Manually start `node.script`. There is no autostart, command
-   reception, or automatic `arm`; the
-   `stagecore_arm_json` input requires explicitly supplied
-   **lab-only** Project/Snapshot/Role/Companion/Receiver/Cue/Execution
-   identity, unique challenge, a strictly increasing generation, a
-   bounded `expires_at_ms`, and an expected
-   `LIVE_TRACK_PLAYING_SLOT` target.
-5. Observe actual Track 0 `playing_slot_index` notifications with
-   the patch. It must receive a baseline first; then a fresh
-   transition to the *armed* slot can produce two signed OSC packets
-   **in base64 on Max's outlet only**. It does not send them anywhere.
+3. In Max/Live, click the `script start --lab` message manually.
+   The Node for Max host must identify itself through
+   `process.env.MAX_ENV`. The lab generates a **new, random, in-memory
+   32-byte key** automatically; no secret needs to be typed or stored
+   in the Live Set. A separately provided
+   `STAGECORE_LAB_RECEIVER_KEY_HEX` is optional for controlled
+   developer interoperability only. Never use a test-vector key on stage.
+4. Let `live.observer` deliver its initial Track 0 value. After
+   observing the baseline, click the
+   `stagecore_arm_live_fixture 3` message to arm **only** fictional
+   `LAB_ONLY` Cue/Execution/Snapshot/Companion IDs for Clip Slot 3
+   (10-second deadline, unpredictable local challenge). Arming never
+   launches a clip or sends a Cue. The old manual JSON inlet remains
+   available only to developers with separately prepared lab metadata.
+5. Manually launch **Clip Slot 3 on Track 0** in this disposable Set
+   within the 10-second window. A matching post-arm transition may
+   produce two HMAC-signed OSC **base64 fixtures to Max's outlet
+   only**. They are not sent to StageCore or VDMX, and the key is
+   intentionally not provisioned to the Hub, so this is not a
+   production-verifiable receipt. No sound/video/physical safety is
+   certified.
 6. Do not connect the outlet to `udpsend`, `stagecore/go`, or a
    production Hub; do not install this patch into the theater's
    Ableton show until its security and state semantics are reviewed.
@@ -145,6 +149,23 @@ production version requires authenticated provisioning and an
 explicit receiver-side binding to the Companion's actual command
 journal, Cue Execution and active Show. Do not infer a new Event from
 Max's initial property read or from any generic incoming OSC route.
+
+## Async and Track rebinding defense
+
+Node for Max uses asynchronous message delivery. If the Operator
+cancels a lab Cue, arms a replacement, or Live changes the bound Track
+while the first diagnostic base64 packet is awaiting Max's outlet,
+`max_receiver_bridge.js` increments a local **observer epoch** and
+suppresses any remaining stale second packet. The first packet may
+already have been delivered; there is no recall and no network
+endpoint. Unit tests explicitly stall the first outlet, issue Cancel
+or rebind, then release it and verify the stale second ACK is dropped.
+
+The Track ID reset also clears its first-value baseline; a newly bound
+Track cannot inherit the previous Track's pending lab arm. Actual
+out-of-order observations in Max/Live and independent receiving-app
+identity **still need attended testing**; these are not a real
+authorization boundary.
 
 ## Safety/reliability limitations
 
