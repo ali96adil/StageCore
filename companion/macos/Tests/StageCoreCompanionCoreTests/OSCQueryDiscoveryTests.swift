@@ -97,9 +97,9 @@ final class OSCQueryDiscoveryTests: XCTestCase {
             XCTAssertTrue(control.path.hasPrefix("/"))
             XCTAssertFalse(control.type.isEmpty)
         }
-        print("OSCQuery: \\(result.host.name), UDP \\(result.host.oscPort), controls \\(result.controls.count)")
+        print("OSCQuery: \(result.host.name), UDP \(result.host.oscPort), controls \(result.controls.count)")
         for control in result.controls.prefix(20) {
-            print("CONTROL \\(control.path) type=\\(control.type) range=\\(String(describing: control.minimum))...\\(String(describing: control.maximum))")
+            print("CONTROL \(control.path) type=\(control.type) range=\(String(describing: control.minimum))...\(String(describing: control.maximum))")
         }
     }
 
