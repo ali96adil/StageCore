@@ -52,15 +52,18 @@ public struct OSCQueryDiscoveryClient: Sendable {
         defer { session.invalidateAndCancel() }
 
         let info = try await getJSON(endpoint: endpoint, query: "HOST_INFO", session: session)
-        guard let name = info["NAME"] as? String,
-              let port = info["OSC_PORT"] as? Int, (1...65535).contains(port),
-              let transport = info["OSC_TRANSPORT"] as? String else {
+        let tree = try await getJSON(endpoint: endpoint, query: nil, session: session)
+        return try parse(hostInfo: info, tree: tree)
+    }
+
+    // Internal pure parser allows deterministic fixture tests without controlling live VDMX.
+    func parse(hostInfo: [String: Any], tree: [String: Any]) throws -> Result {
+        guard let name = hostInfo["NAME"] as? String,
+              let port = hostInfo["OSC_PORT"] as? Int, (1...65535).contains(port),
+              let transport = hostInfo["OSC_TRANSPORT"] as? String else {
             throw DiscoveryError.invalidResponse
         }
-        guard transport.uppercased() == "UDP" else {
-            throw DiscoveryError.unsupportedTransport
-        }
-        let tree = try await getJSON(endpoint: endpoint, query: nil, session: session)
+        guard transport.uppercased() == "UDP" else { throw DiscoveryError.unsupportedTransport }
         var controls: [Control] = []
         try collect(tree, depth: 0, into: &controls)
         return Result(host: HostInfo(name: name, oscPort: port, transport: transport), controls: controls)
