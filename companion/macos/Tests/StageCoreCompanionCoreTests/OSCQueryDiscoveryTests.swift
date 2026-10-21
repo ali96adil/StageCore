@@ -80,5 +80,28 @@ final class OSCQueryDiscoveryTests: XCTestCase {
         ))
     }
 
+    /// Opt-in live test; never affects default CI or sends a UDP OSC command.
+    /// Run with STAGECORE_OSCQUERY_LIVE_URL=http://127.0.0.1:2345/
+    func testLiveOSCQueryDiscoveryWhenEnabled() async throws {
+        guard let endpointText = ProcessInfo.processInfo.environment["STAGECORE_OSCQUERY_LIVE_URL"],
+              !endpointText.isEmpty else {
+            throw XCTSkip("Set STAGECORE_OSCQUERY_LIVE_URL to run the live VDMX discovery check")
+        }
+        let endpoint = try XCTUnwrap(URL(string: endpointText))
+        let result = try await OSCQueryDiscoveryClient().discover(at: endpoint)
+        XCTAssertFalse(result.host.name.isEmpty)
+        XCTAssertTrue((1...65535).contains(result.host.oscPort))
+        XCTAssertEqual(result.host.transport.uppercased(), "UDP")
+        XCTAssertFalse(result.controls.isEmpty, "VDMX must publish at least one OSCQuery control")
+        for control in result.controls {
+            XCTAssertTrue(control.path.hasPrefix("/"))
+            XCTAssertFalse(control.type.isEmpty)
+        }
+        print("OSCQuery: \\(result.host.name), UDP \\(result.host.oscPort), controls \\(result.controls.count)")
+        for control in result.controls.prefix(20) {
+            print("CONTROL \\(control.path) type=\\(control.type) range=\\(String(describing: control.minimum))...\\(String(describing: control.maximum))")
+        }
+    }
+
 }
 #endif
