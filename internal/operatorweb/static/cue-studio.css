@@ -231,6 +231,38 @@
   min-width: 80px;
   text-align: end;
 }
+
+.sc008-cue-check {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-block: 10px 14px;
+  background: var(--panel);
+}
+.sc008-cue-check > summary {
+  padding: 13px 15px;
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--text);
+}
+.sc008-cue-check > .card { border: none; margin: 0 !important; }
+.sc008-type-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-block-start: 5px;
+}
+.sc008-type-badge {
+  font-size: .62rem;
+  letter-spacing: .04em;
+  line-height: 1.4;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
 .sc008-row-more { position: relative; }
 .sc008-row-more > summary {
   cursor: pointer;
