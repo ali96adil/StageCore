@@ -67,7 +67,9 @@ public struct OSCQueryDiscoveryRouter: Sendable {
         guard let url = URL(string: request.endpoint) else { return try failure("OSCQUERY_ENDPOINT_INVALID") }
         do {
             let result = try await OSCQueryDiscoveryClient().discover(at: url)
-            return try encoder.encode(Response(
+            // RuntimeChannel messages are capped at 64 KiB. Fail closed instead
+            // of disconnecting the authenticated Companion with an oversized reply.
+            let response = try encoder.encode(Response(
                 requestID: request.requestID, status: "COMPLETED", errorCode: nil,
                 name: result.host.name, oscPort: result.host.oscPort,
                 controls: result.controls.map {
@@ -75,6 +77,10 @@ public struct OSCQueryDiscoveryRouter: Sendable {
                             minimum: $0.minimum, maximum: $0.maximum, access: $0.access)
                 }
             ))
+            guard response.count <= 60 * 1024 else {
+                return try failure("OSCQUERY_RESULT_TOO_LARGE")
+            }
+            return response
         } catch OSCQueryDiscoveryClient.DiscoveryError.invalidEndpoint {
             return try failure("OSCQUERY_ENDPOINT_INVALID")
         } catch {
