@@ -48,7 +48,9 @@ public struct OSCQueryDiscoveryClient: Sendable {
         config.timeoutIntervalForRequest = 2
         config.timeoutIntervalForResource = 3
         config.httpMaximumConnectionsPerHost = 1
-        let session = URLSession(configuration: config)
+        // Redirects must never escape the explicitly permitted loopback endpoint.
+        let redirectBlocker = OSCQueryRedirectBlocker()
+        let session = URLSession(configuration: config, delegate: redirectBlocker, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
 
         let info = try await getJSON(endpoint: endpoint, query: "HOST_INFO", session: session)
@@ -81,7 +83,9 @@ public struct OSCQueryDiscoveryClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              http.url?.host?.lowercased() == endpoint.host?.lowercased() else {
+              http.url?.host?.lowercased() == endpoint.host?.lowercased(),
+              http.url?.port == endpoint.port,
+              http.url?.scheme?.lowercased() == endpoint.scheme?.lowercased() else {
             throw DiscoveryError.invalidResponse
         }
         guard data.count <= maxBytes else { throw DiscoveryError.excessiveResponse }
@@ -115,6 +119,16 @@ public struct OSCQueryDiscoveryClient: Sendable {
                 }
             }
         }
+    }
+}
+
+/// Never follow an HTTP redirect, including redirects to another loopback port.
+private final class OSCQueryRedirectBlocker: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 #endif
