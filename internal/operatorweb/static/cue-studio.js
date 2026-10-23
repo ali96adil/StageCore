@@ -45,9 +45,11 @@
       const ch = cardField(card, ".f002-midi-channel")?.value || "";
       detail = message + (ch ? " · Ch " + ch : "");
     } else if (kind === "lighting") {
-      detail = Object.keys(params.levels || {}).join(", ") || params.command_type || "";
+      detail = Object.keys(params.levels || {}).join(", ") || params.command_type ||
+        cardField(card, ".action-capability")?.value || "";
     } else if (kind === "tablet" || kind === "laser" || kind === "visual") {
-      detail = params.command_type || params.action || "";
+      detail = params.command_type || params.action ||
+        cardField(card, ".action-capability")?.value || "";
     }
     const labels = {
       osc: tr("VDMX / OSC", "VDMX / OSC"),
@@ -206,6 +208,40 @@
     card.addEventListener("change", () => updateCard(card));
     expandCard(card, !existing);
     updateCard(card);
+  }
+
+  function finishAddonComposer(previousCount) {
+    const cards = actionCards();
+    if (cards.length <= previousCount) return;
+    const composer = pick("f002CueComposer");
+    if (composer) composer.hidden = true;
+    const latest = cards.at(-1);
+    cards.forEach((card) => expandCard(card, card === latest));
+    refreshActions();
+    latest?.scrollIntoView({ block: "nearest" });
+  }
+
+  // Reuse the existing canonical Add-on action builders and keep their
+  // validation/error messages. Collapse the setup composer ONLY on a
+  // successful creation, so error messages stay visible to the operator.
+  for (const functionName of [
+    "f002AddTabletAction",
+    "f002AddLightingAction",
+    "f002AddStageLaserAction",
+  ]) {
+    const original = ({
+      f002AddTabletAction,
+      f002AddLightingAction,
+      f002AddStageLaserAction,
+    })[functionName];
+    const wrapped = async (...args) => {
+      const oldCount = actionCards().length;
+      await original(...args);
+      finishAddonComposer(oldCount);
+    };
+    if (functionName === "f002AddTabletAction") f002AddTabletAction = wrapped;
+    if (functionName === "f002AddLightingAction") f002AddLightingAction = wrapped;
+    if (functionName === "f002AddStageLaserAction") f002AddStageLaserAction = wrapped;
   }
 
   const previousAdd = addActionEditor;
