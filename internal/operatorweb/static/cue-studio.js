@@ -495,6 +495,19 @@
     counter.className = "sc008-list-count";
     toolbar.append(label, select, counter);
     tableWrap.before(toolbar);
+    const checkCard = Array.from(content.querySelectorAll("section.card"))
+      .find((node) => node.querySelector("h3")?.textContent.trim() === "Cue Check");
+    if (checkCard && !checkCard.closest(".sc008-cue-check")) {
+      const disclosure = document.createElement("details");
+      disclosure.className = "sc008-cue-check";
+      const summary = document.createElement("summary");
+      summary.textContent = tr("اختبار الكيوهات المنشورة وإجراءات الإيقاف",
+        "Published Cue Check & stop controls");
+      checkCard.before(disclosure);
+      disclosure.append(summary, checkCard);
+      // Never conceal STOP/BLACKOUT while an operational Session is active.
+      disclosure.open = !pick("cueCheckStopButton")?.disabled;
+    }
     const rows = Array.from(tbody.querySelectorAll("tr"));
     const cues = state.cues || [];
     const classify = (cue) => {
@@ -532,6 +545,23 @@
     input.addEventListener("input", apply);
     select.addEventListener("change", apply);
     apply();
+
+    rows.forEach((row, index) => {
+      const cue = cues[index];
+      if (!cue) return;
+      const types = Array.from(classify(cue)).slice(0, 3);
+      const cell = row.children[5];
+      if (!cell || !types.length) return;
+      const badges = document.createElement("div");
+      badges.className = "sc008-type-badges";
+      types.forEach((kind) => {
+        const item = document.createElement("small");
+        item.className = "sc008-type-badge";
+        item.textContent = kind.toUpperCase();
+        badges.append(item);
+      });
+      cell.append(badges);
+    });
 
     // Keep the daily actions visible; place destructive and infrequent
     // controls in an accessible per-Cue disclosure, preserving click handlers.
