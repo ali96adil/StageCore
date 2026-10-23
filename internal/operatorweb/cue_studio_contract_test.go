@@ -42,6 +42,9 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		`function sc008SafeSync(card)`,
 		`initialFormState !== formSignature()`,
 		`function enhanceCueList()`,
+		`function moveCueToPosition(cue)`,
+		`moved.splice(number - 1, 0, item)`,
+		`/cues/reorder`,
 		`type = "search"`,
 		`sc008-row-more`,
 		`cue-delete`,
@@ -49,6 +52,9 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		if !strings.Contains(js, marker) {
 			t.Fatalf("Cue Studio missing required safety/workflow marker %q", marker)
 		}
+	}
+	if !strings.Contains(js, `policyField?.closest("details.card")`) {
+		t.Fatal("advanced Cue policy must move as its outer panel without duplication")
 	}
 	if !strings.Contains(app, `cue_type: existing?.cue_type || "STANDARD"`) {
         t.Fatal("editing a specialized Cue must preserve its original cue_type")
