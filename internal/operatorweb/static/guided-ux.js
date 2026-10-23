@@ -438,12 +438,13 @@ renderConfiguration = async function f002RenderConfiguration(...args) {
 renderCues = async function f002RenderCues(message = "") {
   await f002BaseRenderCues(message);
   const projectID = encodeURIComponent(state.project.project_id);
-  const [configuration, tabletController, lightingController, stageLaserController, machineRoles] = await Promise.all([
+  const [configuration, tabletController, lightingController, stageLaserController, machineRoles, extensionInstallations] = await Promise.all([
     f002Optional(`/api/v1/projects/${projectID}/configuration`, { targets: [] }),
     f002Optional(`/api/v1/projects/${projectID}/tablet-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/lighting-controller`, { nodes: [] }),
     f002Optional(`/api/v1/projects/${projectID}/stagelaser-controller`, { devices: [] }),
     f002Optional(`/api/v1/projects/${projectID}/machine-roles`, { roles: [], companions: [] }),
+    f002Optional("/api/v1/extensions/installations", { installations: [] }),
   ]);
   state.f002Targets = configuration.targets || [];
   state.f002Tablets = tabletController.devices || [];
@@ -451,6 +452,13 @@ renderCues = async function f002RenderCues(message = "") {
   state.f002StageLasers = stageLaserController.devices || [];
   state.f002MachineRoles = machineRoles.roles || [];
   state.f002Companions = machineRoles.companions || [];
+  // The Add-on library is not an installation. Gate new Action composers on
+  // the Hub's verified installations, not on bundled UI code or device APIs.
+  state.f002InstalledAddons = new Set(
+    (extensionInstallations.installations || [])
+      .filter((item) => item.kind === "ADDON" && item.lifecycle_state === "INSTALLED")
+      .map((item) => item.extension_id)
+  );
   f002InstallTargetDatalist(state.f002Targets);
 };
 
@@ -917,11 +925,21 @@ function f002InstallCueComposer() {
   const sources = (state.cues || []).filter((cue) =>
     cue.cue_id !== currentCueID && Array.isArray(cue.actions) && cue.actions.length > 0
   );
+  const installedAddons = state.f002InstalledAddons || new Set();
+  const supportedAddons = [
+    "stagecore.tablet-controller",
+    "stagecore.lighting-controller",
+    "stagecore.stagelaser-controller",
+  ];
+  // A fresh Hub has neither imported Cues nor installed Add-ons. Keep the
+  // Cue editor focused on its core OSC/MIDI Action builder in that case.
+  if (!sources.length && !supportedAddons.some((id) => installedAddons.has(id))) return;
 
   const composer = document.createElement("section");
   composer.id = "f002CueComposer";
   composer.className = "f002-builder f002-cue-composer";
   composer.innerHTML = `
+    <section data-f002-import>
     <div class="f002-builder-head">
       <div>
         <strong>Compose from existing Cues</strong>
@@ -939,7 +957,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002CueComposerMessage" class="message hidden"></div>
     <p class="muted">Imported Actions are independent copies. Action IDs are regenerated when this Cue is saved, so later edits to the source Cue do not silently alter this mixed Cue.</p>
+    </section>
 
+    <section data-f002-extension="stagecore.tablet-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -973,7 +993,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002TabletComposerMessage" class="message hidden"></div>
     <p class="muted">Common Tablet actions are visual. Advanced JSON is optional and only used when explicitly enabled.</p>
+    </section>
 
+    <section data-f002-extension="stagecore.lighting-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -994,7 +1016,9 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002LightingComposerMessage" class="message hidden"></div>
     <p class="muted">${f002LightingNodes().length ? "Uses the configured logical channel aliases and Lighting Node mapping." : "Configure a Lighting Node and logical channel aliases first."}</p>
+    </section>
 
+    <section data-f002-extension="stagecore.stagelaser-controller">
     <hr>
     <div class="f002-builder-head">
       <div>
@@ -1021,7 +1045,14 @@ function f002InstallCueComposer() {
     </div>
     <div id="f002StageLaserComposerMessage" class="message hidden"></div>
     <p class="muted">${f002StageLaserDevices().length ? "Uses the authenticated Stage Device target and canonical laser.* capabilities." : "Assign an ACTIVE StageLaser to this Project first."}</p>
+    </section>
   `;
+  if (!sources.length) composer.querySelector("[data-f002-import]")?.remove();
+  composer.querySelectorAll("[data-f002-extension]").forEach((section) => {
+    if (!installedAddons.has(section.dataset.f002Extension)) section.remove();
+  });
+  // The first visible section should not start with a divider.
+  composer.querySelector("section:first-child > hr")?.remove();
   actionsEditor.parentNode.insertBefore(composer, actionsEditor);
 
   composer.querySelector("#f002ImportCueActions")?.addEventListener("click", () => {
