@@ -6,6 +6,12 @@
  */
 (function () {
   const tr = (ar, en) => document.documentElement.lang.startsWith("ar") ? ar : en;
+  const sc008Strings = {
+    "cue.studio.choose": {"en": "Choose an action", "ar-IQ": "اختر نوع الإجراء"},
+    "cue.studio.optional": {"en": "Timing, links and notes", "ar-IQ": "التوقيت، الربط والملاحظات"},
+    "cue.studio.close_warning": {"en": "Discard unsaved Cue changes?", "ar-IQ": "تجاهل تغييرات الكيو غير المحفوظة؟"},
+  };
+  const phrase = (key) => sc008Strings[key][document.documentElement.lang.startsWith("ar") ? "ar-IQ" : "en"];
   const pick = (id) => document.getElementById(id);
   const actionCards = () => Array.from(pick("actionsEditor")?.querySelectorAll(".action-editor") || []);
   const cardField = (card, selector) => card.querySelector(selector);
@@ -289,7 +295,7 @@
     const heading = document.createElement("div");
     heading.className = "sc008-picker-head";
     const title = document.createElement("h3");
-    title.textContent = tr("اختر نوع الإجراء", "Choose an action");
+    title.textContent = phrase("cue.studio.choose");
     const description = document.createElement("p");
     description.textContent = tr("تظهر لك إعدادات النوع المختار فقط. تقدر تضيف أكثر من نوع بنفس الكيو.",
       "See only the selected editor. Mix action types in the same Cue.");
@@ -329,7 +335,7 @@
     details.id = "sc008Optional";
     details.className = "sc008-optional";
     const summary = document.createElement("summary");
-    summary.textContent = tr("التوقيت، الربط والملاحظات", "Timing, links and notes");
+    summary.textContent = phrase("cue.studio.optional");
     details.append(summary);
     const fields = pick("cueCriticality")?.closest("label")?.parentNode;
     const critical = pick("cueCriticality")?.closest("label");
@@ -373,8 +379,7 @@
     form.addEventListener("click", (event) => {
       if (!event.target.closest("#closeCueDialog, #cancelCueButton")) return;
       if (initialFormState === formSignature()) return;
-      if (!window.confirm(tr("توجد تغييرات غير محفوظة. تريد تغلق؟",
-        "Discard unsaved Cue changes?"))) {
+      if (!window.confirm(phrase("cue.studio.close_warning"))) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
