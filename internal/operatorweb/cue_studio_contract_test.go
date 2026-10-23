@@ -40,7 +40,6 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		`function enhanceCueList()`,
 		`type = "search"`,
 		`sc008-row-more`,
-		`cue-test`,
 		`cue-delete`,
 	} {
 		if !strings.Contains(js, marker) {
@@ -48,8 +47,12 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		}
 	}
 	if !strings.Contains(app, `cue_type: existing?.cue_type || "STANDARD"`) {
-		t.Fatal("editing a specialized Cue must preserve its original cue_type")
-	}
+        t.Fatal("editing a specialized Cue must preserve its original cue_type")
+    }
+    if !strings.Contains(app, `class="button primary cue-test"`) {
+        t.Fatal("Cue Studio must keep the existing explicit runtime Test Cue control")
+    }
+
 	for _, marker := range []string{
 		`[hidden] { display: none !important; }`,
 		`@media (max-width: 720px)`,
