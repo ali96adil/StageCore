@@ -43,6 +43,7 @@ type RuntimeChannel struct {
 	executions                   map[string]*runtimeExecution
 	executionOrder               []string
 	inspections                  map[string]*runtimeInspection
+	oscQueryPending              map[string]*oscQueryPending
 	inspectionOrder              []string
 	environmentOperationBindings map[string]environmentOperationBinding
 	environmentOperationOrder    []string
@@ -357,6 +358,8 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			c.acceptResult(connection, data)
 		case "inspection.result":
 			c.acceptInspectionResult(connection, data)
+		case "oscquery.discover.result":
+			c.acceptOSCQueryDiscoveryResult(connection, data)
 		case "control.surface":
 			if err := c.acceptControlSurface(connection, data); err != nil {
 				return
