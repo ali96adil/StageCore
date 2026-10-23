@@ -12,6 +12,10 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 	js := string(mustReadOperatorContractFile(t, "static/cue-studio.js"))
 	css := string(mustReadOperatorContractFile(t, "static/cue-studio.css"))
 	app := string(mustReadOperatorContractFile(t, "static/app.js"))
+    assets := string(mustReadOperatorContractFile(t, "assets.go"))
+    if !strings.Contains(assets, "static/cue-studio.js") || !strings.Contains(assets, "static/cue-studio.css") {
+        t.Fatal("Cue Studio JS/CSS must be embedded in the compiled Hub")
+    }
 	for _, asset := range []string{`href="/cue-studio.css"`, `src="/cue-studio.js"`} {
 		if !strings.Contains(index, asset) {
 			t.Fatalf("Cue Studio asset missing %s", asset)
