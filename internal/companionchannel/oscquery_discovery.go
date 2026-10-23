@@ -3,6 +3,7 @@ package companionchannel
 import (
     "context"
     "encoding/json"
+    "math"
     "strings"
     "time"
 
@@ -107,10 +108,23 @@ func (c *RuntimeChannel) acceptOSCQueryDiscoveryResult(connection *runtimeConnec
         result := wire.OSCQueryDiscoveryResult
         if result.Status != "COMPLETED" && result.Status != "FAILED" {
             result = OSCQueryDiscoveryResult{RequestID: wire.RequestID, Status: "FAILED", ErrorCode: "OSCQUERY_RESULT_INVALID"}
+        } else if result.Status == "COMPLETED" && !validOSCQueryDiscoveryResult(result) {
+            result = OSCQueryDiscoveryResult{RequestID: wire.RequestID, Status: "FAILED", ErrorCode: "OSCQUERY_RESULT_INVALID"}
         }
         pending.result = result
         delete(c.oscQueryPending, wire.RequestID)
         close(pending.done)
     }
     c.mu.Unlock()
+}
+
+func validOSCQueryDiscoveryResult(result OSCQueryDiscoveryResult) bool {
+    if result.RequestID == "" || result.Name == "" || result.OSCPort < 1 || result.OSCPort > 65535 || len(result.Controls) > 512 { return false }
+    for _, control := range result.Controls {
+        if !strings.HasPrefix(control.Path, "/") || len(control.Path) > 2048 || len(control.Type) == 0 || len(control.Type) > 64 { return false }
+        if control.Minimum != nil && (math.IsNaN(*control.Minimum) || math.IsInf(*control.Minimum, 0)) { return false }
+        if control.Maximum != nil && (math.IsNaN(*control.Maximum) || math.IsInf(*control.Maximum, 0)) { return false }
+        if control.Minimum != nil && control.Maximum != nil && *control.Minimum > *control.Maximum { return false }
+    }
+    return true
 }
