@@ -241,15 +241,28 @@
     const type = kind === "midi" ? "midi.send"
       : kind === "visual" ? "visual.play"
       : kind === "advanced" ? "local.echo" : "osc.send";
-    const eligible = (state.f002Targets || []).filter((target) => {
-      const name = String(target.logical_name || "").toLowerCase();
-      return kind === "midi" ? /audio|ableton|midi/.test(name) : /osc|video|vdmx/.test(name);
-    });
+    const eligible = kind === "visual" && typeof f037TargetsForCapability === "function"
+      ? f037TargetsForCapability("visual.play").map(({ target }) => target)
+      : (state.f002Targets || []).filter((target) => {
+        const name = String(target.logical_name || "").toLowerCase();
+        return kind === "midi" ? /audio|ableton|midi/.test(name) : /osc|vdmx|video/.test(name);
+      });
     const targetName = eligible.length === 1 ? eligible[0].logical_name : "";
     const payload = kind === "osc" ? { address: "", arguments: [] }
       : kind === "visual" ? { contract_version: 1, layer_id: "" } : {};
     addActionEditor({ capability_key: type, target_ref: targetName, parameters: payload });
     const added = actionCards().at(-1);
+    // A newly created MIDI action has no destination yet, so it cannot pass
+    // the existing parseMIDIParameters round-trip parser on construction.
+    // Open its typed MIDI editor explicitly; the operator must choose a
+    // destination before the submit serializer builds canonical MIDI bytes.
+    if (kind === "midi") {
+      const select = added?.querySelector(".f002-action-kind");
+      if (select) {
+        select.value = "midi";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
     actionCards().forEach((card) => expandCard(card, card === added));
     const picker = pick("sc008Picker");
     picker?.classList.remove("is-open");
@@ -279,11 +292,8 @@
     });
     // Native Visual is built into the Hub, not an Add-on. Only advertise
     // the focused editor when the Project has a visual-capable Machine Role.
-    const visualConfigured = (state.f002MachineRoles || []).some((role) =>
-      !role.retired && (role.required_capabilities || []).some((capability) =>
-        String(capability).startsWith("visual.")
-      )
-    );
+    const visualConfigured = typeof f037TargetsForCapability === "function" &&
+      f037TargetsForCapability("visual.play").length > 0;
     if (visualConfigured) list.push({
       key: "visual", icon: "◩", name: tr("محرك الفيديو الداخلي", "Native Visual Engine"),
       desc: tr("تشغيل الطبقات والانتقالات والمؤثرات", "Layers, transitions and effects"),
