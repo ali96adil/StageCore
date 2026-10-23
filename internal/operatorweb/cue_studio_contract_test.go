@@ -38,6 +38,8 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		`previousAdd(action)`,
 		`previousOpen(cue)`,
 		`function duplicateCard(card)`,
+		`function finishAddonComposer(previousCount)`,
+		`finishAddonComposer(oldCount)`,
 		`action_id: ""`,
 		`function moveCard(card, delta)`,
 		`parent.insertBefore`,
