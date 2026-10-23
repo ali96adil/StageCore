@@ -238,13 +238,16 @@
   }
 
   function createCoreAction(kind) {
-    const type = kind === "midi" ? "midi.send" : kind === "advanced" ? "local.echo" : "osc.send";
+    const type = kind === "midi" ? "midi.send"
+      : kind === "visual" ? "visual.play"
+      : kind === "advanced" ? "local.echo" : "osc.send";
     const eligible = (state.f002Targets || []).filter((target) => {
       const name = String(target.logical_name || "").toLowerCase();
       return kind === "midi" ? /audio|ableton|midi/.test(name) : /osc|video|vdmx/.test(name);
     });
     const targetName = eligible.length === 1 ? eligible[0].logical_name : "";
-    const payload = kind === "osc" ? { address: "", arguments: [] } : {};
+    const payload = kind === "osc" ? { address: "", arguments: [] }
+      : kind === "visual" ? { contract_version: 1, layer_id: "" } : {};
     addActionEditor({ capability_key: type, target_ref: targetName, parameters: payload });
     const added = actionCards().at(-1);
     actionCards().forEach((card) => expandCard(card, card === added));
@@ -273,6 +276,17 @@
     if (addons.has("stagecore.stagelaser-controller")) list.push({
       key: "laser", icon: "◇", name: "StageLaser",
       desc: tr("تشغيل آمن وإطفاء وفلاش", "Safe on/off and flash"),
+    });
+    // Native Visual is built into the Hub, not an Add-on. Only advertise
+    // the focused editor when the Project has a visual-capable Machine Role.
+    const visualConfigured = (state.f002MachineRoles || []).some((role) =>
+      !role.retired && (role.required_capabilities || []).some((capability) =>
+        String(capability).startsWith("visual.")
+      )
+    );
+    if (visualConfigured) list.push({
+      key: "visual", icon: "◩", name: tr("محرك الفيديو الداخلي", "Native Visual Engine"),
+      desc: tr("تشغيل الطبقات والانتقالات والمؤثرات", "Layers, transitions and effects"),
     });
     if (pick("f002CueComposer")?.querySelector("[data-f002-import]")) list.push({
       key: "import", icon: "⊞", name: tr("تركيب من كيو موجود", "Compose from Cue"),
@@ -318,7 +332,7 @@
       detail.textContent = option.desc;
       button.append(icon, label, detail);
       button.addEventListener("click", () => {
-        if (["osc", "midi", "advanced"].includes(option.key)) createCoreAction(option.key);
+        if (["osc", "midi", "visual", "advanced"].includes(option.key)) createCoreAction(option.key);
         else {
           picker.classList.remove("is-open");
           showCreator(option.key);
