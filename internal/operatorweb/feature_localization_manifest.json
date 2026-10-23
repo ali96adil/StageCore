@@ -66,6 +66,19 @@
       "ui_keys": []
     },
     {
+      "feature_id": "CORE-CUE-STUDIO",
+      "localization_mode": "keyed",
+      "owner_assets": ["static/cue-studio.js", "static/cue-studio.css"],
+      "name": {"en": "Cue Studio", "ar-IQ": "محرر الإشارات الموحد"},
+      "summary": {"en": "A focused action-first Cue editor and responsive Cue list for theatre operators.", "ar-IQ": "محرر كيوهات يركز على الإجراء المطلوب مع قائمة منظمة ومتجاوبة للمشغّل المسرحي."},
+      "actions": [
+        {"action_id": "choose-cue-action", "label": {"en": "Choose action type", "ar-IQ": "اختيار نوع الإجراء"}},
+        {"action_id": "organize-cue-actions", "label": {"en": "Organize Cue actions", "ar-IQ": "تنظيم إجراءات الكيو"}},
+        {"action_id": "search-cues", "label": {"en": "Search and filter Cues", "ar-IQ": "البحث وتصفية الكيوهات"}}
+      ],
+      "ui_keys": ["cue.studio.choose", "cue.studio.optional", "cue.studio.close_warning"]
+    },
+    {
       "feature_id": "F-002",
       "localization_mode": "keyed",
       "owner_assets": ["static/guided-ux.js", "static/guided-ux.css"],
