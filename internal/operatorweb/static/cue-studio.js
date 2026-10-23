@@ -337,7 +337,6 @@
     const summary = document.createElement("summary");
     summary.textContent = phrase("cue.studio.optional");
     details.append(summary);
-    const fields = pick("cueCriticality")?.closest("label")?.parentNode;
     const critical = pick("cueCriticality")?.closest("label");
     const enabled = pick("cueEnabled")?.closest("label");
     const settings = document.createElement("div");
@@ -362,7 +361,12 @@
     if (linked) details.append(linked);
     const notes = pick("cueNotes")?.closest("label");
     if (notes) details.append(notes);
-    const policy = pick("cueExecutionPolicy")?.closest("details");
+    // Move the *outer* Advanced execution policy disclosure; F-002 may
+    // have wrapped its label in a nested details element. Moving only that
+    // inner element leaves an empty duplicate panel in the Cue form.
+    const policyField = pick("cueExecutionPolicy");
+    const policy = policyField?.closest("details.card") ||
+      policyField?.closest("details");
     if (policy) details.append(policy);
     return details;
   }
@@ -464,6 +468,40 @@
     previousOpen(cue);
     initializeEditor(cue);
   };
+
+  async function moveCueToPosition(cue) {
+    if (!cue || !(state.cues || []).length) return;
+    const ordered = state.cues || [];
+    const sourceIndex = ordered.findIndex((item) => item.cue_id === cue.cue_id);
+    if (sourceIndex < 0) return;
+    const raw = window.prompt(
+      tr("انقل كيو «" + cue.name + "» إلى أي رقم؟ (1–" + ordered.length + ")",
+        "Move Cue “" + cue.name + "” to position (1–" + ordered.length + ")"),
+      String(sourceIndex + 1)
+    );
+    if (raw === null) return;
+    const value = raw.trim();
+    const number = Number(value);
+    if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(number) ||
+        number < 1 || number > ordered.length) {
+      window.alert(tr("أدخل رقماً صحيحاً ضمن نطاق الكيوهات.",
+        "Enter an integer position within the Cue list."));
+      return;
+    }
+    if (number === sourceIndex + 1) return;
+    const moved = [...ordered];
+    const [item] = moved.splice(sourceIndex, 1);
+    moved.splice(number - 1, 0, item);
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/reorder`, {
+        method: "POST",
+        json: { cue_ids: moved.map((entry) => entry.cue_id) },
+      });
+      await renderCues(tr("تم تحديث ترتيب الكيوهات في المسودة.", "Draft Cue order updated."));
+    } catch (error) {
+      setMessage(globalMessage, errorMessage(error), error?.status === 409 ? "warn" : "error");
+    }
+  }
 
   function enhanceCueList() {
     const tableWrap = content.querySelector(".table-wrap");
@@ -576,6 +614,17 @@
       const secondary = Array.from(actions.querySelectorAll(
         ".cue-up,.cue-down,.cue-toggle,.cue-duplicate,.cue-delete"));
       if (!secondary.length) return;
+      // Moving to a position uses the existing atomic reorder endpoint and
+      // stable Cue IDs, not repeated one-step reorders.
+      if (actions.querySelector(".cue-up,.cue-down")) {
+        const cue = cues[rows.indexOf(row)];
+        const move = document.createElement("button");
+        move.type = "button";
+        move.className = "button sc008-move-position";
+        move.textContent = tr("نقل إلى رقم…", "Move to position…");
+        move.addEventListener("click", () => moveCueToPosition(cue));
+        secondary.push(move);
+      }
       const menu = document.createElement("details");
       menu.className = "sc008-row-more";
       const title = document.createElement("summary");
