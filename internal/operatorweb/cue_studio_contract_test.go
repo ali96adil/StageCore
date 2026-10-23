@@ -30,6 +30,8 @@ func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
 		`stagecore.lighting-controller`,
 		`stagecore.stagelaser-controller`,
 		`state.f002InstalledAddons || new Set()`,
+		`const visualConfigured = (state.f002MachineRoles || []).some(`,
+		`kind === "visual" ? { contract_version: 1, layer_id: "" }`,
 		`function createCoreAction(kind)`,
 		`previousAdd(action)`,
 		`previousOpen(cue)`,
