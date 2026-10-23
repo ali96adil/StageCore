@@ -93,7 +93,7 @@ final class OSCSendExecutorTests: XCTestCase {
             endpoint: OSCEndpoint(host: "127.0.0.1", port: 3555),
             sender: sender
         )
-        for address in ["/OSCQUERY/Control\\tSurface/Slider", "/OSCQUERY/Control\\nSurface/Slider", "/OSCQUERY/Control\\u{0000}Surface/Slider"] {
+        for address in ["/OSCQUERY/Control\tSurface/Slider", "/OSCQUERY/Control\nSurface/Slider", "/OSCQUERY/Control\u{0000}Surface/Slider"] {
             let outcome = await executor.execute(parameters: [
                 "address": .string(address),
                 "arguments": .array([]),
