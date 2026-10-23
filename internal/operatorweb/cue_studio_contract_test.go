@@ -1,0 +1,74 @@
+package operatorweb
+
+import (
+	"strings"
+	"testing"
+)
+
+// SC-008 retains canonical Cue serialization and the existing runtime/snapshot
+// boundaries while replacing the overloaded "everything at once" authoring UI.
+func TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip(t *testing.T) {
+	index := string(mustReadOperatorContractFile(t, "static/index.html"))
+	js := string(mustReadOperatorContractFile(t, "static/cue-studio.js"))
+	css := string(mustReadOperatorContractFile(t, "static/cue-studio.css"))
+	app := string(mustReadOperatorContractFile(t, "static/app.js"))
+	for _, asset := range []string{`href="/cue-studio.css"`, `src="/cue-studio.js"`} {
+		if !strings.Contains(index, asset) {
+			t.Fatalf("Cue Studio asset missing %s", asset)
+		}
+	}
+	for _, marker := range []string{
+		`function ensurePicker(workspace)`,
+		`Choose an action`,
+		`Choose an action to start building this Cue.`,
+		`function showCreator(kind)`,
+		`stagecore.tablet-controller`,
+		`stagecore.lighting-controller`,
+		`stagecore.stagelaser-controller`,
+		`state.f002InstalledAddons || new Set()`,
+		`function createCoreAction(kind)`,
+		`previousAdd(action)`,
+		`previousOpen(cue)`,
+		`function duplicateCard(card)`,
+		`action_id: ""`,
+		`function moveCard(card, delta)`,
+		`parent.insertBefore`,
+		`function createOptionalDetails(form)`,
+		`function uiSignature(card)`,
+		`function sc008SafeSync(card)`,
+		`initialFormState !== formSignature()`,
+		`function enhanceCueList()`,
+		`type = "search"`,
+		`sc008-row-more`,
+		`cue-test`,
+		`cue-delete`,
+	} {
+		if !strings.Contains(js, marker) {
+			t.Fatalf("Cue Studio missing required safety/workflow marker %q", marker)
+		}
+	}
+	if !strings.Contains(app, `cue_type: existing?.cue_type || "STANDARD"`) {
+		t.Fatal("editing a specialized Cue must preserve its original cue_type")
+	}
+	for _, marker := range []string{
+		`[hidden] { display: none !important; }`,
+		`@media (max-width: 720px)`,
+		`@media (max-width: 420px)`,
+		`prefers-reduced-motion`,
+		`var(--panel`,
+		`var(--line)`,
+	} {
+		if !strings.Contains(css, marker) {
+			t.Fatalf("Cue Studio missing responsive/style marker %q", marker)
+		}
+	}
+	// No shadow Cue model, undocumented direct actuation, or silent publish.
+	for _, forbidden := range []string{
+		`/runtime/go`, `/runtime/jump`, `/publish`,
+		`LASER_TOGGLE`, `localStorage.setItem("cue"`,
+	} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("Cue Studio must not perform runtime or persistence side effects: %q", forbidden)
+		}
+	}
+}
