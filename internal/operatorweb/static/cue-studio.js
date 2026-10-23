@@ -170,6 +170,7 @@
     }
     const select = document.createElement("select");
     select.className = "sc008-target-picker";
+    select.required = true;
     select.setAttribute("aria-label", tr("اختر الهدف", "Choose target"));
     const placeholder = document.createElement("option");
     placeholder.value = "";
