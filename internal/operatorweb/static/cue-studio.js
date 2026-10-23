@@ -156,6 +156,55 @@
     previousSync(card);
   };
 
+  function enhanceTargetPicker(card) {
+    if (!["osc", "midi"].includes(actionKind(card))) return;
+    const input = cardField(card, ".action-target");
+    const label = input?.closest("label");
+    const targets = state.f002Targets || [];
+    if (!input || !label || !targets.length || label.querySelector(".sc008-target-picker")) return;
+
+    // Keep the existing canonical input and legacy/freeform targets intact.
+    // A friendly picker only mirrors its value; it never changes cue schema.
+    if (label.firstChild?.nodeType === Node.TEXT_NODE) {
+      label.firstChild.textContent = tr("الجهاز / الهدف", "Device / target");
+    }
+    const select = document.createElement("select");
+    select.className = "sc008-target-picker";
+    select.setAttribute("aria-label", tr("اختر الهدف", "Choose target"));
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = tr("اختر من الأهداف المعرفة…", "Choose a configured target…");
+    select.append(placeholder);
+    for (const target of targets) {
+      const name = String(target.logical_name || "").trim();
+      if (!name) continue;
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.append(option);
+    }
+    const manual = document.createElement("option");
+    manual.value = "__manual__";
+    manual.textContent = tr("هدف آخر (متقدم)…", "Other target (advanced)…");
+    select.append(manual);
+    const current = input.value.trim();
+    select.value = Array.from(select.options).some((option) => option.value === current)
+      ? current : current ? "__manual__" : "";
+
+    const apply = () => {
+      const other = select.value === "__manual__";
+      input.type = other ? "text" : "hidden";
+      input.required = other;
+      if (!other) input.value = select.value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    select.addEventListener("change", apply);
+    input.after(select);
+    if (current) {
+      if (select.value !== "__manual__") apply();
+    } else apply();
+  }
+
   function decorateAction(card, existing) {
     if (!card || card.classList.contains("sc008-action-card")) return;
     card.classList.add("sc008-action-card");
@@ -204,6 +253,7 @@
       if (child !== header && !child.matches("input.action-id")) body.appendChild(child);
     });
     card.append(body);
+    enhanceTargetPicker(card);
     card.addEventListener("input", () => updateCard(card));
     card.addEventListener("change", () => updateCard(card));
     expandCard(card, !existing);
