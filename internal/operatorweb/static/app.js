@@ -867,7 +867,7 @@ cueForm.addEventListener("submit", async (event) => {
       display_label: el("cueLabel").value.trim(),
       name: el("cueName").value.trim(),
       order_index: existing?.order_index || nextCueOrder(),
-      cue_type: "STANDARD",
+      cue_type: existing?.cue_type || "STANDARD",
       criticality: el("cueCriticality").value,
       enabled: el("cueEnabled").checked,
       execution_policy: (() => {
