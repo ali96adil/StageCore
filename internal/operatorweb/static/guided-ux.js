@@ -1253,6 +1253,11 @@ function f002EnhanceActionCard(card) {
     </div>
     <div class="f002-osc-action">
       <label>OSC address<input class="f002-osc-address" placeholder="/stagecore/go" pattern="/.*" title="OSC address must start with /"></label>
+      <div class="f002-oscquery-browser">
+        <button class="button ghost f002-oscquery-discover" type="button">Discover VDMX Controls</button>
+        <select class="f002-oscquery-control hidden" aria-label="Published VDMX OSC Control"></select>
+        <small class="muted f002-oscquery-message" role="status">Read-only discovery; keeps the existing OSC target and port unchanged.</small>
+      </div>
       <div class="section-title-row"><div><strong>Values</strong><p class="muted">Optional OSC arguments in send order.</p></div><button class="button ghost f002-add-argument" type="button">+ Value</button></div>
       <div class="f002-arguments"></div>
     </div>
@@ -1323,6 +1328,68 @@ function f002EnhanceActionCard(card) {
   const midiPanel = builder.querySelector(".f002-midi-action");
   const address = builder.querySelector(".f002-osc-address");
   const argumentsNode = builder.querySelector(".f002-arguments");
+  const discoverButton = builder.querySelector(".f002-oscquery-discover");
+  const controlSelect = builder.querySelector(".f002-oscquery-control");
+  const discoveryMessage = builder.querySelector(".f002-oscquery-message");
+  let discoveredControls = [];
+  discoverButton.addEventListener("click", async () => {
+    discoverButton.disabled = true;
+    discoveryMessage.textContent = "Discovering VDMX published controls…";
+    controlSelect.classList.add("hidden");
+    try {
+      const projectID = encodeURIComponent(state.project.project_id);
+      const dashboard = await api(`/api/v1/projects/${projectID}/dashboard`);
+      const revisionID = dashboard.draft_revision?.revision_id;
+      if (!revisionID) throw new Error("Create a Draft revision before discovering OSC controls.");
+      const revision = encodeURIComponent(revisionID);
+      const environments = await api(`/api/v1/projects/${projectID}/revisions/${revision}/execution-environments`);
+      const vdmx = (environments.execution_environments || []).filter((item) =>
+        item.adapter_key === "stagecore.adapter.vdmx" && item.machine_role_id);
+      if (!vdmx.length) throw new Error("Bind a VDMX execution environment to a Machine Role first.");
+      const environment = vdmx.length === 1 ? vdmx[0] : vdmx.find((item) =>
+        window.confirm(`Discover controls from VDMX environment “${item.name}”?`));
+      if (!environment) { discoveryMessage.textContent = "Discovery cancelled."; return; }
+      const result = await api(
+        `/api/v1/projects/${projectID}/revisions/${revision}/execution-environments/${encodeURIComponent(environment.execution_environment_id)}/oscquery/discover`,
+        { method: "POST", json: {} }
+      );
+      if (result.status !== "COMPLETED") throw new Error(result.error_code || "Discovery unavailable");
+      discoveredControls = (result.controls || []).filter((item) => item.path?.startsWith("/") && item.type);
+      controlSelect.replaceChildren();
+      const hint = document.createElement("option");
+      hint.value = "";
+      hint.textContent = "Select a published OSC control…";
+      controlSelect.appendChild(hint);
+      for (const item of discoveredControls) {
+        const option = document.createElement("option");
+        option.value = item.path;
+        option.textContent = `${item.path} (${item.type})`;
+        controlSelect.appendChild(option);
+      }
+      controlSelect.classList.toggle("hidden", !discoveredControls.length);
+      discoveryMessage.textContent = `${discoveredControls.length} published control(s). Advertised UDP ${result.osc_port}; existing OSC target is not changed.`;
+    } catch (error) {
+      discoveryMessage.textContent = `VDMX discovery unavailable: ${error.message || error}`;
+    } finally {
+      discoverButton.disabled = false;
+    }
+  });
+  controlSelect.addEventListener("change", () => {
+    const control = discoveredControls.find((item) => item.path === controlSelect.value);
+    if (!control) return;
+    address.value = control.path;
+    const type = ({ f: "float32", i: "int32", s: "string", T: "bool", F: "bool" })[control.type];
+    if (type) {
+      const existing = argumentsNode.querySelectorAll(".f002-argument-row");
+      if (!existing.length) {
+        const initial = type === "bool" ? (control.type === "T") : type === "string" ? "" :
+          Number.isFinite(control.minimum) ? control.minimum : 0;
+        argumentsNode.appendChild(f002ArgumentRow({ type, value: initial }));
+      }
+    }
+    discoveryMessage.textContent = "OSC address selected. Review arguments and target before saving the Cue.";
+  });
+
   const midiDestinationMode = builder.querySelector(".f002-midi-destination-mode");
   const midiDestinationNameField = builder.querySelector(".f002-midi-destination-name-field");
   const midiDestinationIndexField = builder.querySelector(".f002-midi-destination-index-field");

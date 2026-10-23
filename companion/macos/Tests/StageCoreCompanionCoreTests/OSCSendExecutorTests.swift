@@ -60,6 +60,50 @@ final class OSCSendExecutorTests: XCTestCase {
         )
     }
 
+    func testVDMXOSCQueryAddressWithSpacesEncodesThePublishedLiteralPath() async throws {
+        let sender = RecordingOSCSender()
+        let executor = try OSCSendExecutor(
+            endpoint: OSCEndpoint(host: "127.0.0.1", port: 3555),
+            sender: sender
+        )
+        let address = "/OSCQUERY/Control Surface/Slider"
+        let outcome = await executor.execute(parameters: [
+            "address": .string(address),
+            "arguments": .array([
+                .object(["type": .string("float32"), "value": .int(1)]),
+            ]),
+        ])
+
+        XCTAssertEqual(outcome.status, .completed)
+        XCTAssertNil(outcome.errorCode)
+        XCTAssertEqual(sender.sendCount, 1)
+        var expected = Data(address.utf8)
+        expected.append(0)
+        while expected.count % 4 != 0 {
+            expected.append(0)
+        }
+        expected.append(contentsOf: [0x2c, 0x66, 0x00, 0x00])
+        expected.append(contentsOf: [0x3f, 0x80, 0x00, 0x00])
+        XCTAssertEqual(sender.packet, expected)
+    }
+
+    func testOSCAddressRejectsControlCharactersWithoutSending() async throws {
+        let sender = RecordingOSCSender()
+        let executor = try OSCSendExecutor(
+            endpoint: OSCEndpoint(host: "127.0.0.1", port: 3555),
+            sender: sender
+        )
+        for address in ["/OSCQUERY/Control\tSurface/Slider", "/OSCQUERY/Control\nSurface/Slider", "/OSCQUERY/Control\u{0000}Surface/Slider"] {
+            let outcome = await executor.execute(parameters: [
+                "address": .string(address),
+                "arguments": .array([]),
+            ])
+            XCTAssertEqual(outcome.status, .failed)
+            XCTAssertEqual(outcome.errorCode, "OSC_INVALID_PARAMETERS")
+        }
+        XCTAssertEqual(sender.sendCount, 0)
+    }
+
     func testInvalidOSCParametersFailWithoutSending() async throws {
         let sender = RecordingOSCSender()
         let executor = try OSCSendExecutor(
