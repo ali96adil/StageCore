@@ -37,6 +37,7 @@ type runtimeJumpRequest struct {
 	CueID                string  `json:"cue_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
+	RehearsalSessionID   *string `json:"rehearsal_session_id,omitempty"`
 	Confirm              bool    `json:"confirm"`
 }
 
@@ -165,6 +166,11 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		active, ok := activeRuntimeSession(w, r, projectStore)
 		if !ok {
+			return
+		}
+		if body.RehearsalSessionID != nil &&
+			(active.Type != domain.SessionRehearsal || active.ID != *body.RehearsalSessionID) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_CHECK_SESSION_CHANGED"})
 			return
 		}
 		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{

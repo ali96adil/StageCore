@@ -232,19 +232,6 @@
   text-align: end;
 }
 
-.sc008-cue-check {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  margin-block: 10px 14px;
-  background: var(--panel);
-}
-.sc008-cue-check > summary {
-  padding: 13px 15px;
-  cursor: pointer;
-  font-weight: 650;
-  color: var(--text);
-}
-.sc008-cue-check > .card { border: none; margin: 0 !important; }
 .sc008-type-badges {
   display: flex;
   flex-wrap: wrap;

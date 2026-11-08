@@ -649,19 +649,6 @@
     counter.className = "sc008-list-count";
     toolbar.append(label, select, counter);
     tableWrap.before(toolbar);
-    const checkCard = Array.from(content.querySelectorAll("section.card"))
-      .find((node) => node.querySelector("h3")?.textContent.trim() === "Cue Check");
-    if (checkCard && !checkCard.closest(".sc008-cue-check")) {
-      const disclosure = document.createElement("details");
-      disclosure.className = "sc008-cue-check";
-      const summary = document.createElement("summary");
-      summary.textContent = tr("اختبار الكيوهات المنشورة وإجراءات الإيقاف",
-        "Published Cue Check & stop controls");
-      checkCard.before(disclosure);
-      disclosure.append(summary, checkCard);
-      // Never conceal STOP/BLACKOUT while an operational Session is active.
-      disclosure.open = !pick("cueCheckStopButton")?.disabled;
-    }
     const rows = Array.from(tbody.querySelectorAll("tr"));
     const cues = state.cues || [];
     const classify = (cue) => {
@@ -703,9 +690,23 @@
     rows.forEach((row, index) => {
       const cue = cues[index];
       if (!cue) return;
-      const types = Array.from(classify(cue)).slice(0, 3);
       const cell = row.children[5];
-      if (!cell || !types.length) return;
+      if (!cell || !cue.actions?.length) return;
+      const preview = document.createElement("details");
+      const title = document.createElement("summary");
+      title.textContent = tr("معاينة الإجراءات", "Preview actions");
+      preview.append(title);
+      const list = document.createElement("ol");
+      for (const action of cue.actions) {
+        const item = document.createElement("li");
+        item.textContent = [action.capability_key, action.target_ref,
+          action.enabled === false ? tr("معطّل", "Disabled") : ""].filter(Boolean).join(" · ");
+        list.append(item);
+      }
+      preview.append(list);
+      cell.append(preview);
+
+      const types = Array.from(classify(cue)).slice(0, 3);
       const badges = document.createElement("div");
       badges.className = "sc008-type-badges";
       types.forEach((kind) => {

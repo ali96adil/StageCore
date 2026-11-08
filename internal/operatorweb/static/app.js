@@ -582,6 +582,7 @@ async function testCueFromWorkspace(cueID) {
     }
 
     const startRehearsal = !runtime.session;
+    let rehearsalSessionID = runtime.session?.session_id;
     let startWarning = "";
     const promptText = startRehearsal
       ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
@@ -597,10 +598,11 @@ async function testCueFromWorkspace(cueID) {
           request_id: requestID(),
         },
       });
+      rehearsalSessionID = started.session?.session_id;
       startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
       runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     }
-    if (!runtime.session || runtime.session.type !== "REHEARSAL") {
+    if (!rehearsalSessionID || runtime.session?.session_id !== rehearsalSessionID || runtime.session.type !== "REHEARSAL") {
       setMessage(globalMessage, "Cue Check requires an active REHEARSAL Session.", "warn");
       return;
     }
@@ -610,6 +612,7 @@ async function testCueFromWorkspace(cueID) {
       json: {
         request_id: requestID(),
         cue_id: cueID,
+        rehearsal_session_id: rehearsalSessionID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         operator_note: "Cue Workspace individual Cue check",
         confirm: true,

@@ -199,6 +199,18 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatalf("unconfirmed Jump status=%d, want 400", unconfirmedRes.Code)
 	}
 
+	staleSession := "a-different-rehearsal"
+	staleCheck, _ := json.Marshal(runtimeJumpRequest{
+		RequestID: "00000000-0000-7000-8000-000000000413", CueID: second.ID,
+		Confirm: true, RehearsalSessionID: &staleSession,
+	})
+	staleReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/jump", staleCheck, owner.Token, owner.CSRFToken)
+	staleRes := httptest.NewRecorder()
+	handler.ServeHTTP(staleRes, staleReq)
+	if staleRes.Code != http.StatusConflict || !strings.Contains(staleRes.Body.String(), "CUE_CHECK_SESSION_CHANGED") {
+		t.Fatalf("stale Cue Check status=%d body=%s", staleRes.Code, staleRes.Body.String())
+	}
+
 	expected := first.ID
 	jumpPayload, _ := json.Marshal(runtimeJumpRequest{
 		RequestID: "00000000-0000-7000-8000-000000000404", CueID: second.ID,
