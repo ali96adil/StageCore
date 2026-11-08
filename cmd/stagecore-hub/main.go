@@ -124,6 +124,11 @@ func main() {
 			return audioFence.AcquireShow(ctx, audioClient.Call)
 		}
 	}
+	usbManual, err := configuredUSBManual()
+	if err != nil {
+		logger.Error("manual USB-DMX configuration rejected", "error", err)
+		os.Exit(1)
+	}
 	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
@@ -134,6 +139,7 @@ func main() {
 		)),
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
 		runtimecontrol.WithShowAdmissionFence(acquireShowAudioFence),
+		runtimecontrol.WithManualOutputFence(usbManual.AcquireRuntime, usbManual.SetBlackout),
 		runtimecontrol.WithSessionStopSafety(sessionsafety.NewLightingBlackout(
 			application.Store,
 			application.DeviceExperience,
@@ -329,6 +335,7 @@ func main() {
 	}
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
+		httpapi.WithOperatorUSBManualDMX(userAuth, application.Store, usbManual),
 		httpapi.WithScopedOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence, audioScope),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),

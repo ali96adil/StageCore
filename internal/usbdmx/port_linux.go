@@ -69,6 +69,12 @@ func OpenVerifiedLinuxPort(ctx context.Context, byIDPath string, approval Device
 	if err := unix.IoctlSetInt(fd, unix.TIOCEXCL, 0); err != nil {
 		return nil, fmt.Errorf("usbdmx: require exclusive tty ownership: %w", err)
 	}
+	if err := approval(ctx, byIDPath); err != nil {
+		return nil, fmt.Errorf("%w: USB identity changed during exclusive open: %v", ErrAuthorizationRequired, err)
+	}
+	if current, err := filepath.EvalSymlinks(byIDPath); err != nil || current != target {
+		return nil, fmt.Errorf("usbdmx: FTDI serial identity changed after exclusive open")
+	}
 	if err := configureFTDIRaw(fd); err != nil {
 		return nil, fmt.Errorf("usbdmx: configure USB Pro serial port: %w", err)
 	}

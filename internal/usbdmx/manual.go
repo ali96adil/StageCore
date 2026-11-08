@@ -9,11 +9,12 @@ import (
 )
 
 var ErrManualDisabled = errors.New("usbdmx: manual output disabled")
+var ErrPhysicalStateUnknown = errors.New("usbdmx: physical output state unknown")
 var ErrManualBusy = errors.New("usbdmx: manual output already active")
 
 type ChannelValue struct {
-	Channel int
-	Value   int
+	Channel int `json:"channel"`
+	Value   int `json:"value"`
 }
 
 type ManualRequest struct {
@@ -72,12 +73,20 @@ func (m *ManualOutput) Run(ctx context.Context, req ManualRequest, authorize Aut
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		defer cancel()
-		err = errors.Join(err, tx.Disarm(cleanup))
+		if stopErr := tx.Disarm(cleanup); stopErr != nil {
+			err = errors.Join(err, ErrPhysicalStateUnknown, stopErr)
+		}
 	}()
 	if err := tx.Arm(ctx, authorize); err != nil {
+		if tx.Status().Quarantined {
+			return errors.Join(ErrPhysicalStateUnknown, err)
+		}
 		return err
 	}
 	if err := tx.Send(ctx, frame, authorize); err != nil {
+		if tx.Status().Quarantined {
+			return errors.Join(ErrPhysicalStateUnknown, err)
+		}
 		return err
 	}
 	var expiry <-chan time.Time

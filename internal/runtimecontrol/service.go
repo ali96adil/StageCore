@@ -43,6 +43,12 @@ func WithSessionStartGate(gate SessionStartGate) Option {
 }
 
 // WithShowAdmissionFence protects the final SHOW admission check and commit.
+func WithManualOutputFence(acquire func(context.Context) (func(), error), stop func(context.Context, string, bool) error) Option {
+	return func(s *Service) {
+		s.manualOutputFence, s.manualOutputStop = acquire, stop
+	}
+}
+
 func WithShowAdmissionFence(acquire func(context.Context) (func(), error)) Option {
 	return func(s *Service) { s.showAdmissionFence = acquire }
 }
@@ -64,6 +70,8 @@ func WithEmergencySafety(safety EmergencySafety) Option {
 }
 
 type Service struct {
+	manualOutputFence func(context.Context) (func(), error)
+	manualOutputStop func(context.Context, string, bool) error
 	store    *store.Store
 	engine   *cueengine.Engine
 	executor *stoppableExecutor
@@ -228,6 +236,13 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	startWarning := strings.Join(startWarnings, " ")
 
+	if s.manualOutputFence != nil {
+		release, err := s.manualOutputFence(ctx)
+		if err != nil {
+			return finish(rejected(command.CommandID, "MANUAL_OUTPUT_ACTIVE", err.Error(), snapshot.ID))
+		}
+		defer release()
+	}
 	var releaseShowFence func()
 	if req.Mode == domain.SessionShow && s.showAdmissionFence != nil {
 		releaseShowFence, err = s.showAdmissionFence(ctx)
@@ -506,7 +521,17 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 		Type: domain.SessionRehearsal,
 		Status: domain.SessionActive,
 	}
+	var manualErr error
+	if req.Enabled && s.manualOutputStop != nil {
+		manualErr = s.manualOutputStop(ctx, project.ID, true)
+	}
 	report, safetyErr := s.emergencySafety(ctx, synthetic, command, req.Enabled)
+	if !req.Enabled && safetyErr == nil && s.manualOutputStop != nil {
+		manualErr = s.manualOutputStop(ctx, project.ID, false)
+	}
+	if manualErr != nil {
+		safetyErr = fmt.Errorf("manual USB-DMX zero unconfirmed: %v; managed safety: %v", manualErr, safetyErr)
+	}
 	eventType := "runtime.edit_blackout.cleared"
 	if req.Enabled {
 		eventType = "runtime.edit_blackout.applied"
