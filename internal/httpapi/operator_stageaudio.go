@@ -24,14 +24,31 @@ type StageAudioLocal interface {
 func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fences ...*stageaudio.ShowFence) Option {
 	var fence *stageaudio.ShowFence
 	if len(fences) > 0 { fence = fences[0] }
+	return WithScopedOperatorStageAudio(auth, stageStore, client, audit, fence, nil)
+}
+
+func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fence *stageaudio.ShowFence, scope *StageAudioProjectScope) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil { return }
 		checkRuntime := func(ctx context.Context) (domain.SessionType, error) {
 			return stageStore.ActiveOperationalSessionType(ctx)
 		}
 		get := func(operation string) http.HandlerFunc {
-			return withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+			return withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, sessionUser userauth.Session) {
 				w.Header().Set("Cache-Control", "no-store")
+				if !scope.authorize(r, sessionUser.User.ID, false) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+					return
+				}
+				if scope != nil && operation == "FILES" {
+					choices, err := scope.choices(r.Context(), sessionUser.User.ID)
+					if err != nil {
+						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"media": choices})
+					return
+				}
 				session, err := checkRuntime(r.Context())
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code":"STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
@@ -88,6 +105,10 @@ func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, cli
 				return
 			}
 			defer release()
+			if !scope.authorize(r, session.User.ID, true) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+				return
+			}
 			active, err := checkRuntime(ctx)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
@@ -103,6 +124,28 @@ func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, cli
 				})
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "STAGEAUDIO_SHOW_LOCKED"})
 				return
+			}
+			if scope != nil && (command.Operation == "LOAD" || command.Operation == "PLAY") {
+				rehearsal, err := stageStore.ActiveSessionForProject(ctx, scope.ProjectID)
+				if err != nil || rehearsal == nil || rehearsal.Type != domain.SessionRehearsal {
+					writeJSON(w, http.StatusConflict, map[string]any{"error_code": "STAGEAUDIO_REHEARSAL_REQUIRED"})
+					return
+				}
+				if command.Operation == "LOAD" {
+					command, err = scope.resolveLoad(ctx, stageStore, session.User.ID, command)
+					if err != nil || !scope.authorize(r, session.User.ID, true) {
+						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
+						return
+					}
+				} else {
+					status, err := client.Call(ctx, stageaudio.Request{Operation: "STATUS"})
+					deck := status.Status.Decks[command.Deck]
+					resolved, scopeErr := scope.resolveLoad(ctx, stageStore, session.User.ID, stageaudio.Request{File: deck.VaultVersionID})
+					if err != nil || scopeErr != nil || deck.File == "" || deck.File != resolved.File || !scope.authorize(r, session.User.ID, true) {
+						writeJSON(w, http.StatusConflict, map[string]any{"error_code": "STAGEAUDIO_SCOPED_LOAD_REQUIRED"})
+						return
+					}
+				}
 			}
 			result, err := client.Call(ctx, command)
 			if err != nil { fence.MarkUncertain() }
@@ -134,6 +177,7 @@ func stageAudioTimeout(operation string) time.Duration {
 
 // Permit only narrow, typed operations; raw mpv commands cannot be injected.
 func allowStageAudioCommand(command stageaudio.Request) bool {
+	if command.VaultVersionID != "" { return false }
 	switch command.Operation {
 	case "LOAD":
 		return (command.Deck == "A" || command.Deck == "B") && len(command.File) > 0 && len(command.File) <= 256

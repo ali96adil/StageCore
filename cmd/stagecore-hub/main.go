@@ -27,6 +27,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/livereconcile"
 	"github.com/ali96adil/StageCore/internal/preflight"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
@@ -317,9 +318,18 @@ func main() {
 	}
 
 
+	var audioScope *httpapi.StageAudioProjectScope
+	if id := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_PROJECT_ID")); id != "" {
+		access, err := projectaccess.New(application.DB.DB)
+		if err != nil {
+			logger.Error("StageAudio project scope unavailable", "error", err)
+			os.Exit(1)
+		}
+		audioScope = &httpapi.StageAudioProjectScope{ProjectID: id, Access: access, Vault: application.Vault}
+	}
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
-		httpapi.WithOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence),
+		httpapi.WithScopedOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence, audioScope),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),

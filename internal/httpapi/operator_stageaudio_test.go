@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"strings"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/vault"
 )
 
 type fakeStageAudio struct {
@@ -118,5 +121,56 @@ func TestStageAudioCannotSendCommandsDuringActiveShow(t *testing.T){
 	out:=httptest.NewRecorder();handler.ServeHTTP(out,req)
 	if out.Code!=http.StatusLocked||len(fake.calls)!=0{
 		t.Fatalf("SHOW must block local audio: code=%d body=%s calls=%+v",out.Code,out.Body.String(),fake.calls)
+	}
+}
+
+func TestStageAudioScopedLoadUsesOnlyBoundProjectVaultVersion(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	s := store.New(h.db.DB, clock.Real{})
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Audio Project", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	other, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Other Project", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	v, err := vault.Open(t.TempDir(), s)
+	if err != nil { t.Fatal(err) }
+	importAudio := func(projectID, name string) store.ManagedMedia {
+		t.Helper()
+		result, err := v.ImportManaged(ctx, vault.ImportParams{ProjectID: projectID, Name: name, OriginalFilename: name + ".wav"}, strings.NewReader(name))
+		if err != nil { t.Fatal(err) }
+		return result
+	}
+	ours, theirs := importAudio(project.ID, "ours"), importAudio(other.ID, "theirs")
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
+	published, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "owner")
+	if err != nil { t.Fatal(err) }
+	if _, err := s.CreateSession(ctx, published.ID, domain.SessionRehearsal, "scoped audio"); err != nil { t.Fatal(err) }
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	fake := &fakeStageAudio{}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Vault: v, Access: access}
+	handler := New(WithScopedOperatorStageAudio(h.auth, s, fake, nil, stageaudio.NewShowFence(), scope)).Handler()
+	send := func(projectID, versionID string) int {
+		t.Helper()
+		data, _ := json.Marshal(stageaudio.Request{Operation: "LOAD", Deck: "A", File: versionID})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/system/audio/command?project_id="+projectID, bytes.NewReader(data))
+		req.RemoteAddr = "127.0.0.1:9126"
+		req.Header.Set(csrfHeader, owner.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out.Code
+	}
+	if send(other.ID, ours.Version.ID) != http.StatusNotFound || send(project.ID, theirs.Version.ID) != http.StatusNotFound || len(fake.calls) != 0 {
+		t.Fatal("cross-project selection reached local sidecar")
+	}
+	if send(project.ID, ours.Version.ID) != http.StatusOK || len(fake.calls) != 1 {
+		t.Fatal("valid scoped Vault version did not reach the sidecar")
+	}
+	got := fake.calls[0]
+	if got.Operation != "LOAD_VAULT" || got.File != ours.Version.ContentHash || got.VaultVersionID != ours.Version.ID {
+		t.Fatalf("unexpected scoped sidecar request: %+v", got)
 	}
 }

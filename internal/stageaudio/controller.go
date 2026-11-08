@@ -32,6 +32,7 @@ type Sender interface {
 }
 
 type Request struct {
+	VaultVersionID string `json:"vault_version_id,omitempty"`
 	Deck      string   `json:"deck,omitempty"`
 	Operation string   `json:"operation"`
 	File      string   `json:"file,omitempty"`
@@ -42,6 +43,7 @@ type Request struct {
 }
 
 type DeckStatus struct {
+	VaultVersionID string `json:"vault_version_id,omitempty"`
 	File          string  `json:"file,omitempty"`
 	Commanded     string  `json:"commanded_state"`
 	Volume        float64 `json:"volume"`
@@ -61,6 +63,7 @@ type Status struct {
 type Controller struct {
 	mu     sync.Mutex
 	root   string
+	vaultRoot string
 	sender Sender
 	master float64
 	output string
@@ -160,8 +163,20 @@ func (c *Controller) Execute(ctx context.Context, request Request) (Status, erro
 	var command []any
 	var updated DeckStatus = deck
 	switch op {
-	case "LOAD":
-		path, err := c.safeMediaPath(request.File)
+	case "LOAD", "LOAD_VAULT":
+		var path string
+		var err error
+		if op == "LOAD_VAULT" {
+			if request.VaultVersionID == "" || len(request.VaultVersionID) > 128 {
+				return c.statusLocked(), ErrInvalidCommand
+			}
+			path, err = c.vaultMediaPath(request.File)
+		} else {
+			if c.vaultRoot != "" {
+				return c.statusLocked(), ErrInvalidCommand
+			}
+			path, err = c.safeMediaPath(request.File)
+		}
 		if err != nil {
 			return c.statusLocked(), err
 		}
@@ -174,6 +189,10 @@ func (c *Controller) Execute(ctx context.Context, request Request) (Status, erro
 		}
 		// If the following load fails, the old deck was at least paused.
 		updated.File = filepath.Base(path)
+		updated.VaultVersionID = ""
+		if op == "LOAD_VAULT" {
+			updated.VaultVersionID = request.VaultVersionID
+		}
 		updated.Commanded = "PAUSED"
 		command = []any{"loadfile", path, "replace"}
 	case "PLAY":
@@ -191,6 +210,7 @@ func (c *Controller) Execute(ctx context.Context, request Request) (Status, erro
 	case "STOP":
 		command = []any{"stop"}
 		updated.File = ""
+		updated.VaultVersionID = ""
 		updated.Commanded = "STOPPED"
 	case "VOLUME":
 		if !validVolume(request.Volume) {

@@ -165,3 +165,31 @@ func TestLoopAndPauseRemainDeckScoped(t *testing.T) {
 		t.Fatal("mpv loop command must use fixed allowlisted value")
 	}
 }
+
+func TestVaultLoadRequiresCanonicalObjectAndTracksVersion(t *testing.T) {
+	controller, sender, _ := controllerFixture(t)
+	root := t.TempDir()
+	hash := strings.Repeat("a", 64)
+	path := filepath.Join(root, "objects", "sha256", "aa", "aa", hash)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil { t.Fatal(err) }
+	target := filepath.Join(t.TempDir(), "redirect")
+	if err := os.WriteFile(target, []byte("test"), 0600); err != nil { t.Fatal(err) }
+	if err := os.Symlink(target, path); err != nil { t.Fatal(err) }
+	if err := controller.ConfigureVaultRoot(root); err != nil { t.Fatal(err) }
+	request := Request{Operation: "LOAD_VAULT", Deck: DeckA, File: hash, VaultVersionID: "version-a"}
+	if _, err := controller.Execute(context.Background(), request); err == nil || len(sender.Calls) != 0 {
+		t.Fatal("symlink reached player")
+	}
+	if _, err := controller.Execute(context.Background(), Request{Operation: "LOAD", Deck: DeckA, File: "wind.wav"}); err == nil {
+		t.Fatal("unscoped file accepted in Vault mode")
+	}
+	if err := os.Remove(path); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, []byte("test"), 0600); err != nil { t.Fatal(err) }
+	status := command(t, controller, request)
+	if status.Decks[DeckA].VaultVersionID != "version-a" || len(sender.Calls) != 2 || sender.Calls[1].Args[1] != path {
+		t.Fatalf("incorrect scoped playback: %+v %+v", status, sender.Calls)
+	}
+	if status := command(t, controller, Request{Operation: "STOP", Deck: DeckA}); status.Decks[DeckA].VaultVersionID != "" {
+		t.Fatal("STOP retained stale version")
+	}
+}

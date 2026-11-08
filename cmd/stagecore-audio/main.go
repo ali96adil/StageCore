@@ -35,6 +35,7 @@ type reply struct {
 
 func main() {
 	mediaRoot := flag.String("media-root", "", "existing directory of local rehearsal audio files (required)")
+	vaultRoot := flag.String("vault-root", "", "optional local Hub Vault directory for scoped audio loads")
 	runtimeRoot := flag.String("runtime-root", os.TempDir(), "parent directory for private local Unix sockets")
 	flag.Parse()
 	if *mediaRoot == "" {
@@ -49,6 +50,12 @@ func main() {
 	if err != nil {
 		_ = backend.Close()
 		log.Fatal(err)
+	}
+	if *vaultRoot != "" {
+		if err := controller.ConfigureVaultRoot(*vaultRoot); err != nil {
+			_ = backend.Close()
+			log.Fatal(err)
+		}
 	}
 	socket := filepath.Join(backend.SocketDir(), "control.sock")
 	listener, err := net.Listen("unix", socket)

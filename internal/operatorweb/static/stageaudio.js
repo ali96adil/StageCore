@@ -63,14 +63,15 @@ function scAudioDeckHtml(id) {
   const canAct = allowed && !scAudioUI.busy;
   const disabled = canAct ? "" : "disabled";
   const hasFile = !!d.file;
+  const displayName = files.find(item => item.id === d.vault_version_id)?.name || d.file;
   return `<article class="card sc-audio-deck" data-deck="${id}">
     <div class="section-title-row">
       <h2>Layer ${id}</h2><span class="pill neutral">${esc(d.commanded_state || "UNKNOWN")}</span>
     </div>
-    <p class="muted">${esc(d.file || scAudioText("stopped"))}</p>
+    <p class="muted">${esc(displayName || scAudioText("stopped"))}</p>
     <label>${esc(scAudioText("files"))}
       <select class="sc-audio-file" ${disabled}>
-        ${files.length ? files.map(name => `<option value="${esc(name)}" ${name === d.file ? "selected" : ""}>${esc(name)}</option>`).join("") :
+        ${files.length ? files.map(item => { const id = item.id || item; return `<option value="${esc(id)}" ${id === (d.vault_version_id || d.file) ? "selected" : ""}>${esc(item.name || item)}</option>`; }).join("") :
           `<option value="">${esc(scAudioText("noFiles"))}</option>`}
       </select>
     </label>
@@ -168,18 +169,22 @@ function scAudioRender() {
     void scAudioSend({operation:"BT_CONNECT",address:btn.dataset.address});
   }));
 }
+function scAudioPath(path) {
+  const project = state.project?.project_id || "";
+  return `${path}?project_id=${encodeURIComponent(project)}`;
+}
 async function scAudioRefresh(full = false) {
   if (scAudioUI.refreshing || scAudioUI.busy || state.page !== "audio") return;
   scAudioUI.refreshing = true;
   try {
-    const model = await api("/api/v1/system/audio/status");
+    const model = await api(scAudioPath("/api/v1/system/audio/status"));
     if (state.page !== "audio") return;
     scAudioUI.status = model;
     scAudioUI.lastError = "";
     if (full && model.available) {
       const [outputs, media] = await Promise.all([
-        api("/api/v1/system/audio/outputs"),
-        api("/api/v1/system/audio/media"),
+        api(scAudioPath("/api/v1/system/audio/outputs")),
+        api(scAudioPath("/api/v1/system/audio/media")),
       ]);
       if (state.page !== "audio") return;
       scAudioUI.outputs = outputs.outputs || [];
@@ -199,7 +204,7 @@ async function scAudioLoadBT() {
   if (scAudioUI.busy || state.page !== "audio" || !scAudioUI.status?.available) return;
   scAudioUI.busy = true;
   try {
-    const data = await api("/api/v1/system/audio/bluetooth");
+    const data = await api(scAudioPath("/api/v1/system/audio/bluetooth"));
     scAudioUI.bluetooth = data.bluetooth_devices || [];
     scAudioUI.lastError = "";
   } catch (error) {
@@ -213,7 +218,7 @@ async function scAudioSend(command) {
   if (scAudioUI.busy || !scAudioControlsAllowed() || state.page !== "audio") return;
   scAudioUI.busy = true;
   try {
-    const result = await api("/api/v1/system/audio/command",{method:"POST",json:command});
+    const result = await api(scAudioPath("/api/v1/system/audio/command"),{method:"POST",json:command});
     scAudioUI.status = {...(scAudioUI.status || {}),status:result.status};
     if (result.bluetooth_devices?.length) {
       scAudioUI.bluetooth = result.bluetooth_devices;
