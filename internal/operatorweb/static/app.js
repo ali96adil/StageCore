@@ -1272,6 +1272,7 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
+          ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopTablets" type="checkbox" value="${esc(active.session_id)}"> Stop tablet playback when ending this rehearsal</label>` : ""}
           <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
@@ -1404,10 +1405,18 @@ async function jumpRuntime() {
 }
 
 async function stopSessionRuntime() {
-  if (!confirm("End the active runtime Session? StageCore will first require its managed blackout safety to complete.")) return;
+  const stopTablets = el("rehearsalStopTablets");
+  const tabletSessionID = stopTablets?.checked ? stopTablets.value : "";
+  const prompt = tabletSessionID
+    ? "End this rehearsal, complete lighting blackout, and stop tablet playback?"
+    : "End the active runtime Session? StageCore will first require its managed blackout safety to complete.";
+  if (!confirm(prompt)) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop-session`, {
-      method: "POST", json: { request_id: requestID() },
+      method: "POST", json: {
+        request_id: requestID(),
+        ...(tabletSessionID ? { rehearsal_tablet_stop_session_id: tabletSessionID } : {}),
+      },
     });
     state.runtimeForceExitAvailable = false;
     await renderRuntime(true);

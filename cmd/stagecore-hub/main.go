@@ -110,6 +110,10 @@ func main() {
 			application.DeviceExperience,
 			application.DeviceRuntime,
 		)),
+		runtimecontrol.WithRehearsalTabletStop(sessionsafety.NewRehearsalTabletStop(
+			application.DeviceExperience,
+			application.DeviceRuntime,
+		)),
 		runtimecontrol.WithEmergencySafety(sessionsafety.NewManagedOutputBlackout(
 			application.Store,
 			application.DeviceExperience,

@@ -1181,24 +1181,26 @@ function f002ParsePolicyObject(raw) {
 
 function f002ParseTimeoutPolicy(raw) {
   const policy = f002ParsePolicyObject(raw);
-  if (!policy) return null;
-  const keys = Object.keys(policy);
-  if (keys.length === 0) return { timeoutMS: 0 };
-  if (keys.length !== 1 || keys[0] !== "timeout_ms") return null;
-  const timeoutMS = policy.timeout_ms;
-  if (!Number.isInteger(timeoutMS) || timeoutMS < 0) return null;
-  return { timeoutMS };
+  if (!policy || Object.keys(policy).some((key) => !["timeout_ms", "start_delay_ms"].includes(key))) return null;
+  const timeoutMS = Object.hasOwn(policy, "timeout_ms") ? policy.timeout_ms : 0;
+  const startDelayMS = Object.hasOwn(policy, "start_delay_ms") ? policy.start_delay_ms : 0;
+  if (!Number.isInteger(timeoutMS) || timeoutMS < 0 || !Number.isInteger(startDelayMS) || startDelayMS < 0 || startDelayMS > 600000) return null;
+  return { timeoutMS, startDelayMS };
 }
 
 function f002ParseErrorPolicy(raw) {
   const policy = f002ParsePolicyObject(raw);
-  if (!policy) return null;
-  const keys = Object.keys(policy);
-  if (keys.length === 0) return { onError: "FAIL_CUE" };
-  if (keys.length !== 1 || keys[0] !== "on_error" || typeof policy.on_error !== "string") return null;
-  const onError = policy.on_error.trim().toUpperCase();
-  if (!["FAIL_CUE", "CONTINUE"].includes(onError)) return null;
-  return { onError };
+  if (!policy || Object.keys(policy).some((key) => !["on_error", "retry_before_dispatch", "require_application_ack"].includes(key))) return null;
+  if (Object.keys(policy).length === 0) return { onError: "FAIL_CUE" };
+  const onError = Object.hasOwn(policy, "on_error") ? policy.on_error : "CONTINUE";
+  if (typeof onError !== "string" || !["FAIL_CUE", "CONTINUE"].includes(onError.trim().toUpperCase())) return null;
+  if (["retry_before_dispatch", "require_application_ack"].some((key) => Object.hasOwn(policy, key) && typeof policy[key] !== "boolean")) return null;
+  return { onError: onError.trim().toUpperCase(), retry: policy.retry_before_dispatch, requireACK: policy.require_application_ack };
+}
+
+function f002QLCArgument(value) {
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("Enter a mapped float from 0 to 1.");
+  return {type: "float32", value};
 }
 
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
@@ -1291,6 +1293,13 @@ function f002EnhanceActionCard(card) {
       </div>
       <div class="section-title-row"><div><strong>Values</strong><p class="muted">Optional OSC arguments in send order.</p></div><button class="button ghost f002-add-argument" type="button">+ Value</button></div>
       <div class="f002-arguments"></div>
+      <details>
+        <summary>QLC+ mapped fader (optional)</summary>
+        <p class="muted">Use the OSC address and target port mapped in QLC+. This preset adds one normalized Float32 value to the draft.</p>
+        <label>Mapped level (0–1)<input class="f002-qlc-level" type="number" min="0" max="1" step="any" value="0"></label>
+        <button class="button ghost f002-qlc-apply" type="button">Set mapped fader value</button>
+        <small class="muted f002-qlc-status" role="status"></small>
+      </details>
     </div>
     <div class="f002-midi-action hidden">
       <div class="form-grid two">
@@ -1331,6 +1340,11 @@ function f002EnhanceActionCard(card) {
       <label class="f002-timeout-custom hidden">Custom timeout (ms)
         <input class="f002-timeout-ms" type="number" min="0" step="1" value="1000">
       </label>
+      <label class="f002-delay-field">Action start delay (ms)
+        <input class="f002-action-delay" type="number" min="0" max="600000" step="1" value="0">
+      </label>
+      <label class="check-row f002-retry-field"><input class="f002-retry-before-dispatch" type="checkbox"> Retry once if no dispatch occurred</label>
+      <label class="check-row f002-ack-field"><input class="f002-require-app-ack" type="checkbox"> Require receiving application ACK</label>
       <label>On action failure
         <select class="f002-error-kind">
           <option value="FAIL_CUE">Fail Cue / stop following sequential work</option>
@@ -1467,6 +1481,12 @@ function f002EnhanceActionCard(card) {
     timeoutMS.value = String(parsedTimeout.timeoutMS);
   }
   errorKind.value = parsedErrorPolicy?.onError || "advanced";
+  const delay = builder.querySelector(".f002-action-delay");
+  const retry = builder.querySelector(".f002-retry-before-dispatch");
+  const appACK = builder.querySelector(".f002-require-app-ack");
+  delay.value = String(parsedTimeout?.startDelayMS ?? 0);
+  retry.checked = parsedErrorPolicy?.retry === true;
+  appACK.checked = parsedErrorPolicy?.requireACK === true;
 
   const refreshMIDIDestinations = () => {
     const names = f002MIDIDestinationsForTarget(target.value);
@@ -1501,6 +1521,8 @@ function f002EnhanceActionCard(card) {
     const custom = timeoutKind.value === "custom";
     timeoutCustom.classList.toggle("hidden", !custom);
     timeoutMS.required = custom;
+    delay.disabled = timeoutKind.value === "advanced";
+    retry.disabled = appACK.disabled = errorKind.value === "advanced";
     if (timeoutKind.value === "advanced" || errorKind.value === "advanced") advanced.open = true;
   };
 
@@ -1526,6 +1548,19 @@ function f002EnhanceActionCard(card) {
   midiMessage.addEventListener("change", renderMIDIFields);
   timeoutKind.addEventListener("change", applyKind);
   errorKind.addEventListener("change", applyKind);
+  builder.querySelector(".f002-qlc-apply").addEventListener("click", () => {
+    const status = builder.querySelector(".f002-qlc-status");
+    try {
+      if (!address.value.trim().startsWith("/")) throw new Error("Enter the mapped QLC+ OSC address first.");
+      const level = builder.querySelector(".f002-qlc-level").valueAsNumber;
+      const argument = f002QLCArgument(level);
+      if (argumentsNode.children.length && !window.confirm("Replace the existing OSC arguments with the mapped QLC+ float?")) return;
+      argumentsNode.replaceChildren(f002ArgumentRow(argument));
+      status.textContent = "Mapped value set. Review the target before saving.";
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
   builder.querySelector(".f002-add-argument").addEventListener("click", () => argumentsNode.appendChild(f002ArgumentRow()));
   applyKind();
 }
@@ -1537,17 +1572,21 @@ function f002SyncActionCard(card) {
   const timeoutKind = card.querySelector(".f002-timeout-kind");
   const errorKind = card.querySelector(".f002-error-kind");
   if (timeout && timeoutKind && timeoutKind.value !== "advanced") {
-    if (timeoutKind.value === "none") {
-      timeout.value = "{}";
-    } else {
-      const timeoutMS = timeoutKind.value === "custom"
+    const policy = {};
+    if (timeoutKind.value !== "none") {
+      policy.timeout_ms = timeoutKind.value === "custom"
         ? Number.parseInt(card.querySelector(".f002-timeout-ms")?.value || "", 10)
         : Number.parseInt(timeoutKind.value, 10);
-      timeout.value = JSON.stringify({ timeout_ms: timeoutMS }, null, 2);
     }
+    const delayMS = Number(card.querySelector(".f002-action-delay")?.value || 0);
+    if (delayMS) policy.start_delay_ms = delayMS;
+    timeout.value = JSON.stringify(policy, null, 2);
   }
   if (errorPolicy && errorKind && errorKind.value !== "advanced") {
-    errorPolicy.value = JSON.stringify({ on_error: errorKind.value }, null, 2);
+    const policy = {on_error: errorKind.value};
+    if (card.querySelector(".f002-retry-before-dispatch")?.checked) policy.retry_before_dispatch = true;
+    if (card.querySelector(".f002-require-app-ack")?.checked) policy.require_application_ack = true;
+    errorPolicy.value = JSON.stringify(policy, null, 2);
   }
 
   const kind = card.querySelector(".f002-action-kind");

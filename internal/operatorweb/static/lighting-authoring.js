@@ -8,6 +8,10 @@
       moveUp: "Move up", moveDown: "Move down", back: "Back", save: "Save lighting cue", name: "Cue name", label: "Label",
       operation: "Operation", set: "Set levels", fade: "Fade levels", blackout: "Blackout", fadeMS: "Fade duration (ms)", addChannel: "Add channel",
       dmxEstimate: "Estimated DMX value (offline)",
+      preview: "Manual DMX preview · simulation only", previewRun: "Run preview", previewStop: "Simulate blackout",
+      previewHold: "Continuous", previewTimed: "Timed", previewDuration: "Duration (ms)",
+      previewIdle: "Physical output disabled", previewActive: "Simulated levels", previewBlackout: "Simulated blackout",
+      previewDurationInvalid: "Enter an integer duration from 1 to 600000 ms.",
       channel: "Logical channel", level: "Level %", removeChannel: "Remove", nodes: "Lighting nodes", noChannels: "Configure at least one logical channel alias first.",
       emptyLevels: "Add at least one lighting channel.", duplicateAlias: "Each logical channel can appear only once.", chooseNode: "Choose at least one lighting node.",
       saved: "Lighting Cue saved.", duplicated: "Lighting Cue duplicated.", deleted: "Lighting Cue removed.", reordered: "Lighting Cue order updated.",
@@ -20,6 +24,10 @@
       moveUp: "للأعلى", moveDown: "للأسفل", back: "رجوع", save: "حفظ كيو الإضاءة", name: "اسم الكيو", label: "الرمز",
       operation: "العملية", set: "تعيين المستويات", fade: "Fade للمستويات", blackout: "Blackout", fadeMS: "مدة الـ Fade (ms)", addChannel: "إضافة قناة",
       dmxEstimate: "قيمة DMX المتوقعة بدون تشغيل",
+      preview: "معاينة DMX يدوية · محاكاة فقط", previewRun: "ابدأ المعاينة", previewStop: "حاكي الـ Blackout",
+      previewHold: "مستمر", previewTimed: "مؤقت", previewDuration: "المدة (ms)",
+      previewIdle: "الخرج الفعلي معطل", previewActive: "المستويات المحاكاة", previewBlackout: "Blackout محاكى",
+      previewDurationInvalid: "أدخل مدة صحيحة من 1 إلى 600000 ms.",
       channel: "القناة المنطقية", level: "المستوى %", removeChannel: "حذف", nodes: "عقد الإضاءة", noChannels: "اضبط Alias منطقي لقناة واحدة على الأقل أولاً.",
       emptyLevels: "أضف قناة إضاءة واحدة على الأقل.", duplicateAlias: "كل قناة منطقية تظهر مرة وحدة فقط.", chooseNode: "اختار عقدة إضاءة واحدة على الأقل.",
       saved: "تم حفظ كيو الإضاءة.", duplicated: "تم نسخ كيو الإضاءة.", deleted: "تم حذف كيو الإضاءة.", reordered: "تم تحديث ترتيب كيوهات الإضاءة.",
@@ -165,9 +173,72 @@
     const levels = Object.entries(model.levels || {});
     host.innerHTML = `${command === "LIGHTING_CHANNELS_FADE" ? `<div class="lighting-fade-field"><label>${esc(tx("fadeMS"))}<input id="lightingFadeMS" type="number" min="1" max="600000" value="${Number(model.fade_ms || 1200)}"></label></div>` : ""}
       <div class="section-title-row"><h2>${esc(tx("channels"))}</h2><button id="lightingAddChannel" class="button" type="button">+ ${esc(tx("addChannel"))}</button></div>
-      <div id="lightingLevelRows" class="lighting-level-rows"></div>`;
+      <div id="lightingLevelRows" class="lighting-level-rows"></div>
+      <details class="card">
+        <summary>${esc(tx("preview"))}</summary>
+        <label>${esc(tx("operation"))}
+          <select id="lightingPreviewMode"><option value="continuous">${esc(tx("previewHold"))}</option><option value="timed">${esc(tx("previewTimed"))}</option></select>
+        </label>
+        <label>${esc(tx("previewDuration"))}<input id="lightingPreviewDuration" type="number" min="1" max="600000" step="1" value="1000" disabled></label>
+        <div class="toolbar">
+          <button id="lightingPreviewRun" class="button" type="button">${esc(tx("previewRun"))}</button>
+          <button id="lightingPreviewStop" class="button ghost" type="button" disabled>${esc(tx("previewStop"))}</button>
+        </div>
+        <output id="lightingPreviewResult" aria-live="polite">${esc(tx("previewIdle"))}</output>
+      </details>`;
     (levels.length ? levels : [["", 0]]).forEach(([alias, level]) => addLevelRow(alias, level));
     document.getElementById("lightingAddChannel")?.addEventListener("click", () => addLevelRow("", 0));
+    bindManualPreview(host);
+  }
+
+  function previewDMXByte(channel, requested) {
+    const level = Math.max(channel.minimum_level, Math.min(channel.maximum_level, requested));
+    const value = Math.round((level / 100) * 255);
+    return channel.inverted ? 255 - value : value;
+  }
+
+  function bindManualPreview(host) {
+    const mode = host.querySelector("#lightingPreviewMode");
+    const duration = host.querySelector("#lightingPreviewDuration");
+    const run = host.querySelector("#lightingPreviewRun");
+    const stop = host.querySelector("#lightingPreviewStop");
+    const output = host.querySelector("#lightingPreviewResult");
+    let timer;
+    let frame = [];
+    const paint = (blackout) => {
+      if (!output.isConnected) return;
+      const levels = frame.map(({channel, level}) =>
+        `${channel.alias} · CH ${channel.channel_number} = ${previewDMXByte(channel, blackout ? 0 : level)}`);
+      output.textContent = `${tx(blackout ? "previewBlackout" : "previewActive")}: ${levels.join(" | ")}`;
+      stop.disabled = blackout;
+    };
+    const blackout = () => {
+      clearTimeout(timer);
+      paint(true);
+    };
+    mode.addEventListener("change", () => { duration.disabled = mode.value !== "timed"; });
+    stop.addEventListener("click", blackout);
+    run.addEventListener("click", () => {
+      try {
+        const timed = mode.value === "timed";
+        const milliseconds = duration.valueAsNumber;
+        if (timed && (!Number.isInteger(milliseconds) || milliseconds < 1 || milliseconds > 600000)) {
+          throw new Error(tx("previewDurationInvalid"));
+        }
+        const available = new Map(channels().map((channel) => [channel.alias, channel]));
+        const next = Object.entries(readOperation().levels || {}).map(([alias, level]) => {
+          const channel = available.get(alias);
+          if (!channel?.channel_number || !Number.isFinite(level)) throw new Error(tx("emptyLevels"));
+          return {channel, level};
+        });
+        clearTimeout(timer);
+        frame = next;
+        paint(false);
+        if (timed) timer = setTimeout(blackout, milliseconds);
+      } catch (error) {
+        output.textContent = error.message;
+      }
+    });
   }
 
   function addLevelRow(alias, level) {
@@ -189,9 +260,7 @@
         estimate.textContent = "";
         return;
       }
-      const level = Math.max(channel.minimum_level, Math.min(channel.maximum_level, requested));
-      const value = Math.round((level / 100) * 255);
-      estimate.textContent = `${tx("dmxEstimate")}: ${channel.inverted ? 255 - value : value} / 255`;
+      estimate.textContent = `${tx("dmxEstimate")}: ${previewDMXByte(channel, requested)} / 255`;
     };
     aliasInput.addEventListener("change", updateEstimate);
     levelInput.addEventListener("input", updateEstimate);

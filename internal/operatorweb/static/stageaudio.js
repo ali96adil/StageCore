@@ -14,6 +14,7 @@ const scAudioL10n = {
   viewer: {en: "Read only — operator permission is required to change audio.", "ar-IQ": "عرض فقط — تحتاج صلاحية المشغل للتحكم بالصوت."},
   note: {en: "Local command acknowledgement is not proof the speaker is audible. Bluetooth may have delay.", "ar-IQ": "قبول الأمر من المحرك مو دليل أن السماعة أصدرت صوتاً. البلوتوث ممكن يتأخر."},
   refresh: {en: "Refresh", "ar-IQ": "تحديث"},
+  resume: {en: "Resume", "ar-IQ": "استئناف"},
   decks: {en: "Audio layers", "ar-IQ": "طبقات الصوت"},
   output: {en: "Audio outputs", "ar-IQ": "مخارج الصوت"},
   select: {en: "Use selected output", "ar-IQ": "اعتماد المخرج المختار"},
@@ -76,7 +77,7 @@ function scAudioDeckHtml(id) {
     <div class="toolbar sc-audio-actions">
       ${["LOAD", "PLAY", "PAUSE", "STOP"].map(op =>
         `<button type="button" class="button ghost sc-audio-command" data-operation="${op}" data-deck="${id}" ${disabled}
-          ${op === "LOAD" && !files.length || op === "PLAY" && !hasFile ? "disabled" : ""}>${esc(scAudioText(op.toLowerCase()))}</button>`).join("")}
+          ${op === "LOAD" && !files.length || (op === "PLAY" || op === "PAUSE") && !hasFile ? "disabled" : ""}>${esc(scAudioText(op === "PLAY" && hasFile && d.commanded_state === "PAUSED" ? "resume" : op.toLowerCase()))}</button>`).join("")}
     </div>
     <label class="sc-audio-range">${esc(scAudioText("volume"))}: <strong>${Number(d.volume ?? 70)}%</strong>
       <input class="sc-audio-deck-volume" data-deck="${id}" type="range" min="0" max="100"

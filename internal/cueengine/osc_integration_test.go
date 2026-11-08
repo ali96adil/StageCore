@@ -312,3 +312,46 @@ func buildProductOSCPlugin(t *testing.T) string {
 	}
 	return binary
 }
+
+func TestQLCMappedFaderUsesOSCTransportWithoutApplicationACK(t *testing.T) {
+	listener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	parameters := json.RawMessage(`{"address":"/mock/fader","arguments":[{"type":"float32","value":0.5}]}`)
+	fixture := newRealOSCFixture(t, listener.LocalAddr().(*net.UDPAddr).Port, "VIDEO-MAIN", parameters)
+	host := pluginhost.New(buildProductOSCPlugin(t), nil, nil, nil, oscPluginManifest([]string{oscplugin.PermissionUDPSend}))
+	defer host.Close()
+	result := cueengine.NewWithExecutor(fixture.store, oscplugin.New(host)).
+		ExecuteCueGo(context.Background(), fixture.session.ID, commandFor(t, fixture))
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("Cue result=%+v", result)
+	}
+	_ = listener.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 512)
+	n, _, err := listener.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := osc.DecodeMessage(buf[:n])
+	if err != nil || message.Address != "/mock/fader" || len(message.Arguments) != 1 || message.Arguments[0].Value != float32(0.5) {
+		t.Fatalf("mock receiver decoded %#v, err=%v", message, err)
+	}
+	events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.EventType != "action.completed" {
+			continue
+		}
+		var payload struct { AckLevel contracts.AckLevel `json:"ack_level"` }
+		if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.AckLevel != contracts.AckTransportOnly {
+			t.Fatalf("OSC evidence=%+v err=%v", payload, err)
+		}
+		return
+	}
+	t.Fatal("missing OSC completion trace")
+}

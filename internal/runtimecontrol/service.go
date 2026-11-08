@@ -49,6 +49,10 @@ func WithSessionStopSafety(safety SessionStopSafety) Option {
 	return func(s *Service) { s.stopSafety = safety }
 }
 
+func WithRehearsalTabletStop(stop SessionStopSafety) Option {
+	return func(s *Service) { s.rehearsalTabletStop = stop }
+}
+
 func WithEmergencySafety(safety EmergencySafety) Option {
 	return func(s *Service) { s.emergencySafety = safety }
 }
@@ -60,6 +64,7 @@ type Service struct {
 	startGate       SessionStartGate
 	showGate        ShowGate
 	stopSafety      SessionStopSafety
+	rehearsalTabletStop SessionStopSafety
 	emergencySafety EmergencySafety
 
 	mu     sync.Mutex
@@ -97,6 +102,7 @@ type StopRequest struct {
 	SessionID string
 	Issuer    string
 	RequestID string
+	RehearsalTabletStopSessionID string
 }
 
 type EmergencyRequest struct {
@@ -273,7 +279,14 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if session.Type == domain.SessionShow {
 		commandType = CommandShowExit
 	}
-	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, json.RawMessage(`{}`))
+	stopPayload := json.RawMessage(`{}`)
+	if req.RehearsalTabletStopSessionID != "" {
+		if session.Type != domain.SessionRehearsal || session.ID != req.RehearsalTabletStopSessionID {
+			return rejected(req.RequestID, "REHEARSAL_STOP_SESSION_CHANGED", "tablet STOP requires the confirmed Rehearsal Session", session.ID)
+		}
+		stopPayload = json.RawMessage(`{"stop_tablets":true}`)
+	}
+	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, stopPayload)
 	if existing, terminal, ok := s.reserve(ctx, command); !ok {
 		return existing
 	} else if terminal {
@@ -298,6 +311,14 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if s.stopSafety != nil {
 		if err := s.stopSafety(ctx, session, command); err != nil {
 			return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_SAFETY_FAILED", err.Error(), session.ID))
+		}
+	}
+	if req.RehearsalTabletStopSessionID != "" {
+		if s.rehearsalTabletStop == nil {
+			return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_TABLET_STOP_FAILED", "tablet STOP is unavailable", session.ID))
+		}
+		if err := s.rehearsalTabletStop(ctx, session, command); err != nil {
+			return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_TABLET_STOP_FAILED", err.Error(), session.ID))
 		}
 	}
 	if err := s.store.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {

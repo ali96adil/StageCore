@@ -26,7 +26,12 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
 		t.Fatal(err)
 	}
+	tabletStopSessionID := ""
 	runtime := runtimecontrol.New(projectStore, registry,
+		runtimecontrol.WithRehearsalTabletStop(func(_ context.Context, session domain.Session, _ contracts.CommandEnvelope) error {
+			tabletStopSessionID = session.ID
+			return nil
+		}),
 		runtimecontrol.WithEmergencySafety(func(_ context.Context, _ domain.Session, command contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
 			if command.Priority != "P0" {
 				t.Fatalf("Emergency Blackout priority=%s", command.Priority)
@@ -259,11 +264,14 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatalf("unconfirmed Force Exit changed active Session: active=%+v err=%v", activeAfterBadForce, err)
 	}
 
-	stopSessionPayload, _ := json.Marshal(runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000406"})
+	stopSessionPayload, _ := json.Marshal(runtimeStopSessionRequest{
+		runtimeCommandRequest: runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000406"},
+		RehearsalTabletStopSessionID: start.Session.ID,
+	})
 	stopSessionReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/stop-session", stopSessionPayload, owner.Token, owner.CSRFToken)
 	stopSessionRes := httptest.NewRecorder()
 	handler.ServeHTTP(stopSessionRes, stopSessionReq)
-	if stopSessionRes.Code != http.StatusOK {
+	if stopSessionRes.Code != http.StatusOK || tabletStopSessionID != start.Session.ID {
 		t.Fatalf("stop Session status=%d body=%s", stopSessionRes.Code, stopSessionRes.Body.String())
 	}
 

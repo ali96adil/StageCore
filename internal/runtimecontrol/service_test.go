@@ -404,6 +404,19 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 		t.Fatalf("start=%+v", startResult)
 	}
 
+	tabletStops := 0
+	h.service.rehearsalTabletStop = func(context.Context, domain.Session, contracts.CommandEnvelope) error {
+		tabletStops++
+		return nil
+	}
+	stale := h.service.StopSession(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000404",
+		RehearsalTabletStopSessionID: "stale-session",
+	})
+	if stale.Status != contracts.CommandRejected || tabletStops != 0 {
+		t.Fatalf("stale optional action was accepted: %+v", stale)
+	}
+
 	h.service.stopSafety = func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
 		if got.ID != session.ID {
 			t.Fatalf("safety Session=%s want %s", got.ID, session.ID)
@@ -418,7 +431,7 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 		return fmt.Errorf("lighting blackout was not confirmed")
 	}
 	failedStop := h.service.StopSession(ctx, StopRequest{
-		SessionID: session.ID, Issuer: "owner",
+		SessionID: session.ID, Issuer: "owner", RehearsalTabletStopSessionID: session.ID,
 		RequestID: "00000000-0000-7000-8000-000000000402",
 	})
 	if failedStop.Status != contracts.CommandFailed || failedStop.Error == nil || failedStop.Error.ErrorCode != "SESSION_STOP_SAFETY_FAILED" || !failedStop.Error.Retryable {
@@ -428,13 +441,13 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Status != domain.SessionActive || state.EndedAt != nil {
+	if state.Status != domain.SessionActive || state.EndedAt != nil || tabletStops != 0 {
 		t.Fatalf("failed safety incorrectly completed Session: %+v", state)
 	}
 
 	h.service.stopSafety = func(context.Context, domain.Session, contracts.CommandEnvelope) error { return nil }
 	retry := h.service.StopSession(ctx, StopRequest{
-		SessionID: session.ID, Issuer: "owner",
+		SessionID: session.ID, Issuer: "owner", RehearsalTabletStopSessionID: session.ID,
 		RequestID: "00000000-0000-7000-8000-000000000403",
 	})
 	if retry.Status != contracts.CommandCompleted {
@@ -444,7 +457,7 @@ func TestStopSessionSafetyFailureKeepsSessionActiveAndAllowsRetry(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Status != domain.SessionCompleted || state.EndedAt == nil {
+	if state.Status != domain.SessionCompleted || state.EndedAt == nil || tabletStops != 1 {
 		t.Fatalf("retry did not complete Session: %+v", state)
 	}
 }

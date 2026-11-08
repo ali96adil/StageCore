@@ -26,6 +26,11 @@ type runtimeCommandRequest struct {
 	Confirm              string  `json:"confirm"`
 }
 
+type runtimeStopSessionRequest struct {
+	runtimeCommandRequest
+	RehearsalTabletStopSessionID string `json:"rehearsal_tablet_stop_session_id,omitempty"`
+}
+
 type runtimeEmergencyBlackoutRequest struct {
 	RequestID string `json:"request_id"`
 	Enabled   bool   `json:"enabled"`
@@ -100,7 +105,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/stop-session", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		var body runtimeCommandRequest
+		var body runtimeStopSessionRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
@@ -115,6 +120,10 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			}
 		}
 		if body.Force {
+			if body.RehearsalTabletStopSessionID != "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "FORCE_EXIT_WITH_STOP_ACTION"})
+				return
+			}
 			if strings.TrimSpace(body.Confirm) != "FORCE_EXIT_WITHOUT_BLACKOUT" {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 				return
@@ -130,6 +139,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
+			RehearsalTabletStopSessionID: body.RehearsalTabletStopSessionID,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
