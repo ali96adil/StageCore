@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/actionpolicy"
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -133,6 +134,9 @@ func (s *Service) Validate(ctx context.Context, projectID, revisionID string) (R
 			validateTargetCapability(&report, block, aliasByName, s.capabilities, action.TargetRef, action.CapabilityKey, action.ID)
 			if !json.Valid(action.Parameters) || !json.Valid(action.TimeoutPolicy) || !json.Valid(action.ErrorPolicy) {
 				block("ACTION_POLICY_INVALID", "Action parameters/timeout/error policy must be valid JSON", action.ID)
+			}
+			if _, err := actionpolicy.Parse(action.TimeoutPolicy, action.ErrorPolicy); err != nil {
+				block("ACTION_POLICY_INVALID", err.Error(), action.ID)
 			}
 			validateLightingCueAction(block, aliasByName, lightingBindings, action)
 		}

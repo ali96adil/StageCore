@@ -25,6 +25,7 @@ const (
 	AckTransportOnly AckLevel = "TRANSPORT_ONLY"
 	AckAccepted      AckLevel = "ACCEPTED"
 	AckDevice        AckLevel = "DEVICE_ACK"
+	AckApplication   AckLevel = "APPLICATION_ACK"
 	AckVerifiedState AckLevel = "VERIFIED_STATE"
 )
 

@@ -89,7 +89,9 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 		return forwardFailure("ROLE_STATE_UPDATE_FAILED", "could not persist Machine Role readiness before execution")
 	}
 	if evaluation.RoleState != domain.RoleReady {
-		return forwardFailure(readinessErrorCode(evaluation), readinessSummary(evaluation))
+		result := forwardFailure(readinessErrorCode(evaluation), readinessSummary(evaluation))
+		result.DispatchNotAttempted = evaluation.RoleState == domain.RoleOffline
+		return result
 	}
 
 	result := f.channel.Execute(ctx, companionchannel.ExecutionRequest{

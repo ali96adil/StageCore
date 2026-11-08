@@ -223,8 +223,8 @@
       </div>
       <label>Parameters (JSON)<textarea class="action-parameters mono" rows="4">{}</textarea></label>
       <div class="form-grid two">
-        <label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3">{}</textarea></label>
-        <label>Error policy (JSON)<textarea class="action-error mono" rows="3">{}</textarea></label>
+        <label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3" title="Optional start_delay_ms waits before dispatch; timeout_ms begins after the delay.">{}</textarea></label>
+        <label>Error policy (JSON)<textarea class="action-error mono" rows="3" title="Optional retry_before_dispatch allows one safe retry. require_application_ack requires evidence from the receiving application.">{}</textarea></label>
       </div>
     </article>
   </template>
