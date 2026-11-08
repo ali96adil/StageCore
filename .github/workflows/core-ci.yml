@@ -40,6 +40,7 @@ jobs:
           node --check internal/operatorweb/static/cue-studio.js
           node --check internal/operatorweb/static/guided-ux.js
           node --check internal/operatorweb/static/stageaudio.js
+          node --check internal/operatorweb/static/lighting-authoring.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v

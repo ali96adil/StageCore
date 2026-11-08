@@ -21,10 +21,11 @@ const lightingSceneCueType = "LIGHTING_SCENE"
 var lightingAliasSlugRE = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 type lightingChannelView struct {
-	Alias        string                   `json:"alias"`
-	DeviceID     string                   `json:"device_id"`
-	DisplayName  string                   `json:"display_name"`
-	Kind         lightingnode.ChannelKind `json:"kind"`
+	Alias         string                   `json:"alias"`
+	DeviceID      string                   `json:"device_id"`
+	DisplayName   string                   `json:"display_name"`
+	ChannelNumber int                      `json:"channel_number"`
+	Kind          lightingnode.ChannelKind `json:"kind"`
 	PhysicalZone  string                   `json:"physical_zone,omitempty"`
 	MinimumLevel  float64                  `json:"minimum_level"`
 	MaximumLevel  float64                  `json:"maximum_level"`
@@ -280,7 +281,7 @@ func lightingNodeViews(bindings []lightingnode.ProjectBinding, devices []devicee
 			}
 			view.Channels = append(view.Channels, lightingChannelView{
 				Alias: reverse[channel.ChannelKey], DeviceID: binding.DeviceID, DisplayName: channel.DisplayName,
-				Kind: channel.Kind, PhysicalZone: channel.PhysicalZone,
+				ChannelNumber: channel.ChannelNumber, Kind: channel.Kind, PhysicalZone: channel.PhysicalZone,
 				MinimumLevel: channel.MinimumLevel, MaximumLevel: channel.MaximumLevel, Inverted: channel.Inverted,
 			})
 		}

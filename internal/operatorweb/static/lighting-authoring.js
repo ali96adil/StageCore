@@ -7,6 +7,7 @@
       refresh: "Refresh", newCue: "New lighting cue", noCues: "No Lighting Cues yet.", edit: "Edit", duplicate: "Duplicate", remove: "Remove",
       moveUp: "Move up", moveDown: "Move down", back: "Back", save: "Save lighting cue", name: "Cue name", label: "Label",
       operation: "Operation", set: "Set levels", fade: "Fade levels", blackout: "Blackout", fadeMS: "Fade duration (ms)", addChannel: "Add channel",
+      dmxEstimate: "Estimated DMX value (offline)",
       channel: "Logical channel", level: "Level %", removeChannel: "Remove", nodes: "Lighting nodes", noChannels: "Configure at least one logical channel alias first.",
       emptyLevels: "Add at least one lighting channel.", duplicateAlias: "Each logical channel can appear only once.", chooseNode: "Choose at least one lighting node.",
       saved: "Lighting Cue saved.", duplicated: "Lighting Cue duplicated.", deleted: "Lighting Cue removed.", reordered: "Lighting Cue order updated.",
@@ -18,6 +19,7 @@
       refresh: "تحديث", newCue: "كيو إضاءة جديد", noCues: "ماكو كيوهات إضاءة حالياً.", edit: "تعديل", duplicate: "نسخ", remove: "حذف",
       moveUp: "للأعلى", moveDown: "للأسفل", back: "رجوع", save: "حفظ كيو الإضاءة", name: "اسم الكيو", label: "الرمز",
       operation: "العملية", set: "تعيين المستويات", fade: "Fade للمستويات", blackout: "Blackout", fadeMS: "مدة الـ Fade (ms)", addChannel: "إضافة قناة",
+      dmxEstimate: "قيمة DMX المتوقعة بدون تشغيل",
       channel: "القناة المنطقية", level: "المستوى %", removeChannel: "حذف", nodes: "عقد الإضاءة", noChannels: "اضبط Alias منطقي لقناة واحدة على الأقل أولاً.",
       emptyLevels: "أضف قناة إضاءة واحدة على الأقل.", duplicateAlias: "كل قناة منطقية تظهر مرة وحدة فقط.", chooseNode: "اختار عقدة إضاءة واحدة على الأقل.",
       saved: "تم حفظ كيو الإضاءة.", duplicated: "تم نسخ كيو الإضاءة.", deleted: "تم حذف كيو الإضاءة.", reordered: "تم تحديث ترتيب كيوهات الإضاءة.",
@@ -51,7 +53,7 @@
   }
   function channelOptions(selected = "") {
     return `<option value="">—</option>${channels().map((channel) => {
-      const label = `${channel.alias} · ${channel.display_name || channel.channel_key} · ${channel.node_name}`;
+      const label = `${channel.alias} · ${channel.display_name || channel.channel_key} · ${channel.node_name}${channel.channel_number ? ` · CH ${channel.channel_number}` : ""}`;
       return `<option value="${esc(channel.alias)}" ${channel.alias === selected ? "selected" : ""}>${esc(label)}</option>`;
     }).join("")}`;
   }
@@ -175,6 +177,25 @@
     row.className = "lighting-level-row";
     row.innerHTML = `<label>${esc(tx("channel"))}<select class="lighting-level-alias">${channelOptions(alias)}</select></label><label>${esc(tx("level"))}<input class="lighting-level-value" type="number" min="0" max="100" step="1" value="${Number(level ?? 0)}"></label><button class="button danger lighting-level-remove" type="button">${esc(tx("removeChannel"))}</button>`;
     host.appendChild(row);
+    const aliasInput = row.querySelector(".lighting-level-alias");
+    const levelInput = row.querySelector(".lighting-level-value");
+    const estimate = document.createElement("small");
+    estimate.className = "muted";
+    levelInput.after(estimate);
+    const updateEstimate = () => {
+      const channel = channels().find((candidate) => candidate.alias === aliasInput.value);
+      const requested = levelInput.valueAsNumber;
+      if (!channel?.channel_number || !Number.isFinite(requested) || requested < 0 || requested > 100) {
+        estimate.textContent = "";
+        return;
+      }
+      const level = Math.max(channel.minimum_level, Math.min(channel.maximum_level, requested));
+      const value = Math.round((level / 100) * 255);
+      estimate.textContent = `${tx("dmxEstimate")}: ${channel.inverted ? 255 - value : value} / 255`;
+    };
+    aliasInput.addEventListener("change", updateEstimate);
+    levelInput.addEventListener("input", updateEstimate);
+    updateEstimate();
     row.querySelector(".lighting-level-remove")?.addEventListener("click", () => row.remove());
   }
 
@@ -213,18 +234,31 @@
       });
       const descriptors = translated.actions || [];
       if (!descriptors.length) throw new Error("LIGHTING_ACTION_TRANSLATION_FAILED");
-      const actions = descriptors.map((action, index) => ({
-        action_id: "", order_index: index, execution_mode: action.execution_mode,
-        target_ref: action.target_ref, capability_key: action.capability_key,
-        parameters: action.parameters || {}, timeout_policy: action.timeout_policy || {},
-        error_policy: {}, priority_class: action.priority, enabled: true,
-      }));
       const cueID = editor.dataset.cueId || "";
+      const existing = (allCueModel.cues || []).find((cue) => cue.cue_id === cueID);
+      if (cueID && !existing) throw new Error("LIGHTING_CUE_RELOAD_REQUIRED");
+      const previousActions = existing?.actions || [];
+      const actions = descriptors.map((action, index) => {
+        const previous = previousActions.find((item) =>
+          item.target_ref === action.target_ref && item.capability_key === action.capability_key);
+        return {
+          action_id: previous?.action_id || "",
+          order_index: previous?.order_index ?? previousActions.length + index,
+          execution_mode: previous?.execution_mode || action.execution_mode,
+          target_ref: action.target_ref, capability_key: action.capability_key,
+          parameters: { ...previous?.parameters, ...action.parameters },
+          timeout_policy: { ...previous?.timeout_policy, ...action.timeout_policy },
+          error_policy: previous?.error_policy || {},
+          priority_class: previous?.priority_class || action.priority, enabled: previous?.enabled ?? true,
+        };
+      }).sort((a, b) => a.order_index - b.order_index);
+      actions.forEach((action, index) => { action.order_index = index; });
       const body = {
         display_label: document.getElementById("lightingCueLabel")?.value.trim() || "",
-        name, order_index: Number(editor.dataset.orderIndex || 0), cue_type: "LIGHTING_SCENE",
-        criticality: request.command_type === "LIGHTING_BLACKOUT" ? "CRITICAL" : "NORMAL",
-        enabled: true, execution_policy: {}, notes_summary: "Lighting Cue", actions,
+        name, order_index: Number(editor.dataset.orderIndex || 0), cue_type: existing?.cue_type || "LIGHTING_SCENE",
+        criticality: request.command_type === "LIGHTING_BLACKOUT" ? "CRITICAL" : (existing?.criticality || "NORMAL"),
+        enabled: existing?.enabled ?? true, execution_policy: existing?.execution_policy || {},
+        notes_summary: existing?.notes_summary ?? "Lighting Cue", actions,
       };
       await api(`/api/v1/projects/${encodeURIComponent(pid())}/cues${cueID ? `/${encodeURIComponent(cueID)}` : ""}`, { method: cueID ? "PUT" : "POST", json: body });
       await renderLightingCues(tx("saved"), "success");

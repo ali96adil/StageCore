@@ -79,6 +79,28 @@ func TestOperatorLightingCueActionsGroupAliasesPerNode(t *testing.T) {
 	}
 	handler := New(WithOperatorLightingController(h.auth, devices, stageStore)).Handler()
 
+	nodesReq := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/lighting-controller", credential.Token)
+	nodesRes := httptest.NewRecorder()
+	handler.ServeHTTP(nodesRes, nodesReq)
+	var listing struct {
+		Nodes []lightingNodeView `json:"nodes"`
+	}
+	if nodesRes.Code != http.StatusOK || json.Unmarshal(nodesRes.Body.Bytes(), &listing) != nil {
+		t.Fatalf("lighting node list: %d %s", nodesRes.Code, nodesRes.Body.String())
+	}
+	if len(listing.Nodes) != 2 {
+		t.Fatalf("unexpected lighting nodes: %+v", listing.Nodes)
+	}
+	for _, node := range listing.Nodes {
+		if node.DeviceID == "lighting-a" {
+			if len(node.Channels) != 2 || node.Channels[0].ChannelNumber != 1 || node.Channels[1].ChannelNumber != 2 {
+				t.Fatalf("lighting preview channel mapping: %+v", node.Channels)
+			}
+			break
+		}
+	}
+
+
 	body := bytes.NewBufferString(`{
 		"command_type":"LIGHTING_CHANNELS_FADE",
 		"fade_ms":1200,
