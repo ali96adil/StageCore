@@ -29,6 +29,7 @@ type runtimeCommandRequest struct {
 type runtimeStopSessionRequest struct {
 	runtimeCommandRequest
 	RehearsalTabletStopSessionID string `json:"rehearsal_tablet_stop_session_id,omitempty"`
+	RehearsalExternalStopSessionID string `json:"rehearsal_external_stop_session_id,omitempty"`
 }
 
 type runtimeEmergencyBlackoutRequest struct {
@@ -120,7 +121,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			}
 		}
 		if body.Force {
-			if body.RehearsalTabletStopSessionID != "" {
+			if body.RehearsalTabletStopSessionID != "" || body.RehearsalExternalStopSessionID != "" {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "FORCE_EXIT_WITH_STOP_ACTION"})
 				return
 			}
@@ -140,6 +141,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			RehearsalTabletStopSessionID: body.RehearsalTabletStopSessionID,
+			RehearsalExternalStopSessionID: body.RehearsalExternalStopSessionID,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))

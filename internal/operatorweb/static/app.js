@@ -1276,6 +1276,7 @@ async function renderRuntime(startPolling = false) {
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
           ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopTablets" type="checkbox" value="${esc(active.session_id)}"> Stop tablet playback when ending this rehearsal</label>` : ""}
+          ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopExternal" type="checkbox" value="${esc(active.session_id)}"> Run external STOP actions configured in this Snapshot</label>` : ""}
           <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
@@ -1410,8 +1411,11 @@ async function jumpRuntime() {
 async function stopSessionRuntime() {
   const stopTablets = el("rehearsalStopTablets");
   const tabletSessionID = stopTablets?.checked ? stopTablets.value : "";
-  const prompt = tabletSessionID
-    ? "End this rehearsal, complete lighting blackout, and stop tablet playback?"
+  const stopExternal = el("rehearsalStopExternal");
+  const externalSessionID = stopExternal?.checked ? stopExternal.value : "";
+  const selected = [tabletSessionID && "stop tablet playback", externalSessionID && "run configured external STOP actions"].filter(Boolean);
+  const prompt = selected.length
+    ? `End this rehearsal, complete lighting blackout, and ${selected.join(" and ")}?`
     : "End the active runtime Session? StageCore will first require its managed blackout safety to complete.";
   if (!confirm(prompt)) return;
   try {
@@ -1419,6 +1423,7 @@ async function stopSessionRuntime() {
       method: "POST", json: {
         request_id: requestID(),
         ...(tabletSessionID ? { rehearsal_tablet_stop_session_id: tabletSessionID } : {}),
+        ...(externalSessionID ? { rehearsal_external_stop_session_id: externalSessionID } : {}),
       },
     });
     state.runtimeForceExitAvailable = false;

@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -109,6 +110,7 @@ type StopRequest struct {
 	Issuer    string
 	RequestID string
 	RehearsalTabletStopSessionID string
+	RehearsalExternalStopSessionID string
 }
 
 type EmergencyRequest struct {
@@ -302,6 +304,12 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		}
 		stopPayload = json.RawMessage(`{"stop_tablets":true}`)
 	}
+	if req.RehearsalExternalStopSessionID != "" {
+		if session.Type != domain.SessionRehearsal || req.RehearsalExternalStopSessionID != session.ID {
+			return rejected(req.RequestID, "REHEARSAL_STOP_SESSION_CHANGED", "external STOP requires the confirmed Rehearsal Session", session.ID)
+		}
+		stopPayload, _ = json.Marshal(map[string]bool{"stop_external": true, "stop_tablets": req.RehearsalTabletStopSessionID != ""})
+	}
 	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, stopPayload)
 	if existing, terminal, ok := s.reserve(ctx, command); !ok {
 		return existing
@@ -321,6 +329,25 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
 	}
 	defer s.endStoppingCues(session.ID)
+	fresh, err := s.store.GetSession(ctx, session.ID)
+	if err != nil || fresh.Status != domain.SessionActive {
+		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is no longer active", session.ID))
+	}
+	var outputs []rehearsalOutput
+	if req.RehearsalExternalStopSessionID != "" {
+		published, err := s.store.GetRuntimeSnapshot(ctx, session.RuntimeSnapshotID)
+		if err != nil {
+			return finish(failed(command.CommandID, "REHEARSAL_OUTPUT_SNAPSHOT_UNAVAILABLE"))
+		}
+		manifest, err := snapshot.Decode(published.Manifest)
+		if err != nil {
+			return finish(failed(command.CommandID, "REHEARSAL_OUTPUT_SNAPSHOT_INVALID"))
+		}
+		outputs, err = rehearsalOutputs(manifest)
+		if err != nil {
+			return finish(rejected(command.CommandID, "REHEARSAL_OUTPUT_POLICY_INVALID", err.Error(), session.ID))
+		}
+	}
 	if err := s.stopActiveCueForSession(ctx, session.ID); err != nil {
 		return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_CUE_UNCONFIRMED", err.Error(), session.ID))
 	}
@@ -336,6 +363,9 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		if err := s.rehearsalTabletStop(ctx, session, command); err != nil {
 			return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_TABLET_STOP_FAILED", err.Error(), session.ID))
 		}
+	}
+	if err := s.runRehearsalOutputs(ctx, session, command, outputs); err != nil {
+		return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_EXTERNAL_STOP_FAILED", err.Error(), session.ID))
 	}
 	if err := s.store.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {
 		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
