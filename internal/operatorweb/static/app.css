@@ -366,3 +366,22 @@ tr:last-child td { border-bottom: 0; }
   background: var(--surface-secondary, rgba(127, 127, 127, 0.08));
   border-radius: 0.35rem;
 }
+
+
+/* SC-021 phone-first rehearsal player: visually separate optional sound from GO */
+.sc-audio-output-grid, .sc-audio-decks { grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 14px; }
+.sc-audio-output-grid .card, .sc-audio-decks .card { min-width: 0; }
+.sc-audio-output-grid select, .sc-audio-file { width: 100%; max-width: 100%; overflow-wrap: anywhere; }
+.sc-audio-deck { display: grid; gap: 12px; }
+.sc-audio-deck .sc-audio-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-audio-master { margin: 14px 0; }
+.sc-audio-range { display: grid; gap: 7px; }
+.sc-audio-range input { width: 100%; touch-action: pan-y; }
+.sc-audio-bt-list { margin-top: 12px; display: grid; gap: 8px; }
+.sc-audio-bt-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.sc-audio-bt-item span { min-width: 0; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.sc-audio-bt-item small { opacity: .8; }
+@media(max-width:680px) {
+  .sc-audio-deck .sc-audio-actions .button { flex: 1 1 38%; }
+  .sc-audio-bt-item .button { flex-shrink: 0; }
+}

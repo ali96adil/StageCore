@@ -284,6 +284,7 @@ function renderProjects() {
           <div class="row-actions">
             <button class="button primary open-project" data-project-id="${esc(project.project_id)}" type="button">Open Project</button>
             ${canEdit() ? `<button class="button duplicate-project" data-project-id="${esc(project.project_id)}" type="button">Duplicate Project</button>` : ""}
+            ${canEdit() ? `<button class="button rename-project" data-project-id="${esc(project.project_id)}" type="button">Rename Project</button>` : ""}
           </div>
         </article>`).join("") : `<div class="empty">No Projects yet.</div>`}
     </div>`;
@@ -294,7 +295,48 @@ function renderProjects() {
   content.querySelectorAll(".duplicate-project").forEach((button) => {
     button.addEventListener("click", () => duplicateProject(button.dataset.projectId, button));
   });
+  content.querySelectorAll(".rename-project").forEach((button) => {
+    button.addEventListener("click", () => renameProject(button.dataset.projectId, button));
+  });
   el("createProjectForm")?.addEventListener("submit", createProject);
+}
+
+// SC-022: Project display name is mutable metadata; IDs, linked Cues,
+// Snapshots, and Vault assets remain stable. Fine-grained Project ACL is
+// tracked separately under SC-024 and must be server-side before rollout.
+async function renameProject(projectID, button) {
+  const project = state.projects.find(p => p.project_id === projectID) ||
+    (state.project?.project_id === projectID ? state.project : null);
+  if (!canEdit() || !project || button?.disabled) return;
+  const ar = localStorage.getItem("stagecore_locale") !== "en";
+  const value = prompt(ar ? "الاسم الجديد للمشروع:" : "New Project name:", project.name);
+  if (value === null) return;
+  const name = value.trim();
+  if (!name || Array.from(name).length > 160 || /[\u0000\r\n]/.test(name)) {
+    setMessage(globalMessage, ar ? "اسم المشروع لازم يكون من 1 إلى 160 حرف." :
+      "Project name must be 1–160 characters.", "error");
+    return;
+  }
+  if (name === project.name) return;
+  if (button) button.disabled = true;
+  try {
+    const updated = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`, {
+      method: "PATCH", json: {name},
+    });
+    await loadProjects();
+    if (state.project?.project_id === projectID) {
+      state.project = updated.project;
+      updateWorkspaceProject();
+    }
+    if (state.page === "projects") renderProjects();
+    else if (state.page === "dashboard") await renderDashboard();
+    setMessage(globalMessage, ar ? "تم تغيير اسم المشروع دون تعديل الكيوهات أو السناب شوت." :
+      "Project renamed without changing Cues or the Published Snapshot.", "success");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function duplicateProject(sourceID, button) {
@@ -386,7 +428,7 @@ async function renderDashboard() {
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">DASHBOARD</p><h1>${esc(dashboard.project.name)}</h1><p>${esc(dashboard.project.description || "No description")}</p></div>
-      <div class="toolbar">${pill(dashboard.mode, dashboard.mode === "SHOW" ? "bad" : dashboard.mode === "REHEARSAL" ? "good" : "neutral")}${pill(dashboard.unpublished_changes ? "Unpublished Changes" : dashboard.publication_state, publicationKind)}</div>
+      <div class="toolbar">${pill(dashboard.mode, dashboard.mode === "SHOW" ? "bad" : dashboard.mode === "REHEARSAL" ? "good" : "neutral")}${pill(dashboard.unpublished_changes ? "Unpublished Changes" : dashboard.publication_state, publicationKind)}${canEdit() ? `<button class="button" id="renameOpenProject" type="button">Rename Project</button>` : ""}</div>
     </div>
     <div class="stat-grid">
       <article class="stat"><span class="label">Draft Revision</span><span class="value">r${esc(draft.revision_number)} · ${esc(draft.status)}</span><span class="sub mono">${esc(draft.revision_id)}</span></article>
@@ -414,6 +456,7 @@ async function renderDashboard() {
       <button class="button" id="dashboardCues" type="button">Open Cues</button>
       <button class="button primary" id="dashboardRuntime" type="button">Open Runtime</button>
     </div>`;
+  el("renameOpenProject")?.addEventListener("click", () => renameProject(state.project.project_id, el("renameOpenProject")));
   el("dashboardCues").addEventListener("click", () => navigate("cues"));
   el("dashboardRuntime").addEventListener("click", () => navigate("runtime"));
 }

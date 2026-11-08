@@ -78,6 +78,42 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (domai
 	return project, revision, nil
 }
 
+// RenameProject changes only mutable Project metadata. ProjectID, revision,
+// Snapshot, Cue and Vault object identities remain unchanged, so no republish
+// or physical media rename is required. This operation is safe during an
+// ongoing rehearsal/show because runtime references use IDs, not the title.
+func (s *Store) RenameProject(ctx context.Context, projectID, newName string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	newName = strings.TrimSpace(newName)
+	if projectID == "" || newName == "" || len([]rune(newName)) > 160 ||
+		strings.ContainsAny(newName, "\x00\r\n") {
+		return domain.Project{}, fmt.Errorf("%w: project name must contain 1–160 characters without control line breaks", domain.ErrInvalidInput)
+	}
+	// Avoid marking a Project updated if the operator enters its current name.
+	current, err := s.GetProject(ctx, projectID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if current.Name == newName {
+		return current, nil
+	}
+	nowUS := clock.UnixMicros(s.clock.Now().UTC())
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE projects SET name = ?, updated_at_us = ? WHERE project_id = ?`,
+		newName, nowUS, projectID)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("rename project metadata: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("rename project result: %w", err)
+	}
+	if affected != 1 {
+		return domain.Project{}, domain.ErrNotFound
+	}
+	return s.GetProject(ctx, projectID)
+}
+
 func (s *Store) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
 	var p domain.Project
 	var lifecycle string

@@ -30,6 +30,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
+	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/sessionsafety"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
@@ -283,8 +284,22 @@ func main() {
 		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
 	}
 
+	// Audio is disabled unless an administrator explicitly configures an
+	// already running trusted same-host StageAudio Unix socket. No spawn,
+	// package installation, or automatic playback occurs at Hub boot.
+	var audioClient httpapi.StageAudioLocal
+	if socket := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_SOCKET")); socket != "" {
+		local, clientErr := stageaudio.NewLocalClient(socket)
+		if clientErr != nil {
+			logger.Warn("StageAudio disabled: invalid local socket configuration", "error", clientErr)
+		} else {
+			audioClient = local
+		}
+	}
+
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
+		httpapi.WithOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
