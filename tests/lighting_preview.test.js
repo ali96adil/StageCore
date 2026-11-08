@@ -7,7 +7,7 @@ const test = require("node:test");
 
 test("manual DMX preview supports continuous, timed and blackout without dispatch", () => {
   const controls = new Map();
-  for (const name of ["Mode", "Duration", "Run", "Stop", "Result"]) {
+  for (const name of ["Mode", "Duration", "Run", "Stop", "Result", "Raw"]) {
     controls.set("#lightingPreview" + name, {
       isConnected: true,
       addEventListener(event, fn) { this[event] = fn; },
@@ -59,6 +59,16 @@ test("manual DMX preview supports continuous, timed and blackout without dispatc
   get("Run").click();
   assert.match(get("Result").textContent, /Enter an integer duration/);
   assert.equal(pending, undefined);
+
+  get("Mode").value = "continuous";
+  get("Raw").value = "1=20\n512=255";
+  get("Run").click();
+  assert.match(get("Result").textContent, /CH 1 = 20.*CH 512 = 255/);
+  get("Stop").click();
+  assert.match(get("Result").textContent, /CH 1 = 0.*CH 512 = 0/);
+  get("Raw").value = "1=20\n001=255";
+  get("Run").click();
+  assert.match(get("Result").textContent, /Use unique channels/);
 });
 
 test("QLC+ draft preset produces one bounded OSC Float32 argument", () => {

@@ -42,6 +42,7 @@ jobs:
           node --check internal/operatorweb/static/stageaudio.js
           node --check internal/operatorweb/static/lighting-authoring.js
           node --check internal/operatorweb/static/tablet-controller.js
+          node --check internal/operatorweb/static/project-files.js
           node --test tests/lighting_preview.test.js
           node --test tools/receiver-ack-lab/*.test.js
       - name: Firmware Foundation contract

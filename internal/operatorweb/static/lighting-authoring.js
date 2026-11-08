@@ -12,6 +12,7 @@
       previewHold: "Continuous", previewTimed: "Timed", previewDuration: "Duration (ms)",
       previewIdle: "Physical output disabled", previewActive: "Simulated levels", previewBlackout: "Simulated blackout",
       previewDurationInvalid: "Enter an integer duration from 1 to 600000 ms.",
+      previewRaw: "Raw channels (optional, one channel=value per line)", previewRawInvalid: "Use unique channels 1–512 and values 0–255.",
       channel: "Logical channel", level: "Level %", removeChannel: "Remove", nodes: "Lighting nodes", noChannels: "Configure at least one logical channel alias first.",
       emptyLevels: "Add at least one lighting channel.", duplicateAlias: "Each logical channel can appear only once.", chooseNode: "Choose at least one lighting node.",
       saved: "Lighting Cue saved.", duplicated: "Lighting Cue duplicated.", deleted: "Lighting Cue removed.", reordered: "Lighting Cue order updated.",
@@ -28,6 +29,7 @@
       previewHold: "مستمر", previewTimed: "مؤقت", previewDuration: "المدة (ms)",
       previewIdle: "الخرج الفعلي معطل", previewActive: "المستويات المحاكاة", previewBlackout: "Blackout محاكى",
       previewDurationInvalid: "أدخل مدة صحيحة من 1 إلى 600000 ms.",
+      previewRaw: "القنوات المباشرة (اختياري، قناة=قيمة في كل سطر)", previewRawInvalid: "استخدم قنوات فريدة من 1 إلى 512 وقيم من 0 إلى 255.",
       channel: "القناة المنطقية", level: "المستوى %", removeChannel: "حذف", nodes: "عقد الإضاءة", noChannels: "اضبط Alias منطقي لقناة واحدة على الأقل أولاً.",
       emptyLevels: "أضف قناة إضاءة واحدة على الأقل.", duplicateAlias: "كل قناة منطقية تظهر مرة وحدة فقط.", chooseNode: "اختار عقدة إضاءة واحدة على الأقل.",
       saved: "تم حفظ كيو الإضاءة.", duplicated: "تم نسخ كيو الإضاءة.", deleted: "تم حذف كيو الإضاءة.", reordered: "تم تحديث ترتيب كيوهات الإضاءة.",
@@ -179,6 +181,7 @@
         <label>${esc(tx("operation"))}
           <select id="lightingPreviewMode"><option value="continuous">${esc(tx("previewHold"))}</option><option value="timed">${esc(tx("previewTimed"))}</option></select>
         </label>
+        <label>${esc(tx("previewRaw"))}<textarea id="lightingPreviewRaw" class="mono" dir="ltr" maxlength="8192" rows="3" placeholder="1=128"></textarea></label>
         <label>${esc(tx("previewDuration"))}<input id="lightingPreviewDuration" type="number" min="1" max="600000" step="1" value="1000" disabled></label>
         <div class="toolbar">
           <button id="lightingPreviewRun" class="button" type="button">${esc(tx("previewRun"))}</button>
@@ -197,18 +200,36 @@
     return channel.inverted ? 255 - value : value;
   }
 
+  function parseManualDMXRows(text) {
+    const channels = new Map();
+    if (text.length > 8192) throw new Error(tx("previewRawInvalid"));
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const match = /^\s*(\d{1,3})\s*=\s*(\d{1,3})\s*$/.exec(line);
+      const channel = Number(match?.[1]);
+      const value = Number(match?.[2]);
+      if (!match || channel < 1 || channel > 512 || value > 255 || channels.has(channel)) {
+        throw new Error(tx("previewRawInvalid"));
+      }
+      channels.set(channel, value);
+    }
+    return channels;
+  }
+
   function bindManualPreview(host) {
     const mode = host.querySelector("#lightingPreviewMode");
     const duration = host.querySelector("#lightingPreviewDuration");
     const run = host.querySelector("#lightingPreviewRun");
     const stop = host.querySelector("#lightingPreviewStop");
     const output = host.querySelector("#lightingPreviewResult");
+    const raw = host.querySelector("#lightingPreviewRaw");
     let timer;
     let frame = [];
     const paint = (blackout) => {
       if (!output.isConnected) return;
-      const levels = frame.map(({channel, level}) =>
-        `${channel.alias} · CH ${channel.channel_number} = ${previewDMXByte(channel, blackout ? 0 : level)}`);
+      const levels = frame.map(({channel, level, rawChannel}) => rawChannel
+        ? `CH ${rawChannel} = ${blackout ? 0 : level}`
+        : `${channel.alias} · CH ${channel.channel_number} = ${previewDMXByte(channel, blackout ? 0 : level)}`);
       output.textContent = `${tx(blackout ? "previewBlackout" : "previewActive")}: ${levels.join(" | ")}`;
       stop.disabled = blackout;
     };
@@ -226,7 +247,10 @@
           throw new Error(tx("previewDurationInvalid"));
         }
         const available = new Map(channels().map((channel) => [channel.alias, channel]));
-        const next = Object.entries(readOperation().levels || {}).map(([alias, level]) => {
+        const direct = parseManualDMXRows(raw?.value || "");
+        const next = direct.size
+          ? Array.from(direct, ([rawChannel, level]) => ({rawChannel, level}))
+          : Object.entries(readOperation().levels || {}).map(([alias, level]) => {
           const channel = available.get(alias);
           if (!channel?.channel_number || !Number.isFinite(level)) throw new Error(tx("emptyLevels"));
           return {channel, level};
