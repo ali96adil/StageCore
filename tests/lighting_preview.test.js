@@ -100,3 +100,47 @@ test("guided action options round-trip known fields and defer unknown policies t
   assert.equal(readError.onError, "CONTINUE");
   assert.equal(policies.f002ParseErrorPolicy('{"retry_before_dispatch":"yes"}'), null);
 });
+
+test("Cue Studio action clipboard stays in the current project and user session", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function serializeActionCopy");
+  const last = source.indexOf("function duplicateCard", first);
+  const state = { user: {}, project: { project_id: "project-a" } };
+  let pasted;
+  const context = {
+    state, structuredClone,
+    f002SyncActionCard() {},
+    cardField: (card, field) => card[field],
+    pick: () => null,
+    addActionEditor: (action) => { pasted = action; },
+    actionCards: () => [], refreshActions() {},
+  };
+  const clipboard = vm.runInNewContext(
+    "let actionClipboard = null; " + source.slice(first, last) +
+    "({copyActionToClipboard, pasteClipboardAction})", context
+  );
+  const card = {
+    ".action-id": { value: "original-id" },
+    ".action-target": { value: "VDMX" },
+    ".action-capability": { value: "osc.send" },
+    ".action-parameters": { value: '{"address":"/screen","custom":true}' },
+    ".action-timeout": { value: '{"start_delay_ms":120}' },
+  };
+  clipboard.copyActionToClipboard(card);
+  clipboard.pasteClipboardAction();
+  assert.equal(pasted.action_id, "");
+  assert.equal(pasted.target_ref, "VDMX");
+  assert.equal(pasted.parameters.custom, true);
+  assert.equal(pasted.timeout_policy.start_delay_ms, 120);
+  pasted.parameters.custom = false;
+  clipboard.pasteClipboardAction();
+  assert.equal(pasted.parameters.custom, true);
+  pasted = undefined;
+  state.project = { project_id: "project-b" };
+  clipboard.pasteClipboardAction();
+  assert.equal(pasted, undefined);
+  clipboard.copyActionToClipboard(card);
+  state.user = {};
+  clipboard.pasteClipboardAction();
+  assert.equal(pasted, undefined);
+});

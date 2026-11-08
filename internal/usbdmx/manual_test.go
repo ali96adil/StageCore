@@ -3,6 +3,7 @@ package usbdmx
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,4 +70,35 @@ func (p *cancelAfterFrame) WritePacket(ctx context.Context, packet [FrameSize]by
 		p.stop()
 	}
 	return err
+}
+
+func TestManualOutputRevocationAndFailedZeroAreTruthful(t *testing.T) {
+	for _, failZero := range []bool{false, true} {
+		port := &fakePacketPort{}
+		if failZero {
+			port.failAt = 3
+		}
+		output := NewManualOutput(true, func(context.Context) (PacketPort, error) { return port, nil })
+		checks := 0
+		authorize := func(context.Context) error {
+			checks++
+			if checks > 3 {
+				return errors.New("scope revoked")
+			}
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := output.Run(ctx, ManualRequest{Channels: []ChannelValue{{Channel: 1, Value: 190}}}, authorize)
+		cancel()
+		if !errors.Is(err, ErrAuthorizationRequired) || port.closed != 1 {
+			t.Fatalf("revocation did not close output: %v", err)
+		}
+		if failZero {
+			if len(port.packets) != 2 || !strings.Contains(err.Error(), "physical state unknown") {
+				t.Fatalf("failed zero was misreported: %v", err)
+			}
+		} else if len(port.packets) != 3 || port.packets[2] != ZeroFrame() {
+			t.Fatal("revocation did not request zero")
+		}
+	}
 }

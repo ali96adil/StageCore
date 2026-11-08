@@ -16,6 +16,7 @@
   const actionCards = () => Array.from(pick("actionsEditor")?.querySelectorAll(".action-editor") || []);
   const cardField = (card, selector) => card.querySelector(selector);
   let initialFormState = "";
+  let actionClipboard = null;
 
   function safeObject(raw) {
     try { return JSON.parse(raw || "{}"); } catch (_) { return {}; }
@@ -113,22 +114,56 @@
     card.querySelector(".sc008-expand")?.focus();
   }
 
+  function serializeActionCopy(card) {
+    // Translate visual OSC/MIDI fields into the existing canonical payload.
+    f002SyncActionCard(card);
+    const read = (selector) => cardField(card, selector)?.value;
+    return {
+      action_id: "",
+      target_ref: read(".action-target") || "",
+      capability_key: read(".action-capability") || "",
+      parameters: JSON.parse(read(".action-parameters") || "{}"),
+      timeout_policy: JSON.parse(read(".action-timeout") || "{}"),
+      error_policy: JSON.parse(read(".action-error") || "{}"),
+      execution_mode: read(".action-mode") || "SEQUENTIAL",
+      priority_class: read(".action-priority") || "P1",
+      enabled: cardField(card, ".action-enabled")?.checked ?? true,
+    };
+  }
+
+  function clipboardAction() {
+    if (actionClipboard && actionClipboard.user === state.user && actionClipboard.projectID === state.project?.project_id) {
+      return actionClipboard.action;
+    }
+    actionClipboard = null;
+    return null;
+  }
+
+  function copyActionToClipboard(card) {
+    if (!state.user || !state.project?.project_id) return;
+    try {
+      actionClipboard = { user: state.user, projectID: state.project.project_id, action: serializeActionCopy(card) };
+      const paste = pick("sc008PasteAction");
+      if (paste) paste.disabled = false;
+    } catch (_) {
+      window.alert(tr("راجع قيم هذا الإجراء قبل نسخه.", "Review this action's fields before copying."));
+      expandCard(card, true);
+    }
+  }
+
+  function pasteClipboardAction() {
+    const action = clipboardAction();
+    if (!action) return;
+    addActionEditor(structuredClone(action));
+    const inserted = actionCards().at(-1);
+    actionCards().forEach((item) => expandCard(item, item === inserted));
+    refreshActions();
+    inserted?.querySelector(".sc008-expand")?.focus();
+  }
+
   function duplicateCard(card) {
     try {
-      // Translate visual OSC/MIDI fields into the existing canonical payload.
-      f002SyncActionCard(card);
-      const read = (selector) => cardField(card, selector)?.value;
-      const copy = {
-        action_id: "",
-        target_ref: read(".action-target") || "",
-        capability_key: read(".action-capability") || "",
-        parameters: JSON.parse(read(".action-parameters") || "{}"),
-        timeout_policy: JSON.parse(read(".action-timeout") || "{}"),
-        error_policy: JSON.parse(read(".action-error") || "{}"),
-        execution_mode: read(".action-mode") || "SEQUENTIAL",
-        priority_class: read(".action-priority") || "P1",
-        enabled: cardField(card, ".action-enabled")?.checked ?? true,
-      };
+      const copy = serializeActionCopy(card);
       addActionEditor(copy);
       const inserted = actionCards().at(-1);
       card.parentNode.insertBefore(inserted, card.nextSibling);
@@ -239,7 +274,8 @@
     };
     make("sc008-up", "↑", () => moveCard(card, -1));
     make("sc008-down", "↓", () => moveCard(card, 1));
-    make("sc008-copy", tr("نسخ", "Copy"), () => duplicateCard(card));
+    make("sc008-copy", tr("تكرار", "Duplicate"), () => duplicateCard(card));
+    make("sc008-copy-clipboard", tr("نسخ للكيوهات", "Copy to other Cues"), () => copyActionToClipboard(card));
     make("sc008-expand", tr("تعديل", "Edit"), () => expandCard(card, card.querySelector(".sc008-action-body")?.hidden));
     if (originalDelete) {
       originalDelete.textContent = "×";
@@ -543,6 +579,14 @@
     heading?.querySelector("h3")?.append(" ", counter);
     const addButton = pick("addActionButton");
     if (addButton) addButton.textContent = tr("+ إضافة إجراء", "+ Add action");
+    const paste = pick("sc008PasteAction") || document.createElement("button");
+    paste.id = "sc008PasteAction";
+    paste.className = "button ghost";
+    paste.type = "button";
+    paste.textContent = tr("لصق إجراء", "Paste action");
+    paste.disabled = !clipboardAction();
+    paste.onclick = pasteClipboardAction;
+    if (!paste.isConnected) addButton?.after(paste);
     const optional = createOptionalDetails(form);
     if (!optional.isConnected) workspace.after(optional);
     optional.open = !!(cue?.notes_summary || cue?.criticality === "CRITICAL" ||
