@@ -43,6 +43,9 @@ func WithOperatorExecutionEnvironmentOperations(auth *userauth.Service, stageSto
 			return
 		}
 		registerOperatorExecutionEnvironmentOperationRoutes(s.mux, auth, stageStore, runtime)
+		if discovery, ok := runtime.(oscQueryDiscoveryRuntime); ok {
+			registerOperatorOSCQueryDiscoveryRoute(s.mux, auth, stageStore, discovery)
+		}
 	}
 }
 
