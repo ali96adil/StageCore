@@ -41,6 +41,11 @@ func WithSessionStartGate(gate SessionStartGate) Option {
 	return func(s *Service) { s.startGate = gate }
 }
 
+// WithShowAdmissionFence protects the final SHOW admission check and commit.
+func WithShowAdmissionFence(acquire func(context.Context) (func(), error)) Option {
+	return func(s *Service) { s.showAdmissionFence = acquire }
+}
+
 func WithShowGate(gate ShowGate) Option {
 	return func(s *Service) { s.showGate = gate }
 }
@@ -63,6 +68,7 @@ type Service struct {
 	executor *stoppableExecutor
 	startGate       SessionStartGate
 	showGate        ShowGate
+	showAdmissionFence func(context.Context) (func(), error)
 	stopSafety      SessionStopSafety
 	rehearsalTabletStop SessionStopSafety
 	emergencySafety EmergencySafety
@@ -220,7 +226,17 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	startWarning := strings.Join(startWarnings, " ")
 
+	var releaseShowFence func()
+	if req.Mode == domain.SessionShow && s.showAdmissionFence != nil {
+		releaseShowFence, err = s.showAdmissionFence(ctx)
+		if err != nil {
+			return finish(rejected(command.CommandID, "SHOW_AUDIO_NOT_SAFE", "StageAudio must be reachable, stopped and confirmed before SHOW", snapshot.ID))
+		}
+	}
 	session, err := s.store.CreateSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name))
+	if releaseShowFence != nil {
+		releaseShowFence()
+	}
 	if err != nil {
 		return finish(resultFromStoreError(command.CommandID, "SESSION_START_FAILED", err, snapshot.ID))
 	}

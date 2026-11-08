@@ -96,6 +96,27 @@ func main() {
 	)
 	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
 	preflightService := timecode.NewPreflightService(devicePreflight, timecodeRuntime)
+	// Audio is disabled unless an administrator explicitly configures an
+	// already running trusted same-host StageAudio Unix socket. No spawn,
+	// package installation, or automatic playback occurs at Hub boot.
+	var audioClient httpapi.StageAudioLocal
+	if socket := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_SOCKET")); socket != "" {
+		local, clientErr := stageaudio.NewLocalClient(socket)
+		if clientErr != nil {
+			logger.Warn("StageAudio disabled: invalid local socket configuration", "error", clientErr)
+		} else {
+			audioClient = local
+		}
+	}
+
+	var audioFence *stageaudio.ShowFence
+	var acquireShowAudioFence func(context.Context) (func(), error)
+	if audioClient != nil {
+		audioFence = stageaudio.NewShowFence()
+		acquireShowAudioFence = func(ctx context.Context) (func(), error) {
+			return audioFence.AcquireShow(ctx, audioClient.Call)
+		}
+	}
 	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
@@ -105,6 +126,7 @@ func main() {
 			application.DeviceRuntime,
 		)),
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
+		runtimecontrol.WithShowAdmissionFence(acquireShowAudioFence),
 		runtimecontrol.WithSessionStopSafety(sessionsafety.NewLightingBlackout(
 			application.Store,
 			application.DeviceExperience,
@@ -288,22 +310,10 @@ func main() {
 		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
 	}
 
-	// Audio is disabled unless an administrator explicitly configures an
-	// already running trusted same-host StageAudio Unix socket. No spawn,
-	// package installation, or automatic playback occurs at Hub boot.
-	var audioClient httpapi.StageAudioLocal
-	if socket := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_SOCKET")); socket != "" {
-		local, clientErr := stageaudio.NewLocalClient(socket)
-		if clientErr != nil {
-			logger.Warn("StageAudio disabled: invalid local socket configuration", "error", clientErr)
-		} else {
-			audioClient = local
-		}
-	}
 
 	api := httpapi.New(
 		httpapi.WithOperatorWeb(),
-		httpapi.WithOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit),
+		httpapi.WithOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),

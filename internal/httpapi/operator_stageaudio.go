@@ -21,7 +21,9 @@ type StageAudioLocal interface {
 
 // WithOperatorStageAudio exposes an optional, OFF-by-default rehearsal audio
 // endpoint. A missing sidecar must not affect StageCore Cues or GO.
-func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service) Option {
+func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fences ...*stageaudio.ShowFence) Option {
+	var fence *stageaudio.ShowFence
+	if len(fences) > 0 { fence = fences[0] }
 	return func(s *Server) {
 		if auth == nil || stageStore == nil { return }
 		checkRuntime := func(ctx context.Context) (domain.SessionType, error) {
@@ -78,7 +80,15 @@ func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, cli
 			// Fail closed whenever show state cannot be read or SHOW is active.
 			// A sidecar is not a qualified SHOW output and must never receive
 			// operator audio commands during an active SHOW session.
-			active, err := checkRuntime(r.Context())
+			ctx, cancel := context.WithTimeout(r.Context(), stageAudioTimeout(command.Operation))
+			defer cancel()
+			release, err := fence.Acquire(ctx)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_FENCE_BUSY"})
+				return
+			}
+			defer release()
+			active, err := checkRuntime(ctx)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
 				return
@@ -94,9 +104,8 @@ func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, cli
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "STAGEAUDIO_SHOW_LOCKED"})
 				return
 			}
-			ctx, cancel := context.WithTimeout(r.Context(), stageAudioTimeout(command.Operation))
-			defer cancel()
 			result, err := client.Call(ctx, command)
+			if err != nil { fence.MarkUncertain() }
 			auditResult := securityaudit.ResultSuccess
 			reason := "LOCAL_COMMAND_ACK"
 			if err != nil { auditResult, reason = securityaudit.ResultFailed, "SIDECAR_COMMAND_FAILED" }
