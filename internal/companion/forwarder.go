@@ -95,6 +95,7 @@ func (f *Forwarder) Execute(ctx context.Context, req capability.Request) capabil
 	}
 
 	result := f.channel.Execute(ctx, companionchannel.ExecutionRequest{
+		ProjectID: role.ProjectID, CueID: req.CueID, RequireApplicationACK: req.RequireApplicationACK,
 		ExecutionID:       req.ExecutionID,
 		CorrelationID:     req.CorrelationID,
 		CompanionID:       assignment.CompanionID,

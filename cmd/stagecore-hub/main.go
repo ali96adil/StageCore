@@ -67,6 +67,12 @@ func main() {
 		logger.Error("hub startup failed", "error", err)
 		os.Exit(1)
 	}
+	if path := strings.TrimSpace(os.Getenv("STAGECORE_SIGNED_ACK_CONFIG")); path != "" {
+		if err := application.CompanionRuntime.LoadSignedACKConfig(path); err != nil {
+			logger.Error("invalid signed application ACK configuration", "error", err)
+			os.Exit(1)
+		}
+	}
 	defer application.Close()
 
 	userAuth, err := userauth.New(application.DB.DB)

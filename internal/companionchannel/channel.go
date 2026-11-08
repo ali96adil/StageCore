@@ -13,14 +13,17 @@ import (
 )
 
 type ExecutionRequest struct {
-	ExecutionID       string
-	CorrelationID     string
-	CompanionID       string
-	MachineRoleID     string
-	RuntimeSnapshotID string
-	Capability        string
-	Parameters        json.RawMessage
-	TimeoutMS         int64
+	ProjectID             string
+	CueID                 string
+	RequireApplicationACK bool
+	ExecutionID           string
+	CorrelationID         string
+	CompanionID           string
+	MachineRoleID         string
+	RuntimeSnapshotID     string
+	Capability            string
+	Parameters            json.RawMessage
+	TimeoutMS             int64
 }
 
 type ExecutionResult struct {

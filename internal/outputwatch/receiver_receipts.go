@@ -31,13 +31,13 @@ const (
 )
 
 type ReceiverScope struct {
-	ProjectID            string
-	RuntimeSnapshotID    string
-	MachineRoleID        string
-	CompanionID          string
-	ReceiverInstanceID   string
-	Kind                 ReceiverKind
-	ConnectionGeneration int64
+	ProjectID            string       `json:"project_id"`
+	RuntimeSnapshotID    string       `json:"runtime_snapshot_id"`
+	MachineRoleID        string       `json:"machine_role_id"`
+	CompanionID          string       `json:"companion_id"`
+	ReceiverInstanceID   string       `json:"receiver_instance_id"`
+	Kind                 ReceiverKind `json:"kind"`
+	ConnectionGeneration int64        `json:"connection_generation"`
 }
 
 func (s ReceiverScope) valid() bool {
@@ -47,11 +47,11 @@ func (s ReceiverScope) valid() bool {
 }
 
 type ReceiverDispatch struct {
-	Scope       ReceiverScope
-	ExecutionID string
-	CueID       string
-	Challenge   string
-	ExpiresAt   time.Time
+	Scope       ReceiverScope `json:"scope"`
+	ExecutionID string        `json:"execution_id"`
+	CueID       string        `json:"cue_id"`
+	Challenge   string        `json:"challenge"`
+	ExpiresAt   time.Time     `json:"expires_at"`
 }
 type ReceiverNotice struct {
 	Scope       ReceiverScope

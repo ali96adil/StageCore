@@ -19,6 +19,8 @@ type Target struct {
 }
 
 type Request struct {
+	CueID string
+	RequireApplicationACK bool
 	ExecutionID       string
 	ProjectID         string
 	SessionID         string

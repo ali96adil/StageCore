@@ -1,6 +1,7 @@
 package companionchannel_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +30,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/outputwatch"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
@@ -59,7 +63,9 @@ func TestAuthenticatedRuntimeWebSocketExecutesEchoWithoutReplayAndLosesAuthority
 	memory := &runtimeAgentMemory{seen: make(map[string]struct{})}
 	firstCredential := authenticateRuntimeCompanion(t, ctx, auth, companionID, privateKey)
 	firstAgent := startRuntimeAgent(t, runtimeURL, firstCredential.Token, companionID, memory)
-	waitForRuntime(t, func() bool { return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID) })
+	waitForRuntime(t, func() bool {
+		return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID)
+	})
 
 	registry := capability.NewRegistry()
 	if err := registry.RegisterTargetType(
@@ -104,7 +110,9 @@ func TestAuthenticatedRuntimeWebSocketExecutesEchoWithoutReplayAndLosesAuthority
 	waitForRuntime(t, func() bool { return !runtime.IsConnected(companionID) })
 	secondCredential := authenticateRuntimeCompanion(t, ctx, auth, companionID, privateKey)
 	secondAgent := startRuntimeAgent(t, runtimeURL, secondCredential.Token, companionID, memory)
-	waitForRuntime(t, func() bool { return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID) })
+	waitForRuntime(t, func() bool {
+		return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID)
+	})
 	if got := memory.count.Load(); got != 1 {
 		t.Fatalf("reconnect replayed action A; count=%d", got)
 	}
@@ -186,9 +194,11 @@ func TestRuntimeWebSocketRejectsMissingAndInvalidSession(t *testing.T) {
 }
 
 type runtimeAgentMemory struct {
-	mu    sync.Mutex
-	seen  map[string]struct{}
-	count atomic.Int32
+	mu          sync.Mutex
+	seen        map[string]struct{}
+	count       atomic.Int32
+	signedKey   []byte
+	signedFault atomic.Int32
 }
 
 type runtimeTestAgent struct {
@@ -210,6 +220,11 @@ func startRuntimeAgent(t *testing.T, runtimeURL, token, companionID string, memo
 
 func serveRuntimeAgent(connection *websocket.Conn, companionID string, memory *runtimeAgentMemory) error {
 	hello := runtimeAgentHello(companionID, nil, nil, "UNKNOWN")
+	capabilities := []string{"local.echo"}
+	if memory.signedKey != nil {
+		capabilities = append(capabilities, "osc.send", "receiver.signed_ack.v1")
+	}
+	hello["capabilities"] = capabilities
 	if err := websocket.JSON.Send(connection, hello); err != nil {
 		return err
 	}
@@ -224,19 +239,22 @@ func serveRuntimeAgent(connection *websocket.Conn, companionID string, memory *r
 	if ready.Type != "session.ready" || ready.MachineRoleID == "" || ready.RuntimeSnapshotID == "" {
 		return errorsForRuntimeAgent("invalid session.ready")
 	}
-	if err := websocket.JSON.Send(connection, runtimeAgentHello(companionID, &ready.MachineRoleID, &ready.RuntimeSnapshotID, "READY")); err != nil {
+	readyHello := runtimeAgentHello(companionID, &ready.MachineRoleID, &ready.RuntimeSnapshotID, "READY")
+	readyHello["capabilities"] = capabilities
+	if err := websocket.JSON.Send(connection, readyHello); err != nil {
 		return err
 	}
 
 	for {
 		var request struct {
-			Type              string          `json:"type"`
-			SchemaVersion     int             `json:"schema_version"`
-			ExecutionID       string          `json:"execution_id"`
-			MachineRoleID     string          `json:"machine_role_id"`
-			RuntimeSnapshotID string          `json:"runtime_snapshot_id"`
-			Capability        string          `json:"capability"`
-			Parameters        json.RawMessage `json:"parameters"`
+			ApplicationACK    *outputwatch.ReceiverDispatch `json:"application_ack"`
+			Type              string                        `json:"type"`
+			SchemaVersion     int                           `json:"schema_version"`
+			ExecutionID       string                        `json:"execution_id"`
+			MachineRoleID     string                        `json:"machine_role_id"`
+			RuntimeSnapshotID string                        `json:"runtime_snapshot_id"`
+			Capability        string                        `json:"capability"`
+			Parameters        json.RawMessage               `json:"parameters"`
 		}
 		if err := websocket.JSON.Receive(connection, &request); err != nil {
 			return err
@@ -259,6 +277,29 @@ func serveRuntimeAgent(connection *websocket.Conn, companionID string, memory *r
 			result["error_code"] = "SNAPSHOT_MISMATCH"
 		case request.MachineRoleID != ready.MachineRoleID:
 			result["error_code"] = "MACHINE_ROLE_MISMATCH"
+		case request.Capability == "osc.send" && request.ApplicationACK != nil && memory.signedKey != nil:
+			memory.count.Add(1)
+			if memory.signedFault.Load() == 2 {
+				return connection.Close()
+			}
+			dispatch := request.ApplicationACK
+			notice := outputwatch.ReceiverNotice{Scope: dispatch.Scope, ExecutionID: dispatch.ExecutionID,
+				CueID: dispatch.CueID, Challenge: dispatch.Challenge, Sequence: 1, Status: outputwatch.ReceiptAppReceived}
+			if memory.signedFault.Load() == 1 {
+				notice.Challenge = strings.Repeat("f", 64)
+			}
+			received, err := outputwatch.EncodeSignedReceiverAck(notice, memory.signedKey)
+			if err != nil {
+				return err
+			}
+			notice.Sequence++
+			notice.Status = outputwatch.ReceiptAppApplied
+			applied, err := outputwatch.EncodeSignedReceiverAck(notice, memory.signedKey)
+			if err != nil {
+				return err
+			}
+			result["status"], result["ack_level"], result["error_code"] = "COMPLETED", "TRANSPORT_ONLY", nil
+			result["signed_application_receipts"] = [][]byte{received, applied}
 		case request.Capability != "local.echo":
 			result["error_code"] = "UNSUPPORTED_CAPABILITY"
 		default:
@@ -316,14 +357,21 @@ func runtimeCueFixture(
 	ctx context.Context,
 	s *store.Store,
 	companionID string,
+	signed ...bool,
 ) (domain.Project, domain.ProjectRevision, domain.MachineRole, domain.Cue, domain.RuntimeSnapshot) {
 	t.Helper()
 	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Runtime WebSocket Show", CreatedBy: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	capabilityKey := "local.echo"
+	errorPolicy := json.RawMessage(`{"on_error":"FAIL_CUE"}`)
+	if len(signed) != 0 && signed[0] {
+		capabilityKey = "osc.send"
+		errorPolicy = json.RawMessage(`{"on_error":"FAIL_CUE","require_application_ack":true}`)
+	}
 	role, err := s.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
-		RoleKey: "VIDEO-MAIN", DisplayName: "Video Main", RequiredCapabilities: []string{"local.echo"}, Required: true,
+		RoleKey: "VIDEO-MAIN", DisplayName: "Video Main", RequiredCapabilities: []string{capabilityKey}, Required: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -338,8 +386,8 @@ func runtimeCueFixture(
 	cue, err := s.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "1", Name: "Authenticated Echo", OrderIndex: 0, Enabled: true,
 	}, []domain.Action{{
-		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "VIDEO-MAIN", CapabilityKey: "local.echo",
-		Parameters: json.RawMessage(`{"message":"GO"}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "VIDEO-MAIN", CapabilityKey: capabilityKey,
+		Parameters: json.RawMessage(`{"message":"GO"}`), ErrorPolicy: errorPolicy,
 		PriorityClass: domain.PriorityP1, Enabled: true,
 	}})
 	if err != nil {
@@ -348,8 +396,8 @@ func runtimeCueFixture(
 	if _, err := s.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "2", Name: "Authenticated Echo After Reconnect", OrderIndex: 1, Enabled: true,
 	}, []domain.Action{{
-		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "VIDEO-MAIN", CapabilityKey: "local.echo",
-		Parameters: json.RawMessage(`{"message":"GO-2"}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "VIDEO-MAIN", CapabilityKey: capabilityKey,
+		Parameters: json.RawMessage(`{"message":"GO-2"}`), ErrorPolicy: errorPolicy,
 		PriorityClass: domain.PriorityP1, Enabled: true,
 	}}); err != nil {
 		t.Fatal(err)
@@ -475,3 +523,71 @@ type runtimeAgentError string
 func (e runtimeAgentError) Error() string { return string(e) }
 
 func errorsForRuntimeAgent(message string) error { return runtimeAgentError(message) }
+
+func TestSignedApplicationACKThroughCueRuntime(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	s := store.New(handle.DB, clock.Real{})
+	auth := companionauth.New(s, nil)
+	runtime := companionchannel.NewRuntime(s, auth)
+	defer runtime.Close()
+	privateKey, publicKey := runtimeDeviceKey(t)
+	companionID := "11111111-1111-4111-8111-111111111111"
+	pairRuntimeCompanion(t, ctx, auth, companionID, publicKey)
+	project, _, role, cue, snap := runtimeCueFixture(t, ctx, s, companionID, true)
+	key := bytes.Repeat([]byte{17}, 32)
+	config, err := json.Marshal(companionchannel.SignedACKConfig{ProjectID: project.ID, MachineRoleID: role.ID,
+		CompanionID: companionID, ReceiverInstanceID: "fixture", Kind: outputwatch.ReceiverVDMX, Key: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "receiver.json")
+	if err := os.WriteFile(path, config, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.LoadSignedACKConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(httpapi.New(httpapi.WithCompanionAuth(auth), httpapi.WithCompanionRuntime(runtime)).Handler())
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/companion/runtime"
+	memory := &runtimeAgentMemory{seen: make(map[string]struct{}), signedKey: key}
+	credential := authenticateRuntimeCompanion(t, ctx, auth, companionID, privateKey)
+	agent := startRuntimeAgent(t, url, credential.Token, companionID, memory)
+	defer agent.close(t)
+	waitForRuntime(t, func() bool { return companionReady(ctx, s, companionID, snap.ID) })
+	registry := capability.NewRegistry()
+	if err := registry.RegisterTargetType(companion.MachineRoleLogicalType, companion.NewForwarder(s, runtime, 5*time.Second, nil)); err != nil {
+		t.Fatal(err)
+	}
+	engine := cueengine.NewWithExecutor(s, registry)
+	session, err := s.CreateSession(ctx, snap.ID, domain.SessionRehearsal, "signed acknowledgement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goCommand := runtimeCueCommand(t, project.ID, snap.ID)
+	if result := engine.ExecuteCueGo(ctx, session.ID, goCommand); result.Status != contracts.CommandCompleted {
+		t.Fatalf("signed Cue failed: %+v error=%+v", result, result.Error)
+	}
+	if result := engine.ExecuteCueGo(ctx, session.ID, goCommand); result.Status != contracts.CommandCompleted || memory.count.Load() != 1 {
+		t.Fatal("duplicate Cue changed its result or dispatched again")
+	}
+	memory.signedFault.Store(1)
+	if result := engine.ExecuteCueGo(ctx, session.ID, runtimeCueCommand(t, project.ID, snap.ID)); result.Status != contracts.CommandFailed || !bytes.Contains(result.Payload, []byte("APPLICATION_ACK_INVALID")) {
+		t.Fatalf("mismatched receipt accepted: %s", result.Payload)
+	}
+	memory.signedFault.Store(2)
+	req := companionchannel.ExecutionRequest{ProjectID: project.ID, CueID: cue.ID, RequireApplicationACK: true,
+		ExecutionID: "disconnect-during-ack", CompanionID: companionID, MachineRoleID: role.ID,
+		RuntimeSnapshotID: snap.ID, Capability: "osc.send", TimeoutMS: 500}
+	if result := runtime.Execute(ctx, req); result.Result == domain.ExecutionCompleted {
+		t.Fatal("disconnected Companion produced an application confirmation")
+	}
+	if result := runtime.Execute(ctx, req); result.Result == domain.ExecutionCompleted || memory.count.Load() != 3 {
+		t.Fatal("disconnected request replayed")
+	}
+}

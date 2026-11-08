@@ -374,7 +374,7 @@ func (e *Engine) startAction(
 	}
 	resultCh := make(chan actionOutcome, 1)
 	run := func() {
-		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, startedEvent.EventID, action)
+		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, cueExecution.CueID, startedEvent.EventID, action)
 		resultCh <- outcome
 		close(resultCh)
 	}
@@ -392,6 +392,7 @@ func (e *Engine) runAction(
 	command contracts.CommandEnvelope,
 	manifest snapshot.Manifest,
 	actionExecution domain.ActionExecution,
+	cueID string,
 	startedEventID string,
 	action snapshot.Action,
 ) actionOutcome {
@@ -415,6 +416,7 @@ func (e *Engine) runAction(
 		} else {
 			req := capability.Request{
 				ExecutionID: actionExecution.ID, RuntimeSnapshotID: command.RuntimeSnapshotID,
+				CueID: cueID, RequireApplicationACK: settings.RequireApplicationACK,
 				Capability: action.CapabilityKey, Target: resolvedTarget(manifest, action.TargetRef),
 				Parameters: action.Parameters, Priority: action.PriorityClass,
 				TimeoutMS: timeoutMS, CorrelationID: command.CorrelationID,

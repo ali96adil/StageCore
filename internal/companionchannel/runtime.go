@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/outputwatch"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
@@ -35,8 +37,10 @@ type ControlSurfaceRequest struct {
 type ControlSurfaceHandler func(context.Context, ControlSurfaceRequest)
 
 type RuntimeChannel struct {
-	store *store.Store
-	auth  *companionauth.Service
+	signedACK            *SignedACKConfig
+	connectionGeneration int64
+	store                *store.Store
+	auth                 *companionauth.Service
 
 	mu                           sync.Mutex
 	connections                  map[string]*runtimeConnection
@@ -53,11 +57,13 @@ type RuntimeChannel struct {
 }
 
 type runtimeConnection struct {
-	owner       *RuntimeChannel
-	websocket   *websocket.Conn
-	session     domain.CompanionRuntimeSession
-	token       string
-	companionID string
+	generation         int64
+	signedACKSupported bool
+	owner              *RuntimeChannel
+	websocket          *websocket.Conn
+	session            domain.CompanionRuntimeSession
+	token              string
+	companionID        string
 
 	writeMu sync.Mutex
 	closed  chan struct{}
@@ -65,6 +71,7 @@ type runtimeConnection struct {
 }
 
 type runtimeExecution struct {
+	receiver    *outputwatch.SignedReceiver
 	companionID string
 	executionID string
 	connection  *runtimeConnection
@@ -111,27 +118,29 @@ type runtimeSessionReady struct {
 }
 
 type runtimeExecutionRequest struct {
-	Type              string          `json:"type"`
-	SchemaVersion     int             `json:"schema_version"`
-	MessageID         string          `json:"message_id"`
-	ExecutionID       string          `json:"execution_id"`
-	CorrelationID     *string         `json:"correlation_id"`
-	MachineRoleID     string          `json:"machine_role_id"`
-	RuntimeSnapshotID string          `json:"runtime_snapshot_id"`
-	Capability        string          `json:"capability"`
-	Parameters        json.RawMessage `json:"parameters"`
-	TimeoutMS         int64           `json:"timeout_ms"`
+	ApplicationACK    *outputwatch.ReceiverDispatch `json:"application_ack,omitempty"`
+	Type              string                        `json:"type"`
+	SchemaVersion     int                           `json:"schema_version"`
+	MessageID         string                        `json:"message_id"`
+	ExecutionID       string                        `json:"execution_id"`
+	CorrelationID     *string                       `json:"correlation_id"`
+	MachineRoleID     string                        `json:"machine_role_id"`
+	RuntimeSnapshotID string                        `json:"runtime_snapshot_id"`
+	Capability        string                        `json:"capability"`
+	Parameters        json.RawMessage               `json:"parameters"`
+	TimeoutMS         int64                         `json:"timeout_ms"`
 }
 
 type runtimeExecutionResult struct {
-	Type            string          `json:"type"`
-	SchemaVersion   int             `json:"schema_version"`
-	ExecutionID     string          `json:"execution_id"`
-	Status          string          `json:"status"`
-	AckLevel        string          `json:"ack_level"`
-	ErrorCode       string          `json:"error_code"`
-	ResponseSummary string          `json:"response_summary"`
-	Output          json.RawMessage `json:"output"`
+	SignedApplicationReceipts [][]byte        `json:"signed_application_receipts,omitempty"`
+	Type                      string          `json:"type"`
+	SchemaVersion             int             `json:"schema_version"`
+	ExecutionID               string          `json:"execution_id"`
+	Status                    string          `json:"status"`
+	AckLevel                  string          `json:"ack_level"`
+	ErrorCode                 string          `json:"error_code"`
+	ResponseSummary           string          `json:"response_summary"`
+	Output                    json.RawMessage `json:"output"`
 }
 
 type runtimeControlSurfaceEvent struct {
@@ -210,7 +219,22 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 		return failed(request.ExecutionID, "COMPANION_CHANNEL_BUSY", "Companion runtime result window is full", domain.ExecutionFailed)
 	}
 	connection := c.connections[request.CompanionID]
+	var receiver *outputwatch.SignedReceiver
+	var dispatch *outputwatch.ReceiverDispatch
+	if request.RequireApplicationACK && connection != nil {
+		if !connection.signedACKSupported {
+			c.mu.Unlock()
+			return failed(request.ExecutionID, "APPLICATION_ACK_UNSUPPORTED", "Companion does not advertise signed application confirmation", domain.ExecutionFailed)
+		}
+		var err error
+		receiver, dispatch, err = c.signedACK.arm(request, connection.generation)
+		if err != nil {
+			c.mu.Unlock()
+			return failed(request.ExecutionID, "APPLICATION_ACK_NOT_CONFIGURED", "No qualified application receiver is configured for this Action", domain.ExecutionFailed)
+		}
+	}
 	record := &runtimeExecution{
+		receiver:    receiver,
 		companionID: request.CompanionID,
 		executionID: request.ExecutionID,
 		connection:  connection,
@@ -240,7 +264,7 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 		Type: "execution.request", SchemaVersion: runtimeSchemaVersion, MessageID: request.ExecutionID,
 		ExecutionID: request.ExecutionID, CorrelationID: correlationID, MachineRoleID: request.MachineRoleID,
 		RuntimeSnapshotID: request.RuntimeSnapshotID, Capability: request.Capability,
-		Parameters: parameters, TimeoutMS: request.TimeoutMS,
+		Parameters: parameters, TimeoutMS: request.TimeoutMS, ApplicationACK: dispatch,
 	})
 	if err != nil {
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_REQUEST_INVALID", "runtime request could not be encoded", domain.ExecutionFailed))
@@ -378,6 +402,8 @@ func (c *RuntimeChannel) acceptHello(ctx context.Context, connection *runtimeCon
 		c.mu.Unlock()
 		return err
 	}
+	c.connectionGeneration++
+	connection.generation = c.connectionGeneration
 	old := c.connections[connection.companionID]
 	c.connections[connection.companionID] = connection
 	c.mu.Unlock()
@@ -433,12 +459,12 @@ func (c *RuntimeChannel) sendSessionReady(ctx context.Context, connection *runti
 	}
 	for _, requirement := range manifest.RequiredMediaForRole(role.ID) {
 		requiredMedia = append(requiredMedia, runtimeRequiredMedia{
-			MediaAssetID: requirement.MediaAssetID,
-			ContentVersionID: requirement.ContentVersionID,
+			MediaAssetID:      requirement.MediaAssetID,
+			ContentVersionID:  requirement.ContentVersionID,
 			ChecksumAlgorithm: requirement.ChecksumAlgorithm,
-			ContentHash: requirement.ContentHash,
-			SizeBytes: requirement.SizeBytes,
-			Required: requirement.Required,
+			ContentHash:       requirement.ContentHash,
+			SizeBytes:         requirement.SizeBytes,
+			Required:          requirement.Required,
 		})
 	}
 
@@ -474,11 +500,12 @@ func (c *RuntimeChannel) updateHello(ctx context.Context, connection *runtimeCon
 		DisplayName: hello.DisplayName, Hostname: hello.Hostname, Platform: hello.Platform,
 		Architecture: hello.Architecture, Version: hello.AgentVersion, Capabilities: hello.Capabilities,
 		MIDIDestinations: hello.MIDIDestinations,
-		Readiness: readiness, AppliedRuntimeSnapshotID: hello.AppliedRuntimeSnapshotID, ConfigHash: hello.ConfigHash,
+		Readiness:        readiness, AppliedRuntimeSnapshotID: hello.AppliedRuntimeSnapshotID, ConfigHash: hello.ConfigHash,
 	})
 	if err != nil {
 		return err
 	}
+	connection.signedACKSupported = slices.Contains(hello.Capabilities, "receiver.signed_ack.v1")
 	return c.updateRoleStateFromFreshReport(ctx, companion)
 }
 
@@ -556,17 +583,30 @@ func (c *RuntimeChannel) acceptResult(connection *runtimeConnection, data []byte
 	}
 	key := executionKey(connection.companionID, wire.ExecutionID)
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	record := c.executions[key]
-	c.mu.Unlock()
-	if record == nil || record.connection != connection {
+	if record == nil || record.completed || record.connection != connection || c.connections[connection.companionID] != connection {
 		return
 	}
-	c.finish(key, resultFromWire(wire))
+	select {
+	case <-connection.closed:
+		return
+	default:
+	}
+	result := resultFromWire(wire)
+	if record.receiver != nil {
+		result = verifySignedACK(record.receiver, result, wire.SignedApplicationReceipts)
+	}
+	c.finishLocked(key, result)
 }
 
 func (c *RuntimeChannel) finish(key string, result ExecutionResult) ExecutionResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.finishLocked(key, result)
+}
+
+func (c *RuntimeChannel) finishLocked(key string, result ExecutionResult) ExecutionResult {
 	record := c.executions[key]
 	if record == nil {
 		return result

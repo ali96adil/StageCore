@@ -27,6 +27,12 @@ func NewSignedReceiver(scope ReceiverScope, key []byte, now func() time.Time) (*
 }
 
 func (r *SignedReceiver) ArmAfterTransport(executionID, cueID string, expiresAt time.Time) (ReceiverDispatch, error) {
+	return r.Prepare(executionID, cueID, expiresAt)
+}
+
+// Prepare creates a dispatch challenge. The caller must independently prove
+// transport completion before using the receipt as an execution result.
+func (r *SignedReceiver) Prepare(executionID, cueID string, expiresAt time.Time) (ReceiverDispatch, error) {
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return ReceiverDispatch{}, err
