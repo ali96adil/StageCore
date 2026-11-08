@@ -294,3 +294,8 @@
 @media (prefers-reduced-motion: reduce) {
   .sc008-choice { transition: none; }
 }
+
+.cue-label-cell[data-cue-color="blue"] { box-shadow: inset 0 -3px #3691e3; }
+.cue-label-cell[data-cue-color="green"] { box-shadow: inset 0 -3px #38a86e; }
+.cue-label-cell[data-cue-color="amber"] { box-shadow: inset 0 -3px #d79c28; }
+.cue-label-cell[data-cue-color="purple"] { box-shadow: inset 0 -3px #a374d9; }

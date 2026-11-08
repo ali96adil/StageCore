@@ -526,7 +526,7 @@ async function renderCues(message = "", messageKind = "success") {
           ${state.cues.length ? state.cues.map((cue, index) => `
             <tr class="${cueRelationshipClass(cue, cueParents)}">
               <td>${esc(cue.order_index)}</td>
-              <td>${esc(cue.display_label || "—")}</td>
+              <td class="cue-label-cell" data-cue-color="${cueColor(cue)}">${esc(cue.display_label || "—")}</td>
               <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
@@ -693,6 +693,11 @@ function cuePolicyObject(cue) {
   return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
 }
 
+function cueColor(cue) {
+  const value = cuePolicyObject(cue).operator_cue_color;
+  return ["blue", "green", "amber", "purple"].includes(value) ? value : "";
+}
+
 function cueLinkedIDs(cue) {
   const policy = cuePolicyObject(cue);
   return Array.isArray(policy.linked_cue_ids)
@@ -854,6 +859,9 @@ function openCueEditor(cue) {
   el("cueId").value = cue?.cue_id || "";
   el("cueLabel").value = cue?.display_label || String((state.cues.length || 0) + 1);
   el("cueName").value = cue?.name || "";
+  const color = el("cueColor");
+  color.value = cueColor(cue);
+  color.dataset.original = color.value;
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
@@ -927,6 +935,11 @@ cueForm.addEventListener("submit", async (event) => {
         }
         if (delayMS) policy.start_delay_ms = delayMS;
         else delete policy.start_delay_ms;
+        const color = el("cueColor");
+        if (color.value !== color.dataset.original) {
+          if (color.value) policy.operator_cue_color = color.value;
+          else delete policy.operator_cue_color;
+        }
         return policy;
       })(),
       notes_summary: el("cueNotes").value.trim(),
@@ -1008,11 +1021,23 @@ async function duplicateCue(id) {
 
 async function deleteCue(id) {
   const cue = cueByID(id);
-  if (!cue || !confirm(`Delete Draft Cue “${cue.name}”?`)) return;
+  if (!cue) return;
+  const parent = cueByID(cueParentMap().get(id));
+  if (parent) {
+    setMessage(globalMessage, `Remove this Cue from “${parent.name}” in Run together with before deleting it.`, "warn");
+    return;
+  }
+  if (!confirm(`Delete Draft Cue “${cue.name}”?`)) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(id)}?confirm=true`, { method: "DELETE" });
     await renderCues("Cue deleted from Draft.");
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    if (error.payload?.error_code === "CUE_LINKED_CHILD") {
+      await renderCues("This Cue is now linked. Remove it from the parent Cue before deleting it.", "warn");
+    } else {
+      setMessage(globalMessage, errorMessage(error), "error");
+    }
+  }
 }
 
 async function moveCue(id, delta) {

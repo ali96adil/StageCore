@@ -295,6 +295,8 @@ func writeCueMutationError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CUE_INVALID"})
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "CUE_NOT_FOUND"})
+	case errors.Is(err, store.ErrDraftCueLinked):
+		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_LINKED_CHILD"})
 	case errors.Is(err, domain.ErrRevisionFrozen), errors.Is(err, domain.ErrConflict):
 		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_CONFLICT"})
 	default:

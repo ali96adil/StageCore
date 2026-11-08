@@ -171,6 +171,33 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 	return cue, nil
 }
 
+// ErrDraftCueLinked indicates that a surviving Cue still references the Cue.
+var ErrDraftCueLinked = fmt.Errorf("%w: Cue is a linked child", domain.ErrConflict)
+
+func draftCueHasParent(ctx context.Context, tx *sql.Tx, revisionID, cueID string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT link.value FROM cues AS parent
+		JOIN json_each(parent.execution_policy_json, '$.linked_cue_ids') AS link
+		WHERE parent.revision_id = ? AND parent.cue_id <> ?
+		  AND json_type(parent.execution_policy_json, '$.linked_cue_ids') = 'array'
+		  AND link.type = 'text'
+	`, revisionID, cueID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var linkedID string
+		if err := rows.Scan(&linkedID); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(linkedID) == cueID {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -186,6 +213,13 @@ func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) er
 	}
 	if !belongs {
 		return domain.ErrNotFound
+	}
+	linked, err := draftCueHasParent(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return fmt.Errorf("check incoming Cue links: %w", err)
+	}
+	if linked {
+		return ErrDraftCueLinked
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cues WHERE cue_id = ? AND revision_id = ?`, cueID, revisionID); err != nil {
 		return fmt.Errorf("delete cue: %w", err)
