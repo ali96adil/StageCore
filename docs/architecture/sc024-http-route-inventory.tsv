@@ -7,6 +7,7 @@ internal/httpapi/operator_assistant_proposals.go	POST /api/v1/projects/{project_
 internal/httpapi/operator_assistant_proposals.go	POST /api/v1/projects/{project_id}/assistant/proposals/preview
 internal/httpapi/operator_assistant_workspace.go	GET /api/v1/projects/{project_id}/assistant/status
 internal/httpapi/operator_assistant_workspace.go	POST /api/v1/projects/{project_id}/assistant/tasks
+internal/httpapi/operator_camera_relay.go	GET /api/v1/projects/{project_id}/camera-relay/stream
 internal/httpapi/operator_configuration.go	DELETE /api/v1/projects/{project_id}/inputs/{input_id}
 internal/httpapi/operator_configuration.go	DELETE /api/v1/projects/{project_id}/routes/{route_id}
 internal/httpapi/operator_configuration.go	DELETE /api/v1/projects/{project_id}/targets/{alias_id}

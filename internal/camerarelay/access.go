@@ -58,25 +58,34 @@ func readAccessPair(viewerFile, controlFile string) ([32]byte, [32]byte, error) 
 }
 
 func readAccessToken(path string) ([32]byte, error) {
+	token, err := ReadViewerToken(path)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256([]byte(token)), nil
+}
+
+// ReadViewerToken loads an owner-only credential for a trusted local relay client.
+func ReadViewerToken(path string) (string, error) {
 	expected, err := os.Lstat(path)
 	if err != nil || !expected.Mode().IsRegular() || expected.Mode().Perm()&0077 != 0 {
-		return [32]byte{}, errors.New("camera tokens require owner-only regular files")
+		return "", errors.New("camera tokens require owner-only regular files")
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return [32]byte{}, errors.New("camera token file is unavailable")
+		return "", errors.New("camera token file is unavailable")
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !os.SameFile(expected, info) || info.Mode().Perm()&0077 != 0 {
-		return [32]byte{}, errors.New("camera tokens require owner-only regular files")
+		return "", errors.New("camera tokens require owner-only regular files")
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, 260))
 	token := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if err != nil || !validAccessToken(token) {
-		return [32]byte{}, errors.New("invalid camera token file")
+		return "", errors.New("invalid camera token file")
 	}
-	return sha256.Sum256([]byte(token)), nil
+	return token, nil
 }
 
 func validAccessToken(token string) bool {

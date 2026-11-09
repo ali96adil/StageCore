@@ -332,7 +332,20 @@ func main() {
 		}
 		audioScope = &httpapi.StageAudioProjectScope{ProjectID: id, Access: access, Vault: application.Vault}
 	}
+	var cameraViewer *httpapi.ProjectCameraViewer
+	var cameraAccess *projectaccess.Service
+	if id, address, tokenFile := os.Getenv("STAGECORE_CAMERA_VIEW_PROJECT_ID"), os.Getenv("STAGECORE_CAMERA_VIEW_RELAY"), os.Getenv("STAGECORE_CAMERA_VIEW_TOKEN_FILE"); id != "" || address != "" || tokenFile != "" {
+		cameraViewer, err = httpapi.NewProjectCameraViewer(id, address, tokenFile)
+		if err == nil {
+			cameraAccess, err = projectaccess.New(application.DB.DB)
+		}
+		if err != nil {
+			logger.Error("project camera viewer configuration rejected", "error", err)
+			os.Exit(1)
+		}
+	}
 	api := httpapi.New(
+		httpapi.WithOperatorCameraViewer(userAuth, cameraAccess, cameraViewer),
 		httpapi.WithOperatorWeb(),
 		httpapi.WithOperatorUSBManualDMX(userAuth, application.Store, usbManual),
 		httpapi.WithScopedOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence, audioScope),

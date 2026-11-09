@@ -140,3 +140,23 @@ The installer verifies the relay binary against the release `SHA256SUMS`, instal
 ### Restart expectations
 
 The systemd service uses `Restart=on-failure`; camera-source loss itself does **not** terminate the relay process because the relay retries upstream internally. A Pi reboot or unexpected relay process failure therefore restores the service without requiring an operator shell, while ordinary camera reconnects remain within the same relay process.
+
+## Project-scoped browser viewing through the Hub
+
+This optional browser path is configured independently of the general project ACL rollout.
+Bind the authenticated standalone Relay to a numeric loopback address on the Hub host.
+Give the Hub read access to the Relay's owner-only **viewer** token file, and configure:
+
+- `STAGECORE_CAMERA_VIEW_PROJECT_ID` with the exact project ID authorized to see this feed.
+- `STAGECORE_CAMERA_VIEW_RELAY` with the numeric loopback address and port, such as `127.0.0.1:9081`.
+- `STAGECORE_CAMERA_VIEW_TOKEN_FILE` with the viewer token file path.
+
+In Live Video, eligible users see **Open project camera**. The browser request
+uses the existing Hub session and requires live `project.view` and `media.read`
+grants. The Hub keeps the Relay credential server-side and checks browser
+authorization each second, including during idle streams. Revocation cancels the
+Relay request and disconnects the browser. The Hub route forwards JPEG viewing
+only, and uses a fixed upstream path with no redirects or client query forwarding.
+A LAN-accessible direct Relay listener would provide a separate path to the feed,
+so keep this Relay on loopback when using project-scoped viewing. This does not
+change how tablets obtain their live streams.
