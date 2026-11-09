@@ -3,6 +3,7 @@ package timingintelligence
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 type mutableClock struct{ now time.Time }
 
-func (c *mutableClock) Now() time.Time { return c.now.UTC() }
+func (c *mutableClock) Now() time.Time          { return c.now.UTC() }
 func (c *mutableClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 
 type timingFixture struct {
@@ -118,8 +119,8 @@ func TestReportUsesTrustedSequentialIntervalsAndPartialRehearsals(t *testing.T) 
 	service := New(fixture.store, fixture.clock)
 	report, err := service.Report(context.Background(), fixture.projectID, ReportOptions{
 		RuntimeSnapshotID: fixture.snapshot.ID,
-		SectionFromCueID: fixture.cues[0].ID,
-		SectionToCueID: fixture.cues[2].ID,
+		SectionFromCueID:  fixture.cues[0].ID,
+		SectionToCueID:    fixture.cues[2].ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -141,8 +142,8 @@ func TestReportUsesTrustedSequentialIntervalsAndPartialRehearsals(t *testing.T) 
 	if report.Section == nil || report.Section.Statistics.SampleCount != 2 {
 		t.Fatalf("section=%+v", report.Section)
 	}
-	if report.Section.Statistics.MedianUS != (105*time.Second).Microseconds() {
-		t.Fatalf("section median=%d want %d", report.Section.Statistics.MedianUS, (105*time.Second).Microseconds())
+	if report.Section.Statistics.MedianUS != (105 * time.Second).Microseconds() {
+		t.Fatalf("section median=%d want %d", report.Section.Statistics.MedianUS, (105 * time.Second).Microseconds())
 	}
 	candidate := findCandidate(t, report, partial.ID)
 	if !candidate.Effective || candidate.LifecycleState != domain.SessionLifecycleStopped {
@@ -284,4 +285,68 @@ func findCandidate(t *testing.T, report Report, sessionID string) SessionCandida
 	}
 	t.Fatalf("candidate %s not found", sessionID)
 	return SessionCandidate{}
+}
+
+func TestTimingCapturePausePreservesRawEventsAndReanchorsTraining(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	rehearsal, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionRehearsal, Name: "Pause rehearsal",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(paused bool) {
+		t.Helper()
+		if err := service.SetTimingCapturePaused(ctx, f.projectID, rehearsal.ID, "operator", paused); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.executeCue(t, rehearsal.ID, f.cues[0].ID)
+	set(true)
+	set(true)
+	f.clock.Advance(15 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[1].ID)
+	set(false)
+	f.clock.Advance(20 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[2].ID)
+	f.clock.Advance(time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[0].ID)
+	f.clock.Advance(2 * time.Second)
+	f.executeCue(t, rehearsal.ID, f.cues[1].ID)
+	if err := f.store.EndSessionLifecycle(ctx, rehearsal.ID, domain.SessionLifecycleCompleted, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, rehearsal.ID, "operator", true); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("ended session accepted mutation: %v", err)
+	}
+	records, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 5 || records[0].TrainingExcluded || !records[1].TrainingExcluded || !records[2].TrainingExcluded || records[3].TrainingExcluded || records[4].TrainingExcluded {
+		t.Fatalf("unexpected retained observations: %+v", records)
+	}
+	report, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Transitions) != 1 || report.Transitions[0].Statistics.SampleCount != 1 || report.Transitions[0].Statistics.MedianUS != int64(2*time.Second/time.Microsecond) {
+		t.Fatalf("training used interrupted observations: %+v", report.Transitions)
+	}
+	events, err := f.store.ListEvents(ctx, rehearsal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.EventType == "timing.capture_paused" || event.EventType == "timing.capture_resumed" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected two journal changes, got %d", count)
+	}
 }

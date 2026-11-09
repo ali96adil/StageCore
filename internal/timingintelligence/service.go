@@ -46,6 +46,7 @@ type SessionCandidate struct {
 	SelectionMode     store.TimingSelectionMode    `json:"selection_mode"`
 	Eligible          bool                         `json:"eligible"`
 	Effective         bool                         `json:"effective"`
+	CapturePaused     bool                         `json:"capture_paused"`
 	ObservationCount  int                          `json:"observation_count"`
 	Reason            string                       `json:"reason,omitempty"`
 }
@@ -144,6 +145,10 @@ func New(stageStore *store.Store, stageClock clock.Clock) *Service {
 	return &Service{store: stageStore, clock: stageClock}
 }
 
+func (s *Service) SetTimingCapturePaused(ctx context.Context, projectID, sessionID, actor string, paused bool) error {
+	return s.store.SetTimingCapturePaused(ctx, projectID, sessionID, actor, paused)
+}
+
 func (s *Service) SetSessionSelection(ctx context.Context, projectID, sessionID string, mode store.TimingSelectionMode, updatedBy string) (store.TimingSessionSelection, error) {
 	if s == nil || s.store == nil {
 		return store.TimingSessionSelection{}, errors.New("timing intelligence is unavailable")
@@ -198,6 +203,11 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 	if err != nil {
 		return Report{}, err
 	}
+	capturePaused, err := s.store.TimingCapturePausedSessions(ctx, projectID)
+	if err != nil {
+		return Report{}, err
+	}
+
 	obsCount := make(map[string]int)
 	for _, record := range observations {
 		obsCount[record.SessionID]++
@@ -243,7 +253,7 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 			SessionID: session.ID, Name: session.Name, LifecycleState: session.LifecycleState,
 			StartedAt: session.StartedAt, EndedAt: session.EndedAt, RuntimeSnapshotID: session.RuntimeSnapshotID,
 			SnapshotMatch: match, SelectionMode: mode, Eligible: eligible, Effective: effective,
-			ObservationCount: obsCount[session.ID], Reason: reason,
+			CapturePaused: capturePaused[session.ID], ObservationCount: obsCount[session.ID], Reason: reason,
 		})
 	}
 
@@ -255,7 +265,7 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 			continue
 		}
 		sessionObservations[record.SessionID] = append(sessionObservations[record.SessionID], parsed)
-		if !trusted[record.SessionID] || record.SnapshotContentHash != target.ContentHash {
+		if parsed.TrainingExcluded || !trusted[record.SessionID] || record.SnapshotContentHash != target.ContentHash {
 			continue
 		}
 		if parsed.Path.Kind != "NEXT" || parsed.Path.FromCueID == "" || parsed.Path.ToCueID == "" || parsed.CueToCueElapsedUS == nil || *parsed.CueToCueElapsedUS <= 0 {
@@ -373,6 +383,7 @@ func enabledCueIndex(manifest snapshot.Manifest) ([]CueRef, map[string]CueRef) {
 }
 
 type observation struct {
+	TrainingExcluded bool
 	SessionID         string
 	CueID             string `json:"cue_id"`
 	CueStartedAtUS    int64  `json:"cue_started_at_us"`
@@ -391,6 +402,7 @@ func decodeObservation(record store.TimingObservationRecord) (observation, error
 		return observation{}, err
 	}
 	parsed.SessionID = record.SessionID
+	parsed.TrainingExcluded = record.TrainingExcluded
 	return parsed, nil
 }
 
@@ -511,6 +523,13 @@ func buildSectionStatistics(fromID, toID string, cues []CueRef, cueByID map[stri
 		endUS := int64(0)
 		progress := 0
 		for _, obs := range observations {
+			if obs.TrainingExcluded {
+				if progress == len(expected) {
+					break
+				}
+				startUS, endUS, progress = 0, 0, 0
+				continue
+			}
 			if obs.Path.Kind != "NEXT" {
 				continue
 			}

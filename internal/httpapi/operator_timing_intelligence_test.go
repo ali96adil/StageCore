@@ -38,6 +38,10 @@ func (f *fakeTimingIntelligenceService) SetSessionSelection(_ context.Context, p
 	return store.TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: updatedBy}, nil
 }
 
+func (*fakeTimingIntelligenceService) SetTimingCapturePaused(context.Context, string, string, string, bool) error {
+	return nil
+}
+
 func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

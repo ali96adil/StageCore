@@ -33,6 +33,7 @@ type TimingObservationRecord struct {
 	SessionID           string          `json:"session_id"`
 	RuntimeSnapshotID   string          `json:"runtime_snapshot_id"`
 	SnapshotContentHash string          `json:"snapshot_content_hash"`
+	TrainingExcluded    bool
 	Payload             json.RawMessage `json:"payload"`
 }
 
@@ -132,25 +133,35 @@ func (s *Store) GetTimingSessionSelection(ctx context.Context, projectID, sessio
 
 func (s *Store) ListTimingObservationRecords(ctx context.Context, projectID string) ([]TimingObservationRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT er.sequence, er.session_id, se.runtime_snapshot_id, rs.content_hash, er.payload_json
+		SELECT er.sequence, er.session_id, se.runtime_snapshot_id, rs.content_hash, er.event_type, er.payload_json
 		FROM event_records er
 		JOIN sessions se ON se.session_id = er.session_id
 		JOIN runtime_snapshots rs ON rs.runtime_snapshot_id = se.runtime_snapshot_id
 		WHERE er.project_id = ?
-		  AND er.event_type = 'cue.timing_observed'
+		  AND er.event_type IN ('cue.timing_observed', ?, ?)
 		  AND se.session_type = 'REHEARSAL'
-		ORDER BY er.sequence`, strings.TrimSpace(projectID))
+		ORDER BY er.sequence`, strings.TrimSpace(projectID), timingCapturePaused, timingCaptureResumed)
 	if err != nil {
 		return nil, fmt.Errorf("list timing observations: %w", err)
 	}
 	defer rows.Close()
 	out := make([]TimingObservationRecord, 0)
+	type captureState struct { paused, reanchor bool }
+	states := map[string]captureState{}
 	for rows.Next() {
 		var item TimingObservationRecord
-		var payload string
-		if err := rows.Scan(&item.Sequence, &item.SessionID, &item.RuntimeSnapshotID, &item.SnapshotContentHash, &payload); err != nil {
+		var kind, payload string
+		if err := rows.Scan(&item.Sequence, &item.SessionID, &item.RuntimeSnapshotID, &item.SnapshotContentHash, &kind, &payload); err != nil {
 			return nil, fmt.Errorf("scan timing observation: %w", err)
 		}
+		state := states[item.SessionID]
+		if kind != "cue.timing_observed" {
+			states[item.SessionID] = captureState{paused: kind == timingCapturePaused, reanchor: true}
+			continue
+		}
+		item.TrainingExcluded = state.paused || state.reanchor
+		state.reanchor = false
+		states[item.SessionID] = state
 		item.Payload = json.RawMessage(payload)
 		out = append(out, item)
 	}

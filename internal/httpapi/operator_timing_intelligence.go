@@ -15,10 +15,12 @@ import (
 type TimingIntelligenceService interface {
 	Report(context.Context, string, timingintelligence.ReportOptions) (timingintelligence.Report, error)
 	SetSessionSelection(context.Context, string, string, store.TimingSelectionMode, string) (store.TimingSessionSelection, error)
+	SetTimingCapturePaused(context.Context, string, string, string, bool) error
 }
 
 type timingSelectionRequest struct {
-	Mode store.TimingSelectionMode `json:"mode"`
+	Mode   store.TimingSelectionMode `json:"mode,omitempty"`
+	Paused *bool                     `json:"paused,omitempty"`
 }
 
 func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntelligenceService) Option {
@@ -49,10 +51,10 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			}
 			report, err := service.Report(r.Context(), r.PathValue("project_id"), timingintelligence.ReportOptions{
 				RuntimeSnapshotID: strings.TrimSpace(r.URL.Query().Get("runtime_snapshot_id")),
-				SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
-				LeadTime: leadTime,
-				SectionFromCueID: fromCue,
-				SectionToCueID: toCue,
+				SessionID:         strings.TrimSpace(r.URL.Query().Get("session_id")),
+				LeadTime:          leadTime,
+				SectionFromCueID:  fromCue,
+				SectionToCueID:    toCue,
 			})
 			if err != nil {
 				writeProjectStoreError(w, err)
@@ -64,6 +66,21 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/timing-intelligence/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			var body timingSelectionRequest
 			if !decodeBoundedJSON(w, r, &body) {
+				return
+			}
+			if body.Paused != nil {
+				if body.Mode != "" {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
+					return
+				}
+				if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+					return
+				}
+				if err := service.SetTimingCapturePaused(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused); err != nil {
+					writeProjectStoreError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]bool{"capture_paused": *body.Paused})
 				return
 			}
 			selection, err := service.SetSessionSelection(

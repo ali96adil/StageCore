@@ -32,6 +32,9 @@ const f028Copy = {
   "timing.seconds": { en: "seconds", "ar-IQ": "ثانية" },
   "timing.rehearsals": { en: "Trusted rehearsals", "ar-IQ": "البروفات الموثوقة" },
   "timing.rehearsals_detail": { en: "AUTO uses completed or intentionally stopped rehearsals on the same immutable Snapshot content. INCLUDE/EXCLUDE changes only training selection; history remains intact.", "ar-IQ": "يستخدم AUTO البروفات المكتملة أو المتوقفة قصداً على نفس محتوى اللقطة غير القابل للتغيير. INCLUDE/EXCLUDE يغيّر اختيار التدريب فقط ويبقى السجل محفوظاً." },
+  "timing.pause_capture": { en: "Pause timing capture", "ar-IQ": "أوقف تسجيل التوقيت مؤقتاً" },
+  "timing.resume_capture": { en: "Resume timing capture", "ar-IQ": "استأنف تسجيل التوقيت" },
+  "timing.capture_paused": { en: "Timing capture paused", "ar-IQ": "تسجيل التوقيت متوقف مؤقتاً" },
   "timing.session": { en: "Rehearsal", "ar-IQ": "البروفة" },
   "timing.lifecycle": { en: "Lifecycle", "ar-IQ": "حالة الجلسة" },
   "timing.observations": { en: "Observations", "ar-IQ": "المشاهدات" },
@@ -184,7 +187,10 @@ function f028SessionTable(sessions) {
     <thead><tr><th>${esc(f028T("timing.session"))}</th><th>${esc(f028T("timing.lifecycle"))}</th><th>${esc(f028T("timing.observations"))}</th><th>${esc(f028T("timing.snapshot_match"))}</th><th>${esc(f028T("timing.training"))}</th><th>${esc(f028T("timing.selection"))}</th></tr></thead>
     <tbody>${sessions.map((session) => `<tr data-timing-session="${esc(session.session_id)}">
       <td><strong>${esc(session.name || session.session_id)}</strong><div class="mono muted">${esc(session.session_id)}</div>${session.reason ? `<div class="muted">${esc(session.reason)}</div>` : ""}</td>
-      <td>${pill(session.lifecycle_state, session.eligible ? "good" : "neutral")}</td>
+      <td>${pill(session.lifecycle_state, session.eligible ? "good" : "neutral")}
+        ${session.capture_paused ? pill(f028T("timing.capture_paused"), "warn") : ""}
+        ${editable && session.lifecycle_state === "ACTIVE" ? `<button type="button" class="button ghost timing-capture-toggle" data-session-id="${esc(session.session_id)}" data-paused="${session.capture_paused ? "true" : "false"}">${esc(f028T(session.capture_paused ? "timing.resume_capture" : "timing.pause_capture"))}</button>` : ""}
+      </td>
       <td>${esc(session.observation_count)}</td>
       <td>${pill(session.snapshot_match ? f028T("timing.yes") : f028T("timing.no"), session.snapshot_match ? "good" : "warn")}</td>
       <td>${pill(session.effective ? f028T("timing.used") : f028T("timing.not_used"), session.effective ? "good" : "neutral")}</td>
@@ -269,6 +275,23 @@ async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "
     renderTimingIntelligenceWorkspace(from, to).catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
   });
   el("timingSectionClear")?.addEventListener("click", () => renderTimingIntelligenceWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
+
+  content.querySelectorAll(".timing-capture-toggle").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(report.project_id)}/timing-intelligence/sessions/${encodeURIComponent(button.dataset.sessionId)}`, {
+          method: "PUT", json: { paused: button.dataset.paused !== "true" },
+        });
+        if (state.project?.project_id === report.project_id) {
+          await renderTimingIntelligenceWorkspace(sectionFrom, sectionTo);
+        }
+      } catch (error) {
+        button.disabled = false;
+        setMessage(globalMessage, errorMessage(error), "error");
+      }
+    });
+  });
 
   content.querySelectorAll(".timing-selection").forEach((select) => {
     select.addEventListener("change", async () => {
