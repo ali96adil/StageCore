@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -157,19 +158,10 @@ func WithOperatorStageDeviceFirmware(
 					CreatedAt: time.Now().UTC(),
 				}
 
-				token, _ := browserSessionToken(r)
-				authorize := func() error {
-					if err := capability.CheckDispatch(r.Context()); err != nil {
-						return err
-					}
-					current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
-					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
-						userauth.Authorize(current.User.Role, userauth.PermissionDeviceFirmwareManage) != nil {
-						return capability.ErrDispatchAuthorityRevoked
-					}
-					return nil
-				}
-				imported, err := artifacts.ImportQualifiedWithAuthorization(metadata, source, authorize)
+				authorize := firmwareMutationAuthorization(r, auth, session)
+				imported, err := artifacts.ImportQualifiedWithAuthorization(metadata, source, func() error {
+					return authorize(r.Context())
+				})
 				if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
 					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": capability.DispatchAuthorityRevokedCode})
 					return
@@ -333,6 +325,10 @@ func WithOperatorStageDeviceFirmware(
 					return
 				}
 
+				if err := firmwareMutationAuthorization(r, auth, session)(r.Context()); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": capability.DispatchAuthorityRevokedCode})
+					return
+				}
 				record, err := updates.Issue(r.Context(), manifest, session.User.ID)
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -473,11 +469,14 @@ func WithOperatorStageDeviceFirmware(
 					return
 				}
 
-				sent, err := runtime.SendFirmwareMaintenance(r.Context(), updateID)
+				dispatch := capability.WithDispatchCheck(r.Context(), firmwareMutationAuthorization(r, auth, session))
+				sent, err := runtime.SendFirmwareMaintenance(dispatch, updateID)
 				if err != nil {
 					status := http.StatusConflict
 					code := "STAGE_DEVICE_FIRMWARE_SEND_REJECTED"
 					switch {
+					case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+						status, code = http.StatusForbidden, capability.DispatchAuthorityRevokedCode
 					case errors.Is(err, devicechannel.ErrFirmwareMaintenanceOffline):
 						code = "STAGE_DEVICE_FIRMWARE_DEVICE_OFFLINE"
 					case errors.Is(err, devicechannel.ErrFirmwareMaintenanceProtocol):
@@ -524,6 +523,23 @@ func firmwareMaintenanceDeviceEligible(device deviceexperience.Device) bool {
 		strings.TrimSpace(device.ID) != "" &&
 		strings.TrimSpace(device.ProfileID) != "" &&
 		strings.TrimSpace(device.ClientVersion) != ""
+}
+
+// Firmware mutations require the original live session through artifact
+// publication, manifest issuance, and the device transport write.
+func firmwareMutationAuthorization(r *http.Request, auth *userauth.Service, session userauth.Session) func(context.Context) error {
+	token, _ := browserSessionToken(r)
+	csrf := r.Header.Get(csrfHeader)
+	ownerOnly := qualificationAccess(r, nil) != nil
+	return func(ctx context.Context) error {
+		current, err := auth.ValidateCSRF(ctx, token, csrf)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, userauth.PermissionDeviceFirmwareManage) != nil ||
+			(ownerOnly && current.User.Role != userauth.RoleOwner) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	}
 }
 
 func firmwareMaintenanceStateReady(device deviceexperience.Device) error {

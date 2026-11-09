@@ -375,6 +375,52 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].ArtifactID != response.Artifact.ArtifactID {
 		t.Fatalf("revoked upload affected the firmware registry: %d artifacts, err=%v", len(items), err)
 	}
+
+	// Seed an already-qualified runtime observation in the isolated fixture.
+	ready := readyStageLaserDevice(t).Runtime
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: device.ID, Connection: ready.Connection, Readiness: ready.Readiness, ObservedState: ready.ObservedState,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "UPDATE stage_device_runtime_state SET readiness = ? WHERE device_id = ?", ready.Readiness, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	owner, err = h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issueManifest := func(revoke bool) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/stage-devices/"+device.ID+"/firmware-updates",
+			strings.NewReader(`{"artifact_id":"`+response.Artifact.ArtifactID+`"}`))
+		req.RemoteAddr = "127.0.0.1:19901"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeader, owner.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		if revoke {
+			req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Fatal(err)
+				}
+			}}
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if issued := issueManifest(false); issued.Code != http.StatusCreated {
+		t.Fatalf("active session could not issue manifest: %d %s", issued.Code, issued.Body.String())
+	}
+	if revoked := issueManifest(true); revoked.Code != http.StatusForbidden ||
+		!strings.Contains(revoked.Body.String(), "DISPATCH_AUTHORITY_REVOKED") {
+		t.Fatalf("revoked session issued manifest: %d %s", revoked.Code, revoked.Body.String())
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_firmware_updates").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("revocation changed persisted firmware updates: %d, err=%v", count, err)
+	}
 }
 
 type firmwareUploadRevokeReader struct {
