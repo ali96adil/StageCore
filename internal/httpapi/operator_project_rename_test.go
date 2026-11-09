@@ -118,3 +118,40 @@ func TestRenamePermissionDeniedForViewer(t *testing.T) {
 	p,err:=s.GetProject(ctx,project.ID)
 	if err!=nil || p.Name!="Read only"{t.Fatalf("viewer modified project: %+v %v",p,err)}
 }
+
+func TestProjectMutationsRejectRevokedSessionAfterBodyRead(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorProjects(h.auth, projects)).Handler()
+	path := "/api/v1/projects/" + project.ID
+	for _, mutation := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/projects"},
+		{http.MethodPost, path + "/duplicate"},
+		{http.MethodPatch, path},
+	} {
+		login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := authenticatedMutationRequest(t, mutation.method, mutation.path, []byte(`{"name":"Unexpected"}`), login.Token, login.CSRFToken)
+		req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Fatal(err)
+			}
+		}}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s returned %d: %s", mutation.method, mutation.path, rec.Code, rec.Body)
+		}
+	}
+	items, err := projects.ListProjects(ctx)
+	if err != nil || len(items) != 1 || items[0].Name != "Original" {
+		t.Fatalf("revoked request changed projects: %+v, %v", items, err)
+	}
+}
