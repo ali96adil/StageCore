@@ -23,6 +23,7 @@ func WithScopedProjectMediaDownload(auth *userauth.Service, access *projectacces
 		if auth == nil || access == nil || projects == nil || objects == nil {
 			return
 		}
+		s.projectMediaDownload = true
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/files/{version_id}/download",
 			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				if !allowScopedProject(w, r, session, access, projectaccess.MediaRead) {

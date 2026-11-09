@@ -20,8 +20,7 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectA);
-		!errors.Is(err, projectaccess.ErrDenied) {
+	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectA); !errors.Is(err, projectaccess.ErrDenied) {
 		t.Fatalf("project.view alone exposed Project Files: %v", err)
 	}
 	workspace, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, f.projectA)
@@ -74,8 +73,7 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, clone.ID);
-		!errors.Is(err, projectaccess.ErrDenied) {
+	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, clone.ID); !errors.Is(err, projectaccess.ErrDenied) {
 		t.Fatalf("duplicated Project inherited operator membership: %v", err)
 	}
 	copied, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, clone.ID)
@@ -104,15 +102,13 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 		len(renamed.Files) != len(media) {
 		t.Fatalf("rename broke Project workspace: %+v err=%v", renamed, err)
 	}
-	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectB);
-		!errors.Is(err, projectaccess.ErrDenied) {
+	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectB); !errors.Is(err, projectaccess.ErrDenied) {
 		t.Fatalf("Operator could enumerate an unassigned Project: %v", err)
 	}
 	if err := f.a.SetPermissions(ctx, f.ownerID, f.operatorID, f.projectA, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectA);
-		!errors.Is(err, projectaccess.ErrDenied) {
+	if _, err := f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectA); !errors.Is(err, projectaccess.ErrDenied) {
 		t.Fatalf("revoked operator kept Project Files access: %v", err)
 	}
 }
@@ -143,8 +139,31 @@ func TestProjectFileWorkspaceBoundsUnpagedListing(t *testing.T) {
 		len(workspace.Files) != 0 {
 		t.Fatalf("large workspace silently truncated: %+v err=%v", workspace, err)
 	}
-	if _, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, "unknown");
-		!errors.Is(err, projectaccess.ErrDenied) {
+	seen := map[string]bool{}
+	cursor := ""
+	for page := 0; page < 6; page++ {
+		workspace, err := f.a.ListScopedProjectFilesPage(ctx, f.ownerID, f.projectA, 100, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range workspace.Files {
+			if seen[file.MediaAssetID] {
+				t.Fatal("duplicate asset in cursor pagination")
+			}
+			seen[file.MediaAssetID] = true
+		}
+		cursor = workspace.NextCursor
+		if page == 0 {
+			if _, err := f.a.ListScopedProjectFilesPage(ctx, f.ownerID, f.projectB, 100, cursor); !errors.Is(err, projectaccess.ErrInvalid) {
+				t.Fatalf("foreign project accepted cursor: %v", err)
+			}
+		}
+	}
+	if len(seen) != 501 || cursor != "" {
+		t.Fatalf("paginated workspace returned %d assets; next=%q", len(seen), cursor)
+	}
+
+	if _, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, "unknown"); !errors.Is(err, projectaccess.ErrDenied) {
 		t.Fatalf("unknown Project exposed: %v", err)
 	}
 }

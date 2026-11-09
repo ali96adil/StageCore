@@ -18,15 +18,16 @@ import (
 )
 
 type Server struct {
-	mux                 *http.ServeMux
-	companionAuth       *companionauth.Service
-	companionRuntime    *companionchannel.RuntimeChannel
-	vault               *stagevault.Vault
-	companionVaultScope *store.Store
-	software            *software.Repository
-	bulk                *bulk.Manager
-	storageHealth       *storagehealth.Monitor
-	assistantWorkspace  *assistant.WorkspaceService
+	mux                  *http.ServeMux
+	companionAuth        *companionauth.Service
+	companionRuntime     *companionchannel.RuntimeChannel
+	vault                *stagevault.Vault
+	companionVaultScope  *store.Store
+	projectMediaDownload bool
+	software             *software.Repository
+	bulk                 *bulk.Manager
+	storageHealth        *storagehealth.Monitor
+	assistantWorkspace   *assistant.WorkspaceService
 }
 
 type Option func(*Server)

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -36,7 +37,7 @@ func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 			}))
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/files",
-			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
+			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				projectID := strings.TrimSpace(r.PathValue("project_id"))
 				if projectID == "" {
 					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_FILES_NOT_FOUND"})
@@ -44,8 +45,22 @@ func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 				}
 				// ListScopedProjectFiles rechecks live grants on both sides of
 				// its database reads; no raw filesystem path is returned.
-				workspace, err := access.ListScopedProjectFiles(r.Context(), session.User.ID, projectID)
+				var workspace projectaccess.ProjectFileWorkspace
+				var err error
+				query := r.URL.Query()
+				if query.Has("page_size") || query.Has("cursor") {
+					size, parseErr := strconv.Atoi(query.Get("page_size"))
+					if parseErr != nil {
+						size = 0
+					}
+					workspace, err = access.ListScopedProjectFilesPage(r.Context(), session.User.ID, projectID, size, query.Get("cursor"))
+				} else {
+					workspace, err = access.ListScopedProjectFiles(r.Context(), session.User.ID, projectID)
+				}
 				switch {
+				case errors.Is(err, projectaccess.ErrInvalid):
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_FILES_CURSOR_INVALID"})
+					return
 				case errors.Is(err, projectaccess.ErrDenied), errors.Is(err, projectaccess.ErrNotFound):
 					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_FILES_NOT_FOUND"})
 					return
@@ -56,11 +71,17 @@ func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_FILES_UNAVAILABLE"})
 					return
 				}
+				current, err := auth.ValidatePassive(r.Context(), token)
+				if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+					return
+				}
 				w.Header().Set("Cache-Control", "no-store")
 				writeJSON(w, http.StatusOK, map[string]any{
-					"workspace": workspace,
-					"read_only": true,
-					"scoped": true,
+					"workspace":          workspace,
+					"read_only":          true,
+					"scoped":             true,
+					"download_available": s.projectMediaDownload,
 				})
 			}))
 	}

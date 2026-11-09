@@ -10,7 +10,7 @@ inventory, not proof that a route uses the prospective policy.
 | Surface | Qualified behavior | Remaining qualification before cutover |
 | --- | --- | --- |
 | Projects and Show Capsule | Explicit alternate assembly qualifies list, detail, dashboard, rename, preview, export and Owner-only creation, duplication and global import. | Other project/revision/cue/session mutations and in-flight revocation across multi-stage writes. |
-| Project Files and browser Vault | Scoped listing and version-bound attachment download. Shared bytes do not grant a foreign project version. Downloads recheck both grant and session per chunk. | Browser presentation and pagination; remaining execution-environment media and ticket flows. |
+| Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. Downloads recheck both grant and session per chunk. | Activation and remaining execution-environment media and ticket flows. |
 | Companion Vault | Optional role, project and published Snapshot scope. Revocation closes an in-flight transfer. | Rollout against real Companion provisioning and separate capture-upload review. |
 | SSE | The current feed emits a session-ready event and keepalive, with a fresh session check before delivery. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
 | Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. | Apply live browser grants to setup, maintenance, provisioning and actuation. Test scope changes during operations. |

@@ -8,8 +8,10 @@ const scFileCopy = {
   nav: { en: "Files", "ar-IQ": "الملفات" },
   title: { en: "Project Files", "ar-IQ": "ملفات المشروع" },
   eyebrow: { en: "PROJECT MEDIA", "ar-IQ": "وسائط المشروع" },
-  description: { en: "Files referenced by this Project. Read-only: uploads, downloads and deletions are not enabled yet.", "ar-IQ": "الملفات المرتبطة بهذا المشروع. العرض للقراءة فقط؛ الرفع والتنزيل والحذف غير مفعّلة حالياً." },
+  description: { en: "Files referenced by this Project. Read-only access to registered media.", "ar-IQ": "الملفات المرتبطة بهذا المشروع. الوصول للوسائط المسجّلة للقراءة فقط." },
   refresh: { en: "Refresh", "ar-IQ": "تحديث" },
+  next: { en: "Next page", "ar-IQ": "الصفحة التالية" },
+  download: { en: "Download", "ar-IQ": "تنزيل" },
   name: { en: "Name", "ar-IQ": "الاسم" },
   type: { en: "Type", "ar-IQ": "النوع" },
   size: { en: "Size", "ar-IQ": "الحجم" },
@@ -33,6 +35,7 @@ scFilesNav.textContent = scFileT("nav");
 document.querySelector('#workspaceNav [data-page="cues"]')?.insertAdjacentElement("afterend", scFilesNav);
 
 let scFilesProbeGeneration = 0;
+let scFilesRenderGeneration = 0;
 
 async function scFilesUpdateForProject(projectID) {
   const generation = ++scFilesProbeGeneration;
@@ -49,12 +52,15 @@ async function scFilesUpdateForProject(projectID) {
   }
 }
 
-async function renderScopedProjectFiles() {
+async function renderScopedProjectFiles(cursor = "") {
+  const generation = ++scFilesRenderGeneration;
   const projectID = state.project?.project_id;
   if (!projectID) return;
   try {
-    const payload = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/files`);
-    if (!state.project || state.project.project_id !== projectID || state.page !== "files") return;
+    const base = `/api/v1/projects/${encodeURIComponent(projectID)}/files`;
+    const query = new URLSearchParams({page_size: "100", cursor});
+    const payload = await api(`${base}?${query}`);
+    if (generation !== scFilesRenderGeneration || !state.project || state.project.project_id !== projectID || state.page !== "files") return;
     const workspace = payload?.workspace;
     if (!payload?.read_only || !payload?.scoped || workspace?.project_id !== projectID ||
         !Array.isArray(workspace.files)) throw new Error("Invalid scoped Project Files response");
@@ -80,7 +86,8 @@ async function renderScopedProjectFiles() {
               <small class="muted">${esc(item.original_filename || "—")}</small></td>
             <td>${pill(item.category === "OTHER" ? scFileT("other") : item.category)}</td>
             <td>${esc(humanSize(item.size_bytes))}</td>
-            <td>${esc(item.asset_policy)}</td>
+            <td>${esc(item.asset_policy)}${payload.download_available === true && item.content_version_id && item.asset_policy !== "REFERENCE_ONLY"
+              ? `<br><a download href="${esc(`${base}/${encodeURIComponent(item.content_version_id)}/download`)}">${esc(scFileT("download"))}</a>` : ""}</td>
           </tr>`).join("")}</tbody></table></div>`
       : `<div class="empty">${esc(scFileT("empty"))}</div>`;
 
@@ -99,12 +106,18 @@ async function renderScopedProjectFiles() {
           ${["AUDIO","VIDEO","IMAGE","OTHER"].map((kind) => pill(`${kind}: ${counts[kind]}`)).join("")}
         </div>
       </section>
-      <section class="card">${table}</section>`;
+      <section class="card">${table}
+        ${workspace.next_cursor ? `<button id="nextScopedFiles" class="button" type="button">${esc(scFileT("next"))}</button>` : ""}
+      </section>`;
+    el("nextScopedFiles")?.addEventListener("click", (event) => {
+      event.currentTarget.disabled = true;
+      renderScopedProjectFiles(workspace.next_cursor);
+    });
     el("refreshScopedFiles")?.addEventListener("click", () => {
       renderScopedProjectFiles().catch((err) => setMessage(globalMessage, errorMessage(err), "error"));
     });
   } catch (error) {
-    if (state.project?.project_id !== projectID || state.page !== "files") return;
+    if (generation !== scFilesRenderGeneration || state.project?.project_id !== projectID || state.page !== "files") return;
     if (error.status === 404 || error.status === 403) {
       scFilesNav.classList.add("hidden");
     }

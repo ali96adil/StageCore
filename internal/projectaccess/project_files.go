@@ -2,6 +2,9 @@ package projectaccess
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -28,14 +31,14 @@ type ProjectFileWorkspace struct {
 	ProjectID   string        `json:"project_id"`
 	ProjectName string        `json:"project_name"`
 	Files       []ProjectFile `json:"files"`
+	NextCursor  string        `json:"next_cursor,omitempty"`
 }
 
 var ErrWorkspacePaginationRequired = errors.New("projectaccess: Project Files exceed unpaged qualification limit")
 
 const maxUnpagedProjectFiles = 500
 
-// ListScopedProjectFiles is a READ-ONLY, UNWIRED qualification helper for a
-// future authenticated Project Files browser route. Only users with live
+// ListScopedProjectFiles supplies the bounded legacy unpaged view. Only users with live
 // Project media.read grants can inspect file names or metadata, including
 // empty workspaces. It never enumerates other Projects or exposes Vault paths.
 // The future HTTP route must revalidate session/grants at response/stream time;
@@ -43,6 +46,35 @@ const maxUnpagedProjectFiles = 500
 func (s *Service) ListScopedProjectFiles(
 	ctx context.Context, userID, projectID string,
 ) (ProjectFileWorkspace, error) {
+	return s.listScopedProjectFiles(ctx, userID, projectID, maxUnpagedProjectFiles, false, fileCursor{})
+}
+
+type fileCursor struct {
+	Project string
+	Name    string `json:"-"`
+	Asset   string
+	Created int64 `json:"-"`
+	Version string
+}
+
+// ListScopedProjectFilesPage preserves the unpaged sort and resumes after the
+// last returned asset/version. Each page independently checks live grants.
+func (s *Service) ListScopedProjectFilesPage(ctx context.Context, userID, projectID string, size int, cursor string) (ProjectFileWorkspace, error) {
+	projectID = strings.TrimSpace(projectID)
+	if size < 1 || size > 100 || len(cursor) > 4096 {
+		return ProjectFileWorkspace{}, ErrInvalid
+	}
+	var after fileCursor
+	if cursor != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+		if err != nil || json.Unmarshal(decoded, &after) != nil || after.Project != projectID || after.Asset == "" {
+			return ProjectFileWorkspace{}, ErrInvalid
+		}
+	}
+	return s.listScopedProjectFiles(ctx, userID, projectID, size, true, after)
+}
+
+func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID string, size int, paginated bool, after fileCursor) (ProjectFileWorkspace, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(userID) == "" ||
 		strings.TrimSpace(projectID) == "" {
 		return ProjectFileWorkspace{}, ErrDenied
@@ -59,6 +91,20 @@ func (s *Service) ListScopedProjectFiles(
 		// to callers of an eventual HTTP wrapper.
 		return ProjectFileWorkspace{}, ErrDenied
 	}
+	if after.Asset != "" {
+		err := s.db.QueryRowContext(ctx, `
+			SELECT a.name, -COALESCE(v.created_at_us, 0)
+			FROM media_assets a
+			LEFT JOIN media_content_versions v ON v.media_asset_id = a.media_asset_id
+			WHERE a.project_id = ? AND a.media_asset_id = ? AND COALESCE(v.content_version_id, '') = ?
+		`, projectID, after.Asset, after.Version).Scan(&after.Name, &after.Created)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProjectFileWorkspace{}, ErrInvalid
+		}
+		if err != nil {
+			return ProjectFileWorkspace{}, fmt.Errorf("resolve Project Files cursor: %w", err)
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.media_asset_id, a.name, a.asset_policy,
 		       COALESCE(v.content_version_id, ''),
@@ -66,21 +112,36 @@ func (s *Service) ListScopedProjectFiles(
 		       COALESCE(v.size_bytes, 0)
 		FROM media_assets a
 		LEFT JOIN media_content_versions v ON v.media_asset_id = a.media_asset_id
-		WHERE a.project_id = ?
+		WHERE a.project_id = ? AND (? = '' OR
+		   (a.name COLLATE NOCASE, a.media_asset_id, -COALESCE(v.created_at_us, 0), COALESCE(v.content_version_id, ''))
+		   > (?, ?, ?, ?))
 		ORDER BY a.name COLLATE NOCASE, a.media_asset_id,
-		         v.created_at_us DESC, v.content_version_id
+		         -COALESCE(v.created_at_us, 0), COALESCE(v.content_version_id, '')
 		LIMIT ?
-	`, projectID, maxUnpagedProjectFiles+1)
+	`, projectID, after.Asset, after.Name, after.Asset, after.Created, after.Version, size+1)
 	if err != nil {
 		return ProjectFileWorkspace{}, fmt.Errorf("query Project Files: %w", err)
 	}
 	defer rows.Close()
 	files := make([]ProjectFile, 0)
+	var last fileCursor
+	var nextCursor string
 	for rows.Next() {
 		var item ProjectFile
 		if err := rows.Scan(&item.MediaAssetID, &item.MediaAssetName, &item.AssetPolicy,
 			&item.ContentVersionID, &item.OriginalFilename, &item.SizeBytes); err != nil {
 			return ProjectFileWorkspace{}, fmt.Errorf("scan Project File: %w", err)
+		}
+		if len(files) == size {
+			if !paginated {
+				return ProjectFileWorkspace{}, ErrWorkspacePaginationRequired
+			}
+			encoded, err := json.Marshal(last)
+			if err != nil {
+				return ProjectFileWorkspace{}, err
+			}
+			nextCursor = base64.RawURLEncoding.EncodeToString(encoded)
+			break
 		}
 		filename := item.OriginalFilename
 		if filename == "" {
@@ -88,9 +149,7 @@ func (s *Service) ListScopedProjectFiles(
 		}
 		item.Category = projectFileCategory(filename)
 		files = append(files, item)
-		if len(files) > maxUnpagedProjectFiles {
-			return ProjectFileWorkspace{}, ErrWorkspacePaginationRequired
-		}
+		last = fileCursor{Project: projectID, Asset: item.MediaAssetID, Version: item.ContentVersionID}
 	}
 	if err := rows.Err(); err != nil {
 		return ProjectFileWorkspace{}, fmt.Errorf("iterate Project Files: %w", err)
@@ -104,7 +163,7 @@ func (s *Service) ListScopedProjectFiles(
 		return ProjectFileWorkspace{}, err
 	}
 	return ProjectFileWorkspace{
-		ProjectID: projectID, ProjectName: projectName, Files: files,
+		ProjectID: projectID, ProjectName: projectName, Files: files, NextCursor: nextCursor,
 	}, nil
 }
 
