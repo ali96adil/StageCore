@@ -56,3 +56,74 @@ application callback. Honor the abort signal and `receiver_deadline_ms` at the
 point of action. A plain transport completion or a boolean cannot satisfy either
 handler. The client never repeats a claim on timeout. No Max patch or VDMX
 project automatically starts this client.
+
+## Installing the application integrations
+
+Both integrations are opt-in, use a separate gateway and application token per
+receiver, and require a non-show copy for first commissioning. Start the gateway
+and signed-ACK-enabled Companion using the private profiles above. Use separate
+Companion processes/profiles when qualifying each kind; this bridge URL selects
+one gateway. Existing OSC/MIDI routes are independent.
+
+### Ableton Live and Max for Live
+
+1. Copy `StageCore-Live-Receiver.maxpat`, `stagecore_live_track.js`,
+   `max_live_receiver.js` and `application_receiver.js` into the same Max
+   project folder. Open a Max Audio Effect for editing from Live, paste the
+   supplied patch objects and connections into it, and retain the device's
+   normal audio passthrough. Save the device and use Max's project dependency
+   tools to include the scripts. Place it at top level on a dedicated audio
+   track with a unique name.
+2. Launch Live/Max with `STAGECORE_LIVE_RECEIVER=1`,
+   `STAGECORE_ACK_GATEWAY_PORT`, `STAGECORE_ACK_APPLICATION_TOKEN` and
+   `STAGECORE_LIVE_TRACK` (exact case-sensitive track name). Use a Node for
+   Max runtime with Node 18+; keep the token out of the patch. In the device,
+   click **script start**, then enable the polling toggle.
+3. Use the signed `osc.send` action address `/stagecore/ableton/mute` with
+   exactly one `int32` argument of 0 or 1. This address is an adapter mapping.
+   The Max `js` object resolves the containing Track using LiveAPI, reads the
+   binding, rechecks that same object on apply, and confirms the resulting
+   `mute` property via LiveAPI. The receipt covers the Track property only.
+4. On the test track, toggle 0→1→0 through StageCore. Disable the patch or move
+   it to a different track mid-claim and verify that the Cue does not complete
+   with application ACK. Re-enable it and issue a new execution to recover.
+
+### VDMX
+
+1. Create a new slider in a test Control Surface, range 0–1, publish it to
+   OSCQuery and inspect its exact `FULL_PATH`. Add an OSC receiver for an
+   exclusive path such as `/stagecore/vdmx/opacity`. In the slider's
+   **Sending** tab add an OSC sender with type **Float**, same 0–1 range and
+   path `/stagecore/vdmx/opacity-applied` to a dedicated UDP port on 127.0.0.1.
+   Enable sending on value changes, including changes from the OSC receiver.
+   Use the VDMX control exclusively for StageCore while the adapter is running.
+2. Run `node tools/receiver-ack-lab/vdmx_receiver.js` with
+   `STAGECORE_VDMX_RECEIVER=1`, `STAGECORE_ACK_GATEWAY_PORT`,
+   `STAGECORE_ACK_APPLICATION_TOKEN`, `STAGECORE_VDMX_OSC_PORT`,
+   `STAGECORE_VDMX_QUERY_PORT`, `STAGECORE_VDMX_FEEDBACK_PORT`,
+   `STAGECORE_VDMX_INPUT`, `STAGECORE_VDMX_QUERY_PATH` and
+   `STAGECORE_VDMX_FEEDBACK` set to the test mapping. Use the existing input
+   and query ports. Do not add this slider to a production project first.
+3. Use the input path with one `float32` argument in 0–1 on a signed
+   `osc.send` action. The adapter requires a differing initial readback,
+   the slider's own matching outgoing OSC event, and a fresh matching
+   OSCQuery readback. An already-set value or lost event fails closed. This
+   is confirmation of a dedicated control change, with no evidence of
+   rendering or physical output. Local OSC/OSCQuery has no native execution
+   ID. The receiver assumes the configured local VDMX process exclusively
+   drives these paths; other local senders or manual writes to the same
+   slider invalidate that assumption.
+4. In VDMX verify one 0→0.5 change, then disable its sender and request 0.5→1.
+   Confirm that StageCore does not mark that action application-applied.
+   Re-enable feedback and send a new command with a different target.
+
+The automated tests execute the supplied Max script against the LiveAPI object
+contract and exercise the real VDMX receiver adapter over local UDP/HTTP. The
+test doubles stand in for the installed applications; repeat the above checks
+with the installed versions before using either profile at a show.
+
+Product references: [Live API](https://docs.cycling74.com/userguide/m4l/live_api/),
+[Track properties](https://docs.cycling74.com/apiref/lom/track/),
+[Node for Max](https://docs.cycling74.com/apiref/nodeformax/),
+[VDMX OSCQuery](https://docs.vidvox.net/vdmx/vdmx_oscquery),
+[VDMX data I/O](https://docs.vidvox.net/vdmx/vdmx_data_io).

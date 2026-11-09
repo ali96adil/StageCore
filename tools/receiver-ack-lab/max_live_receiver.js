@@ -1,0 +1,75 @@
+"use strict";
+
+const { randomUUID } = require("node:crypto");
+const { createApplicationReceiver } = require("./application_receiver");
+
+function registerLiveReceiver(max, {port, token, trackName}) {
+  if (typeof trackName !== "string" || !trackName.trim() || trackName.length > 80) {
+    throw new Error("configure the dedicated Live track name");
+  }
+  let pending;
+  let binding;
+  max.addHandler("stagecore_live_result", (ticket, ok, id) => {
+    if (ticket === pending?.ticket) pending.finish(ok === 1 && Number.isSafeInteger(id) && id > 0 ? id : null);
+  });
+
+  function requestLive(phase, command, signal, mute, trackID) {
+    signal.throwIfAborted();
+    const ticket = randomUUID();
+    return new Promise((resolve, reject) => {
+      function finish(id) {
+        if (pending?.ticket !== ticket) return;
+        pending = null;
+        signal.removeEventListener("abort", abort);
+        if (id === null) reject(new Error("Live API could not confirm the mapped operation"));
+        else resolve(id);
+      }
+      const abort = () => finish(null);
+      pending = {ticket, finish};
+      signal.addEventListener("abort", abort, {once: true});
+      Promise.resolve().then(() => max.outlet("stagecore_live", phase, ticket, trackName,
+        mute, trackID, "t" + command.receiver_deadline_ms)).catch(abort);
+    });
+  }
+
+  function receipt(command, status) {
+    return {status, execution_id: command.execution_id, correlation_id: command.correlation_id ?? null,
+      challenge: command.application_ack.challenge};
+  }
+
+  const processOne = createApplicationReceiver({port, token, kind: "ABLETON",
+    async accept(command, signal) {
+      binding = null;
+      const {address, arguments: args} = command.parameters ?? {};
+      if (command.capability !== "osc.send" || address !== "/stagecore/ableton/mute" ||
+          !Array.isArray(args) || args.length !== 1 || args[0]?.type !== "int32" ||
+          ![0, 1].includes(args[0].value)) throw new Error("unmapped Ableton action");
+      const mute = args[0].value;
+      binding = {command, mute, trackID: await requestLive("check", command, signal, mute, 0)};
+      return receipt(command, "APP_REPORTED_RECEIVED");
+    },
+    async apply(command, signal) {
+      if (binding?.command !== command) throw new Error("missing Live track binding");
+      const {mute, trackID} = binding;
+      binding = null;
+      if (await requestLive("apply", command, signal, mute, trackID) !== trackID) {
+        throw new Error("Live track changed during execution");
+      }
+      return receipt(command, "APP_REPORTED_APPLIED");
+    }
+  });
+  max.addHandler("poll", async () => {
+    try { await processOne(); } catch (_) { max.post("StageCore Live: no confirmed application result"); }
+  });
+}
+
+if (require.main === module) {
+  if (process.env.STAGECORE_LIVE_RECEIVER !== "1") throw new Error("StageCore Live receiver is disabled");
+  registerLiveReceiver(require("max-api"), {
+    port: Number(process.env.STAGECORE_ACK_GATEWAY_PORT),
+    token: process.env.STAGECORE_ACK_APPLICATION_TOKEN,
+    trackName: process.env.STAGECORE_LIVE_TRACK
+  });
+}
+
+module.exports = { registerLiveReceiver };
