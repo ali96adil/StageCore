@@ -13,6 +13,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -120,6 +121,20 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("ready SHOW gate allowed=%v err=%v", allowed, err)
 	}
+
+	now := time.Now()
+	rtc := offlineclock.RTC{Time: now, UsedAtBoot: true}
+	WithOfflineRTC(func() (offlineclock.RTC, error) { return rtc, nil })(service)
+	withRTC, err := service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)
+	if err != nil || !hasCheck(withRTC, "clock.offline_rtc", Pass) {
+		t.Fatalf("RTC boot readiness not reported: %+v, err=%v", withRTC.Checks, err)
+	}
+	rtc.Time = now.Add(-time.Minute)
+	withRTC, err = service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)
+	if err != nil || !hasCheck(withRTC, "clock.offline_rtc", Warn) || !withRTC.AllowsShow() {
+		t.Fatalf("RTC drift did not remain advisory: %+v, err=%v", withRTC.Checks, err)
+	}
+	WithOfflineRTC(nil)(service)
 
 	connected = false
 	offline, err := service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)

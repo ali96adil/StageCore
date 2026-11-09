@@ -26,6 +26,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/livereconcile"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
@@ -82,13 +83,16 @@ func main() {
 		os.Exit(1)
 	}
 	publisher := publish.New(application.Store, application.Capabilities)
-	basePreflight := preflight.New(
-		application.Store,
-		application.Capabilities,
-		application.StorageHealth,
+	preflightOptions := []preflight.Option{
 		preflight.WithConnectionCheck(application.CompanionRuntime.IsConnected),
 		preflight.WithEnvironmentInspection(application.CompanionRuntime.Inspect),
-	)
+	}
+	if os.Getenv("STAGECORE_OFFLINE_RTC_READINESS") == "1" {
+		preflightOptions = append(preflightOptions, preflight.WithOfflineRTC(func() (offlineclock.RTC, error) {
+			return offlineclock.ReadRTC("/sys/class/rtc/rtc0")
+		}))
+	}
+	basePreflight := preflight.New(application.Store, application.Capabilities, application.StorageHealth, preflightOptions...)
 	securityPreflight := securitypreflight.New(
 		basePreflight,
 		application.Store,

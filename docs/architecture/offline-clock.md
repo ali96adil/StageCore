@@ -22,3 +22,8 @@ clock or changes the system time-sync configuration through this command.
 
 - [Linux RTC sysfs interface](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux.git/+/refs/tags/v4.0/Documentation/rtc.txt)
 - [util-linux hwclock manual](https://man7.org/linux/man-pages/man8/hwclock.8.html)
+
+Set `STAGECORE_OFFLINE_RTC_READINESS=1` on a Hub intended for offline use to
+surface this evidence in the existing Preflight and Cue Inspector readiness
+checks. Missing, drifting or unused RTC evidence is advisory. The diagnostic
+does not set the clock or change SHOW admission policy.

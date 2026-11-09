@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -101,6 +102,7 @@ type Service struct {
 	storage            *storagehealth.Monitor
 	connected          ConnectionCheck
 	inspectEnvironment EnvironmentInspection
+	readRTC func() (offlineclock.RTC, error)
 	now                func() time.Time
 	heartbeatTimeout   time.Duration
 }
@@ -109,6 +111,11 @@ type Option func(*Service)
 
 func WithConnectionCheck(check ConnectionCheck) Option {
 	return func(s *Service) { s.connected = check }
+}
+
+// WithOfflineRTC adds advisory RTC evidence for Hubs configured to boot offline.
+func WithOfflineRTC(read func() (offlineclock.RTC, error)) Option {
+	return func(s *Service) { s.readRTC = read }
 }
 
 func WithClock(now func() time.Time) Option {
@@ -151,6 +158,8 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		return Report{}, err
 	}
 
+	s.evaluateRTC(&report)
+
 	runtimeSnapshot, err := s.resolveSnapshot(ctx, project.ID, runtimeSnapshotID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
@@ -180,6 +189,28 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		return report.Checks[i].Category < report.Checks[j].Category
 	})
 	return report, nil
+}
+
+func (s *Service) evaluateRTC(report *Report) {
+	if s.readRTC == nil {
+		return
+	}
+	const key = "clock.offline_rtc"
+	rtc, err := s.readRTC()
+	if err != nil {
+		report.add(Warn, key, "clock", "Offline RTC evidence unavailable", "Check the local RTC with stagecore clock.", "")
+		return
+	}
+	evidence := offlineclock.Evaluate(s.now(), rtc, time.Time{})
+	if !evidence.RTCAgrees {
+		report.add(Warn, key, "clock", "Hub clock and RTC disagree or are implausible", "Verify both against a fresh trusted local reference before rehearsal.", "")
+		return
+	}
+	if !evidence.RTCBootEvidence {
+		report.add(Warn, key, "clock", "RTC agrees but was not reported as the boot clock", "Verify disconnected cold boot before relying on the RTC.", "")
+		return
+	}
+	report.add(Pass, key, "clock", "RTC boot evidence and clock agreement observed", "Check absolute time separately against a fresh trusted reference.", "")
 }
 
 func (s *Service) ShowGate(ctx context.Context, projectID, runtimeSnapshotID string) (bool, string, error) {
