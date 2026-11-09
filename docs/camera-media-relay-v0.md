@@ -176,3 +176,11 @@ request only after the replacement socket has an active assignment. No flash
 controls or Relay credentials are available through this endpoint. This opt-in
 contract preserves existing tablet stream URLs and requires a compatible Android
 client to use it.
+
+
+For Camera Relay v1, send `TABLET_LIVE_SHOW` with the reserved media key
+`stagecore.camera.relay.v1`. The compatible client derives the URL from its
+paired device TLS endpoint and current project, rather than taking a URL or
+credential from the cue. A new runtime session requires a fresh live cue.
+The [v1 wire fixture](contracts/tablet-camera-relay-v1.json) is used by
+the Hub and Android contract tests.

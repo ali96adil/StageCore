@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "command": "TABLET_LIVE_SHOW",
+  "payload": {"media_key": "stagecore.camera.relay.v1"},
+  "request_method": "GET",
+  "request_path": "/api/v1/stage-device-camera/projects/{project_id}/stream",
+  "authorization_scheme": "StageCoreSession",
+  "content_type": "multipart/x-mixed-replace",
+  "frame_content_type": "image/jpeg",
+  "fixture_jpeg_base64": "/9j/2Q=="
+}
