@@ -6,6 +6,7 @@ package projectaccess
 import (
 	"context"
 	"database/sql"
+ "encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -198,33 +199,48 @@ func writeGrantAudit(ctx context.Context, tx *sql.Tx, audit *securityaudit.Servi
 // trusted from a possibly stale browser session. Unknown projects deny.
 // Importantly this method alone does not secure existing HTTP endpoints.
 func (s *Service) Check(ctx context.Context, userID, projectID string, permission Permission) error {
-	if s == nil || !permissionSet[permission] || strings.TrimSpace(userID)=="" || strings.TrimSpace(projectID)=="" {
+	return s.CheckAll(ctx, userID, projectID, permission)
+}
+
+// CheckAll evaluates compound permissions against one database snapshot.
+func (s *Service) CheckAll(ctx context.Context, userID, projectID string, permissions ...Permission) error {
+	if s == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(projectID) == "" || len(permissions) == 0 {
+		return ErrDenied
+	}
+	for _, permission := range permissions {
+		if !permissionSet[permission] {
+			return ErrDenied
+		}
+	}
+	encoded, err := json.Marshal(permissions)
+	if err != nil {
 		return ErrDenied
 	}
 	var permitted int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT CASE WHEN u.role='OWNER' THEN 1
-			WHEN u.role IN ('OPERATOR','TECHNICIAN') AND g.permission IS NOT NULL
-				AND EXISTS (SELECT 1 FROM project_permission_grants view_grant
-					WHERE view_grant.project_id=p.project_id
-						AND view_grant.user_id=u.user_id
-						AND view_grant.permission='project.view') THEN 1
-			WHEN u.role='VIEWER' AND g.permission IS NOT NULL
-				AND ? IN ('project.view','media.read')
-				AND EXISTS (SELECT 1 FROM project_permission_grants view_grant
-					WHERE view_grant.project_id=p.project_id
-						AND view_grant.user_id=u.user_id
-						AND view_grant.permission='project.view') THEN 1
+	err = s.db.QueryRowContext(ctx, `
+		SELECT CASE WHEN u.role = 'OWNER' THEN 1
+			WHEN u.role IN ('OPERATOR','TECHNICIAN','VIEWER')
+			 AND EXISTS (SELECT 1 FROM project_permission_grants v
+				WHERE v.project_id = p.project_id AND v.user_id = u.user_id AND v.permission = 'project.view')
+			 AND NOT EXISTS (
+				SELECT 1 FROM json_each(?) required
+				WHERE (u.role = 'VIEWER' AND required.value NOT IN ('project.view','media.read'))
+				 OR NOT EXISTS (SELECT 1 FROM project_permission_grants g
+					WHERE g.project_id = p.project_id AND g.user_id = u.user_id AND g.permission = required.value)
+			 ) THEN 1
 			ELSE 0 END
-		FROM local_users u
-		JOIN projects p ON p.project_id = ?
-		LEFT JOIN project_permission_grants g ON g.user_id=u.user_id
-			AND g.project_id=p.project_id AND g.permission=?
-		WHERE u.user_id=? AND u.enabled=1
-	`,string(permission),projectID,string(permission),userID).Scan(&permitted)
-	if errors.Is(err, sql.ErrNoRows) { return ErrDenied }
-	if err != nil { return fmt.Errorf("evaluate project access: %w",err) }
-	if permitted != 1 { return ErrDenied }
+		FROM local_users u JOIN projects p ON p.project_id = ?
+		WHERE u.user_id = ? AND u.enabled = 1
+	`, string(encoded), projectID, userID).Scan(&permitted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDenied
+	}
+	if err != nil {
+		return fmt.Errorf("evaluate project access: %w", err)
+	}
+	if permitted != 1 {
+		return ErrDenied
+	}
 	return nil
 }
 

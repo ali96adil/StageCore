@@ -11,6 +11,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -38,6 +39,18 @@ type showCapsuleEntry struct {
 }
 
 func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string) Option {
+	return withOperatorShowCapsules(auth, service, root, nil)
+}
+
+// WithScopedOperatorShowCapsules is available for cutover qualification only.
+func WithScopedOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string, access *projectaccess.Service) Option {
+	if access == nil {
+		return func(*Server) {}
+	}
+	return withOperatorShowCapsules(auth, service, root, access)
+}
+
+func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string, access *projectaccess.Service) Option {
 	return func(s *Server) {
 		if auth == nil || service == nil || strings.TrimSpace(root) == "" {
 			return
@@ -46,7 +59,10 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 		exportRoot := filepath.Join(root, "exports")
 		importRoot := filepath.Join(root, "imports")
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/show-capsule/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/show-capsule/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedProject(w, r, session, access, projectaccess.CapsuleExport, projectaccess.MediaRead) {
+				return
+			}
 			mode, ok := parseShowCapsuleMode(w, r.URL.Query().Get("mode"))
 			if !ok {
 				return
@@ -59,10 +75,20 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowScopedProject(w, r, session, access, projectaccess.CapsuleExport, projectaccess.MediaRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"manifest": manifest})
 		}))
 
-		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/show-capsules", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		exportPermission := userauth.PermissionProjectEdit
+		if access != nil {
+			exportPermission = userauth.PermissionProjectRead
+		}
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/show-capsules", withPermission(auth, exportPermission, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedProject(w, r, session, access, projectaccess.CapsuleExport, projectaccess.MediaRead) {
+				return
+			}
 			var body showCapsuleExportRequest
 			if !decodeBoundedJSON(w, r, &body) {
 				return
@@ -91,7 +117,10 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/show-capsules", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/show-capsules", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			entries := make([]showCapsuleEntry, 0)
 			for _, source := range []struct {
 				name string
@@ -119,7 +148,10 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/show-capsules/imports/{capsule_id}/plan", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/show-capsules/imports/{capsule_id}/plan", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			path, ok := resolveCapsulePath(w, importRoot, r.PathValue("capsule_id"))
 			if !ok {
 				return
@@ -133,6 +165,9 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 		}))
 
 		s.mux.HandleFunc("POST /api/v1/show-capsules/imports/{capsule_id}/materialize", withPermission(auth, userauth.PermissionBackupRestore, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			path, ok := resolveCapsulePath(w, importRoot, r.PathValue("capsule_id"))
 			if !ok {
 				return

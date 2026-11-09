@@ -144,6 +144,8 @@ func TestSC024RegisteredHTTPRoutesMustRemainReviewed(t *testing.T) {
 func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 	guardedOptions := []string{
 		"WithOperatorProjectAccess",
+		"WithScopedOperatorProjects",
+		"WithScopedOperatorShowCapsules",
 		"WithScopedProjectFilesRead",
 		"WithScopedLocalCapsuleExports",
 		"WithOwnerCapsuleImportReview",
