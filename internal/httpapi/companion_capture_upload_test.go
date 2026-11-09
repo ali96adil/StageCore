@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -246,21 +247,27 @@ func TestCompanionCaptureUploadAuthorityLossRejectsCompletionAndRollsBack(t *tes
 	}
 }
 
-func TestQualifiedCompanionUploadStopsReadingAfterAssignmentLoss(t *testing.T) {
-	h := newCaptureUploadHarness(t, bulk.ModeEdit, true)
-	payload := bytes.Repeat([]byte("capture"), 30000)
-	ticket := h.ticket(t, "scoped-mid-upload", payload)
-	body := bytes.NewReader(payload)
-	reader := &releaseAssignmentReader{source:body,release:func(){
-		if err := h.store.ReleaseRoleAssignment(h.ctx, h.assignment.ID); err != nil { t.Fatal(err) }
-	}}
-	res := httptest.NewRecorder()
-	h.handler.ServeHTTP(res, h.request(ticket, reader, int64(len(payload))))
-	if res.Code != http.StatusConflict || body.Len() == 0 {
-		t.Fatalf("did not stop at revocation: status=%d unread=%d body=%s",res.Code,body.Len(),res.Body.String())
-	}
-	if _, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("revoked upload reached Vault: %v",err)
+func TestCompanionCaptureUploadStopsReadingAfterAssignmentLoss(t *testing.T) {
+	for _, qualified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("qualified=%t", qualified), func(t *testing.T) {
+			h := newCaptureUploadHarness(t, bulk.ModeEdit, qualified)
+			payload := bytes.Repeat([]byte("capture"), 30000)
+			ticket := h.ticket(t, "scoped-mid-upload", payload)
+			body := bytes.NewReader(payload)
+			reader := &releaseAssignmentReader{source: body, release: func() {
+				if err := h.store.ReleaseRoleAssignment(h.ctx, h.assignment.ID); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			res := httptest.NewRecorder()
+			h.handler.ServeHTTP(res, h.request(ticket, reader, int64(len(payload))))
+			if res.Code != http.StatusConflict || body.Len() == 0 {
+				t.Fatalf("did not stop at revocation: status=%d unread=%d body=%s", res.Code, body.Len(), res.Body.String())
+			}
+			if _, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash); !errors.Is(err, domain.ErrNotFound) {
+				t.Fatalf("revoked upload reached Vault: %v", err)
+			}
+		})
 	}
 }
 

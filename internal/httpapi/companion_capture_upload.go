@@ -28,7 +28,7 @@ func WithCompanionCaptureUpload(
 		s.mux.HandleFunc(
 			"PUT /api/v1/companion/capture-uploads/{ticket_id}",
 			func(w http.ResponseWriter, r *http.Request) {
-				handleCompanionCaptureUpload(w, r, auth, stageStore, v, manager, s.projectRouteQualification != nil)
+				handleCompanionCaptureUpload(w, r, auth, stageStore, v, manager)
 			},
 		)
 	}
@@ -41,7 +41,6 @@ func handleCompanionCaptureUpload(
 	stageStore *store.Store,
 	v *stagevault.Vault,
 	manager *bulk.Manager,
-	qualifyLiveScope bool,
 ) {
 	if !secureDeviceRequest(r) {
 		writeJSON(w, http.StatusUpgradeRequired, map[string]any{"error_code": "SECURE_TRANSPORT_REQUIRED"})
@@ -93,22 +92,17 @@ func handleCompanionCaptureUpload(
 		return
 	}
 
-	var source io.Reader = r.Body
-	var scoped *captureTicketReader
-	if qualifyLiveScope || ticket.IssuerBrowserSessionID != "" {
-		scoped = &captureTicketReader{source: source, authorize: func() error {
-			current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
-			if err != nil {
-				return err
-			}
-			if current.ID != ticket.ID || current.RuntimeSessionID != session.ID || current.CompanionID != session.CompanionID {
-				return domain.ErrConflict
-			}
-			return nil
-		}}
-		source = scoped
-	}
-	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, source)
+	scoped := &captureTicketReader{source: r.Body, authorize: func() error {
+		current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
+		if err != nil {
+			return err
+		}
+		if current.ID != ticket.ID || current.RuntimeSessionID != session.ID || current.CompanionID != session.CompanionID {
+			return domain.ErrConflict
+		}
+		return nil
+	}}
+	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, scoped)
 	object, err := v.ImportVerifiedObject(
 		r.Context(),
 		ticket.ExpectedContentHash,
@@ -116,7 +110,7 @@ func handleCompanionCaptureUpload(
 		reader,
 	)
 	if err != nil {
-		if scoped != nil && scoped.denied != nil {
+		if scoped.denied != nil {
 			manager.Fail(jobID, "capture upload authority changed during transfer")
 			writeCompanionCaptureUploadTicketError(w, scoped.denied)
 			return
