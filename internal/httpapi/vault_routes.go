@@ -90,6 +90,10 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requireRuntimeSession(w http.ResponseWriter, r *http.Request) (domain.CompanionRuntimeSession, string, bool) {
+	return requireDeviceRuntimeSession(w, r, s.companionAuth)
+}
+
+func requireDeviceRuntimeSession(w http.ResponseWriter, r *http.Request, auth stageDeviceSessionValidator) (domain.CompanionRuntimeSession, string, bool) {
 	const prefix = "StageCoreSession "
 	authorization := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authorization, prefix) || strings.TrimSpace(strings.TrimPrefix(authorization, prefix)) == "" {
@@ -97,7 +101,7 @@ func (s *Server) requireRuntimeSession(w http.ResponseWriter, r *http.Request) (
 		return domain.CompanionRuntimeSession{}, "", false
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
-	session, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token)
+	session, err := auth.ValidateRuntimeSession(r.Context(), token)
 	if err != nil {
 		writeCompanionAuthError(w, err)
 		return domain.CompanionRuntimeSession{}, "", false

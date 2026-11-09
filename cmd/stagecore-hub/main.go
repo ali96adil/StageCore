@@ -436,7 +436,15 @@ func main() {
 	}
 	logger.Info("StageCore Operator HTTPS listening", "listen", cfg.OperatorTLSListen, "host", operatorHost, "tls_sha256", operatorPin)
 
-	gateway, err := startDeviceGateway(ctx, logger, application, cfg.DeviceListen, deviceErrCh)
+	var tabletCameraViewer *httpapi.ProjectCameraViewer
+	if os.Getenv("STAGECORE_CAMERA_VIEW_TABLETS") == "1" {
+		if cameraViewer == nil {
+			logger.Error("tablet camera viewing requires project camera viewer configuration")
+			os.Exit(1)
+		}
+		tabletCameraViewer = cameraViewer
+	}
+	gateway, err := startDeviceGateway(ctx, logger, application, cfg.DeviceListen, tabletCameraViewer, deviceErrCh)
 	if err != nil {
 		logger.Error("secure device gateway startup failed", "error", err)
 		os.Exit(1)

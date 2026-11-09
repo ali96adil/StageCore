@@ -158,5 +158,21 @@ authorization each second, including during idle streams. Revocation cancels the
 Relay request and disconnects the browser. The Hub route forwards JPEG viewing
 only, and uses a fixed upstream path with no redirects or client query forwarding.
 A LAN-accessible direct Relay listener would provide a separate path to the feed,
-so keep this Relay on loopback when using project-scoped viewing. This does not
-change how tablets obtain their live streams.
+so keep this Relay on loopback when using project-scoped viewing.
+
+### Opt-in Stage Device v2 tablet viewing
+
+Set `STAGECORE_CAMERA_VIEW_TABLETS=1` on the Hub in addition to the three
+project viewer settings above. On the existing device TLS gateway, a compatible
+tablet can request `GET /api/v1/stage-device-camera/projects/{project_id}/stream`
+with `Authorization: StageCoreSession <token>` and the paired Hub certificate pin.
+Use the same runtime session as the current v2 socket. The tablet must advertise
+`tablet.media.live.show` and hold an active Hub assignment for that project and
+published Snapshot. A `HEAD` request checks access without opening the Relay.
+
+During viewing, the Hub checks authorization each second. Revocation, assignment
+or Snapshot changes, and socket replacement close the old stream. Open a new
+request only after the replacement socket has an active assignment. No flash
+controls or Relay credentials are available through this endpoint. This opt-in
+contract preserves existing tablet stream URLs and requires a compatible Android
+client to use it.

@@ -272,6 +272,7 @@ internal/httpapi/server.go	POST /api/v1/companion/auth/challenges
 internal/httpapi/server.go	POST /api/v1/companion/auth/sessions
 internal/httpapi/server.go	POST /api/v1/companion/pairing/requests
 internal/httpapi/server.go	POST /api/v1/companion/pairing/status
+internal/httpapi/stage_device_camera.go	GET /api/v1/stage-device-camera/projects/{project_id}/stream
 internal/httpapi/stage_device_firmware.go	GET /api/v1/stage-device-firmware/artifacts/{artifact_id}/firmware.bin
 internal/httpapi/stage_device_runtime.go	GET /api/v1/stage-devices/runtime
 internal/httpapi/user_auth.go	GET /api/v1/auth/me

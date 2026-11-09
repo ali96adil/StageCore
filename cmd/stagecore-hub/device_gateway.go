@@ -35,6 +35,7 @@ func startDeviceGateway(
 	logger *slog.Logger,
 	application *app.App,
 	listenAddress string,
+	cameraViewer *httpapi.ProjectCameraViewer,
 	errCh chan<- error,
 ) (*deviceGateway, error) {
 	if application == nil || application.HubSecurity == nil || application.CompanionAuth == nil || application.CompanionRuntime == nil || application.DeviceExperience == nil || application.DeviceRuntime == nil || application.DeviceUpdateArtifacts == nil {
@@ -54,6 +55,7 @@ func startDeviceGateway(
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithStageDeviceRuntime(application.CompanionAuth, application.DeviceRuntime),
+		httpapi.WithTabletCameraViewer(application.CompanionAuth, application.DeviceExperience, application.DeviceRuntime, cameraViewer),
 		httpapi.WithStageDeviceFirmwareArtifacts(application.CompanionAuth, application.DeviceUpdateArtifacts),
 		httpapi.WithVault(application.Vault),
 		companionVaultScopeOption(application),
