@@ -2,6 +2,7 @@ package deviceexperience_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -134,6 +135,20 @@ func TestTabletV2AssignmentUsesPublishedHubSnapshotAndExactCommandScope(t *testi
 	if command.Envelope.ProjectID != projectID ||
 		command.Envelope.RuntimeSnapshotID != firstSnapshot {
 		t.Fatalf("command scope=%+v", command.Envelope)
+	}
+
+	camera, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, projectID)
+	if err != nil || camera.RuntimeSnapshotID != firstSnapshot || camera.Epoch != commit.ToEpoch {
+		t.Fatalf("exact tablet camera assignment rejected: %+v, %v", camera, err)
+	}
+	if _, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, secondProject.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("tablet camera assignment crossed projects: %v", err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, "UPDATE runtime_snapshots SET status = 'REVOKED' WHERE runtime_snapshot_id = ?", firstSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ActiveTabletCameraAssignment(ctx, deviceID, projectID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("revoked Snapshot still grants camera viewing: %v", err)
 	}
 }
 

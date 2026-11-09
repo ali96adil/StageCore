@@ -12,7 +12,7 @@ import (
 )
 
 type tabletCameraDevices interface {
-	GetDevice(context.Context, string) (deviceexperience.Device, error)
+	ActiveTabletCameraAssignment(context.Context, string, string) (deviceexperience.AssignmentRecord, error)
 }
 
 type tabletCameraRuntime interface {
@@ -47,16 +47,11 @@ func WithTabletCameraViewer(auth stageDeviceSessionValidator, devices tabletCame
 				if err != nil || current.ID != session.ID || current.CompanionID != session.CompanionID {
 					return devicechannel.V2RuntimeScope{}, projectaccess.ErrDenied
 				}
-				device, err := devices.GetDevice(ctx, session.CompanionID)
-				assignment := device.Assignment
-				if err != nil || device.ID != session.CompanionID || !device.Enabled ||
-					device.Kind != deviceexperience.DeviceTabletPlayer || device.ProfileID != deviceexperience.TabletPlayerProfileID ||
-					device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
-					assignment == nil || assignment.DeviceID != device.ID || assignment.State != "ACTIVE" ||
-					assignment.ProjectID != viewer.projectID || assignment.RuntimeSnapshotID == "" || assignment.Epoch < 1 {
+				assignment, err := devices.ActiveTabletCameraAssignment(ctx, session.CompanionID, viewer.projectID)
+				if err != nil {
 					return devicechannel.V2RuntimeScope{}, projectaccess.ErrDenied
 				}
-				scope, ok := runtime.CurrentV2ScopeForSession(device.ID, session.ID)
+				scope, ok := runtime.CurrentV2ScopeForSession(session.CompanionID, session.ID)
 				if !ok || !scope.CommandsEnabled || scope.ProjectID != assignment.ProjectID ||
 					scope.AssignmentEpoch != assignment.Epoch || scope.RuntimeSnapshotID != assignment.RuntimeSnapshotID ||
 					!slices.Contains(scope.Capabilities, deviceexperience.CapabilityTabletLiveShow) {

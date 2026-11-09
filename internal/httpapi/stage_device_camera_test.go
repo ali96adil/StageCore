@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,21 +19,25 @@ import (
 )
 
 type tabletCameraFixture struct {
-	device deviceexperience.Device
-	scope  devicechannel.V2RuntimeScope
+	assignment *deviceexperience.AssignmentRecord
+	scope      devicechannel.V2RuntimeScope
 }
 
 type tabletCameraState struct {
 	value atomic.Pointer[tabletCameraFixture]
 }
 
-func (s *tabletCameraState) GetDevice(_ context.Context, _ string) (deviceexperience.Device, error) {
-	return s.value.Load().device, nil
+func (s *tabletCameraState) ActiveTabletCameraAssignment(_ context.Context, deviceID, projectID string) (deviceexperience.AssignmentRecord, error) {
+	assignment := s.value.Load().assignment
+	if assignment == nil || assignment.DeviceID != deviceID || assignment.ProjectID != projectID {
+		return deviceexperience.AssignmentRecord{}, sql.ErrNoRows
+	}
+	return *assignment, nil
 }
 
 func (s *tabletCameraState) CurrentV2ScopeForSession(deviceID, sessionID string) (devicechannel.V2RuntimeScope, bool) {
 	f := s.value.Load()
-	return f.scope, deviceID == f.device.ID && sessionID == "session-1" && f.scope.Generation > 0
+	return f.scope, deviceID == "tablet" && sessionID == "session-1" && f.scope.Generation > 0
 }
 
 func TestTabletCameraViewerChecksProjectAndFencesLiveStream(t *testing.T) {
@@ -40,8 +45,7 @@ func TestTabletCameraViewerChecksProjectAndFencesLiveStream(t *testing.T) {
 	const projectID = "camera-project"
 	assignment := deviceexperience.AssignmentRecord{DeviceID: deviceID, State: "ACTIVE", ProjectID: projectID, RuntimeSnapshotID: "snapshot", Epoch: 5}
 	initial := tabletCameraFixture{
-		device: deviceexperience.Device{ID: deviceID, Enabled: true, Kind: deviceexperience.DeviceTabletPlayer,
-			ProfileID: deviceexperience.TabletPlayerProfileID, ProtocolVersion: deviceexperience.ProtocolVersion2, Assignment: &assignment},
+		assignment: &assignment,
 		scope: devicechannel.V2RuntimeScope{Generation: 1, CommandsEnabled: true, ProjectID: projectID,
 			RuntimeSnapshotID: assignment.RuntimeSnapshotID, AssignmentEpoch: assignment.Epoch,
 			Capabilities: []string{deviceexperience.CapabilityTabletLiveShow}},
@@ -109,8 +113,7 @@ func TestTabletCameraViewerChecksProjectAndFencesLiveStream(t *testing.T) {
 	do(http.MethodHead, path, "", http.StatusUnauthorized)
 	do(http.MethodHead, "other/stream", auth.token, http.StatusNotFound)
 	for _, mutate := range []func(*tabletCameraFixture){
-		func(f *tabletCameraFixture) { f.device.Enabled = false },
-		func(f *tabletCameraFixture) { f.device.ProtocolVersion = deviceexperience.ProtocolVersion1 },
+		func(f *tabletCameraFixture) { f.assignment = nil },
 		func(f *tabletCameraFixture) { f.scope.ProjectID = "other" },
 		func(f *tabletCameraFixture) { f.scope.AssignmentEpoch++ },
 		func(f *tabletCameraFixture) { f.scope.Capabilities = nil },
@@ -130,7 +133,7 @@ func TestTabletCameraViewerChecksProjectAndFencesLiveStream(t *testing.T) {
 	for _, change := range []func(){
 		func() { active.Store(false) },
 		func() { f := initial; f.scope.Generation++; state.value.Store(&f) },
-		func() { f := initial; f.device.Assignment = nil; state.value.Store(&f) },
+		func() { f := initial; f.assignment = nil; state.value.Store(&f) },
 	} {
 		active.Store(true)
 		state.value.Store(&initial)
