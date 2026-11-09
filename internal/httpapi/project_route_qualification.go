@@ -196,8 +196,13 @@ func qualificationAccess(r *http.Request, explicit *projectaccess.Service) *proj
 }
 
 func projectURLPattern(pattern string) bool {
-	_, path, _ := strings.Cut(pattern, " ")
-	return path == projectRoute || strings.HasPrefix(path, projectRoute+"/")
+	start := strings.IndexByte(pattern, '/')
+	if start < 0 {
+		return false
+	}
+	path := pattern[start:]
+	const projects = "/api/v1/projects"
+	return path == projects || strings.HasPrefix(path, projects+"/")
 }
 
 func projectRouteIsQualified(pattern string) bool {

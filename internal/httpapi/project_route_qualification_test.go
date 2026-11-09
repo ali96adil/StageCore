@@ -186,6 +186,7 @@ func TestQualifiedLegacyProjectsAndAudioRejectForeignAccess(t *testing.T) {
 	audio := &fakeStageAudio{}
 	unknown := func(s *Server) {
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/future-legacy", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+		s.mux.HandleFunc("/api/v1/projects/{alternate_id}/future-methodless", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
 	}
 	opts := []Option{WithOperatorProjects(h.auth, st), WithOperatorStageAudio(h.auth, st, audio, nil), unknown}
 	legacy := New(opts...).Handler()
@@ -206,9 +207,12 @@ func TestQualifiedLegacyProjectsAndAudioRejectForeignAccess(t *testing.T) {
 	get(scoped, "/api/v1/projects/"+a.ID, 200)
 	get(scoped, "/api/v1/projects/"+b.ID, 404)
 	get(scoped, "/api/v1/projects/"+a.ID+"/future-legacy", 404)
+	get(scoped, "/api/v1/projects/"+a.ID+"/future-methodless", 404)
 	get(legacy, "/api/v1/projects/"+b.ID, 200)
 	get(legacy, "/api/v1/projects/"+a.ID+"/future-legacy", http.StatusTeapot)
-	get(scoped, "/api/v1/system/audio/media", 404)
+	for _, resource := range []string{"media", "status", "outputs", "bluetooth"} {
+		get(scoped, "/api/v1/system/audio/"+resource, 404)
+	}
 	if len(audio.calls) != 0 {
 		t.Fatal("denied audio request reached the sidecar")
 	}

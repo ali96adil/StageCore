@@ -30,8 +30,9 @@ const reviewedHTTPRouteInventorySHA256 = "6868fd3e2953a4a650f62b6c3d0ca16dcefee3
 // routeRegistration describes a registration expression, not an assumption
 // about whether the handler actually enforces the desired Project scope.
 type routeRegistration struct {
-	Source  string
-	Pattern string
+	Source               string
+	Pattern              string
+	BrowserAuthenticated bool
 }
 
 func collectHTTPRouteRegistrations(t *testing.T) []routeRegistration {
@@ -81,6 +82,15 @@ func collectHTTPRouteRegistrations(t *testing.T) []routeRegistration {
 				pattern = "DYNAMIC(" + output.String() + ")"
 			}
 			record := routeRegistration{Source: filename, Pattern: pattern}
+			if len(call.Args) > 1 {
+				if wrapper, ok := call.Args[1].(*ast.CallExpr); ok {
+					if name, ok := wrapper.Fun.(*ast.Ident); ok {
+						record.BrowserAuthenticated = name.Name == "withPermission" || name.Name == "withAuthenticatedSession" ||
+							// The local StageAudio GET wrapper is exercised through the real router.
+							(filename == "operator_stageaudio.go" && name.Name == "get" && strings.HasPrefix(pattern, "GET /api/v1/system/audio/"))
+					}
+				}
+			}
 			key := filename + "|" + pattern
 			// Distinct occurrences of the same pattern in one source also
 			// matter. Duplicates can indicate conditional registration.
@@ -182,6 +192,17 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 					t.Fatalf("partial scoped Project ACL option %q wired in production %s before complete cutover", option, filename)
 				}
 			}
+		}
+	}
+}
+
+func TestSC024QualifiedBrowserRoutesUseLiveAuthentication(t *testing.T) {
+	for _, record := range collectHTTPRouteRegistrations(t) {
+		qualified := projectURLPattern(record.Pattern) || projectRouteIsQualified(record.Pattern)
+		// Indirect patterns are separately reconciled with the project
+		// inventory. All reviewed indirect HTTP routes here are browser APIs.
+		if (qualified || strings.HasPrefix(record.Pattern, "DYNAMIC(")) && !record.BrowserAuthenticated {
+			t.Errorf("qualification bypass: %s %s lacks the browser middleware", record.Source, record.Pattern)
 		}
 	}
 }
