@@ -176,7 +176,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		result := runtime.Go(qualifiedCueDispatchContext(r, active.ID, projectaccess.RuntimeGO), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, OperatorNote: body.OperatorNote,
 		})
@@ -209,7 +209,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		result := runtime.Go(qualifiedCueDispatchContext(r, active.ID, projectaccess.RuntimeJump), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
 		})

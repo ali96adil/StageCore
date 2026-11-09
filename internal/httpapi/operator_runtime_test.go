@@ -12,6 +12,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -39,7 +40,11 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 			return json.RawMessage(`{"enabled":` + map[bool]string{true: "true", false: "false"}[enabled] + `,"lighting":{"status":"NOT_CONFIGURED"},"tablets":{"status":"NOT_CONFIGURED"},"native_visual":{"status":"NOT_CONFIGURED"},"audio":{"status":"UNCHANGED_BY_DESIGN"},"external_adapters":{"status":"UNCHANGED_BY_DESIGN"}}`), nil
 		}),
 	)
-	handler := New(WithOperatorRuntime(h.auth, projectStore, runtime)).Handler()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorRuntime(h.auth, projectStore, runtime), WithProjectRouteQualification(access)).Handler()
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +256,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 
 	badForcePayload, _ := json.Marshal(runtimeCommandRequest{
 		RequestID: "00000000-0000-7000-8000-000000000412",
-		Force: true,
+		Force:     true,
 	})
 	badForceReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/stop-session", badForcePayload, owner.Token, owner.CSRFToken)
 	badForceRes := httptest.NewRecorder()
@@ -265,7 +270,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	}
 
 	stopSessionPayload, _ := json.Marshal(runtimeStopSessionRequest{
-		runtimeCommandRequest: runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000406"},
+		runtimeCommandRequest:        runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000406"},
 		RehearsalTabletStopSessionID: start.Session.ID,
 	})
 	stopSessionReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/stop-session", stopSessionPayload, owner.Token, owner.CSRFToken)

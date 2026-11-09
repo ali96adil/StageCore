@@ -289,14 +289,30 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 	environmentManifestID, roleID, runtimeSnapshotID, companionID string,
 	descriptor EnvironmentCaptureObjectDescriptor,
 ) (EnvironmentCaptureUploadReceipt, string, string) {
+	runtimeSessionID := c.runtimeSessionIDForExecution(companionID, request.OperationID)
+	if runtimeSessionID == "" {
+		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_SESSION_UNAVAILABLE", "capture execution has no authenticated runtime session"
+	}
+	scope := store.CreateCompanionUploadTicketParams{
+		CompanionID:           companionID,
+		RuntimeSessionID:      runtimeSessionID,
+		OperationID:           request.OperationID,
+		EnvironmentManifestID: environmentManifestID,
+		MachineRoleID:         roleID,
+		RuntimeSnapshotID:     runtimeSnapshotID,
+		Purpose:               store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash:   descriptor.ContentHash,
+		ExpectedSizeBytes:     descriptor.SizeBytes,
+		ExpiresAt:             time.Now().UTC().Add(environmentCaptureUploadTicketTTL),
+	}
 	if existing, err := c.store.GetLatestCompanionUploadTicketForOperation(
 		ctx,
 		companionID,
 		request.OperationID,
 		store.CompanionUploadExecutionEnvironmentCapture,
 	); err == nil {
-		if !environmentCaptureUploadTicketMatches(existing, descriptor) {
-			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IDENTITY_CONFLICT", "existing capture-upload ticket does not match the capture descriptor"
+		if !environmentCaptureUploadTicketMatches(existing, scope) {
+			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IDENTITY_CONFLICT", "existing capture-upload ticket does not match the current authenticated capture scope"
 		}
 		switch existing.Status {
 		case store.CompanionUploadTicketCompleted:
@@ -308,22 +324,7 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_TICKET_UNAVAILABLE", "capture-upload ticket state could not be read"
 	}
 
-	runtimeSessionID := c.runtimeSessionIDForExecution(companionID, request.OperationID)
-	if runtimeSessionID == "" {
-		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_SESSION_UNAVAILABLE", "capture execution has no authenticated runtime session"
-	}
-	grant, err := c.store.CreateCompanionUploadTicket(ctx, store.CreateCompanionUploadTicketParams{
-		CompanionID:           companionID,
-		RuntimeSessionID:      runtimeSessionID,
-		OperationID:           request.OperationID,
-		EnvironmentManifestID: environmentManifestID,
-		MachineRoleID:         roleID,
-		RuntimeSnapshotID:     runtimeSnapshotID,
-		Purpose:               store.CompanionUploadExecutionEnvironmentCapture,
-		ExpectedContentHash:   descriptor.ContentHash,
-		ExpectedSizeBytes:     descriptor.SizeBytes,
-		ExpiresAt:             time.Now().UTC().Add(environmentCaptureUploadTicketTTL),
-	})
+	grant, err := c.store.CreateCompanionUploadTicket(ctx, scope)
 	if err != nil {
 		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_TICKET_FAILED", "scoped capture-upload ticket could not be issued"
 	}
@@ -352,8 +353,8 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 	})
 	ticket, ticketErr := c.store.GetCompanionUploadTicket(ctx, grant.Ticket.ID)
 	if ticketErr == nil && ticket.Status == store.CompanionUploadTicketCompleted {
-		if !environmentCaptureUploadTicketMatches(ticket, descriptor) {
-			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IDENTITY_CONFLICT", "completed capture upload does not match the capture descriptor"
+		if !environmentCaptureUploadTicketMatches(ticket, scope) {
+			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IDENTITY_CONFLICT", "completed capture upload does not match the current authenticated capture scope"
 		}
 		return environmentCaptureUploadReceipt(ticket), "", ""
 	}
@@ -384,10 +385,16 @@ func (c *RuntimeChannel) runtimeSessionIDForExecution(companionID, executionID s
 	return strings.TrimSpace(record.connection.session.ID)
 }
 
-func environmentCaptureUploadTicketMatches(ticket store.CompanionUploadTicket, descriptor EnvironmentCaptureObjectDescriptor) bool {
-	return ticket.Purpose == store.CompanionUploadExecutionEnvironmentCapture &&
-		strings.EqualFold(ticket.ExpectedContentHash, descriptor.ContentHash) &&
-		ticket.ExpectedSizeBytes == descriptor.SizeBytes
+func environmentCaptureUploadTicketMatches(ticket store.CompanionUploadTicket, scope store.CreateCompanionUploadTicketParams) bool {
+	return ticket.Purpose == scope.Purpose &&
+		ticket.CompanionID == scope.CompanionID &&
+		ticket.RuntimeSessionID == scope.RuntimeSessionID &&
+		ticket.OperationID == scope.OperationID &&
+		ticket.EnvironmentManifestID == scope.EnvironmentManifestID &&
+		ticket.MachineRoleID == scope.MachineRoleID &&
+		ticket.RuntimeSnapshotID == scope.RuntimeSnapshotID &&
+		strings.EqualFold(ticket.ExpectedContentHash, scope.ExpectedContentHash) &&
+		ticket.ExpectedSizeBytes == scope.ExpectedSizeBytes
 }
 
 func environmentCaptureUploadReceipt(ticket store.CompanionUploadTicket) EnvironmentCaptureUploadReceipt {

@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -254,4 +256,22 @@ func qualifyRuntimeIntent(w http.ResponseWriter, r *http.Request, sessionID stri
 		err = grant.access.CheckRuntimeIntent(r.Context(), grant.user.User.ID, r.PathValue("project_id"), sessionID, intent)
 	}
 	return writeProjectQualificationError(w, err)
+}
+
+func qualifiedCueDispatchContext(r *http.Request, sessionID string, intent projectaccess.RuntimeIntent) context.Context {
+	grant, _ := r.Context().Value(projectRouteGrantKey{}).(projectRouteGrant)
+	if grant.access == nil {
+		return r.Context()
+	}
+	projectID := strings.TrimSpace(r.PathValue("project_id"))
+	return runtimecontrol.WithDispatchAuthorization(r.Context(), func(ctx context.Context, req capability.Request) error {
+		if req.SessionID != sessionID || req.ProjectID != projectID {
+			return projectaccess.ErrDenied
+		}
+		current, err := grant.auth.ValidatePassive(ctx, grant.token)
+		if err != nil || current.ID != grant.user.ID || current.User.ID != grant.user.User.ID {
+			return projectaccess.ErrDenied
+		}
+		return grant.access.CheckRuntimeIntent(ctx, current.User.ID, projectID, sessionID, intent)
+	})
 }

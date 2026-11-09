@@ -416,6 +416,7 @@ func (e *Engine) runAction(
 		} else {
 			req := capability.Request{
 				ExecutionID: actionExecution.ID, RuntimeSnapshotID: command.RuntimeSnapshotID,
+				ProjectID: command.ProjectID, SessionID: sessionID,
 				CueID: cueID, RequireApplicationACK: settings.RequireApplicationACK,
 				Capability: action.CapabilityKey, Target: resolvedTarget(manifest, action.TargetRef),
 				Parameters: action.Parameters, Priority: action.PriorityClass,

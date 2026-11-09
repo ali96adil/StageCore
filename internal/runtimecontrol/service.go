@@ -948,6 +948,14 @@ func resultFromStoreError(commandID, code string, err error, entityID string) co
 	return failed(commandID, code)
 }
 
+type dispatchAuthorizationKey struct{}
+
+// WithDispatchAuthorization supplies a live boundary check for every Cue
+// capability dispatch, including actions which wait behind an authored delay.
+func WithDispatchAuthorization(ctx context.Context, authorize func(context.Context, capability.Request) error) context.Context {
+	return context.WithValue(ctx, dispatchAuthorizationKey{}, authorize)
+}
+
 type stoppableExecutor struct {
 	inner capability.Executor
 	mu sync.Mutex
@@ -984,6 +992,14 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		}
 		e.mu.Unlock()
 	}()
+	if authorize, ok := ctx.Value(dispatchAuthorizationKey{}).(func(context.Context, capability.Request) error); ok && authorize != nil && executionCtx.Err() == nil {
+		if err := authorize(executionCtx, req); err != nil && executionCtx.Err() == nil {
+			return capability.Result{
+				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode: "PROJECT_DISPATCH_AUTHORITY_REVOKED", ResponseSummary: "Cue action authority ended before dispatch",
+			}
+		}
+	}
 	// STOP may have won the registration race; never call a device adapter
 	// with an already-cancelled execution context.
 	if err := executionCtx.Err(); err != nil {
