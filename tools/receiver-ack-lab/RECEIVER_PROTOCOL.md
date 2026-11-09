@@ -45,3 +45,14 @@ its lifetime. It fails closed after 8192 unique dispatches, at which point
 restart it between runs. Timeout or HTTP disconnect drops the pending claim.
 An application must also check the deadline before acting and avoid executing a
 claimed request that no longer has authority.
+
+`application_receiver.js` supplies an optional Node 18+ client for the
+application integration. Construct it with the local gateway port, application
+token, kind and explicit `accept(command, signal)` and `apply(command, signal)`
+handlers. Call the resulting `processOne()` from the app integration's scheduler.
+Use a project-specific allowlist to map parameters. Each handler must return
+`status`, `execution_id`, `correlation_id` and the challenge from the actual
+application callback. Honor the abort signal and `receiver_deadline_ms` at the
+point of action. A plain transport completion or a boolean cannot satisfy either
+handler. The client never repeats a claim on timeout. No Max patch or VDMX
+project automatically starts this client.

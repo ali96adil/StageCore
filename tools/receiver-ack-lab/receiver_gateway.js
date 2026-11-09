@@ -48,6 +48,14 @@ function createReceiverGateway({ companionToken, applicationToken, key, scope, n
     pending = undefined;
     return true;
   }
+  function activeClaim() {
+    const item = pending;
+    if (item && now() >= item.deadline) {
+      if (clear(item)) json(item.res, 504, {});
+      return undefined;
+    }
+    return item;
+  }
   return http.createServer({requestTimeout: 15000}, async (req, res) => {
     try {
       if (req.socket.remoteAddress !== "127.0.0.1") return json(res, 403, {});
@@ -69,14 +77,14 @@ function createReceiverGateway({ companionToken, applicationToken, key, scope, n
             (command.correlation_id != null && typeof command.correlation_id !== "string")) {
           return json(res, 400, {});
         }
-        if (pending || seen.has(dispatch.execution_id) || seen.size >= 8192) return json(res, 409, {});
+        if (activeClaim() || seen.has(dispatch.execution_id) || seen.size >= 8192) return json(res, 409, {});
         const receipt = Object.fromEntries(scopeKeys.map(field => [field, runtimeScope[field]]));
         Object.assign(receipt, {execution_id: dispatch.execution_id, cue_id: dispatch.cue_id,
           challenge: dispatch.challenge, sequence: "1", status: "APP_REPORTED_RECEIVED"});
         fieldsFromReceipt(receipt);
         seen.add(dispatch.execution_id);
-        const item = {command, receipt, res, claimed: false, received: null};
         const timeout = Math.min(expires - current, command.timeout_ms > 0 ? command.timeout_ms : 12000, 12000);
+        const item = {command, receipt, res, deadline: current + timeout, claimed: false, received: null};
         item.timer = setTimeout(() => { if (clear(item)) json(res, 504, {}); }, timeout);
         pending = item;
         res.on("close", () => clear(item));
@@ -84,13 +92,14 @@ function createReceiverGateway({ companionToken, applicationToken, key, scope, n
       }
       if (!authorized(req, applicationToken)) return json(res, 401, {});
       if (req.method === "GET" && req.url === "/stagecore/pending") {
-        if (!pending || pending.claimed) return json(res, 404, {});
-        pending.claimed = true;
-        return json(res, 200, pending.command);
+        const item = activeClaim();
+        if (!item || item.claimed) return json(res, 404, {});
+        item.claimed = true;
+        return json(res, 200, {...item.command, receiver_deadline_ms: item.deadline});
       }
       if (req.method === "POST" && req.url === "/stagecore/receipt") {
         const report = await readObject(req);
-        const item = pending;
+        const item = activeClaim();
         if (!item?.claimed || !scopeKeys.every(field => report[field] === item.receipt[field]) ||
             report.execution_id !== item.receipt.execution_id || report.cue_id !== item.receipt.cue_id ||
             report.challenge !== item.receipt.challenge ||
