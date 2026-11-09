@@ -22,6 +22,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/httpapi"
+"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/vault"
@@ -42,7 +43,7 @@ type captureUploadHarness struct {
 	handler    http.Handler
 }
 
-func newCaptureUploadHarness(t *testing.T, mode bulk.Mode) *captureUploadHarness {
+func newCaptureUploadHarness(t *testing.T, mode bulk.Mode, qualified ...bool) *captureUploadHarness {
 	t.Helper()
 	ctx := context.Background()
 	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
@@ -71,7 +72,13 @@ func newCaptureUploadHarness(t *testing.T, mode bulk.Mode) *captureUploadHarness
 	v, err := vault.Open(t.TempDir(), stageStore)
 	if err != nil { t.Fatal(err) }
 	manager := bulk.New(func(context.Context) (bulk.Mode, error) { return mode, nil })
-	handler := httpapi.New(httpapi.WithCompanionCaptureUpload(auth, stageStore, v, manager)).Handler()
+	options := []httpapi.Option{httpapi.WithCompanionCaptureUpload(auth, stageStore, v, manager)}
+	if len(qualified) != 0 && qualified[0] {
+		access, err := projectaccess.New(handle.DB)
+		if err != nil { t.Fatal(err) }
+		options = append(options, httpapi.WithProjectRouteQualification(access))
+	}
+	handler := httpapi.New(options...).Handler()
 	return &captureUploadHarness{
 		ctx: ctx, store: stageStore, auth: auth, credential: credential, session: session,
 		environment: environment, role: role, assignment: assignment, runtimeSnapshotID: runtimeSnapshot.ID,
@@ -236,6 +243,24 @@ func TestCompanionCaptureUploadAuthorityLossRejectsCompletionAndRollsBack(t *tes
 	if err != nil { t.Fatal(err) }
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("authority-loss object file remains, stat err=%v", err)
+	}
+}
+
+func TestQualifiedCompanionUploadStopsReadingAfterAssignmentLoss(t *testing.T) {
+	h := newCaptureUploadHarness(t, bulk.ModeEdit, true)
+	payload := bytes.Repeat([]byte("capture"), 30000)
+	ticket := h.ticket(t, "scoped-mid-upload", payload)
+	body := bytes.NewReader(payload)
+	reader := &releaseAssignmentReader{source:body,release:func(){
+		if err := h.store.ReleaseRoleAssignment(h.ctx, h.assignment.ID); err != nil { t.Fatal(err) }
+	}}
+	res := httptest.NewRecorder()
+	h.handler.ServeHTTP(res, h.request(ticket, reader, int64(len(payload))))
+	if res.Code != http.StatusConflict || body.Len() == 0 {
+		t.Fatalf("did not stop at revocation: status=%d unread=%d body=%s",res.Code,body.Len(),res.Body.String())
+	}
+	if _, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked upload reached Vault: %v",err)
 	}
 }
 

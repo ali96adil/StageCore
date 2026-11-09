@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -27,7 +28,7 @@ func WithCompanionCaptureUpload(
 		s.mux.HandleFunc(
 			"PUT /api/v1/companion/capture-uploads/{ticket_id}",
 			func(w http.ResponseWriter, r *http.Request) {
-				handleCompanionCaptureUpload(w, r, auth, stageStore, v, manager)
+				handleCompanionCaptureUpload(w, r, auth, stageStore, v, manager, s.projectRouteQualification != nil)
 			},
 		)
 	}
@@ -40,6 +41,7 @@ func handleCompanionCaptureUpload(
 	stageStore *store.Store,
 	v *stagevault.Vault,
 	manager *bulk.Manager,
+	qualifyLiveScope bool,
 ) {
 	if !secureDeviceRequest(r) {
 		writeJSON(w, http.StatusUpgradeRequired, map[string]any{"error_code": "SECURE_TRANSPORT_REQUIRED"})
@@ -75,7 +77,7 @@ func handleCompanionCaptureUpload(
 	}
 	if r.ContentLength != ticket.ExpectedSizeBytes {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error_code": "CAPTURE_UPLOAD_LENGTH_MISMATCH",
+			"error_code":          "CAPTURE_UPLOAD_LENGTH_MISMATCH",
 			"expected_size_bytes": ticket.ExpectedSizeBytes,
 		})
 		return
@@ -91,7 +93,22 @@ func handleCompanionCaptureUpload(
 		return
 	}
 
-	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, r.Body)
+	var source io.Reader = r.Body
+	var scoped *captureTicketReader
+	if qualifyLiveScope {
+		scoped = &captureTicketReader{source: source, authorize: func() error {
+			current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
+			if err != nil {
+				return err
+			}
+			if current.ID != ticket.ID || current.RuntimeSessionID != session.ID || current.CompanionID != session.CompanionID {
+				return domain.ErrConflict
+			}
+			return nil
+		}}
+		source = scoped
+	}
+	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, source)
 	object, err := v.ImportVerifiedObject(
 		r.Context(),
 		ticket.ExpectedContentHash,
@@ -99,6 +116,11 @@ func handleCompanionCaptureUpload(
 		reader,
 	)
 	if err != nil {
+		if scoped != nil && scoped.denied != nil {
+			manager.Fail(jobID, "capture upload authority changed during transfer")
+			writeCompanionCaptureUploadTicketError(w, scoped.denied)
+			return
+		}
 		if r.Context().Err() != nil {
 			manager.Cancel(jobID, r.Context().Err().Error())
 		} else {
@@ -125,11 +147,32 @@ func handleCompanionCaptureUpload(
 	manager.Complete(jobID)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"ticket_id": completed.ID,
-		"status": completed.Status,
+		"ticket_id":    completed.ID,
+		"status":       completed.Status,
 		"content_hash": object.ContentHash,
-		"size_bytes": object.SizeBytes,
+		"size_bytes":   object.SizeBytes,
 	})
+}
+
+type captureTicketReader struct {
+	source    io.Reader
+	authorize func() error
+	denied    error
+}
+
+func (reader *captureTicketReader) Read(data []byte) (int, error) {
+	if reader.denied == nil {
+		reader.denied = reader.authorize()
+	}
+	if reader.denied != nil {
+		return 0, reader.denied
+	}
+	n, err := reader.source.Read(data[:min(len(data), 64<<10)])
+	// Revocation may happen while the request body is waiting for bytes.
+	if reader.denied = reader.authorize(); reader.denied != nil {
+		return 0, reader.denied
+	}
+	return n, err
 }
 
 func companionCaptureUploadRuntimeSession(

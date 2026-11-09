@@ -128,7 +128,7 @@ func (s *Server) Handler() http.Handler {
 			s.pluginAdminGuard(w, r)
 			return
 		}
-		if s.projectRouteQualification != nil && len(projectRoutePermissions[pattern]) != 0 {
+		if s.projectRouteQualification != nil && projectRouteIsQualified(pattern) {
 			r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
 		}
 		s.mux.ServeHTTP(w, r)
