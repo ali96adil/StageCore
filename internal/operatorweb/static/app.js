@@ -952,6 +952,7 @@ cueForm.addEventListener("submit", async (event) => {
       ? `/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(cueID)}`
       : `/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues`;
     await api(path, { method: cueID ? "PUT" : "POST", json: body });
+    cueDialog.dispatchEvent(new Event("stagecore:cue-saved"));
     cueDialog.close();
     await renderCues(cueID ? "Cue updated in Draft. Publish a new Runtime Snapshot and start a new Rehearsal to apply the delay." : "Cue created in Draft. Publish a Runtime Snapshot and start a new Rehearsal to test it.");
   } catch (error) {

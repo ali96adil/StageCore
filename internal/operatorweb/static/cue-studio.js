@@ -114,17 +114,26 @@
     card.querySelector(".sc008-expand")?.focus();
   }
 
-  function serializeActionCopy(card) {
+  function serializeActionCopy(card, raw = null) {
     // Translate visual OSC/MIDI fields into the existing canonical payload.
     f002SyncActionCard(card);
     const read = (selector) => cardField(card, selector)?.value;
+    const parse = (selector) => {
+      const value = read(selector) || "{}";
+      try { return JSON.parse(value); }
+      catch (error) {
+        if (!raw) throw error;
+        raw[selector] = value;
+        return {};
+      }
+    };
     return {
       action_id: "",
       target_ref: read(".action-target") || "",
       capability_key: read(".action-capability") || "",
-      parameters: JSON.parse(read(".action-parameters") || "{}"),
-      timeout_policy: JSON.parse(read(".action-timeout") || "{}"),
-      error_policy: JSON.parse(read(".action-error") || "{}"),
+      parameters: parse(".action-parameters"),
+      timeout_policy: parse(".action-timeout"),
+      error_policy: parse(".action-error"),
       execution_mode: read(".action-mode") || "SEQUENTIAL",
       priority_class: read(".action-priority") || "P1",
       enabled: cardField(card, ".action-enabled")?.checked ?? true,
@@ -550,7 +559,7 @@
   let historyTimer;
   let restoringDraft = false;
 
-  function readDraftHistory() {
+  function readDraftHistory(includeIncomplete = false) {
     try {
       const fields = historyFields.map((id) => {
         const field = pick(id);
@@ -560,7 +569,15 @@
       const actions = actionCards().map((card) => {
         // Guided synchronization writes canonical JSON. Run it on a clone
         // so recording history never changes the visible edit or raw text.
-        const action = serializeActionCopy(card.cloneNode(true));
+        const clone = card.cloneNode(true);
+        const controls = card.querySelectorAll("input,select,textarea");
+        clone.querySelectorAll("input,select,textarea").forEach((node, index) => {
+          node.value = controls[index].value;
+          if (node.type === "checkbox") node.checked = controls[index].checked;
+        });
+        const raw = includeIncomplete ? {} : null;
+        const action = serializeActionCopy(clone, raw);
+        if (raw && Object.keys(raw).length) action.recovery_raw = raw;
         action.action_id = cardField(card, ".action-id").value;
         return action;
       });
@@ -592,7 +609,11 @@
     // nearest valid checkpoint. Redo never records invalid JSON.
     const stored = current === null && delta < 0 ? draftHistory.current() : draftHistory.move(delta);
     if (typeof stored !== "string") return;
-    const draft = JSON.parse(stored);
+    applyEditorDraft(JSON.parse(stored));
+    refreshHistoryButtons();
+  }
+
+  function applyEditorDraft(draft) {
     restoringDraft = true;
     try {
       historyFields.forEach((id, index) => {
@@ -605,12 +626,27 @@
       });
       updateLinkedCuesEditorState();
       pick("actionsEditor").replaceChildren();
-      draft.actions.forEach((action) => addActionEditor(action));
+      draft.actions.forEach((action) => {
+        addActionEditor(action);
+        const card = actionCards().at(-1);
+        for (const [field, mode] of [
+          [".action-parameters", ".f002-action-kind"],
+          [".action-timeout", ".f002-timeout-kind"],
+          [".action-error", ".f002-error-kind"],
+        ]) {
+          if (typeof action.recovery_raw?.[field] !== "string") continue;
+          const select = cardField(card, mode);
+          if (select) {
+            select.value = "advanced";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          cardField(card, field).value = action.recovery_raw[field];
+        }
+      });
       refreshActions();
     } finally {
       restoringDraft = false;
     }
-    refreshHistoryButtons();
   }
 
   function bindDraftHistory(form, anchor) {
@@ -647,6 +683,150 @@
     refreshHistoryButtons();
   }
 
+  function bindEditorRecovery(form, cue, workspace) {
+    const dialog = pick("cueDialog");
+    const projectID = state.project?.project_id;
+    const user = state.user;
+    const base = readDraftHistory(true);
+    if (!dialog || !projectID || !user || !base) return;
+    const cueID = cue?.cue_id || "";
+    const path = `/api/v1/projects/${encodeURIComponent(projectID)}/cue-editor-recovery`;
+    const panel = document.createElement("div");
+    panel.id = "sc009EditorRecovery";
+    const status = document.createElement("p");
+    status.className = "muted";
+    status.setAttribute("role", "status");
+    const restore = document.createElement("button");
+    const discard = document.createElement("button");
+    for (const button of [restore, discard]) {
+      button.type = "button";
+      button.className = "button ghost";
+      button.hidden = true;
+    }
+    restore.textContent = tr("استرجع المسودة", "Recover draft");
+    discard.textContent = tr("احذف النسخة المحفوظة", "Discard recovery");
+    panel.append(status, restore, discard);
+    pick(panel.id)?.remove();
+    workspace.prepend(panel);
+
+    let generation = "";
+    let blocked = true;
+    let ownsRecovery = false;
+    let lastSaved = base;
+    let timer;
+    let queue = Promise.resolve();
+    const lifetime = new AbortController();
+    const active = () => dialog.open && state.user === user && state.project?.project_id === projectID && panel.isConnected;
+    const message = (ar, en) => { if (active()) status.textContent = tr(ar, en); };
+    const clearRecovery = async () => {
+      if (generation) {
+        await api(path, { method: "DELETE", headers: { "If-Match": generation } });
+        generation = "";
+      }
+    };
+    const reportFailure = (error) => {
+      if (error?.status === 409) blocked = true;
+      message("تعذّر حفظ الاسترجاع. أبقِ المحرر مفتوحاً وأعد الاتصال، أو راجع التبويب الآخر.",
+        "Recovery could not be saved. Keep the editor open and reconnect or check the other tab.");
+    };
+    const flush = (keepalive = false) => {
+      if (!active() || blocked || restoringDraft) return;
+      const current = readDraftHistory(true);
+      if (current === null) {
+        message("تعذّر قراءة حقول المحرر. آخر نسخة محفوظة تبقى متاحة.",
+          "The editor fields could not be read. The last saved recovery is still available.");
+        return;
+      }
+      queue = queue.then(async () => {
+        if (blocked || current === lastSaved || !active()) return;
+        if (current === base && !generation) return;
+        const document = { version: 1, cue_id: cueID, base, draft: JSON.parse(current) };
+        const saved = await api(path, { method: "PUT", json: { generation, document }, keepalive });
+        generation = saved.generation;
+        ownsRecovery = true;
+        lastSaved = current;
+        message("حُفظت نسخة للاسترجاع.", "Recovery saved.");
+      }).catch(reportFailure);
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(flush, 400);
+    };
+    const options = { signal: lifetime.signal };
+    form.addEventListener("input", schedule, options);
+    form.addEventListener("change", schedule, options);
+    const changes = new MutationObserver(schedule);
+    changes.observe(pick("actionsEditor"), { childList: true, subtree: true });
+    window.addEventListener("online", () => { if (loaded) flush(); else load(); }, options);
+    window.addEventListener("pagehide", () => flush(true), options);
+    let loaded = false;
+
+    const closeRecovery = () => {
+      clearTimeout(timer);
+      blocked = true;
+      queue = queue.then(async () => {
+        if (ownsRecovery && state.user === user) await clearRecovery();
+      }).catch(reportFailure);
+    };
+    dialog.addEventListener("stagecore:cue-saved", closeRecovery, options);
+    dialog.addEventListener("stagecore:cue-discard", closeRecovery, options);
+    dialog.addEventListener("close", () => {
+      if (dialog.open) return;
+      clearTimeout(timer);
+      changes.disconnect();
+      lifetime.abort();
+      panel.remove();
+    }, options);
+    async function load() {
+      try {
+        const saved = await api(path);
+        if (!active()) return;
+        loaded = true;
+        generation = saved.generation || "";
+        const document = saved.document;
+        if (!generation) {
+          blocked = false;
+          flush();
+          return;
+        }
+        const draft = document?.draft;
+        const compatible = document?.version === 1 && document.cue_id === cueID && document.base === base &&
+          draft?.fields?.length === historyFields.length && Array.isArray(draft.links) && Array.isArray(draft.actions);
+        message(compatible ? "توجد مسودة محفوظة لهذا الكيو." : "توجد مسودة لكيو آخر أو لنسخة أقدم.",
+          compatible ? "A recovery draft exists for this Cue." : "Recovery belongs to another Cue or an older version.");
+        restore.hidden = !compatible;
+        discard.hidden = false;
+        restore.onclick = () => {
+          if (!active() || (readDraftHistory(true) !== base &&
+              !window.confirm(tr("استبدال التعديلات الحالية بالمسودة المحفوظة؟", "Replace these edits with the saved draft?")))) return;
+          applyEditorDraft(draft);
+          lastSaved = readDraftHistory(true);
+          recordDraftHistory();
+          ownsRecovery = true;
+          blocked = false;
+          restore.hidden = discard.hidden = true;
+          message("استُرجعت المسودة.", "Draft recovered.");
+        };
+        discard.onclick = async () => {
+          if (!active() || !window.confirm(tr("حذف نسخة الاسترجاع؟", "Delete the saved recovery?"))) return;
+          try {
+            await clearRecovery();
+            if (!active()) return;
+            blocked = false;
+            restore.hidden = discard.hidden = true;
+            message("حُذفت نسخة الاسترجاع.", "Recovery discarded.");
+            flush();
+          } catch (error) {
+            reportFailure(error);
+          }
+        };
+      } catch (error) {
+        reportFailure(error);
+      }
+    }
+    load();
+  }
+
   function formSignature() {
     return JSON.stringify(Array.from(pick("cueForm")?.querySelectorAll("input,select,textarea") || [])
       .map((node) => [node.id || node.className, node.value, node.type === "checkbox" ? node.checked : null]));
@@ -662,12 +842,16 @@
       if (!window.confirm(phrase("cue.studio.close_warning"))) {
         event.preventDefault();
         event.stopImmediatePropagation();
+      } else {
+        pick("cueDialog")?.dispatchEvent(new Event("stagecore:cue-discard"));
       }
     }, true);
     pick("cueDialog")?.addEventListener("cancel", (event) => {
       if (initialFormState !== formSignature() &&
           !window.confirm(tr("تجاهل التغييرات غير المحفوظة؟", "Discard unsaved changes?"))) {
         event.preventDefault();
+      } else if (initialFormState !== formSignature()) {
+        pick("cueDialog")?.dispatchEvent(new Event("stagecore:cue-discard"));
       }
     });
     form.addEventListener("invalid", (event) => {
@@ -735,6 +919,7 @@
     bindFormGuards();
     initialFormState = formSignature();
     bindDraftHistory(form, paste);
+    bindEditorRecovery(form, cue, workspace);
   }
 
   // Base Cue creation attaches a click listener. Capture before that listener

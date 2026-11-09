@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -86,7 +88,15 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 					return
 				}
 				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
-				if err := service.SetTimingSegment(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment); err != nil {
+				err := service.SetTimingSegment(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
+				switch {
+				case errors.Is(err, domain.ErrInvalidInput):
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_TIMING_SEGMENT"})
+					return
+				case errors.Is(err, domain.ErrShowConfigurationLocked):
+					writeJSON(w, http.StatusConflict, map[string]string{"error_code": "SHOW_CONFIGURATION_LOCKED"})
+					return
+				case err != nil:
 					writeProjectStoreError(w, err)
 					return
 				}

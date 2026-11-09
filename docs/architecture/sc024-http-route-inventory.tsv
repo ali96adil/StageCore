@@ -22,6 +22,9 @@ internal/httpapi/operator_configuration.go	PUT /api/v1/projects/{project_id}/tar
 internal/httpapi/operator_configuration_draft.go	DELETE /api/v1/projects/{project_id}/configuration/draft
 internal/httpapi/operator_configuration_draft.go	GET /api/v1/projects/{project_id}/configuration/lock
 internal/httpapi/operator_configuration_draft.go	POST /api/v1/projects/{project_id}/configuration/draft
+internal/httpapi/operator_cue_recovery.go	DELETE /api/v1/projects/{project_id}/cue-editor-recovery
+internal/httpapi/operator_cue_recovery.go	GET /api/v1/projects/{project_id}/cue-editor-recovery
+internal/httpapi/operator_cue_recovery.go	PUT /api/v1/projects/{project_id}/cue-editor-recovery
 internal/httpapi/operator_cue_reorder.go	POST /api/v1/projects/{project_id}/cues/reorder
 internal/httpapi/operator_cues_publish.go	DELETE /api/v1/projects/{project_id}/cues/{cue_id}
 internal/httpapi/operator_cues_publish.go	GET /api/v1/projects/{project_id}/cues
