@@ -21,6 +21,7 @@ type ManualRequest struct {
 	Channels []ChannelValue
 	// Zero holds the frame until the caller cancels the lease.
 	Duration time.Duration
+	lease    time.Duration
 }
 
 // ManualOutput holds one explicitly enabled and authorized output lease. Its
@@ -90,8 +91,10 @@ func (m *ManualOutput) Run(ctx context.Context, req ManualRequest, authorize Aut
 		return err
 	}
 	var expiry <-chan time.Time
-	if req.Duration > 0 {
-		timer := time.NewTimer(req.Duration)
+	var deadline time.Time
+	if hold := max(req.Duration, req.lease); hold > 0 {
+		deadline = time.Now().Add(hold)
+		timer := time.NewTimer(time.Until(deadline))
 		defer timer.Stop()
 		expiry = timer.C
 	}
@@ -104,6 +107,27 @@ func (m *ManualOutput) Run(ctx context.Context, req ManualRequest, authorize Aut
 		case <-expiry:
 			return nil
 		case <-check.C:
+			if req.Duration == 0 {
+				// Probe the still-open serial connection during a continuous
+				// lease. A write fault quarantines it without reopening.
+				writeContext := ctx
+				cancel := func() {}
+				if !deadline.IsZero() {
+					if !time.Now().Before(deadline) {
+						return nil
+					}
+					writeContext, cancel = context.WithDeadline(ctx, deadline)
+				}
+				err := tx.Send(writeContext, frame, authorize)
+				cancel()
+				if err != nil {
+					if tx.Status().Quarantined {
+						return errors.Join(ErrPhysicalStateUnknown, err)
+					}
+					return err
+				}
+				continue
+			}
 			if err := requireAuthority(ctx, authorize); err != nil {
 				return err
 			}

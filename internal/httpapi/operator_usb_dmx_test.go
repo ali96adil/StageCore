@@ -63,6 +63,22 @@ func TestUSBManualRouteRequiresExplicitScopeAndDoesNotReplay(t *testing.T) {
 		send(handler, "other-project", data) != http.StatusNotFound || len(port.frames) != 0 {
 		t.Fatal("disabled or cross-project route produced output")
 	}
+	continuous := data
+	continuous.Confirm, continuous.RequestID = "CONTINUOUS_USB_DMX", uuid.NewString()
+	if send(handler, p.ID, continuous) != http.StatusNotFound || len(port.frames) != 0 {
+		t.Fatal("continuous output enabled by default")
+	}
+	leasePort := &usbDMXFixturePort{}
+	lease := &usbdmx.HubManual{ProjectID: p.ID, EnableContinuous: true, Output: usbdmx.NewManualOutput(true,
+		func(context.Context) (usbdmx.PacketPort, error) { return leasePort, nil })}
+	leaseHandler := New(WithOperatorUSBManualDMX(h.auth, st, lease)).Handler()
+	if send(leaseHandler, p.ID, continuous) != http.StatusOK || len(leasePort.frames) != 3 ||
+		leasePort.frames[2] != usbdmx.ZeroFrame() {
+		t.Fatal("explicit continuous lease did not end with zero")
+	}
+	if send(leaseHandler, p.ID, continuous) != http.StatusConflict || len(leasePort.frames) != 3 {
+		t.Fatal("continuous lease replay dispatched output")
+	}
 	if send(handler, p.ID, data) != http.StatusOK || len(port.frames) != 3 ||
 		port.frames[0] != usbdmx.ZeroFrame() || port.frames[2] != usbdmx.ZeroFrame() {
 		t.Fatal("confirmed lease did not submit zero, data, zero")

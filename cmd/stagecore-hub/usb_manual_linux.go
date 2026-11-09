@@ -49,7 +49,7 @@ func configuredUSBManual() (*usbdmx.HubManual, error) {
 		}
 		return errors.New("USB identity does not match the configured device")
 	}
-	return &usbdmx.HubManual{ProjectID: project, Output: usbdmx.NewManualOutput(true, func(ctx context.Context) (usbdmx.PacketPort, error) {
+	return &usbdmx.HubManual{ProjectID: project, EnableContinuous: os.Getenv("STAGECORE_USB_DMX_CONTINUOUS") == "1", Output: usbdmx.NewManualOutput(true, func(ctx context.Context) (usbdmx.PacketPort, error) {
 		return usbdmx.OpenVerifiedLinuxPort(ctx, byID, approve)
 	})}, nil
 }

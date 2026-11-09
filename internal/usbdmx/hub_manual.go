@@ -10,8 +10,9 @@ import (
 // HubManual arbitrates one physical output lease against operational session
 // admission. It is constructed only for an explicitly configured project.
 type HubManual struct {
-	ProjectID string
-	Output    *ManualOutput
+	ProjectID        string
+	Output           *ManualOutput
+	EnableContinuous bool
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
@@ -36,6 +37,23 @@ func (h *HubManual) Run(ctx context.Context, req ManualRequest, authorize Author
 	if req.Duration <= 0 || req.Duration > 10*time.Second {
 		return errors.New("Hub manual USB-DMX requires 1ms–10s timed output")
 	}
+	return h.run(ctx, req, authorize)
+}
+
+const MaxContinuousLease = time.Minute
+
+// RunContinuous holds an exclusive, bounded lease tied to the caller context.
+func (h *HubManual) RunContinuous(ctx context.Context, channels []ChannelValue, lease time.Duration, authorize Authorize) error {
+	if h == nil || !h.EnableContinuous {
+		return ErrManualDisabled
+	}
+	if lease < time.Millisecond || lease > MaxContinuousLease {
+		return errors.New("usbdmx: invalid continuous lease duration")
+	}
+	return h.run(ctx, ManualRequest{Channels: channels, lease: lease}, authorize)
+}
+
+func (h *HubManual) run(ctx context.Context, req ManualRequest, authorize Authorize) error {
 	h.mu.Lock()
 	if h.done != nil || h.fault != nil || h.blackout {
 		h.mu.Unlock()

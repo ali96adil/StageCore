@@ -47,13 +47,23 @@ func WithOperatorUSBManualDMX(auth *userauth.Service, st *store.Store, manual *u
 					return
 				}
 				parsedID, idErr := uuid.Parse(req.RequestID)
-				if req.Confirm != "MANUAL_USB_DMX" || req.DurationMS < 1 || req.DurationMS > 10000 || idErr != nil || parsedID == uuid.Nil {
+				continuous := req.Confirm == "CONTINUOUS_USB_DMX"
+				maxDuration := int64(10000)
+				if continuous {
+					if !manual.EnableContinuous {
+						writeJSON(w, http.StatusNotFound, map[string]string{"error_code": "USB_DMX_UNAVAILABLE"})
+						return
+					}
+					maxDuration = usbdmx.MaxContinuousLease.Milliseconds()
+				}
+				if (req.Confirm != "MANUAL_USB_DMX" && !continuous) || req.DurationMS < 1 ||
+					req.DurationMS > maxDuration || idErr != nil || parsedID == uuid.Nil {
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "USB_DMX_INVALID_REQUEST"})
 					return
 				}
 				authorize := func(ctx context.Context) error {
-					current, err := auth.Validate(ctx, token)
-					if err != nil || current.User.ID != session.User.ID || current.User.Role != userauth.RoleOwner {
+					current, err := auth.ValidatePassive(ctx, token)
+					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID || current.User.Role != userauth.RoleOwner {
 						return errors.New("owner authorization ended")
 					}
 					active, err := st.ActiveOperationalSessionType(ctx)
@@ -79,7 +89,13 @@ func WithOperatorUSBManualDMX(auth *userauth.Service, st *store.Store, manual *u
 					writeJSON(w, http.StatusConflict, map[string]string{"error_code": "USB_DMX_REQUEST_NOT_RESERVED"})
 					return
 				}
-				err := manual.Run(r.Context(), usbdmx.ManualRequest{Channels: req.Channels, Duration: time.Duration(req.DurationMS) * time.Millisecond}, authorize)
+				duration := time.Duration(req.DurationMS) * time.Millisecond
+				var err error
+				if continuous {
+					err = manual.RunContinuous(r.Context(), req.Channels, duration, authorize)
+				} else {
+					err = manual.Run(r.Context(), usbdmx.ManualRequest{Channels: req.Channels, Duration: duration}, authorize)
+				}
 				status := contracts.CommandCompleted
 				if err != nil {
 					status = contracts.CommandFailed

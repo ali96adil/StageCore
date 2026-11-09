@@ -64,3 +64,16 @@ CI tests use fake packet ports and deliberately invalid paths; tests verify cold
 - USB-Pro output packets provide no physical fixture ACK. The device can retain/repeat a previous DMX state after a cable disconnect or process crash; an attempted zero is **not** proof of actual blackout. Measure hotplug/loss-of-power behavior with isolated fixtures before qualifying.
 - On-site tests must identify real hardware in `lsusb`, confirm exact `/dev/serial/by-id`, FTDI permissions, and no other application (QLC+ included) owning the adapter.
 - Persistent output authority, active snapshot + project assignment, idle/SHOW lock, blackout reconciliation and manual output selection are deferred and must be integrated before any live show deployment.
+
+### Hub continuous manual lease
+
+Continuous output additionally requires `STAGECORE_USB_DMX_CONTINUOUS=1`
+on an already configured manual USB-DMX Hub. Use the Owner-only manual
+endpoint with `confirm: "CONTINUOUS_USB_DMX"`, a fresh request UUID,
+the current published Snapshot, channels, and `duration_ms` from 1 to 60000.
+Keep the request connected for the lease. Stop via the same endpoint with
+`confirm: "STOP_USB_DMX"` or engage EDIT blackout. Disconnect, expiration,
+lost Owner authority or Snapshot replacement ends the lease. Session admission
+stays fenced while the lease is active or its zero request is unconfirmed.
+A serial write or zero request is local transport evidence. Qualify the actual
+fixtures and physical zero state separately.

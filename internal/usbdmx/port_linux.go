@@ -112,7 +112,7 @@ func (p *LinuxPort) WritePacket(ctx context.Context, packet [FrameSize]byte) err
 	for written < FrameSize {
 		if err := local.Err(); err != nil { return fmt.Errorf("usbdmx: incomplete serial frame %d/%d: %w", written, FrameSize, err) }
 		n, err := unix.Write(p.fd, packet[written:])
-		written += n
+		if n > 0 { written += n }
 		if err == nil && n > 0 { continue }
 		if err != nil && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
 			return fmt.Errorf("usbdmx: USB serial write %d/%d: %w", written, FrameSize, err)
