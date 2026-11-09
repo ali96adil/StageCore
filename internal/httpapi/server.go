@@ -13,18 +13,20 @@ import (
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
+	"github.com/ali96adil/StageCore/internal/store"
 	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
 type Server struct {
-	mux                *http.ServeMux
-	companionAuth      *companionauth.Service
-	companionRuntime   *companionchannel.RuntimeChannel
-	vault              *stagevault.Vault
-	software           *software.Repository
-	bulk               *bulk.Manager
-	storageHealth      *storagehealth.Monitor
-	assistantWorkspace *assistant.WorkspaceService
+	mux                 *http.ServeMux
+	companionAuth       *companionauth.Service
+	companionRuntime    *companionchannel.RuntimeChannel
+	vault               *stagevault.Vault
+	companionVaultScope *store.Store
+	software            *software.Repository
+	bulk                *bulk.Manager
+	storageHealth       *storagehealth.Monitor
+	assistantWorkspace  *assistant.WorkspaceService
 }
 
 type Option func(*Server)
@@ -39,6 +41,11 @@ func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
 
 func WithVault(v *stagevault.Vault) Option {
 	return func(s *Server) { s.vault = v }
+}
+
+// WithCompanionVaultScope limits authenticated Vault downloads to the role's published Snapshot.
+func WithCompanionVaultScope(projects *store.Store) Option {
+	return func(s *Server) { s.companionVaultScope = projects }
 }
 
 func WithSoftwareRepository(repository *software.Repository) Option {

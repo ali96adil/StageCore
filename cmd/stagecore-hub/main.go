@@ -31,7 +31,6 @@ import (
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
-	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/sessionsafety"
 	"github.com/ali96adil/StageCore/internal/showcapsule"
@@ -39,6 +38,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/simulationinput"
 	"github.com/ali96adil/StageCore/internal/simulationreport"
+	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
@@ -323,7 +323,6 @@ func main() {
 		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
 	}
 
-
 	var audioScope *httpapi.StageAudioProjectScope
 	if id := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_PROJECT_ID")); id != "" {
 		access, err := projectaccess.New(application.DB.DB)
@@ -391,6 +390,7 @@ func main() {
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
+		companionVaultScopeOption(application),
 		httpapi.WithCompanionCaptureUpload(application.CompanionAuth, application.Store, application.Vault, application.Bulk),
 		httpapi.WithSoftwareRepository(application.Software),
 		httpapi.WithBulkManager(application.Bulk),

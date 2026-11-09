@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -15,11 +16,21 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUpgradeRequired, map[string]any{"error_code": "SECURE_TRANSPORT_REQUIRED"})
 		return
 	}
-	if !s.requireRuntimeSession(w, r) {
+	session, token, ok := s.requireRuntimeSession(w, r)
+	if !ok {
 		return
 	}
 
 	contentHash := strings.ToLower(strings.TrimSpace(r.PathValue("content_hash")))
+	var scope *companionVaultReadScope
+	if s.companionVaultScope != nil {
+		scope = s.authorizeCompanionVaultRead(r.Context(), session, token, contentHash)
+		if scope == nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
 	file, object, err := s.vault.OpenObject(r.Context(), contentHash)
 	if errors.Is(err, domain.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})
@@ -35,10 +46,7 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	content := interface {
-		Read([]byte) (int, error)
-		Seek(int64, int) (int64, error)
-	}(file)
+	var content io.ReadSeeker = file
 	jobID := ""
 	if s.bulk != nil {
 		jobID, err = s.bulk.Begin(r.Context(), bulk.KindMediaSync, object.SizeBytes)
@@ -56,10 +64,18 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 				s.bulk.Cancel(jobID, r.Context().Err().Error())
 				return
 			}
+			if scope != nil && scope.denied {
+				s.bulk.Cancel(jobID, "Companion Vault scope revoked")
+				return
+			}
 			s.bulk.Complete(jobID)
 		}()
 	}
 
+	if scope != nil {
+		scope.ReadSeeker = content
+		content = scope
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", `"sha256:`+object.ContentHash+`"`)
@@ -68,19 +84,20 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, object.ContentHash, object.CreatedAt, content)
 }
 
-func (s *Server) requireRuntimeSession(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) requireRuntimeSession(w http.ResponseWriter, r *http.Request) (domain.CompanionRuntimeSession, string, bool) {
 	const prefix = "StageCoreSession "
 	authorization := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authorization, prefix) || strings.TrimSpace(strings.TrimPrefix(authorization, prefix)) == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": companionauth.CodeSessionInvalid})
-		return false
+		return domain.CompanionRuntimeSession{}, "", false
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(authorization, prefix))
-	if _, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token); err != nil {
+	session, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token)
+	if err != nil {
 		writeCompanionAuthError(w, err)
-		return false
+		return domain.CompanionRuntimeSession{}, "", false
 	}
-	return true
+	return session, token, true
 }
 
 func int64String(value int64) string {

@@ -113,9 +113,9 @@ func (s *Service) BuildManifest(ctx context.Context, projectID string, options B
 	for _, role := range roles {
 		manifest.MachineRoles = append(manifest.MachineRoles, MachineRoleIdentity{
 			MachineRoleID: role.ID, RoleKey: role.RoleKey, DisplayName: role.DisplayName,
-			RequiredCapabilities: append([]string(nil), role.RequiredCapabilities...),
+			RequiredCapabilities:      append([]string(nil), role.RequiredCapabilities...),
 			RequiredRuntimeSnapshotID: cloneString(role.RequiredRuntimeSnapshotID),
-			RequiredConfigHash: role.RequiredConfigHash, Required: role.Required,
+			RequiredConfigHash:        role.RequiredConfigHash, Required: role.Required,
 		})
 	}
 
@@ -213,13 +213,16 @@ func Verify(capsulePath string) (Manifest, error) {
 	if capsulePath == "" {
 		return Manifest{}, fmt.Errorf("show capsule path is required")
 	}
-	capsulePath = filepath.Clean(capsulePath)
-	manifestPath := filepath.Join(capsulePath, ManifestFileName)
-	manifestBytes, err := os.ReadFile(manifestPath)
+	root, err := openCapsuleRoot(capsulePath)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer root.Close()
+	manifestBytes, err := readCapsuleFile(root, ManifestFileName, 16<<20)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read show capsule manifest: %w", err)
 	}
-	checksumBytes, err := os.ReadFile(filepath.Join(capsulePath, ManifestChecksumFile))
+	checksumBytes, err := readCapsuleFile(root, ManifestChecksumFile, 256)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read show capsule checksum: %w", err)
 	}
@@ -246,8 +249,7 @@ func Verify(capsulePath string) (Manifest, error) {
 		if !object.Included {
 			continue
 		}
-		path := filepath.Join(capsulePath, filepath.FromSlash(object.ArchivePath))
-		if err := verifyFile(path, object.ContentSHA256, object.SizeBytes); err != nil {
+		if err := verifyFile(root, filepath.FromSlash(object.ArchivePath), object.ContentSHA256, object.SizeBytes); err != nil {
 			return Manifest{}, fmt.Errorf("verify capsule object %s: %w", object.ContentSHA256, err)
 		}
 	}
@@ -331,7 +333,7 @@ func (s *Service) collectExecutionEnvironments(ctx context.Context, manifest *Ma
 			case executionenv.CaptureContentBound:
 				if asset.SizeBytes == nil {
 					return fmt.Errorf("%w: execution environment asset %s has no content size", domain.ErrConflict, asset.Key)
-			}
+				}
 				if err := s.addVaultObject(ctx, objects, asset.ContentHash, *asset.SizeBytes, true, "environment:"+environment.Manifest.EnvironmentKey+":asset:"+asset.Key, manifest.ExportMode); err != nil {
 					return err
 				}
@@ -548,8 +550,65 @@ func (s *Service) copyVaultObject(ctx context.Context, stagingRoot string, objec
 	return nil
 }
 
-func verifyFile(path, expectedHash string, expectedSize int64) error {
-	file, err := os.Open(path)
+func openCapsuleRoot(path string) (*os.Root, error) {
+	path = filepath.Clean(path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("show capsule must be a directory")
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		root.Close()
+		return nil, fmt.Errorf("show capsule directory changed while opening")
+	}
+	return root, nil
+}
+
+func openCapsuleFile(root *os.Root, path string) (*os.File, error) {
+	info, err := root.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("capsule file must be regular")
+	}
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		file.Close()
+		return nil, fmt.Errorf("capsule file changed while opening")
+	}
+	return file, nil
+}
+
+func readCapsuleFile(root *os.Root, path string, limit int64) ([]byte, error) {
+	file, err := openCapsuleFile(root, path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("capsule metadata exceeds %d bytes", limit)
+	}
+	return data, nil
+}
+
+func verifyFile(root *os.Root, path, expectedHash string, expectedSize int64) error {
+	file, err := openCapsuleFile(root, path)
 	if err != nil {
 		return err
 	}
@@ -562,11 +621,12 @@ func verifyFile(path, expectedHash string, expectedSize int64) error {
 		return fmt.Errorf("file size/type mismatch")
 	}
 	hasher := sha256.New()
-	written, err := io.Copy(hasher, file)
+	written, err := io.Copy(hasher, io.LimitReader(file, expectedSize))
 	if err != nil {
 		return err
 	}
-	if written != expectedSize || hex.EncodeToString(hasher.Sum(nil)) != expectedHash {
+	var extra [1]byte
+	if _, err := io.ReadFull(file, extra[:]); err != io.EOF || written != expectedSize || hex.EncodeToString(hasher.Sum(nil)) != expectedHash {
 		return fmt.Errorf("file content hash mismatch")
 	}
 	return nil

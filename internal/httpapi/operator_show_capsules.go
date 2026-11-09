@@ -28,13 +28,13 @@ type showCapsuleExportRequest struct {
 }
 
 type showCapsuleEntry struct {
-	CapsuleID          string                 `json:"capsule_id"`
-	ProjectID          string                 `json:"project_id"`
-	ProjectName        string                 `json:"project_name"`
-	RuntimeSnapshotID  string                 `json:"runtime_snapshot_id"`
-	ExportMode         showcapsule.ExportMode `json:"export_mode"`
-	CreatedAt          string                 `json:"created_at"`
-	Location           string                 `json:"location"`
+	CapsuleID         string                 `json:"capsule_id"`
+	ProjectID         string                 `json:"project_id"`
+	ProjectName       string                 `json:"project_name"`
+	RuntimeSnapshotID string                 `json:"runtime_snapshot_id"`
+	ExportMode        showcapsule.ExportMode `json:"export_mode"`
+	CreatedAt         string                 `json:"created_at"`
+	Location          string                 `json:"location"`
 }
 
 func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string) Option {
@@ -53,7 +53,7 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			}
 			manifest, err := service.BuildManifest(r.Context(), r.PathValue("project_id"), showcapsule.BuildOptions{
 				RuntimeSnapshotID: strings.TrimSpace(r.URL.Query().Get("runtime_snapshot_id")),
-				Mode: mode,
+				Mode:              mode,
 			})
 			if err != nil {
 				writeProjectStoreError(w, err)
@@ -77,16 +77,16 @@ func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			}
 			result, err := service.Export(r.Context(), r.PathValue("project_id"), exportRoot, showcapsule.BuildOptions{
 				RuntimeSnapshotID: strings.TrimSpace(body.RuntimeSnapshotID),
-				Mode: mode,
+				Mode:              mode,
 			})
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{
-				"capsule_id": result.CapsuleID,
-				"manifest": result.Manifest,
-				"location": "exports",
+				"capsule_id":    result.CapsuleID,
+				"manifest":      result.Manifest,
+				"location":      "exports",
 				"transfer_note": "Copy this capsule directory into the replacement Hub's Show Capsule imports directory before planning restore.",
 			})
 		}))
@@ -166,7 +166,7 @@ func resolveCapsulePath(w http.ResponseWriter, root, capsuleID string) (string, 
 		return "", false
 	}
 	path := filepath.Join(root, capsuleID)
-	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+	if info, err := os.Lstat(path); err != nil || !info.IsDir() {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "CAPSULE_NOT_FOUND"})
 		return "", false
 	}
@@ -191,13 +191,13 @@ func listShowCapsules(root, location string) ([]showCapsuleEntry, error) {
 			continue
 		}
 		out = append(out, showCapsuleEntry{
-			CapsuleID: manifest.CapsuleID,
-			ProjectID: manifest.Project.ProjectID,
-			ProjectName: manifest.Project.Name,
+			CapsuleID:         manifest.CapsuleID,
+			ProjectID:         manifest.Project.ProjectID,
+			ProjectName:       manifest.Project.Name,
 			RuntimeSnapshotID: manifest.RuntimeSnapshot.RuntimeSnapshotID,
-			ExportMode: manifest.ExportMode,
-			CreatedAt: manifest.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z"),
-			Location: location,
+			ExportMode:        manifest.ExportMode,
+			CreatedAt:         manifest.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z"),
+			Location:          location,
 		})
 	}
 	return out, nil
