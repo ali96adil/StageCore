@@ -158,6 +158,16 @@ func (s *Service) Login(ctx context.Context, username, password, remoteKey strin
 }
 
 func (s *Service) Validate(ctx context.Context, token string) (Session, error) {
+	return s.validate(ctx, token, true)
+}
+
+// ValidatePassive checks the current session without writing activity on every
+// heartbeat or streamed chunk. The initial HTTP request uses Validate.
+func (s *Service) ValidatePassive(ctx context.Context, token string) (Session, error) {
+	return s.validate(ctx, token, false)
+}
+
+func (s *Service) validate(ctx context.Context, token string, touch bool) (Session, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return Session{}, ErrSessionInvalid
@@ -188,8 +198,10 @@ func (s *Service) Validate(ctx context.Context, token string) (Session, error) {
 	if enabled != 1 || !session.ExpiresAt.After(now) {
 		return Session{}, ErrSessionInvalid
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE browser_sessions SET last_seen_at_us = ? WHERE session_id = ?`, now.UnixMicro(), session.ID); err != nil {
-		return Session{}, fmt.Errorf("touch browser session: %w", err)
+	if touch {
+		if _, err := s.db.ExecContext(ctx, `UPDATE browser_sessions SET last_seen_at_us = ? WHERE session_id = ?`, now.UnixMicro(), session.ID); err != nil {
+			return Session{}, fmt.Errorf("touch browser session: %w", err)
+		}
 	}
 	return session, nil
 }
