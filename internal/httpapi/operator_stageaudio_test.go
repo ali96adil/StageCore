@@ -282,3 +282,52 @@ func TestScopedStageAudioRevocationAtSidecarWriteDoesNotPoisonShowFence(t *testi
 	}
 	release()
 }
+
+func TestLegacyStageAudioFencesRevokedBrowserSession(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"before command write", http.MethodPost, "/api/v1/system/audio/command"},
+		{"before status response", http.MethodGet, "/api/v1/system/audio/status"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrote := false
+			sidecar := audioLocalFunc(func(ctx context.Context, _ stageaudio.Request) (stageaudio.LocalReply, error) {
+				if err := h.auth.Logout(ctx, login.Token); err != nil {
+					t.Fatal(err)
+				}
+				if test.method == http.MethodPost {
+					if err := capability.CheckDispatch(ctx); err != nil {
+						return stageaudio.LocalReply{}, err
+					}
+					wrote = true
+				}
+				return stageaudio.LocalReply{Media: []string{"private.wav"}}, nil
+			})
+			handler := New(WithOperatorStageAudio(h.auth, projects, sidecar, nil)).Handler()
+			var req *http.Request
+			if test.method == http.MethodPost {
+				req = authenticatedMutationRequest(t, test.method, test.path,
+					[]byte(`{"operation":"STOP","deck":"A"}`), login.Token, login.CSRFToken)
+			} else {
+				req = httptest.NewRequest(test.method, test.path, nil)
+				req.RemoteAddr = "127.0.0.1:9126"
+				req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if wrote || rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "private.wav") {
+				t.Fatalf("revoked session got HTTP %d, wrote=%t, %s", rec.Code, wrote, rec.Body.String())
+			}
+		})
+	}
+}

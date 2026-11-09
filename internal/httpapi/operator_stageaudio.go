@@ -36,9 +36,6 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 			return stageStore.ActiveOperationalSessionType(ctx)
 		}
 		authorize := func(r *http.Request, session userauth.Session, mutate bool) bool {
-			if scope == nil && qualificationAccess(r, nil) == nil {
-				return true
-			}
 			token, ok := browserSessionToken(r)
 			if !ok {
 				return false
@@ -47,8 +44,15 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
 				return false
 			}
+			permission := userauth.PermissionProjectRead
+			if mutate {
+				permission = userauth.PermissionRuntimeControl
+			}
+			if userauth.Authorize(current.User.Role, permission) != nil {
+				return false
+			}
 			if scope == nil {
-				return current.User.Role == userauth.RoleOwner
+				return qualificationAccess(r, nil) == nil || current.User.Role == userauth.RoleOwner
 			}
 			return scope.authorize(r, current.User.ID, mutate)
 		}
