@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -120,8 +121,10 @@ func (r *Runtime) ExecuteTabletAssignmentAuthorized(
 		"target_runtime_snapshot_id": strings.TrimSpace(input.TargetRuntimeSnapshotID),
 		"safe_media_required":        true,
 	}
-	if err := current.send(request); err != nil {
-		current.close()
+	if err := current.sendAuthorized(ctx, request); err != nil {
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return deviceexperience.TabletAssignmentCommit{}, fmt.Errorf("%w: safe-media request failed: %v", ErrTabletAssignmentNotVerified, err)
 	}
 

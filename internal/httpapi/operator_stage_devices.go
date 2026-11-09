@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -213,11 +214,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionSnapshotPublish); err != nil {
@@ -930,11 +934,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -1007,11 +1014,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -1089,11 +1099,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {

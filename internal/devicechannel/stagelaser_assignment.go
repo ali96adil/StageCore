@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -103,7 +104,7 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 			return deviceexperience.StageLaserAssignmentCommit{}, fmt.Errorf("%w: operator authorization changed: %v", ErrStageLaserAssignmentNotVerified, err)
 		}
 	}
-	if err := current.send(map[string]any{
+	if err := current.sendAuthorized(ctx, map[string]any{
 		"type": "stagelaser.assignment.prepare",
 		"schema_version": 2,
 		"device_id": input.DeviceID,
@@ -117,7 +118,9 @@ func (r *Runtime) ExecuteStageLaserAssignmentAuthorized(
 		"required_arm_state": string(stagelaser.ArmDisarmed),
 		"required_logical_state": string(stagelaser.StateOff),
 	}); err != nil {
-		current.close()
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return deviceexperience.StageLaserAssignmentCommit{}, fmt.Errorf("%w: safe-off request failed: %v", ErrStageLaserAssignmentNotVerified, err)
 	}
 

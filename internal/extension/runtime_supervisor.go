@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
@@ -133,6 +134,10 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 		return RuntimeLifecycleStatus{}, fmt.Errorf("installation ID and actor are required")
 	}
 
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return RuntimeLifecycleStatus{}, err
+	}
+
 	// Operator intent takes precedence over any pending automatic recovery.
 	s.cancelCrashRecovery(installationID)
 
@@ -155,6 +160,9 @@ func (s *RuntimeSupervisor) Enable(ctx context.Context, installationID, actor st
 	// scoped StageCore-owned broker session can be created inside the private
 	// sandbox; unsupported network permissions remain fail-closed.
 	if _, err := s.probe.Probe(ctx, installationID); err != nil {
+		return RuntimeLifecycleStatus{}, err
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
 	lifecycle, err := s.installer.library.store.SetExtensionRuntimeDesiredState(ctx, installationID, store.ExtensionRuntimeDesiredEnabled, actor)
@@ -184,6 +192,10 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 		return RuntimeLifecycleStatus{}, fmt.Errorf("installation ID and actor are required")
 	}
 
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return RuntimeLifecycleStatus{}, err
+	}
+
 	// Cancel before waiting on the process mutex so an in-flight recovery probe
 	// or backoff observes cancellation as early as possible.
 	s.cancelCrashRecovery(installationID)
@@ -192,6 +204,9 @@ func (s *RuntimeSupervisor) Disable(ctx context.Context, installationID, actor s
 	defer s.mu.Unlock()
 
 	if err := s.rejectShow(ctx); err != nil {
+		return RuntimeLifecycleStatus{}, err
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
 		return RuntimeLifecycleStatus{}, err
 	}
 	lifecycle, err := s.installer.library.store.SetExtensionRuntimeDesiredState(ctx, installationID, store.ExtensionRuntimeDesiredDisabled, actor)

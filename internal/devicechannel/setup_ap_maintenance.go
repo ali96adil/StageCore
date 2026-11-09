@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 )
 
@@ -124,8 +125,10 @@ func (r *Runtime) ConfigureSetupAPPassword(
 		Operation:            operation,
 		Password:             password,
 	}
-	if err := current.send(request); err != nil {
-		current.close()
+	if err := current.sendAuthorized(ctx, request); err != nil {
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return SetupAPPasswordResult{}, fmt.Errorf("send setup AP maintenance request: %w", err)
 	}
 

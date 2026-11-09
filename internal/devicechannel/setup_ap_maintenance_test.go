@@ -3,7 +3,10 @@ package devicechannel
 import (
 	"context"
 	"errors"
+	"golang.org/x/net/websocket"
 	"testing"
+
+	"github.com/ali96adil/StageCore/internal/capability"
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 )
@@ -105,5 +108,30 @@ func TestDeliverSetupAPMaintenanceRequiresExactAuthenticatedV2Connection(t *test
 	message.MaintenanceState = "APPLIED"
 	if runtime.deliverSetupAPPasswordResult(current, message) {
 		t.Fatal("result accepted after capability disappeared")
+	}
+}
+
+func TestSetupAPRevokedAtWriteKeepsConnectionAndClearsPending(t *testing.T) {
+	const deviceID = "device"
+	current := &connection{
+		ws: &websocket.Conn{}, deviceID: deviceID,
+		closed: make(chan struct{}), protocolVersion: deviceexperience.ProtocolVersion2,
+		advertisedCapabilities: []string{SetupAPPasswordCapability},
+	}
+	runtime := &Runtime{connections: map[string]*connection{deviceID: current}}
+	ctx := capability.WithDispatchCheck(context.Background(), func(context.Context) error {
+		return errors.New("revoked before write")
+	})
+	_, err := runtime.ConfigureSetupAPPassword(ctx, deviceID, "request", SetupAPPasswordResetDefault, "")
+	if !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("send returned %v", err)
+	}
+	if len(runtime.pendingSetupAPPassword) != 0 {
+		t.Fatal("revoked request left pending maintenance")
+	}
+	select {
+	case <-current.closed:
+		t.Fatal("revocation closed the device connection")
+	default:
 	}
 }
