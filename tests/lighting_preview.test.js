@@ -192,7 +192,7 @@ test("Cue Studio history restores original action IDs and unknown Snapshot field
   const first = source.indexOf("function createDraftHistory");
   const last = source.indexOf("function bindDraftHistory", first);
   const fields = new Map();
-  let actions = [{action_id:"existing-id", parameters:{legacy_extension:{value:42}}, timeout_policy:{future_key:3}}];
+  let actions = [{action_id:"existing-id", execution_mode:"PARALLEL", parameters:{legacy_extension:{value:42}}, timeout_policy:{future_key:3}}];
   const links = [{value:"child", checked:true}];
   const context = {
     pick(id) {
@@ -201,24 +201,37 @@ test("Cue Studio history restores original action IDs and unknown Snapshot field
       if (!fields.has(id)) fields.set(id, {value:""});
       return fields.get(id);
     },
-    actionCards: () => actions.map(action => ({action, cloneNode:()=>({action:structuredClone(action)})})),
+    actionCards: () => actions.map(action => ({
+      action,
+      querySelectorAll: () => [{value:action.execution_mode || "SEQUENTIAL"}],
+      cloneNode() {
+        const mode = {value:"SEQUENTIAL"};
+        return {action:structuredClone(action), mode, querySelectorAll: () => [mode]};
+      },
+    })),
     cardField: card => ({value:card.action.action_id}),
-    serializeActionCopy: card => card.action,
+    serializeActionCopy: card => ({...card.action, execution_mode:card.mode.value}),
     updateLinkedCuesEditorState(){}, refreshActions(){}, clearTimeout(){},
     addActionEditor: action => actions.push(action),
   };
   const draft = vm.runInNewContext(source.slice(first, last) + "({draftHistory, readDraftHistory, restoreDraftHistory})", context);
   fields.set("cueStartDelaySeconds", {value:"1.25"});
-  draft.draftHistory.reset(draft.readDraftHistory());
+  fields.set("f018CueAt", {value:"00:02:03:04"});
+  const baseline = draft.readDraftHistory();
+  assert.notEqual(baseline, null);
+  draft.draftHistory.reset(baseline);
   links[0].checked = false;
   actions = [{action_id:"replacement", parameters:{}}];
   fields.get("cueStartDelaySeconds").value = "0";
+  fields.get("f018CueAt").value = "";
   draft.restoreDraftHistory(-1);
   assert.equal(actions[0].action_id, "existing-id");
+  assert.equal(actions[0].execution_mode, "PARALLEL");
   assert.equal(actions[0].parameters.legacy_extension.value, 42);
   assert.equal(actions[0].timeout_policy.future_key, 3);
   assert.equal(fields.get("cueStartDelaySeconds").value, "1.25");
   assert.equal(links[0].checked, true);
+  assert.equal(fields.get("f018CueAt").value, "00:02:03:04");
   draft.restoreDraftHistory(1);
   assert.equal(actions[0].action_id, "replacement");
 });
