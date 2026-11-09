@@ -3,14 +3,46 @@ package devicechannel_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"golang.org/x/net/websocket"
 )
+
+func TestRuntimeRevokedDispatchIsTerminalAndNeverSent(t *testing.T) {
+	f := newRuntimeFixture(t)
+	device := f.connect(t)
+	defer device.Close()
+	ctx := capability.WithDispatchCheck(context.Background(), func(context.Context) error {
+		return errors.New("grant revoked")
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	input := deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID, CommandType: "TABLET_PLAY",
+		Issuer: "operator:test", CorrelationID: "revoked", IdempotencyKey: "revoked",
+		Payload: json.RawMessage(`{"media":"01.mp4"}`), DeadlineAt: &deadline,
+	}
+	command, err := f.runtime.Dispatch(ctx, input)
+	if err != nil || command.Status != contracts.CommandFailed ||
+		!strings.Contains(string(command.Result), capability.DispatchAuthorityRevokedCode) ||
+		!strings.Contains(string(command.Result), `"retryable":false`) {
+		t.Fatalf("revoked dispatch=%+v err=%v", command, err)
+	}
+	replay, err := f.runtime.Dispatch(context.Background(), input)
+	if err != nil || replay.Envelope.CommandID != command.Envelope.CommandID || replay.Status != contracts.CommandFailed {
+		t.Fatalf("revoked replay=%+v err=%v", replay, err)
+	}
+	_ = device.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	var message map[string]any
+	if err := websocket.JSON.Receive(device, &message); err == nil {
+		t.Fatalf("revoked command reached socket: %v", message)
+	}
+}
 
 func TestReconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
 	f := newRuntimeFixture(t)

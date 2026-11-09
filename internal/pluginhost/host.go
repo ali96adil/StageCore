@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
 )
 
@@ -107,6 +108,12 @@ func (h *Host) Execute(ctx context.Context, req pluginprotocol.ExecutionRequest)
 	line, err := json.Marshal(req)
 	if err != nil {
 		return failed(req.ExecutionID, "INVALID_PLUGIN_REQUEST", "VALIDATION", err.Error()), err
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return failed(req.ExecutionID, capability.DispatchAuthorityRevokedCode, "PERMISSION", err.Error()), err
+		}
+		return cancelled(req.ExecutionID), err
 	}
 	if _, err := h.stdin.Write(append(line, '\n')); err != nil {
 		h.stopLocked()

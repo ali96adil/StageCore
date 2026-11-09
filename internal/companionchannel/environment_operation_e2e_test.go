@@ -3,11 +3,13 @@ package companionchannel_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
@@ -51,6 +53,16 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 	waitForRuntime(t, func() bool {
 		return runtime.IsConnected(companionID) && companionReady(ctx, s, companionID, runtimeSnapshot.ID)
 	})
+
+	revoked := capability.WithDispatchCheck(ctx, func(context.Context) error { return errors.New("grant revoked") })
+	blocked := runtime.Execute(revoked, companionchannel.ExecutionRequest{
+		ExecutionID: "revoked-before-companion-write", CompanionID: companionID,
+		MachineRoleID: role.ID, RuntimeSnapshotID: runtimeSnapshot.ID,
+		Capability: companionchannel.ExecutionEnvironmentOperationCapability,
+	})
+	if blocked.ErrorCode != capability.DispatchAuthorityRevokedCode || executions.Load() != 0 {
+		t.Fatalf("revoked dispatch=%+v executions=%d", blocked, executions.Load())
+	}
 
 	capture := companionchannel.EnvironmentOperationRequest{
 		OperationID: "env-op-capture",

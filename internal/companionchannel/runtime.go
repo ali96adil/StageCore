@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -269,7 +270,13 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 	if err != nil {
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_REQUEST_INVALID", "runtime request could not be encoded", domain.ExecutionFailed))
 	}
-	if err := connection.send(written); err != nil {
+	if err := connection.sendAuthorized(ctx, written); err != nil {
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return c.finish(key, failed(request.ExecutionID, capability.DispatchAuthorityRevokedCode, err.Error(), domain.ExecutionFailed))
+		}
+		if ctx.Err() != nil {
+			return c.finish(key, failed(request.ExecutionID, "CANCELLED", ctx.Err().Error(), domain.ExecutionCancelled))
+		}
 		connection.close()
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_EXECUTION_INTERRUPTED", "Companion disconnected before execution result", domain.ExecutionFailed))
 	}
@@ -621,6 +628,10 @@ func (c *RuntimeChannel) finishLocked(key string, result ExecutionResult) Execut
 }
 
 func (connection *runtimeConnection) send(data []byte) error {
+	return connection.sendAuthorized(context.Background(), data)
+}
+
+func (connection *runtimeConnection) sendAuthorized(ctx context.Context, data []byte) error {
 	if len(data) > maxRuntimeMessage {
 		return errors.New("runtime message exceeds size limit")
 	}
@@ -630,6 +641,9 @@ func (connection *runtimeConnection) send(data []byte) error {
 	case <-connection.closed:
 		return errors.New("runtime connection is closed")
 	default:
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return err
 	}
 	return websocket.Message.Send(connection.websocket, string(data))
 }

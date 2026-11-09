@@ -993,10 +993,11 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		e.mu.Unlock()
 	}()
 	if authorize, ok := ctx.Value(dispatchAuthorizationKey{}).(func(context.Context, capability.Request) error); ok && authorize != nil && executionCtx.Err() == nil {
-		if err := authorize(executionCtx, req); err != nil && executionCtx.Err() == nil {
+		executionCtx = capability.WithDispatchCheck(executionCtx, func(ctx context.Context) error { return authorize(ctx, req) })
+		if err := capability.CheckDispatch(executionCtx); err == capability.ErrDispatchAuthorityRevoked {
 			return capability.Result{
 				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
-				ErrorCode: "PROJECT_DISPATCH_AUTHORITY_REVOKED", ResponseSummary: "Cue action authority ended before dispatch",
+				ErrorCode: capability.DispatchAuthorityRevokedCode, ResponseSummary: "Cue action authority ended before dispatch",
 			}
 		}
 	}

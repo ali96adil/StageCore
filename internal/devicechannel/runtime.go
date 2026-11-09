@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -340,8 +341,21 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 		DeviceID:      command.DeviceID,
 		Command:       command.Envelope,
 	}
-	if err := current.send(message); err != nil {
+	if err := current.sendAuthorized(ctx, message); err != nil {
 		r.unbindCommand(command.Envelope.CommandID, current)
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return r.terminateDispatch(ctx, command, contracts.CommandFailed, capability.DispatchAuthorityRevokedCode, "PERMISSION", err.Error(), false)
+		}
+		if ctx.Err() != nil {
+			result := cancelledBeforeDispatch(ctx.Err())
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			defer cancel()
+			status := contracts.CommandCancelled
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				status = contracts.CommandTimedOut
+			}
+			return r.terminateDispatch(cleanupCtx, command, status, result.ErrorCode, "TRANSPORT", result.ResponseSummary, false)
+		}
 		current.close()
 		return r.failCommand(ctx, command, "TRANSPORT_SEND_FAILED", err.Error())
 	}
@@ -972,18 +986,22 @@ func (r *Runtime) failInterruptedCommand(ctx context.Context, commandID, deviceI
 }
 
 func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.DeviceCommand, code, message string) (deviceexperience.DeviceCommand, error) {
+	return r.terminateDispatch(ctx, command, contracts.CommandFailed, code, "TRANSPORT", message, true)
+}
+
+func (r *Runtime) terminateDispatch(ctx context.Context, command deviceexperience.DeviceCommand, status contracts.CommandStatus, code, category, message string, retryable bool) (deviceexperience.DeviceCommand, error) {
 	result, _ := json.Marshal(contracts.CommandResult{
 		CommandID: command.Envelope.CommandID,
-		Status:    contracts.CommandFailed,
+		Status:    status,
 		Error: &contracts.ContractError{
 			ErrorCode:        code,
-			Category:         "TRANSPORT",
+			Category:         category,
 			Message:          message,
-			Retryable:        true,
+			Retryable:        retryable,
 			AffectedEntityID: command.DeviceID,
 		},
 	})
-	completed, err := r.repository.CompleteCommand(ctx, command.Envelope.CommandID, contracts.CommandFailed, result)
+	completed, err := r.repository.CompleteCommand(ctx, command.Envelope.CommandID, status, result)
 	if err != nil {
 		return deviceexperience.DeviceCommand{}, err
 	}
@@ -991,6 +1009,10 @@ func (r *Runtime) failCommand(ctx context.Context, command deviceexperience.Devi
 }
 
 func (c *connection) send(value any) error {
+	return c.sendAuthorized(context.Background(), value)
+}
+
+func (c *connection) sendAuthorized(ctx context.Context, value any) error {
 	if c == nil || c.ws == nil {
 		return errors.New("stage device connection unavailable")
 	}
@@ -1000,6 +1022,9 @@ func (c *connection) send(value any) error {
 	case <-c.closed:
 		return errors.New("stage device connection is closed")
 	default:
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return err
 	}
 	return websocket.JSON.Send(c.ws, value)
 }

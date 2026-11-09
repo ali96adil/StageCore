@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -348,7 +349,10 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_COMMAND_INVALID", "capture-upload command could not be encoded"
 	}
 
-	upload := c.Execute(ctx, ExecutionRequest{
+	uploadCtx := capability.WithDispatchCheck(ctx, func(ctx context.Context) error {
+		return c.store.CheckCompanionUploadIssuer(ctx, scope)
+	})
+	upload := c.Execute(uploadCtx, ExecutionRequest{
 		ExecutionID:       "capture-upload:" + grant.Ticket.ID,
 		CorrelationID:     "execution-environment-capture:" + environmentManifestID,
 		CompanionID:       companionID,
