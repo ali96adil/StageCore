@@ -127,3 +127,23 @@ Product references: [Live API](https://docs.cycling74.com/userguide/m4l/live_api
 [Node for Max](https://docs.cycling74.com/apiref/nodeformax/),
 [VDMX OSCQuery](https://docs.vidvox.net/vdmx/vdmx_oscquery),
 [VDMX data I/O](https://docs.vidvox.net/vdmx/vdmx_data_io).
+
+### Additional ACK mappings
+
+All Ableton addresses take one `int32` argument (0 or 1).
+`/stagecore/ableton/solo` confirms the same bound Track's solo property.
+`/stagecore/ableton/arm` additionally requires `STAGECORE_LIVE_ALLOW_ARM=1`
+and a track that Live reports can be armed. `/stagecore/ableton/transport`
+requires `STAGECORE_LIVE_ALLOW_TRANSPORT=1` and confirms Song `is_playing`
+after the Live API transport call. Arm and Set-wide transport are off by default.
+Immediate readback must match; a delayed application or unsupported property
+produces no applied receipt. These receipts cover the property itself. Clip,
+scene, media and rendering commands without independently attributable
+application feedback have no ACK mapping here.
+
+VDMX can use `STAGECORE_VDMX_MAPPINGS`, a JSON array of 1–32 objects with
+`inputPath`, `feedbackPath` and `queryPath`. Each mapping needs its own
+exclusive control and distinct feedback route. Shared and duplicate paths
+are rejected. The previous single-mapping environment remains supported
+when the array is absent. All mappings retain Float32 0–1, matching feedback
+and matching readback. On installation, commission every mapping separately.

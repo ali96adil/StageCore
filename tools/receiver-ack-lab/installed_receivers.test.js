@@ -51,13 +51,19 @@ test("Live receiver runs the patch's Live API script and fences mismatched repli
   assert.ok(patch.boxes.some(({box}) => box.text === "node.script max_live_receiver.js @autostart 0"));
   assert.deepEqual(patch.lines.slice(-3).map(({patchline}) => [patchline.source[0], patchline.destination[0]]),
     [["node", "defer"], ["defer", "js"], ["js", "node"]]);
-  let value = 0, writes = 0, trackID = 7, rebind = false;
+  const flags = {mute:0, solo:0, arm:0, can_be_armed:1, is_playing:0};
+  let writes = 0, trackID = 7, rebind = false;
   const handlers = new Map();
   const context = vm.createContext({autowatch:0, inlets:1, outlets:1,
     LiveAPI: class {
-      constructor(_, path) { assert.equal(path, "this_device canonical_parent"); this.id = trackID; this.type = "Track"; }
-      get(property) { return property === "name" ? ["StageCore Test"] : [value]; }
-      set(property, next) { assert.equal(property, "mute"); writes++; value = next; }
+      constructor(_, path) {
+        assert.ok(["this_device canonical_parent", "live_set"].includes(path));
+        this.id = path === "live_set" ? 42 : trackID;
+        this.type = path === "live_set" ? "Song" : "Track";
+      }
+      get(property) { return property === "name" ? ["StageCore Test"] : [flags[property]]; }
+      set(property, next) { writes++; flags[property] = next; }
+      call(method) { writes++; flags.is_playing = method === "start_playing" ? 1 : 0; }
     },
     outlet(_index, handler, ...args) {handlers.get(handler)(...args);}
   });
@@ -73,11 +79,11 @@ test("Live receiver runs the patch's Live API script and fences mismatched repli
       context[name](phase, ticket, ...args);
     },
     post() {}
-  }, {port, token, trackName:"StageCore Test"});
+  }, {port, token, trackName:"StageCore Test", allowTransport:true});
   const address = "/stagecore/ableton/mute";
   const mute = {type:"int32", value:1};
   assert.equal((await pumpUntil(handlers.get("poll"), dispatch("one", address, mute))).status, 200);
-  assert.equal(value, 1);
+  assert.equal(flags.mute, 1);
   assert.equal((await dispatch("one", address, mute)).status, 409);
   rebind = true;
   assert.equal((await pumpUntil(handlers.get("poll"), dispatch("two", address, {...mute, value:0}, 350))).status, 504);
@@ -85,6 +91,14 @@ test("Live receiver runs the patch's Live API script and fences mismatched repli
   rebind = false;
   assert.equal((await pumpUntil(handlers.get("poll"), dispatch("three", address, {...mute, value:0}))).status, 200);
   assert.equal(writes, 2);
+  assert.equal((await pumpUntil(handlers.get("poll"), dispatch("solo", "/stagecore/ableton/solo", mute))).status, 200);
+  assert.equal(flags.solo, 1);
+  assert.equal((await pumpUntil(handlers.get("poll"), dispatch("arm", "/stagecore/ableton/arm", mute, 350))).status, 504);
+  assert.equal(flags.arm, 0);
+  assert.equal((await pumpUntil(handlers.get("poll"), dispatch("play", "/stagecore/ableton/transport", mute))).status, 200);
+  assert.equal(flags.is_playing, 1);
+  assert.equal((await pumpUntil(handlers.get("poll"), dispatch("stop", "/stagecore/ableton/transport", {...mute,value:0}))).status, 200);
+  assert.equal(flags.is_playing, 0);
 });
 
 test("VDMX receiver needs the application event and readback, then reconnect accepts only a new execution", async t => {
@@ -116,7 +130,14 @@ test("VDMX receiver needs the application event and readback, then reconnect acc
   t.after(() => udp.close());
   const config = {port, token, oscPort:udp.address().port, queryPort:query.address().port,
     feedbackPort, inputPath, queryPath, feedbackPath};
-  let receiver = await openVDMXReceiver(config);
+  await assert.rejects(openVDMXReceiver({...config, mappings: [
+    {inputPath, queryPath, feedbackPath},
+    {inputPath:"/stagecore/test/other", queryPath:queryPath+" Other", feedbackPath}
+  ]}), /invalid dedicated/);
+  let receiver = await openVDMXReceiver({...config, mappings: [
+    {inputPath, queryPath, feedbackPath},
+    {inputPath:"/stagecore/test/other", queryPath:queryPath+" Other", feedbackPath:feedbackPath+"-other"}
+  ]});
   t.after(() => receiver.close());
   const send = (id, next, timeout) => dispatch(id, inputPath, {type:"float32",value:next}, timeout);
   const poll = async () => {try { await receiver.processOne(); } catch (_) {}};

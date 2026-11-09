@@ -18,12 +18,19 @@ function floatOSC(address, value) {
 }
 
 async function openVDMXReceiver(config) {
-  const {port, token, oscPort, queryPort, feedbackPort, inputPath, queryPath, feedbackPath} = config;
+  const {port, token, oscPort, queryPort, feedbackPort} = config;
   const ports = [port, oscPort, queryPort, feedbackPort];
+  const mappings = config.mappings ?? [{inputPath: config.inputPath, queryPath: config.queryPath, feedbackPath: config.feedbackPath}];
+  const localOSCPath = path => typeof path === "string" && /^\/stagecore(?:\/[A-Za-z0-9_-]+)+$/.test(path) && path.length <= 121;
   if (ports.some(p => !Number.isSafeInteger(p) || p < 1024 || p > 65535) ||
-      new Set(ports).size !== ports.length || !validPublishedPath(queryPath) ||
-      ![inputPath, feedbackPath].every(path => typeof path === "string" && /^\/stagecore(?:\/[A-Za-z0-9_-]+)+$/.test(path) && path.length <= 121) ||
-      inputPath === feedbackPath) throw new Error("invalid dedicated VDMX mapping");
+      new Set(ports).size !== ports.length || !Array.isArray(mappings) || mappings.length < 1 || mappings.length > 32 ||
+      mappings.some(mapping => !mapping || !validPublishedPath(mapping.queryPath) ||
+        !localOSCPath(mapping.inputPath) || !localOSCPath(mapping.feedbackPath)) ||
+      new Set(mappings.flatMap(mapping => [mapping.inputPath, mapping.feedbackPath])).size !== mappings.length * 2 ||
+      new Set(mappings.map(mapping => mapping.queryPath)).size !== mappings.length) {
+    throw new Error("invalid dedicated VDMX mapping");
+  }
+  const byAddress = new Map(mappings.map(mapping => [mapping.inputPath, {...mapping}]));
   const socket = dgram.createSocket("udp4");
   let pending;
   let failed = false;
@@ -35,7 +42,7 @@ async function openVDMXReceiver(config) {
     if (peer.address === "127.0.0.1" && pending?.packet.equals(packet)) pending.resolve();
   });
 
-  function appliedFeedback(value, signal) {
+  function appliedFeedback(mapping, value, signal) {
     signal.throwIfAborted();
     return new Promise((resolve, reject) => {
       const abort = () => finish(signal.reason);
@@ -45,9 +52,9 @@ async function openVDMXReceiver(config) {
         if (err) reject(err);
         else resolve();
       }
-      pending = {packet: floatOSC(feedbackPath, value), resolve: () => finish(), reject: finish};
+      pending = {packet: floatOSC(mapping.feedbackPath, value), resolve: () => finish(), reject: finish};
       signal.addEventListener("abort", abort, {once: true});
-      socket.send(floatOSC(inputPath, value), oscPort, "127.0.0.1", error => {
+      socket.send(floatOSC(mapping.inputPath, value), oscPort, "127.0.0.1", error => {
         if (error && pending?.reject === finish) finish(error);
       });
     });
@@ -57,16 +64,17 @@ async function openVDMXReceiver(config) {
     return {status, execution_id: command.execution_id, correlation_id: command.correlation_id ?? null,
       challenge: command.application_ack.challenge};
   }
-  const readControl = () => getLoopbackControl({port: queryPort, target: queryPath});
+  const readControl = mapping => getLoopbackControl({port: queryPort, target: mapping.queryPath});
   const target = command => Math.fround(command.parameters.arguments[0].value);
   const processOne = createApplicationReceiver({port, token, kind: "VDMX",
     async accept(command, signal) {
       if (failed) throw new Error("VDMX feedback socket offline");
       const {address, arguments: args} = command.parameters ?? {};
-      if (command.capability !== "osc.send" || address !== inputPath || !Array.isArray(args) ||
+      const mapping = byAddress.get(address);
+      if (command.capability !== "osc.send" || !mapping || !Array.isArray(args) ||
           args.length !== 1 || args[0]?.type !== "float32" || !Number.isFinite(args[0].value) ||
           args[0].value < 0 || args[0].value > 1) throw new Error("unmapped VDMX action");
-      const baseline = await readControl();
+      const baseline = await readControl(mapping);
       signal.throwIfAborted();
       if (!Number.isFinite(baseline.published_value) || Math.fround(baseline.published_value) === target(command)) {
         throw new Error("no distinguishable VDMX control transition");
@@ -77,8 +85,9 @@ async function openVDMXReceiver(config) {
       if (failed) throw new Error("VDMX feedback socket offline");
       const expected = target(command);
       if (Date.now() >= command.receiver_deadline_ms) throw new Error("VDMX claim expired");
-      await appliedFeedback(expected, signal);
-      const current = await readControl();
+      const mapping = byAddress.get(command.parameters.address);
+      await appliedFeedback(mapping, expected, signal);
+      const current = await readControl(mapping);
       signal.throwIfAborted();
       if (!Number.isFinite(current.published_value) || Math.fround(current.published_value) !== expected) {
         throw new Error("VDMX control readback did not confirm the change");
@@ -108,6 +117,7 @@ async function main() {
     oscPort: Number(process.env.STAGECORE_VDMX_OSC_PORT),
     queryPort: Number(process.env.STAGECORE_VDMX_QUERY_PORT),
     feedbackPort: Number(process.env.STAGECORE_VDMX_FEEDBACK_PORT),
+    mappings: process.env.STAGECORE_VDMX_MAPPINGS ? JSON.parse(process.env.STAGECORE_VDMX_MAPPINGS) : undefined,
     inputPath: process.env.STAGECORE_VDMX_INPUT,
     queryPath: process.env.STAGECORE_VDMX_QUERY_PATH,
     feedbackPath: process.env.STAGECORE_VDMX_FEEDBACK
