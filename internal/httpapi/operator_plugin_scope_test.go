@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -100,5 +101,42 @@ func TestSC024AllRegisteredPluginNamespacesUseQualifiedGuard(t *testing.T) {
 	}
 	if matched != 28 {
 		t.Fatalf("plugin inventory changed: %d", matched)
+	}
+}
+
+func TestPluginMutationChecksLiveSessionBeforeSideEffect(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	path := "/api/v1/extensions/test-package/install"
+	for _, scoped := range []bool{false, true} {
+		login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrote := false
+		register := func(s *Server) {
+			s.mux.HandleFunc("POST "+path, withPermission(h.auth, userauth.PermissionPluginManage,
+				func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+					if err := h.auth.Logout(ctx, login.Token); err != nil {
+						t.Fatal(err)
+					}
+					if err := capability.CheckDispatch(r.Context()); err != nil {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					wrote = true
+					w.WriteHeader(http.StatusNoContent)
+				}))
+		}
+		options := []Option{register}
+		if scoped {
+			options = append(options, WithOwnerPluginAdministration(h.auth))
+		}
+		request := authenticatedMutationRequest(t, http.MethodPost, path, []byte("{}"), login.Token, login.CSRFToken)
+		response := httptest.NewRecorder()
+		New(options...).Handler().ServeHTTP(response, request)
+		if wrote || response.Code != http.StatusForbidden {
+			t.Fatalf("scoped=%t revoked extension mutation wrote=%t status=%d", scoped, wrote, response.Code)
+		}
 	}
 }

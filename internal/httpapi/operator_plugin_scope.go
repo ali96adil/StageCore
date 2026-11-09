@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -24,10 +26,27 @@ func WithOwnerPluginAdministration(auth *userauth.Service) Option {
 						writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 						return
 					}
-					s.mux.ServeHTTP(w, r)
+					s.mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ownerPluginDispatchKey{}, true)))
 				})(w, r)
 		}
 	}
+}
+
+type ownerPluginDispatchKey struct{}
+
+func pluginMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, token string, permission userauth.Permission) context.Context {
+	ownerGuard, _ := r.Context().Value(ownerPluginDispatchKey{}).(bool)
+	ownerOnly := ownerGuard || qualificationAccess(r, nil) != nil
+	csrf := r.Header.Get(csrfHeader)
+	return capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+		current, err := auth.ValidateCSRF(ctx, token, csrf)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, permission) != nil ||
+			(ownerOnly && current.User.Role != userauth.RoleOwner) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
 }
 
 func isHubPluginAdminPattern(pattern string) bool {
