@@ -1200,7 +1200,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			payload, _ := json.Marshal(map[string]string{"state": input.State})
 			correlationID, _ := stageid.New()
 			deadline := time.Now().UTC().Add(10 * time.Second)
-			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+			command, err := dispatchBrowserStageDevice(stageDeviceDispatchContext(r, auth, session), runtime, deviceexperience.CreateCommandInput{
 				ProjectID: projectID, DeviceID: device.ID,
 				RuntimeSnapshotID: device.Assignment.RuntimeSnapshotID,
 				CommandType: stagelaser.CommandStateResync,
@@ -1261,7 +1261,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
 				return
 			}
-			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+			command, err := dispatchBrowserStageDevice(stageDeviceDispatchContext(r, auth, session), runtime, deviceexperience.CreateCommandInput{
 				ProjectID:         commandProjectID,
 				SessionID:         input.SessionID,
 				DeviceID:          device.ID,
@@ -1346,8 +1346,13 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				Error    string                          `json:"error,omitempty"`
 			}
 			results := make([]batchResult, 0, len(targets))
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			if err := capability.CheckDispatch(dispatch); err != nil {
+				writeStageDeviceCommandError(w, err)
+				return
+			}
 			for _, device := range targets {
-				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+				command, dispatchErr := dispatchBrowserStageDevice(dispatch, runtime, deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         input.SessionID,
 					DeviceID:          device.ID,
@@ -1363,6 +1368,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				})
 				if dispatchErr != nil {
 					results = append(results, batchResult{DeviceID: device.ID, Error: dispatchErr.Error()})
+					if errors.Is(dispatchErr, capability.ErrDispatchAuthorityRevoked) {
+						break
+					}
 					continue
 				}
 				copy := command
@@ -1466,9 +1474,34 @@ func waitForStageDeviceScope(
 }
 
 
+func dispatchBrowserStageDevice(ctx context.Context, runtime *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return deviceexperience.DeviceCommand{}, err
+	}
+	return runtime.Dispatch(ctx, input)
+}
+
+func stageDeviceDispatchContext(r *http.Request, auth *userauth.Service, session userauth.Session) context.Context {
+	token, _ := browserSessionToken(r)
+	csrf := r.Header.Get(csrfHeader)
+	ownerOnly := qualificationAccess(r, nil) != nil
+	return capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+		current, err := auth.ValidateCSRF(ctx, token, csrf)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, userauth.PermissionRuntimeControl) != nil ||
+			(ownerOnly && current.User.Role != userauth.RoleOwner) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+}
+
 func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 	status := http.StatusConflict
 	switch {
+	case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
+		return
 	case errors.Is(err, deviceexperience.ErrCommandExpired):
 		status = http.StatusGone
 	case errors.Is(err, deviceexperience.ErrInvalidState), errors.Is(err, deviceexperience.ErrInvalidDevice):

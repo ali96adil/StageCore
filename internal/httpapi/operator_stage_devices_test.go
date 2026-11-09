@@ -201,6 +201,25 @@ func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
 	if persisted.Status != contracts.CommandFailed || !bytes.Contains(persisted.Result, []byte("DEVICE_OFFLINE")) {
 		t.Fatalf("persisted status=%s result=%s", persisted.Status, persisted.Result)
 	}
+
+	revoked := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+device.ID+"/commands",
+		[]byte(`{"command_type":"TABLET_PLAY","idempotency_key":"revoked","payload":{"media":"01.mp4"}}`),
+		credential.Token, credential.CSRFToken)
+	revoked.Body = &firmwareUploadRevokeReader{ReadCloser: revoked.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, credential.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, revoked)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked device dispatch = %d, %s", res.Code, res.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_commands").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("revoked device dispatch changed command history: %d, %v", count, err)
+	}
 }
 
 func TestOperatorStageDeviceGroupCommandSharesCorrelation(t *testing.T) {
