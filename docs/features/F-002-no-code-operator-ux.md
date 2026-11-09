@@ -209,3 +209,8 @@ protects the copy against stale updates and deletes from another tab.
 The editor shows when recovery is saved. During an interruption, keep the
 editor open until it reconnects and acknowledges recovery. Closing the tab
 before a change reaches the Hub can lose that change.
+
+Open **Action presets**, copy a valid action and save it with a name. Presets
+belong to the current account and project. Inserting one creates a new action
+in the editor with no copied action ID. The authored Cue changes only when
+saved through the normal Draft controls.

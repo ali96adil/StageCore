@@ -34,6 +34,9 @@ const envRoute = projectRoute + "/revisions/{revision_id}/execution-environments
 const envItem = envRoute + "/{execution_environment_id}"
 
 var projectRoutePermissions = map[string][]projectaccess.Permission{
+	"GET " + projectRoute + "/cue-action-presets": {projectaccess.CueEdit},
+	"POST " + projectRoute + "/cue-action-presets": {projectaccess.CueEdit},
+	"DELETE " + projectRoute + "/cue-action-presets/{preset_id}": {projectaccess.CueEdit},
 	"GET " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},
 	"PUT " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},
 	"DELETE " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},

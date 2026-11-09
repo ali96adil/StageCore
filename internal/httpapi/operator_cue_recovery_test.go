@@ -88,10 +88,42 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	}
 	request(http.MethodDelete, project, second.Token, second.CSRFToken, first.Generation, nil, http.StatusConflict)
 	request(http.MethodGet, otherProject, second.Token, "", "", nil, http.StatusNotFound)
+	presetRequest := func(method, id, suffix, token, csrf string, body []byte, expected int) *httptest.ResponseRecorder {
+		t.Helper()
+		req := authenticatedMutationRequest(t, method, "/api/v1/projects/"+id+"/cue-action-presets"+suffix, body, token, csrf)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != expected {
+			t.Fatalf("%s preset status=%d want=%d: %s", method, res.Code, expected, res.Body)
+		}
+		return res
+	}
+	action := []byte(`{"name":"Scene","action":{"action_id":"original","order_index":10,"capability_key":"osc.send","parameters":{"address":"/scene"},"enabled":true}}`)
+	created := presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusCreated)
+	var preset store.CueActionPreset
+	if err := json.Unmarshal(created.Body.Bytes(), &preset); err != nil {
+		t.Fatal(err)
+	}
+	var authored actionWriteRequest
+	if err := json.Unmarshal(preset.Action, &authored); err != nil {
+		t.Fatal(err)
+	}
+	if preset.ID == "" || authored.ActionID != "" || authored.OrderIndex != 0 || authored.CapabilityKey != "osc.send" {
+		t.Fatalf("preset persisted cue identity or lost capability: %+v", authored)
+	}
+	presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusConflict)
+	presetRequest(http.MethodDelete, project, "/"+preset.ID, second.Token, second.CSRFToken, nil, http.StatusNotFound)
+	presetRequest(http.MethodDelete, otherProject, "/"+preset.ID, owner.Token, owner.CSRFToken, nil, http.StatusNotFound)
+	visible := presetRequest(http.MethodGet, project, "", second.Token, "", nil, http.StatusOK)
+	if visible.Body.String() != "{\"presets\":[]}\n" {
+		t.Fatalf("presets leaked across users: %s", visible.Body)
+	}
+	presetRequest(http.MethodDelete, project, "/"+preset.ID, owner.Token, owner.CSRFToken, nil, http.StatusNoContent)
 	if err := access.SetPermissions(ctx, owner.Session.User.ID, tech.ID, project, []projectaccess.Permission{projectaccess.ProjectView}); err != nil {
 		t.Fatal(err)
 	}
 	request(http.MethodGet, project, second.Token, "", "", nil, http.StatusNotFound)
+	presetRequest(http.MethodGet, project, "", second.Token, "", nil, http.StatusNotFound)
 	request(http.MethodPut, project, second.Token, second.CSRFToken, "", document, http.StatusNotFound)
 	request(http.MethodPut, project, owner.Token, owner.CSRFToken, "", document, http.StatusConflict)
 	request(http.MethodDelete, project, owner.Token, "", first.Generation, nil, http.StatusForbidden)

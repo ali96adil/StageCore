@@ -556,6 +556,7 @@
   const draftHistory = createDraftHistory(30);
   const historyFields = ["cueLabel", "cueName", "cueColor", "cueCriticality", "cueEnabled",
     "cueExecutionPolicy", "cueStartDelaySeconds", "cueNotes"];
+  const timecodeFields = ["f018CueTimecodeMode", "f018CueBindingID", "f018CueAt", "f018CueExpiry"];
   let historyTimer;
   let restoringDraft = false;
 
@@ -581,7 +582,8 @@
         action.action_id = cardField(card, ".action-id").value;
         return action;
       });
-      return JSON.stringify({fields, links, actions});
+      const timecode = timecodeFields.map((id) => pick(id)?.value);
+      return JSON.stringify({fields, links, actions, timecode});
     } catch (_) {
       return null; // keep invalid in-progress JSON editable
     }
@@ -625,6 +627,13 @@
         node.checked = draft.links.includes(node.value);
       });
       updateLinkedCuesEditorState();
+      if (Array.isArray(draft.timecode)) {
+        timecodeFields.forEach((id, index) => {
+          const field = pick(id);
+          if (field && typeof draft.timecode[index] === "string") field.value = draft.timecode[index];
+        });
+        if (typeof f018SyncCueBindingEnabled === "function") f018SyncCueBindingEnabled();
+      }
       pick("actionsEditor").replaceChildren();
       draft.actions.forEach((action) => {
         addActionEditor(action);
@@ -790,7 +799,9 @@
           return;
         }
         const draft = document?.draft;
-        const compatible = document?.version === 1 && document.cue_id === cueID && document.base === base &&
+        const { timecode, ...previousBaseline } = JSON.parse(base);
+        const sameBaseline = document?.base === base || document?.base === JSON.stringify(previousBaseline);
+        const compatible = document?.version === 1 && document.cue_id === cueID && sameBaseline &&
           draft?.fields?.length === historyFields.length && Array.isArray(draft.links) && Array.isArray(draft.actions);
         message(compatible ? "توجد مسودة محفوظة لهذا الكيو." : "توجد مسودة لكيو آخر أو لنسخة أقدم.",
           compatible ? "A recovery draft exists for this Cue." : "Recovery belongs to another Cue or an older version.");
@@ -825,6 +836,95 @@
       }
     }
     load();
+  }
+
+  function bindActionPresets(workspace) {
+    const user = state.user;
+    const projectID = state.project?.project_id;
+    if (!user || !projectID) return;
+    const path = `/api/v1/projects/${encodeURIComponent(projectID)}/cue-action-presets`;
+    const panel = document.createElement("details");
+    panel.id = "sc009ActionPresets";
+    const heading = document.createElement("summary");
+    heading.textContent = tr("قوالب الإجراءات", "Action presets");
+    const status = document.createElement("p");
+    status.className = "muted";
+    status.setAttribute("role", "status");
+    const name = document.createElement("input");
+    name.placeholder = tr("اسم القالب", "Preset name");
+    name.setAttribute("aria-label", name.placeholder);
+    name.maxLength = 64;
+    const button = (text) => {
+      const result = document.createElement("button");
+      result.type = "button";
+      result.className = "button ghost";
+      result.textContent = text;
+      return result;
+    };
+    const save = button(tr("احفظ الإجراء المنسوخ", "Save copied action"));
+    const list = document.createElement("ul");
+    panel.append(heading, name, save, status, list);
+    pick(panel.id)?.remove();
+    workspace.append(panel);
+    const active = () => pick("cueDialog")?.open && panel.isConnected &&
+      state.user === user && state.project?.project_id === projectID;
+    const refresh = async () => {
+      const { presets } = await api(path);
+      if (!active()) return;
+      list.replaceChildren();
+      for (const preset of presets) {
+        const row = document.createElement("li");
+        const insert = button(tr("أضف إلى الكيو", "Add to Cue"));
+        insert.onclick = () => {
+          if (!active()) return;
+          addActionEditor({ ...preset.action, action_id: "" });
+          refreshActions();
+        };
+        const remove = button(tr("احذف القالب", "Delete preset"));
+        remove.onclick = async () => {
+          if (!active() || !window.confirm(tr("حذف قالب «" + preset.name + "»؟", "Delete preset “" + preset.name + "”?"))) return;
+          remove.disabled = true;
+          try {
+            await api(path + "/" + encodeURIComponent(preset.preset_id), { method: "DELETE" });
+            if (active()) await refresh();
+          } catch (error) {
+            if (active()) status.textContent = errorMessage(error);
+          } finally {
+            remove.disabled = false;
+          }
+        };
+        row.append(preset.name, " ", insert, " ", remove);
+        list.append(row);
+      }
+    };
+    panel.addEventListener("toggle", () => {
+      if (panel.open && active()) refresh().catch((error) => {
+        if (active()) status.textContent = errorMessage(error);
+      });
+    });
+    save.onclick = async () => {
+      if (!active()) return;
+      const action = clipboardAction();
+      const label = name.value.trim();
+      if (!action || !label) {
+        status.textContent = tr("انسخ إجراءً واكتب اسم القالب.", "Copy an action and enter a preset name.");
+        return;
+      }
+      save.disabled = true;
+      try {
+        await api(path, { method: "POST", json: { name: label, action } });
+        if (!active()) return;
+        name.value = "";
+        status.textContent = tr("حُفظ القالب.", "Preset saved.");
+        await refresh();
+      } catch (error) {
+        if (active()) status.textContent = error.status === 409
+          ? tr("الاسم موجود أو وصلت إلى ٣٢ قالباً.", "The name exists or the 32-preset limit was reached.")
+          : errorMessage(error);
+      } finally {
+        save.disabled = false;
+      }
+    };
   }
 
   function formSignature() {
@@ -920,6 +1020,7 @@
     initialFormState = formSignature();
     bindDraftHistory(form, paste);
     bindEditorRecovery(form, cue, workspace);
+    bindActionPresets(workspace);
   }
 
   // Base Cue creation attaches a click listener. Capture before that listener
