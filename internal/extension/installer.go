@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -202,6 +203,9 @@ func (i *Installer) Install(ctx context.Context, packageID, actor string) (Insta
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Installation{}, fmt.Errorf("inspect final extension payload path: %w", err)
 	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return Installation{}, err
+	}
 	if err := os.Rename(stagedPath, finalPath); err != nil {
 		return Installation{}, fmt.Errorf("atomically promote extension package: %w", err)
 	}
@@ -240,6 +244,9 @@ func (i *Installer) List(ctx context.Context, extensionID string) ([]Installatio
 }
 
 func (i *Installer) persistInstalled(ctx context.Context, pkg Package, actor, relativePath, contentHash string, size int64) (Installation, error) {
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return Installation{}, err
+	}
 	record, err := i.library.store.RegisterExtensionInstallation(ctx, store.RegisterExtensionInstallationParams{
 		PackageID: pkg.PackageID,
 		LifecycleState: store.ExtensionInstallationInstalled,

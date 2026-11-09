@@ -162,7 +162,7 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 
 	runtimeSnapshot, err := s.resolveSnapshot(ctx, project.ID, runtimeSnapshotID)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
+		if errors.Is(err, domain.ErrNotFound) && strings.TrimSpace(runtimeSnapshotID) == "" {
 			report.add(Block, "snapshot.exists", "snapshot", "Published Runtime Snapshot required", "No published Runtime Snapshot is available for this Project.", project.ID)
 			s.evaluateStorage(&report)
 			return report, nil
@@ -230,8 +230,15 @@ func (s *Service) ShowGate(ctx context.Context, projectID, runtimeSnapshotID str
 }
 
 func (s *Service) resolveSnapshot(ctx context.Context, projectID, runtimeSnapshotID string) (domain.RuntimeSnapshot, error) {
-	if strings.TrimSpace(runtimeSnapshotID) != "" {
-		return s.store.GetRuntimeSnapshot(ctx, strings.TrimSpace(runtimeSnapshotID))
+	if id := strings.TrimSpace(runtimeSnapshotID); id != "" {
+		requested, err := s.store.GetRuntimeSnapshot(ctx, id)
+		if err != nil {
+			return domain.RuntimeSnapshot{}, err
+		}
+		if requested.ProjectID != projectID {
+			return domain.RuntimeSnapshot{}, domain.ErrNotFound
+		}
+		return requested, nil
 	}
 	latest, err := s.store.LatestPublishedRuntimeSnapshotForProject(ctx, projectID)
 	if err != nil {

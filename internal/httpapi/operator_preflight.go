@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/ali96adil/StageCore/internal/preflight"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -22,6 +25,21 @@ func WithOperatorPreflight(auth *userauth.Service, service PreflightEvaluator) O
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
+			}
+			grant, err := currentProjectRouteGrant(r)
+			if !writeProjectQualificationError(w, err) {
+				return
+			}
+			if grant.access != nil {
+				err := grant.access.Check(r.Context(), grant.user.User.ID, r.PathValue("project_id"), projectaccess.MediaRead)
+				if errors.Is(err, projectaccess.ErrDenied) {
+					report.Media = []preflight.MediaStatus{}
+					report.Checks = slices.DeleteFunc(slices.Clone(report.Checks), func(check preflight.Check) bool {
+						return check.Category == "media"
+					})
+				} else if !writeProjectQualificationError(w, err) {
+					return
+				}
 			}
 			writeJSON(w, http.StatusOK, report)
 		}))

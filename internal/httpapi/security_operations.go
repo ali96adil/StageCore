@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
@@ -189,6 +190,10 @@ func (s *securityOperations) handlePluginPermissionSet(w http.ResponseWriter, r 
 	}
 	var body pluginPermissionRequest
 	if !decodeBoundedJSON(w, r, &body) {
+		return
+	}
+	if err := capability.CheckDispatch(r.Context()); err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "PLUGIN_PERMISSION_AUTHORITY_REVOKED"})
 		return
 	}
 	grant, err := s.plugins.Set(r.Context(), pluginID, permission, body.Granted, session.User.Username)
