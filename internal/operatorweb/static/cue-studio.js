@@ -518,6 +518,135 @@
     return details;
   }
 
+  // Dialog-local history only. Save continues through the existing Draft API.
+  function createDraftHistory(limit) {
+    let entries = [];
+    let position = -1;
+    return {
+      reset(value) {
+        entries = [value];
+        position = 0;
+      },
+      record(value) {
+        if (value === null || value === entries[position]) return;
+        entries = entries.slice(0, position + 1);
+        entries.push(value);
+        if (entries.length > limit) entries.shift();
+        position = entries.length - 1;
+      },
+      current() { return entries[position]; },
+      canMove(delta) { return position + delta >= 0 && position + delta < entries.length; },
+      move(delta) {
+        if (!this.canMove(delta)) return undefined;
+        position += delta;
+        return entries[position];
+      },
+    };
+  }
+
+  const draftHistory = createDraftHistory(30);
+  const historyFields = ["cueLabel", "cueName", "cueColor", "cueCriticality", "cueEnabled",
+    "cueExecutionPolicy", "cueStartDelaySeconds", "cueNotes"];
+  let historyTimer;
+  let restoringDraft = false;
+
+  function readDraftHistory() {
+    try {
+      const fields = historyFields.map((id) => {
+        const field = pick(id);
+        return field.type === "checkbox" ? field.checked : field.value;
+      });
+      const links = Array.from(pick("linkedCuesEditor").querySelectorAll(".linked-cue-checkbox:checked"), (node) => node.value);
+      const actions = actionCards().map((card) => {
+        // Guided synchronization writes canonical JSON. Run it on a clone
+        // so recording history never changes the visible edit or raw text.
+        const action = serializeActionCopy(card.cloneNode(true));
+        action.action_id = cardField(card, ".action-id").value;
+        return action;
+      });
+      return JSON.stringify({fields, links, actions});
+    } catch (_) {
+      return null; // keep invalid in-progress JSON editable
+    }
+  }
+
+  function refreshHistoryButtons(current = draftHistory.current()) {
+    const undo = pick("sc009UndoDraft");
+    const redo = pick("sc009RedoDraft");
+    if (undo) undo.disabled = current !== null && !draftHistory.canMove(-1);
+    if (redo) redo.disabled = current === null || !draftHistory.canMove(1);
+  }
+
+  function recordDraftHistory() {
+    if (restoringDraft || !pick("cueDialog")?.open) return;
+    const current = readDraftHistory();
+    draftHistory.record(current);
+    refreshHistoryButtons(current);
+  }
+
+  function restoreDraftHistory(delta) {
+    clearTimeout(historyTimer);
+    const current = readDraftHistory();
+    draftHistory.record(current);
+    // Invalid text can be discarded explicitly by Undo to recover the
+    // nearest valid checkpoint. Redo never records invalid JSON.
+    const stored = current === null && delta < 0 ? draftHistory.current() : draftHistory.move(delta);
+    if (typeof stored !== "string") return;
+    const draft = JSON.parse(stored);
+    restoringDraft = true;
+    try {
+      historyFields.forEach((id, index) => {
+        const field = pick(id);
+        if (field.type === "checkbox") field.checked = draft.fields[index];
+        else field.value = draft.fields[index];
+      });
+      pick("linkedCuesEditor").querySelectorAll(".linked-cue-checkbox").forEach((node) => {
+        node.checked = draft.links.includes(node.value);
+      });
+      updateLinkedCuesEditorState();
+      pick("actionsEditor").replaceChildren();
+      draft.actions.forEach((action) => addActionEditor(action));
+      refreshActions();
+    } finally {
+      restoringDraft = false;
+    }
+    refreshHistoryButtons();
+  }
+
+  function bindDraftHistory(form, anchor) {
+    if (!anchor) return;
+    for (const [id, delta, label] of [
+      ["sc009UndoDraft", -1, tr("تراجع", "Undo")],
+      ["sc009RedoDraft", 1, tr("إعادة", "Redo")],
+    ]) {
+      const button = pick(id) || document.createElement("button");
+      button.id = id;
+      button.type = "button";
+      button.className = "button ghost";
+      button.textContent = label;
+      button.onclick = () => restoreDraftHistory(delta);
+      if (!button.isConnected) anchor.after(button);
+    }
+    if (!form.dataset.sc009History) {
+      form.dataset.sc009History = "true";
+      const schedule = () => {
+        clearTimeout(historyTimer);
+        historyTimer = setTimeout(recordDraftHistory, 300);
+      };
+      form.addEventListener("input", schedule);
+      form.addEventListener("change", schedule);
+      new MutationObserver(schedule).observe(pick("actionsEditor"), {childList:true, subtree:true});
+      pick("cueDialog")?.addEventListener("close", (event) => {
+        if (event.currentTarget.open) return;
+        clearTimeout(historyTimer);
+        draftHistory.reset(null);
+      });
+    }
+    clearTimeout(historyTimer);
+    draftHistory.reset(readDraftHistory());
+    refreshHistoryButtons();
+  }
+
   function formSignature() {
     return JSON.stringify(Array.from(pick("cueForm")?.querySelectorAll("input,select,textarea") || [])
       .map((node) => [node.id || node.className, node.value, node.type === "checkbox" ? node.checked : null]));
@@ -605,6 +734,7 @@
     refreshActions();
     bindFormGuards();
     initialFormState = formSignature();
+    bindDraftHistory(form, paste);
   }
 
   // Base Cue creation attaches a click listener. Capture before that listener

@@ -166,3 +166,59 @@ test("raw preview values copy only through unique representable logical channels
   assert.throws(() => mapRawDMXToDraft(parseManualDMXRows("1=200"),
     [...fixtures, {...fixtures[0], channel_number:3}]), /previewUnmapped/);
 });
+
+test("Cue Studio draft history bounds checkpoints and discards redo on a new edit", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function createDraftHistory");
+  const last = source.indexOf("const draftHistory", first);
+  const history = vm.runInNewContext(source.slice(first, last) + "createDraftHistory(3)");
+  history.reset("original");
+  history.record("one");
+  history.record(null);
+  history.record("two");
+  history.record("two");
+  history.record("three");
+  assert.equal(history.move(-1), "two");
+  assert.equal(history.move(-1), "one");
+  assert.equal(history.move(-1), undefined);
+  assert.equal(history.move(1), "two");
+  history.record("new branch");
+  assert.equal(history.move(1), undefined);
+  assert.equal(history.move(-1), "two");
+});
+
+test("Cue Studio history restores original action IDs and unknown Snapshot fields", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function createDraftHistory");
+  const last = source.indexOf("function bindDraftHistory", first);
+  const fields = new Map();
+  let actions = [{action_id:"existing-id", parameters:{legacy_extension:{value:42}}, timeout_policy:{future_key:3}}];
+  const links = [{value:"child", checked:true}];
+  const context = {
+    pick(id) {
+      if (id === "linkedCuesEditor") return {querySelectorAll: selector => selector.endsWith(":checked") ? links.filter(x=>x.checked) : links};
+      if (id === "actionsEditor") return {replaceChildren(){actions = [];}};
+      if (!fields.has(id)) fields.set(id, {value:""});
+      return fields.get(id);
+    },
+    actionCards: () => actions.map(action => ({action, cloneNode:()=>({action:structuredClone(action)})})),
+    cardField: card => ({value:card.action.action_id}),
+    serializeActionCopy: card => card.action,
+    updateLinkedCuesEditorState(){}, refreshActions(){}, clearTimeout(){},
+    addActionEditor: action => actions.push(action),
+  };
+  const draft = vm.runInNewContext(source.slice(first, last) + "({draftHistory, readDraftHistory, restoreDraftHistory})", context);
+  fields.set("cueStartDelaySeconds", {value:"1.25"});
+  draft.draftHistory.reset(draft.readDraftHistory());
+  links[0].checked = false;
+  actions = [{action_id:"replacement", parameters:{}}];
+  fields.get("cueStartDelaySeconds").value = "0";
+  draft.restoreDraftHistory(-1);
+  assert.equal(actions[0].action_id, "existing-id");
+  assert.equal(actions[0].parameters.legacy_extension.value, 42);
+  assert.equal(actions[0].timeout_policy.future_key, 3);
+  assert.equal(fields.get("cueStartDelaySeconds").value, "1.25");
+  assert.equal(links[0].checked, true);
+  draft.restoreDraftHistory(1);
+  assert.equal(actions[0].action_id, "replacement");
+});
