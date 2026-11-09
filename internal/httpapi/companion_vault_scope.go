@@ -78,5 +78,11 @@ func (scope *companionVaultReadScope) Read(buffer []byte) (int, error) {
 		return 0, domain.ErrNotFound
 	}
 	const maxRead = 64 << 10
-	return scope.ReadSeeker.Read(buffer[:min(len(buffer), maxRead)])
+	n, err := scope.ReadSeeker.Read(buffer[:min(len(buffer), maxRead)])
+	// A read may complete after authority was withdrawn. Discard the chunk.
+	if n > 0 && !scope.active() {
+		scope.denied = true
+		return 0, domain.ErrNotFound
+	}
+	return n, err
 }

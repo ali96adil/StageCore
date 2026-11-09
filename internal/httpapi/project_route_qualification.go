@@ -226,7 +226,18 @@ func qualifyProjectRoute(w http.ResponseWriter, r *http.Request, auth *userauth.
 		return r, true
 	}
 	if ownerRouteQualification[r.Pattern] || isHubPluginAdminPattern(r.Pattern) {
-		return r, allowScopedOwner(w, session, access)
+		if !allowScopedOwner(w, session, access) {
+			return r, false
+		}
+		// Preserve the exact authenticated Owner up to any adapter write.
+		ctx := capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+			current, err := auth.ValidatePassive(ctx, token)
+			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID || current.User.Role != userauth.RoleOwner {
+				return projectaccess.ErrDenied
+			}
+			return nil
+		})
+		return r.WithContext(ctx), true
 	}
 	if len(needed) == 0 {
 		return r, true

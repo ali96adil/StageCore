@@ -279,7 +279,7 @@ func isUnsafeMethod(method string) bool {
 }
 
 func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *userauth.Service, hub *hubsecurity.Service, session userauth.Session) {
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "REALTIME_UNAVAILABLE"})
 		return
@@ -306,8 +306,24 @@ func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *user
 		"type": "session.ready", "user": current.User,
 		"hub_id": identity.HubID, "fingerprint": identity.Fingerprint,
 	})
-	_, _ = fmt.Fprintf(w, "event: session\ndata: %s\n\n", payload)
-	flusher.Flush()
+	controller := http.NewResponseController(w)
+	write := func(value string) bool {
+		if err := controller.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return false
+		}
+		if _, err := fmt.Fprint(w, value); err != nil || controller.Flush() != nil {
+			return false
+		}
+		err := controller.SetWriteDeadline(time.Time{})
+		return err == nil || errors.Is(err, http.ErrNotSupported)
+	}
+	if !write(fmt.Sprintf("event: session\ndata: %s\n\n", payload)) {
+		return
+	}
+	active := func() bool {
+		current, err := service.ValidatePassive(r.Context(), token)
+		return err == nil && current.ID == session.ID && current.User.ID == session.User.ID
+	}
 
 	ticker := time.NewTicker(sessionRecheckInterval)
 	defer ticker.Stop()
@@ -318,15 +334,13 @@ func serveAuthenticatedSSE(w http.ResponseWriter, r *http.Request, service *user
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if _, err := service.ValidatePassive(r.Context(), token); err != nil {
+			if !active() {
 				return
 			}
 		case <-keepAlive.C:
-			if _, err := service.ValidatePassive(r.Context(), token); err != nil {
+			if !active() || !write(": keepalive\n\n") {
 				return
 			}
-			_, _ = fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
 		}
 	}
 }

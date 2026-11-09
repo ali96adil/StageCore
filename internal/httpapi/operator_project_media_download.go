@@ -98,5 +98,11 @@ func (r *authorizedMediaReader) Read(data []byte) (int, error) {
 		r.denied = true
 		return 0, domain.ErrNotFound
 	}
-	return r.ReadSeeker.Read(data[:min(len(data), 64<<10)])
+	n, err := r.ReadSeeker.Read(data[:min(len(data), 64<<10)])
+	// A read may complete after authority was withdrawn. Discard the chunk.
+	if n > 0 && !r.authorize() {
+		r.denied = true
+		return 0, domain.ErrNotFound
+	}
+	return n, err
 }
