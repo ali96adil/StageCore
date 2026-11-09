@@ -34,6 +34,12 @@ const f028Copy = {
   "timing.rehearsals_detail": { en: "AUTO uses completed or intentionally stopped rehearsals on the same immutable Snapshot content. INCLUDE/EXCLUDE changes only training selection; history remains intact.", "ar-IQ": "يستخدم AUTO البروفات المكتملة أو المتوقفة قصداً على نفس محتوى اللقطة غير القابل للتغيير. INCLUDE/EXCLUDE يغيّر اختيار التدريب فقط ويبقى السجل محفوظاً." },
   "timing.pause_capture": { en: "Pause timing capture", "ar-IQ": "أوقف تسجيل التوقيت مؤقتاً" },
   "timing.resume_capture": { en: "Resume timing capture", "ar-IQ": "استأنف تسجيل التوقيت" },
+  "timing.review_segments": { en: "Review timing segments", "ar-IQ": "مراجعة مقاطع التوقيت" },
+  "timing.segment_first": { en: "First observed Cue", "ar-IQ": "أول كيو مرصود" },
+  "timing.segment_last": { en: "Last observed Cue", "ar-IQ": "آخر كيو مرصود" },
+  "timing.segment_exclude": { en: "Exclude segment", "ar-IQ": "استبعاد المقطع" },
+  "timing.segment_restore": { en: "Restore segment", "ar-IQ": "إعادة المقطع" },
+  "timing.segment_truncated": { en: "Showing the first 2,000 observations.", "ar-IQ": "معروض أول ٢٠٠٠ رصد." },
   "timing.capture_paused": { en: "Timing capture paused", "ar-IQ": "تسجيل التوقيت متوقف مؤقتاً" },
   "timing.session": { en: "Rehearsal", "ar-IQ": "البروفة" },
   "timing.lifecycle": { en: "Lifecycle", "ar-IQ": "حالة الجلسة" },
@@ -191,7 +197,9 @@ function f028SessionTable(sessions) {
         ${session.capture_paused ? pill(f028T("timing.capture_paused"), "warn") : ""}
         ${editable && session.lifecycle_state === "ACTIVE" ? `<button type="button" class="button ghost timing-capture-toggle" data-session-id="${esc(session.session_id)}" data-paused="${session.capture_paused ? "true" : "false"}">${esc(f028T(session.capture_paused ? "timing.resume_capture" : "timing.pause_capture"))}</button>` : ""}
       </td>
-      <td>${esc(session.observation_count)}</td>
+      <td>${esc(session.observation_count)}
+        ${editable && session.eligible && session.observation_count ? `<button type="button" class="button ghost timing-segment-review" data-session-id="${esc(session.session_id)}">${esc(f028T("timing.review_segments"))}</button><div class="timing-segment-editor"></div>` : ""}
+      </td>
       <td>${pill(session.snapshot_match ? f028T("timing.yes") : f028T("timing.no"), session.snapshot_match ? "good" : "warn")}</td>
       <td>${pill(session.effective ? f028T("timing.used") : f028T("timing.not_used"), session.effective ? "good" : "neutral")}</td>
       <td>${editable ? `<select class="timing-selection" data-session-id="${esc(session.session_id)}" ${session.eligible ? "" : "disabled"}>
@@ -219,6 +227,47 @@ function f028SectionCard(report, cues, selectedFrom = "", selectedTo = "") {
       <article class="stat"><span class="label">${esc(f028T("timing.confidence"))}</span><span class="value">${pill(f028ConfidenceLabel(section.statistics.confidence), f028ConfidenceKind(section.statistics.confidence))}</span><span class="sub">${section.statistics.confidence === "WITHHELD" ? esc(f028T("timing.section_withheld")) : ""}</span></article>
     </div>` : ""}
   </section>`;
+}
+
+async function f028ReviewSegments(button, projectID, refresh) {
+  const container = button.parentElement.querySelector(".timing-segment-editor");
+  const project = encodeURIComponent(projectID);
+  const session = encodeURIComponent(button.dataset.sessionId);
+  const base = `/api/v1/projects/${project}/timing-intelligence`;
+  const { report } = await api(`${base}?review_session_id=${session}`);
+  if (!container.isConnected || state.project?.project_id !== projectID) return;
+  const review = report.segment_review;
+  const points = review?.points || [];
+  if (!points.length) return;
+  const labels = new Map(points.map((point, index) => [point.sequence, `${index + 1} · ${point.cue_name}`]));
+  const options = points.map((point) => `<option value="${esc(point.sequence)}">${esc(labels.get(point.sequence))}</option>`).join("");
+  container.innerHTML = `
+    ${review.truncated ? `<p class="muted">${esc(f028T("timing.segment_truncated"))}</p>` : ""}
+    <label>${esc(f028T("timing.segment_first"))}<select data-segment-first>${options}</select></label>
+    <label>${esc(f028T("timing.segment_last"))}<select data-segment-last>${options}</select></label>
+    <button type="button" class="button ghost" data-segment-exclude>${esc(f028T("timing.segment_exclude"))}</button>
+    <ul>${(review.excluded || []).map(({first, last}) => `<li>${esc(labels.get(first) || first)} → ${esc(labels.get(last) || last)} <button type="button" class="button ghost" data-segment-restore data-first="${esc(first)}" data-last="${esc(last)}">${esc(f028T("timing.segment_restore"))}</button></li>`).join("")}</ul>`;
+  const first = container.querySelector("[data-segment-first]");
+  const last = container.querySelector("[data-segment-last]");
+  const submit = container.querySelector("[data-segment-exclude]");
+  const updateBounds = () => { submit.disabled = Number(first.value) > Number(last.value); };
+  first.addEventListener("change", updateBounds);
+  last.addEventListener("change", updateBounds);
+  const setSegment = async (control, first, last, excluded) => {
+    if (state.project?.project_id !== projectID) return;
+    control.disabled = true;
+    try {
+      await api(`${base}/sessions/${session}`, { method: "PUT", json: { segment: { first, last, excluded } } });
+      if (state.project?.project_id === projectID) await refresh();
+    } catch (error) {
+      control.disabled = false;
+      setMessage(globalMessage, errorMessage(error), "error");
+    }
+  };
+  submit.onclick = () => setSegment(submit, Number(first.value), Number(last.value), true);
+  container.querySelectorAll("[data-segment-restore]").forEach((restore) => {
+    restore.onclick = () => setSegment(restore, Number(restore.dataset.first), Number(restore.dataset.last), false);
+  });
 }
 
 async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "") {
@@ -275,6 +324,19 @@ async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "
     renderTimingIntelligenceWorkspace(from, to).catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
   });
   el("timingSectionClear")?.addEventListener("click", () => renderTimingIntelligenceWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
+
+  content.querySelectorAll(".timing-segment-review").forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        await f028ReviewSegments(button, report.project_id, () => renderTimingIntelligenceWorkspace(sectionFrom, sectionTo));
+      } catch (error) {
+        setMessage(globalMessage, errorMessage(error), "error");
+      } finally {
+        button.disabled = false;
+      }
+    };
+  });
 
   content.querySelectorAll(".timing-capture-toggle").forEach((button) => {
     button.addEventListener("click", async () => {

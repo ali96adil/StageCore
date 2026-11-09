@@ -178,3 +178,12 @@ A future implementation is not complete until it can demonstrate at least:
 6. Work when a rehearsal begins from a scene/cue/checkpoint instead of the beginning.
 7. Continue to work fully offline without AI or Internet access.
 8. Never auto-trigger GO or a critical action solely from the learned prediction.
+
+### Review a captured segment
+
+In Timing Intelligence, choose **Review timing segments** for a completed or
+stopped rehearsal. Select the first and last captured Cue observations to
+exclude the incoming intervals in that range from training. **Restore segment**
+removes that range's exclusion. Overlapping ranges continue to apply until
+each is restored. The journal retains the original observations and records
+who changed each selection. Segment edits are fenced during SHOW.

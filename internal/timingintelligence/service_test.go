@@ -350,3 +350,73 @@ func TestTimingCapturePausePreservesRawEventsAndReanchorsTraining(t *testing.T) 
 		t.Fatalf("expected two journal changes, got %d", count)
 	}
 }
+
+func TestRetrospectiveTimingSegmentsAreScopedOverlappingAndReversible(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	first := f.rehearsal(t, "First", time.Minute, 40*time.Second, false)
+	second := f.rehearsal(t, "Second", 80*time.Second, 50*time.Second, false)
+	service := New(f.store, f.clock)
+	options := ReportOptions{
+		RuntimeSnapshotID: f.snapshot.ID, ReviewSessionID: first.ID,
+		SectionFromCueID: f.cues[0].ID, SectionToCueID: f.cues[2].ID,
+	}
+	report := func() Report {
+		t.Helper()
+		got, err := service.Report(ctx, f.projectID, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	initial := report()
+	if len(initial.SegmentReview.Points) != 3 || initial.Section.Statistics.SampleCount != 2 {
+		t.Fatalf("initial=%+v review=%+v", initial, initial.SegmentReview)
+	}
+	points := initial.SegmentReview.Points
+	set := func(sessionID string, segment store.TimingSegment) error {
+		return service.SetTimingSegment(ctx, f.projectID, sessionID, "operator", segment)
+	}
+	single := store.TimingSegment{First: points[1].Sequence, Last: points[1].Sequence, Excluded: true}
+	span := store.TimingSegment{First: points[1].Sequence, Last: points[2].Sequence, Excluded: true}
+	if err := set(second.ID, single); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("foreign session accepted boundaries: %v", err)
+	}
+	if err := service.SetTimingSegment(ctx, "foreign-project", first.ID, "operator", single); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("foreign project accepted segment: %v", err)
+	}
+	for _, segment := range []store.TimingSegment{single, span, span} {
+		if err := set(first.ID, segment); err != nil {
+			t.Fatal(err)
+		}
+	}
+	single.Excluded = false
+	if err := set(first.ID, single); err != nil {
+		t.Fatal(err)
+	}
+	masked := report()
+	if len(masked.SegmentReview.Excluded) != 1 || len(masked.SegmentReview.Points) != 3 ||
+		masked.Section.Statistics.SampleCount != 1 ||
+		findTransition(t, masked, f.cues[0].ID, f.cues[1].ID).MedianUS != (80*time.Second).Microseconds() {
+		t.Fatalf("masked=%+v review=%+v", masked, masked.SegmentReview)
+	}
+	span.Excluded = false
+	if err := set(first.ID, span); err != nil {
+		t.Fatal(err)
+	}
+	restored := report()
+	if len(restored.SegmentReview.Excluded) != 0 || restored.Section.Statistics.SampleCount != 2 {
+		t.Fatalf("restored=%+v review=%+v", restored, restored.SegmentReview)
+	}
+	if _, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionShow, Name: "Live Show",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	span.Excluded = true
+	if err := set(first.ID, span); !errors.Is(err, domain.ErrShowConfigurationLocked) {
+		t.Fatalf("live SHOW allowed segment edits: %v", err)
+	}
+
+}

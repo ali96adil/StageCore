@@ -13,6 +13,7 @@ import (
 )
 
 type fakeTimingIntelligenceService struct {
+	lastSegment       store.TimingSegment
 	reportCalls       int
 	lastProjectID     string
 	lastOptions       timingintelligence.ReportOptions
@@ -39,6 +40,11 @@ func (f *fakeTimingIntelligenceService) SetSessionSelection(_ context.Context, p
 }
 
 func (*fakeTimingIntelligenceService) SetTimingCapturePaused(context.Context, string, string, string, bool) error {
+	return nil
+}
+
+func (f *fakeTimingIntelligenceService) SetTimingSegment(_ context.Context, _, _, _ string, segment store.TimingSegment) error {
+	f.lastSegment = segment
 	return nil
 }
 
@@ -85,7 +91,7 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 		t.Fatalf("invalid query reached timing service: calls=%d", service.reportCalls)
 	}
 
-	validPath := "/api/v1/projects/" + projectID + "/timing-intelligence?session_id=" + sessionID + "&lead_time_seconds=45&section_from_cue_id=cue-1&section_to_cue_id=cue-3"
+	validPath := "/api/v1/projects/" + projectID + "/timing-intelligence?session_id=" + sessionID + "&review_session_id=" + sessionID + "&lead_time_seconds=45&section_from_cue_id=cue-1&section_to_cue_id=cue-3"
 	validReq := httptest.NewRequest(http.MethodGet, validPath, nil)
 	validReq.RemoteAddr = "127.0.0.1:19003"
 	validReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
@@ -97,7 +103,7 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	if service.reportCalls != 1 || service.lastProjectID != projectID {
 		t.Fatalf("report calls=%d project=%q", service.reportCalls, service.lastProjectID)
 	}
-	if service.lastOptions.SessionID != sessionID || service.lastOptions.LeadTime != 45*time.Second || service.lastOptions.SectionFromCueID != "cue-1" || service.lastOptions.SectionToCueID != "cue-3" {
+	if service.lastOptions.ReviewSessionID != sessionID || service.lastOptions.SessionID != sessionID || service.lastOptions.LeadTime != 45*time.Second || service.lastOptions.SectionFromCueID != "cue-1" || service.lastOptions.SectionToCueID != "cue-3" {
 		t.Fatalf("unexpected report options: %+v", service.lastOptions)
 	}
 	if !strings.Contains(validRes.Body.String(), `"advisory_only":true`) {
@@ -167,6 +173,29 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 1 || service.lastSessionID != sessionID || service.lastSelectionMode != store.TimingSelectionExclude || service.lastUpdatedBy != "owner" {
 		t.Fatalf("unexpected selection call: calls=%d session=%q mode=%q updated_by=%q", service.selectionCalls, service.lastSessionID, service.lastSelectionMode, service.lastUpdatedBy)
+	}
+
+	for _, tc := range []struct {
+		body   string
+		status int
+	}{
+		{`{"segment":{"first":3,"last":5}}`, http.StatusBadRequest},
+		{`{"mode":"AUTO","segment":{"first":3,"last":5,"excluded":false}}`, http.StatusBadRequest},
+		{`{"segment":{"first":3,"last":5,"excluded":true}}`, http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodPut, ownerWrite.URL.Path, strings.NewReader(tc.body))
+		req.RemoteAddr = "127.0.0.1:19007"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeader, owner.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != tc.status {
+			t.Fatalf("segment %s returned %d want %d: %s", tc.body, res.Code, tc.status, res.Body.String())
+		}
+	}
+	if service.lastSegment != (store.TimingSegment{First: 3, Last: 5, Excluded: true}) {
+		t.Fatalf("timing segment=%+v", service.lastSegment)
 	}
 
 	goReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/timing-intelligence/go", nil)

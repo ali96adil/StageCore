@@ -16,11 +16,19 @@ type TimingIntelligenceService interface {
 	Report(context.Context, string, timingintelligence.ReportOptions) (timingintelligence.Report, error)
 	SetSessionSelection(context.Context, string, string, store.TimingSelectionMode, string) (store.TimingSessionSelection, error)
 	SetTimingCapturePaused(context.Context, string, string, string, bool) error
+	SetTimingSegment(context.Context, string, string, string, store.TimingSegment) error
+}
+
+type timingSegmentRequest struct {
+	First    int64 `json:"first"`
+	Last     int64 `json:"last"`
+	Excluded *bool `json:"excluded"`
 }
 
 type timingSelectionRequest struct {
-	Mode   store.TimingSelectionMode `json:"mode,omitempty"`
-	Paused *bool                     `json:"paused,omitempty"`
+	Segment *timingSegmentRequest     `json:"segment,omitempty"`
+	Mode    store.TimingSelectionMode `json:"mode,omitempty"`
+	Paused  *bool                     `json:"paused,omitempty"`
 }
 
 func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntelligenceService) Option {
@@ -52,6 +60,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			report, err := service.Report(r.Context(), r.PathValue("project_id"), timingintelligence.ReportOptions{
 				RuntimeSnapshotID: strings.TrimSpace(r.URL.Query().Get("runtime_snapshot_id")),
 				SessionID:         strings.TrimSpace(r.URL.Query().Get("session_id")),
+				ReviewSessionID:   strings.TrimSpace(r.URL.Query().Get("review_session_id")),
 				LeadTime:          leadTime,
 				SectionFromCueID:  fromCue,
 				SectionToCueID:    toCue,
@@ -68,12 +77,25 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			if !decodeBoundedJSON(w, r, &body) {
 				return
 			}
-			if body.Paused != nil {
-				if body.Mode != "" {
+			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				return
+			}
+			if body.Segment != nil {
+				if body.Mode != "" || body.Paused != nil || body.Segment.Excluded == nil {
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
-				if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
+				if err := service.SetTimingSegment(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment); err != nil {
+					writeProjectStoreError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"segment": segment})
+				return
+			}
+			if body.Paused != nil {
+				if body.Mode != "" {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
 				if err := service.SetTimingCapturePaused(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused); err != nil {
