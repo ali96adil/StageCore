@@ -144,3 +144,25 @@ test("Cue Studio action clipboard stays in the current project and user session"
   clipboard.pasteClipboardAction();
   assert.equal(pasted, undefined);
 });
+
+test("raw preview values copy only through unique representable logical channels", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/lighting-authoring.js", "utf8");
+  const first = source.indexOf("function previewDMXByte");
+  const last = source.indexOf("function bindManualPreview", first);
+  const {mapRawDMXToDraft, previewDMXByte, parseManualDMXRows} = vm.runInNewContext(
+    source.slice(first, last) + "({mapRawDMXToDraft, previewDMXByte, parseManualDMXRows})", {tx: key => key}
+  );
+  const fixtures = [
+    {alias:"warm", channel_number:1, minimum_level:0, maximum_level:100},
+    {alias:"cold", channel_number:2, minimum_level:10, maximum_level:80, inverted:true}
+  ];
+  const mapped = mapRawDMXToDraft(parseManualDMXRows("1=128\n2=200"), fixtures);
+  assert.equal(previewDMXByte(fixtures[0], mapped.get("warm")), 128);
+  assert.equal(previewDMXByte(fixtures[1], mapped.get("cold")), 200);
+  assert.throws(() => mapRawDMXToDraft(parseManualDMXRows("2=0"), fixtures), /previewUnmapped/);
+  assert.throws(() => mapRawDMXToDraft(parseManualDMXRows("3=0"), fixtures), /previewUnmapped/);
+  assert.throws(() => mapRawDMXToDraft(parseManualDMXRows("1=200"),
+    [...fixtures, {...fixtures[0], alias:"other"}]), /previewUnmapped/);
+  assert.throws(() => mapRawDMXToDraft(parseManualDMXRows("1=200"),
+    [...fixtures, {...fixtures[0], channel_number:3}]), /previewUnmapped/);
+});

@@ -13,6 +13,8 @@
       previewIdle: "Physical output disabled", previewActive: "Simulated levels", previewBlackout: "Simulated blackout",
       previewDurationInvalid: "Enter an integer duration from 1 to 600000 ms.",
       previewRaw: "Raw channels (optional, one channel=value per line)", previewRawInvalid: "Use unique channels 1–512 and values 0–255.",
+      previewCopy: "Copy raw values to draft", previewCopied: "Mapped values copied to the draft.",
+      previewUnmapped: "Each raw channel needs one unique logical alias and a value within its configured range.",
       channel: "Logical channel", level: "Level %", removeChannel: "Remove", nodes: "Lighting nodes", noChannels: "Configure at least one logical channel alias first.",
       emptyLevels: "Add at least one lighting channel.", duplicateAlias: "Each logical channel can appear only once.", chooseNode: "Choose at least one lighting node.",
       saved: "Lighting Cue saved.", duplicated: "Lighting Cue duplicated.", deleted: "Lighting Cue removed.", reordered: "Lighting Cue order updated.",
@@ -30,6 +32,8 @@
       previewIdle: "الخرج الفعلي معطل", previewActive: "المستويات المحاكاة", previewBlackout: "Blackout محاكى",
       previewDurationInvalid: "أدخل مدة صحيحة من 1 إلى 600000 ms.",
       previewRaw: "القنوات المباشرة (اختياري، قناة=قيمة في كل سطر)", previewRawInvalid: "استخدم قنوات فريدة من 1 إلى 512 وقيم من 0 إلى 255.",
+      previewCopy: "انسخ القيم المباشرة للمسودة", previewCopied: "تم نسخ القيم المطابقة للمسودة.",
+      previewUnmapped: "كل قناة تحتاج Alias منطقي واحد وقيمة ضمن نطاقه المضبوط.",
       channel: "القناة المنطقية", level: "المستوى %", removeChannel: "حذف", nodes: "عقد الإضاءة", noChannels: "اضبط Alias منطقي لقناة واحدة على الأقل أولاً.",
       emptyLevels: "أضف قناة إضاءة واحدة على الأقل.", duplicateAlias: "كل قناة منطقية تظهر مرة وحدة فقط.", chooseNode: "اختار عقدة إضاءة واحدة على الأقل.",
       saved: "تم حفظ كيو الإضاءة.", duplicated: "تم نسخ كيو الإضاءة.", deleted: "تم حذف كيو الإضاءة.", reordered: "تم تحديث ترتيب كيوهات الإضاءة.",
@@ -186,6 +190,7 @@
         <div class="toolbar">
           <button id="lightingPreviewRun" class="button" type="button">${esc(tx("previewRun"))}</button>
           <button id="lightingPreviewStop" class="button ghost" type="button" disabled>${esc(tx("previewStop"))}</button>
+          <button id="lightingPreviewCopy" class="button ghost" type="button">${esc(tx("previewCopy"))}</button>
         </div>
         <output id="lightingPreviewResult" aria-live="polite">${esc(tx("previewIdle"))}</output>
       </details>`;
@@ -216,6 +221,26 @@
     return channels;
   }
 
+  function mapRawDMXToDraft(direct, configured) {
+    if (!direct.size) throw new Error(tx("previewRawInvalid"));
+    const mapped = new Map();
+    for (const [number, value] of direct) {
+      const candidates = configured.filter((channel) => channel.channel_number === number);
+      if (candidates.length !== 1) throw new Error(tx("previewUnmapped"));
+      const channel = candidates[0];
+      if (configured.filter((candidate) => candidate.alias === channel.alias).length !== 1) {
+        throw new Error(tx("previewUnmapped"));
+      }
+      const requested = ((channel.inverted ? 255 - value : value) / 255) * 100;
+      const level = Math.max(channel.minimum_level, Math.min(channel.maximum_level, requested));
+      if (!Number.isFinite(level) || previewDMXByte(channel, level) !== value) {
+        throw new Error(tx("previewUnmapped"));
+      }
+      mapped.set(channel.alias, level);
+    }
+    return mapped;
+  }
+
   function bindManualPreview(host) {
     const mode = host.querySelector("#lightingPreviewMode");
     const duration = host.querySelector("#lightingPreviewDuration");
@@ -223,6 +248,7 @@
     const stop = host.querySelector("#lightingPreviewStop");
     const output = host.querySelector("#lightingPreviewResult");
     const raw = host.querySelector("#lightingPreviewRaw");
+    const copy = host.querySelector("#lightingPreviewCopy");
     let timer;
     let frame = [];
     const paint = (blackout) => {
@@ -239,6 +265,28 @@
     };
     mode.addEventListener("change", () => { duration.disabled = mode.value !== "timed"; });
     stop.addEventListener("click", blackout);
+    copy?.addEventListener("click", () => {
+      try {
+        const mapped = mapRawDMXToDraft(parseManualDMXRows(raw.value), channels());
+        const rows = [...host.querySelectorAll(".lighting-level-row")];
+        for (const [alias, level] of mapped) {
+          const existing = rows.find((row) => row.querySelector(".lighting-level-alias")?.value === alias);
+          if (existing) {
+            const input = existing.querySelector(".lighting-level-value");
+            input.value = String(level);
+            input.dispatchEvent(new Event("input"));
+          } else {
+            addLevelRow(alias, level);
+          }
+        }
+        for (const row of rows) {
+          if (!row.querySelector(".lighting-level-alias")?.value) row.remove();
+        }
+        output.textContent = tx("previewCopied");
+      } catch (error) {
+        output.textContent = error.message;
+      }
+    });
     run.addEventListener("click", () => {
       try {
         const timed = mode.value === "timed";
@@ -270,7 +318,7 @@
     if (!host) return;
     const row = document.createElement("div");
     row.className = "lighting-level-row";
-    row.innerHTML = `<label>${esc(tx("channel"))}<select class="lighting-level-alias">${channelOptions(alias)}</select></label><label>${esc(tx("level"))}<input class="lighting-level-value" type="number" min="0" max="100" step="1" value="${Number(level ?? 0)}"></label><button class="button danger lighting-level-remove" type="button">${esc(tx("removeChannel"))}</button>`;
+    row.innerHTML = `<label>${esc(tx("channel"))}<select class="lighting-level-alias">${channelOptions(alias)}</select></label><label>${esc(tx("level"))}<input class="lighting-level-value" type="number" min="0" max="100" step="any" value="${Number(level ?? 0)}"></label><button class="button danger lighting-level-remove" type="button">${esc(tx("removeChannel"))}</button>`;
     host.appendChild(row);
     const aliasInput = row.querySelector(".lighting-level-alias");
     const levelInput = row.querySelector(".lighting-level-value");
