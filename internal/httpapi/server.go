@@ -128,8 +128,14 @@ func (s *Server) Handler() http.Handler {
 			s.pluginAdminGuard(w, r)
 			return
 		}
-		if s.projectRouteQualification != nil && projectRouteIsQualified(pattern) {
-			r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
+		if s.projectRouteQualification != nil {
+			if projectURLPattern(pattern) && !projectRouteIsQualified(pattern) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error_code": "PROJECT_ROUTE_UNQUALIFIED"})
+				return
+			}
+			if projectRouteIsQualified(pattern) {
+				r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
+			}
 		}
 		s.mux.ServeHTTP(w, r)
 	})

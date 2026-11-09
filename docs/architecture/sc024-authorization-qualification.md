@@ -15,9 +15,18 @@ inventory, not proof that a route uses the prospective policy.
 | SSE | The current feed emits a session-ready event and keepalive, with a fresh session check before delivery. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
 | Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Dispatch-time authorization across asynchronous device operations and remaining device families still need review. |
 | Plugin and extensions | Qualification-only Owner boundary for the 28 Hub-global extension and plugin administration registrations. | Qualify project use of installed plugins through execution contexts and runtime operations. |
-| Audio | Optional StageAudio project, Vault version and SHOW fence. Live grant/session checks before commands and after sidecar replies. | Legacy audio routes and revocation while a device operation is in flight. |
+| Audio | Optional StageAudio project, Vault version and SHOW fence. Live grant/session checks before commands and after sidecar replies. | Unbound legacy audio is Owner-only in qualification. Hardware-side revocation during a device operation remains open. |
 | Camera relay | Separate local service with its own health, stream and flash endpoints. | Qualify project viewing and control at the Hub/relay boundary; an inventory entry does not confer browser authority. |
 
 The source guard rejects wiring the alternate Project/Capsule/Files options
 into the production Hub before the coordinated ACL cutover. Migration 53 is
 unchanged, and the legacy assembly continues to serve previously created shows.
+
+
+Every registered project-ID browser pattern in the inventory now has an
+explicit qualification policy, including legacy memory, simulation,
+preflight, visual and tablet routes. The opt-in router rejects new project-ID
+patterns without a policy. Legacy registrations for project listing, device
+metadata and unbound StageAudio inherit the qualification context. This
+coverage describes the HTTP boundary; it does not certify downstream
+asynchronous dispatch or the standalone Camera Relay.

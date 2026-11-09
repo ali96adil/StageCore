@@ -117,7 +117,7 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			return
 		}
 		var allowed map[string]bool
-		if access != nil {
+		if access := qualificationAccess(r, access); access != nil {
 			ids, err := access.AccessibleProjectIDs(r.Context(), session.User.ID)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})

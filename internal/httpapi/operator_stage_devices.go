@@ -66,6 +66,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if projectID == "" {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
@@ -506,6 +507,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		// authenticated runtime scope. Read-only; it grants no transfer or
 		// command authority.
 		s.mux.HandleFunc("GET /api/v1/stage-devices/inventory", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			if !allowScopedOwner(w, session, access) {
 				return
 			}
@@ -565,6 +567,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			if !allowScopedOwner(w, session, access) {
 				return
 			}
@@ -645,6 +648,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			boundProject, allowed := allowScopedDeviceMetadata(w, r, session, access, "")
 			if !allowed {
 				return
@@ -670,6 +674,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		// This does not assign or transfer a device, and LEGACY is never a
 		// statement that the new authenticated v2 handshake has completed.
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			boundProject, allowed := allowScopedDeviceMetadata(w, r, session, access, "")
 			if !allowed {
 				return
@@ -706,6 +711,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		// An ACK stored on an earlier socket is historical, not live proof.
 		// This endpoint never reports independent physical DMX verification.
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment/transfer-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			if !allowScopedOwner(w, session, access) {
 				return
 			}
@@ -1353,6 +1359,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
 				return
 			}
@@ -1403,6 +1410,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/network/cockpit", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			if !allowScopedOwner(w, session, access) {
 				return
 			}

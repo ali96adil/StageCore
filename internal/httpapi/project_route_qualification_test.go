@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"testing"
 
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
-	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
@@ -90,13 +90,16 @@ func TestSC024QualifiedPolicyPatternsExistInReviewedInventory(t *testing.T) {
 	for _, line := range strings.Split(string(raw), "\n") {
 		_, pattern, _ := strings.Cut(line, "\t")
 		patterns[pattern] = true
+		if projectURLPattern(pattern) && !projectRouteIsQualified(pattern) {
+			t.Errorf("project URL has no qualification policy: %s", pattern)
+		}
 	}
 	for pattern := range projectRoutePermissions {
 		if !patterns[pattern] {
 			t.Errorf("qualification route does not exist: %s", pattern)
 		}
 	}
-	for pattern := range ownerDeviceQualification {
+	for pattern := range ownerRouteQualification {
 		if !patterns[pattern] {
 			t.Errorf("Owner qualification route does not exist: %s", pattern)
 		}
@@ -147,4 +150,67 @@ func TestQualifiedRawDeviceCommandsRejectScopedOperator(t *testing.T) {
 			t.Fatalf("%s: status=%d body=%s", path, res.Code, res.Body.String())
 		}
 	}
+}
+
+func TestQualifiedLegacyProjectsAndAudioRejectForeignAccess(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	st := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := h.auth.CreateUser(ctx, "legacy-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, user.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Granted rehearsal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Private rehearsal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, user.ID, a.ID, []projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	audio := &fakeStageAudio{}
+	unknown := func(s *Server) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/future-legacy", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	}
+	opts := []Option{WithOperatorProjects(h.auth, st), WithOperatorStageAudio(h.auth, st, audio, nil), unknown}
+	legacy := New(opts...).Handler()
+	scoped := New(append(opts, WithProjectRouteQualification(access))...).Handler()
+	get := func(handler http.Handler, path string, want int) string {
+		t.Helper()
+		req := authenticatedExecutionEnvironmentRequest(t, login.Token, login.CSRFToken, http.MethodGet, path, nil)
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		if out.Code != want {
+			t.Fatalf("%s returned %d want %d: %s", path, out.Code, want, out.Body.String())
+		}
+		return out.Body.String()
+	}
+	if body := get(scoped, "/api/v1/projects", 200); !strings.Contains(body, a.ID) || strings.Contains(body, b.ID) {
+		t.Fatalf("unscoped list: %s", body)
+	}
+	get(scoped, "/api/v1/projects/"+a.ID, 200)
+	get(scoped, "/api/v1/projects/"+b.ID, 404)
+	get(scoped, "/api/v1/projects/"+a.ID+"/future-legacy", 404)
+	get(legacy, "/api/v1/projects/"+b.ID, 200)
+	get(legacy, "/api/v1/projects/"+a.ID+"/future-legacy", http.StatusTeapot)
+	get(scoped, "/api/v1/system/audio/media", 404)
+	if len(audio.calls) != 0 {
+		t.Fatal("denied audio request reached the sidecar")
+	}
+	get(legacy, "/api/v1/system/audio/media", 200)
 }
