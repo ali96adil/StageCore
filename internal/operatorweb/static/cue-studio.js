@@ -1077,6 +1077,18 @@
   // Read-only planning from the loaded revision. No runtime API is used.
   function planCueInspection(root, cues) {
     const byID = new Map(cues.map((cue) => [cue.cue_id, cue]));
+    const parents = new Map();
+    const ambiguous = new Set();
+    for (const cue of cues) {
+      for (const child of cueLinkedIDs(cue)) {
+        if (parents.has(child) && parents.get(child) !== cue.cue_id) {
+          ambiguous.add(child);
+        } else {
+          parents.set(child, cue.cue_id);
+        }
+      }
+    }
+    const parent = ambiguous.has(root.cue_id) ? undefined : parents.get(root.cue_id);
     const active = new Set();
     const seen = new Set();
     const stack = [{ id: root.cue_id }];
@@ -1093,6 +1105,7 @@
         continue;
       }
       if (seen.has(id)) continue;
+      if (ambiguous.delete(id)) issues.push({ kind: "multiple-parents", id });
       const cue = byID.get(id);
       if (!cue || (cue.enabled === false && id !== root.cue_id)) {
         issues.push({ kind: cue ? "disabled" : "missing", id });
@@ -1108,7 +1121,7 @@
       stack.push({ id, done: true });
       for (const child of cueLinkedIDs(cue).reverse()) stack.push({ id: child });
     }
-    return { group, issues, parent: cueParentMapFor(cues).get(root.cue_id) };
+    return { group, issues, parent };
   }
 
   function cueInspector(cue, cues, projectID, findings) {
@@ -1151,6 +1164,7 @@
           cycle: tr("حلقة ربط", "Link cycle"),
           disabled: tr("رابط لكيو معطّل", "Link to disabled Cue"),
           missing: tr("رابط لكيو مفقود", "Link to missing Cue"),
+          "multiple-parents": tr("الكيو مرتبط بأكثر من كيو أب", "Cue is linked by more than one parent"),
         };
         line(details, "p", labels[kind] + " · " + id);
       }

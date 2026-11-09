@@ -244,7 +244,6 @@ test("Cue Inspector dry-run plans saved actions and diagnoses invalid links with
   const context = {
     cuePolicyObject: (cue) => cue.execution_policy || {},
     cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
-    cueParentMapFor: () => new Map([["child", "root"]]),
     api() { assert.fail("dry-run contacted an API"); },
   };
   const plan = vm.runInNewContext(source.slice(start, end) + "\nplanCueInspection", context);
@@ -264,4 +263,10 @@ test("Cue Inspector dry-run plans saved actions and diagnoses invalid links with
   assert.equal(root.actions[0].order_index, 2, "planning did not mutate the saved Cue");
   assert.equal(result.issues.map((issue) => issue.kind).join(","), "cycle,missing,disabled");
   assert.equal(plan(child, cues).parent, "root");
+  const secondParent = { cue_id: "second", execution_policy: { linked_cue_ids: ["child"] } };
+  const conflicting = [...cues, secondParent];
+  const childPlan = plan(child, conflicting);
+  assert.equal(childPlan.parent, undefined);
+  assert.equal(childPlan.issues[0].kind, "multiple-parents");
+  assert.equal(plan(root, conflicting).issues.find((issue) => issue.kind === "multiple-parents").id, "child");
 });
