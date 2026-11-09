@@ -38,3 +38,34 @@ func allowScopedOwner(w http.ResponseWriter, session userauth.Session, access *p
 	}
 	return true
 }
+
+// Direct-ID metadata resolves the current audited assignment. When a binding
+// was captured before loading metadata, it must match again before delivery.
+func allowScopedDeviceMetadata(w http.ResponseWriter, r *http.Request, session userauth.Session, access *projectaccess.Service, expectedProject string) (string, bool) {
+	if access == nil {
+		return "", true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if session.User.Role == userauth.RoleOwner {
+		return "", true
+	}
+	ctx := r.Context()
+	id := r.PathValue("device_id")
+	projectID, err := access.ResolveActiveV2DeviceProject(ctx, id)
+	if err == nil {
+		if expectedProject != "" && projectID != expectedProject {
+			err = projectaccess.ErrDenied
+		} else {
+			err = access.Check(ctx, session.User.ID, projectID, projectaccess.ProjectView)
+		}
+	}
+	switch {
+	case errors.Is(err, projectaccess.ErrDenied), errors.Is(err, projectaccess.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGE_DEVICE_NOT_FOUND"})
+	case err != nil:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
+	default:
+		return projectID, true
+	}
+	return "", false
+}

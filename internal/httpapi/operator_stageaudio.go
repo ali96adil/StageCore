@@ -33,10 +33,22 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 		checkRuntime := func(ctx context.Context) (domain.SessionType, error) {
 			return stageStore.ActiveOperationalSessionType(ctx)
 		}
+		authorize := func(r *http.Request, session userauth.Session, mutate bool) bool {
+			if scope == nil {
+				return true
+			}
+			token, ok := browserSessionToken(r)
+			if !ok {
+				return false
+			}
+			current, err := auth.ValidatePassive(r.Context(), token)
+			return err == nil && current.ID == session.ID && current.User.ID == session.User.ID &&
+				scope.authorize(r, current.User.ID, mutate)
+		}
 		get := func(operation string) http.HandlerFunc {
 			return withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, sessionUser userauth.Session) {
 				w.Header().Set("Cache-Control", "no-store")
-				if !scope.authorize(r, sessionUser.User.ID, false) {
+				if !authorize(r, sessionUser, false) {
 					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 					return
 				}
@@ -44,6 +56,10 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 					choices, err := scope.choices(r.Context(), sessionUser.User.ID)
 					if err != nil {
 						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
+						return
+					}
+					if !authorize(r, sessionUser, false) {
+						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 						return
 					}
 					writeJSON(w, http.StatusOK, map[string]any{"media": choices})
@@ -63,6 +79,10 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				ctx, cancel := context.WithTimeout(r.Context(), stageAudioTimeout(operation))
 				defer cancel()
 				result, err := client.Call(ctx, stageaudio.Request{Operation: operation})
+				if !authorize(r, sessionUser, false) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+					return
+				}
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 						"available": false, "active_session": session, "error_code": "STAGEAUDIO_OFFLINE",
@@ -105,7 +125,7 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				return
 			}
 			defer release()
-			if !scope.authorize(r, session.User.ID, true) {
+			if !authorize(r, session, true) {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
 			}
@@ -133,7 +153,7 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				}
 				if command.Operation == "LOAD" {
 					command, err = scope.resolveLoad(ctx, stageStore, session.User.ID, command)
-					if err != nil || !scope.authorize(r, session.User.ID, true) {
+					if err != nil || !authorize(r, session, true) {
 						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
 						return
 					}
@@ -141,11 +161,15 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 					status, err := client.Call(ctx, stageaudio.Request{Operation: "STATUS"})
 					deck := status.Status.Decks[command.Deck]
 					resolved, scopeErr := scope.resolveLoad(ctx, stageStore, session.User.ID, stageaudio.Request{File: deck.VaultVersionID})
-					if err != nil || scopeErr != nil || deck.File == "" || deck.File != resolved.File || !scope.authorize(r, session.User.ID, true) {
+					if err != nil || scopeErr != nil || deck.File == "" || deck.File != resolved.File || !authorize(r, session, true) {
 						writeJSON(w, http.StatusConflict, map[string]any{"error_code": "STAGEAUDIO_SCOPED_LOAD_REQUIRED"})
 						return
 					}
 				}
+			}
+			if !authorize(r, session, true) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+				return
 			}
 			result, err := client.Call(ctx, command)
 			if err != nil { fence.MarkUncertain() }
@@ -161,6 +185,10 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 			})
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_COMMAND_FAILED"})
+				return
+			}
+			if !authorize(r, session, true) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{

@@ -29,10 +29,10 @@ func (s *StageAudioProjectScope) authorize(r *http.Request, userID string, mutat
 	if s.Access == nil || s.Vault == nil || s.ProjectID == "" || r.URL.Query().Get("project_id") != s.ProjectID {
 		return false
 	}
-	if s.Access.Check(r.Context(), userID, s.ProjectID, projectaccess.MediaRead) != nil {
-		return false
+	if mutate {
+		return s.Access.CheckAll(r.Context(), userID, s.ProjectID, projectaccess.MediaRead, projectaccess.AudioControl) == nil
 	}
-	return !mutate || s.Access.Check(r.Context(), userID, s.ProjectID, projectaccess.AudioControl) == nil
+	return s.Access.Check(r.Context(), userID, s.ProjectID, projectaccess.MediaRead) == nil
 }
 
 func (s *StageAudioProjectScope) choices(ctx context.Context, userID string) ([]audioMediaChoice, error) {

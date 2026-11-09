@@ -147,6 +147,7 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 		"WithScopedOperatorProjects",
 		"WithScopedOperatorShowCapsules",
 		"WithScopedProjectMediaDownload",
+		"WithScopedOperatorStageDeviceReads",
 		"WithScopedProjectFilesRead",
 		"WithScopedLocalCapsuleExports",
 		"WithOwnerCapsuleImportReview",

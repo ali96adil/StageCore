@@ -15,14 +15,17 @@ import (
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
 type fakeStageAudio struct {
 	calls []stageaudio.Request
+	onCall func(stageaudio.Request)
 }
 func (a *fakeStageAudio) Call(_ context.Context, r stageaudio.Request)(stageaudio.LocalReply,error){
 	a.calls=append(a.calls,r)
+	if a.onCall != nil { a.onCall(r) }
 	return stageaudio.LocalReply{
 		Status:stageaudio.Status{MasterVolume:70,Decks:map[string]stageaudio.DeckStatus{
 			"A":{Commanded:"STOPPED",Volume:70},"B":{Commanded:"STOPPED",Volume:70},
@@ -172,5 +175,41 @@ func TestStageAudioScopedLoadUsesOnlyBoundProjectVaultVersion(t *testing.T) {
 	got := fake.calls[0]
 	if got.Operation != "LOAD_VAULT" || got.File != ours.Version.ContentHash || got.VaultVersionID != ours.Version.ID {
 		t.Fatalf("unexpected scoped sidecar request: %+v", got)
+	}
+}
+
+func TestScopedStageAudioDoesNotDeliverStatusAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped Audio"})
+	if err != nil { t.Fatal(err) }
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil { t.Fatal(err) }
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	operator, err := h.auth.CreateUser(ctx, "audio-operator", h.password, userauth.RoleOperator)
+	if err != nil { t.Fatal(err) }
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	set := func(permissions ...projectaccess.Permission) {
+		t.Helper()
+		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(projectaccess.ProjectView, projectaccess.MediaRead)
+	sidecar := &fakeStageAudio{onCall: func(_ stageaudio.Request) { set() }}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(WithScopedOperatorStageAudio(h.auth, projects, sidecar, nil, stageaudio.NewShowFence(), scope)).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/audio/status?project_id="+project.ID, nil)
+	req.RemoteAddr = "127.0.0.1:9126"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || len(sidecar.calls) != 1 || strings.Contains(res.Body.String(), "Pi headphones") {
+		t.Fatalf("revoked browser got sidecar data: %d %s", res.Code, res.Body.String())
 	}
 }
