@@ -1074,6 +1074,124 @@
     }
   }
 
+  // Read-only planning from the loaded revision. No runtime API is used.
+  function planCueInspection(root, cues) {
+    const byID = new Map(cues.map((cue) => [cue.cue_id, cue]));
+    const active = new Set();
+    const seen = new Set();
+    const stack = [{ id: root.cue_id }];
+    const group = [];
+    const issues = [];
+    while (stack.length) {
+      const { id, done } = stack.pop();
+      if (done) {
+        active.delete(id);
+        continue;
+      }
+      if (active.has(id)) {
+        issues.push({ kind: "cycle", id });
+        continue;
+      }
+      if (seen.has(id)) continue;
+      const cue = byID.get(id);
+      if (!cue || (cue.enabled === false && id !== root.cue_id)) {
+        issues.push({ kind: cue ? "disabled" : "missing", id });
+        continue;
+      }
+      seen.add(id);
+      active.add(id);
+      group.push({
+        cue,
+        delay: cuePolicyObject(cue).start_delay_ms || 0,
+        actions: [...(cue.actions || [])].sort((a, b) => a.order_index - b.order_index),
+      });
+      stack.push({ id, done: true });
+      for (const child of cueLinkedIDs(cue).reverse()) stack.push({ id: child });
+    }
+    return { group, issues, parent: cueParentMapFor(cues).get(root.cue_id) };
+  }
+
+  function cueInspector(cue, cues, projectID, findings) {
+    const details = document.createElement("details");
+    const title = document.createElement("summary");
+    title.textContent = tr("فاحص الكيو · تشغيل جاف", "Cue Inspector · Dry-run");
+    details.append(title);
+    details.addEventListener("toggle", () => {
+      if (!details.open || details.childElementCount > 1) return;
+      const plan = planCueInspection(cue, cues);
+      const line = (parent, tag, value) => {
+        const item = document.createElement(tag);
+        item.textContent = value;
+        parent.append(item);
+        return item;
+      };
+      line(details, "p", tr("خطة للنسخة المعروضة، بدون إرسال أي أمر. أوقات التنفيذ الفعلية تعتمد على الأجهزة.", "Plan for the loaded revision. No commands are sent. Actual execution time depends on the devices."));
+      if (cue.enabled === false) line(details, "p", tr("هذا الكيو معطّل.", "This Cue is disabled."));
+      if (plan.parent) line(details, "p", tr("يُشغّل من الكيو الأب ", "Triggered by parent Cue ") + plan.parent);
+      const refs = new Set();
+      for (const { cue: member, delay, actions } of plan.group) {
+        refs.add(member.cue_id);
+        line(details, "strong", [member.display_label, member.name, `${delay} ms`].filter(Boolean).join(" · "));
+        if (member.notes_summary) line(details, "p", member.notes_summary);
+        const list = document.createElement("ol");
+        for (const action of actions) {
+          refs.add(action.action_id);
+          refs.add(action.target_ref);
+          const delay = action.timeout_policy?.start_delay_ms || 0;
+          const timeout = action.timeout_policy?.timeout_ms;
+          line(list, "li", [action.capability_key, action.target_ref, action.execution_mode,
+            delay ? tr("تأخير ", "Delay ") + delay + " ms" : "",
+            timeout ? tr("مهلة ", "Timeout ") + timeout + " ms" : "",
+            action.enabled === false ? tr("معطّل", "Disabled") : ""].filter(Boolean).join(" · "));
+        }
+        if (list.childElementCount) details.append(list);
+      }
+      for (const { kind, id } of plan.issues) {
+        const labels = {
+          cycle: tr("حلقة ربط", "Link cycle"),
+          disabled: tr("رابط لكيو معطّل", "Link to disabled Cue"),
+          missing: tr("رابط لكيو مفقود", "Link to missing Cue"),
+        };
+        line(details, "p", labels[kind] + " · " + id);
+      }
+      for (const finding of findings) {
+        if (finding.ref && refs.has(finding.ref)) {
+          line(details, "p", [finding.severity, finding.code, finding.message].filter(Boolean).join(" · "));
+        }
+      }
+      const button = line(details, "button", tr("افحص جاهزية النسخة المنشورة", "Check published snapshot readiness"));
+      button.type = "button";
+      button.className = "button ghost";
+      const result = document.createElement("div");
+      result.setAttribute("role", "status");
+      details.append(result);
+      button.addEventListener("click", async () => {
+        if (state.project?.project_id !== projectID) return;
+        button.disabled = true;
+        result.textContent = tr("جاري فحص الجاهزية…", "Checking readiness…");
+        try {
+          const report = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/preflight`);
+          if (!result.isConnected || state.project?.project_id !== projectID) return;
+          result.replaceChildren();
+          line(result, "strong", tr("النسخة المنشورة ", "Published snapshot ") +
+            [report.snapshot_version, report.runtime_snapshot_id, report.status].filter(Boolean).join(" · "));
+          const list = document.createElement("ul");
+          for (const check of report.checks || []) {
+            if (check.status !== "PASS") {
+              line(list, "li", [check.status, check.category, check.summary, check.detail].filter(Boolean).join(" · "));
+            }
+          }
+          if (list.childElementCount) result.append(list);
+        } catch (error) {
+          if (result.isConnected && state.project?.project_id === projectID) result.textContent = errorMessage(error);
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    });
+    return details;
+  }
+
   function enhanceCueList() {
     const tableWrap = content.querySelector(".table-wrap");
     const tbody = tableWrap?.querySelector("tbody");
@@ -1151,20 +1269,8 @@
       const cue = cues[index];
       if (!cue) return;
       const cell = row.children[5];
-      if (!cell || !cue.actions?.length) return;
-      const preview = document.createElement("details");
-      const title = document.createElement("summary");
-      title.textContent = tr("معاينة الإجراءات", "Preview actions");
-      preview.append(title);
-      const list = document.createElement("ol");
-      for (const action of cue.actions) {
-        const item = document.createElement("li");
-        item.textContent = [action.capability_key, action.target_ref,
-          action.enabled === false ? tr("معطّل", "Disabled") : ""].filter(Boolean).join(" · ");
-        list.append(item);
-      }
-      preview.append(list);
-      cell.append(preview);
+      if (!cell) return;
+      cell.append(cueInspector(cue, cues, state.project.project_id, state.validation?.findings || []));
 
       const types = Array.from(classify(cue)).slice(0, 3);
       const badges = document.createElement("div");

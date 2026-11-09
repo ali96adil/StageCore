@@ -235,3 +235,33 @@ test("Cue Studio history restores original action IDs and unknown Snapshot field
   draft.restoreDraftHistory(1);
   assert.equal(actions[0].action_id, "replacement");
 });
+
+test("Cue Inspector dry-run plans saved actions and diagnoses invalid links without dispatch", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = source.indexOf("  function planCueInspection(");
+  const end = source.indexOf("  function cueInspector(", start);
+  assert.ok(start >= 0 && end > start);
+  const context = {
+    cuePolicyObject: (cue) => cue.execution_policy || {},
+    cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
+    cueParentMapFor: () => new Map([["child", "root"]]),
+    api() { assert.fail("dry-run contacted an API"); },
+  };
+  const plan = vm.runInNewContext(source.slice(start, end) + "\nplanCueInspection", context);
+  const root = {
+    cue_id: "root", enabled: true,
+    execution_policy: { start_delay_ms: 120, linked_cue_ids: ["child", "missing", "disabled"] },
+    actions: [{ order_index: 2, enabled: false }, { order_index: 1, execution_mode: "PARALLEL" }],
+  };
+  const child = { cue_id: "child", enabled: true, execution_policy: { linked_cue_ids: ["root"] } };
+  const disabled = { cue_id: "disabled", enabled: false };
+  const cues = [root, child, disabled];
+  const result = plan(root, cues);
+  assert.equal(result.group.map((item) => item.cue.cue_id).join(","), "root,child");
+  assert.equal(result.group[0].delay, 120);
+  assert.equal(result.group[0].actions.map((action) => action.order_index).join(","), "1,2");
+  assert.equal(result.group[0].actions[1].enabled, false);
+  assert.equal(root.actions[0].order_index, 2, "planning did not mutate the saved Cue");
+  assert.equal(result.issues.map((issue) => issue.kind).join(","), "cycle,missing,disabled");
+  assert.equal(plan(child, cues).parent, "root");
+});
