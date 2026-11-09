@@ -14,6 +14,7 @@ import (
 )
 
 type runtimeStartRequest struct {
+	RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
 	Mode      string `json:"mode"`
 	Name      string `json:"name"`
 	RequestID string `json:"request_id"`
@@ -112,6 +113,7 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		created, result := runtime.StartSession(r.Context(), runtimecontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"), Mode: mode, Name: body.Name,
+			RehearsalPurpose: body.RehearsalPurpose,
 			Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
 		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": makeSessionView(created)})

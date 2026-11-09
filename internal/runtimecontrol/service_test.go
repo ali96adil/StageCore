@@ -140,7 +140,8 @@ func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Name: "Rehearsal 1", Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000000101",
 	})
-	if startResult.Status != contracts.CommandCompleted || session.ID == "" || session.RuntimeSnapshotID != h.snapshot.ID {
+	if startResult.Status != contracts.CommandCompleted || session.ID == "" || session.RuntimeSnapshotID != h.snapshot.ID ||
+		session.RehearsalPurpose != domain.RehearsalPreview {
 		t.Fatalf("start result=%+v session=%+v", startResult, session)
 	}
 

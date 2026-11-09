@@ -187,3 +187,14 @@ exclude the incoming intervals in that range from training. **Restore segment**
 removes that range's exclusion. Overlapping ranges continue to apply until
 each is restored. The journal retains the original observations and records
 who changed each selection. Segment edits are fenced during SHOW.
+
+### Rehearsal purpose and approval
+
+New runtime rehearsals default to **Preview**. The operator can choose
+**Timing Capture** when starting a rehearsal. Both collect the same
+observations and neither trains the model until explicitly approved. On the
+Timing Intelligence page, **Approve timings** can be selected during or after
+a rehearsal. While active, an approval waits for a completed or stopped
+session with valid, matching observations. Removing approval removes the
+samples from training while preserving the underlying record. Existing
+rehearsals keep their legacy AUTO/INCLUDE/EXCLUDE behavior.

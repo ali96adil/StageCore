@@ -34,6 +34,12 @@ const f028Copy = {
   "timing.rehearsals_detail": { en: "AUTO uses completed or intentionally stopped rehearsals on the same immutable Snapshot content. INCLUDE/EXCLUDE changes only training selection; history remains intact.", "ar-IQ": "يستخدم AUTO البروفات المكتملة أو المتوقفة قصداً على نفس محتوى اللقطة غير القابل للتغيير. INCLUDE/EXCLUDE يغيّر اختيار التدريب فقط ويبقى السجل محفوظاً." },
   "timing.pause_capture": { en: "Pause timing capture", "ar-IQ": "أوقف تسجيل التوقيت مؤقتاً" },
   "timing.resume_capture": { en: "Resume timing capture", "ar-IQ": "استأنف تسجيل التوقيت" },
+  "timing.preview_purpose": { en: "Preview", "ar-IQ": "استعراض وتجربة" },
+  "timing.capture_purpose": { en: "Timing Capture", "ar-IQ": "بروفة لقياس التوقيت" },
+  "timing.not_approved": { en: "Not approved", "ar-IQ": "غير معتمد" },
+  "timing.approve": { en: "Approve timings", "ar-IQ": "اعتماد التوقيتات" },
+  "timing.approval_pending": { en: "Approved · pending completion", "ar-IQ": "معتمد · بانتظار انتهاء البروفة" },
+  "timing.confirm_revoke": { en: "Remove this rehearsal’s approval from timing training?", "ar-IQ": "تسحب اعتماد توقيتات هذه البروفة؟" },
   "timing.review_segments": { en: "Review timing segments", "ar-IQ": "مراجعة مقاطع التوقيت" },
   "timing.segment_first": { en: "First observed Cue", "ar-IQ": "أول كيو مرصود" },
   "timing.segment_last": { en: "Last observed Cue", "ar-IQ": "آخر كيو مرصود" },
@@ -195,6 +201,8 @@ function f028SessionTable(sessions) {
       <td><strong>${esc(session.name || session.session_id)}</strong><div class="mono muted">${esc(session.session_id)}</div>${session.reason ? `<div class="muted">${esc(session.reason)}</div>` : ""}</td>
       <td>${pill(session.lifecycle_state, session.eligible ? "good" : "neutral")}
         ${session.capture_paused ? pill(f028T("timing.capture_paused"), "warn") : ""}
+        ${session.rehearsal_purpose ? pill(f028T(session.rehearsal_purpose === "TIMING_CAPTURE" ? "timing.capture_purpose" : "timing.preview_purpose")) : ""}
+        ${session.rehearsal_purpose && session.lifecycle_state === "ACTIVE" && session.selection_mode === "INCLUDE" ? pill(f028T("timing.approval_pending"), "warn") : ""}
         ${editable && session.lifecycle_state === "ACTIVE" ? `<button type="button" class="button ghost timing-capture-toggle" data-session-id="${esc(session.session_id)}" data-paused="${session.capture_paused ? "true" : "false"}">${esc(f028T(session.capture_paused ? "timing.resume_capture" : "timing.pause_capture"))}</button>` : ""}
       </td>
       <td>${esc(session.observation_count)}
@@ -202,9 +210,9 @@ function f028SessionTable(sessions) {
       </td>
       <td>${pill(session.snapshot_match ? f028T("timing.yes") : f028T("timing.no"), session.snapshot_match ? "good" : "warn")}</td>
       <td>${pill(session.effective ? f028T("timing.used") : f028T("timing.not_used"), session.effective ? "good" : "neutral")}</td>
-      <td>${editable ? `<select class="timing-selection" data-session-id="${esc(session.session_id)}" ${session.eligible ? "" : "disabled"}>
-        <option value="AUTO" ${session.selection_mode === "AUTO" ? "selected" : ""}>${esc(f028T("timing.auto"))}</option>
-        <option value="INCLUDE" ${session.selection_mode === "INCLUDE" ? "selected" : ""}>${esc(f028T("timing.include"))}</option>
+      <td>${editable ? `<select class="timing-selection" data-session-id="${esc(session.session_id)}" ${session.eligible || (session.rehearsal_purpose && session.lifecycle_state === "ACTIVE") ? "" : "disabled"}>
+        <option value="AUTO" ${session.selection_mode === "AUTO" ? "selected" : ""}>${esc(f028T(session.rehearsal_purpose ? "timing.not_approved" : "timing.auto"))}</option>
+        <option value="INCLUDE" ${session.selection_mode === "INCLUDE" ? "selected" : ""}>${esc(f028T(session.rehearsal_purpose ? "timing.approve" : "timing.include"))}</option>
         <option value="EXCLUDE" ${session.selection_mode === "EXCLUDE" ? "selected" : ""}>${esc(f028T("timing.exclude"))}</option>
       </select>` : esc(f028T("timing.read_only"))}</td>
     </tr>`).join("")}</tbody>
@@ -358,6 +366,10 @@ async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "
   content.querySelectorAll(".timing-selection").forEach((select) => {
     select.addEventListener("change", async () => {
       const previous = (report.sessions || []).find((item) => item.session_id === select.dataset.sessionId)?.selection_mode || "AUTO";
+      if (previous === "INCLUDE" && select.value !== previous && !window.confirm(f028T("timing.confirm_revoke"))) {
+        select.value = previous;
+        return;
+      }
       select.disabled = true;
       try {
         await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/timing-intelligence/sessions/${encodeURIComponent(select.dataset.sessionId)}`, {

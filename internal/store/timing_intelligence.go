@@ -29,10 +29,10 @@ type TimingSessionSelection struct {
 }
 
 type TimingObservationRecord struct {
-	Sequence            int64           `json:"sequence"`
-	SessionID           string          `json:"session_id"`
-	RuntimeSnapshotID   string          `json:"runtime_snapshot_id"`
-	SnapshotContentHash string          `json:"snapshot_content_hash"`
+	Sequence            int64  `json:"sequence"`
+	SessionID           string `json:"session_id"`
+	RuntimeSnapshotID   string `json:"runtime_snapshot_id"`
+	SnapshotContentHash string `json:"snapshot_content_hash"`
 	TrainingExcluded    bool
 	Payload             json.RawMessage `json:"payload"`
 }
@@ -47,30 +47,44 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 	if mode != TimingSelectionAuto && mode != TimingSelectionInclude && mode != TimingSelectionExclude {
 		return TimingSessionSelection{}, fmt.Errorf("%w: timing selection mode must be AUTO, INCLUDE or EXCLUDE", domain.ErrInvalidInput)
 	}
-	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
-		return TimingSessionSelection{}, err
-	}
-	session, err := s.GetSessionFoundation(ctx, sessionID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TimingSessionSelection{}, err
 	}
-	if session.ProjectID != projectID {
+	defer tx.Rollback()
+	var session domain.Session
+	var showLocked bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT session_type, lifecycle_state, rehearsal_purpose, EXISTS (
+			SELECT 1 FROM sessions live WHERE live.project_id = ? AND live.session_type = 'SHOW' AND live.status = 'ACTIVE'
+		) FROM sessions WHERE session_id = ? AND project_id = ?`, projectID, sessionID, projectID).
+		Scan(&session.Type, &session.LifecycleState, &session.RehearsalPurpose, &showLocked)
+	if errors.Is(err, sql.ErrNoRows) {
 		return TimingSessionSelection{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return TimingSessionSelection{}, err
+	}
+	if showLocked {
+		return TimingSessionSelection{}, domain.ErrShowConfigurationLocked
 	}
 	if session.Type != domain.SessionRehearsal {
 		return TimingSessionSelection{}, fmt.Errorf("%w: only REHEARSAL sessions can be selected for timing intelligence", domain.ErrInvalidInput)
 	}
-	if mode == TimingSelectionInclude && session.LifecycleState != domain.SessionLifecycleCompleted && session.LifecycleState != domain.SessionLifecycleStopped {
-		return TimingSessionSelection{}, fmt.Errorf("%w: only completed or stopped REHEARSAL sessions can be explicitly included", domain.ErrConflict)
+	if mode == TimingSelectionInclude &&
+		session.LifecycleState != domain.SessionLifecycleCompleted &&
+		session.LifecycleState != domain.SessionLifecycleStopped &&
+		(session.RehearsalPurpose == "" || session.LifecycleState != domain.SessionLifecycleActive) {
+		return TimingSessionSelection{}, fmt.Errorf("%w: only eligible rehearsals or active rehearsals with a recorded purpose can be approved", domain.ErrConflict)
 	}
 	if mode == TimingSelectionAuto {
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM timing_session_selection WHERE session_id = ?`, sessionID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM timing_session_selection WHERE session_id = ?`, sessionID); err != nil {
 			return TimingSessionSelection{}, fmt.Errorf("clear timing session selection: %w", err)
 		}
-		return TimingSessionSelection{SessionID: sessionID, Mode: TimingSelectionAuto}, nil
+		return TimingSessionSelection{SessionID: sessionID, Mode: TimingSelectionAuto}, tx.Commit()
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO timing_session_selection (session_id, mode, updated_by, updated_at_us)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
@@ -80,7 +94,7 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 		sessionID, mode, strings.TrimSpace(updatedBy), clock.UnixMicros(now)); err != nil {
 		return TimingSessionSelection{}, fmt.Errorf("set timing session selection: %w", err)
 	}
-	return TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: strings.TrimSpace(updatedBy), UpdatedAt: now}, nil
+	return TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: strings.TrimSpace(updatedBy), UpdatedAt: now}, tx.Commit()
 }
 
 func (s *Store) ListTimingSessionSelections(ctx context.Context, projectID string) ([]TimingSessionSelection, error) {
@@ -146,7 +160,7 @@ func (s *Store) ListTimingObservationRecords(ctx context.Context, projectID stri
 	}
 	defer rows.Close()
 	out := make([]TimingObservationRecord, 0)
-	type captureState struct { paused, reanchor bool }
+	type captureState struct{ paused, reanchor bool }
 	states := map[string]captureState{}
 	for rows.Next() {
 		var item TimingObservationRecord

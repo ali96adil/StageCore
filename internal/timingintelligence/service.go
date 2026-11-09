@@ -36,6 +36,7 @@ const (
 )
 
 type SessionCandidate struct {
+	RehearsalPurpose  domain.RehearsalPurpose      `json:"rehearsal_purpose,omitempty"`
 	SessionID         string                       `json:"session_id"`
 	Name              string                       `json:"name"`
 	LifecycleState    domain.SessionLifecycleState `json:"lifecycle_state"`
@@ -282,13 +283,20 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 		}
 		eligible := session.LifecycleState == domain.SessionLifecycleCompleted || session.LifecycleState == domain.SessionLifecycleStopped
 		match := hash == target.ContentHash
-		effective := eligible && match && mode != store.TimingSelectionExclude
+		approved := mode == store.TimingSelectionInclude || (session.RehearsalPurpose == "" && mode == store.TimingSelectionAuto)
+		effective := eligible && match && approved
 		reason := ""
 		switch {
 		case mode == store.TimingSelectionExclude:
 			reason = "operator excluded this rehearsal"
+		case !approved:
+			reason = "timing has not been approved"
 		case !eligible:
-			reason = "rehearsal is not completed or stopped"
+			if session.RehearsalPurpose != "" && mode == store.TimingSelectionInclude {
+				reason = "approved, pending completed or stopped rehearsal"
+			} else {
+				reason = "rehearsal is not completed or stopped"
+			}
 		case !match:
 			reason = "runtime snapshot content differs from the target snapshot"
 		case obsCount[session.ID] == 0:
@@ -297,7 +305,7 @@ func (s *Service) Report(ctx context.Context, projectID string, options ReportOp
 		}
 		trusted[session.ID] = effective
 		candidates = append(candidates, SessionCandidate{
-			SessionID: session.ID, Name: session.Name, LifecycleState: session.LifecycleState,
+			SessionID: session.ID, Name: session.Name, LifecycleState: session.LifecycleState, RehearsalPurpose: session.RehearsalPurpose,
 			StartedAt: session.StartedAt, EndedAt: session.EndedAt, RuntimeSnapshotID: session.RuntimeSnapshotID,
 			SnapshotMatch: match, SelectionMode: mode, Eligible: eligible, Effective: effective,
 			CapturePaused: capturePaused[session.ID], ObservationCount: obsCount[session.ID], Reason: reason,

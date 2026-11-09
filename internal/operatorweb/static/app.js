@@ -1181,6 +1181,11 @@ async function renderRuntime(startPolling = false) {
     api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
   ]);
   const active = runtime.session;
+  const rehearsalPurpose = el("rehearsalPurpose")?.value || "PREVIEW";
+  const timingLocale = document.documentElement.lang.startsWith("ar");
+  const rehearsalLabel = timingLocale ? "هدف البروفة" : "Rehearsal purpose";
+  const previewLabel = timingLocale ? "استعراض وتجربة" : "Preview";
+  const timingLabel = timingLocale ? "بروفة لقياس التوقيت" : "Timing Capture";
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
@@ -1232,7 +1237,7 @@ async function renderRuntime(startPolling = false) {
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
-      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}</div>
+      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}${active?.rehearsal_purpose ? pill(active.rehearsal_purpose === "TIMING_CAPTURE" ? timingLabel : previewLabel) : ""}</div>
     </div>
     <div class="runtime-hero">
       <section class="cue-focus">
@@ -1257,6 +1262,12 @@ async function renderRuntime(startPolling = false) {
             <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
+          <label>${esc(rehearsalLabel)}
+            <select id="rehearsalPurpose" ${!canControl || !snapshot ? "disabled" : ""}>
+              <option value="PREVIEW" ${rehearsalPurpose === "PREVIEW" ? "selected" : ""}>${esc(previewLabel)}</option>
+              <option value="TIMING_CAPTURE" ${rehearsalPurpose === "TIMING_CAPTURE" ? "selected" : ""}>${esc(timingLabel)}</option>
+            </select>
+          </label>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
           <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
@@ -1311,7 +1322,10 @@ async function startRuntime(mode) {
     state.runtimeForceExitAvailable = false;
     const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
-      json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
+      json: {
+        mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID(),
+        ...(mode === "REHEARSAL" ? { rehearsal_purpose: el("rehearsalPurpose")?.value || "PREVIEW" } : {}),
+      },
     });
     const payload = started.result?.payload || {};
     const degradedReasons = Array.isArray(payload.degraded_reasons)

@@ -420,3 +420,66 @@ func TestRetrospectiveTimingSegmentsAreScopedOverlappingAndReversible(t *testing
 	}
 
 }
+
+func TestNewRehearsalTimingRequiresReversibleApproval(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	f.rehearsal(t, "Legacy automatic", time.Minute, 0, true)
+
+	start := func(purpose domain.RehearsalPurpose, interval time.Duration) domain.Session {
+		t.Helper()
+		session, err := f.store.CreateSessionWithPurpose(ctx, f.snapshot.ID, domain.SessionRehearsal, string(purpose), purpose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.executeCue(t, session.ID, f.cues[0].ID)
+		f.clock.Advance(interval)
+		f.executeCue(t, session.ID, f.cues[1].ID)
+		return session
+	}
+	end := func(sessionID string) {
+		t.Helper()
+		if err := f.store.EndSessionLifecycle(ctx, sessionID, domain.SessionLifecycleStopped, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := func(sessionID string, wantCount int, effective bool) SessionCandidate {
+		t.Helper()
+		got, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stats := findTransition(t, got, f.cues[0].ID, f.cues[1].ID)
+		candidate := findCandidate(t, got, sessionID)
+		if stats.SampleCount != wantCount || candidate.Effective != effective || candidate.ObservationCount != 2 {
+			t.Fatalf("candidate=%+v statistics=%+v", candidate, stats)
+		}
+		return candidate
+	}
+	selectMode := func(sessionID string, mode store.TimingSelectionMode) {
+		t.Helper()
+		if _, err := service.SetSessionSelection(ctx, f.projectID, sessionID, mode, "operator"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	preview := start(domain.RehearsalPreview, 75*time.Second)
+	end(preview.ID)
+	report(preview.ID, 1, false)
+
+	capture := start(domain.RehearsalTimingCapture, 80*time.Second)
+	selectMode(capture.ID, store.TimingSelectionInclude)
+	pending := report(capture.ID, 1, false)
+	if pending.SelectionMode != store.TimingSelectionInclude || pending.Reason != "approved, pending completed or stopped rehearsal" {
+		t.Fatalf("active approval=%+v", pending)
+	}
+	end(capture.ID)
+	report(capture.ID, 2, true)
+	selectMode(capture.ID, store.TimingSelectionAuto)
+	report(capture.ID, 1, false)
+	selectMode(preview.ID, store.TimingSelectionInclude)
+	report(preview.ID, 2, true)
+	selectMode(preview.ID, store.TimingSelectionExclude)
+	report(preview.ID, 1, false)
+}

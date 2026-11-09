@@ -89,15 +89,8 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				}
 				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
 				err := service.SetTimingSegment(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
-				switch {
-				case errors.Is(err, domain.ErrInvalidInput):
-					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_TIMING_SEGMENT"})
-					return
-				case errors.Is(err, domain.ErrShowConfigurationLocked):
-					writeJSON(w, http.StatusConflict, map[string]string{"error_code": "SHOW_CONFIGURATION_LOCKED"})
-					return
-				case err != nil:
-					writeProjectStoreError(w, err)
+				if err != nil {
+					writeTimingMutationError(w, err)
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]any{"segment": segment})
@@ -119,10 +112,21 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
 			)
 			if err != nil {
-				writeProjectStoreError(w, err)
+				writeTimingMutationError(w, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"selection": selection})
 		}))
+	}
+}
+
+func writeTimingMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_TIMING_SELECTION"})
+	case errors.Is(err, domain.ErrShowConfigurationLocked):
+		writeJSON(w, http.StatusConflict, map[string]string{"error_code": "SHOW_CONFIGURATION_LOCKED"})
+	default:
+		writeProjectStoreError(w, err)
 	}
 }

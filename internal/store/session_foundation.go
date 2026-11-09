@@ -227,7 +227,7 @@ func (s *Store) GetSessionFoundation(ctx context.Context, sessionID string) (dom
 		       start_position_version, start_position_kind, start_cue_id,
 		       start_position_metadata_json, last_completed_cue_id, next_cue_id,
 		       state_truth_version, restoration_status, desired_state_ref,
-		       verified_state_ref, manual_confirmation_required
+		       verified_state_ref, manual_confirmation_required, rehearsal_purpose
 		FROM sessions WHERE session_id = ?`, strings.TrimSpace(sessionID))
 	return scanSessionFoundation(row)
 }
@@ -243,7 +243,7 @@ func (s *Store) ListSessionFoundationsForProject(ctx context.Context, projectID 
 		       start_position_version, start_position_kind, start_cue_id,
 		       start_position_metadata_json, last_completed_cue_id, next_cue_id,
 		       state_truth_version, restoration_status, desired_state_ref,
-		       verified_state_ref, manual_confirmation_required
+		       verified_state_ref, manual_confirmation_required, rehearsal_purpose
 		FROM sessions WHERE project_id = ?
 		ORDER BY started_at_us DESC, session_id DESC LIMIT ?`, strings.TrimSpace(projectID), limit)
 	if err != nil {
@@ -313,7 +313,7 @@ func scanSessionFoundation(row sessionFoundationRowScanner) (domain.Session, err
 		&session.ContractVersion, &lifecycle, &session.EndReason,
 		&session.StartPosition.Version, &startKind, &startCue, &metadata,
 		&lastCompleted, &nextCue, &session.StateTruth.Version, &restoration,
-		&desiredState, &verifiedState, &manualConfirmation,
+		&desiredState, &verifiedState, &manualConfirmation, &session.RehearsalPurpose,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Session{}, domain.ErrNotFound

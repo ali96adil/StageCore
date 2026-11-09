@@ -114,6 +114,14 @@ func (s *Store) GetRuntimeSnapshot(ctx context.Context, snapshotID string) (doma
 }
 
 func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string) (domain.Session, error) {
+	return s.CreateSessionWithPurpose(ctx, snapshotID, sessionType, name, "")
+}
+
+func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
+	if purpose != "" && (sessionType != domain.SessionRehearsal ||
+		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
+		return domain.Session{}, fmt.Errorf("%w: invalid rehearsal purpose", domain.ErrInvalidInput)
+	}
 	if sessionType != domain.SessionSimulation && sessionType != domain.SessionRehearsal && sessionType != domain.SessionShow {
 		return domain.Session{}, fmt.Errorf("%w: unsupported session type", domain.ErrInvalidInput)
 	}
@@ -132,9 +140,18 @@ func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionTyp
 		return domain.Session{}, err
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status)
-		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')`, sessionID, projectID, snapshotID, sessionType, name, clock.UnixMicros(now)); err != nil {
+	// Legacy callers can still seed an older database during migration tests.
+	const legacyInsert = `INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status)
+		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')`
+	const purposeInsert = `INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status, rehearsal_purpose)
+		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`
+	statement := legacyInsert
+	args := []any{sessionID, projectID, snapshotID, sessionType, name, clock.UnixMicros(now)}
+	if purpose != "" {
+		statement = purposeInsert
+		args = append(args, purpose)
+	}
+	if _, err := s.db.ExecContext(ctx, statement, args...); err != nil {
 		return domain.Session{}, fmt.Errorf("insert session: %w", err)
 	}
 	return domain.Session{
@@ -143,6 +160,7 @@ func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionTyp
 		RuntimeSnapshotID: snapshotID,
 		Type:              sessionType,
 		Name:              name,
+		RehearsalPurpose: purpose,
 		StartedAt:         now,
 		Status:            domain.SessionActive,
 	}, nil
@@ -155,10 +173,10 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	var endedUS sql.NullInt64
 	var current sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, ended_at_us, status, current_cue_id
+		SELECT session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, ended_at_us, status, current_cue_id, rehearsal_purpose
 		FROM sessions WHERE session_id = ?`, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.RuntimeSnapshotID, &sessionType, &session.Name,
-		&startedUS, &endedUS, &status, &current,
+		&startedUS, &endedUS, &status, &current, &session.RehearsalPurpose,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Session{}, domain.ErrNotFound

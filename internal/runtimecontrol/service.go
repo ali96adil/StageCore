@@ -97,6 +97,7 @@ type activeRun struct {
 }
 
 type StartRequest struct {
+	RehearsalPurpose domain.RehearsalPurpose
 	ProjectID string
 	Mode      domain.SessionType
 	Name      string
@@ -158,6 +159,15 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		commandType = CommandShowEnter
 	} else if req.Mode != domain.SessionRehearsal {
 		return domain.Session{}, rejected(req.RequestID, "MODE_UNSUPPORTED", "only REHEARSAL and SHOW can be started", string(req.Mode))
+	}
+
+	purpose := req.RehearsalPurpose
+	if req.Mode == domain.SessionRehearsal && purpose == "" {
+		purpose = domain.RehearsalPreview
+	}
+	if purpose != "" && (req.Mode != domain.SessionRehearsal ||
+		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
+		return domain.Session{}, rejected(req.RequestID, "REHEARSAL_PURPOSE_INVALID", "choose PREVIEW or TIMING_CAPTURE for a rehearsal", "")
 	}
 
 	project, err := s.store.GetProject(ctx, req.ProjectID)
@@ -250,7 +260,7 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 			return finish(rejected(command.CommandID, "SHOW_AUDIO_NOT_SAFE", "StageAudio must be reachable, stopped and confirmed before SHOW", snapshot.ID))
 		}
 	}
-	session, err := s.store.CreateSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name))
+	session, err := s.store.CreateSessionWithPurpose(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose)
 	if releaseShowFence != nil {
 		releaseShowFence()
 	}
@@ -262,6 +272,9 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		eventType = "show.entered"
 	}
 	eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
+	if purpose != "" {
+		eventPayload["rehearsal_purpose"] = purpose
+	}
 	if startWarning != "" {
 		eventPayload["degraded_start"] = true
 		eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
@@ -294,6 +307,9 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	if preflightWarning != "" {
 		resultData["preflight_warning"] = preflightWarning
+	}
+	if purpose != "" {
+		resultData["rehearsal_purpose"] = purpose
 	}
 	resultPayload, _ := json.Marshal(resultData)
 	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
@@ -907,11 +923,12 @@ func sessionFromStoredResult(result contracts.CommandResult) domain.Session {
 		SessionID         string             `json:"session_id"`
 		SessionType       domain.SessionType `json:"session_type"`
 		RuntimeSnapshotID string             `json:"runtime_snapshot_id"`
+		RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose"`
 	}
 	if json.Unmarshal(result.Payload, &payload) != nil {
 		return domain.Session{}
 	}
-	return domain.Session{ID: payload.SessionID, Type: payload.SessionType, RuntimeSnapshotID: payload.RuntimeSnapshotID}
+	return domain.Session{ID: payload.SessionID, Type: payload.SessionType, RuntimeSnapshotID: payload.RuntimeSnapshotID, RehearsalPurpose: payload.RehearsalPurpose}
 }
 
 func rejected(commandID, code, message, entityID string) contracts.CommandResult {

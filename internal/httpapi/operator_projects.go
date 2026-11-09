@@ -53,6 +53,7 @@ type snapshotView struct {
 }
 
 type sessionView struct {
+	RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
 	ID                string               `json:"session_id"`
 	RuntimeSnapshotID string               `json:"runtime_snapshot_id"`
 	Type              domain.SessionType   `json:"type"`
@@ -396,7 +397,7 @@ func makeSnapshotView(snapshot domain.RuntimeSnapshot) snapshotView {
 }
 
 func makeSessionView(session domain.Session) sessionView {
-	return sessionView{ID: session.ID, RuntimeSnapshotID: session.RuntimeSnapshotID, Type: session.Type, Status: session.Status, StartedAt: session.StartedAt}
+	return sessionView{ID: session.ID, RuntimeSnapshotID: session.RuntimeSnapshotID, Type: session.Type, Status: session.Status, StartedAt: session.StartedAt, RehearsalPurpose: session.RehearsalPurpose}
 }
 
 func makeCueSummary(cue domain.Cue) cueSummaryView {
