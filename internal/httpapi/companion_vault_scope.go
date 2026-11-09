@@ -2,14 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"io"
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 )
 
 type companionVaultReadScope struct {
-	io.ReadSeeker
 	ctx          context.Context
 	server       *Server
 	token        string
@@ -18,7 +16,6 @@ type companionVaultReadScope struct {
 	assignmentID string
 	roleID       string
 	snapshotID   string
-	denied       bool
 }
 
 func (s *Server) authorizeCompanionVaultRead(ctx context.Context, session domain.CompanionRuntimeSession, token, hash string) *companionVaultReadScope {
@@ -70,19 +67,4 @@ func (scope *companionVaultReadScope) active() bool {
 	}
 	role, err := projects.GetMachineRole(scope.ctx, scope.roleID)
 	return err == nil && !role.Retired && role.RequiredRuntimeSnapshotID != nil && *role.RequiredRuntimeSnapshotID == scope.snapshotID
-}
-
-func (scope *companionVaultReadScope) Read(buffer []byte) (int, error) {
-	if scope.denied || !scope.active() {
-		scope.denied = true
-		return 0, domain.ErrNotFound
-	}
-	const maxRead = 64 << 10
-	n, err := scope.ReadSeeker.Read(buffer[:min(len(buffer), maxRead)])
-	// A read may complete after authority was withdrawn. Discard the chunk.
-	if n > 0 && !scope.active() {
-		scope.denied = true
-		return 0, domain.ErrNotFound
-	}
-	return n, err
 }

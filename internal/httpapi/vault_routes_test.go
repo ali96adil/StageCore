@@ -43,7 +43,7 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
+	payload := bytes.Repeat([]byte("0123456789abcdefghijklmnopqrstuvwxyz"), 4000)
 	managed, err := v.ImportManaged(ctx, vault.ImportParams{ProjectID: project.ID, Name: "Media", OriginalFilename: "media.bin"}, bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	if got, want := response.Body.Bytes(), payload[10:20]; !bytes.Equal(got, want) {
 		t.Fatalf("range bytes=%q want=%q", got, want)
 	}
-	if got := response.Header().Get("Content-Range"); got != "bytes 10-19/36" {
+	if got := response.Header().Get("Content-Range"); got != "bytes 10-19/144000" {
 		t.Fatalf("Content-Range=%q", got)
 	}
 	if got := response.Header().Get("X-Content-SHA256"); got != managed.Object.ContentHash {
@@ -80,6 +80,32 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	}
 	if got := response.Header().Get("Accept-Ranges"); got != "bytes" {
 		t.Fatalf("Accept-Ranges=%q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("Cache-Control=%q", got)
+	}
+	session, err := auth.ValidateRuntimeSession(ctx, credential.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &releaseVaultResponse{
+		ResponseRecorder: httptest.NewRecorder(),
+		release: func() {
+			if err := auth.Revoke(ctx, session.CompanionID, "owner", "test revocation", true); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	request.Header.Del("Range")
+	api.Handler().ServeHTTP(stream, request)
+	if got := stream.Body.Len(); got == 0 || got > 64<<10 || got >= len(payload) {
+		t.Fatalf("revoked session wrote %d bytes", got)
+	}
+	retry := httptest.NewRecorder()
+	request.Header.Set("Range", "bytes=65536-")
+	api.Handler().ServeHTTP(retry, request)
+	if retry.Code != http.StatusGone {
+		t.Fatalf("revoked range request returned HTTP %d", retry.Code)
 	}
 }
 

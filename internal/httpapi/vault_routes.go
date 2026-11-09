@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -22,14 +21,19 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentHash := strings.ToLower(strings.TrimSpace(r.PathValue("content_hash")))
-	var scope *companionVaultReadScope
+	authorize := func() bool {
+		current, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token)
+		return err == nil && current.ID == session.ID && current.CompanionID == session.CompanionID
+	}
+	status, code := http.StatusGone, companionauth.CodeSessionInvalid
 	if s.companionVaultScope != nil {
-		scope = s.authorizeCompanionVaultRead(r.Context(), session, token, contentHash)
+		scope := s.authorizeCompanionVaultRead(r.Context(), session, token, contentHash)
 		if scope == nil {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})
 			return
 		}
-		w.Header().Set("Cache-Control", "private, no-store")
+		authorize = scope.active
+		status, code = http.StatusNotFound, "VAULT_OBJECT_NOT_FOUND"
 	}
 	file, object, err := s.vault.OpenObject(r.Context(), contentHash)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -46,7 +50,11 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	var content io.ReadSeeker = file
+	if !authorize() {
+		writeJSON(w, status, map[string]any{"error_code": code})
+		return
+	}
+	content := &authorizedMediaReader{ReadSeeker: file, authorize: authorize}
 	jobID := ""
 	if s.bulk != nil {
 		jobID, err = s.bulk.Begin(r.Context(), bulk.KindMediaSync, object.SizeBytes)
@@ -58,24 +66,21 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "BULK_TRANSFER_UNAVAILABLE"})
 			return
 		}
-		content = bulk.NewGuardedReadSeeker(r.Context(), s.bulk, jobID, file)
+		content.ReadSeeker = bulk.NewGuardedReadSeeker(r.Context(), s.bulk, jobID, file)
 		defer func() {
 			if r.Context().Err() != nil {
 				s.bulk.Cancel(jobID, r.Context().Err().Error())
 				return
 			}
-			if scope != nil && scope.denied {
-				s.bulk.Cancel(jobID, "Companion Vault scope revoked")
+			if content.denied {
+				s.bulk.Cancel(jobID, "Companion Vault authority revoked")
 				return
 			}
 			s.bulk.Complete(jobID)
 		}()
 	}
 
-	if scope != nil {
-		scope.ReadSeeker = content
-		content = scope
-	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("ETag", `"sha256:`+object.ContentHash+`"`)
