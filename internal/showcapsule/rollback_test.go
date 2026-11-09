@@ -66,3 +66,40 @@ func TestMaterializeRollsBackProjectAndNewVaultObjectsOnGraphCollision(t *testin
 		t.Fatalf("pre-existing alias changed during rollback: %+v", alias)
 	}
 }
+
+func TestMaterializeRemovesStagedVaultObjectsWhenAuthorityEnds(t *testing.T) {
+	ctx := context.Background()
+	source := newCapsuleFixture(t)
+	defer source.db.Close()
+	exported, err := source.service.Export(ctx, source.projectID, t.TempDir(), BuildOptions{Mode: ExportSelfContained})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := newEmptyCapsuleService(t)
+	defer destination.db.Close()
+	denied := errors.New("restore authority ended")
+	checks := 0
+	_, err = destination.service.Materialize(ctx, exported.Path, MaterializeOptions{
+		ImportedBy: "owner",
+		AuthorizeWrite: func(ctx context.Context) error {
+			checks++
+			if checks == 1 {
+				return nil
+			}
+			if _, err := destination.store.GetVaultObject(ctx, source.contentHash); err != nil {
+				t.Fatalf("expected Vault object staged before Project write: %v", err)
+			}
+			return denied
+		},
+	})
+	if !errors.Is(err, denied) || checks != 2 {
+		t.Fatalf("materialization authority checks=%d, err=%v", checks, err)
+	}
+	if _, err := destination.store.GetProject(ctx, source.projectID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked materialization left a Project: %v", err)
+	}
+	if _, err := destination.store.GetVaultObject(ctx, source.contentHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked materialization left a Vault object: %v", err)
+	}
+}

@@ -14,7 +14,8 @@ import (
 )
 
 type MaterializeOptions struct {
-	ImportedBy string `json:"imported_by"`
+	ImportedBy     string                      `json:"imported_by"`
+	AuthorizeWrite func(context.Context) error `json:"-"`
 }
 
 type MaterializeResult struct {
@@ -62,6 +63,11 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	}()
 
 	for _, object := range plan.IncludedObjects {
+		if options.AuthorizeWrite != nil {
+			if err := options.AuthorizeWrite(ctx); err != nil {
+				return MaterializeResult{}, err
+			}
+		}
 		file, err := openCapsuleFile(root, filepath.FromSlash(object.ArchivePath))
 		if err != nil {
 			return MaterializeResult{}, fmt.Errorf("open capsule object %s: %w", object.ContentSHA256, err)
@@ -91,6 +97,11 @@ func (s *Service) Materialize(ctx context.Context, capsulePath string, options M
 	bundle, err := portableImportFromManifest(plan.Manifest, actor)
 	if err != nil {
 		return MaterializeResult{}, err
+	}
+	if options.AuthorizeWrite != nil {
+		if err := options.AuthorizeWrite(ctx); err != nil {
+			return MaterializeResult{}, err
+		}
 	}
 	imported, err := s.store.ImportPortableProject(ctx, bundle)
 	if err != nil {

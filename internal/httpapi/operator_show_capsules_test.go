@@ -54,10 +54,15 @@ func (f *fakeShowCapsuleService) PlanImport(_ context.Context, path string) (sho
 	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, nil
 }
 
-func (f *fakeShowCapsuleService) Materialize(_ context.Context, path string, options showcapsule.MaterializeOptions) (showcapsule.MaterializeResult, error) {
+func (f *fakeShowCapsuleService) Materialize(ctx context.Context, path string, options showcapsule.MaterializeOptions) (showcapsule.MaterializeResult, error) {
 	f.materializeCalls++
 	f.lastPath = path
 	f.lastImportedBy = options.ImportedBy
+	if options.AuthorizeWrite != nil {
+		if err := options.AuthorizeWrite(ctx); err != nil {
+			return showcapsule.MaterializeResult{}, err
+		}
+	}
 	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, nil
 }
 

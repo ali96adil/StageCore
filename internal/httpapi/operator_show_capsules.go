@@ -203,7 +203,23 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			if !ok {
 				return
 			}
-			result, err := service.Materialize(r.Context(), path, showcapsule.MaterializeOptions{ImportedBy: session.User.Username})
+			token, _ := browserSessionToken(r)
+			csrf := r.Header.Get(csrfHeader)
+			authorize := func(ctx context.Context) error {
+				current, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+					userauth.Authorize(current.User.Role, userauth.PermissionBackupRestore) != nil {
+					return userauth.ErrForbidden
+				}
+				return nil
+			}
+			result, err := service.Materialize(r.Context(), path, showcapsule.MaterializeOptions{
+				ImportedBy: session.User.Username, AuthorizeWrite: authorize,
+			})
+			if errors.Is(err, userauth.ErrForbidden) {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+				return
+			}
 			if err != nil {
 				writeShowCapsuleError(w, err)
 				return
