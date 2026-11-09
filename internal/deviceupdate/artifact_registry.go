@@ -72,6 +72,11 @@ func ArtifactPath(artifactID string) string {
 }
 
 func (r *ArtifactRegistry) ImportQualified(metadata ArtifactMetadata, source io.Reader) (ArtifactMetadata, error) {
+	return r.ImportQualifiedWithAuthorization(metadata, source, nil)
+}
+
+// ImportQualifiedWithAuthorization rechecks live authority before making a staged artifact visible.
+func (r *ArtifactRegistry) ImportQualifiedWithAuthorization(metadata ArtifactMetadata, source io.Reader, authorize func() error) (ArtifactMetadata, error) {
 	if r == nil || r.root == "" || source == nil {
 		return ArtifactMetadata{}, fmt.Errorf("%w: artifact registry and source are required", ErrArtifactInvalid)
 	}
@@ -127,6 +132,11 @@ func (r *ArtifactRegistry) ImportQualified(metadata ArtifactMetadata, source io.
 		return ArtifactMetadata{}, fmt.Errorf("write artifact metadata: %w", err)
 	}
 
+	if authorize != nil {
+		if err := authorize(); err != nil {
+			return ArtifactMetadata{}, err
+		}
+	}
 	if err := os.Rename(tempDir, finalDir); err != nil {
 		if _, statErr := os.Lstat(finalDir); statErr == nil {
 			return ArtifactMetadata{}, ErrArtifactConflict

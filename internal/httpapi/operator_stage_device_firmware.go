@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/deviceupdate"
@@ -156,7 +157,23 @@ func WithOperatorStageDeviceFirmware(
 					CreatedAt: time.Now().UTC(),
 				}
 
-				imported, err := artifacts.ImportQualified(metadata, source)
+				token, _ := browserSessionToken(r)
+				authorize := func() error {
+					if err := capability.CheckDispatch(r.Context()); err != nil {
+						return err
+					}
+					current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+						userauth.Authorize(current.User.Role, userauth.PermissionDeviceFirmwareManage) != nil {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+					return nil
+				}
+				imported, err := artifacts.ImportQualifiedWithAuthorization(metadata, source, authorize)
+				if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": capability.DispatchAuthorityRevokedCode})
+					return
+				}
 				if err != nil {
 					status := http.StatusBadRequest
 					code := "STAGE_DEVICE_FIRMWARE_ARTIFACT_REJECTED"

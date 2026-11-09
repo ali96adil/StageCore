@@ -354,4 +354,39 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 	if !bytes.Equal(stored, payload) || metadata.SHA256 != expectedSHA {
 		t.Fatalf("stored artifact integrity mismatch metadata=%+v", metadata)
 	}
+
+	body, contentType := makeUpload(expectedSHA, deviceupdate.QualificationQualified)
+	req := httptest.NewRequest(http.MethodPost, path, body)
+	req.RemoteAddr = "127.0.0.1:19901"
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set(csrfHeader, owner.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, req)
+	if result.Code != http.StatusForbidden || !strings.Contains(result.Body.String(), "DISPATCH_AUTHORITY_REVOKED") {
+		t.Fatalf("revoked upload returned HTTP %d, %s", result.Code, result.Body.String())
+	}
+	items, err := artifacts.ListForDevice(device.ID)
+	if err != nil || len(items) != 1 || items[0].ArtifactID != response.Artifact.ArtifactID {
+		t.Fatalf("revoked upload affected the firmware registry: %d artifacts, err=%v", len(items), err)
+	}
+}
+
+type firmwareUploadRevokeReader struct {
+	io.ReadCloser
+	revoke func()
+}
+
+func (r *firmwareUploadRevokeReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if n > 0 && r.revoke != nil {
+		r.revoke()
+		r.revoke = nil
+	}
+	return n, err
 }
