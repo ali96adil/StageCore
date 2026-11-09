@@ -18,6 +18,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "clock":
+		os.Exit(runClock(os.Args[2:]))
 	case "doctor":
 		os.Exit(runDoctor(os.Args[2:]))
 	case "support-bundle":
@@ -87,6 +89,7 @@ func runDoctor(args []string) int {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: stagecore <command> [options]")
+	fmt.Fprintln(os.Stderr, "  clock           check offline RTC boot evidence and optionally sync the RTC")
 	fmt.Fprintln(os.Stderr, "  doctor          run read-only StageCore deployment and health diagnostics")
 	fmt.Fprintln(os.Stderr, "  support-bundle  export a redacted diagnostics archive for support or offline review")
 }
