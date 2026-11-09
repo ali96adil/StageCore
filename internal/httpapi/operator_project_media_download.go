@@ -79,6 +79,7 @@ func WithScopedProjectMediaDownload(auth *userauth.Service, access *projectacces
 				if filename == "." || filename == "/" || filename == ".." {
 					filename = "media.bin"
 				}
+				w.Header().Set("Cache-Control", "private, no-store")
 				w.Header().Set("Content-Type", "application/octet-stream")
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))

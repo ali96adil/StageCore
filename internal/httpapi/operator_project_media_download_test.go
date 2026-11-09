@@ -85,7 +85,7 @@ func TestScopedBrowserMediaDownloadChecksSharedVersionsAndLiveRevocation(t *test
 	assertStatus(b, versionB, "", 404)
 	res := assertStatus(a, versionA, "bytes=3-9", 206)
 	if !bytes.Equal(res.Body.Bytes(), data[3:10]) || !strings.HasPrefix(res.Header().Get("Content-Disposition"), "attachment;") ||
-		res.Header().Get("X-Content-Type-Options") != "nosniff" {
+		res.Header().Get("X-Content-Type-Options") != "nosniff" || res.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("unsafe or incorrect response: %v %q", res.Header(), res.Body.Bytes())
 	}
 	stream := &revokeOnMediaWrite{ResponseRecorder: httptest.NewRecorder(), revoke: func() { set() }}
