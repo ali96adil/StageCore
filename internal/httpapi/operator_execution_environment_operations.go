@@ -51,7 +51,7 @@ func WithOperatorExecutionEnvironmentOperations(auth *userauth.Service, stageSto
 
 func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, runtime executionEnvironmentOperationRuntime) {
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/operations"
-	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -90,14 +90,17 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			return
 		}
 
-		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+		grant, err := currentProjectRouteGrant(r)
+		if !writeProjectQualificationError(w, err) {
 			return
 		}
 		result := runtime.OperateExecutionEnvironment(r.Context(), companionchannel.EnvironmentOperationRequest{
-			OperationID:           body.OperationID,
-			EnvironmentManifestID: environment.ID,
-			Kind:                  body.Kind,
-			TimeoutMS:             body.TimeoutMS,
+			IssuerBrowserSessionID:      session.ID,
+			IssuerRequiresProjectGrants: grant.access != nil,
+			OperationID:                 body.OperationID,
+			EnvironmentManifestID:       environment.ID,
+			Kind:                        body.Kind,
+			TimeoutMS:                   body.TimeoutMS,
 		})
 		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 			return

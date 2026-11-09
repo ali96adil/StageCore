@@ -204,7 +204,17 @@ func (s *Service) Check(ctx context.Context, userID, projectID string, permissio
 
 // CheckAll evaluates compound permissions against one database snapshot.
 func (s *Service) CheckAll(ctx context.Context, userID, projectID string, permissions ...Permission) error {
-	if s == nil || strings.TrimSpace(userID) == "" || strings.TrimSpace(projectID) == "" || len(permissions) == 0 {
+	if s == nil {
+		return ErrDenied
+	}
+	return CheckAllInTransaction(ctx, s.db, userID, projectID, permissions...)
+}
+
+// CheckAllInTransaction uses the caller's database snapshot for grant checks.
+func CheckAllInTransaction(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, userID, projectID string, permissions ...Permission) error {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(projectID) == "" || len(permissions) == 0 {
 		return ErrDenied
 	}
 	for _, permission := range permissions {
@@ -217,7 +227,7 @@ func (s *Service) CheckAll(ctx context.Context, userID, projectID string, permis
 		return ErrDenied
 	}
 	var permitted int
-	err = s.db.QueryRowContext(ctx, `
+	err = q.QueryRowContext(ctx, `
 		SELECT CASE WHEN u.role = 'OWNER' THEN 1
 			WHEN u.role IN ('OPERATOR','TECHNICIAN','VIEWER')
 			 AND EXISTS (SELECT 1 FROM project_permission_grants v

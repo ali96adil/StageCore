@@ -44,6 +44,8 @@ const (
 )
 
 type EnvironmentOperationRequest struct {
+ IssuerBrowserSessionID string
+ IssuerRequiresProjectGrants bool
 	OperationID string
 	EnvironmentManifestID string
 	Kind EnvironmentOperationKind
@@ -294,6 +296,8 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 		return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_SESSION_UNAVAILABLE", "capture execution has no authenticated runtime session"
 	}
 	scope := store.CreateCompanionUploadTicketParams{
+ IssuerBrowserSessionID: request.IssuerBrowserSessionID,
+ IssuerRequiresProjectGrants: request.IssuerRequiresProjectGrants,
 		CompanionID:           companionID,
 		RuntimeSessionID:      runtimeSessionID,
 		OperationID:           request.OperationID,
@@ -316,6 +320,9 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 		}
 		switch existing.Status {
 		case store.CompanionUploadTicketCompleted:
+			if err := c.store.CheckCompanionUploadIssuer(ctx, scope); err != nil {
+				return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_ISSUER_UNAVAILABLE", "capture upload issuer authority is unavailable"
+			}
 			return environmentCaptureUploadReceipt(existing), "", ""
 		case store.CompanionUploadTicketActive:
 			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IN_PROGRESS", "capture upload is already active for this operation"
@@ -356,6 +363,9 @@ func (c *RuntimeChannel) uploadEnvironmentCaptureObject(
 		if !environmentCaptureUploadTicketMatches(ticket, scope) {
 			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_IDENTITY_CONFLICT", "completed capture upload does not match the current authenticated capture scope"
 		}
+		if err := c.store.CheckCompanionUploadIssuer(ctx, scope); err != nil {
+			return EnvironmentCaptureUploadReceipt{}, "ENVIRONMENT_CAPTURE_UPLOAD_ISSUER_UNAVAILABLE", "capture upload issuer authority is unavailable"
+		}
 		return environmentCaptureUploadReceipt(ticket), "", ""
 	}
 
@@ -387,6 +397,8 @@ func (c *RuntimeChannel) runtimeSessionIDForExecution(companionID, executionID s
 
 func environmentCaptureUploadTicketMatches(ticket store.CompanionUploadTicket, scope store.CreateCompanionUploadTicketParams) bool {
 	return ticket.Purpose == scope.Purpose &&
+		ticket.IssuerBrowserSessionID == scope.IssuerBrowserSessionID &&
+		ticket.IssuerRequiresProjectGrants == scope.IssuerRequiresProjectGrants &&
 		ticket.CompanionID == scope.CompanionID &&
 		ticket.RuntimeSessionID == scope.RuntimeSessionID &&
 		ticket.OperationID == scope.OperationID &&

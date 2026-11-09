@@ -95,7 +95,7 @@ func handleCompanionCaptureUpload(
 
 	var source io.Reader = r.Body
 	var scoped *captureTicketReader
-	if qualifyLiveScope {
+	if qualifyLiveScope || ticket.IssuerBrowserSessionID != "" {
 		scoped = &captureTicketReader{source: source, authorize: func() error {
 			current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
 			if err != nil {

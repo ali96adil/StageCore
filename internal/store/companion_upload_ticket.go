@@ -15,6 +15,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 type CompanionUploadTicketStatus string
@@ -30,20 +32,22 @@ const (
 )
 
 type CompanionUploadTicket struct {
-	ID                    string
-	CompanionID           string
-	RuntimeSessionID      string
-	OperationID           string
-	EnvironmentManifestID string
-	MachineRoleID         string
-	RuntimeSnapshotID     string
-	Purpose               CompanionUploadPurpose
-	ExpectedContentHash   string
-	ExpectedSizeBytes     int64
-	Status                CompanionUploadTicketStatus
-	CreatedAt             time.Time
-	ExpiresAt             time.Time
-	TerminalAt            *time.Time
+	IssuerBrowserSessionID      string
+	IssuerRequiresProjectGrants bool
+	ID                          string
+	CompanionID                 string
+	RuntimeSessionID            string
+	OperationID                 string
+	EnvironmentManifestID       string
+	MachineRoleID               string
+	RuntimeSnapshotID           string
+	Purpose                     CompanionUploadPurpose
+	ExpectedContentHash         string
+	ExpectedSizeBytes           int64
+	Status                      CompanionUploadTicketStatus
+	CreatedAt                   time.Time
+	ExpiresAt                   time.Time
+	TerminalAt                  *time.Time
 }
 
 type CompanionUploadTicketGrant struct {
@@ -52,16 +56,18 @@ type CompanionUploadTicketGrant struct {
 }
 
 type CreateCompanionUploadTicketParams struct {
-	CompanionID           string
-	RuntimeSessionID      string
-	OperationID           string
-	EnvironmentManifestID string
-	MachineRoleID         string
-	RuntimeSnapshotID     string
-	Purpose               CompanionUploadPurpose
-	ExpectedContentHash   string
-	ExpectedSizeBytes     int64
-	ExpiresAt             time.Time
+	IssuerBrowserSessionID      string
+	IssuerRequiresProjectGrants bool
+	CompanionID                 string
+	RuntimeSessionID            string
+	OperationID                 string
+	EnvironmentManifestID       string
+	MachineRoleID               string
+	RuntimeSnapshotID           string
+	Purpose                     CompanionUploadPurpose
+	ExpectedContentHash         string
+	ExpectedSizeBytes           int64
+	ExpiresAt                   time.Time
 }
 
 func (s *Store) CreateCompanionUploadTicket(
@@ -106,20 +112,31 @@ func (s *Store) CreateCompanionUploadTicket(
 		return CompanionUploadTicketGrant{}, err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return CompanionUploadTicketGrant{}, err
+	}
+	defer tx.Rollback()
+	if err := checkCompanionUploadIssuer(ctx, tx, p.EnvironmentManifestID, p.IssuerBrowserSessionID, p.IssuerRequiresProjectGrants, now); err != nil {
+		return CompanionUploadTicketGrant{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO companion_upload_tickets (
 			upload_ticket_id, credential_hash, companion_id, runtime_session_id, operation_id,
 			environment_manifest_id, machine_role_id, runtime_snapshot_id,
 			purpose, expected_content_hash, expected_size_bytes, status,
-			created_at_us, expires_at_us, terminal_at_us
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, NULL)`,
+			created_at_us, expires_at_us, terminal_at_us, issuer_browser_session_id, issuer_requires_project_grants
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, NULL, ?, ?)`,
 		ticketID, credentialHash, p.CompanionID, p.RuntimeSessionID, p.OperationID,
 		p.EnvironmentManifestID, p.MachineRoleID, p.RuntimeSnapshotID,
 		p.Purpose, p.ExpectedContentHash, p.ExpectedSizeBytes,
-		clock.UnixMicros(now), clock.UnixMicros(expiresAt),
+		clock.UnixMicros(now), clock.UnixMicros(expiresAt), nullableText(p.IssuerBrowserSessionID), p.IssuerRequiresProjectGrants,
 	)
 	if err != nil {
 		return CompanionUploadTicketGrant{}, mapCompanionUploadTicketWriteError("create Companion upload ticket", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return CompanionUploadTicketGrant{}, err
 	}
 	ticket, err := s.GetCompanionUploadTicket(ctx, ticketID)
 	if err != nil {
@@ -334,7 +351,8 @@ func (s *Store) ExpireCompanionUploadTickets(ctx context.Context) (int64, error)
 const companionUploadTicketSelect = `
 	SELECT upload_ticket_id, companion_id, runtime_session_id, operation_id, environment_manifest_id,
 	       machine_role_id, runtime_snapshot_id, purpose, expected_content_hash,
-	       expected_size_bytes, status, created_at_us, expires_at_us, terminal_at_us
+	       expected_size_bytes, status, created_at_us, expires_at_us, terminal_at_us,
+	       COALESCE(issuer_browser_session_id, ''), issuer_requires_project_grants
 	FROM companion_upload_tickets`
 
 func scanCompanionUploadTicket(row rowScanner) (CompanionUploadTicket, error) {
@@ -346,6 +364,7 @@ func scanCompanionUploadTicket(row rowScanner) (CompanionUploadTicket, error) {
 		&ticket.ID, &ticket.CompanionID, &ticket.RuntimeSessionID, &ticket.OperationID, &ticket.EnvironmentManifestID,
 		&ticket.MachineRoleID, &ticket.RuntimeSnapshotID, &purpose, &ticket.ExpectedContentHash,
 		&ticket.ExpectedSizeBytes, &status, &createdUS, &expiresUS, &terminalUS,
+		&ticket.IssuerBrowserSessionID, &ticket.IssuerRequiresProjectGrants,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return CompanionUploadTicket{}, domain.ErrNotFound
@@ -408,7 +427,62 @@ func companionUploadTicketScopeCurrent(
 	if err != nil {
 		return false, fmt.Errorf("revalidate Companion upload ticket authority: %w", err)
 	}
-	return current == 1, nil
+	if current != 1 {
+		return false, nil
+	}
+	err = checkCompanionUploadIssuer(ctx, q, ticket.EnvironmentManifestID, ticket.IssuerBrowserSessionID, ticket.IssuerRequiresProjectGrants, now)
+	if errors.Is(err, domain.ErrConflict) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *Store) CheckCompanionUploadIssuer(ctx context.Context, scope CreateCompanionUploadTicketParams) error {
+	if scope.IssuerBrowserSessionID == "" && !scope.IssuerRequiresProjectGrants {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return checkCompanionUploadIssuer(ctx, tx, scope.EnvironmentManifestID, scope.IssuerBrowserSessionID, scope.IssuerRequiresProjectGrants, s.clock.Now().UTC())
+}
+
+func checkCompanionUploadIssuer(ctx context.Context, q queryer, environmentID, browserSessionID string, projectGrants bool, now time.Time) error {
+	denied := fmt.Errorf("%w: Companion upload browser authority ended", domain.ErrConflict)
+	if browserSessionID == "" {
+		if projectGrants {
+			return denied
+		}
+		return nil
+	}
+	var userID, role, projectID string
+	err := q.QueryRowContext(ctx, `
+		SELECT u.user_id, u.role, pr.project_id
+		FROM browser_sessions bs
+		JOIN local_users u ON u.user_id = bs.user_id AND u.enabled = 1
+		JOIN execution_environment_manifests eem ON eem.environment_manifest_id = ?
+		JOIN project_revisions pr ON pr.revision_id = eem.revision_id
+		WHERE bs.session_id = ? AND bs.revoked_at_us IS NULL AND bs.expires_at_us > ?
+	`, environmentID, browserSessionID, clock.UnixMicros(now)).Scan(&userID, &role, &projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return denied
+	}
+	if err != nil {
+		return err
+	}
+	if userauth.Authorize(role, userauth.PermissionRuntimeControl) != nil {
+		return denied
+	}
+	if projectGrants {
+		err := projectaccess.CheckAllInTransaction(ctx, q, userID, projectID, projectaccess.RehearsalControl, projectaccess.MediaRead)
+		if errors.Is(err, projectaccess.ErrDenied) {
+			return denied
+		}
+		return err
+	}
+	return nil
 }
 
 func newCompanionUploadCredential() (string, string, error) {
