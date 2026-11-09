@@ -97,14 +97,45 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			if !ok {
 				return
 			}
+			w.Header().Set("Cache-Control", "no-store")
+			projectID := r.PathValue("project_id")
+			projectScope := qualificationAccess(r, access)
+			token, _ := browserSessionToken(r)
+			csrf := r.Header.Get(csrfHeader)
+			authorize := func(ctx context.Context) error {
+				current, err := auth.ValidateCSRF(ctx, token, csrf)
+				if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+					userauth.Authorize(current.User.Role, exportPermission) != nil {
+					return userauth.ErrForbidden
+				}
+				if projectScope != nil {
+					return projectScope.CheckAll(ctx, current.User.ID, projectID, projectaccess.CapsuleExport, projectaccess.MediaRead)
+				}
+				return nil
+			}
+			writeExportAuthorizationError := func(err error) bool {
+				if errors.Is(err, userauth.ErrForbidden) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+					return false
+				}
+				return writeProjectQualificationError(w, err)
+			}
+			if !writeExportAuthorizationError(authorize(r.Context())) {
+				return
+			}
 			if err := os.MkdirAll(exportRoot, 0o750); err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CAPSULE_STORAGE_UNAVAILABLE"})
 				return
 			}
-			result, err := service.Export(r.Context(), r.PathValue("project_id"), exportRoot, showcapsule.BuildOptions{
+			result, err := service.Export(r.Context(), projectID, exportRoot, showcapsule.BuildOptions{
 				RuntimeSnapshotID: strings.TrimSpace(body.RuntimeSnapshotID),
 				Mode:              mode,
+				AuthorizePublish:  authorize,
 			})
+			if errors.Is(err, userauth.ErrForbidden) || errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound) {
+				writeExportAuthorizationError(err)
+				return
+			}
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return

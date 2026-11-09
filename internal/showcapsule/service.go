@@ -32,6 +32,7 @@ type Service struct {
 type BuildOptions struct {
 	RuntimeSnapshotID string
 	Mode              ExportMode
+	AuthorizePublish  func(context.Context) error
 }
 
 type ExportResult struct {
@@ -200,6 +201,11 @@ func (s *Service) Export(ctx context.Context, projectID, destinationRoot string,
 	}
 	if verified.CapsuleID != manifest.CapsuleID {
 		return ExportResult{}, fmt.Errorf("verified capsule identity changed during staging")
+	}
+	if options.AuthorizePublish != nil {
+		if err := options.AuthorizePublish(ctx); err != nil {
+			return ExportResult{}, err
+		}
 	}
 	if err := os.Rename(stagingPath, finalPath); err != nil {
 		return ExportResult{}, fmt.Errorf("atomically promote show capsule: %w", err)

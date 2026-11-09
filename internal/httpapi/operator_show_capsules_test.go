@@ -22,6 +22,7 @@ type fakeShowCapsuleService struct {
 	lastExportRoot   string
 	lastMode         showcapsule.ExportMode
 	lastImportedBy   string
+	onExport         func()
 }
 
 func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID string, options showcapsule.BuildOptions) (showcapsule.Manifest, error) {
@@ -31,11 +32,19 @@ func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID stri
 	return showcapsule.Manifest{ExportMode: options.Mode}, nil
 }
 
-func (f *fakeShowCapsuleService) Export(_ context.Context, projectID, root string, options showcapsule.BuildOptions) (showcapsule.ExportResult, error) {
+func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root string, options showcapsule.BuildOptions) (showcapsule.ExportResult, error) {
 	f.exportCalls++
 	f.lastProjectID = projectID
 	f.lastExportRoot = root
 	f.lastMode = options.Mode
+	if f.onExport != nil {
+		f.onExport()
+	}
+	if options.AuthorizePublish != nil {
+		if err := options.AuthorizePublish(ctx); err != nil {
+			return showcapsule.ExportResult{}, err
+		}
+	}
 	return showcapsule.ExportResult{CapsuleID: "00000000-0000-7000-8000-000000000611", Manifest: showcapsule.Manifest{ExportMode: options.Mode}}, nil
 }
 
@@ -177,5 +186,28 @@ func TestShowCapsuleAPIAuthenticationRBACCSRFAndPathBounds(t *testing.T) {
 	handler.ServeHTTP(ownerMaterializeRes, ownerMaterialize)
 	if ownerMaterializeRes.Code != http.StatusCreated || service.materializeCalls != 1 || service.lastImportedBy != "owner" {
 		t.Fatalf("owner materialize status=%d calls=%d actor=%q body=%s", ownerMaterializeRes.Code, service.materializeCalls, service.lastImportedBy, ownerMaterializeRes.Body.String())
+	}
+}
+
+func TestShowCapsuleExportRechecksSessionAtPublication(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{onExport: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") {
+		t.Fatalf("revoked export got HTTP %d, %d calls, %s", rec.Code, service.exportCalls, rec.Body.String())
 	}
 }

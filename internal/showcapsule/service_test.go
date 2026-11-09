@@ -2,6 +2,7 @@ package showcapsule
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,34 @@ type capsuleFixture struct {
 	mediaAssetID string
 	contentHash  string
 	contentBytes []byte
+}
+
+func TestCapsuleExportDoesNotPublishAfterAuthorityEnds(t *testing.T) {
+	fixture := newCapsuleFixture(t)
+	defer fixture.db.Close()
+	root := t.TempDir()
+	denied := errors.New("export authority ended")
+	_, err := fixture.service.Export(context.Background(), fixture.projectID, root, BuildOptions{
+		RuntimeSnapshotID: fixture.snapshotID,
+		Mode:              ExportSelfContained,
+		AuthorizePublish: func(context.Context) error {
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 1 || !strings.Contains(entries[0].Name(), ".staging-") {
+				t.Fatalf("expected one unpublished staging directory, got %v, err=%v", entries, err)
+			}
+			staged, err := Verify(filepath.Join(root, entries[0].Name()))
+			if err != nil || staged.RuntimeSnapshot.RuntimeSnapshotID != fixture.snapshotID {
+				t.Fatalf("expected verified staging content, err=%v", err)
+			}
+			return denied
+		},
+	})
+	if !errors.Is(err, denied) {
+		t.Fatalf("export authorization error = %v", err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("revoked export left %v, err=%v", entries, err)
+	}
 }
 
 func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
