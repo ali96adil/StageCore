@@ -9,6 +9,7 @@ import (
 	"testing"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -212,4 +213,72 @@ func TestScopedStageAudioDoesNotDeliverStatusAfterGrantRevocation(t *testing.T) 
 	if res.Code != http.StatusNotFound || len(sidecar.calls) != 1 || strings.Contains(res.Body.String(), "Pi headphones") {
 		t.Fatalf("revoked browser got sidecar data: %d %s", res.Code, res.Body.String())
 	}
+}
+
+type audioLocalFunc func(context.Context, stageaudio.Request) (stageaudio.LocalReply, error)
+
+func (f audioLocalFunc) Call(ctx context.Context, req stageaudio.Request) (stageaudio.LocalReply, error) {
+	return f(ctx, req)
+}
+
+func TestScopedStageAudioRevocationAtSidecarWriteDoesNotPoisonShowFence(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	st := store.New(h.db.DB, clock.Real{})
+	project, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped audio transport"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "audio-transport", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(permissions ...projectaccess.Permission) {
+		t.Helper()
+		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(projectaccess.ProjectView, projectaccess.MediaRead, projectaccess.AudioControl)
+	fence := stageaudio.NewShowFence()
+	var wrote bool
+	sidecar := audioLocalFunc(func(ctx context.Context, request stageaudio.Request) (stageaudio.LocalReply, error) {
+		set(projectaccess.ProjectView, projectaccess.MediaRead)
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return stageaudio.LocalReply{}, err
+		}
+		wrote = true
+		return stageaudio.LocalReply{}, nil
+	})
+	handler := New(WithScopedOperatorStageAudio(h.auth, st, sidecar, nil, fence, &StageAudioProjectScope{
+		ProjectID: project.ID, Vault: objects, Access: access,
+	})).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/system/audio/command?project_id="+project.ID,
+		[]byte(`{"operation":"STOP","deck":"A"}`), login.Token, login.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if wrote || res.Code != http.StatusNotFound {
+		t.Fatalf("revoked command wrote=%t status=%d %s", wrote, res.Code, res.Body)
+	}
+	release, err := fence.AcquireShow(ctx, (&fakeStageAudio{}).Call)
+	if err != nil {
+		t.Fatalf("denial before write made SHOW uncertain: %v", err)
+	}
+	release()
 }

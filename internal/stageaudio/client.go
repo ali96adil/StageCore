@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/capability"
 )
 
 // LocalReply is the typed answer from the manually started StageAudio sidecar.
@@ -70,6 +72,9 @@ func (c *LocalClient) Call(ctx context.Context, request Request) (LocalReply, er
 		return LocalReply{}, ErrInvalidCommand
 	}
 	line = append(line, '\n')
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return LocalReply{}, err
+	}
 	if written, err := conn.Write(line); err != nil || written != len(line) {
 		if ctx.Err() != nil {
 			return LocalReply{}, ctx.Err()

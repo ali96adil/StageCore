@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/capability"
 )
 
 func TestLocalClientOnlyUsesExplicitUnixSocket(t *testing.T) {
@@ -51,6 +54,47 @@ func TestLocalClientOnlyUsesExplicitUnixSocket(t *testing.T) {
 		t.Fatalf("unexpected local reply: %+v err=%v", reply, err)
 	}
 }
+func TestLocalClientDoesNotWriteWhenAuthorityEnds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audio.sock")
+	server, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := NewLocalClient(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan error, 1)
+	go func() {
+		conn, err := server.Accept()
+		if err != nil {
+			read <- err
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		var request Request
+		read <- json.NewDecoder(conn).Decode(&request)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ctx = capability.WithDispatchCheck(ctx, func(context.Context) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	if _, err := client.Call(ctx, Request{Operation: "STOP", Deck: DeckA}); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("client error=%v", err)
+	}
+	select {
+	case err := <-read:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("sidecar received command or partial write: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("sidecar did not observe connection closure")
+	}
+}
+
 func TestLocalClientRejectsSymlinkAndOrdinaryFile(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "ordinary.sock")
