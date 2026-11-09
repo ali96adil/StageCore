@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -74,5 +75,51 @@ func TestExternalRehearsalStopUsesPublishedPolicyAndDispatchesOnce(t *testing.T)
 	}
 	if err := h.service.runRehearsalOutputs(ctx, session, contracts.CommandEnvelope{CommandID: uuid.NewString(), Issuer: "owner"}, plan); err != nil || dispatches != 1 {
 		t.Fatalf("persisted output was replayed: %v, calls=%d", err, dispatches)
+	}
+}
+
+func TestExternalRehearsalStopContinuesAfterOutputFailureWithoutReplay(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	p, revision, err := h.store.CreateProject(ctx, store.CreateProjectParams{Name: "Independent STOP outputs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(h.store).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := h.store.CreateSession(ctx, published.ID, domain.SessionRehearsal, "output fault simulation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ProjectID != p.ID {
+		t.Fatal("wrong test session")
+	}
+	plan := []rehearsalOutput{
+		{Target: snapshot.Target{AliasID: "audio", TargetRef: "AUDIO"}, Capability: "midi.send", Parameters: json.RawMessage(`{}`)},
+		{Target: snapshot.Target{AliasID: "video", TargetRef: "VIDEO"}, Capability: "osc.send", Parameters: json.RawMessage(`{}`)},
+	}
+	var calls []string
+	offline := true
+	h.service.executor.inner = capability.ExecutorFunc(func(_ context.Context, req capability.Request) capability.Result {
+		calls = append(calls, req.Target.Ref)
+		if offline && req.Target.Ref == "AUDIO" {
+			return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone, ErrorCode: "OFFLINE"}
+		}
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckTransportOnly}
+	})
+	for range 2 {
+		stop := contracts.CommandEnvelope{CommandID: uuid.NewString(), Issuer: "owner"}
+		if err := h.service.runRehearsalOutputs(ctx, session, stop, plan); err == nil {
+			t.Fatal("reported success after an unconfirmed STOP")
+		}
+		offline = false
+	}
+	if !slices.Equal(calls, []string{"AUDIO", "VIDEO"}) {
+		t.Fatalf("external STOP dispatches=%v", calls)
 	}
 }

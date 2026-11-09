@@ -53,17 +53,24 @@ func rehearsalOutputs(manifest snapshot.Manifest) ([]rehearsalOutput, error) {
 }
 
 func (s *Service) runRehearsalOutputs(ctx context.Context, session domain.Session, stop contracts.CommandEnvelope, plan []rehearsalOutput) error {
+	var failedOutputs error
 	for _, action := range plan {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(failedOutputs, err)
+		}
 		// Persist the dispatch reservation before any write. The ID is stable
 		// across STOP request retries and server restarts.
 		id := uuid.NewSHA1(uuid.NameSpaceOID, []byte("stagecore.rehearsal-end:"+session.ID+":"+action.Target.AliasID)).String()
 		command := commandEnvelope(id, "rehearsal.output.stop", session.ProjectID, session.RuntimeSnapshotID, stop.Issuer, action.Parameters)
 		result, terminal, ok := s.reserve(ctx, command)
-		if !ok || terminal {
-			if terminal && result.Status == contracts.CommandCompleted {
-				continue
+		if terminal {
+			if result.Status != contracts.CommandCompleted {
+				failedOutputs = errors.Join(failedOutputs, fmt.Errorf("previous output action for %s failed", action.Target.TargetRef))
 			}
-			return fmt.Errorf("previous output action for %s is failed or unresolved", action.Target.TargetRef)
+			continue
+		}
+		if !ok {
+			return errors.Join(failedOutputs, fmt.Errorf("previous output action for %s is unresolved", action.Target.TargetRef))
 		}
 		actionCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		output := s.executor.Execute(actionCtx, capability.Request{
@@ -86,8 +93,8 @@ func (s *Service) runRehearsalOutputs(ctx context.Context, session domain.Sessio
 			return err
 		}
 		if status != contracts.CommandCompleted {
-			return fmt.Errorf("external output action failed or is uncertain for %s", action.Target.TargetRef)
+			failedOutputs = errors.Join(failedOutputs, fmt.Errorf("external output action failed or is uncertain for %s", action.Target.TargetRef))
 		}
 	}
-	return nil
+	return failedOutputs
 }
