@@ -7,6 +7,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -28,7 +29,7 @@ type runtimeCommandRequest struct {
 
 type runtimeStopSessionRequest struct {
 	runtimeCommandRequest
-	RehearsalTabletStopSessionID string `json:"rehearsal_tablet_stop_session_id,omitempty"`
+	RehearsalTabletStopSessionID   string `json:"rehearsal_tablet_stop_session_id,omitempty"`
 	RehearsalExternalStopSessionID string `json:"rehearsal_external_stop_session_id,omitempty"`
 }
 
@@ -56,13 +57,13 @@ type runtimeExecutionView struct {
 }
 
 type runtimeStatusView struct {
-	Project         projectView           `json:"project"`
-	Mode            string                `json:"mode"`
-	Snapshot        *snapshotView         `json:"runtime_snapshot"`
-	Session         *sessionView          `json:"session"`
-	Cues            []cueSummaryView      `json:"cues"`
-	CurrentCue      *cueSummaryView       `json:"current_cue"`
-	NextCue         *cueSummaryView       `json:"next_cue"`
+	Project               projectView           `json:"project"`
+	Mode                  string                `json:"mode"`
+	Snapshot              *snapshotView         `json:"runtime_snapshot"`
+	Session               *sessionView          `json:"session"`
+	Cues                  []cueSummaryView      `json:"cues"`
+	CurrentCue            *cueSummaryView       `json:"current_cue"`
+	NextCue               *cueSummaryView       `json:"next_cue"`
 	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
 	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
 }
@@ -98,6 +99,17 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				return
 			}
 		}
+		grant, scopeErr := currentProjectRouteGrant(r)
+		if scopeErr == nil && grant.access != nil {
+			needed := projectaccess.RehearsalControl
+			if mode == domain.SessionShow {
+				needed = projectaccess.ShowEnterExit
+			}
+			scopeErr = grant.access.Check(r.Context(), session.User.ID, r.PathValue("project_id"), needed)
+		}
+		if !writeProjectQualificationError(w, scopeErr) {
+			return
+		}
 		created, result := runtime.StartSession(r.Context(), runtimecontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"), Mode: mode, Name: body.Name,
 			Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
@@ -129,18 +141,24 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 				return
 			}
+			if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeForceExit) {
+				return
+			}
 			result := runtime.ForceStopSession(r.Context(), runtimecontrol.StopRequest{
 				SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			})
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
-				"forced": true,
+				"forced":          true,
 				"safety_bypassed": true,
 			})
 			return
 		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopSession) {
+			return
+		}
 		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
-			RehearsalTabletStopSessionID: body.RehearsalTabletStopSessionID,
+			RehearsalTabletStopSessionID:   body.RehearsalTabletStopSessionID,
 			RehearsalExternalStopSessionID: body.RehearsalExternalStopSessionID,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
@@ -153,6 +171,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		active, ok := activeRuntimeSession(w, r, projectStore)
 		if !ok {
+			return
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
 			return
 		}
 		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
@@ -185,6 +206,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_CHECK_SESSION_CHANGED"})
 			return
 		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
+			return
+		}
 		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
@@ -205,14 +229,21 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
+		intent := projectaccess.RuntimeBlackoutClear
+		if body.Enabled {
+			intent = projectaccess.RuntimeBlackoutEngage
+		}
+		if !qualifyRuntimeIntent(w, r, "", intent) {
+			return
+		}
 		result := runtime.ProjectBlackout(r.Context(), runtimecontrol.ProjectEmergencyRequest{
 			ProjectID: r.PathValue("project_id"),
-			Issuer: session.User.ID,
+			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
-			Enabled: body.Enabled,
+			Enabled:   body.Enabled,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
-			"sessionless": true,
+			"sessionless":             true,
 			"managed_output_blackout": body.Enabled,
 		})
 	}))
@@ -234,11 +265,18 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
+		intent := projectaccess.RuntimeBlackoutClear
+		if body.Enabled {
+			intent = projectaccess.RuntimeBlackoutEngage
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, intent) {
+			return
+		}
 		result := runtime.EmergencyBlackout(r.Context(), runtimecontrol.EmergencyRequest{
 			SessionID: active.ID,
-			Issuer: session.User.ID,
+			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
-			Enabled: body.Enabled,
+			Enabled:   body.Enabled,
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"managed_output_blackout": body.Enabled})
 	}))
@@ -250,6 +288,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		active, ok := activeRuntimeSession(w, r, projectStore)
 		if !ok {
+			return
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopCue) {
 			return
 		}
 		result := runtime.StopCue(r.Context(), runtimecontrol.StopRequest{

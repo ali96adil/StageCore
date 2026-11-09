@@ -50,7 +50,13 @@ func registerOperatorOSCQueryDiscoveryRoute(mux *http.ServeMux, auth *userauth.S
 		}
 		// The OSCQuery endpoint is explicitly local to the VDMX Companion.
 		// Never proxy the browser-supplied URL to a workstation.
+		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		}
 		result := runtime.DiscoverOSCQuery(r.Context(), assignment.CompanionID, "http://127.0.0.1:2345/")
+		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		}
 		if result.Status != "COMPLETED" {
 			writeJSON(w, http.StatusServiceUnavailable, result)
 			return

@@ -18,20 +18,20 @@ type executionEnvironmentOperationRuntime interface {
 }
 
 type executionEnvironmentOperationRequest struct {
-	OperationID string                                     `json:"operation_id"`
+	OperationID string                                    `json:"operation_id"`
 	Kind        companionchannel.EnvironmentOperationKind `json:"kind"`
-	TimeoutMS   int64                                      `json:"timeout_ms"`
+	TimeoutMS   int64                                     `json:"timeout_ms"`
 }
 
 type executionEnvironmentOperationView struct {
-	OperationID     string                                      `json:"operation_id"`
-	Kind            companionchannel.EnvironmentOperationKind  `json:"kind"`
-	Status          companionchannel.EnvironmentOperationStatus `json:"status"`
-	ErrorCode       string                                      `json:"error_code,omitempty"`
-	ResponseSummary string                                      `json:"response_summary,omitempty"`
-	Snapshot        *executionenv.Snapshot                      `json:"snapshot,omitempty"`
+	OperationID     string                                               `json:"operation_id"`
+	Kind            companionchannel.EnvironmentOperationKind            `json:"kind"`
+	Status          companionchannel.EnvironmentOperationStatus          `json:"status"`
+	ErrorCode       string                                               `json:"error_code,omitempty"`
+	ResponseSummary string                                               `json:"response_summary,omitempty"`
+	Snapshot        *executionenv.Snapshot                               `json:"snapshot,omitempty"`
 	CaptureObject   *companionchannel.EnvironmentCaptureObjectDescriptor `json:"capture_object,omitempty"`
-	CaptureUpload   *companionchannel.EnvironmentCaptureUploadReceipt `json:"capture_upload,omitempty"`
+	CaptureUpload   *companionchannel.EnvironmentCaptureUploadReceipt    `json:"capture_upload,omitempty"`
 }
 
 // WithOperatorExecutionEnvironmentOperations exposes only the bounded F-025
@@ -90,21 +90,27 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			return
 		}
 
+		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		}
 		result := runtime.OperateExecutionEnvironment(r.Context(), companionchannel.EnvironmentOperationRequest{
-			OperationID:                 body.OperationID,
-			EnvironmentManifestID:      environment.ID,
-			Kind:                        body.Kind,
-			TimeoutMS:                   body.TimeoutMS,
+			OperationID:           body.OperationID,
+			EnvironmentManifestID: environment.ID,
+			Kind:                  body.Kind,
+			TimeoutMS:             body.TimeoutMS,
 		})
+		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		}
 		writeJSON(w, http.StatusOK, executionEnvironmentOperationView{
-			OperationID: result.OperationID,
-			Kind: result.Kind,
-			Status: result.Status,
-			ErrorCode: result.ErrorCode,
+			OperationID:     result.OperationID,
+			Kind:            result.Kind,
+			Status:          result.Status,
+			ErrorCode:       result.ErrorCode,
 			ResponseSummary: result.ResponseSummary,
-			Snapshot: result.Snapshot,
-			CaptureObject: result.CaptureObject,
-			CaptureUpload: result.CaptureUpload,
+			Snapshot:        result.Snapshot,
+			CaptureObject:   result.CaptureObject,
+			CaptureUpload:   result.CaptureUpload,
 		})
 	}))
 }

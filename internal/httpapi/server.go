@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/netip"
@@ -11,6 +12,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -18,17 +20,18 @@ import (
 )
 
 type Server struct {
-	mux                  *http.ServeMux
-	companionAuth        *companionauth.Service
-	companionRuntime     *companionchannel.RuntimeChannel
-	vault                *stagevault.Vault
-	companionVaultScope  *store.Store
-	projectMediaDownload bool
-	pluginAdminGuard     func(http.ResponseWriter, *http.Request)
-	software             *software.Repository
-	bulk                 *bulk.Manager
-	storageHealth        *storagehealth.Monitor
-	assistantWorkspace   *assistant.WorkspaceService
+	mux                       *http.ServeMux
+	companionAuth             *companionauth.Service
+	companionRuntime          *companionchannel.RuntimeChannel
+	vault                     *stagevault.Vault
+	companionVaultScope       *store.Store
+	projectMediaDownload      bool
+	projectRouteQualification *projectaccess.Service
+	pluginAdminGuard          func(http.ResponseWriter, *http.Request)
+	software                  *software.Repository
+	bulk                      *bulk.Manager
+	storageHealth             *storagehealth.Monitor
+	assistantWorkspace        *assistant.WorkspaceService
 }
 
 type Option func(*Server)
@@ -116,14 +119,17 @@ func (s *Server) handleCompanionRuntime(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) Handler() http.Handler {
-	if s.pluginAdminGuard == nil {
+	if s.pluginAdminGuard == nil && s.projectRouteQualification == nil {
 		return s.mux
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := s.mux.Handler(r)
-		if isHubPluginAdminPattern(pattern) {
+		if s.pluginAdminGuard != nil && isHubPluginAdminPattern(pattern) {
 			s.pluginAdminGuard(w, r)
 			return
+		}
+		if s.projectRouteQualification != nil && len(projectRoutePermissions[pattern]) != 0 {
+			r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
 		}
 		s.mux.ServeHTTP(w, r)
 	})

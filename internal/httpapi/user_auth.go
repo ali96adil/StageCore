@@ -205,7 +205,10 @@ func withAuthenticatedSession(service *userauth.Service, requireCSRF bool, next 
 			writeJSON(w, status, map[string]any{"error_code": code})
 			return
 		}
-		next(w, r, session, token)
+		r, allowed := qualifyProjectRoute(w, r, service, session, token)
+		if allowed {
+			next(w, r, session, token)
+		}
 	}
 }
 

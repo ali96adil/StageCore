@@ -145,6 +145,7 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 	guardedOptions := []string{
 		"WithOperatorProjectAccess",
 		"WithScopedOperatorProjects",
+		"WithProjectRouteQualification",
 		"WithScopedOperatorShowCapsules",
 		"WithScopedProjectMediaDownload",
 		"WithScopedOperatorStageDeviceReads",

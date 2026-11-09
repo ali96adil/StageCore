@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -92,8 +94,17 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			return
 		}
 
-		object, err := vault.ImportObject(r.Context(), r.Body)
+		var body io.Reader = r.Body
+		if grant, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		} else if grant.access != nil {
+			body = projectCaptureReader{r}
+		}
+		object, err := vault.ImportObject(r.Context(), body)
 		if err != nil {
+			if _, scopeErr := currentProjectRouteGrant(r); !writeProjectQualificationError(w, scopeErr) {
+				return
+			}
 			if errors.Is(err, storagehealth.ErrRuntimeReserve) {
 				writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error_code": "STORAGE_RUNTIME_RESERVE"})
 				return
@@ -102,6 +113,10 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			return
 		}
 
+		if _, scopeErr := currentProjectRouteGrant(r); !writeProjectQualificationError(w, scopeErr) {
+			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
+			return
+		}
 		updated, err := stageStore.CaptureExecutionEnvironmentAsset(r.Context(), environment.ID, asset.Key, object.ContentHash, object.SizeBytes)
 		if err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
@@ -140,4 +155,13 @@ func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stage
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_ASSET_NOT_FOUND"})
 	return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+}
+
+type projectCaptureReader struct{ request *http.Request }
+
+func (reader projectCaptureReader) Read(data []byte) (int, error) {
+	if _, err := currentProjectRouteGrant(reader.request); err != nil {
+		return 0, err
+	}
+	return reader.request.Body.Read(data[:min(len(data), 64<<10)])
 }
