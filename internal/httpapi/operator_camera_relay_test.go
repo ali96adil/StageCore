@@ -145,3 +145,45 @@ func TestProjectCameraViewerRevokesIdleStream(t *testing.T) {
 	waitForClose(secondStream)
 	do(http.MethodHead, first.ID, otherBrowser, "", 204)
 }
+
+func TestProjectCameraViewerRechecksBeforeFirstFrame(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "viewer.token")
+	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("v", 32)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var allowed atomic.Bool
+	allowed.Store(true)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		allowed.Store(false)
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=relay")
+		fmt.Fprint(w, "--relay\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xff\xd8\xff\xd9\r\n--relay--\r\n")
+	}))
+	defer relay.Close()
+	viewer, err := NewProjectCameraViewer("project", strings.TrimPrefix(relay.URL, "http://"), tokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		viewer.stream(w, r, func(context.Context) error {
+			if !allowed.Load() {
+				return projectaccess.ErrDenied
+			}
+			return nil
+		})
+	}))
+	defer hub.Close()
+	client := hub.Client()
+	client.Timeout = 5 * time.Second
+	resp, err := client.Get(hub.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusNotFound ||
+		strings.Contains(string(body), "\xff\xd8") ||
+		strings.HasPrefix(resp.Header.Get("Content-Type"), "multipart/") {
+		t.Fatalf("revoked viewer got status %d, content type %q, %d bytes, err=%v",
+			resp.StatusCode, resp.Header.Get("Content-Type"), len(body), err)
+	}
+}

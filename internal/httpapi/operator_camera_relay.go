@@ -139,7 +139,7 @@ func (v *ProjectCameraViewer) stream(w http.ResponseWriter, r *http.Request, che
 
 	frames := multipart.NewReader(resp.Body, boundary)
 	output := multipart.NewWriter(w)
-	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+output.Boundary())
+	firstFrame := true
 	control := http.NewResponseController(w)
 	defer control.SetWriteDeadline(time.Time{})
 	const maxFrame = 4 << 20
@@ -157,6 +157,13 @@ func (v *ProjectCameraViewer) stream(w http.ResponseWriter, r *http.Request, che
 		if err != nil || jpeg[0] != 0xff || jpeg[1] != 0xd8 ||
 			jpeg[len(jpeg)-2] != 0xff || jpeg[len(jpeg)-1] != 0xd9 || ctx.Err() != nil {
 			return
+		}
+		if firstFrame {
+			if !writeProjectQualificationError(w, check(ctx)) || ctx.Err() != nil {
+				return
+			}
+			w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+output.Boundary())
+			firstFrame = false
 		}
 		if err := control.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			return
