@@ -37,7 +37,7 @@ func WithScopedLocalCapsuleExports(
 		}
 		exportsRoot := filepath.Join(filepath.Clean(capsuleRoot), "exports")
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/show-capsules/exports",
-			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
+			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				w.Header().Set("Cache-Control", "no-store")
 				projectID := strings.TrimSpace(r.PathValue("project_id"))
 				if projectID == "" {
@@ -57,8 +57,12 @@ func WithScopedLocalCapsuleExports(
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "SCOPED_CAPSULES_UNAVAILABLE"})
 					return
 				}
-				// Recheck revocations before serialization; this is NOT a
-				// substitute for a future atomic streaming authorization fence.
+				current, err := auth.ValidatePassive(r.Context(), token)
+				if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+					return
+				}
+				// Recheck the live grant after inspecting files on disk.
 				if err := access.Check(r.Context(), session.User.ID, projectID, projectaccess.CapsuleExport); err != nil {
 					writeScopedExportAccessError(w, err)
 					return

@@ -45,12 +45,15 @@ func WithOwnerCapsuleImportReview(
 		}
 		root := filepath.Join(filepath.Clean(capsuleRoot), "imports")
 		s.mux.HandleFunc("GET /api/v1/show-capsules/imports/review",
-			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
+			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				w.Header().Set("Cache-Control", "no-store")
 				if !authorizeOwnerCapsuleReview(w, session) { return }
 				items, skipped, err := ownerVerifiedImportInventory(r.Context(), root)
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CAPSULE_IMPORT_REVIEW_UNAVAILABLE"})
+					return
+				}
+				if !reauthorizeOwnerCapsuleReview(w, r, auth, session, token) {
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]any{
@@ -64,7 +67,7 @@ func WithOwnerCapsuleImportReview(
 			}))
 
 		s.mux.HandleFunc("GET /api/v1/show-capsules/imports/{capsule_id}/review",
-			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
+			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				w.Header().Set("Cache-Control", "no-store")
 				if !authorizeOwnerCapsuleReview(w, session) { return }
 				capsuleID := strings.TrimSpace(r.PathValue("capsule_id"))
@@ -95,12 +98,24 @@ func WithOwnerCapsuleImportReview(
 					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error_code": "CAPSULE_IMPORT_PLAN_MISMATCH"})
 					return
 				}
+				if !reauthorizeOwnerCapsuleReview(w, r, auth, session, token) {
+					return
+				}
 				writeJSON(w, http.StatusOK, map[string]any{
 					"plan": plan, "read_only": true,
 					"authorized_to_restore": false, "scope": "OWNER_REVIEW_ONLY",
 				})
 			}))
 	}
+}
+
+func reauthorizeOwnerCapsuleReview(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, token string) bool {
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	return authorizeOwnerCapsuleReview(w, current)
 }
 
 func authorizeOwnerCapsuleReview(w http.ResponseWriter, session userauth.Session) bool {

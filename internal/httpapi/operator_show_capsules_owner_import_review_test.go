@@ -125,6 +125,26 @@ func TestOwnerCapsuleImportReviewIsReadOnlyAndStrictlyOwnerOnly(t *testing.T) {
 		t.Fatalf("unsafe import path accepted: %d",got.Code)
 	}
 
+	reviewSession, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokingPlanner := ownerCapsulePlanFunc(func(ctx context.Context, path string) (showcapsule.ImportPlan, error) {
+		plan, err := capsuleService.PlanImport(ctx, path)
+		if err != nil {
+			return plan, err
+		}
+		if err := h.auth.Logout(ctx, reviewSession.Token); err != nil {
+			t.Fatal(err)
+		}
+		return plan, nil
+	})
+	revoked := New(WithOwnerCapsuleImportReview(h.auth, revokingPlanner, root))
+	if got := get(revoked.Handler(), reviewSession.Token, detail); got.Code != http.StatusUnauthorized ||
+		strings.Contains(got.Body.String(), exported.CapsuleID) || strings.Contains(got.Body.String(), snap.ID) {
+		t.Fatalf("revoked session received an import plan: %d %s", got.Code, got.Body.String())
+	}
+
 	// SHOW state is reflected as a blocking readiness check; preview itself
 	// remains read-only and never enters STOP/GO/restore.
 	if _,err:=st.CreateSession(ctx,snap.ID,domain.SessionShow,"SHOW safety test");err!=nil {t.Fatal(err)}
@@ -155,6 +175,12 @@ func TestOwnerCapsuleImportReviewIsReadOnlyAndStrictlyOwnerOnly(t *testing.T) {
 	if got:=get(s.Handler(),owner.Token,detail);got.Code!=http.StatusUnprocessableEntity{
 		t.Fatalf("corrupt import detail did not fail: %d %s",got.Code,got.Body.String())
 	}
+}
+
+type ownerCapsulePlanFunc func(context.Context, string) (showcapsule.ImportPlan, error)
+
+func (f ownerCapsulePlanFunc) PlanImport(ctx context.Context, path string) (showcapsule.ImportPlan, error) {
+	return f(ctx, path)
 }
 
 func TestOwnerCapsuleReviewRejectsSymlinkRootAndInventoryOverflow(t *testing.T) {
