@@ -24,6 +24,7 @@ type Server struct {
 	vault                *stagevault.Vault
 	companionVaultScope  *store.Store
 	projectMediaDownload bool
+	pluginAdminGuard     func(http.ResponseWriter, *http.Request)
 	software             *software.Repository
 	bulk                 *bulk.Manager
 	storageHealth        *storagehealth.Monitor
@@ -114,7 +115,19 @@ func (s *Server) handleCompanionRuntime(w http.ResponseWriter, r *http.Request) 
 	s.companionRuntime.ServeWebSocket(w, r, session, token)
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler {
+	if s.pluginAdminGuard == nil {
+		return s.mux
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := s.mux.Handler(r)
+		if isHubPluginAdminPattern(pattern) {
+			s.pluginAdminGuard(w, r)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
