@@ -43,7 +43,11 @@ Use Ctrl+C to terminate the temporary relay. Do NOT modify the production stagec
 
 ## Security and limits
 
-The source and downstream streams use plaintext unauthenticated HTTP. The listener stays loopback-only unless explicitly overridden. There is NO access control for an exposed LAN listener: do not forward this port to the internet or expose it to untrusted Wi-Fi. Before production, define client authentication, firewall segmentation, IP binding, health monitoring, rollback and stage-level readiness policies. A successful Pi loopback test does not establish four-tablet readiness or frame-accurate sync.
+The legacy trial uses plaintext HTTP and defaults to loopback. Keep the camera source on the isolated show LAN.
+
+The protected listener is opt-in through `-viewer-token-file` and `-control-token-file`. Supply distinct random base64url tokens of at least 32 characters in owner-only regular files. For a non-loopback protected listener, supply `-tls-cert` and `-tls-key` for the relay hostname. Send the token in the `Authorization: Bearer` header. The viewer token grants health and plain MJPEG. The control token also grants flash control and `/stream?flash=on`. Protected flash-on is tied to a live stream. POST flash `auto` and `off` remain available to the control token.
+
+Replace token files atomically to revoke a credential. Active streams recheck at each frame and once per second while idle. Dropping a flash stream releases its flash request. The standalone credentials are relay-wide. Hub project grants and browser or tablet delivery of authenticated streams require separate integration and qualification.
 
 
 ## Physical checkpoint — 2026-09-22

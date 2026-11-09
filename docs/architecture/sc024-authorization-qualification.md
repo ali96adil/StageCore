@@ -16,7 +16,7 @@ inventory, not proof that a route uses the prospective policy.
 | Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Device operations outside that Cue path still need review. |
 | Plugin and extensions | Qualification-only Owner boundary for the 28 Hub-global extension and plugin administration registrations. | Qualified Cue dispatch rechecks the originating grant before the OSC plugin pipe write. Other extension lifecycle operations remain subject to their route policies. |
 | Audio | Optional StageAudio project, Vault version and SHOW fence. Live grant/session checks before commands and after sidecar replies. | Unbound legacy audio is Owner-only in qualification. Hardware-side revocation during a device operation remains open. |
-| Camera relay | Separate local service with its own health, stream and flash endpoints. | Qualify project viewing and control at the Hub/relay boundary; an inventory entry does not confer browser authority. |
+| Camera relay | Optional standalone bearer authorization separates viewing from flash control. Active viewers are disconnected on credential rotation, and protected LAN listeners require TLS. | Hub project grants and authenticated browser/tablet delivery are still open. |
 
 The source guard rejects wiring the alternate Project/Capsule/Files options
 into the production Hub before the coordinated ACL cutover. Migration 53 is
@@ -28,4 +28,4 @@ explicit qualification policy, including legacy memory, simulation,
 preflight, visual and tablet routes. The opt-in router rejects new project-ID
 patterns without a policy. Legacy registrations for project listing, device
 metadata and unbound StageAudio inherit the qualification context. This
-coverage includes the live grant check at the Companion, Stage Device, and OSC plugin Cue send boundaries. Other asynchronous dispatch paths and the standalone Camera Relay still need qualification.
+coverage includes the live grant check at the Companion, Stage Device, and OSC plugin Cue send boundaries. Other asynchronous dispatch paths and project-grant integration with Camera Relay still need qualification.
