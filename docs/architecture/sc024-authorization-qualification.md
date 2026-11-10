@@ -30,3 +30,47 @@ preflight, visual and tablet routes. The opt-in router rejects new project-ID
 patterns without a policy. Legacy registrations for project listing, device
 metadata and unbound StageAudio inherit the qualification context. This
 coverage includes the live grant check at the Companion, Stage Device, and OSC plugin Cue send boundaries. Other asynchronous dispatch paths still need qualification.
+
+## SC-023 cutover and rollback rehearsal
+
+The current release candidate uses the legacy production assembly. The
+qualified route registry and the Owner cutover impact preview are exercised
+through tests. The preview deliberately reports `ready_for_cutover: false`
+and does not grant access or activate enforcement.
+
+### Before a future cutover
+
+1. Record the approved current bundle checksum, installed revision, managed
+   configuration paths and authoritative Data Root. Retain the previous
+   release bundle and its checksums beside the candidate.
+2. Run the [F-010 update dry run](../features/F-010-safe-update-rollback-foundation.md)
+   against a disposable copy of the installation. Review Doctor, the managed
+   paths, and the candidate bundle verification. A dry run creates no
+   rollback snapshot.
+3. On the disposable database, review the Owner impact preview for each
+   active operator. Confirm that Project visibility, GO, independent STOP
+   and Blackout grants match the intended assignments. Include an account
+   with revoked access and an unrelated Project in the rehearsal.
+4. Verify a rollback snapshot can be created and restored on the disposable
+   installation. Record the snapshot path, verification outcome, expected
+   previous revision, and Doctor result after restoration. Keep any copied
+   operator identities, grants and session records private.
+5. Require an idle Hub, a designated rollback operator, a reviewed production
+   assembly change, and separately qualified device safety behavior before
+   scheduling activation.
+
+### Rollback decision
+
+Treat an inaccessible intended Project, unexpected cross-Project access,
+loss of independent STOP or Blackout authority, a blocked Doctor result,
+or a migration/health failure as a cutover stop condition. The F-010 updater
+automatically restores the verified cold snapshot if install or postflight
+fails. If a later authorization check fails after a successful update, use
+the reviewed recovery procedure for the verified pre-cutover snapshot. Do
+not substitute an older executable on top of newer database state or
+hand-edit permission rows to simulate rollback.
+
+After recovery, verify the recorded previous revision, Doctor, restored
+Project visibility and the legacy authorization behavior in the disposable
+installation. Record the triggering failure and the resulting state. The
+existing source guard stays in place until an explicit coordinated cutover.
