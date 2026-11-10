@@ -37,6 +37,10 @@ func WithOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinpu
 			if !decodeBoundedJSON(w, r, &body) {
 				return
 			}
+			// JSON body reads can outlive the route's initial grant check.
+			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+				return
+			}
 			result := inputs.Inject(r.Context(), simulationinput.InjectRequest{
 				ProjectID: r.PathValue("project_id"),
 				Issuer: session.User.ID,

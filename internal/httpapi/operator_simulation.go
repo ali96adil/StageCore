@@ -82,6 +82,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		if !writeProjectQualificationError(w, func() error { _, err := currentProjectRouteGrant(r); return err }()) {
+			return
+		}
 		created, result := control.Start(r.Context(), simulationcontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"),
 			Name: body.Name,
@@ -249,6 +252,11 @@ func activeSimulationSession(w http.ResponseWriter, r *http.Request, control *si
 	}
 	if status.Session == nil || status.Session.Type != domain.SessionSimulation || status.Session.Status != domain.SessionActive {
 		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "SIMULATION_NOT_ACTIVE"})
+		return domain.Session{}, false
+	}
+	// Status may have performed multiple DB reads after the route's initial
+	// grant check; deny a revoked browser before any simulation mutation.
+	if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 		return domain.Session{}, false
 	}
 	return *status.Session, true
