@@ -12,6 +12,21 @@ import (
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
 
+type projectMutationAuthorizationKey struct{}
+
+// WithProjectMutationAuthorization binds the browser authority check to the
+// transaction committing a project metadata or authoring mutation.
+func WithProjectMutationAuthorization(ctx context.Context, authorize func(context.Context, *sql.Tx) error) context.Context {
+	return context.WithValue(ctx, projectMutationAuthorizationKey{}, authorize)
+}
+
+func authorizeProjectMutation(ctx context.Context, tx *sql.Tx) error {
+	if authorize, ok := ctx.Value(projectMutationAuthorizationKey{}).(func(context.Context, *sql.Tx) error); ok && authorize != nil {
+		return authorize(ctx, tx)
+	}
+	return nil
+}
+
 type CreateProjectParams struct {
 	Name        string
 	Description string
@@ -53,6 +68,9 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (domai
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ? WHERE project_id = ?`, revisionID, projectID); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("set current revision: %w", err)
 	}
+	if err := authorizeProjectMutation(ctx, tx); err != nil {
+		return domain.Project{}, domain.ProjectRevision{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("commit create project: %w", err)
 	}
@@ -89,38 +107,45 @@ func (s *Store) RenameProject(ctx context.Context, projectID, newName string) (d
 		strings.ContainsAny(newName, "\x00\r\n") {
 		return domain.Project{}, fmt.Errorf("%w: project name must contain 1–160 characters without control line breaks", domain.ErrInvalidInput)
 	}
-	// Avoid marking a Project updated if the operator enters its current name.
-	current, err := s.GetProject(ctx, projectID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Project{}, fmt.Errorf("begin rename project: %w", err)
+	}
+	defer tx.Rollback()
+	current, err := getProject(ctx, tx, projectID)
 	if err != nil {
 		return domain.Project{}, err
 	}
-	if current.Name == newName {
-		return current, nil
+	if current.Name != newName {
+		now := s.clock.Now().UTC()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE projects SET name = ?, updated_at_us = ? WHERE project_id = ?`,
+			newName, clock.UnixMicros(now), projectID); err != nil {
+			return domain.Project{}, fmt.Errorf("rename project metadata: %w", err)
+		}
+		current.Name = newName
+		current.UpdatedAt = clock.FromUnixMicros(clock.UnixMicros(now))
 	}
-	nowUS := clock.UnixMicros(s.clock.Now().UTC())
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE projects SET name = ?, updated_at_us = ? WHERE project_id = ?`,
-		newName, nowUS, projectID)
-	if err != nil {
-		return domain.Project{}, fmt.Errorf("rename project metadata: %w", err)
+	if err := authorizeProjectMutation(ctx, tx); err != nil {
+		return domain.Project{}, err
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return domain.Project{}, fmt.Errorf("rename project result: %w", err)
+	if err := tx.Commit(); err != nil {
+		return domain.Project{}, fmt.Errorf("commit rename project: %w", err)
 	}
-	if affected != 1 {
-		return domain.Project{}, domain.ErrNotFound
-	}
-	return s.GetProject(ctx, projectID)
+	return current, nil
 }
 
 func (s *Store) GetProject(ctx context.Context, projectID string) (domain.Project, error) {
+	return getProject(ctx, s.db, projectID)
+}
+
+func getProject(ctx context.Context, q queryer, projectID string) (domain.Project, error) {
 	var p domain.Project
 	var lifecycle string
 	var current sql.NullString
 	var venue sql.NullString
 	var createdUS, updatedUS int64
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT project_id, name, description, lifecycle_state, current_revision_id, default_venue_profile_id, created_at_us, updated_at_us
 		FROM projects WHERE project_id = ?`, projectID).Scan(
 		&p.ID, &p.Name, &p.Description, &lifecycle, &current, &venue, &createdUS, &updatedUS,
@@ -190,7 +215,6 @@ func (s *Store) SetRevisionStatus(ctx context.Context, revisionID string, next d
 	}
 	return nil
 }
-
 
 // ReopenCurrentValidatedRevisionIfUnpublished restores the current revision
 // to DRAFT only when Publish validated it but failed before committing any

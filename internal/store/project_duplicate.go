@@ -331,6 +331,9 @@ func (s *Store) DuplicateProjectAuthoring(ctx context.Context, sourceProjectID, 
     if err := duplicateProjectExtrasTx(ctx, tx, sourceProjectID, newProjectID, source.ID, newRevisionID, createdBy, nowUS, cueIDs, roleIDs); err != nil {
         return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("duplicate Project authoring extras: %w", err)
     }
+	if err := authorizeProjectMutation(ctx, tx); err != nil {
+		return domain.Project{}, domain.ProjectRevision{}, err
+	}
     if err := tx.Commit(); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("commit draft fork: %w", err)
 	}

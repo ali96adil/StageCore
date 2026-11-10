@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestRenameOriginalAndDuplicatedProjectPreservesStableReferences(t *testing.T) {
@@ -153,5 +155,49 @@ func TestProjectMutationsRejectRevokedSessionAfterBodyRead(t *testing.T) {
 	items, err := projects.ListProjects(ctx)
 	if err != nil || len(items) != 1 || items[0].Name != "Original" {
 		t.Fatalf("revoked request changed projects: %+v, %v", items, err)
+	}
+}
+
+type projectMutationTestClock func() time.Time
+
+func (c projectMutationTestClock) Now() time.Time { return c() }
+
+func TestProjectMutationRollsBackIfSessionExpiresBeforeCommit(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	initial := store.New(h.db.DB, clock.Real{})
+	project, _, err := initial.CreateProject(ctx, store.CreateProjectParams{Name: "Original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/projects"},
+		{http.MethodPost, "/api/v1/projects/" + project.ID + "/duplicate"},
+		{http.MethodPatch, "/api/v1/projects/" + project.ID},
+	} {
+		now := time.Now().UTC()
+		auth, err := userauth.New(h.db.DB, userauth.WithClock(func() time.Time { return now }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		login, err := auth.Login(ctx, "owner", h.password, "127.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		projects := store.New(h.db.DB, projectMutationTestClock(func() time.Time {
+			now = login.Session.ExpiresAt
+			return now
+		}))
+		handler := New(WithOperatorProjects(auth, projects)).Handler()
+		req := authenticatedMutationRequest(t, mutation.method, mutation.path, []byte(`{"name":"Unexpected"}`), login.Token, login.CSRFToken)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s returned %d: %s", mutation.method, mutation.path, rec.Code, rec.Body)
+		}
+	}
+	items, err := initial.ListProjects(ctx)
+	if err != nil || len(items) != 1 || items[0].Name != "Original" {
+		t.Fatalf("expired transaction changed projects: %+v, %v", items, err)
 	}
 }

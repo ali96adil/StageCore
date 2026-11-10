@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -53,12 +55,12 @@ type snapshotView struct {
 }
 
 type sessionView struct {
-	RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
-	ID                string               `json:"session_id"`
-	RuntimeSnapshotID string               `json:"runtime_snapshot_id"`
-	Type              domain.SessionType   `json:"type"`
-	Status            domain.SessionStatus `json:"status"`
-	StartedAt         time.Time            `json:"started_at"`
+	RehearsalPurpose  domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
+	ID                string                  `json:"session_id"`
+	RuntimeSnapshotID string                  `json:"runtime_snapshot_id"`
+	Type              domain.SessionType      `json:"type"`
+	Status            domain.SessionStatus    `json:"status"`
+	StartedAt         time.Time               `json:"started_at"`
 }
 
 type cueSummaryView struct {
@@ -125,6 +127,39 @@ func recheckProjectMutation(w http.ResponseWriter, r *http.Request, auth *userau
 	return allowScopedProject(w, r, current, access, scoped...)
 }
 
+func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
+	qualified := qualificationAccess(r, access) != nil
+	projectID := r.PathValue("project_id")
+	return store.WithProjectMutationAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
+		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
+		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && userauth.Authorize(role, permission) != nil) {
+			return userauth.ErrForbidden
+		}
+		if err != nil || !qualified {
+			return err
+		}
+		if len(scoped) != 0 {
+			return projectaccess.CheckAllInTransaction(ctx, tx, session.User.ID, projectID, scoped...)
+		}
+		if role != userauth.RoleOwner {
+			return userauth.ErrForbidden
+		}
+		return nil
+	})
+}
+
+func writeProjectMutationDenied(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, userauth.ErrForbidden):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	case errors.Is(err, projectaccess.ErrDenied):
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
+	default:
+		return false
+	}
+	return true
+}
+
 func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service) {
 	mux.HandleFunc("GET /api/v1/projects", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projects, err := projectStore.ListProjects(r.Context())
@@ -165,11 +200,14 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
 			return
 		}
-		project, revision, err := projectStore.CreateProject(r.Context(), store.CreateProjectParams{
+		project, revision, err := projectStore.CreateProject(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, access), store.CreateProjectParams{
 			Name: strings.TrimSpace(body.Name), Description: body.Description,
 			CreatedBy: session.User.ID, ChangeNote: "Created from Operator Web",
 		})
 		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			status := http.StatusBadRequest
 			code := "PROJECT_INVALID"
 			if !errors.Is(err, domain.ErrInvalidInput) {
@@ -198,9 +236,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				return
 			}
 			project, revision, err := projectStore.DuplicateProjectAuthoring(
-				r.Context(), strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(body.Name), session.User.ID,
+				projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, access), strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(body.Name), session.User.ID,
 			)
 			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
 				code, status := "PROJECT_DUPLICATE_FAILED", http.StatusServiceUnavailable
 				switch {
 				case errors.Is(err, domain.ErrInvalidInput):
@@ -239,8 +280,11 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			if !recheckProjectMutation(w, r, auth, session, renamePermission, access, projectaccess.ProjectRename) {
 				return
 			}
-			project, err := projectStore.RenameProject(r.Context(), r.PathValue("project_id"), body.Name)
+			project, err := projectStore.RenameProject(projectMutationContext(r, auth, session, renamePermission, access, projectaccess.ProjectRename), r.PathValue("project_id"), body.Name)
 			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
 				code, status := "PROJECT_RENAME_FAILED", http.StatusServiceUnavailable
 				switch {
 				case errors.Is(err, domain.ErrInvalidInput):
