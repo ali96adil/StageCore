@@ -21,6 +21,7 @@ type fakeShowTemplateService struct {
 	importCalls      int
 	exportCalls      int
 	lastCreatedBy    string
+	onExport         func()
 }
 
 func (f *fakeShowTemplateService) List() []showtemplate.Template {
@@ -48,6 +49,9 @@ func (f *fakeShowTemplateService) MaterializeDocument(_ context.Context, data []
 }
 func (f *fakeShowTemplateService) ExportProject(_ context.Context, projectID string) (showtemplate.Template, error) {
 	f.exportCalls++
+	if f.onExport != nil {
+		f.onExport()
+	}
 	return showtemplate.Template{SchemaVersion: 1, MinAPIVersion: 1, MaxAPIVersion: 1, ID: "exported.test", Version: "1.0.0", Source: showtemplate.SourceExported}, nil
 }
 
@@ -136,5 +140,29 @@ func TestShowTemplateDraftRollsBackWhenBrowserSessionEnds(t *testing.T) {
 	drafts, err := projects.ListProjects(ctx)
 	if err != nil || len(drafts) != 0 {
 		t.Fatalf("revoked template left projects=%+v err=%v", drafts, err)
+	}
+}
+
+func TestShowTemplateExportWithholdsProjectDataAfterLogout(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowTemplateService{onExport: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowTemplates(h.auth, service)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodGet,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000811/template-export",
+		nil, login.Token, "")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized || service.exportCalls != 1 ||
+		strings.Contains(res.Body.String(), "exported.test") {
+		t.Fatalf("revoked export status=%d calls=%d body=%s", res.Code, service.exportCalls, res.Body)
 	}
 }
