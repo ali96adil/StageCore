@@ -196,10 +196,13 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
 			return
 		}
-		result := runtime.Go(qualifiedCueDispatchContext(r, active.ID, projectaccess.RuntimeGO), runtimecontrol.CueRequest{
+		result := runtime.Go(browserCueDispatchContext(r, auth, session, active.ID, projectaccess.RuntimeGO), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, OperatorNote: body.OperatorNote,
 		})
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -233,10 +236,13 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
 			return
 		}
-		result := runtime.Go(qualifiedCueDispatchContext(r, active.ID, projectaccess.RuntimeJump), runtimecontrol.CueRequest{
+		result := runtime.Go(browserCueDispatchContext(r, auth, session, active.ID, projectaccess.RuntimeJump), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
 		})
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
 	}))
 

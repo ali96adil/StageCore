@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -485,5 +486,61 @@ func TestEmergencyBlackoutClearKeepsLatchAfterBrowserRevocation(t *testing.T) {
 	latched, err := f.projects.SessionManagedOutputBlackout(ctx, active.ID)
 	if err != nil || !latched {
 		t.Fatalf("revoked clear released GO latch: %t, %v", latched, err)
+	}
+}
+
+func TestLegacyBrowserCueRevocationSuppressesDispatchAndReply(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: project.CurrentRevisionID, Name: "Revocation Cue", OrderIndex: 1, Enabled: true,
+	}, []domain.Action{{
+		ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	crossedBoundary := false
+	registry := capability.NewRegistry()
+	if err := registry.Register("sim.test", capability.ExecutorFunc(func(ctx context.Context, _ capability.Request) capability.Result {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+		crossedBoundary = true
+		if !errors.Is(capability.CheckDispatch(ctx), capability.ErrDispatchAuthorityRevoked) {
+			t.Error("revoked browser session still authorized the adapter write")
+		}
+		return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone, ErrorCode: capability.DispatchAuthorityRevokedCode}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimecontrol.New(f.projects, registry)
+	_, started := runtime.StartSession(ctx, runtimecontrol.StartRequest{
+		ProjectID: project.ID, Mode: domain.SessionRehearsal, Issuer: f.owner.Session.User.ID,
+		RequestID: "00000000-0000-7000-8000-000000000995",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start rehearsal: %+v", started)
+	}
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/go",
+		[]byte(`{"request_id":"00000000-0000-7000-8000-000000000996"}`), f.owner.Token, f.owner.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !crossedBoundary || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "cue_execution_id") {
+		t.Fatalf("boundary=%t status=%d body=%s", crossedBoundary, res.Code, res.Body)
 	}
 }
