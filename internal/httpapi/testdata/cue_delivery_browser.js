@@ -34,6 +34,13 @@
     check((await fetch("/cue-delivery-release-go", { method: "POST" })).ok, "GO release failed");
     await until(() => first.result?.payload?.cue_execution_id, "delayed GO receipt missing");
     check(state.runtimeCueReceipt === jump, "delayed GO replaced Jump");
+    // A duplicate request must produce exactly the original execution.
+    const replay = await api(`/api/v1/projects/${config.project}/runtime/go`, {
+      method: "POST",
+      json: {request_id:first.requestID, expected_session_id:config.session, expected_current_cue_id:null}
+    });
+    check(replay.result?.payload?.cue_execution_id === first.result.payload.cue_execution_id,
+      "replayed GO created a different execution");
     el("runtimeCueTrace").click();
     await until(() => content.textContent.includes(jump.result.payload.cue_execution_id), "selected Jump trace missing");
     check(!content.textContent.includes(first.result.payload.cue_execution_id), "trace showed unrelated GO");

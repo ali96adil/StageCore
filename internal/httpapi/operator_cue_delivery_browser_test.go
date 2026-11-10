@@ -133,11 +133,17 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
-			goRequests.Store(command.RequestID, true)
+			_, retry := goRequests.LoadOrStore(command.RequestID, true)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, r)
 			if rec.Code != http.StatusOK {
 				writeJSON(w, rec.Code, map[string]string{"error": rec.Body.String()})
+				return
+			}
+			if retry {
+				// Return the original command result for an HTTP-level replay.
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(rec.Body.Bytes())
 				return
 			}
 			select {
