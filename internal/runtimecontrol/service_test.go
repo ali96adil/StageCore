@@ -945,3 +945,49 @@ func TestForcedExitRollsBackAndRetriesWithoutWaitingForPendingCue(t *testing.T) 
 		t.Fatalf("events = %+v err=%v", events, err)
 	}
 }
+
+func TestEmergencyBlackoutDispatchesBeforePendingCueCompletes(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cueCtx, cancelCue := context.WithCancel(ctx)
+	defer cancelCue()
+	cueDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-cueDone:
+		default:
+			close(cueDone)
+		}
+	}()
+	h.service.active[session.ID] = map[string]activeRun{
+		"pending": {correlationID: "pending", done: cueDone, cancel: cancelCue},
+	}
+	safety := make(chan bool, 1)
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		latched, err := h.store.SessionManagedOutputBlackout(ctx, session.ID)
+		safety <- err == nil && latched && cueCtx.Err() != nil
+		return json.RawMessage(`{}`), nil
+	}
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.EmergencyBlackout(ctx, EmergencyRequest{
+			SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000011",
+		})
+	}()
+	select {
+	case ready := <-safety:
+		if !ready {
+			t.Fatal("safe-state dispatch preceded the latch or cancellation")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("safe-state dispatch waited for Cue completion")
+	}
+	close(cueDone)
+	if result := <-done; result.Status != contracts.CommandCompleted {
+		t.Fatalf("blackout = %+v", result)
+	}
+}

@@ -624,13 +624,6 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
 	}
-	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
-	if err != nil {
-		return failed(req.RequestID, "EMERGENCY_BLACKOUT_STATE_FAILED")
-	}
-	if blackout {
-		return rejected(req.RequestID, "EMERGENCY_BLACKOUT_ACTIVE", "managed-output Emergency Blackout is active; clear it explicitly before GO", session.ID)
-	}
 	payload, _ := json.Marshal(cueengine.CueGoPayload{
 		ExpectedCurrentCueID: req.ExpectedCurrentCueID,
 		RequestedNextCueID: req.RequestedCueID,
@@ -649,6 +642,17 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		s.mu.Unlock()
 		cancel()
 		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
+	}
+	// Read the persisted latch inside admission. A blackout that finished
+	// between loading the Session and taking the lock must still block GO.
+	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || blackout {
+		s.mu.Unlock()
+		cancel()
+		if err != nil {
+			return failed(req.RequestID, "EMERGENCY_BLACKOUT_STATE_FAILED")
+		}
+		return rejected(req.RequestID, "EMERGENCY_BLACKOUT_ACTIVE", "managed-output Emergency Blackout is active; clear it explicitly before GO", session.ID)
 	}
 	runs := s.active[session.ID]
 	// Validate orphan RUNNING rows while holding the admission lock. The
@@ -714,7 +718,7 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -759,12 +763,15 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		}
 	}
 
-	var cueStopErr error
+	var runs []activeRun
 	if req.Enabled {
-		cueStopErr = s.stopActiveCueForSession(ctx, session.ID)
+		runs = s.activeRunsForSession(session.ID)
+		s.interruptCueRuns(runs)
 	}
 
+	// Send the managed safe-state commands before waiting on canceled Cues.
 	report, safetyErr := s.emergencySafety(ctx, session, command, req.Enabled)
+	cueStopErr := waitForCueRuns(ctx, runs)
 	if !req.Enabled && safetyErr == nil {
 		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, false, req.Issuer); err != nil {
 			safetyErr = fmt.Errorf("clear emergency blackout latch: %w", err)
@@ -830,7 +837,7 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -911,10 +918,14 @@ func (s *Service) interruptCueRuns(runs []activeRun) {
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
 	runs := s.activeRunsForSession(sessionID)
+	s.interruptCueRuns(runs)
+	return waitForCueRuns(ctx, runs)
+}
+
+func waitForCueRuns(ctx context.Context, runs []activeRun) error {
 	if len(runs) == 0 {
 		return nil
 	}
-	s.interruptCueRuns(runs)
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	for _, run := range runs {
