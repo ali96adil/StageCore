@@ -3,12 +3,12 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -77,7 +77,7 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		writeJSON(w, http.StatusOK, status)
 	}))
 
-	mux.HandleFunc("POST "+base+"/capture", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST "+base+"/capture", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
 		if !ok {
 			return
@@ -94,15 +94,24 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			return
 		}
 
-		var body io.Reader = r.Body
-		if grant, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
-			return
-		} else if grant.access != nil {
-			body = projectCaptureReader{r}
-		}
+		token, _ := browserSessionToken(r)
+		body := &authorizedCaptureReader{source: r.Body, authorize: func() error {
+			if _, err := currentProjectRouteGrant(r); err != nil {
+				return err
+			}
+			current, err := auth.ValidatePassive(r.Context(), token)
+			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+				userauth.Authorize(current.User.Role, userauth.PermissionProjectEdit) != nil {
+				return userauth.ErrForbidden
+			}
+			return nil
+		}}
 		object, err := vault.ImportObject(r.Context(), body)
 		if err != nil {
-			if _, scopeErr := currentProjectRouteGrant(r); !writeProjectQualificationError(w, scopeErr) {
+			if body.denied != nil {
+				if !writeProjectMutationDenied(w, body.denied) {
+					writeProjectQualificationError(w, body.denied)
+				}
 				return
 			}
 			if errors.Is(err, storagehealth.ErrRuntimeReserve) {
@@ -113,12 +122,10 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			return
 		}
 
-		if _, scopeErr := currentProjectRouteGrant(r); !writeProjectQualificationError(w, scopeErr) {
-			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
-			return
-		}
-		updated, err := stageStore.CaptureExecutionEnvironmentAsset(r.Context(), environment.ID, asset.Key, object.ContentHash, object.SizeBytes)
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload)
+		updated, err := stageStore.CaptureExecutionEnvironmentAsset(ctx, environment.ID, asset.Key, object.ContentHash, object.SizeBytes)
 		if err != nil {
+			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 			return
 		}
@@ -155,13 +162,4 @@ func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stage
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_ASSET_NOT_FOUND"})
 	return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
-}
-
-type projectCaptureReader struct{ request *http.Request }
-
-func (reader projectCaptureReader) Read(data []byte) (int, error) {
-	if _, err := currentProjectRouteGrant(reader.request); err != nil {
-		return 0, err
-	}
-	return reader.request.Body.Read(data[:min(len(data), 64<<10)])
 }

@@ -92,7 +92,7 @@ func handleCompanionCaptureUpload(
 		return
 	}
 
-	scoped := &captureTicketReader{source: r.Body, authorize: func() error {
+	scoped := &authorizedCaptureReader{source: r.Body, authorize: func() error {
 		current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
 		if err != nil {
 			return err
@@ -152,13 +152,13 @@ func handleCompanionCaptureUpload(
 	})
 }
 
-type captureTicketReader struct {
+type authorizedCaptureReader struct {
 	source    io.Reader
 	authorize func() error
 	denied    error
 }
 
-func (reader *captureTicketReader) Read(data []byte) (int, error) {
+func (reader *authorizedCaptureReader) Read(data []byte) (int, error) {
 	if reader.denied == nil {
 		reader.denied = reader.authorize()
 	}

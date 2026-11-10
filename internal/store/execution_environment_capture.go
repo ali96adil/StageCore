@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 )
@@ -126,6 +127,9 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	}
 	if rows != 1 {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment changed during capture", domain.ErrConflict)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return ExecutionEnvironmentManifest{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("commit execution environment asset capture: %w", err)

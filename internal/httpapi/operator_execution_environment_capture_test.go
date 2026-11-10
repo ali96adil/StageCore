@@ -209,3 +209,41 @@ func TestOperatorExecutionEnvironmentCaptureSHOWLockRejectsBeforeVaultImport(t *
 		t.Fatalf("SHOW capture unexpectedly registered Vault object err=%v", err)
 	}
 }
+
+func TestLegacyBrowserCaptureStopsReadingAfterSessionRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := f.projects.CreateExecutionEnvironmentManifest(
+		ctx, project.CurrentRevisionID, testVDMXExecutionEnvironmentManifest("revoked"), f.owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := vault.Open(t.TempDir(), f.projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorExecutionEnvironmentCapture(f.h.auth, f.projects, v)).Handler()
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + project.CurrentRevisionID + "/execution-environments/" + environment.ID + "/assets/workspace/capture"
+	payload := bytes.Repeat([]byte("capture"), 100000)
+	req := authenticatedMutationRequest(t, http.MethodPost, path, payload, f.owner.Token, f.owner.CSRFToken)
+	source := bytes.NewReader(payload)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: io.NopCloser(source), revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden || source.Len() == 0 {
+		t.Fatalf("revoked capture returned %d with %d bytes unread: %s", res.Code, source.Len(), res.Body)
+	}
+	digest := sha256.Sum256(payload)
+	if _, err := f.projects.GetVaultObject(ctx, hex.EncodeToString(digest[:])); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked capture registered a Vault object: %v", err)
+	}
+}
