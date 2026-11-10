@@ -38,6 +38,7 @@ jobs:
         run: |
           node --check internal/operatorweb/static/app.js
           node --check internal/operatorweb/static/timing-intelligence.js
+          node --check internal/operatorweb/static/memory.js
           node --check internal/operatorweb/static/phase4.js
           node --check internal/operatorweb/static/cue-studio.js
           node --check internal/operatorweb/static/guided-ux.js
