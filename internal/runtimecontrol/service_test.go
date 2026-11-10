@@ -1166,3 +1166,30 @@ func TestEmergencyBlackoutClearRejectsLostAuthorityBeforeOutputDispatch(t *testi
 		t.Fatalf("latch = %v err=%v", active, err)
 	}
 }
+
+func TestEmergencyBlackoutAppliesWhileOrdinaryStopHoldsItsFence(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.service.beginStoppingCues(session.ID) {
+		t.Fatal("ordinary STOP could not acquire its fence")
+	}
+	defer h.service.endStoppingCues(session.ID)
+	dispatched := false
+	h.service.emergencySafety = func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		dispatched = enabled
+		return json.RawMessage(`{}`), nil
+	}
+	result := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000018",
+	})
+	if result.Status != contracts.CommandCompleted || !dispatched {
+		t.Fatalf("ordinary STOP blocked emergency dispatch: %+v", result)
+	}
+	if h.service.beginStoppingCues(session.ID) {
+		t.Fatal("emergency completion released the ordinary STOP fence")
+	}
+}

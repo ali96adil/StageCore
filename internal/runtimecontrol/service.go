@@ -89,6 +89,7 @@ type Service struct {
 	// Block GO while a STOP/Session exit is in flight so no new Cue is
 	// admitted after the STOP snapshot has been taken.
 	stopping map[string]bool
+	emergencyApplying map[string]bool
 	pendingCueAdmissions map[string]*cueAdmissionGroup
 	blackoutClears map[string]context.CancelFunc
 	projectOutputTransitions map[string]struct{}
@@ -148,6 +149,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
 		stopping: make(map[string]bool),
+		emergencyApplying: make(map[string]bool),
 		pendingCueAdmissions: make(map[string]*cueAdmissionGroup),
 		blackoutClears: make(map[string]context.CancelFunc),
 		projectOutputTransitions: make(map[string]struct{}),
@@ -670,7 +672,7 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
 	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
-	if s.stopping[session.ID] {
+	if s.stopping[session.ID] || s.emergencyApplying[session.ID] {
 		s.mu.Unlock()
 		cancel()
 		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
@@ -795,10 +797,11 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	// Block admission atomically before latching and snapshotting all active
 	// Cues. A GO which passed the earlier blackout read must still be fenced.
 	if req.Enabled {
-		if !s.beginStoppingCues(session.ID) {
-			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+		release := s.beginEmergencyApply(session.ID)
+		if release == nil {
+			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "Emergency Blackout apply is already in progress", session.ID))
 		}
-		defer s.endStoppingCues(session.ID)
+		defer release()
 	}
 
 	// Activation is latched durably BEFORE cancelling all active Cues or
@@ -955,7 +958,7 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 func (s *Service) beginBlackoutClear(ctx context.Context, sessionID string) (context.Context, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping[sessionID] || s.blackoutClears[sessionID] != nil {
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] || s.blackoutClears[sessionID] != nil {
 		return nil, nil
 	}
 	clearCtx, cancel := context.WithCancel(ctx)
@@ -977,7 +980,7 @@ type cueAdmissionGroup struct {
 func (s *Service) beginCueAdmission(sessionID string) (*cueAdmissionGroup, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping[sessionID] {
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] {
 		return nil, nil
 	}
 	group := s.pendingCueAdmissions[sessionID]
@@ -996,20 +999,41 @@ func (s *Service) beginCueAdmission(sessionID string) (*cueAdmissionGroup, func(
 	}
 }
 
+// Emergency apply has its own admission gate so an ordinary STOP waiting
+// for Cue completion cannot delay the dispatch of managed safe state.
+func (s *Service) beginEmergencyApply(sessionID string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.emergencyApplying[sessionID] {
+		return nil
+	}
+	s.emergencyApplying[sessionID] = true
+	s.invalidatePendingSafetyWorkLocked(sessionID)
+	return func() {
+		s.mu.Lock()
+		delete(s.emergencyApplying, sessionID)
+		s.mu.Unlock()
+	}
+}
+
 // beginStoppingCues prevents newly admitted GO executions while STOP is
 // canceling its snapshot. It also fences a normal or forced Session exit.
 func (s *Service) beginStoppingCues(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping[sessionID] {
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] {
 		return false
 	}
 	s.stopping[sessionID] = true
+	s.invalidatePendingSafetyWorkLocked(sessionID)
+	return true
+}
+
+func (s *Service) invalidatePendingSafetyWorkLocked(sessionID string) {
 	delete(s.pendingCueAdmissions, sessionID)
 	if cancel := s.blackoutClears[sessionID]; cancel != nil {
 		cancel()
 	}
-	return true
 }
 
 func (s *Service) endStoppingCues(sessionID string) {
