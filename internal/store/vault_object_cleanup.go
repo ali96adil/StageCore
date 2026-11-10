@@ -37,12 +37,13 @@ func (s *Store) DeleteVaultObjectIfUnreferenced(ctx context.Context, contentHash
 			OR EXISTS (SELECT 1 FROM software_packages WHERE content_hash = ?)
 			OR EXISTS (SELECT 1 FROM execution_environment_manifests WHERE lower(manifest_json) LIKE ?)
 			OR EXISTS (SELECT 1 FROM execution_environment_snapshots WHERE lower(snapshot_json) LIKE ?)
+			OR EXISTS (SELECT 1 FROM runtime_snapshots WHERE lower(manifest_json) LIKE ?)
 			OR EXISTS (
 				SELECT 1 FROM companion_upload_tickets
 				WHERE expected_content_hash = ?
 				  AND status IN ('ACTIVE', 'COMPLETED')
 			)
-		THEN 1 ELSE 0 END`, contentHash, contentHash, pattern, pattern, contentHash).Scan(&referenced)
+		THEN 1 ELSE 0 END`, contentHash, contentHash, pattern, pattern, pattern, contentHash).Scan(&referenced)
 	if err != nil {
 		return VaultObject{}, false, fmt.Errorf("check Vault object references: %w", err)
 	}
