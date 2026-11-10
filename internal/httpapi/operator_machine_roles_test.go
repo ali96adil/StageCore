@@ -401,3 +401,25 @@ func TestOperatorMachineRoleLifecyclePreservesIdentityAndHistory(t *testing.T) {
 		t.Fatalf("deleted role lookup err=%v", err)
 	}
 }
+
+func TestMachineRoleCreationRejectsRevokedBrowserSession(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	handler := New(WithOperatorMachineRoles(f.h.auth, f.projects)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/machine-roles",
+		[]byte(`{"role_key":"REVOKED"}`), f.owner.Token, f.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked machine role creation returned %d: %s", res.Code, res.Body)
+	}
+	roles, err := f.projects.ListMachineRoles(ctx, f.projectID)
+	if err != nil || len(roles) != 0 {
+		t.Fatalf("revoked request changed machine roles: %+v, %v", roles, err)
+	}
+}
