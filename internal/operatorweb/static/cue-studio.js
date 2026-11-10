@@ -718,6 +718,64 @@
     pick(panel.id)?.remove();
     workspace.prepend(panel);
 
+    const localStatus = document.createElement("p");
+    localStatus.className = "muted";
+    localStatus.setAttribute("role", "status");
+    const localRestore = restore.cloneNode();
+    localRestore.id = "sc009LocalRestore";
+    const localDiscard = discard.cloneNode();
+    localDiscard.id = "sc009LocalDiscard";
+    localDiscard.textContent = tr("احذف نسخة هذا التبويب", "Discard this tab's draft");
+    const localReview = document.createElement("textarea");
+    localReview.hidden = true;
+    localReview.readOnly = true;
+    localReview.setAttribute("aria-label", tr("تعديلات المسودة المحلية", "Local draft edits"));
+    panel.append(localStatus, localRestore, localDiscard, localReview);
+
+    // Per-tab storage survives reload without sharing a writable draft slot
+    // across tabs. Account, project and Cue are part of the lookup key.
+    const localKey = user.user_id && "stagecore.cue-recovery.v1:" + JSON.stringify([user.user_id, projectID, cueID]);
+    const localMessage = (ar, en) => { localStatus.textContent = tr(ar, en); };
+    const { timecode, ...previousBaseline } = JSON.parse(base);
+    const compatible = (saved) => saved?.version === 1 && saved.cue_id === cueID &&
+      (saved.base === base || saved.base === JSON.stringify(previousBaseline)) &&
+      saved.draft?.fields?.length === historyFields.length &&
+      Array.isArray(saved.draft.links) && Array.isArray(saved.draft.actions);
+    let localPending = null;
+    try {
+      if (localKey) {
+        const saved = JSON.parse(window.sessionStorage.getItem(localKey) || "null");
+        if (saved?.version === 1 && saved.cue_id === cueID && saved.draft) localPending = saved;
+      }
+    } catch (_) {
+      localMessage("تخزين المسودة في هذا التبويب غير متاح.", "Draft storage in this tab is unavailable.");
+    }
+    function writeLocal(saved) {
+      if (!localKey) return false;
+      try {
+        if (saved) window.sessionStorage.setItem(localKey, JSON.stringify(saved));
+        else window.sessionStorage.removeItem(localKey);
+        return true;
+      } catch (_) {
+        localMessage("تعذّر تخزين المسودة في هذا التبويب.", "This tab could not store the draft.");
+        return false;
+      }
+    }
+    const recoveryDocument = (current) => ({ version: 1, cue_id: cueID, base, draft: JSON.parse(current) });
+    const showLocalCandidate = () => {
+      if (!localPending) {
+        localRestore.hidden = localDiscard.hidden = localReview.hidden = true;
+        return;
+      }
+      const matches = compatible(localPending);
+      localRestore.hidden = localDiscard.hidden = false;
+      localRestore.textContent = matches ? tr("استرجع مسودة هذا التبويب", "Recover this tab's draft") :
+        tr("راجع المسودة المحلية", "Review local draft");
+      localMessage(matches ? "توجد نسخة في هذا التبويب." : "تغيّر الكيو منذ حفظ مسودة هذا التبويب. راجع التعديلات قبل نقلها.",
+        matches ? "A recovery draft is available in this tab." : "The Cue changed since this tab saved its draft. Review the edits before transferring them.");
+    };
+    showLocalCandidate();
+
     let generation = "";
     let blocked = true;
     let ownsRecovery = false;
@@ -738,8 +796,22 @@
       message("تعذّر حفظ الاسترجاع. أبقِ المحرر مفتوحاً وأعد الاتصال، أو راجع التبويب الآخر.",
         "Recovery could not be saved. Keep the editor open and reconnect or check the other tab.");
     };
+    const cacheLocal = () => {
+      if (!active() || restoringDraft) return;
+      const current = readDraftHistory(true);
+      if (current === null) return;
+      if (localPending) {
+        if (current !== base) localMessage("قرّر مصير المسودة المسترجعة قبل تخزين التعديلات الجديدة.",
+          "Resolve the recovered draft before storing new edits in this tab.");
+        return;
+      }
+      if (writeLocal(current === base ? null : recoveryDocument(current))) {
+        localMessage(current === base ? "" : "حُفظت مسودة في هذا التبويب.",
+          current === base ? "" : "Draft stored in this tab.");
+      }
+    };
     const flush = (keepalive = false) => {
-      if (!active() || blocked || restoringDraft) return;
+      if (!active() || blocked || localPending || restoringDraft) return;
       const current = readDraftHistory(true);
       if (current === null) {
         message("تعذّر قراءة حقول المحرر. آخر نسخة محفوظة تبقى متاحة.",
@@ -747,9 +819,9 @@
         return;
       }
       queue = queue.then(async () => {
-        if (blocked || current === lastSaved || !active()) return;
+        if (blocked || localPending || current === lastSaved || !active()) return;
         if (current === base && !generation) return;
-        const document = { version: 1, cue_id: cueID, base, draft: JSON.parse(current) };
+        const document = recoveryDocument(current);
         const saved = await api(path, { method: "PUT", json: { generation, document }, keepalive });
         generation = saved.generation;
         ownsRecovery = true;
@@ -758,6 +830,7 @@
       }).catch(reportFailure);
     };
     const schedule = () => {
+      cacheLocal();
       clearTimeout(timer);
       timer = setTimeout(flush, 400);
     };
@@ -767,10 +840,33 @@
     const changes = new MutationObserver(schedule);
     changes.observe(pick("actionsEditor"), { childList: true, subtree: true });
     window.addEventListener("online", () => { if (loaded) flush(); else load(); }, options);
-    window.addEventListener("pagehide", () => flush(true), options);
+    window.addEventListener("pagehide", () => { cacheLocal(); flush(true); }, options);
     let loaded = false;
 
+    localRestore.onclick = () => {
+      if (!active() || !localPending) return;
+      if (!compatible(localPending)) {
+        localReview.value = JSON.stringify(localPending.draft, null, 2);
+        localReview.hidden = false;
+        return;
+      }
+      if (readDraftHistory(true) !== base &&
+          !window.confirm(tr("استبدال التعديلات الحالية بمسودة التبويب؟", "Replace current edits with this tab's draft?"))) return;
+      applyEditorDraft(localPending.draft);
+      recordDraftHistory();
+      localPending = null;
+      showLocalCandidate();
+      schedule();
+    };
+    localDiscard.onclick = () => {
+      if (!active() || !window.confirm(tr("حذف مسودة هذا التبويب؟", "Delete this tab's recovery draft?"))) return;
+      if (!writeLocal(null)) return;
+      localPending = null;
+      showLocalCandidate();
+      schedule();
+    };
     const closeRecovery = () => {
+      if (active() && !localPending) writeLocal(null);
       clearTimeout(timer);
       blocked = true;
       queue = queue.then(async () => {
@@ -799,13 +895,10 @@
           return;
         }
         const draft = document?.draft;
-        const { timecode, ...previousBaseline } = JSON.parse(base);
-        const sameBaseline = document?.base === base || document?.base === JSON.stringify(previousBaseline);
-        const compatible = document?.version === 1 && document.cue_id === cueID && sameBaseline &&
-          draft?.fields?.length === historyFields.length && Array.isArray(draft.links) && Array.isArray(draft.actions);
-        message(compatible ? "توجد مسودة محفوظة لهذا الكيو." : "توجد مسودة لكيو آخر أو لنسخة أقدم.",
-          compatible ? "A recovery draft exists for this Cue." : "Recovery belongs to another Cue or an older version.");
-        restore.hidden = !compatible;
+        const matches = compatible(document);
+        message(matches ? "توجد مسودة محفوظة لهذا الكيو." : "توجد مسودة لكيو آخر أو لنسخة أقدم.",
+          matches ? "A recovery draft exists for this Cue." : "Recovery belongs to another Cue or an older version.");
+        restore.hidden = !matches;
         discard.hidden = false;
         restore.onclick = () => {
           if (!active() || (readDraftHistory(true) !== base &&
@@ -816,6 +909,7 @@
           ownsRecovery = true;
           blocked = false;
           restore.hidden = discard.hidden = true;
+          cacheLocal();
           message("استُرجعت المسودة.", "Draft recovered.");
         };
         discard.onclick = async () => {
