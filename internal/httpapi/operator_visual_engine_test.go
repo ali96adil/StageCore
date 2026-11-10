@@ -396,3 +396,36 @@ func addVisualEngineTestUser(t *testing.T, h *authHarness, userID, username, rol
 	}
 	return credential
 }
+
+func TestOperatorVisualEngineModeRejectsRevokedSessionBeforeFork(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore, handler := newVisualEngineAcceptanceHandler(t, h)
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, source, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Visual Mode Revocation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, source.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	req := authenticatedMutationRequest(t, http.MethodPut, "/api/v1/projects/"+project.ID+"/visual-engine/mode",
+		[]byte(`{"engine_mode":"NATIVE"}`), owner.Token, owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked visual mode request returned %d: %s", res.Code, res.Body)
+	}
+	current, err := stageStore.GetProject(ctx, project.ID)
+	if err != nil || current.CurrentRevisionID != source.ID {
+		t.Fatalf("revoked request changed current revision: %+v, %v", current, err)
+	}
+}

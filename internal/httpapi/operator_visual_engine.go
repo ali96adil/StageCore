@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/visualengine"
@@ -106,7 +107,7 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 				if visualengine.IsCapability(action.CapabilityKey) {
 					visualActions = append(visualActions, visualEngineActionView{CueID: cue.ID, CueName: cue.Name, Action: action})
 				}
-		}
+			}
 		}
 		visualRoles := make([]machineRoleView, 0)
 		for _, role := range roles {
@@ -165,12 +166,13 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 			return
 		}
 
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Visual Engine mode edit")
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		revision, err := stageStore.EnsureProjectDraft(ctx, projectID, session.User.ID, "Visual Engine mode edit")
 		if err != nil {
 			writeVisualEngineStoreError(w, err)
 			return
 		}
-		if err := stageStore.SetVisualEngineMode(r.Context(), revision.ID, mode, session.User.ID); err != nil {
+		if err := stageStore.SetVisualEngineMode(ctx, revision.ID, mode, session.User.ID); err != nil {
 			writeVisualEngineStoreError(w, err)
 			return
 		}
@@ -190,6 +192,9 @@ func machineRoleSupportsVisualEngine(role domain.MachineRole) bool {
 }
 
 func writeVisualEngineStoreError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VISUAL_ENGINE_PROJECT_NOT_FOUND"})
