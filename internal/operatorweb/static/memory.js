@@ -66,6 +66,50 @@ function actionTraceCard(action) {
     </article>`;
 }
 
+async function renderRehearsalApproval(container, projectID, session) {
+  const user = state.user;
+  const current = () => container.isConnected && state.user === user && state.project?.project_id === projectID && state.page === "sessions";
+  const base = `/api/v1/projects/${encodeURIComponent(projectID)}/timing-intelligence`;
+  try {
+    const { report } = await api(`${base}?runtime_snapshot_id=${encodeURIComponent(session.runtime_snapshot_id)}&session_id=${encodeURIComponent(session.session_id)}`);
+    if (!current()) return;
+    const candidate = (report.sessions || []).find((item) => item.session_id === session.session_id);
+    if (!candidate) {
+      container.textContent = "No timing approval record is available for this rehearsal.";
+      return;
+    }
+    container.innerHTML = `
+      <p>${esc(candidate.observation_count)} timing observations · ${candidate.effective ? "Used for timing" : "Excluded from timing"}</p>
+      <p class="muted">${esc(candidate.reason || "")}</p>
+      ${candidate.eligible && f028CanEditSelection() ? `<label>Timing approval<select>
+        <option value="AUTO">Not approved</option><option value="INCLUDE">Approved</option><option value="EXCLUDE">Excluded</option>
+      </select></label>` : `<p>Selection: ${esc(candidate.selection_mode)}</p>`}`;
+    const select = container.querySelector("select");
+    if (!select) return;
+    select.value = candidate.selection_mode;
+    select.addEventListener("change", async () => {
+      if (!current()) return;
+      if (candidate.selection_mode === "INCLUDE" && !window.confirm(f028T("timing.confirm_revoke"))) {
+        select.value = candidate.selection_mode;
+        return;
+      }
+      select.disabled = true;
+      try {
+        await api(`${base}/sessions/${encodeURIComponent(session.session_id)}`, { method: "PUT", json: { mode: select.value } });
+        if (current()) await renderRehearsalApproval(container, projectID, session);
+      } catch (error) {
+        if (!current()) return;
+        select.value = candidate.selection_mode;
+        select.disabled = false;
+        setMessage(globalMessage, errorMessage(error), "error");
+      }
+    });
+  } catch (error) {
+    if (!current()) return;
+    container.textContent = errorMessage(error);
+  }
+}
+
 async function renderSessionDetail(sessionID, executionID = "") {
   const user = state.user;
   const projectID = state.project.project_id;
@@ -73,6 +117,8 @@ async function renderSessionDetail(sessionID, executionID = "") {
   if (state.user !== user || state.project?.project_id !== projectID || state.page !== "sessions") return;
   const session = detail.session;
   const traces = detail.cue_executions || [];
+  const rehearsalSummary = !executionID && session.session_type === "REHEARSAL" && session.ended_at;
+  const interrupted = traces.filter((cue) => cue.interrupted).length;
   const cues = executionID ? traces.filter((cue) => cue.cue_execution_id === executionID) : traces;
   content.innerHTML = `
     <div class="page-head">
@@ -83,6 +129,11 @@ async function renderSessionDetail(sessionID, executionID = "") {
       <div class="meta"><span>Snapshot</span><span class="mono">${esc(session.runtime_snapshot_id)}</span></div>
       <p class="mono muted" style="margin-top:8px">Session ${esc(session.session_id)}</p>
     </article>
+    ${rehearsalSummary ? `<article class="card" style="margin-bottom:16px">
+      <h2>Rehearsal summary</h2>
+      <p>${traces.length} recorded Cue executions · ${interrupted} interrupted</p>
+      <div id="rehearsalApproval"><button type="button" class="button">Review timing approval</button></div>
+    </article>` : ""}
     <div class="grid cards">
       ${cues.length ? cues.map((cue) => `
         <article class="card">
@@ -95,6 +146,11 @@ async function renderSessionDetail(sessionID, executionID = "") {
           <div class="actions-editor" style="margin-top:14px">${(cue.actions || []).length ? cue.actions.map(actionTraceCard).join("") : `<div class="empty">Cue had no Action executions.</div>`}</div>
         </article>`).join("") : `<div class="empty">${executionID ? "This execution was not found in the session trace." : "No Cue executions were recorded for this Session."}</div>`}
     </div>`;
+  const approval = el("rehearsalApproval");
+  approval?.querySelector("button").addEventListener("click", () => {
+    approval.textContent = "Loading timing approval…";
+    renderRehearsalApproval(approval, projectID, session);
+  });
   el("backSessions").addEventListener("click", () => renderSessions().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
 }
 
