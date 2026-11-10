@@ -269,11 +269,24 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) contracts.CommandRe
 	if session.Type != domain.SessionSimulation || session.Status != domain.SessionActive || session.LifecycleState != domain.SessionLifecycleActive {
 		return finish(rejected(command.CommandID, "SIMULATION_NOT_ACTIVE", "an ACTIVE SIMULATION Session is required", session.ID))
 	}
-	if err := s.store.EndSessionLifecycle(ctx, session.ID, domain.SessionLifecycleStopped, "operator stopped simulation"); err != nil {
-		return finish(fromStoreError(command.CommandID, "SIMULATION_STOP_FAILED", err, session.ID))
+	// The lifecycle change and its event must share a single authorization
+	// check at commit. Otherwise grant revocation between writes could leave
+	// a stopped Session with no corresponding persisted STOP event.
+	stopPayload, _ := json.Marshal(map[string]any{"session_id": session.ID})
+	stopEvent := contracts.EventEnvelope{
+		EventType:         "simulation.stopped",
+		SchemaVersion:     contracts.SchemaVersion1,
+		Source:            "hub.simulation_control",
+		ProjectID:         session.ProjectID,
+		RuntimeSnapshotID: session.RuntimeSnapshotID,
+		CorrelationID:     command.CorrelationID,
+		CausationID:       command.CommandID,
+		Priority:          "P1",
+		TraceContext:      json.RawMessage(`{}`),
+		Payload:           stopPayload,
 	}
-	if err := s.appendEvent(ctx, session, "simulation.stopped", command, map[string]any{"session_id": session.ID}); err != nil {
-		return finish(failed(command.CommandID, "SIMULATION_STOP_EVENT_FAILED", err.Error(), session.ID))
+	if err := s.store.StopSimulationWithEvent(ctx, session, stopEvent); err != nil {
+		return finish(fromStoreError(command.CommandID, "SIMULATION_STOP_FAILED", err, session.ID))
 	}
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
