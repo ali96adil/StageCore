@@ -204,6 +204,9 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 			auditResult := securityaudit.ResultSuccess
 			reason := "LOCAL_COMMAND_ACK"
 			switch {
+			case errors.Is(err, stageaudio.ErrInFlightAuthorityRevoked):
+				fence.MarkUncertain()
+				auditResult, reason = securityaudit.ResultFailed, "SIDECAR_AUTHORITY_ENDED_IN_FLIGHT"
 			case revoked:
 				auditResult, reason = securityaudit.ResultRejected, capability.DispatchAuthorityRevokedCode
 			case err != nil:

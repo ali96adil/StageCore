@@ -30,6 +30,10 @@ type LocalReply struct {
 
 type LocalClient struct{ socket string }
 
+// ErrInFlightAuthorityRevoked means an audio command may already have reached
+// the sidecar. Closing the IPC connection does not prove that it stopped.
+var ErrInFlightAuthorityRevoked = fmt.Errorf("StageAudio reply withdrawn: %w", capability.ErrDispatchAuthorityRevoked)
+
 // NewLocalClient deliberately does not discover /tmp sockets: the Hub must
 // be explicitly configured with a trusted same-host Unix socket path.
 func NewLocalClient(socket string) (*LocalClient, error) {
@@ -84,12 +88,9 @@ func (c *LocalClient) Call(ctx context.Context, request Request) (LocalReply, er
 		}
 		return LocalReply{}, fmt.Errorf("send local audio: %w", err)
 	}
-	raw, err := bufio.NewReader(io.LimitReader(conn, 128<<10)).ReadBytes('\n')
+	raw, err := waitLocalReply(ctx, conn)
 	if err != nil {
-		if ctx.Err() != nil {
-			return LocalReply{}, ctx.Err()
-		}
-		return LocalReply{}, fmt.Errorf("receive local audio: %w", err)
+		return LocalReply{}, err
 	}
 	var result LocalReply
 	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&result); err != nil {
@@ -99,4 +100,46 @@ func (c *LocalClient) Call(ctx context.Context, request Request) (LocalReply, er
 		return result, fmt.Errorf("%w: %s", ErrBackend, result.Error)
 	}
 	return result, nil
+}
+
+func waitLocalReply(ctx context.Context, conn net.Conn) ([]byte, error) {
+	pending, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := context.AfterFunc(pending, func() { _ = conn.Close() })
+	defer stop()
+	go func() {
+		tick := time.NewTicker(200 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-pending.Done():
+				return
+			case <-tick.C:
+				if err := capability.CheckDispatch(pending); err != nil {
+					if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+						err = ErrInFlightAuthorityRevoked
+					}
+					cancel(err)
+					return
+				}
+			}
+		}
+	}()
+	raw, err := bufio.NewReader(io.LimitReader(conn, 128<<10)).ReadBytes('\n')
+	if cause := context.Cause(pending); cause != nil {
+		return nil, cause
+	}
+	if checkErr := capability.CheckDispatch(pending); checkErr != nil {
+		if cause := context.Cause(pending); cause != nil {
+			return nil, cause
+		}
+		if errors.Is(checkErr, capability.ErrDispatchAuthorityRevoked) {
+			return nil, ErrInFlightAuthorityRevoked
+		}
+		return nil, checkErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("receive local audio: %w", err)
+	}
+	return raw, nil
 }

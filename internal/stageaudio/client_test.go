@@ -185,3 +185,35 @@ func TestLocalClientCancelsPendingReplyAndDoesNotReplayOnReconnect(t *testing.T)
 		t.Fatalf("reconnect replayed %s", op)
 	}
 }
+
+func TestPendingAudioReplyClosesOnAuthorityLoss(t *testing.T) {
+	client, sidecar := net.Pipe()
+	defer client.Close()
+	defer sidecar.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	revoked := make(chan struct{})
+	ctx = capability.WithDispatchCheck(ctx, func(context.Context) error {
+		select {
+		case <-revoked:
+			return capability.ErrDispatchAuthorityRevoked
+		default:
+			return nil
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := waitLocalReply(ctx, client)
+		done <- err
+	}()
+	if _, err := sidecar.Write([]byte(`{"status":`)); err != nil {
+		t.Fatal(err)
+	}
+	close(revoked)
+	if err := <-done; !errors.Is(err, ErrInFlightAuthorityRevoked) {
+		t.Fatalf("pending reply returned %v", err)
+	}
+	if _, err := sidecar.Write([]byte("null}\n")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("sidecar connection remained open: %v", err)
+	}
+}
