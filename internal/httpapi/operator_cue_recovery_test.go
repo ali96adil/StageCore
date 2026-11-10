@@ -210,7 +210,7 @@ func TestCuePrivateReadRejectsSessionRevokedBeforeDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := httptest.NewRecorder()
-	if allowCuePrivateRead(res, req, h.auth, owner.Session) || res.Code != http.StatusUnauthorized {
+	if allowLiveProjectRead(res, req, h.auth, owner.Session, userauth.PermissionProjectEdit) || res.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked session returned status %d", res.Code)
 	}
 }

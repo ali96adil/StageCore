@@ -40,7 +40,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			return
 		}
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timing-intelligence", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timing-intelligence", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			leadTime := 30 * time.Second
 			if raw := strings.TrimSpace(r.URL.Query().Get("lead_time_seconds")); raw != "" {
 				seconds, err := strconv.Atoi(raw)
@@ -70,6 +70,9 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			})
 			if err != nil {
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"report": report})

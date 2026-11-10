@@ -21,12 +21,16 @@ type fakeTimingIntelligenceService struct {
 	lastSessionID     string
 	lastSelectionMode store.TimingSelectionMode
 	lastUpdatedBy     string
+	beforeReport      func()
 }
 
 func (f *fakeTimingIntelligenceService) Report(_ context.Context, projectID string, options timingintelligence.ReportOptions) (timingintelligence.Report, error) {
 	f.reportCalls++
 	f.lastProjectID = projectID
 	f.lastOptions = options
+	if f.beforeReport != nil {
+		f.beforeReport()
+	}
 	return timingintelligence.Report{ProjectID: projectID, AdvisoryOnly: true}, nil
 }
 
@@ -209,5 +213,26 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 1 {
 		t.Fatalf("nonexistent GO route reached timing service: selection calls=%d", service.selectionCalls)
+	}
+}
+
+func TestTimingIntelligenceRejectsRevocationDuringReport(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{beforeReport: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodGet, "/api/v1/projects/project/timing-intelligence", nil, owner.Token, "")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if service.reportCalls != 1 || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "advisory_only") {
+		t.Fatalf("report calls=%d status=%d body=%s", service.reportCalls, res.Code, res.Body.String())
 	}
 }

@@ -45,7 +45,7 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			return
 		}
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			limit := 100
 			if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 				value, err := strconv.Atoi(raw)
@@ -60,19 +60,25 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			detail, err := memory.Detail(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"))
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, detail)
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/notes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/notes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			filter := store.NoteFilter{
 				Status:    domain.NoteStatus(strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))),
 				Category:  strings.TrimSpace(r.URL.Query().Get("category")),
@@ -87,6 +93,9 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			views := make([]noteView, 0, len(notes))
 			for _, note := range notes {
 				views = append(views, viewNote(note))
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"notes": views})
 		}))

@@ -30,7 +30,7 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 				writeProjectStoreError(w, err)
 				return
 			}
-			if !allowCuePrivateRead(w, r, auth, session) {
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"presets": presets})
