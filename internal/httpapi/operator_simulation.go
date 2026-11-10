@@ -109,7 +109,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		result := control.Go(r.Context(), simulationcontrol.CueRequest{
+		result := control.Go(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.CueRequest{
 			SessionID: active.ID,
 			Issuer: session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),

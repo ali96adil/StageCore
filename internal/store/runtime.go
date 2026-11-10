@@ -333,7 +333,7 @@ func (s *Store) CreateCueExecution(ctx context.Context, sessionID, cueID, correl
 		return domain.CueExecution{}, err
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO cue_executions (
 			cue_execution_id, session_id, cue_id, correlation_id, trigger_source, started_at_us, result, manual_override
 		) VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', 0)`,
