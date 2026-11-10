@@ -5,6 +5,7 @@ import (
 	"errors"
 	"golang.org/x/net/websocket"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 
@@ -58,7 +59,7 @@ func TestDeliverSetupAPMaintenanceRequiresExactAuthenticatedV2Connection(t *test
 
 	runtime := &Runtime{
 		connections:            make(map[string]*connection),
-		pendingSetupAPPassword: make(map[string]chan SetupAPPasswordResult),
+		pendingSetupAPPassword: make(map[string]pendingSetupAPResult),
 	}
 	current := &connection{
 		owner:                  runtime,
@@ -70,7 +71,7 @@ func TestDeliverSetupAPMaintenanceRequiresExactAuthenticatedV2Connection(t *test
 	}
 	runtime.connections[deviceID] = current
 	resultCh := make(chan SetupAPPasswordResult, 1)
-	runtime.pendingSetupAPPassword[requestID] = resultCh
+	runtime.pendingSetupAPPassword[requestID] = pendingSetupAPResult{connection: current, result: resultCh}
 
 	message := inboundMessage{
 		DeviceID:             deviceID,
@@ -78,6 +79,16 @@ func TestDeliverSetupAPMaintenanceRequiresExactAuthenticatedV2Connection(t *test
 		ConnectionGeneration: 7,
 		MaintenanceState:     "APPLIED",
 		Detail:               "Setup AP credential updated",
+	}
+	other := &connection{
+		deviceID: "other", protocolVersion: deviceexperience.ProtocolVersion2, generation: 9,
+		advertisedCapabilities: []string{SetupAPPasswordCapability},
+	}
+	runtime.connections[other.deviceID] = other
+	forged := message
+	forged.DeviceID, forged.ConnectionGeneration = other.deviceID, other.generation
+	if runtime.deliverSetupAPPasswordResult(other, forged) || len(resultCh) != 0 {
+		t.Fatal("another authenticated device completed the pending request")
 	}
 	if !runtime.deliverSetupAPPasswordResult(current, message) {
 		t.Fatal("valid maintenance result rejected")
@@ -133,5 +144,20 @@ func TestSetupAPRevokedAtWriteKeepsConnectionAndClearsPending(t *testing.T) {
 	case <-current.closed:
 		t.Fatal("revocation closed the device connection")
 	default:
+	}
+}
+
+func TestSetupAPWaitWithdrawsAckAfterRevocation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = capability.WithDispatchCheck(ctx, func(context.Context) error { return capability.ErrDispatchAuthorityRevoked })
+	for _, ready := range []bool{false, true} {
+		ack := make(chan SetupAPPasswordResult, 1)
+		if ready {
+			ack <- SetupAPPasswordResult{MaintenanceState: "APPLIED"}
+		}
+		if _, err := waitSetupAPResult(ctx, nil, ack); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			t.Fatalf("revoked request (ack ready=%t) returned %v", ready, err)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -113,13 +114,31 @@ func WithOperatorStageDeviceSetupMaintenance(
 
 				ctx, cancel := context.WithTimeout(r.Context(), setupAPMaintenanceTimeout)
 				defer cancel()
+				token, _ := browserSessionToken(r)
+				csrf := r.Header.Get(csrfHeader)
+				ownerOnly := qualificationAccess(r, nil) != nil
+				dispatch := capability.WithDispatchCheck(ctx, func(ctx context.Context) error {
+					current, err := auth.ValidateCSRF(ctx, token, csrf)
+					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+						userauth.Authorize(current.User.Role, userauth.PermissionDeviceMaintenanceManage) != nil ||
+						(ownerOnly && current.User.Role != userauth.RoleOwner) {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+					active, err := stageStore.ActiveOperationalSessionType(ctx)
+					if err != nil || active != "" {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+					return nil
+				})
 				result, err := runtime.ConfigureSetupAPPassword(
-					ctx, device.ID, requestID, operation, password,
+					dispatch, device.ID, requestID, operation, password,
 				)
 				if err != nil {
 					status := http.StatusConflict
 					code := "STAGE_DEVICE_SETUP_AP_REJECTED"
 					switch {
+					case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+						status, code = http.StatusForbidden, capability.DispatchAuthorityRevokedCode
 					case errors.Is(err, devicechannel.ErrSetupAPMaintenanceOffline):
 						code = "STAGE_DEVICE_SETUP_AP_DEVICE_OFFLINE"
 					case errors.Is(err, devicechannel.ErrSetupAPMaintenanceProtocol):

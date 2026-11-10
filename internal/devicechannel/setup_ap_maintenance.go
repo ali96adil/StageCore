@@ -5,10 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 )
+
+type pendingSetupAPResult struct {
+	connection *connection
+	result     chan SetupAPPasswordResult
+}
 
 const SetupAPPasswordCapability = "device.maintenance.setup-ap-password"
 
@@ -99,14 +105,14 @@ func (r *Runtime) ConfigureSetupAPPassword(
 	default:
 	}
 	if r.pendingSetupAPPassword == nil {
-		r.pendingSetupAPPassword = make(map[string]chan SetupAPPasswordResult)
+		r.pendingSetupAPPassword = make(map[string]pendingSetupAPResult)
 	}
 	if _, exists := r.pendingSetupAPPassword[requestID]; exists {
 		r.mu.Unlock()
 		return SetupAPPasswordResult{}, ErrSetupAPMaintenanceInput
 	}
 	resultCh := make(chan SetupAPPasswordResult, 1)
-	r.pendingSetupAPPassword[requestID] = resultCh
+	r.pendingSetupAPPassword[requestID] = pendingSetupAPResult{connection: current, result: resultCh}
 	generation := current.generation
 	r.mu.Unlock()
 
@@ -132,14 +138,31 @@ func (r *Runtime) ConfigureSetupAPPassword(
 		return SetupAPPasswordResult{}, fmt.Errorf("send setup AP maintenance request: %w", err)
 	}
 
-	select {
-	case result := <-resultCh:
-		if result.MaintenanceState != "APPLIED" {
-			return result, fmt.Errorf("%w: %s", ErrSetupAPMaintenanceRejected, result.Detail)
+	return waitSetupAPResult(ctx, current.closed, resultCh)
+}
+
+func waitSetupAPResult(ctx context.Context, disconnected <-chan struct{}, resultCh <-chan SetupAPPasswordResult) (SetupAPPasswordResult, error) {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case result := <-resultCh:
+			if err := capability.CheckDispatch(ctx); err != nil {
+				return SetupAPPasswordResult{}, err
+			}
+			if result.MaintenanceState != "APPLIED" {
+				return result, fmt.Errorf("%w: %s", ErrSetupAPMaintenanceRejected, result.Detail)
+			}
+			return result, nil
+		case <-ticker.C:
+			if err := capability.CheckDispatch(ctx); err != nil {
+				return SetupAPPasswordResult{}, err
+			}
+		case <-disconnected:
+			return SetupAPPasswordResult{}, ErrSetupAPMaintenanceOffline
+		case <-ctx.Done():
+			return SetupAPPasswordResult{}, fmt.Errorf("wait for setup AP maintenance result: %w", ctx.Err())
 		}
-		return result, nil
-	case <-ctx.Done():
-		return SetupAPPasswordResult{}, fmt.Errorf("wait for setup AP maintenance result: %w", ctx.Err())
 	}
 }
 
@@ -171,7 +194,7 @@ func (r *Runtime) deliverSetupAPPasswordResult(
 	same := !r.closed &&
 		r.connections[current.deviceID] == current &&
 		containsCapability(current.advertisedCapabilities, SetupAPPasswordCapability)
-	ch := r.pendingSetupAPPassword[result.RequestID]
+	pending := r.pendingSetupAPPassword[result.RequestID]
 	r.mu.Unlock()
 	if !same {
 		return false
@@ -180,11 +203,14 @@ func (r *Runtime) deliverSetupAPPasswordResult(
 	// A valid late result after the bounded Operator request timed out is safe
 	// to ignore. Never close an otherwise authenticated device connection only
 	// because the browser stopped waiting.
-	if ch == nil {
+	if pending.result == nil {
 		return true
 	}
+	if pending.connection != current {
+		return false
+	}
 	select {
-	case ch <- result:
+	case pending.result <- result:
 	default:
 	}
 	return true

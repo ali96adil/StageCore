@@ -56,7 +56,7 @@ type Runtime struct {
 	pendingTabletAssignments     map[string]*pendingTabletAssignment
 	pendingStageLaserAssignments map[string]*pendingStageLaserAssignment
 	pendingLightingActivations   map[string]*pendingLightingActivation
-	pendingSetupAPPassword       map[string]chan SetupAPPasswordResult
+	pendingSetupAPPassword       map[string]pendingSetupAPResult
 	assignmentTransitions        map[string]bool
 	autoProbeV2                  bool
 	nextGeneration               int64
@@ -161,7 +161,7 @@ func New(repository *deviceexperience.Repository, auth *companionauth.Service, o
 		pendingTabletAssignments:     make(map[string]*pendingTabletAssignment),
 		pendingStageLaserAssignments: make(map[string]*pendingStageLaserAssignment),
 		pendingLightingActivations:   make(map[string]*pendingLightingActivation),
-		pendingSetupAPPassword:       make(map[string]chan SetupAPPasswordResult),
+		pendingSetupAPPassword:       make(map[string]pendingSetupAPResult),
 		assignmentTransitions:        make(map[string]bool),
 		autoProbeV2:                  os.Getenv("STAGECORE_EXPERIMENTAL_V2_AUTO_PROBE") == "1",
 	}
