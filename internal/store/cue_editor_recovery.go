@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -43,12 +44,12 @@ func (s *Store) SaveCueEditorRecovery(ctx context.Context, projectID, userID, ex
 	}
 	var result sql.Result
 	if expected == "" {
-		result, err = s.db.ExecContext(ctx, `
+		result, err = capability.ExecAuthorized(ctx, s.db, `
 			INSERT INTO cue_editor_recovery (project_id, user_id, generation, document)
 			VALUES (?, ?, ?, ?) ON CONFLICT(project_id, user_id) DO NOTHING
 		`, projectID, userID, generation, string(document))
 	} else {
-		result, err = s.db.ExecContext(ctx, `
+		result, err = capability.ExecAuthorized(ctx, s.db, `
 			UPDATE cue_editor_recovery SET generation = ?, document = ?
 			WHERE project_id = ? AND user_id = ? AND generation = ?
 		`, generation, string(document), projectID, userID, expected)
@@ -63,7 +64,7 @@ func (s *Store) DeleteCueEditorRecovery(ctx context.Context, projectID, userID, 
 	if expected == "" {
 		return fmt.Errorf("%w: recovery generation required", domain.ErrInvalidInput)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		DELETE FROM cue_editor_recovery WHERE project_id = ? AND user_id = ? AND generation = ?
 	`, projectID, userID, expected)
 	return requireRecoveryGeneration(result, err)

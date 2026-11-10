@@ -139,3 +139,61 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	}
 	request(http.MethodGet, project, owner.Token, "", "", nil, http.StatusUnauthorized)
 }
+
+func TestCueEditorPrivateWritesRecheckProjectGrantAtCommit(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	st := store.New(h.db.DB, clock.Real{})
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tech, err := h.auth.CreateUser(ctx, "private-cue-tech", h.password, userauth.RoleTechnician)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, tech.Username, h.password, "127.0.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Private cue data", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorCuePublish(h.auth, st, publish.New(st, capability.NewRegistry())), WithProjectRouteQualification(access)).Handler()
+	for _, request := range []struct {
+		method string
+		route  string
+		body   string
+	}{
+		{http.MethodPut, "cue-editor-recovery", `{"document":{"draft":true}}`},
+		{http.MethodPost, "cue-action-presets", `{"name":"Scene","action":{"capability_key":"osc.send"}}`},
+	} {
+		t.Run(request.route, func(t *testing.T) {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, tech.ID, project.ID, []projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+				t.Fatal(err)
+			}
+			req := authenticatedMutationRequest(t, request.method, "/api/v1/projects/"+project.ID+"/"+request.route, []byte(request.body), login.Token, login.CSRFToken)
+			req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+				if err := access.SetPermissions(ctx, owner.Session.User.ID, tech.ID, project.ID, []projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if res.Code != http.StatusNotFound {
+				t.Fatalf("write after revocation returned %d: %s", res.Code, res.Body)
+			}
+			if recovery, err := st.CueEditorRecovery(ctx, project.ID, tech.ID); err != nil || recovery.Generation != "" {
+				t.Fatalf("recovery=%+v err=%v", recovery, err)
+			}
+			if presets, err := st.ListCueActionPresets(ctx, project.ID, tech.ID); err != nil || len(presets) != 0 {
+				t.Fatalf("presets=%+v err=%v", presets, err)
+			}
+		})
+	}
+}

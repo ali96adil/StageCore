@@ -6,6 +6,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -31,9 +32,9 @@ func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *s
 			if !decodeBoundedJSON(w, r, &request) {
 				return
 			}
-			recovery, err = st.SaveCueEditorRecovery(r.Context(), projectID, session.User.ID, request.Generation, request.Document)
+			recovery, err = st.SaveCueEditorRecovery(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, session.User.ID, request.Generation, request.Document)
 		case http.MethodDelete:
-			err = st.DeleteCueEditorRecovery(r.Context(), projectID, session.User.ID, r.Header.Get("If-Match"))
+			err = st.DeleteCueEditorRecovery(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, session.User.ID, r.Header.Get("If-Match"))
 		}
 		if errors.Is(err, domain.ErrInvalidInput) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_RECOVERY"})

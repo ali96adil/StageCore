@@ -7,6 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -52,14 +53,14 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
 				return
 			}
-			preset, err := st.CreateCueActionPreset(ctx, projectID, userID, request.Name, document)
+			preset, err := st.CreateCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, request.Name, document)
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
 			}
 			writeJSON(w, http.StatusCreated, preset)
 		case http.MethodDelete:
-			if err := st.DeleteCueActionPreset(ctx, projectID, userID, r.PathValue("preset_id")); err != nil {
+			if err := st.DeleteCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, r.PathValue("preset_id")); err != nil {
 				writeProjectStoreError(w, err)
 				return
 			}

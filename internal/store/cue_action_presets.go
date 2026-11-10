@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
@@ -42,7 +43,7 @@ func (s *Store) CreateCueActionPreset(ctx context.Context, projectID, userID, na
 	if err != nil {
 		return CueActionPreset{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO cue_action_presets (preset_id, project_id, user_id, name, action)
 		SELECT ?, ?, ?, ?, ?
 		WHERE (SELECT COUNT(*) FROM cue_action_presets WHERE project_id = ? AND user_id = ?) < 32
@@ -62,7 +63,7 @@ func (s *Store) CreateCueActionPreset(ctx context.Context, projectID, userID, na
 }
 
 func (s *Store) DeleteCueActionPreset(ctx context.Context, projectID, userID, id string) error {
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		DELETE FROM cue_action_presets WHERE preset_id = ? AND project_id = ? AND user_id = ?
 	`, id, projectID, userID)
 	if err != nil {
