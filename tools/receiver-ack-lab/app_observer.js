@@ -7,6 +7,43 @@ const { encodeReceipt, fieldsFromReceipt } = require("./receiver_ack");
 
 const LIVE_SLOT = "LIVE_TRACK_PLAYING_SLOT";
 const VDMX_PROPERTY = "VDMX_OUTPUT_PROPERTY";
+const VDMX_MEDIA = "VDMX_MEDIA_PLAYBACK";
+const VDMX_RENDER = "VDMX_RENDER_FRAME";
+const proofID = value => typeof value === "string" && /^[A-Za-z0-9_.:/-]{1,128}$/.test(value);
+const independentVDMX = source => source === VDMX_MEDIA || source === VDMX_RENDER;
+
+function validVDMXExpectation(expectation) {
+  if (independentVDMX(expectation.source)) {
+    return proofID(expectation.target_id) && proofID(expectation.application_generation) &&
+      Number.isSafeInteger(expectation.baseline_sequence) && expectation.baseline_sequence >= 0 &&
+      (expectation.source === VDMX_RENDER ||
+        (proofID(expectation.asset_id) && expectation.state === "PLAYING" &&
+          (expectation.baseline_playback_instance_id === null || proofID(expectation.baseline_playback_instance_id))));
+  }
+  return expectation.source === VDMX_PROPERTY &&
+    typeof expectation.property === "string" &&
+    /^\/[a-zA-Z0-9_/-]{1,120}$/.test(expectation.property) &&
+    ["string", "number", "boolean"].includes(typeof expectation.value) &&
+    (typeof expectation.value !== "number" || Number.isFinite(expectation.value));
+}
+
+function matchesVDMXApplicationProof(event, pending) {
+  const { expectation, metadata, armedAt } = pending;
+  return event.source === expectation.source && event.observed_at_ms > armedAt &&
+    event.execution_id === metadata.execution_id && event.challenge === metadata.challenge &&
+    event.correlation_id === metadata.correlation_id &&
+    ["project_id", "runtime_snapshot_id", "machine_role_id", "companion_id",
+      "receiver_instance_id", "connection_generation", "kind", "cue_id"]
+      .every(field => event[field] === metadata[field]) &&
+    event.application_generation === expectation.application_generation &&
+    event.target_id === expectation.target_id &&
+    event.observation_sequence > expectation.baseline_sequence &&
+    (event.source === VDMX_RENDER
+      ? event.frame_produced === true
+      : event.asset_id === expectation.asset_id && event.state === expectation.state &&
+        proofID(event.playback_instance_id) && event.playback_instance_id !== expectation.baseline_playback_instance_id);
+}
+
 const MAX_COMMANDS = 256;
 
 class AppObserverLab {
@@ -48,12 +85,11 @@ class AppObserverLab {
         throw new Error("Live observation must target track and playing clip slot");
       }
     } else if (metadata.kind === "VDMX") {
-      if (expectation.source !== VDMX_PROPERTY ||
-          typeof expectation.property !== "string" ||
-          !/^\/[a-zA-Z0-9_/-]{1,120}$/.test(expectation.property) ||
-          !["string", "number", "boolean"].includes(typeof expectation.value) ||
-          (typeof expectation.value === "number" && !Number.isFinite(expectation.value))) {
-        throw new Error("VDMX must observe explicit published output property");
+      if (!validVDMXExpectation(expectation)) {
+        throw new Error("VDMX must observe an explicit published output property or application proof");
+      }
+      if (independentVDMX(expectation.source) && metadata.correlation_id !== null && !proofID(metadata.correlation_id)) {
+        throw new Error("VDMX application proof needs an explicit correlation identity");
       }
     } else {
       throw new Error("unsupported receiver");
@@ -97,12 +133,14 @@ class AppObserverLab {
       matches = event.source === VDMX_PROPERTY &&
         event.property === expectation.property &&
         event.value === expectation.value;
+    } else if (independentVDMX(expectation.source)) {
+      matches = matchesVDMXApplicationProof(event, pending);
     }
     // Out-of-order mismatches cannot be replayed later as fresh evidence.
     pending.lastObservationSequence = event.observation_sequence;
     if (!matches) return [];
-    // Both receipt states are emitted only AFTER the app-side property
-    // is observed. This is still NOT independent proof of sound/video.
+    // The lab emits both receipt states only after a qualifying observation.
+    // These packets never establish physical output or authenticate the source.
     const packets = [];
     for (const status of ["APP_REPORTED_RECEIVED", "APP_REPORTED_APPLIED"]) {
       this.sequence += 1n;
@@ -123,4 +161,4 @@ class AppObserverLab {
       commandsEnabled: false, networkEnabled: false, autoReplay: false };
   }
 }
-module.exports = { AppObserverLab, LIVE_SLOT, VDMX_PROPERTY };
+module.exports = { AppObserverLab, LIVE_SLOT, VDMX_PROPERTY, VDMX_MEDIA, VDMX_RENDER };

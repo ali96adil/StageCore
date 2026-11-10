@@ -103,3 +103,36 @@ test("all messages are emitted only after explicit matching observation; never s
   // anything without an explicit newly-qualified command arm.
   assert.deepEqual(fresh.tracker.observe(fresh.event(1)), []);
 });
+
+for (const [kind, target, extra] of [
+  ["VDMX_MEDIA_PLAYBACK", "deck-A", {asset_id: "asset-A", state: "PLAYING", playback_instance_id: "play-02", baseline_playback_instance_id: "play-01"}],
+  ["VDMX_RENDER_FRAME", "canvas-A", {frame_produced: true}],
+]) {
+  test(kind + " requires a fresh, correlated application observation", () => {
+    const f = lab("VDMX");
+    const receipt = {...f.metadata, correlation_id: "request-1"};
+    const expect = {
+      source: kind, target_id: target, application_generation: "vdmx-2",
+      baseline_sequence: 10, ...extra,
+    };
+    assert.deepEqual(f.tracker.arm({...f.command(), receipt, expect}).receiptPackets, []);
+    f.advance(1);
+    const evidence = {
+      ...expect, ...receipt, change: true, observed_at_ms: f.now(), observation_sequence: 11,
+    };
+    for (const [i, wrong] of [
+      {source: "OSC_PACKET_RECEIVED"}, {observation_sequence: 10}, {observed_at_ms: f.now() - 1},
+      {application_generation: "old-vdmx"}, {connection_generation: "32"},
+      {target_id: "unrelated-target"}, {execution_id: "old-execution"}, {challenge: "other-challenge"},
+      {correlation_id: "different-request"}, {project_id: "other-project"},
+      kind === "VDMX_RENDER_FRAME" ? {frame_produced: false} : {asset_id: "wrong-asset"},
+      kind === "VDMX_RENDER_FRAME" ? {source: "VDMX_OUTPUT_PROPERTY"} : {state: "QUEUED"},
+      kind === "VDMX_RENDER_FRAME" ? {receiver_instance_id: "another-receiver"} : {playback_instance_id: "play-01"},
+    ].entries()) {
+      assert.deepEqual(f.tracker.observe({...evidence, observation_sequence: 11 + i, ...wrong}), []);
+    }
+    evidence.observation_sequence = 40;
+    assert.equal(f.tracker.observe(evidence).length, 2);
+    assert.deepEqual(f.tracker.observe({...evidence, observation_sequence: 41}), []);
+  });
+}

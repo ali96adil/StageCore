@@ -230,3 +230,13 @@ receiver scope/challenge; lost network or app reconnect; delayed feedback
 after the deadline; and duplicate execution ID. Every case must fail closed
 with no false application-applied receipt. Qualify STOP, Jump and Blackout
 separately and preserve existing unsigned OSC workflows unchanged.
+
+The lab-only observer can now exercise synthetic Media and Render
+application observations. It checks exact target, receiver and application
+generation, request correlation, execution challenge, a fresh sequence
+after baseline, and the command deadline. Media needs the expected asset
+in a playing instance. Render needs evidence of a produced frame. The
+observer has no VDMX callback integration or network receiver. These
+fixtures qualify the software checks only. Real VDMX evidence remains
+`Integration Pending`, and the installed control receiver still rejects
+Media/Render mappings.
