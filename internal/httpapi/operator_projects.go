@@ -129,15 +129,27 @@ func recheckProjectMutation(w http.ResponseWriter, r *http.Request, auth *userau
 }
 
 func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
+	return projectMutationContextForPermissions(r, auth, session, []userauth.Permission{permission}, access, scoped...)
+}
+
+func projectMutationContextForPermissions(r *http.Request, auth *userauth.Service, session userauth.Session, permissions []userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
 	qualified := qualificationAccess(r, access) != nil
 	projectID := r.PathValue("project_id")
 	return capability.WithWriteAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
 		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
-		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && userauth.Authorize(role, permission) != nil) {
+		if errors.Is(err, userauth.ErrSessionInvalid) {
 			return userauth.ErrForbidden
 		}
-		if err != nil || !qualified {
+		if err != nil {
 			return err
+		}
+		for _, permission := range permissions {
+			if userauth.Authorize(role, permission) != nil {
+				return userauth.ErrForbidden
+			}
+		}
+		if !qualified {
+			return nil
 		}
 		if len(scoped) != 0 {
 			return projectaccess.CheckAllInTransaction(ctx, tx, session.User.ID, projectID, scoped...)

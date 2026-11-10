@@ -12,6 +12,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/assistant"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -107,7 +108,8 @@ func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.
 			writeAssistantProposalError(w, errAssistantProposalStale)
 			return
 		}
-		result, err := applyAssistantProposalOperation(r, stageStore, projectID, session, input.Proposal.BaseRevisionID, op)
+		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectEdit)
+		result, err := applyAssistantProposalOperation(r.WithContext(ctx), stageStore, projectID, session, input.Proposal.BaseRevisionID, op)
 		if err != nil {
 			appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, assistantProposalAuditResult(err), err.Error())
 			writeAssistantProposalError(w, err)
@@ -311,6 +313,9 @@ func assistantProposalAuditResult(err error) string {
 }
 
 func writeAssistantProposalError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, assistant.ErrInvalidContract), errors.Is(err, errAssistantProposalPayloadInvalid), errors.Is(err, domain.ErrInvalidInput):
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ASSISTANT_PROPOSAL_INVALID"})

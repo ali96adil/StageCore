@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -150,5 +151,37 @@ func TestAssistantProposalAtomicBatchShowLockBlocksMixedNoteAndStructuralMutatio
 	}
 	if len(notes) != 0 || len(aliases) != 0 {
 		t.Fatalf("SHOW-rejected batch mutated notes=%+v aliases=%+v", notes, aliases)
+	}
+}
+
+func TestAssistantProposalBatchRejectsRevokedBrowserSession(t *testing.T) {
+	h := newAssistantProposalHTTPHarness(t)
+	ctx := context.Background()
+	sealed := h.preview(h.owner, assistant.DraftProposal{
+		BaseRevisionID: h.revision.ID,
+		Operations: []assistant.ProposalOperation{
+			{Kind: assistant.ProposalNoteDraft, Summary: "Add one", Payload: json.RawMessage(`{"body":"one"}`)},
+			{Kind: assistant.ProposalNoteDraft, Summary: "Add two", Payload: json.RawMessage(`{"body":"two"}`)},
+		},
+	})
+	body, err := json.Marshal(assistantProposalBatchApplyRequest{Proposal: sealed, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + h.project.ID + "/assistant/proposals/apply-batch"
+	req := authenticatedMutationRequest(t, http.MethodPost, path, body, h.owner.Token, h.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.auth.Logout(ctx, h.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	h.handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked proposal batch returned %d: %s", res.Code, res.Body)
+	}
+	notes, err := h.stageStore.ListNotes(ctx, h.project.ID, store.NoteFilter{})
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("revoked batch changed notes: %+v, %v", notes, err)
 	}
 }
