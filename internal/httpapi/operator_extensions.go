@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -82,6 +83,9 @@ func (h *operatorExtensionLibrary) register(w http.ResponseWriter, r *http.Reque
 		status := http.StatusBadRequest
 		code := "EXTENSION_REGISTER_FAILED"
 		switch {
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			status = http.StatusForbidden
+			code = "FORBIDDEN"
 		case errors.Is(err, domain.ErrShowConfigurationLocked):
 			status = http.StatusConflict
 			code = "SHOW_CONFIGURATION_LOCKED"

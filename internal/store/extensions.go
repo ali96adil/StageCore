@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -60,8 +61,20 @@ func (s *Store) RegisterExtensionPackage(ctx context.Context, p RegisterExtensio
 		}
 		return ExtensionPackage{}, fmt.Errorf("read extension software package: %w", err)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ExtensionPackage{}, err
+	}
+	defer tx.Rollback()
+	active, err := ActiveOperationalSessionTypeInTransaction(ctx, tx)
+	if err != nil {
+		return ExtensionPackage{}, err
+	}
+	if active == domain.SessionShow {
+		return ExtensionPackage{}, domain.ErrShowConfigurationLocked
+	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO extension_packages (
 			package_id, extension_id, version, kind, source,
 			manifest_json, manifest_sha256, registered_by, registered_at_us
@@ -70,6 +83,12 @@ func (s *Store) RegisterExtensionPackage(ctx context.Context, p RegisterExtensio
 		string(p.ManifestJSON), p.ManifestSHA256, p.RegisteredBy, clock.UnixMicros(now),
 	); err != nil {
 		return ExtensionPackage{}, fmt.Errorf("register extension package: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return ExtensionPackage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ExtensionPackage{}, err
 	}
 	return s.GetExtensionPackage(ctx, p.PackageID)
 }

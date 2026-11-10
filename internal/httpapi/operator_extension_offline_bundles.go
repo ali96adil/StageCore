@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -73,6 +74,8 @@ func (h *operatorExtensionOfflineBundles) syncCatalog(w http.ResponseWriter, r *
 func offlineBundleError(err error) (int, string) {
 	var maxBytes *http.MaxBytesError
 	switch {
+	case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+		return http.StatusForbidden, "FORBIDDEN"
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		return http.StatusConflict, "SHOW_CONFIGURATION_LOCKED"
 	case errors.Is(err, extension.ErrOfflineBundleSource), errors.Is(err, extension.ErrOfficialSourceRequiresTrustedPath):
