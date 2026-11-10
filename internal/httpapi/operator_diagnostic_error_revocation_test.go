@@ -16,8 +16,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-type preflightEvaluatorFunc func(context.Context, string, string) (preflight.Report, error)
-func (f preflightEvaluatorFunc) Evaluate(ctx context.Context, projectID, snapshotID string) (preflight.Report, error) {
+type preflightErrorRevocationFunc func(context.Context, string, string) (preflight.Report, error)
+func (f preflightErrorRevocationFunc) Evaluate(ctx context.Context, projectID, snapshotID string) (preflight.Report, error) {
 	return f(ctx, projectID, snapshotID)
 }
 
@@ -37,7 +37,7 @@ func TestPreflightFailureDoesNotRevealProjectErrorAfterGrantRevocation(t *testin
 	if err != nil { t.Fatal(err) }
 	if err := access.SetPermissions(ctx, owner.Session.User.ID, viewer.ID, project.ID, []projectaccess.Permission{projectaccess.ProjectView}); err != nil { t.Fatal(err) }
 	called := false
-	evaluator := preflightEvaluatorFunc(func(ctx context.Context, _, _ string) (preflight.Report, error) {
+	evaluator := preflightErrorRevocationFunc(func(ctx context.Context, _, _ string) (preflight.Report, error) {
 		called = true
 		if err := access.SetPermissions(ctx, owner.Session.User.ID, viewer.ID, project.ID, nil); err != nil { t.Fatal(err) }
 		return preflight.Report{}, errors.New("PRIVATE_DIAGNOSTIC_DO_NOT_LEAK")
