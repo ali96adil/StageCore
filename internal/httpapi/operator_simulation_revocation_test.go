@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"io"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +13,8 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/cueengine"
+	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -56,5 +60,46 @@ func TestActiveSimulationSessionRejectsGrantRevokedDuringStatusRead(t *testing.T
 	w := httptest.NewRecorder()
 	if active, ok := activeSimulationSession(w, request, reader); ok || !read || w.Code != http.StatusNotFound || active.ID != "" {
 		t.Fatalf("revoked simulation status got active=%+v ok=%v read=%v status=%d body=%s", active, ok, read, w.Code, w.Body.String())
+	}
+}
+
+func TestSimulationStartRejectsProjectGrantRevokedWhileReadingBody(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	st := store.New(h.db.DB, clock.Real{})
+	project, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "simulation request read boundary"})
+	if err != nil { t.Fatal(err) }
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	operator, err := h.auth.CreateUser(ctx, "simulation-body-operator", h.password, userauth.RoleOperator)
+	if err != nil { t.Fatal(err) }
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, []projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}); err != nil { t.Fatal(err) }
+	twin := simulator.NewDigitalTwin()
+	engine := cueengine.NewWithExecutor(st, simulator.NewSessionExecutorWithDigitalTwin(st, simulator.Adapter{}, twin))
+	control := simulationcontrol.New(st, engine, twin)
+	handler := New(WithProjectRouteQualification(access), WithOperatorSimulation(h.auth, control)).Handler()
+	body := `{"request_id":"00000000-0000-7000-8000-000000000731","name":"should-not-create"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/simulation/start", strings.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:28123"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	request.Header.Set(csrfHeader, login.CSRFToken)
+	request.Header.Set("Content-Type", "application/json")
+	revoked := false
+	request.Body = io.NopCloser(revokeDuringRead{Reader: strings.NewReader(body), revoke: func() {
+		if revoked { return }
+		revoked = true
+		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil { t.Fatal(err) }
+	}})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, request)
+	if !revoked || w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "should-not-create") {
+		t.Fatalf("revoked simulation start: revoked=%v status=%d body=%s", revoked, w.Code, w.Body.String())
+	}
+	if status, err := control.Status(ctx, project.ID); err != nil || status.Session != nil {
+		t.Fatalf("revoked simulation created session: status=%+v err=%v", status, err)
 	}
 }
