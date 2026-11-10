@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
@@ -379,6 +380,9 @@ func (s *Store) ImportPortableProject(ctx context.Context, p PortableProjectImpo
 		importedExtensions = append(importedExtensions, extension.ExtensionID)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return PortableProjectImportResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return PortableProjectImportResult{}, fmt.Errorf("commit portable Project import: %w", err)
 	}

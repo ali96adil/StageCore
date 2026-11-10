@@ -236,7 +236,8 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				}
 				return nil
 			}
-			result, err := service.Materialize(r.Context(), path, showcapsule.MaterializeOptions{
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionBackupRestore, access)
+			result, err := service.Materialize(ctx, path, showcapsule.MaterializeOptions{
 				ImportedBy: session.User.Username, AuthorizeWrite: authorize,
 			})
 			if errors.Is(err, userauth.ErrForbidden) {

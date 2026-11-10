@@ -2,9 +2,11 @@ package showcapsule
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -29,11 +31,11 @@ func TestMaterializeRollsBackProjectAndNewVaultObjectsOnGraphCollision(t *testin
 		t.Fatal(err)
 	}
 	if _, err := destination.store.CreateAlias(ctx, domain.ProjectDeviceAlias{
-		ID: collidingAliasID,
-		ProjectID: otherProject.ID,
-		LogicalName: "EXISTING-TARGET",
-		LogicalType: "TEST",
-		TargetRef: "EXISTING-TARGET",
+		ID:            collidingAliasID,
+		ProjectID:     otherProject.ID,
+		LogicalName:   "EXISTING-TARGET",
+		LogicalType:   "TEST",
+		TargetRef:     "EXISTING-TARGET",
 		ProjectConfig: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -95,6 +97,36 @@ func TestMaterializeRemovesStagedVaultObjectsWhenAuthorityEnds(t *testing.T) {
 	})
 	if !errors.Is(err, denied) || checks != 2 {
 		t.Fatalf("materialization authority checks=%d, err=%v", checks, err)
+	}
+	if _, err := destination.store.GetProject(ctx, source.projectID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked materialization left a Project: %v", err)
+	}
+	if _, err := destination.store.GetVaultObject(ctx, source.contentHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked materialization left a Vault object: %v", err)
+	}
+}
+
+func TestMaterializeRollsBackGraphAndVaultWhenCommitAuthorityEnds(t *testing.T) {
+	ctx := context.Background()
+	source := newCapsuleFixture(t)
+	defer source.db.Close()
+	exported, err := source.service.Export(ctx, source.projectID, t.TempDir(), BuildOptions{Mode: ExportSelfContained})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destination := newEmptyCapsuleService(t)
+	defer destination.db.Close()
+	denied := errors.New("restore authority ended at commit")
+	ctx = capability.WithWriteAuthorization(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var id string
+		if err := tx.QueryRowContext(ctx, "SELECT project_id FROM projects WHERE project_id = ?", source.projectID).Scan(&id); err != nil {
+			t.Fatalf("portable Project was not staged in the committing transaction: %v", err)
+		}
+		return denied
+	})
+	if _, err := destination.service.Materialize(ctx, exported.Path, MaterializeOptions{ImportedBy: "owner"}); !errors.Is(err, denied) {
+		t.Fatalf("materialization err=%v, want %v", err, denied)
 	}
 	if _, err := destination.store.GetProject(ctx, source.projectID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("revoked materialization left a Project: %v", err)
