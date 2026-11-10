@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/deviceupdate"
+	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -329,7 +331,16 @@ func WithOperatorStageDeviceFirmware(
 					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": capability.DispatchAuthorityRevokedCode})
 					return
 				}
-				record, err := updates.Issue(r.Context(), manifest, session.User.ID)
+				dispatch := firmwareMaintenanceContext(r, auth, session, stageStore)
+				record, err := updates.Issue(dispatch, manifest, session.User.ID)
+				if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error_code": capability.DispatchAuthorityRevokedCode})
+					return
+				}
+				if errors.Is(err, domain.ErrShowConfigurationLocked) {
+					writeJSON(w, http.StatusConflict, map[string]any{"error_code": "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE"})
+					return
+				}
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_UPDATE_PERSIST_FAILED",
@@ -469,7 +480,7 @@ func WithOperatorStageDeviceFirmware(
 					return
 				}
 
-				dispatch := capability.WithDispatchCheck(r.Context(), firmwareMutationAuthorization(r, auth, session))
+				dispatch := firmwareMaintenanceContext(r, auth, session, stageStore)
 				sent, err := runtime.SendFirmwareMaintenance(dispatch, updateID)
 				if err != nil {
 					status := http.StatusConflict
@@ -477,6 +488,8 @@ func WithOperatorStageDeviceFirmware(
 					switch {
 					case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
 						status, code = http.StatusForbidden, capability.DispatchAuthorityRevokedCode
+					case errors.Is(err, domain.ErrShowConfigurationLocked):
+						code = "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE"
 					case errors.Is(err, devicechannel.ErrFirmwareMaintenanceOffline):
 						code = "STAGE_DEVICE_FIRMWARE_DEVICE_OFFLINE"
 					case errors.Is(err, devicechannel.ErrFirmwareMaintenanceProtocol):
@@ -527,6 +540,32 @@ func firmwareMaintenanceDeviceEligible(device deviceexperience.Device) bool {
 
 // Firmware mutations require the original live session through artifact
 // publication, manifest issuance, and the device transport write.
+func firmwareMaintenanceContext(r *http.Request, auth *userauth.Service, session userauth.Session, stageStore *store.Store) context.Context {
+	authorize := firmwareMutationAuthorization(r, auth, session)
+	dispatch := capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+		if err := authorize(ctx); err != nil {
+			return err
+		}
+		active, err := stageStore.ActiveOperationalSessionType(ctx)
+		if err == nil && active != "" {
+			return domain.ErrShowConfigurationLocked
+		}
+		return err
+	})
+	actor := browserDeviceWriteContext(dispatch, auth, session, qualificationAccess(r, nil) != nil,
+		userauth.PermissionDeviceFirmwareManage)
+	return capability.WithWriteAuthorization(actor, func(ctx context.Context, tx *sql.Tx) error {
+		if err := capability.CheckWriteAuthorization(actor, tx); err != nil {
+			return err
+		}
+		active, err := store.ActiveOperationalSessionTypeInTransaction(ctx, tx)
+		if err == nil && active != "" {
+			return domain.ErrShowConfigurationLocked
+		}
+		return err
+	})
+}
+
 func firmwareMutationAuthorization(r *http.Request, auth *userauth.Service, session userauth.Session) func(context.Context) error {
 	token, _ := browserSessionToken(r)
 	csrf := r.Header.Get(csrfHeader)
