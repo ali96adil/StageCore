@@ -209,3 +209,26 @@ func TestQualifiedPreflightFencesReportAndRedactsMediaWithoutGrant(t *testing.T)
 		t.Fatalf("revoked report escaped: %d %s", res.Code, res.Body.String())
 	}
 }
+
+func TestPreflightSuppressesReportAfterBrowserSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	evaluator := preflightEvaluatorFunc(func(ctx context.Context, _, _ string) (preflight.Report, error) {
+		called = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+		return preflight.Report{ProjectID: "protected-report"}, nil
+	})
+	handler := New(WithOperatorPreflight(h.auth, evaluator)).Handler()
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, authenticatedReadRequest(http.MethodGet, "/api/v1/projects/project/preflight", owner.Token))
+	if !called || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "protected-report") {
+		t.Fatalf("evaluated=%t status=%d body=%s", called, res.Code, res.Body)
+	}
+}

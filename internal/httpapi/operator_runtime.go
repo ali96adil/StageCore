@@ -83,10 +83,13 @@ func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runt
 }
 
 func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		view, err := buildRuntimeStatus(r, projectStore, r.PathValue("project_id"))
 		if err != nil {
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, view)
