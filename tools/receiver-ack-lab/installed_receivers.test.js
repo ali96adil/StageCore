@@ -134,6 +134,13 @@ test("VDMX receiver needs the application event and readback, then reconnect acc
     {inputPath, queryPath, feedbackPath},
     {inputPath:"/stagecore/test/other", queryPath:queryPath+" Other", feedbackPath}
   ]}), /invalid dedicated/);
+  // Deliberately fail closed when a caller attempts to promote published
+  // slider values into unqualified media or renderer ACK evidence.
+  for (const proofKind of ["MEDIA_PLAYBACK", "RENDER_FRAME", "UNKNOWN"]) {
+    await assert.rejects(openVDMXReceiver({...config, mappings: [
+      {inputPath, queryPath, feedbackPath, proofKind}
+    ]}), /invalid dedicated VDMX mapping/);
+  }
   let receiver = await openVDMXReceiver({...config, mappings: [
     {inputPath, queryPath, feedbackPath},
     {inputPath:"/stagecore/test/other", queryPath:queryPath+" Other", feedbackPath:feedbackPath+"-other"}

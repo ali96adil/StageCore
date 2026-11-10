@@ -24,7 +24,10 @@ async function openVDMXReceiver(config) {
   const localOSCPath = path => typeof path === "string" && /^\/stagecore(?:\/[A-Za-z0-9_-]+)+$/.test(path) && path.length <= 121;
   if (ports.some(p => !Number.isSafeInteger(p) || p < 1024 || p > 65535) ||
       new Set(ports).size !== ports.length || !Array.isArray(mappings) || mappings.length < 1 || mappings.length > 32 ||
-      mappings.some(mapping => !mapping || !validPublishedPath(mapping.queryPath) ||
+      mappings.some(mapping => !mapping ||
+        // A Control Surface value is not proof of media playback or a rendered frame.
+        (mapping.proofKind !== undefined && mapping.proofKind !== "CONTROL_VALUE_ONLY") ||
+        !validPublishedPath(mapping.queryPath) ||
         !localOSCPath(mapping.inputPath) || !localOSCPath(mapping.feedbackPath)) ||
       new Set(mappings.flatMap(mapping => [mapping.inputPath, mapping.feedbackPath])).size !== mappings.length * 2 ||
       new Set(mappings.map(mapping => mapping.queryPath)).size !== mappings.length) {

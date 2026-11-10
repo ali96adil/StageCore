@@ -141,6 +141,16 @@ produces no applied receipt. These receipts cover the property itself. Clip,
 scene, media and rendering commands without independently attributable
 application feedback have no ACK mapping here.
 
+The VDMX receiver supports **Control Surface value confirmation only**.
+An optional mapping `proofKind` may be `CONTROL_VALUE_ONLY`; attempting
+`MEDIA_PLAYBACK`, `RENDER_FRAME`, or an unrecognized proof kind fails
+closed at configuration time. OSC send success, the slider's matching echo,
+and OSCQuery readback do not prove a media clip played or that a frame was
+rendered. A future media/render receiver must use independently attributable
+application-side playback/render feedback, and requires qualification with
+the installed VDMX version. Do not label these control receipts as media or
+render confirmation.
+
 VDMX can use `STAGECORE_VDMX_MAPPINGS`, a JSON array of 1–32 objects with
 `inputPath`, `feedbackPath` and `queryPath`. Each mapping needs its own
 exclusive control and distinct feedback route. Shared and duplicate paths
