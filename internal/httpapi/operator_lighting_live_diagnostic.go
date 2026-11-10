@@ -32,7 +32,7 @@ func WithOperatorLightingLiveDiagnostics(
 		s.mux.HandleFunc(
 			"GET /api/v1/projects/{project_id}/lighting-controller/nodes/{device_id}/live-diagnostic",
 			withPermission(auth, userauth.PermissionProjectRead,
-				func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 					w.Header().Set("Cache-Control", "no-store")
 					projectID := strings.TrimSpace(r.PathValue("project_id"))
 					deviceID := strings.TrimSpace(r.PathValue("device_id"))
@@ -67,6 +67,9 @@ func WithOperatorLightingLiveDiagnostics(
 							Reason: diagnostic.Reason,
 							PhysicalVerified: false, CommandsEnabled: false,
 						}
+					}
+					if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+						return
 					}
 					writeJSON(w, http.StatusOK, map[string]any{
 						"schema_version": 1,
