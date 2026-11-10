@@ -18,11 +18,12 @@ function floatOSC(address, value) {
 }
 
 async function openVDMXReceiver(config) {
-  const {port, token, oscPort, queryPort, feedbackPort} = config;
+  const {port, token, oscPort, queryPort, feedbackPort, feedbackSourcePort} = config;
   const ports = [port, oscPort, queryPort, feedbackPort];
   const mappings = config.mappings ?? [{inputPath: config.inputPath, queryPath: config.queryPath, feedbackPath: config.feedbackPath}];
   const localOSCPath = path => typeof path === "string" && /^\/stagecore(?:\/[A-Za-z0-9_-]+)+$/.test(path) && path.length <= 121;
-  if (ports.some(p => !Number.isSafeInteger(p) || p < 1024 || p > 65535) ||
+  if ((feedbackSourcePort !== undefined && (!Number.isSafeInteger(feedbackSourcePort) || feedbackSourcePort < 1024 || feedbackSourcePort > 65535 || feedbackSourcePort === feedbackPort)) ||
+      ports.some(p => !Number.isSafeInteger(p) || p < 1024 || p > 65535) ||
       new Set(ports).size !== ports.length || !Array.isArray(mappings) || mappings.length < 1 || mappings.length > 32 ||
       mappings.some(mapping => !mapping ||
         // A Control Surface value is not proof of media playback or a rendered frame.
@@ -42,7 +43,9 @@ async function openVDMXReceiver(config) {
     pending?.reject(error);
   });
   socket.on("message", (packet, peer) => {
-    if (peer.address === "127.0.0.1" && pending?.packet.equals(packet)) pending.resolve();
+    if (peer.address === "127.0.0.1" &&
+        (feedbackSourcePort === undefined || peer.port === feedbackSourcePort) &&
+        pending?.packet.equals(packet)) pending.resolve();
   });
 
   function appliedFeedback(mapping, value, signal) {
@@ -120,6 +123,7 @@ async function main() {
     oscPort: Number(process.env.STAGECORE_VDMX_OSC_PORT),
     queryPort: Number(process.env.STAGECORE_VDMX_QUERY_PORT),
     feedbackPort: Number(process.env.STAGECORE_VDMX_FEEDBACK_PORT),
+    feedbackSourcePort: process.env.STAGECORE_VDMX_FEEDBACK_SOURCE_PORT ? Number(process.env.STAGECORE_VDMX_FEEDBACK_SOURCE_PORT) : undefined,
     mappings: process.env.STAGECORE_VDMX_MAPPINGS ? JSON.parse(process.env.STAGECORE_VDMX_MAPPINGS) : undefined,
     inputPath: process.env.STAGECORE_VDMX_INPUT,
     queryPath: process.env.STAGECORE_VDMX_QUERY_PATH,

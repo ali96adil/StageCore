@@ -118,12 +118,20 @@ test("VDMX receiver needs the application event and readback, then reconnect acc
   reservation.bind(0, "127.0.0.1"); await once(reservation, "listening");
   const feedbackPort = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
+  const spoofer = dgram.createSocket("udp4");
+  spoofer.bind(0, "127.0.0.1"); await once(spoofer, "listening");
+  t.after(() => spoofer.close());
   udp.on("message", async packet => {
     writes++;
     const next = packet.readFloatBE(packet.length - 4);
     assert.deepEqual(packet, floatOSC(inputPath, next));
     if (mode === "missing") return;
     await sleep(20);
+    if (mode === "forged") {
+      value = next; // Even matching OSCQuery readback must not authenticate a forged sender.
+      spoofer.send(floatOSC(feedbackPath, next), feedbackPort, "127.0.0.1");
+      return;
+    }
     if (mode === "correct") value = next;
     udp.send(floatOSC(feedbackPath, next), feedbackPort, "127.0.0.1");
   });
@@ -159,6 +167,17 @@ test("VDMX receiver needs the application event and readback, then reconnect acc
   assert.equal(writes, 3);
   assert.equal((await pumpUntil(poll, send("already-set", 0.5, 350))).status, 504);
   assert.equal(writes, 3);
+
+  // Optional source-port pin is backward-compatible, but prevents an
+  // unrelated local UDP sender from satisfying this receiver's feedback.
+  await assert.rejects(openVDMXReceiver({...config, feedbackSourcePort: feedbackPort}), /invalid dedicated/);
+  receiver.close();
+  receiver = await openVDMXReceiver({...config, feedbackSourcePort: udp.address().port});
+  mode = "forged";
+  assert.equal((await pumpUntil(poll, send("forged-control-echo", 0.75, 350))).status, 504);
+  mode = "correct";
+  assert.equal((await pumpUntil(poll, send("genuine-source", 1))).status, 200);
+  assert.equal(writes, 5);
 });
 
 test("opt-in Clip ACK requires exact Live playback after fire, without replaying or acknowledging a queued launch", async t => {

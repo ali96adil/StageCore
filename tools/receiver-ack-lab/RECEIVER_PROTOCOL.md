@@ -141,6 +141,16 @@ produces no applied receipt. These receipts cover the property itself. Clip,
 scene, media and rendering commands without independently attributable
 application feedback have no ACK mapping here.
 
+To reduce accidental or forged loopback feedback, a VDMX lab mapping can
+optionally set `STAGECORE_VDMX_FEEDBACK_SOURCE_PORT` to the actual **UDP
+source port** of the dedicated VDMX OSC sender (not the receiver's destination
+port). Only feedback packets from that loopback source port then count toward
+the receipt. Invalid ports fail at startup; an unexpected sender produces
+timeout/unconfirmed. The original configuration remains supported when this
+option is absent, but the unpinned feedback has weaker attribution. UDP
+source-port pinning is **not authentication** and neither mode proves
+playback or rendering.
+
 The VDMX receiver supports **Control Surface value confirmation only**.
 An optional mapping `proofKind` may be `CONTROL_VALUE_ONLY`; attempting
 `MEDIA_PLAYBACK`, `RENDER_FRAME`, or an unrecognized proof kind fails
