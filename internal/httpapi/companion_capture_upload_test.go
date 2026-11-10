@@ -283,3 +283,36 @@ func captureUploadManifest() executionenv.Manifest {
 		},
 	}
 }
+
+func TestCompanionCaptureUploadCannotCompleteAfterShowStarts(t *testing.T) {
+	// The bulk reader's mode deliberately stays at EDIT. Final acceptance must
+	// use the persisted session state, even when a reader's mode view is stale.
+	h := newCaptureUploadHarness(t, bulk.ModeEdit)
+	payload := []byte("capture at the SHOW boundary")
+	ticket := h.ticket(t, "capture-show-admission", payload)
+	var show domain.Session
+	reader := &releaseAssignmentReader{source: bytes.NewReader(payload), release: func() {
+		var err error
+		show, err = h.store.StartOperationalSession(h.ctx, h.runtimeSnapshotID, domain.SessionShow, "SHOW", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	h.handler.ServeHTTP(res, h.request(ticket, reader, int64(len(payload))))
+	if res.Code != http.StatusLocked {
+		t.Fatalf("capture completed during SHOW: %d %s", res.Code, res.Body)
+	}
+	stored, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
+	if err != nil || stored.Status != store.CompanionUploadTicketActive {
+		t.Fatalf("blocked capture should remain retryable: %+v, %v", stored, err)
+	}
+	if err := h.store.EndSession(h.ctx, show.ID, domain.SessionCompleted); err != nil {
+		t.Fatal(err)
+	}
+	res = httptest.NewRecorder()
+	h.handler.ServeHTTP(res, h.request(ticket, bytes.NewReader(payload), int64(len(payload))))
+	if res.Code != http.StatusCreated {
+		t.Fatalf("capture retry after SHOW: %d %s", res.Code, res.Body)
+	}
+}

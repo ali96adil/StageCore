@@ -291,6 +291,13 @@ func (s *Store) CompleteCompanionUploadTicket(
 		}
 		return CompanionUploadTicket{}, fmt.Errorf("%w: upload ticket authority is no longer current", domain.ErrConflict)
 	}
+	mode, err := ActiveOperationalSessionTypeInTransaction(ctx, tx)
+	if err != nil {
+		return CompanionUploadTicket{}, err
+	}
+	if mode == domain.SessionShow {
+		return CompanionUploadTicket{}, domain.ErrShowConfigurationLocked
+	}
 	if ticket.ExpectedContentHash != actualContentHash || ticket.ExpectedSizeBytes != actualSizeBytes {
 		return CompanionUploadTicket{}, fmt.Errorf("%w: verified upload identity does not match ticket", domain.ErrConflict)
 	}

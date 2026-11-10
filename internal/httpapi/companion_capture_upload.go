@@ -129,6 +129,10 @@ func handleCompanionCaptureUpload(
 	)
 	if err != nil {
 		manager.Fail(jobID, "capture upload authority changed before completion")
+		if errors.Is(err, domain.ErrShowConfigurationLocked) {
+			writeJSON(w, http.StatusLocked, map[string]any{"error_code": "BULK_TRANSFER_BLOCKED_SHOW"})
+			return
+		}
 		_, _ = v.RemoveObjectIfUnreferenced(r.Context(), object.ContentHash)
 		if errors.Is(err, domain.ErrConflict) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CAPTURE_UPLOAD_COMPLETION_REJECTED"})
