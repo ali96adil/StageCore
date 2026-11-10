@@ -175,3 +175,25 @@ func memoryMutationRequest(method, path string, body []byte, token, csrf string)
 	}
 	return req
 }
+
+func TestOperatorNoteWriteRejectsRevokedBrowserSession(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	handler := New(WithOperatorMemory(f.h.auth, f.projects, sessionmemory.New(f.projects))).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/notes",
+		[]byte(`{"body":"revoked note"}`), f.owner.Token, f.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked note write returned %d: %s", res.Code, res.Body)
+	}
+	notes, err := f.projects.ListNotes(ctx, f.projectID, store.NoteFilter{})
+	if err != nil || len(notes) != 0 {
+		t.Fatalf("revoked request changed notes: %+v, %v", notes, err)
+	}
+}
