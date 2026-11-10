@@ -280,6 +280,10 @@ async function f028ReviewSegments(button, projectID, refresh) {
 
 async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "") {
   if (!state.project) return;
+  const reviewUser = state.user;
+  const reviewProjectID = state.project.project_id;
+  const isCurrentReview = () => state.user === reviewUser &&
+    state.project?.project_id === reviewProjectID && state.page === "timing";
   setPage("timing");
   setMessage(globalMessage, "");
   f028UpdateNav();
@@ -292,11 +296,15 @@ async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "
       api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues`),
     ]);
   } catch (error) {
+    if (!isCurrentReview()) return;
     content.innerHTML = `<div class="page-head"><div><p class="eyebrow">${esc(f028T("timing.eyebrow"))}</p><h1>${esc(f028T("timing.title"))}</h1><p>${esc(f028T("timing.subtitle"))}</p></div><button id="timingRefresh" class="button" type="button">${esc(f028T("timing.refresh"))}</button></div><section class="card"><div class="empty">${esc(error.status === 404 ? f028T("timing.no_snapshot") : errorMessage(error))}</div></section>`;
     el("timingRefresh")?.addEventListener("click", () => renderTimingIntelligenceWorkspace());
     return;
   }
 
+  // Ignore an old Project's report after a user, Project, or page switch.
+  // Backend ACL protects the response; this prevents stale browser display.
+  if (!isCurrentReview()) return;
   const cues = (cuePayload.cues || []).filter((cue) => cue.enabled !== false).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
   const leadTime = f028LeadTime();
   content.innerHTML = `
