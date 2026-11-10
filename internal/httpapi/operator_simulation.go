@@ -146,12 +146,12 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		writeJSON(w, http.StatusOK, map[string]any{"session": updated, "verified": false})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/checkpoints", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/checkpoints", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		active, ok := activeSimulationSession(w, r, control)
 		if !ok {
 			return
 		}
-		checkpoint, err := control.CaptureCheckpoint(r.Context(), active.ID)
+		checkpoint, err := control.CaptureCheckpoint(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID)
 		if err != nil {
 			writeSimulationError(w, err)
 			return
@@ -159,7 +159,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		writeJSON(w, http.StatusCreated, map[string]any{"checkpoint": checkpoint})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/restore", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/restore", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body simulationCheckpointRestoreRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -168,7 +168,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		checkpoint, err := control.RestoreCheckpoint(r.Context(), active.ID, body.CheckpointID)
+		checkpoint, err := control.RestoreCheckpoint(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.CheckpointID)
 		if err != nil {
 			writeSimulationError(w, err)
 			return
