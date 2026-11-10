@@ -1307,10 +1307,10 @@ async function renderRuntime(startPolling = false) {
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
   el("editBlackoutButton")?.addEventListener("click", () => setProjectBlackoutRuntime(true));
   el("editBlackoutClearButton")?.addEventListener("click", () => setProjectBlackoutRuntime(false));
-  el("goButton")?.addEventListener("click", goRuntime);
+  el("goButton")?.addEventListener("click", () => goRuntime(projectID, runtime));
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
   el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
-  el("jumpButton")?.addEventListener("click", jumpRuntime);
+  el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
   el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
   if (startPolling) startRuntimePolling();
@@ -1341,12 +1341,16 @@ async function startRuntime(mode) {
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
 
-async function goRuntime() {
+async function goRuntime(projectID, runtime) {
+  if (encodeURIComponent(state.project?.project_id || "") !== projectID || !runtime.session?.session_id) return;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
+    await api(`/api/v1/projects/${projectID}/runtime/go`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null },
+      json: {
+        request_id: requestID(),
+        expected_session_id: runtime.session.session_id,
+        expected_current_cue_id: runtime.current_cue?.cue_id || null,
+      },
     });
     await renderRuntime(true);
   } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
@@ -1401,20 +1405,21 @@ async function setEmergencyBlackoutRuntime(enabled) {
   }
 }
 
-async function jumpRuntime() {
+async function jumpRuntime(projectID, runtime) {
+  if (encodeURIComponent(state.project?.project_id || "") !== projectID || !runtime.session?.session_id) return;
   const cueID = el("jumpCueSelect")?.value;
   if (!cueID) {
     setMessage(globalMessage, "Choose a published Cue before Jump.", "warn");
     return;
   }
-  const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
   const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
   if (!confirm(`Jump runtime to “${label?.name || cueID}”? This is an explicit operator override.`)) return;
   try {
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
+    await api(`/api/v1/projects/${projectID}/runtime/jump`, {
       method: "POST",
       json: {
         request_id: requestID(), cue_id: cueID,
+        expected_session_id: runtime.session.session_id,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         confirm: true,
       },

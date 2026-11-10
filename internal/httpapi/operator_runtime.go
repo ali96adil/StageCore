@@ -23,6 +23,7 @@ type runtimeStartRequest struct {
 }
 
 type runtimeCommandRequest struct {
+	ExpectedSessionID    *string `json:"expected_session_id,omitempty"`
 	RequestID            string  `json:"request_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
@@ -43,6 +44,7 @@ type runtimeEmergencyBlackoutRequest struct {
 }
 
 type runtimeJumpRequest struct {
+	ExpectedSessionID    *string `json:"expected_session_id,omitempty"`
 	RequestID            string  `json:"request_id"`
 	CueID                string  `json:"cue_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
@@ -184,6 +186,10 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
+		if body.ExpectedSessionID != nil && active.ID != *body.ExpectedSessionID {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "RUNTIME_SESSION_CHANGED"})
+			return
+		}
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
 			return
 		}
@@ -215,6 +221,10 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if body.RehearsalSessionID != nil &&
 			(active.Type != domain.SessionRehearsal || active.ID != *body.RehearsalSessionID) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_CHECK_SESSION_CHANGED"})
+			return
+		}
+		if body.ExpectedSessionID != nil && active.ID != *body.ExpectedSessionID {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "RUNTIME_SESSION_CHANGED"})
 			return
 		}
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {

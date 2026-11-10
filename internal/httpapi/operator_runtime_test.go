@@ -119,6 +119,21 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatalf("unexpected start response: %+v", start)
 	}
 
+	for _, route := range []string{"go", "jump"} {
+		body := []byte(`{"request_id":"00000000-0000-7000-8000-000000000499","expected_session_id":"previous-session"}`)
+		if route == "jump" {
+			body = []byte(`{"request_id":"00000000-0000-7000-8000-000000000499","cue_id":"some-cue","confirm":true,"expected_session_id":"previous-session"}`)
+		}
+		req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/"+route, body, owner.Token, owner.CSRFToken)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "RUNTIME_SESSION_CHANGED") {
+			t.Fatalf("stale %s returned %d: %s", route, res.Code, res.Body)
+		}
+	}
+	if runs, err := projectStore.ListCueExecutions(ctx, start.Session.ID); err != nil || len(runs) != 0 {
+		t.Fatalf("stale commands dispatched cues: %+v, %v", runs, err)
+	}
 	goPayload, _ := json.Marshal(runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000402"})
 	goReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/go", goPayload, owner.Token, owner.CSRFToken)
 	goRes := httptest.NewRecorder()
