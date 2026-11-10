@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -244,7 +245,11 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 }
 
-func activeSimulationSession(w http.ResponseWriter, r *http.Request, control *simulationcontrol.Service) (domain.Session, bool) {
+type simulationStatusReader interface {
+	Status(context.Context, string) (simulationcontrol.Status, error)
+}
+
+func activeSimulationSession(w http.ResponseWriter, r *http.Request, control simulationStatusReader) (domain.Session, bool) {
 	status, err := control.Status(r.Context(), r.PathValue("project_id"))
 	if err != nil {
 		writeSimulationError(w, err)
