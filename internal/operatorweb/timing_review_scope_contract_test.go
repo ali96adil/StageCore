@@ -10,6 +10,8 @@ func TestTimingReviewWithholdsStaleProjectAndSessionDisplay(t *testing.T) {
 	for _, marker := range []string{
 		`const reviewUser = state.user;`,
 		`const reviewProjectID = state.project.project_id;`,
+		`const generation = ++f028RenderGeneration;`,
+		`generation === f028RenderGeneration`,
 		`state.user === reviewUser`,
 		`state.project?.project_id === reviewProjectID && state.page === "timing"`,
 		`if (!isCurrentReview()) return;`,

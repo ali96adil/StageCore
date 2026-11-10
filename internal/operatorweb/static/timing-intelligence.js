@@ -278,11 +278,17 @@ async function f028ReviewSegments(button, projectID, refresh) {
   });
 }
 
+// An earlier report for the same Project must not overwrite a newer
+// approval or changed section after overlapping asynchronous requests.
+let f028RenderGeneration = 0;
+
 async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "") {
   if (!state.project) return;
+  const generation = ++f028RenderGeneration;
   const reviewUser = state.user;
   const reviewProjectID = state.project.project_id;
-  const isCurrentReview = () => state.user === reviewUser &&
+  const isCurrentReview = () => generation === f028RenderGeneration &&
+    state.user === reviewUser &&
     state.project?.project_id === reviewProjectID && state.page === "timing";
   setPage("timing");
   setMessage(globalMessage, "");
