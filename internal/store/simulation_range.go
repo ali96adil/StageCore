@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -49,6 +50,9 @@ func (s *Store) ConfirmSimulationStartState(ctx context.Context, sessionID strin
 		"verified":           false,
 		"replay":             false,
 	}); err != nil {
+		return err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

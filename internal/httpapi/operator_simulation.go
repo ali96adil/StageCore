@@ -129,7 +129,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		result := control.Stop(r.Context(), simulationcontrol.StopRequest{SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID)})
+		result := control.Stop(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.StopRequest{SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID)})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -138,7 +138,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		updated, err := control.ConfirmStartState(r.Context(), active.ID, session.User.ID)
+		updated, err := control.ConfirmStartState(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, session.User.ID)
 		if err != nil {
 			writeSimulationError(w, err)
 			return
