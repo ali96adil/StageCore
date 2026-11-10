@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 	}
 	goStored, releaseGO := make(chan struct{}), make(chan struct{})
 	browserResult := make(chan string, 1)
-	var goRequests atomic.Int32
+	var goRequests sync.Map
 	goPath := "/api/v1/projects/" + project.ID + "/runtime/go"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -125,14 +126,23 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
 		case goPath:
-			n := goRequests.Add(1)
+			body, err := io.ReadAll(io.LimitReader(r.Body, 8192))
+			var command runtimeCommandRequest
+			if err != nil || json.Unmarshal(body, &command) != nil || command.RequestID == "" {
+				http.Error(w, "invalid GO fixture request", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			goRequests.Store(command.RequestID, true)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, r)
 			if rec.Code != http.StatusOK {
 				writeJSON(w, rec.Code, map[string]string{"error": rec.Body.String()})
 				return
 			}
-			if n == 1 {
+			select {
+			case <-goStored:
+			default:
 				close(goStored)
 				select {
 				case <-releaseGO:
@@ -185,7 +195,18 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 		output, _ := os.ReadFile(browserLog.Name())
 		t.Fatalf("browser did not finish: %s", output)
 	}
-	if n := goRequests.Load(); n != 2 {
-		t.Fatalf("expected exactly two GO requests, got %d", n)
+	// Chrome can resend a POST after a connection reset. A transport retry
+	// keeps the original request ID and must not create another execution.
+	count := 0
+	goRequests.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count != 2 {
+		t.Fatalf("expected exactly two logical GO requests, got %d", count)
+	}
+	traces, err := st.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(traces) != 3 {
+		t.Fatalf("want exactly three persisted executions, got %d: %v", len(traces), err)
 	}
 }
