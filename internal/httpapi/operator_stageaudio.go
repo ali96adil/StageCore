@@ -61,6 +61,12 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				if !authorize(r.WithContext(ctx), session, mutate) {
 					return capability.ErrDispatchAuthorityRevoked
 				}
+				if mutate {
+					active, err := checkRuntime(ctx)
+					if err != nil || active == domain.SessionShow {
+						return capability.ErrDispatchAuthorityRevoked
+					}
+				}
 				if rehearsalID != "" {
 					current, err := stageStore.ActiveSessionForProject(ctx, scope.ProjectID)
 					if err != nil || current == nil || current.ID != rehearsalID || current.Type != domain.SessionRehearsal {
@@ -199,7 +205,8 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
 			}
-			result, err := client.Call(guardDispatch(ctx, r, session, true, rehearsalID), command)
+			dispatch := guardDispatch(ctx, r, session, true, rehearsalID)
+			result, err := client.Call(dispatch, command)
 			revoked := errors.Is(err, capability.ErrDispatchAuthorityRevoked)
 			auditResult := securityaudit.ResultSuccess
 			reason := "LOCAL_COMMAND_ACK"
@@ -228,7 +235,7 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_COMMAND_FAILED"})
 				return
 			}
-			if !authorize(r, session, true) {
+			if capability.CheckDispatch(dispatch) != nil {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
 			}

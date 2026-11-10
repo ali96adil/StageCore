@@ -148,7 +148,8 @@ func TestStageAudioScopedLoadUsesOnlyBoundProjectVaultVersion(t *testing.T) {
 	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
 	published, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "owner")
 	if err != nil { t.Fatal(err) }
-	if _, err := s.CreateSession(ctx, published.ID, domain.SessionRehearsal, "scoped audio"); err != nil { t.Fatal(err) }
+	rehearsal, err := s.CreateSession(ctx, published.ID, domain.SessionRehearsal, "scoped audio")
+	if err != nil { t.Fatal(err) }
 	access, err := projectaccess.New(h.db.DB)
 	if err != nil { t.Fatal(err) }
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
@@ -176,6 +177,14 @@ func TestStageAudioScopedLoadUsesOnlyBoundProjectVaultVersion(t *testing.T) {
 	got := fake.calls[0]
 	if got.Operation != "LOAD_VAULT" || got.File != ours.Version.ContentHash || got.VaultVersionID != ours.Version.ID {
 		t.Fatalf("unexpected scoped sidecar request: %+v", got)
+	}
+	fake.onCall = func(stageaudio.Request) {
+		if err := s.EndSession(ctx, rehearsal.ID, domain.SessionCompleted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if send(project.ID, ours.Version.ID) != http.StatusNotFound || len(fake.calls) != 2 {
+		t.Fatal("scoped StageAudio reply escaped its ended rehearsal")
 	}
 }
 
