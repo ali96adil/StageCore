@@ -61,7 +61,8 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			if !validTemplateMaterializeBody(body.ProjectName, body.ProjectDescription, body.Locale, body.Values) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "SHOW_TEMPLATE_VALUES_INVALID"}); return
 			}
-			result, err := service.Materialize(r.Context(), strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
+			result, err := service.Materialize(ctx, strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
 			if err != nil { writeShowTemplateError(w, err); return }
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result})
 		}))
@@ -81,7 +82,8 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			if len(body.Template) == 0 || len(body.Template) > 2<<20 || !validTemplateMaterializeBody(body.ProjectName, body.ProjectDescription, body.Locale, body.Values) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "SHOW_TEMPLATE_DOCUMENT_INVALID"}); return
 			}
-			result, compatibility, err := service.MaterializeDocument(r.Context(), body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
+			result, compatibility, err := service.MaterializeDocument(ctx, body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
 			if err != nil { writeShowTemplateError(w, err); return }
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result, "compatibility": compatibility})
 		}))
@@ -101,6 +103,9 @@ func validTemplateMaterializeBody(name, description, locale string, values map[s
 }
 
 func writeShowTemplateError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, showtemplate.ErrTemplateNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "SHOW_TEMPLATE_NOT_FOUND"})

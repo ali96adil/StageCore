@@ -190,6 +190,8 @@ var ownerRouteQualification = map[string]bool{
 	"POST " + projectRoute + "/tablet-controller/live-flash":                                 true,
 	"POST " + projectRoute + "/usb-dmx/manual":                                               true,
 	"POST /api/v1/projects": true,
+	"POST /api/v1/show-templates/{template_id}/materialize": true,
+	"POST /api/v1/show-templates/import/materialize": true,
 	"POST /api/v1/show-capsules/imports/{capsule_id}/materialize": true,
 	"PUT " + projectRoute + "/access/users/{user_id}":             true,
 }

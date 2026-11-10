@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/showtemplate"
+	"github.com/ali96adil/StageCore/internal/store"
 )
 
 type fakeShowTemplateService struct {
@@ -103,4 +105,36 @@ func TestShowTemplateAPIAuthenticationRBACAndCSRF(t *testing.T) {
 	viewerValidate.RemoteAddr = "127.0.0.1:21007"; viewerValidate.Header.Set("Content-Type", "application/json"); viewerValidate.Header.Set(csrfHeader, viewer.CSRFToken); viewerValidate.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: viewer.Token})
 	viewerValidateRes := httptest.NewRecorder(); handler.ServeHTTP(viewerValidateRes, viewerValidate)
 	if viewerValidateRes.Code != http.StatusOK || service.validateCalls != 1 { t.Fatalf("viewer validate status=%d calls=%d body=%s", viewerValidateRes.Code, service.validateCalls, viewerValidateRes.Body.String()) }
+}
+
+func TestShowTemplateDraftRollsBackWhenBrowserSessionEnds(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := store.New(h.db.DB, clock.Real{})
+	service, err := showtemplate.NewService(projects, showtemplate.BuiltinCatalog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorShowTemplates(h.auth, service)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/show-templates/stagecore.starter.rehearsal/materialize",
+		[]byte(`{"project_name":"Revoked draft"}`), login.Token, login.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked template response=%d body=%s", res.Code, res.Body)
+	}
+	drafts, err := projects.ListProjects(ctx)
+	if err != nil || len(drafts) != 0 {
+		t.Fatalf("revoked template left projects=%+v err=%v", drafts, err)
+	}
 }
