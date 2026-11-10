@@ -153,3 +153,55 @@ test("VDMX receiver needs the application event and readback, then reconnect acc
   assert.equal((await pumpUntil(poll, send("already-set", 0.5, 350))).status, 504);
   assert.equal(writes, 3);
 });
+
+test("opt-in Clip ACK requires exact Live playback after fire, without replaying or acknowledging a queued launch", async t => {
+  const {port, dispatch} = await harness(t, "ABLETON");
+  const script = fs.readFileSync(__dirname + "/stagecore_live_track.js", "utf8");
+  const handlers = new Map();
+  let clipID = 14, playing = 0, playingSlot = -1, fires = 0, mode = "plays";
+  const context = vm.createContext({
+    LiveAPI: class {
+      constructor(_, path) {
+        this.id = path === "this_device canonical_parent" ? 7 : Number(path.slice(3));
+        this.type = this.id === 7 ? "Track" : this.id === 8 ? "ClipSlot" : "Clip";
+      }
+      get(property) {
+        return {name:["StageCore Test"], can_be_armed:[0], clip_slots:["id", 8],
+          has_clip:[1], clip:["id", clipID], is_triggered:[0], is_recording:[0],
+          is_playing:[playing], playing_slot_index:[playingSlot]}[property];
+      }
+      call(method) {
+        assert.equal(this.type, "ClipSlot");
+        assert.equal(method, "fire");
+        fires++;
+        if (mode === "plays") setTimeout(() => {playing = 1; playingSlot = 0;}, 50);
+      }
+    },
+    Task: class {
+      constructor(fn) { this.fn = fn; }
+      schedule(delay) { setTimeout(this.fn, delay).unref(); }
+    },
+    outlet(_index, name, ...args) {handlers.get(name)(...args);}
+  });
+  vm.runInContext(script, context);
+  registerLiveReceiver({
+    addHandler(name, fn) {handlers.set(name, fn);},
+    async outlet(name, phase, ticket, ...args) {
+      if (phase === "apply" && mode === "rebound") clipID++;
+      context[name](phase, ticket, ...args);
+    },
+    post() {},
+  }, {port, token, trackName:"StageCore Test", allowClip:true});
+  const fire = (id, timeout) => dispatch(id, "/stagecore/ableton/clip/fire", {type:"int32", value:0}, timeout);
+  const run = (id, timeout) => pumpUntil(handlers.get("poll"), fire(id, timeout));
+  assert.equal((await run("plays")).status, 200);
+  assert.equal(fires, 1);
+  assert.equal((await run("already-playing", 350)).status, 504);
+  assert.equal(fires, 1);
+  playing = 0; playingSlot = -1; mode = "rebound";
+  assert.equal((await run("rebound", 350)).status, 504);
+  assert.equal(fires, 1);
+  mode = "queued";
+  assert.equal((await run("queued", 350)).status, 504);
+  assert.equal(fires, 2);
+});

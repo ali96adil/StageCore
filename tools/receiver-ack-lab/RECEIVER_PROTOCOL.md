@@ -147,3 +147,16 @@ exclusive control and distinct feedback route. Shared and duplicate paths
 are rejected. The previous single-mapping environment remains supported
 when the array is absent. All mappings retain Float32 0–1, matching feedback
 and matching readback. On installation, commission every mapping separately.
+
+### Ableton Clip playback mapping
+
+The Max receiver can opt into `/stagecore/ableton/clip/fire` with
+`STAGECORE_LIVE_ALLOW_CLIP=1` and one Int32 zero-based Session View slot
+index (0–255). Use a dedicated track whose Clip launches are exclusively
+owned by this receiver. The receiver refuses armed tracks, empty slots,
+already-triggered or playing Clips, and changed track, slot or Clip IDs.
+It fires once. `APP_REPORTED_APPLIED` requires later Live API readback of
+both the matching playing slot and the exact non-recording Clip's playing
+state within the command deadline. A launch queued beyond the deadline is
+unconfirmed and is not fired again. Installed Live/Max testing remains
+required for quantized playback and scheduler behavior.
