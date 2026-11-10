@@ -139,8 +139,14 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (domain.Session, 
 	if err != nil {
 		return finish(domain.Session{}, fromStoreError(command.CommandID, "SIMULATION_START_FAILED", err, snapshot.ID))
 	}
+	// This is a compensating rollback for a Session created by this very
+	// Start call. In particular, a grant revoked after the Session insert may
+	// reject the later event insert. Reusing the request's write authorization
+	// here would also reject rollback, leaving an unauthorized active Session.
+	// Only abort the freshly created Session ID; never use this context for
+	// a requested mutation, a new Session, or any external output.
 	abort := func(reason string) {
-		_ = s.store.EndSessionLifecycle(context.WithoutCancel(ctx), session.ID, domain.SessionLifecycleAborted, reason)
+		_ = s.store.EndSessionLifecycle(context.Background(), session.ID, domain.SessionLifecycleAborted, reason)
 	}
 	if err := s.twin.BindSession(session); err != nil {
 		abort("DIGITAL_TWIN_BIND_FAILED")
