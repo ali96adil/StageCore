@@ -19,11 +19,11 @@ func TestAssistantPreviewDoesNotReturnSealedProposalAfterProjectGrantRevocation(
 	ctx := context.Background()
 	access, err := projectaccess.New(h.auth.db.DB)
 	if err != nil { t.Fatal(err) }
-	operator, err := h.auth.auth.CreateUser(ctx, "assistant-revoked-preview", h.auth.password, userauth.RoleOperator)
+	operator, err := h.auth.auth.CreateUser(ctx, "assistant-revoked-preview", h.auth.password, userauth.RoleTechnician)
 	if err != nil { t.Fatal(err) }
 	login, err := h.auth.auth.Login(ctx, operator.Username, h.auth.password, "127.0.0.1")
 	if err != nil { t.Fatal(err) }
-	if err := access.SetPermissions(ctx, h.owner.Session.User.ID, operator.ID, h.project.ID, []projectaccess.Permission{projectaccess.ProjectView}); err != nil { t.Fatal(err) }
+	if err := access.SetPermissions(ctx, h.owner.Session.User.ID, operator.ID, h.project.ID, []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil { t.Fatal(err) }
 	handler := New(WithProjectRouteQualification(access), WithOperatorConfigurationDraft(h.auth.auth, h.stageStore, h.audit)).Handler()
 	proposal := proposalWithPayload(h.revision.ID, assistant.ProposalNoteDraft, "Preview private note", `{"category":"assistant","body":"Secret note"}`)
 	payload, err := json.Marshal(assistantProposalRequest{Proposal: proposal})
