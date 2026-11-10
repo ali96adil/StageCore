@@ -105,7 +105,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}))
 
 
-		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/stage-devices/{device_id}/show-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/stage-devices/{device_id}/show-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			if projectID == "" || deviceID == "" {
@@ -126,8 +126,11 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_REQUIRED"})
 				return
 			}
-			assignment, err := devices.SetRequiredForShow(r.Context(), deviceID, projectID, *input.RequiredForShow)
+			assignment, err := devices.SetRequiredForShow(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure), deviceID, projectID, *input.RequiredForShow)
 			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
 				status := http.StatusConflict
 				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 					status = http.StatusBadRequest
@@ -635,9 +638,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_DECOMMISSION_CONFIRMATION_REQUIRED"})
 				return
 			}
-			record, err := devices.DecommissionOfflineTablet(r.Context(), deviceID, session.User.ID, input.Reason)
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionCompanionRevoke)
+			record, err := devices.DecommissionOfflineTablet(writeCtx, deviceID, session.User.ID, input.Reason)
 			if err != nil {
 				status := http.StatusConflict
+				if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
+					return
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					status = http.StatusNotFound
 				} else if errors.Is(err, deviceexperience.ErrInvalidDevice) {
@@ -817,10 +825,13 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LEGACY_V2_MIGRATION_CONFIRMATION_REQUIRED"})
 				return
 			}
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair)
 			record, err := devices.MigrateLegacyLightingToV2Blocked(
-				r.Context(), deviceID, projectID, session.User.ID)
+				writeCtx, deviceID, projectID, session.User.ID)
 			if err != nil {
 				switch {
+				case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
 				case errors.Is(err, sql.ErrNoRows):
 					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				case errors.Is(err, deviceexperience.ErrInvalidState):

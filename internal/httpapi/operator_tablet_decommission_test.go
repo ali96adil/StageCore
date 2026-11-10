@@ -39,6 +39,22 @@ func TestOperatorCanDecommissionOfflineV2TabletWithExplicitOwnerConfirmation(t *
 	}
 
 	path := "/api/v1/stage-devices/stale-tablet-api/decommission"
+	revoked := authenticatedMutationRequest(t, http.MethodPost, path,
+		[]byte(`{"confirm":"DECOMMISSION_OFFLINE_TABLET","reason":"revoked"}`), owner.Token, owner.CSRFToken)
+	revoked.Body = &firmwareUploadRevokeReader{ReadCloser: revoked.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, revoked)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("revoked decommission got %d: %s", denied.Code, denied.Body)
+	}
+	owner, err = h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{"confirm":"DECOMMISSION_OFFLINE_TABLET","reason":"clean reinstall"}`))
 	req.RemoteAddr = "127.0.0.1:19140"
 	req.Header.Set("Content-Type", "application/json")

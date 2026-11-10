@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -42,10 +43,10 @@ func (r *Repository) MigrateLegacyLightingToV2Blocked(
 	defer tx.Rollback()
 
 	var (
-		deviceProject, profileID, kind, protocol string
+		deviceProject, profileID, kind, protocol       string
 		assignmentProject, assignmentState, snapshotID string
-		enabled int
-		epoch int64
+		enabled                                        int
+		epoch                                          int64
 	)
 	err = tx.QueryRowContext(ctx, `
 		SELECT COALESCE(d.project_id,''), COALESCE(d.profile_id,''),
@@ -147,15 +148,18 @@ func (r *Repository) MigrateLegacyLightingToV2Blocked(
 		return LegacyLightingV2Migration{}, fmt.Errorf("record legacy v2 migration audit: %w", err)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return LegacyLightingV2Migration{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return LegacyLightingV2Migration{}, fmt.Errorf("commit legacy v2 migration: %w", err)
 	}
 	return LegacyLightingV2Migration{
 		MigrationID: migrationID,
-		DeviceID: deviceID,
-		ProjectID: projectID,
-		FromEpoch: epoch,
-		ToEpoch: nextEpoch,
-		NextState: "BLOCKED",
+		DeviceID:    deviceID,
+		ProjectID:   projectID,
+		FromEpoch:   epoch,
+		ToEpoch:     nextEpoch,
+		NextState:   "BLOCKED",
 	}, nil
 }
