@@ -66,10 +66,14 @@ function actionTraceCard(action) {
     </article>`;
 }
 
-async function renderSessionDetail(sessionID) {
-  const detail = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/sessions/${encodeURIComponent(sessionID)}`);
+async function renderSessionDetail(sessionID, executionID = "") {
+  const user = state.user;
+  const projectID = state.project.project_id;
+  const detail = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/sessions/${encodeURIComponent(sessionID)}`);
+  if (state.user !== user || state.project?.project_id !== projectID || state.page !== "sessions") return;
   const session = detail.session;
-  const cues = detail.cue_executions || [];
+  const traces = detail.cue_executions || [];
+  const cues = executionID ? traces.filter((cue) => cue.cue_execution_id === executionID) : traces;
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">SESSION TRACE · ${esc(session.session_type)}</p><h1>${esc(session.name || "Unnamed Session")}</h1><p>${esc(fmtDate(session.started_at))} → ${session.ended_at ? esc(fmtDate(session.ended_at)) : "active"}</p></div>
@@ -89,7 +93,7 @@ async function renderSessionDetail(sessionID) {
           <div class="meta" style="margin-top:10px"><span>${esc(fmtDate(cue.started_at))}</span><span>Trigger ${esc(cue.trigger_source || "—")}</span></div>
           <p class="mono muted" style="margin-top:8px">${esc(cue.cue_execution_id)}</p>
           <div class="actions-editor" style="margin-top:14px">${(cue.actions || []).length ? cue.actions.map(actionTraceCard).join("") : `<div class="empty">Cue had no Action executions.</div>`}</div>
-        </article>`).join("") : `<div class="empty">No Cue executions were recorded for this Session.</div>`}
+        </article>`).join("") : `<div class="empty">${executionID ? "This execution was not found in the session trace." : "No Cue executions were recorded for this Session."}</div>`}
     </div>`;
   el("backSessions").addEventListener("click", () => renderSessions().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
 }

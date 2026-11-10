@@ -1175,12 +1175,29 @@ function runtimeReadinessGroupTitle(group) {
 }
 
 async function renderRuntime(startPolling = false) {
+  const user = state.user;
   const projectID = encodeURIComponent(state.project.project_id);
   const [runtime, preflight] = await Promise.all([
     api(`/api/v1/projects/${projectID}/runtime`),
     api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
   ]);
+  if (state.page !== "runtime" || state.user !== user || encodeURIComponent(state.project?.project_id || "") !== projectID) return;
   const active = runtime.session;
+  const remembered = state.runtimeCueReceipt;
+  const receipt = remembered?.user === user && remembered.projectID === projectID &&
+    remembered.sessionID === active?.session_id ? remembered : null;
+  const traceID = receipt ? receipt.result?.payload?.cue_execution_id : runtime.latest_execution?.cue_execution_id;
+  const failedAction = receipt?.result?.payload?.failed_action;
+  const receiptMarkup = receipt || traceID ? `
+    <section class="card">
+      <div class="section-title-row"><h2>Cue delivery</h2>
+        ${traceID ? '<button id="runtimeCueTrace" type="button" class="button ghost">Inspect execution</button>' : ""}
+      </div>
+      ${receipt ? `<p><strong>${esc(receipt.operation.toUpperCase())} · ${esc(receipt.result?.status || receipt.status)}</strong>
+        <span class="mono">${esc(receipt.requestID)}</span></p>
+        ${receipt.message ? `<p>${esc(receipt.message)}</p>` : ""}
+        ${failedAction ? `<p>${esc(failedAction.error_code)} · ${esc(failedAction.response_summary)}</p>` : ""}` : ""}
+    </section>` : "";
   const rehearsalPurpose = el("rehearsalPurpose")?.value || "PREVIEW";
   const timingLocale = document.documentElement.lang.startsWith("ar");
   const rehearsalLabel = timingLocale ? "هدف البروفة" : "Rehearsal purpose";
@@ -1300,6 +1317,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    ${receiptMarkup}
     ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
@@ -1313,6 +1331,11 @@ async function renderRuntime(startPolling = false) {
   el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
   el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
+  el("runtimeCueTrace")?.addEventListener("click", async () => {
+    setPage("sessions");
+    try { await renderSessionDetail(active.session_id, traceID); }
+    catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  });
   if (startPolling) startRuntimePolling();
 }
 
@@ -1342,18 +1365,37 @@ async function startRuntime(mode) {
 }
 
 async function goRuntime(projectID, runtime) {
-  if (encodeURIComponent(state.project?.project_id || "") !== projectID || !runtime.session?.session_id) return;
+  await dispatchRuntimeCue(projectID, runtime, "go");
+}
+
+async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
+  const user = state.user;
+  const sessionID = runtime.session?.session_id;
+  const matches = () => state.user === user && encodeURIComponent(state.project?.project_id || "") === projectID;
+  if (!matches() || !sessionID) return;
+  const receipt = { user, projectID, sessionID, operation, requestID: requestID(), status: "PENDING" };
+  state.runtimeCueReceipt = receipt;
   try {
-    await api(`/api/v1/projects/${projectID}/runtime/go`, {
+    const response = await api(`/api/v1/projects/${projectID}/runtime/${operation}`, {
       method: "POST",
       json: {
-        request_id: requestID(),
-        expected_session_id: runtime.session.session_id,
+        ...extra,
+        request_id: receipt.requestID,
+        expected_session_id: sessionID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
       },
     });
-    await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+    receipt.result = response?.result;
+    receipt.status = "UNCONFIRMED";
+  } catch (error) {
+    receipt.result = error.payload?.result;
+    receipt.status = error.status ? `HTTP ${error.status}` : "UNCONFIRMED";
+    receipt.message = error.status ? errorMessage(error) :
+      "Delivery unconfirmed. Check Session History before sending another command.";
+  }
+  if (!matches() || state.runtimeCueReceipt !== receipt || state.page !== "runtime") return;
+  try { await renderRuntime(true); }
+  catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
 async function stopCueRuntime() {
@@ -1414,18 +1456,7 @@ async function jumpRuntime(projectID, runtime) {
   }
   const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
   if (!confirm(`Jump runtime to “${label?.name || cueID}”? This is an explicit operator override.`)) return;
-  try {
-    await api(`/api/v1/projects/${projectID}/runtime/jump`, {
-      method: "POST",
-      json: {
-        request_id: requestID(), cue_id: cueID,
-        expected_session_id: runtime.session.session_id,
-        expected_current_cue_id: runtime.current_cue?.cue_id || null,
-        confirm: true,
-      },
-    });
-    await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  await dispatchRuntimeCue(projectID, runtime, "jump", { cue_id: cueID, confirm: true });
 }
 
 async function stopSessionRuntime() {

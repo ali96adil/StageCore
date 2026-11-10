@@ -43,7 +43,7 @@ jobs:
           node --check internal/operatorweb/static/lighting-authoring.js
           node --check internal/operatorweb/static/tablet-controller.js
           node --check internal/operatorweb/static/project-files.js
-          node --test tests/lighting_preview.test.js tests/cue_recovery.test.js
+          node --test tests/lighting_preview.test.js tests/cue_recovery.test.js tests/cue_delivery.test.js
           node --test tools/receiver-ack-lab/*.test.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
