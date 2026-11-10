@@ -89,6 +89,7 @@ type Service struct {
 	// Block GO while a STOP/Session exit is in flight so no new Cue is
 	// admitted after the STOP snapshot has been taken.
 	stopping map[string]bool
+	blackoutClears map[string]context.CancelFunc
 	projectOutputTransitions map[string]struct{}
 }
 
@@ -146,6 +147,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
 		stopping: make(map[string]bool),
+		blackoutClears: make(map[string]context.CancelFunc),
 		projectOutputTransitions: make(map[string]struct{}),
 	}
 	for _, option := range options {
@@ -738,6 +740,15 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		})
 	}
 
+	var clearCtx context.Context
+	if !req.Enabled {
+		var release func()
+		clearCtx, release = s.beginBlackoutClear(ctx, session.ID)
+		if release == nil {
+			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Session safety transition is in progress", session.ID))
+		}
+		defer release()
+	}
 	current, stateErr := s.store.SessionManagedOutputBlackout(ctx, session.ID)
 	if stateErr != nil {
 		return finish(failed(command.CommandID, "EMERGENCY_BLACKOUT_STATE_FAILED"))
@@ -770,12 +781,14 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	}
 
 	// Send the managed safe-state commands before waiting on canceled Cues.
-	report, safetyErr := s.emergencySafety(ctx, session, command, req.Enabled)
+	safetyCtx := ctx
+	if clearCtx != nil {
+		safetyCtx = clearCtx
+	}
+	report, safetyErr := s.emergencySafety(safetyCtx, session, command, req.Enabled)
 	cueStopErr := waitForCueRuns(ctx, runs)
 	if !req.Enabled && safetyErr == nil {
-		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, false, req.Issuer); err != nil {
-			safetyErr = fmt.Errorf("clear emergency blackout latch: %w", err)
-		}
+		safetyErr = clearCtx.Err()
 	}
 
 	eventType := "runtime.emergency_blackout.cleared"
@@ -788,13 +801,13 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	if len(eventPayload) == 0 {
 		eventPayload = json.RawMessage(`{}`)
 	}
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
-	})
-
+	}
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload}
 	if cueStopErr != nil || safetyErr != nil {
 		message := "managed-output Emergency Blackout completed with a partial failure"
 		if !req.Enabled {
@@ -807,19 +820,40 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		if safetyErr != nil {
 			details = append(details, safetyErr.Error())
 		}
-		return finish(contracts.CommandResult{
+		result = contracts.CommandResult{
 			CommandID: command.CommandID, Status: contracts.CommandFailed, Payload: eventPayload,
 			Error: &contracts.ContractError{
 				ErrorCode: "EMERGENCY_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
 				Message: message + ": " + strings.Join(details, "; "),
 				Retryable: true, AffectedEntityID: session.ID,
 			},
-		})
+		}
 	}
 
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload,
-	})
+	recordCtx := context.WithoutCancel(ctx)
+	clearActor := ""
+	if !req.Enabled && safetyErr == nil {
+		recordCtx = clearCtx
+		clearActor = strings.TrimSpace(req.Issuer)
+	}
+	if err := s.store.CompleteSessionBlackout(recordCtx, session.ID, clearActor, event, result); err != nil {
+		if req.Enabled {
+			return finish(resultFromStoreError(command.CommandID, "EMERGENCY_BLACKOUT_COMMIT_FAILED", err, session.ID))
+		}
+		// A device clear may already have been attempted. Preserve the
+		// partial-failure contract and keep the persisted GO latch set.
+		event.EventType = "runtime.emergency_blackout.clear_failed"
+		result.Status = contracts.CommandFailed
+		result.Error = &contracts.ContractError{
+			ErrorCode: "EMERGENCY_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
+			Message: "managed-output Emergency Blackout clear could not be committed; safety latch remains active",
+			Retryable: true, AffectedEntityID: session.ID,
+		}
+		if err := s.store.CompleteSessionBlackout(context.WithoutCancel(ctx), session.ID, "", event, result); err != nil {
+			return finish(result)
+		}
+	}
+	return result
 }
 
 func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.CommandResult {
@@ -876,6 +910,24 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
 
+// A clear is subordinate to STOP or a new blackout. Cancellation reaches
+// device dispatch and prevents its later latch write from committing.
+func (s *Service) beginBlackoutClear(ctx context.Context, sessionID string) (context.Context, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] || s.blackoutClears[sessionID] != nil {
+		return nil, nil
+	}
+	clearCtx, cancel := context.WithCancel(ctx)
+	s.blackoutClears[sessionID] = cancel
+	return clearCtx, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		cancel()
+		delete(s.blackoutClears, sessionID)
+	}
+}
+
 // beginStoppingCues prevents newly admitted GO executions while STOP is
 // canceling its snapshot. It also fences a normal or forced Session exit.
 func (s *Service) beginStoppingCues(sessionID string) bool {
@@ -885,6 +937,9 @@ func (s *Service) beginStoppingCues(sessionID string) bool {
 		return false
 	}
 	s.stopping[sessionID] = true
+	if cancel := s.blackoutClears[sessionID]; cancel != nil {
+		cancel()
+	}
 	return true
 }
 

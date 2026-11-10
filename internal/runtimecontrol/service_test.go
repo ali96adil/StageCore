@@ -991,3 +991,97 @@ func TestEmergencyBlackoutDispatchesBeforePendingCueCompletes(t *testing.T) {
 		t.Fatalf("blackout = %+v", result)
 	}
 }
+
+func TestEmergencyBlackoutClearRollsBackLatchWhenJournalFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		return json.RawMessage(`{}`), nil
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_blackout_clear BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'runtime.emergency_blackout.cleared' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := EmergencyRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000012"}
+	if result := h.service.EmergencyBlackout(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch after failed journal = %v err=%v", active, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_blackout_clear"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000013"
+	for range 2 {
+		if result := h.service.EmergencyBlackout(ctx, req); result.Status != contracts.CommandCompleted {
+			t.Fatalf("retry/replay = %+v", result)
+		}
+	}
+	if events, err := h.store.ListEvents(ctx, session.ID); err != nil || len(events) != 2 ||
+		events[0].EventType != "runtime.emergency_blackout.clear_failed" ||
+		events[1].EventType != "runtime.emergency_blackout.cleared" {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+}
+
+func TestEmergencyBlackoutApplySupersedesPendingClear(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	clearing := make(chan struct{})
+	clearCanceled := make(chan struct{})
+	h.service.emergencySafety = func(ctx context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if !enabled {
+			close(clearing)
+			<-ctx.Done()
+			close(clearCanceled)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	clearCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.EmergencyBlackout(clearCtx, EmergencyRequest{
+			SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000014",
+		})
+	}()
+	select {
+	case <-clearing:
+	case <-clearCtx.Done():
+		t.Fatal("clear did not start")
+	}
+	apply := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000015",
+	})
+	if apply.Status != contracts.CommandCompleted {
+		t.Fatalf("apply = %+v", apply)
+	}
+	select {
+	case <-clearCanceled:
+	case <-clearCtx.Done():
+		t.Fatal("apply did not preempt the clear")
+	}
+	if result := <-done; result.Status != contracts.CommandFailed {
+		t.Fatalf("superseded clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch after superseded clear = %v err=%v", active, err)
+	}
+}

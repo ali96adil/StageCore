@@ -248,6 +248,16 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	return session, nil
 }
 
+const setSessionBlackoutSQL = `
+		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
+		SELECT session_id, ?, ?, ? FROM sessions
+		WHERE session_id = ? AND status = 'ACTIVE'
+		ON CONFLICT(session_id) DO UPDATE SET
+			managed_output_blackout = excluded.managed_output_blackout,
+			updated_by = excluded.updated_by,
+			updated_at_us = excluded.updated_at_us
+	`
+
 func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID string, enabled bool, updatedBy string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	updatedBy = strings.TrimSpace(updatedBy)
@@ -265,15 +275,7 @@ func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID s
 	if enabled {
 		value = 1
 	}
-	result, err := capability.ExecAuthorized(ctx, s.db, `
-		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
-		SELECT session_id, ?, ?, ? FROM sessions
-		WHERE session_id = ? AND status = 'ACTIVE'
-		ON CONFLICT(session_id) DO UPDATE SET
-			managed_output_blackout = excluded.managed_output_blackout,
-			updated_by = excluded.updated_by,
-			updated_at_us = excluded.updated_at_us
-	`, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()), session.ID)
+	result, err := capability.ExecAuthorized(ctx, s.db, setSessionBlackoutSQL, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()), session.ID)
 	if err != nil {
 		return fmt.Errorf("set session managed-output blackout: %w", err)
 	}

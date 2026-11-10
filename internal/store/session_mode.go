@@ -89,3 +89,34 @@ func (s *Store) completeOperationalExit(ctx context.Context, sessionID string, s
 	}
 	return tx.Commit()
 }
+
+// CompleteSessionBlackout records the journal and replay result together.
+// Clearing the latch also belongs to this transaction. An applied latch is
+// persisted separately before any output dispatch.
+func (s *Store) CompleteSessionBlackout(ctx context.Context, sessionID, clearActor string, event contracts.EventEnvelope, result contracts.CommandResult) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if clearActor != "" {
+		cleared, err := tx.ExecContext(ctx, setSessionBlackoutSQL, 0, clearActor, clock.UnixMicros(s.clock.Now().UTC()), sessionID)
+		if err != nil {
+			return err
+		}
+		if err := requireOneRow(cleared); err != nil {
+			return err
+		}
+		if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if _, err := s.appendEvent(ctx, tx, &sessionID, event); err != nil {
+		return err
+	}
+	if err := s.finishCommand(ctx, tx, result.CommandID, result); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
