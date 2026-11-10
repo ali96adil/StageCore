@@ -463,7 +463,7 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -476,10 +476,15 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 	}
 	defer s.endStoppingCues(session.ID)
 
-	cueStopErr := s.stopActiveCueForSession(ctx, session.ID)
-	reason := "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
-	if err := s.store.EndSessionLifecycle(context.WithoutCancel(ctx), session.ID, domain.SessionLifecycleAborted, reason); err != nil {
-		return finish(resultFromStoreError(command.CommandID, "SESSION_FORCE_STOP_FAILED", err, session.ID))
+	runs := s.activeRunsForSession(session.ID)
+	s.interruptCueRuns(runs)
+	confirmed := true
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		default:
+			confirmed = false
+		}
 	}
 
 	resultPayloadMap := map[string]any{
@@ -487,23 +492,24 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		"status": domain.SessionAborted,
 		"forced": true,
 		"safety_bypassed": true,
-		"cue_stop_confirmed": cueStopErr == nil,
+		"cue_stop_confirmed": confirmed,
 	}
-	if cueStopErr != nil {
-		resultPayloadMap["cue_stop_error"] = cueStopErr.Error()
+	if !confirmed {
+		resultPayloadMap["cue_stop_error"] = "forced exit did not wait for pending Cue termination"
 	}
 	resultPayload, _ := json.Marshal(resultPayloadMap)
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: resultPayload,
-	})
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID,
-		Status: contracts.CommandCompleted,
-		Payload: resultPayload,
-	})
+	}
+	const reason = "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
+	if err := s.store.CompleteForcedOperationalExit(context.WithoutCancel(ctx), session.ID, reason, event, result); err != nil {
+		return finish(resultFromStoreError(command.CommandID, "SESSION_FORCE_STOP_FAILED", err, session.ID))
+	}
+	return result
 }
 
 func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyRequest) contracts.CommandResult {

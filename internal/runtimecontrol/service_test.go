@@ -890,3 +890,58 @@ func TestSessionlessBlackoutClearCannotOverlapShowAdmission(t *testing.T) {
 		t.Fatalf("SHOW retry = %+v", result)
 	}
 }
+
+func TestForcedExitRollsBackAndRetriesWithoutWaitingForPendingCue(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cueCtx, cancelCue := context.WithCancel(ctx)
+	defer cancelCue()
+	h.service.active[session.ID] = map[string]activeRun{
+		"pending": {correlationID: "pending", done: make(chan struct{}), cancel: cancelCue},
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_forced_exit BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.force_exited' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StopRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000009"}
+	if result := h.service.ForceStopSession(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("forced exit = %+v", result)
+	}
+	if cueCtx.Err() == nil {
+		t.Fatal("pending Cue was not canceled")
+	}
+	current, err := h.store.GetSessionFoundation(ctx, session.ID)
+	if err != nil || current.LifecycleState != domain.SessionLifecycleActive {
+		t.Fatalf("session changed without journal: %+v err=%v", current, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_forced_exit"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000010"
+	done := make(chan contracts.CommandResult, 1)
+	go func() { done <- h.service.ForceStopSession(ctx, req) }()
+	select {
+	case result := <-done:
+		var payload struct {
+			Confirmed bool `json:"cue_stop_confirmed"`
+		}
+		if result.Status != contracts.CommandCompleted || json.Unmarshal(result.Payload, &payload) != nil || payload.Confirmed {
+			t.Fatalf("retry = %+v payload=%s", result, result.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("forced exit waited on an unresponsive Cue")
+	}
+	if result := h.service.ForceStopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("replay = %+v", result)
+	}
+	events, err := h.store.ListEvents(ctx, session.ID)
+	if err != nil || len(events) != 1 || events[0].EventType != "show.force_exited" {
+		t.Fatalf("events = %+v err=%v", events, err)
+	}
+}

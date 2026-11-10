@@ -54,14 +54,24 @@ func (s *Store) EndSession(ctx context.Context, sessionID string, status domain.
 // CompleteOperationalStop commits the terminal session, its event, and the
 // replayable command result together after the runtime confirms output safety.
 func (s *Store) CompleteOperationalStop(ctx context.Context, sessionID string, event contracts.EventEnvelope, result contracts.CommandResult) error {
+	return s.completeOperationalExit(ctx, sessionID, domain.SessionCompleted, domain.SessionLifecycleCompleted, "", event, result)
+}
+
+// CompleteForcedOperationalExit preserves the aborted lifecycle and its audit
+// reason in the same transaction as the replayable result.
+func (s *Store) CompleteForcedOperationalExit(ctx context.Context, sessionID, reason string, event contracts.EventEnvelope, result contracts.CommandResult) error {
+	return s.completeOperationalExit(ctx, sessionID, domain.SessionAborted, domain.SessionLifecycleAborted, reason, event, result)
+}
+
+func (s *Store) completeOperationalExit(ctx context.Context, sessionID string, status domain.SessionStatus, lifecycle domain.SessionLifecycleState, reason string, event contracts.EventEnvelope, result contracts.CommandResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	updated, err := tx.ExecContext(ctx, endSessionLifecycleSQL, domain.SessionCompleted,
-		domain.SessionLifecycleCompleted, "", clock.UnixMicros(s.clock.Now()), sessionID)
+	updated, err := tx.ExecContext(ctx, endSessionLifecycleSQL, status,
+		lifecycle, reason, clock.UnixMicros(s.clock.Now()), sessionID)
 	if err != nil {
 		return err
 	}
