@@ -71,6 +71,23 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 		t.Fatalf("bad asset status=%d body=%s", badAssetRes.Code, badAssetRes.Body.String())
 	}
 
+	changed := testVDMXExecutionEnvironmentManifest("video-main")
+	changed.Assets[0].Locator = "/Users/show/Replacement.vdmx5"
+	stale := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, base+"/capture", payload)
+	stale.Body = &firmwareUploadRevokeReader{ReadCloser: stale.Body, revoke: func() {
+		if _, err := stageStore.UpdateExecutionEnvironmentManifest(ctx, environment.ID, changed); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	staleResponse := httptest.NewRecorder()
+	handler.ServeHTTP(staleResponse, stale)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale capture status=%d body=%s", staleResponse.Code, staleResponse.Body.String())
+	}
+	if _, err := stageStore.UpdateExecutionEnvironmentManifest(ctx, environment.ID, environment.Manifest); err != nil {
+		t.Fatal(err)
+	}
+
 	captureReq := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, base+"/capture", payload)
 	captureRes := httptest.NewRecorder()
 	handler.ServeHTTP(captureRes, captureReq)

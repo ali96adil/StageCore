@@ -27,6 +27,7 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	assetKey string,
 	contentHash string,
 	sizeBytes int64,
+	expectedManifestSHA256 string,
 ) (ExecutionEnvironmentManifest, error) {
 	manifestID = strings.TrimSpace(manifestID)
 	assetKey = strings.TrimSpace(assetKey)
@@ -55,6 +56,11 @@ func (s *Store) CaptureExecutionEnvironmentAsset(
 	// SHOW lock intentionally takes precedence over frozen revision state.
 	if err := s.RequireProjectConfigurationMutable(ctx, revision.ProjectID); err != nil {
 		return ExecutionEnvironmentManifest{}, err
+	}
+
+	// The upload was accepted for the exact manifest the caller read.
+	if item.ContentSHA256 != expectedManifestSHA256 {
+		return ExecutionEnvironmentManifest{}, fmt.Errorf("%w: execution environment changed during capture", domain.ErrConflict)
 	}
 
 	assetIndex := -1

@@ -123,7 +123,7 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		}
 
 		ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload)
-		updated, err := stageStore.CaptureExecutionEnvironmentAsset(ctx, environment.ID, asset.Key, object.ContentHash, object.SizeBytes)
+		updated, err := stageStore.CaptureExecutionEnvironmentAsset(ctx, environment.ID, asset.Key, object.ContentHash, object.SizeBytes, environment.ContentSHA256)
 		if err != nil {
 			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
