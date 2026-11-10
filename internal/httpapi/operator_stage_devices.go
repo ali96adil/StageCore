@@ -369,7 +369,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						continue
 					}
 					record, assignErr := runtime.ExecuteStageLaserAssignmentAuthorized(
-						r.Context(),
+						browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+							userauth.PermissionSnapshotPublish, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 						deviceexperience.StageLaserAssignmentInput{
 							DeviceID: device.ID,
 							ExpectedProjectID: projectID,
@@ -951,7 +952,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
 			record, err := runtime.ExecuteReservedSoftwareTransferAuthorized(
-				r.Context(), intent, actor, reauthorize)
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair), intent, actor, reauthorize)
 			if err != nil {
 				// Never interpret an error as a successful transfer. Client
 				// must refetch Hub-owned assignment, not retry a stale ACK.
@@ -1031,7 +1033,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
 			record, err := runtime.ExecuteStageLaserAssignmentAuthorized(
-				r.Context(),
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.StageLaserAssignmentInput{
 					DeviceID: deviceID,
 					TargetProjectID: projectID,
@@ -1116,7 +1119,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
 			record, err := runtime.ExecuteLightingActivationAuthorized(
-				r.Context(),
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.LightingActivationInput{
 					DeviceID: deviceID,
 					ProjectID: projectID,

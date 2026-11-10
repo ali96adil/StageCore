@@ -2,11 +2,13 @@ package deviceexperience_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -133,7 +135,7 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		t.Fatalf("unsafe ON assignment ACK was accepted: %v", err)
 	}
 
-	commit, err := repo.CommitStageLaserSafeAssignment(ctx, deviceexperience.VerifiedStageLaserAssignmentInput{
+	input := deviceexperience.VerifiedStageLaserAssignmentInput{
 		AssignmentID: "31111111-1111-4111-8111-111111111111",
 		DeviceID: deviceID,
 		TargetProjectID: projectID,
@@ -147,7 +149,18 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		AckChallenge: challenge,
 		AckObservation: safe,
 		ActorID: "owner",
+	}
+	denied := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return capability.ErrDispatchAuthorityRevoked
 	})
+	if _, err := repo.CommitStageLaserSafeAssignment(denied, input); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked StageLaser assignment returned %v", err)
+	}
+	before, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || before.Epoch != 1 || before.ProjectID != "" {
+		t.Fatalf("revoked StageLaser assignment changed binding: %+v, %v", before, err)
+	}
+	commit, err := repo.CommitStageLaserSafeAssignment(ctx, input)
 	if err != nil || commit.NextState != "ACTIVE" || commit.ToEpoch != 2 {
 		t.Fatalf("StageLaser assignment commit=%+v err=%v", commit, err)
 	}

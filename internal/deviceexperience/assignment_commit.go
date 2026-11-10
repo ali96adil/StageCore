@@ -10,6 +10,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 )
@@ -275,6 +276,9 @@ func (r *Repository) CommitVerifiedBlackoutTransfer(ctx context.Context, in Veri
 		if err != nil || affected != 1 {
 			return TransferCommitRecord{}, fmt.Errorf("%w: reservation expired or already finalized", ErrInvalidState)
 		}
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TransferCommitRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return TransferCommitRecord{}, fmt.Errorf("commit verified transfer: %w", err)
