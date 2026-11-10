@@ -911,7 +911,12 @@
       clearTimeout(timer);
       blocked = true;
       queue = queue.then(async () => {
-        if (ownsRecovery && state.user === user) await clearRecovery();
+        // A save/discard event from an obsolete editor must not delete the
+        // previous Project's server recovery after the operator switched
+        // projects. Its local copy remains available in the original scope.
+        if (ownsRecovery && state.user === user && state.project?.project_id === projectID) {
+          await clearRecovery();
+        }
       }).catch(reportFailure);
     };
     dialog.addEventListener("stagecore:cue-saved", closeRecovery, options);

@@ -75,6 +75,8 @@ function openEditor({ storage, legacy = new Map(), base = "original", user = "ow
     edit(value) { current = draft(value); form.input(); },
     flush() { for (const fn of timers.values()) fn(); timers.clear(); },
     saved() { dialog["stagecore:cue-saved"](); },
+    switchProject(projectID) { ctx.state.project = { project_id: projectID }; },
+    switchUser(userID) { ctx.state.user = { user_id: userID }; },
   };
 }
 
@@ -162,4 +164,50 @@ test("existing tab recovery migrates to durable storage when restored", () => {
   assert.equal(editor.value(), "old local");
   assert.equal(legacy.size, 0);
   assert.equal(storage.size, 1);
+});
+
+test("a late recovery save cannot delete another Project's recovery on editor close", async () => {
+  const storage = new Map();
+  const requests = [];
+  let resolveSave;
+  const editor = openEditor({ storage, async api(path, options) {
+    requests.push({ path, method: options?.method || "GET" });
+    if (!options) return { generation: "" };
+    if (options.method === "PUT") return new Promise(resolve => { resolveSave = resolve; });
+    if (options.method === "DELETE") return { generation: "" };
+    throw new Error("unexpected call");
+  } });
+  await settle();
+  editor.edit("project one unsynced changes");
+  editor.flush();
+  await settle();
+  assert.equal(typeof resolveSave, "function");
+  editor.switchProject("project two");
+  resolveSave({ generation: "old-project-generation" });
+  await settle();
+  editor.saved();
+  await settle();
+  assert.equal(requests.filter(r => r.method === "DELETE").length, 0,
+    "an editor from another Project deleted the original Project recovery");
+  assert.match([...storage.values()].join("\\n"), /project one unsynced changes/);
+  const original = openEditor({ storage });
+  assert.equal(original.local.hidden, false);
+  original.local.onclick();
+  assert.equal(original.value(), "project one unsynced changes");
+});
+
+test("offline drafts survive account switching and damaged unrelated recovery records", async () => {
+  const storage = new Map();
+  const original = openEditor({ storage });
+  original.edit("unsynced recording notes");
+  original.switchUser("different account");
+  // A draft saved before the account switch remains isolated from the new account.
+  const wrongAccount = openEditor({ storage, user: "different account" });
+  assert.equal(wrongAccount.local.hidden, true);
+  storage.set('stagecore.cue-recovery.v2:["owner","other project","cue"]:damaged', "{");
+  const reopened = openEditor({ storage });
+  assert.equal(reopened.local.hidden, false);
+  reopened.local.onclick();
+  assert.equal(reopened.value(), "unsynced recording notes");
+  await settle();
 });
