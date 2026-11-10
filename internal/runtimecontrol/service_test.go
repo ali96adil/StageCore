@@ -1090,3 +1090,51 @@ func TestEmergencyBlackoutApplySupersedesPendingClear(t *testing.T) {
 		t.Fatalf("latch after superseded clear = %v err=%v", active, err)
 	}
 }
+
+func TestPendingGoCannotEnterAfterCompletedStopFence(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := h.database.DB
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitCount := db.Stats().WaitCount
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000016",
+		})
+	}()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for db.Stats().WaitCount == waitCount {
+		select {
+		case <-tick.C:
+		case <-ctx.Done():
+			t.Fatal("GO did not block in its prerequisite lookup")
+		}
+	}
+	if !h.service.beginStoppingCues(session.ID) {
+		t.Fatal("STOP could not take its admission fence")
+	}
+	h.service.endStoppingCues(session.ID)
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-done:
+		if result.Status != contracts.CommandRejected || result.Error == nil || result.Error.ErrorCode != "CUE_ADMISSION_SUPERSEDED" {
+			t.Fatalf("old GO passed the STOP fence: %+v", result)
+		}
+	case <-ctx.Done():
+		t.Fatal("GO did not return")
+	}
+}

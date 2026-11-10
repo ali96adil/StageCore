@@ -89,6 +89,7 @@ type Service struct {
 	// Block GO while a STOP/Session exit is in flight so no new Cue is
 	// admitted after the STOP snapshot has been taken.
 	stopping map[string]bool
+	pendingCueAdmissions map[string]*cueAdmissionGroup
 	blackoutClears map[string]context.CancelFunc
 	projectOutputTransitions map[string]struct{}
 }
@@ -147,6 +148,7 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
 		stopping: make(map[string]bool),
+		pendingCueAdmissions: make(map[string]*cueAdmissionGroup),
 		blackoutClears: make(map[string]context.CancelFunc),
 		projectOutputTransitions: make(map[string]struct{}),
 	}
@@ -640,6 +642,11 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
 		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
 	}
+	admission, release := s.beginCueAdmission(req.SessionID)
+	if release == nil {
+		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", req.SessionID)
+	}
+	defer release()
 	session, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
@@ -662,6 +669,11 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		s.mu.Unlock()
 		cancel()
 		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
+	}
+	if s.pendingCueAdmissions[session.ID] != admission {
+		s.mu.Unlock()
+		cancel()
+		return rejected(req.RequestID, "CUE_ADMISSION_SUPERSEDED", "a STOP or safety transition superseded this pending GO", session.ID)
 	}
 	// Read the persisted latch inside admission. A blackout that finished
 	// between loading the Session and taking the lock must still block GO.
@@ -946,6 +958,34 @@ func (s *Service) beginBlackoutClear(ctx context.Context, sessionID string) (con
 	}
 }
 
+type cueAdmissionGroup struct {
+	pending int
+}
+
+// Remember which GO requests were already doing prerequisite reads when
+// STOP arrived, without holding the admission lock across those reads.
+func (s *Service) beginCueAdmission(sessionID string) (*cueAdmissionGroup, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] {
+		return nil, nil
+	}
+	group := s.pendingCueAdmissions[sessionID]
+	if group == nil {
+		group = &cueAdmissionGroup{}
+		s.pendingCueAdmissions[sessionID] = group
+	}
+	group.pending++
+	return group, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		group.pending--
+		if group.pending == 0 && s.pendingCueAdmissions[sessionID] == group {
+			delete(s.pendingCueAdmissions, sessionID)
+		}
+	}
+}
+
 // beginStoppingCues prevents newly admitted GO executions while STOP is
 // canceling its snapshot. It also fences a normal or forced Session exit.
 func (s *Service) beginStoppingCues(sessionID string) bool {
@@ -955,6 +995,7 @@ func (s *Service) beginStoppingCues(sessionID string) bool {
 		return false
 	}
 	s.stopping[sessionID] = true
+	delete(s.pendingCueAdmissions, sessionID)
 	if cancel := s.blackoutClears[sessionID]; cancel != nil {
 		cancel()
 	}
