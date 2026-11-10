@@ -593,9 +593,14 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	if req.Enabled && s.manualOutputStop != nil {
 		manualErr = s.manualOutputStop(ctx, project.ID, true)
 	}
+	if !req.Enabled {
+		if err := capability.CheckDispatch(safetyCtx); err != nil {
+			return finish(resultFromStoreError(command.CommandID, "BLACKOUT_CLEAR_DISPATCH_DENIED", err, project.ID))
+		}
+	}
 	report, safetyErr := s.emergencySafety(safetyCtx, synthetic, command, req.Enabled)
 	if !req.Enabled && safetyErr == nil {
-		safetyErr = safetyCtx.Err()
+		safetyErr = capability.CheckDispatch(safetyCtx)
 	}
 	if !req.Enabled && safetyErr == nil && s.manualOutputStop != nil {
 		manualErr = s.manualOutputStop(safetyCtx, project.ID, false)
@@ -815,10 +820,15 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	if clearCtx != nil {
 		safetyCtx = clearCtx
 	}
+	if !req.Enabled {
+		if err := capability.CheckDispatch(safetyCtx); err != nil {
+			return finish(resultFromStoreError(command.CommandID, "BLACKOUT_CLEAR_DISPATCH_DENIED", err, session.ID))
+		}
+	}
 	report, safetyErr := s.emergencySafety(safetyCtx, session, command, req.Enabled)
 	cueStopErr := waitForCueRuns(ctx, runs)
 	if !req.Enabled && safetyErr == nil {
-		safetyErr = clearCtx.Err()
+		safetyErr = capability.CheckDispatch(clearCtx)
 	}
 
 	eventType := "runtime.emergency_blackout.cleared"
@@ -1118,7 +1128,7 @@ func sessionStopSafetyFailure(commandID, code, message, entityID string) contrac
 }
 
 func resultFromStoreError(commandID, code string, err error, entityID string) contracts.CommandResult {
-	if errors.Is(err, userauth.ErrForbidden) {
+	if errors.Is(err, userauth.ErrForbidden) || errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
 		return rejected(commandID, "FORBIDDEN", "runtime authorization is no longer valid", "")
 	}
 	if errors.Is(err, projectaccess.ErrDenied) {

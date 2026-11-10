@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -250,6 +252,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
 		}
 		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		if !body.Enabled {
+			ctx = runtimeBlackoutClearContext(ctx, r, auth, session, "")
+		}
 		result := runtime.ProjectBlackout(ctx, runtimecontrol.ProjectEmergencyRequest{
 			ProjectID: r.PathValue("project_id"),
 			Issuer:    session.User.ID,
@@ -291,6 +296,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
 		}
 		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		if !body.Enabled {
+			ctx = runtimeBlackoutClearContext(ctx, r, auth, session, active.ID)
+		}
 		result := runtime.EmergencyBlackout(ctx, runtimecontrol.EmergencyRequest{
 			SessionID: active.ID,
 			Issuer:    session.User.ID,
@@ -401,6 +409,25 @@ func makeRuntimeCueSummaries(cues []domain.Cue) []cueSummaryView {
 		}
 	}
 	return items
+}
+
+// A clear releases output restrictions. Recheck the browser and, in
+// qualification mode, its exact project/session intent at dispatch time.
+func runtimeBlackoutClearContext(ctx context.Context, r *http.Request, auth *userauth.Service, session userauth.Session, sessionID string) context.Context {
+	token, _ := browserSessionToken(r)
+	access := qualificationAccess(r, nil)
+	projectID := r.PathValue("project_id")
+	return capability.WithDispatchCheck(ctx, func(ctx context.Context) error {
+		current, err := auth.ValidatePassive(ctx, token)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, userauth.PermissionRuntimeControl) != nil {
+			return userauth.ErrForbidden
+		}
+		if access != nil {
+			return access.CheckRuntimeIntent(ctx, current.User.ID, projectID, sessionID, projectaccess.RuntimeBlackoutClear)
+		}
+		return nil
+	})
 }
 
 func writeRuntimeCommandResponse(w http.ResponseWriter, successStatus int, result contracts.CommandResult, extra map[string]any) {

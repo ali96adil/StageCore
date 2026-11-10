@@ -1138,3 +1138,31 @@ func TestPendingGoCannotEnterAfterCompletedStopFence(t *testing.T) {
 		t.Fatal("GO did not return")
 	}
 }
+
+func TestEmergencyBlackoutClearRejectsLostAuthorityBeforeOutputDispatch(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionManagedOutputBlackout(ctx, session.ID, true, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	h.service.emergencySafety = func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+		t.Fatal("revoked clear attempted output dispatch")
+		return nil, nil
+	}
+	guarded := capability.WithDispatchCheck(ctx, func(context.Context) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	result := h.service.EmergencyBlackout(guarded, EmergencyRequest{
+		SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000017",
+	})
+	if result.Status != contracts.CommandRejected || result.Error == nil || result.Error.ErrorCode != "FORBIDDEN" {
+		t.Fatalf("revoked clear = %+v", result)
+	}
+	if active, err := h.store.SessionManagedOutputBlackout(ctx, session.ID); err != nil || !active {
+		t.Fatalf("latch = %v err=%v", active, err)
+	}
+}
