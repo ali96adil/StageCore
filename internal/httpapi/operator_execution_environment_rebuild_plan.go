@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -112,7 +113,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		stored, err := stageStore.UpsertExecutionEnvironmentRebuildPlan(
-			r.Context(), environment.ID, source.ID, seeded, session.User.ID,
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, source.ID, seeded, session.User.ID,
 		)
 		if err != nil {
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
@@ -140,7 +141,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		stored, err := stageStore.UpsertExecutionEnvironmentRebuildPlan(
-			r.Context(), environment.ID, sourceID, body.Plan, session.User.ID,
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, sourceID, body.Plan, session.User.ID,
 		)
 		if err != nil {
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UPDATE_FAILED")
@@ -150,7 +151,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	}))
 
 	mux.HandleFunc("DELETE "+path, withPermission(auth, userauth.PermissionProjectEdit, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
 		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
 		if !ok {
@@ -162,7 +163,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			})
 			return
 		}
-		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err != nil {
+		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID); err != nil {
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_DELETE_FAILED")
 			return
 		}
@@ -212,6 +213,9 @@ func makeExecutionEnvironmentRebuildPlanView(
 }
 
 func writeExecutionEnvironmentRebuildPlanError(w http.ResponseWriter, err error, fallback string) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED"})
