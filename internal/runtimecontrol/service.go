@@ -897,7 +897,7 @@ func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string)
 func (s *Service) reserve(ctx context.Context, command contracts.CommandEnvelope) (contracts.CommandResult, bool, bool) {
 	record, reserved, err := s.store.ReserveCommand(ctx, command)
 	if err != nil {
-		return failed(command.CommandID, "COMMAND_RESERVE_FAILED"), false, false
+		return resultFromStoreError(command.CommandID, "COMMAND_RESERVE_FAILED", err, ""), false, false
 	}
 	if reserved {
 		return contracts.CommandResult{}, false, true

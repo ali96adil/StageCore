@@ -490,6 +490,11 @@ func (s *Store) ListEvents(ctx context.Context, sessionID string) ([]contracts.E
 
 func (s *Store) FindCommandRecord(ctx context.Context, command contracts.CommandEnvelope) (domain.CommandRecord, bool, error) {
 	record, found, err := s.getCommandRecord(ctx, `SELECT command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us FROM command_records WHERE command_id = ?`, command.CommandID)
+	if found && (record.ProjectID != command.ProjectID || record.CommandType != command.CommandType) {
+		// Command IDs are globally unique, but knowing one is not permission
+		// to read a result for a different Project or operation.
+		return domain.CommandRecord{}, false, domain.ErrNotFound
+	}
 	if err != nil || found || command.IdempotencyKey == "" { return record, found, err }
 	return s.getCommandRecord(ctx, `SELECT command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us FROM command_records WHERE project_id = ? AND command_type = ? AND idempotency_key = ?`, command.ProjectID, command.CommandType, command.IdempotencyKey)
 }

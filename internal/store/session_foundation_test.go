@@ -274,3 +274,32 @@ func TestConcurrentOperationalSessionAdmissionAllowsOneStart(t *testing.T) {
 		t.Fatalf("expected one admitted Session and one conflict, got %v and %v", first, second)
 	}
 }
+
+func TestCommandReplayCannotReadAnotherProjectOrOperation(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	first, published, _ := createSessionFoundationFixture(t, s)
+	other, otherSnapshot, _ := createSessionFoundationFixture(t, s)
+	command := contracts.CommandEnvelope{
+		CommandID: "018f5b34-0f47-7cc0-9000-0a0000000111", CommandType: "show.enter",
+		SchemaVersion: contracts.SchemaVersion1, ProjectID: first.ID, RuntimeSnapshotID: published.ID,
+	}
+	if _, reserved, err := s.ReserveCommand(ctx, command); err != nil || !reserved {
+		t.Fatalf("reserve source command: reserved=%t err=%v", reserved, err)
+	}
+	crossProject := command
+	crossProject.ProjectID, crossProject.RuntimeSnapshotID = other.ID, otherSnapshot.ID
+	crossOperation := command
+	crossOperation.CommandType = "show.exit"
+	for _, attempt := range []contracts.CommandEnvelope{crossProject, crossOperation} {
+		if record, found, err := s.FindCommandRecord(ctx, attempt); !errors.Is(err, domain.ErrNotFound) || found || record.CommandID != "" {
+			t.Fatalf("foreign lookup returned record=%+v found=%t err=%v", record, found, err)
+		}
+		if record, reserved, err := s.ReserveCommand(ctx, attempt); !errors.Is(err, domain.ErrNotFound) || reserved || record.CommandID != "" {
+			t.Fatalf("foreign replay returned record=%+v reserved=%t err=%v", record, reserved, err)
+		}
+	}
+	if record, found, err := s.FindCommandRecord(ctx, command); err != nil || !found || record.ProjectID != first.ID {
+		t.Fatalf("same-scope replay returned record=%+v found=%t err=%v", record, found, err)
+	}
+}
