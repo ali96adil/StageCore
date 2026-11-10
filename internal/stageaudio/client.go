@@ -126,6 +126,11 @@ func waitLocalReply(ctx context.Context, conn net.Conn) ([]byte, error) {
 		}
 	}()
 	raw, err := bufio.NewReader(io.LimitReader(conn, 128<<10)).ReadBytes('\n')
+	// Call also closes the socket on parent cancellation to interrupt writes.
+	// That callback can wake the read before cancellation reaches pending.
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	if cause := context.Cause(pending); cause != nil {
 		return nil, cause
 	}
@@ -139,6 +144,9 @@ func waitLocalReply(ctx context.Context, conn net.Conn) ([]byte, error) {
 		return nil, checkErr
 	}
 	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
 		return nil, fmt.Errorf("receive local audio: %w", err)
 	}
 	return raw, nil

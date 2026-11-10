@@ -217,3 +217,31 @@ func TestPendingAudioReplyClosesOnAuthorityLoss(t *testing.T) {
 		t.Fatalf("sidecar connection remained open: %v", err)
 	}
 }
+
+func TestPendingAudioReplyPreservesParentCancellationWhenSocketCloses(t *testing.T) {
+	client, sidecar := net.Pipe()
+	defer client.Close()
+	defer sidecar.Close()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
+	done := make(chan error, 1)
+	go func() {
+		_, err := waitLocalReply(ctx, client)
+		done <- err
+	}()
+	if _, err := sidecar.Write([]byte(`{"status":`)); err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("audio request withdrawn")
+	cancel(cause)
+	select {
+	case err := <-done:
+		if !errors.Is(err, cause) {
+			t.Fatalf("read returned %v, want %v", err, cause)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("canceled read did not return")
+	}
+}
