@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -260,7 +262,7 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 			return finish(rejected(command.CommandID, "SHOW_AUDIO_NOT_SAFE", "StageAudio must be reachable, stopped and confirmed before SHOW", snapshot.ID))
 		}
 	}
-	session, err := s.store.CreateSessionWithPurpose(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose)
+	session, err := s.store.StartOperationalSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose)
 	if releaseShowFence != nil {
 		releaseShowFence()
 	}
@@ -956,6 +958,12 @@ func sessionStopSafetyFailure(commandID, code, message, entityID string) contrac
 }
 
 func resultFromStoreError(commandID, code string, err error, entityID string) contracts.CommandResult {
+	if errors.Is(err, userauth.ErrForbidden) {
+		return rejected(commandID, "FORBIDDEN", "runtime authorization is no longer valid", "")
+	}
+	if errors.Is(err, projectaccess.ErrDenied) {
+		return rejected(commandID, "NOT_FOUND", "requested runtime entity was not found", "")
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		return rejected(commandID, "NOT_FOUND", "requested runtime entity was not found", entityID)
 	}

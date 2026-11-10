@@ -251,3 +251,26 @@ func TestRestartReconciliationKeepsShowStrictAndLifecycleStatesDistinct(t *testi
 		t.Fatalf("second terminal transition err=%v want conflict", err)
 	}
 }
+
+func TestConcurrentOperationalSessionAdmissionAllowsOneStart(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	_, published, _ := createSessionFoundationFixture(t, s)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, mode := range []domain.SessionType{domain.SessionShow, domain.SessionRehearsal} {
+		go func() {
+			<-start
+			_, err := s.StartOperationalSession(ctx, published.ID, mode, "concurrent", "")
+			results <- err
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first == nil {
+		first, second = second, first
+	}
+	if !errors.Is(first, domain.ErrConflict) || second != nil {
+		t.Fatalf("expected one admitted Session and one conflict, got %v and %v", first, second)
+	}
+}

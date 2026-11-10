@@ -317,3 +317,41 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatalf("unexpected SHOW gate result: %+v", showResponse.Result)
 	}
 }
+
+func TestShowAdmissionRechecksGrantAfterPreflight(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	grants := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowEnterExit}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, grants); err != nil {
+		t.Fatal(err)
+	}
+	gateReached := false
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry(), runtimecontrol.WithShowGate(
+		func(_ context.Context, projectID, _ string) (bool, string, error) {
+			gateReached = true
+			return true, "", f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, projectID, nil)
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/start",
+		[]byte(`{"mode":"SHOW","request_id":"018f5b34-0f47-7cc0-9000-0a0000000109"}`), f.operator.Token, f.operator.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !gateReached || res.Code != http.StatusNotFound {
+		t.Fatalf("SHOW after grant revocation returned %d (gate=%t): %s", res.Code, gateReached, res.Body)
+	}
+	active, err := f.projects.ActiveSessionForProject(ctx, f.projectID)
+	if err != nil || active != nil {
+		t.Fatalf("revoked SHOW changed runtime state: %+v, %v", active, err)
+	}
+}

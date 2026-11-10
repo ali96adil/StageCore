@@ -15,9 +15,9 @@ import (
 
 type runtimeStartRequest struct {
 	RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
-	Mode      string `json:"mode"`
-	Name      string `json:"name"`
-	RequestID string `json:"request_id"`
+	Mode             string                  `json:"mode"`
+	Name             string                  `json:"name"`
+	RequestID        string                  `json:"request_id"`
 }
 
 type runtimeCommandRequest struct {
@@ -94,27 +94,28 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			return
 		}
 		mode := domain.SessionType(strings.ToUpper(strings.TrimSpace(body.Mode)))
+		permission := userauth.PermissionRuntimeControl
+		needed := projectaccess.RehearsalControl
 		if mode == domain.SessionShow {
-			if err := userauth.Authorize(session.User.Role, userauth.PermissionShowEnterExit); err != nil {
+			permission = userauth.PermissionShowEnterExit
+			needed = projectaccess.ShowEnterExit
+			if err := userauth.Authorize(session.User.Role, permission); err != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
 			}
 		}
 		grant, scopeErr := currentProjectRouteGrant(r)
 		if scopeErr == nil && grant.access != nil {
-			needed := projectaccess.RehearsalControl
-			if mode == domain.SessionShow {
-				needed = projectaccess.ShowEnterExit
-			}
 			scopeErr = grant.access.Check(r.Context(), session.User.ID, r.PathValue("project_id"), needed)
 		}
 		if !writeProjectQualificationError(w, scopeErr) {
 			return
 		}
-		created, result := runtime.StartSession(r.Context(), runtimecontrol.StartRequest{
+		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectView, needed)
+		created, result := runtime.StartSession(ctx, runtimecontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"), Mode: mode, Name: body.Name,
 			RehearsalPurpose: body.RehearsalPurpose,
-			Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
+			Issuer:           session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
 		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": makeSessionView(created)})
 	}))
@@ -391,6 +392,8 @@ func writeRuntimeCommandResponse(w http.ResponseWriter, successStatus int, resul
 		status = http.StatusConflict
 		if result.Error != nil && result.Error.ErrorCode == "NOT_FOUND" {
 			status = http.StatusNotFound
+		} else if result.Error != nil && result.Error.ErrorCode == "FORBIDDEN" {
+			status = http.StatusForbidden
 		}
 	} else if result.Status == contracts.CommandFailed {
 		status = http.StatusServiceUnavailable

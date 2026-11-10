@@ -122,6 +122,16 @@ func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionTyp
 }
 
 func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, false)
+}
+
+// StartOperationalSession serializes admission with other session starts and
+// checks the initiating authority in the same transaction as the insert.
+func (s *Store) StartOperationalSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true)
+}
+
+func (s *Store) createSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, exclusive bool) (domain.Session, error) {
 	if purpose != "" && (sessionType != domain.SessionRehearsal ||
 		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
 		return domain.Session{}, fmt.Errorf("%w: invalid rehearsal purpose", domain.ErrInvalidInput)
@@ -129,8 +139,16 @@ func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string,
 	if sessionType != domain.SessionSimulation && sessionType != domain.SessionRehearsal && sessionType != domain.SessionShow {
 		return domain.Session{}, fmt.Errorf("%w: unsupported session type", domain.ErrInvalidInput)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("begin session admission: %w", err)
+	}
+	defer tx.Rollback()
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Session{}, err
+	}
 	var projectID, snapshotStatus string
-	if err := s.db.QueryRowContext(ctx, `SELECT project_id, status FROM runtime_snapshots WHERE runtime_snapshot_id = ?`, snapshotID).Scan(&projectID, &snapshotStatus); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT project_id, status FROM runtime_snapshots WHERE runtime_snapshot_id = ?`, snapshotID).Scan(&projectID, &snapshotStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Session{}, domain.ErrNotFound
 		}
@@ -138,6 +156,15 @@ func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string,
 	}
 	if domain.RuntimeSnapshotStatus(snapshotStatus) != domain.SnapshotPublished {
 		return domain.Session{}, fmt.Errorf("%w: session requires PUBLISHED snapshot", domain.ErrConflict)
+	}
+	if exclusive {
+		var active bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE project_id = ? AND status = 'ACTIVE')", projectID).Scan(&active); err != nil {
+			return domain.Session{}, fmt.Errorf("check active session at admission: %w", err)
+		}
+		if active {
+			return domain.Session{}, fmt.Errorf("%w: the Project already has an active runtime Session", domain.ErrConflict)
+		}
 	}
 	sessionID, err := stageid.New()
 	if err != nil {
@@ -155,8 +182,11 @@ func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string,
 		statement = purposeInsert
 		args = append(args, purpose)
 	}
-	if _, err := s.db.ExecContext(ctx, statement, args...); err != nil {
+	if _, err := tx.ExecContext(ctx, statement, args...); err != nil {
 		return domain.Session{}, fmt.Errorf("insert session: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Session{}, fmt.Errorf("commit session admission: %w", err)
 	}
 	return domain.Session{
 		ID:                sessionID,
@@ -164,7 +194,7 @@ func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string,
 		RuntimeSnapshotID: snapshotID,
 		Type:              sessionType,
 		Name:              name,
-		RehearsalPurpose: purpose,
+		RehearsalPurpose:  purpose,
 		StartedAt:         now,
 		Status:            domain.SessionActive,
 	}, nil
