@@ -172,8 +172,25 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	// Chromium may briefly keep writing its profile after the browser
+	// process exits. A t.TempDir cleanup would race those child processes.
+	profileDir, err := os.MkdirTemp("", "stagecore-cue-chrome-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		var removeErr error
+		for attempt := 0; attempt < 20; attempt++ {
+			removeErr = os.RemoveAll(profileDir)
+			if removeErr == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Errorf("Chrome profile cleanup failed: %v", removeErr)
+	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--user-data-dir="+t.TempDir(), server.URL)
+		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "browser.log"))
 	if err != nil {
 		t.Fatal(err)
