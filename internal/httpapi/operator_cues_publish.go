@@ -201,8 +201,11 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 			writeProjectStoreError(w, err)
 			return
 		}
-		created, report, err := publisher.Publish(r.Context(), project.ID, project.CurrentRevisionID, session.User.ID)
+		created, report, err := publisher.Publish(projectMutationContext(r, auth, session, userauth.PermissionSnapshotPublish, nil, projectaccess.SnapshotPublish), project.ID, project.CurrentRevisionID, session.User.ID)
 		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PUBLISH_FAILED"})
 			return
 		}

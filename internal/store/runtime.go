@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -74,6 +75,9 @@ func (s *Store) CreateRuntimeSnapshot(ctx context.Context, revisionID, createdBy
 		  )`,
 		nowUS, projectID); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("mark machine role assignments syncing: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.RuntimeSnapshot{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("commit runtime snapshot: %w", err)

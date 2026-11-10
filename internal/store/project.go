@@ -188,7 +188,7 @@ func (s *Store) SetRevisionStatus(ctx context.Context, revisionID string, next d
 	if !valid {
 		return fmt.Errorf("%w: revision transition %s -> %s", domain.ErrConflict, current.Status, next)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE project_revisions SET status = ? WHERE revision_id = ? AND status = ?`, next, revisionID, current.Status)
+	result, err := capability.ExecAuthorized(ctx, s.db, `UPDATE project_revisions SET status = ? WHERE revision_id = ? AND status = ?`, next, revisionID, current.Status)
 	if err != nil {
 		return fmt.Errorf("set revision status: %w", err)
 	}
