@@ -331,7 +331,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						continue
 					}
 					record, assignErr := runtime.ExecuteTabletAssignmentAuthorized(
-						r.Context(),
+						browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+							userauth.PermissionSnapshotPublish, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 						deviceexperience.TabletAssignmentInput{
 							DeviceID: device.ID,
 							ExpectedProjectID: projectID,
@@ -1494,13 +1495,24 @@ func stageDeviceDispatchContext(r *http.Request, auth *userauth.Service, session
 		}
 		return nil
 	})
-	return capability.WithWriteAuthorization(dispatch, func(ctx context.Context, tx *sql.Tx) error {
+	return browserDeviceWriteContext(dispatch, auth, session, ownerOnly, userauth.PermissionRuntimeControl)
+}
+
+func browserDeviceWriteContext(ctx context.Context, auth *userauth.Service, session userauth.Session, ownerOnly bool, permissions ...userauth.Permission) context.Context {
+	return capability.WithWriteAuthorization(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
-		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil &&
-			(userauth.Authorize(role, userauth.PermissionRuntimeControl) != nil || (ownerOnly && role != userauth.RoleOwner))) {
+		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && ownerOnly && role != userauth.RoleOwner) {
 			return capability.ErrDispatchAuthorityRevoked
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		for _, permission := range permissions {
+			if userauth.Authorize(role, permission) != nil {
+				return capability.ErrDispatchAuthorityRevoked
+			}
+		}
+		return nil
 	})
 }
 

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/ali96adil/StageCore/internal/capability"
 )
 
 const TabletPlayerProfileID = "stagecore.tablet-player"
@@ -334,6 +336,9 @@ func (r *Repository) CommitTabletSafeAssignment(ctx context.Context, in Verified
 		return TabletAssignmentCommit{}, fmt.Errorf("record tablet assignment audit: %w", err)
 	}
 
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TabletAssignmentCommit{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return TabletAssignmentCommit{}, fmt.Errorf("commit tablet assignment: %w", err)
 	}

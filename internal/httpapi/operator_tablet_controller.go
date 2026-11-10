@@ -387,7 +387,9 @@ func WithOperatorTabletController(
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteTabletAssignmentAuthorized(r.Context(), intent, actor, reauthorize)
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+				userauth.PermissionProjectEdit, userauth.PermissionCompanionPair)
+			record, err := runtime.ExecuteTabletAssignmentAuthorized(writeCtx, intent, actor, reauthorize)
 			if err != nil {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "TABLET_ASSIGNMENT_NOT_COMMITTED",
