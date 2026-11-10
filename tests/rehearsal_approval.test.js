@@ -52,3 +52,29 @@ test("a detached review cannot submit and an ineligible rehearsal is read-only",
   await readOnly.open();
   assert.doesNotMatch(readOnly.container.innerHTML, /<select>/);
 });
+
+test("an older approval report cannot overwrite the latest rehearsal review", async () => {
+  const pending = [];
+  const container = { isConnected: true, innerHTML: "", querySelector: () => null };
+  const ctx = {
+    state: { user: {}, project: { project_id: "project A" }, page: "sessions" },
+    esc: String,
+    f028CanEditSelection: () => false,
+    api: () => new Promise(resolve => pending.push(resolve)),
+  };
+  vm.runInNewContext(approval, ctx);
+  const first = ctx.renderRehearsalApproval(container, "project A", session);
+  const second = ctx.renderRehearsalApproval(container, "project A", session);
+  assert.equal(pending.length, 2);
+  const response = (mode) => ({ report: { sessions: [{
+    session_id: session.session_id, runtime_snapshot_id: session.runtime_snapshot_id,
+    observation_count: 4, selection_mode: mode, eligible: true, effective: mode === "INCLUDE"
+  }] } });
+  pending[1](response("INCLUDE"));
+  await second;
+  assert.match(container.innerHTML, /Selection: INCLUDE/);
+  const latestHTML = container.innerHTML;
+  pending[0](response("AUTO"));
+  await first;
+  assert.equal(container.innerHTML, latestHTML, "stale approval replaced latest review");
+});

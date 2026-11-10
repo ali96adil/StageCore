@@ -70,7 +70,13 @@ function actionTraceCard(action) {
 
 async function renderRehearsalApproval(container, projectID, session) {
   const user = state.user;
-  const current = () => container.isConnected && state.user === user && state.project?.project_id === projectID && state.page === "sessions";
+  // The same approval card may refresh twice before its first read returns.
+  // Only the newest request may render or submit a selection.
+  const requestToken = {};
+  container.stagecoreApprovalRequest = requestToken;
+  const current = () => container.stagecoreApprovalRequest === requestToken &&
+    container.isConnected && state.user === user &&
+    state.project?.project_id === projectID && state.page === "sessions";
   const base = `/api/v1/projects/${encodeURIComponent(projectID)}/timing-intelligence`;
   try {
     const { report } = await api(`${base}?runtime_snapshot_id=${encodeURIComponent(session.runtime_snapshot_id)}&session_id=${encodeURIComponent(session.session_id)}`);
