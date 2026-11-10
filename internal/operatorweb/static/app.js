@@ -1183,6 +1183,8 @@ async function renderRuntime(startPolling = false) {
   ]);
   if (state.page !== "runtime" || state.user !== user || encodeURIComponent(state.project?.project_id || "") !== projectID) return;
   const active = runtime.session;
+  const ended = state.runtimeEndedRehearsal;
+  const endedRehearsal = ended?.user === user && ended.projectID === projectID ? ended : null;
   const remembered = state.runtimeCueReceipt;
   const receipt = remembered?.user === user && remembered.projectID === projectID &&
     remembered.sessionID === active?.session_id ? remembered : null;
@@ -1317,6 +1319,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    ${endedRehearsal && !active ? '<button id="runtimeRehearsalSummary" class="button" type="button">Review ended rehearsal</button>' : ""}
     ${receiptMarkup}
     ${runtimeIssueMarkup}`;
 
@@ -1329,8 +1332,13 @@ async function renderRuntime(startPolling = false) {
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
   el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
   el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
-  el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
+  el("stopSessionButton")?.addEventListener("click", () => stopSessionRuntime(active));
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
+  el("runtimeRehearsalSummary")?.addEventListener("click", async () => {
+    setPage("sessions");
+    try { await renderSessionDetail(endedRehearsal.sessionID); }
+    catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  });
   el("runtimeCueTrace")?.addEventListener("click", async () => {
     setPage("sessions");
     try { await renderSessionDetail(active.session_id, traceID); }
@@ -1376,7 +1384,8 @@ async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
   const receipt = { user, projectID, sessionID, operation, requestID: requestID(), status: "PENDING" };
   state.runtimeCueReceipt = receipt;
   try {
-    const response = await api(`/api/v1/projects/${projectID}/runtime/${operation}`, {
+    const endpoint = operation === "go" ? "/runtime/go" : "/runtime/jump";
+    const response = await api(`/api/v1/projects/${projectID}${endpoint}`, {
       method: "POST",
       json: {
         ...extra,
@@ -1459,7 +1468,10 @@ async function jumpRuntime(projectID, runtime) {
   await dispatchRuntimeCue(projectID, runtime, "jump", { cue_id: cueID, confirm: true });
 }
 
-async function stopSessionRuntime() {
+async function stopSessionRuntime(active) {
+  const user = state.user;
+  const projectID = encodeURIComponent(state.project.project_id);
+  const current = () => state.user === user && encodeURIComponent(state.project?.project_id || "") === projectID && state.page === "runtime";
   const stopTablets = el("rehearsalStopTablets");
   const tabletSessionID = stopTablets?.checked ? stopTablets.value : "";
   const stopExternal = el("rehearsalStopExternal");
@@ -1470,16 +1482,22 @@ async function stopSessionRuntime() {
     : "End the active runtime Session? StageCore will first require its managed blackout safety to complete.";
   if (!confirm(prompt)) return;
   try {
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop-session`, {
+    const stopped = await api(`/api/v1/projects/${projectID}/runtime/stop-session`, {
       method: "POST", json: {
         request_id: requestID(),
         ...(tabletSessionID ? { rehearsal_tablet_stop_session_id: tabletSessionID } : {}),
         ...(externalSessionID ? { rehearsal_external_stop_session_id: externalSessionID } : {}),
       },
     });
+    if (!current()) return;
+    const sessionID = stopped.result?.payload?.session_id;
+    if (sessionID && active?.type === "REHEARSAL" && active.session_id === sessionID) {
+      state.runtimeEndedRehearsal = { user, projectID, sessionID };
+    }
     state.runtimeForceExitAvailable = false;
     await renderRuntime(true);
   } catch (error) {
+    if (!current()) return;
     const code = error.payload?.result?.error?.error_code || "";
     state.runtimeForceExitAvailable = code === "SESSION_STOP_SAFETY_FAILED" || code === "SESSION_STOP_CUE_UNCONFIRMED";
     const suffix = state.runtimeForceExitAvailable
