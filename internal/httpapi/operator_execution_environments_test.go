@@ -253,3 +253,33 @@ func testVDMXExecutionEnvironmentManifest(environmentKey string) executionenv.Ma
 		Launch: &executionenv.LaunchTarget{Kind: executionenv.LaunchAsset, AssetKey: "workspace"},
 	}
 }
+
+func TestExecutionEnvironmentCreateRejectsRevokedBrowserSession(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"manifest": testVDMXExecutionEnvironmentManifest("revoked")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + f.projectID + "/revisions/" + project.CurrentRevisionID + "/execution-environments"
+	req := authenticatedMutationRequest(t, http.MethodPost, path, body, f.owner.Token, f.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorExecutionEnvironments(f.h.auth, f.projects)).Handler()
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked environment create returned %d: %s", res.Code, res.Body)
+	}
+	items, err := f.projects.ListExecutionEnvironmentManifests(ctx, project.CurrentRevisionID)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("revoked request changed execution environments: %+v, %v", items, err)
+	}
+}
