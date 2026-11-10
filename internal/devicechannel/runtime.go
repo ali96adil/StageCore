@@ -326,6 +326,7 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	schemaVersion := runtimeSchemaVersion
 	scopeReady := true
 	capabilityReady := true
+	generationReady := true
 	if current != nil && current.protocolVersion == deviceexperience.ProtocolVersion2 {
 		schemaVersion = 2
 		scopeReady = current.commandsEnabled &&
@@ -334,8 +335,12 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 			current.activeAssignmentEpoch > 0
 		capabilityReady = requiredCapability == "" ||
 			containsCapability(current.advertisedCapabilities, requiredCapability)
+		if stagelaser.CommandCapability(command.Envelope.CommandType) != "" {
+			generationReady = (command.Envelope.ControlGeneration > 0) ==
+				containsCapability(current.advertisedCapabilities, stagelaser.ControlGenerationCapability)
+		}
 	}
-	if !closed && current != nil && !transition && scopeReady && capabilityReady {
+	if !closed && current != nil && !transition && scopeReady && capabilityReady && generationReady {
 		r.inflight[command.Envelope.CommandID] = current
 	}
 	r.mu.Unlock()
@@ -350,6 +355,9 @@ func (r *Runtime) Dispatch(ctx context.Context, input deviceexperience.CreateCom
 	}
 	if !capabilityReady {
 		return r.failCommand(ctx, command, "DEVICE_CAPABILITY_MISSING", "Current authenticated Stage Device socket did not advertise the required capability")
+	}
+	if !generationReady {
+		return r.failCommand(ctx, command, "DEVICE_CONTROL_GENERATION_MISMATCH", "StageLaser command and current authenticated socket require different generation protocols")
 	}
 	message := executeMessage{
 		Type:          "command.execute",

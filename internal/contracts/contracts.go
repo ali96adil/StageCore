@@ -30,6 +30,7 @@ const (
 )
 
 type CommandEnvelope struct {
+	ControlGeneration int64           `json:"control_generation,omitempty"`
 	CommandID         string          `json:"command_id"`
 	CommandType       string          `json:"command_type"`
 	SchemaVersion     int             `json:"schema_version"`

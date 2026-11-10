@@ -96,7 +96,7 @@ func connectStageLaserV2(
 		"platform": "esp32", "architecture": "riscv32",
 		"client_version": "test-stagelaser-v2",
 		"protocol_version": deviceexperience.ProtocolVersion2,
-		"capabilities": stagelaser.CapabilityKeys(),
+		"capabilities": append(stagelaser.CapabilityKeys(), stagelaser.ControlGenerationCapability),
 		"readiness": deviceexperience.ReadinessReady,
 		"observed_state": safeStageLaserObservation(),
 		"network_state": json.RawMessage(`{"transport":"WSS"}`),
@@ -285,6 +285,7 @@ func TestStageLaserV2SafeAssignmentActivationAndCommandDispatch(t *testing.T) {
 		Command       struct {
 			CommandID         string `json:"command_id"`
 			CommandType       string `json:"command_type"`
+			ControlGeneration int64 `json:"control_generation"`
 			ProjectID         string `json:"project_id"`
 			RuntimeSnapshotID string `json:"runtime_snapshot_id"`
 		} `json:"command"`
@@ -294,6 +295,8 @@ func TestStageLaserV2SafeAssignmentActivationAndCommandDispatch(t *testing.T) {
 	if err != nil || execute.Type != "command.execute" || execute.SchemaVersion != 2 ||
 		execute.Command.CommandID != command.Envelope.CommandID ||
 		execute.Command.CommandType != stagelaser.CommandArm ||
+		execute.Command.ControlGeneration <= 0 ||
+		execute.Command.ControlGeneration != command.Envelope.ControlGeneration ||
 		execute.Command.ProjectID != f.projectID ||
 		execute.Command.RuntimeSnapshotID != stageLaserV2SnapshotID {
 		t.Fatalf("StageLaser command.execute=%+v err=%v", execute, err)
