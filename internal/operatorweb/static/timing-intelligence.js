@@ -365,22 +365,32 @@ async function renderTimingIntelligenceWorkspace(sectionFrom = "", sectionTo = "
 
   content.querySelectorAll(".timing-selection").forEach((select) => {
     select.addEventListener("change", async () => {
-      const previous = (report.sessions || []).find((item) => item.session_id === select.dataset.sessionId)?.selection_mode || "AUTO";
+      const candidate = (report.sessions || []).find((item) => item.session_id === select.dataset.sessionId);
+      const user = state.user;
+      const current = () => select.isConnected && state.user === user && state.project?.project_id === report.project_id && state.page === "timing";
+      if (!candidate || !current()) return;
+      const previous = candidate.selection_mode;
       if (previous === "INCLUDE" && select.value !== previous && !window.confirm(f028T("timing.confirm_revoke"))) {
         select.value = previous;
         return;
       }
       select.disabled = true;
       try {
-        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/timing-intelligence/sessions/${encodeURIComponent(select.dataset.sessionId)}`, {
-          method: "PUT", json: { mode: select.value },
+        await api(`/api/v1/projects/${encodeURIComponent(report.project_id)}/timing-intelligence/sessions/${encodeURIComponent(candidate.session_id)}`, {
+          method: "PUT", json: { mode: select.value, review: { runtime_snapshot_id: candidate.runtime_snapshot_id, mode: previous } },
         });
+        if (!current()) return;
         setMessage(globalMessage, f028T("timing.saved"), "success");
         await renderTimingIntelligenceWorkspace(sectionFrom, sectionTo);
       } catch (error) {
+        if (!current()) return;
+        setMessage(globalMessage, errorMessage(error), "error");
+        if (error.status === 409 || error.status === 403) {
+          await renderTimingIntelligenceWorkspace(sectionFrom, sectionTo);
+          return;
+        }
         select.value = previous;
         select.disabled = false;
-        setMessage(globalMessage, errorMessage(error), "error");
       }
     });
   });

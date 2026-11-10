@@ -29,6 +29,18 @@ type TimingSessionSelection struct {
 	UpdatedAt time.Time           `json:"updated_at,omitempty"`
 }
 
+// TimingSelectionReview binds an approval to the snapshot and selection the operator reviewed.
+type TimingSelectionReview struct {
+	RuntimeSnapshotID string              `json:"runtime_snapshot_id"`
+	Mode              TimingSelectionMode `json:"mode"`
+}
+
+type timingSelectionReviewKey struct{}
+
+func WithTimingSelectionReview(ctx context.Context, review TimingSelectionReview) context.Context {
+	return context.WithValue(ctx, timingSelectionReviewKey{}, review)
+}
+
 type TimingObservationRecord struct {
 	Sequence            int64  `json:"sequence"`
 	SessionID           string `json:"session_id"`
@@ -56,10 +68,10 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 	var session domain.Session
 	var showLocked bool
 	err = tx.QueryRowContext(ctx, `
-		SELECT session_type, lifecycle_state, rehearsal_purpose, EXISTS (
+		SELECT session_type, lifecycle_state, rehearsal_purpose, runtime_snapshot_id, EXISTS (
 			SELECT 1 FROM sessions live WHERE live.project_id = ? AND live.session_type = 'SHOW' AND live.status = 'ACTIVE'
 		) FROM sessions WHERE session_id = ? AND project_id = ?`, projectID, sessionID, projectID).
-		Scan(&session.Type, &session.LifecycleState, &session.RehearsalPurpose, &showLocked)
+		Scan(&session.Type, &session.LifecycleState, &session.RehearsalPurpose, &session.RuntimeSnapshotID, &showLocked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TimingSessionSelection{}, domain.ErrNotFound
 	}
@@ -77,6 +89,18 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 		session.LifecycleState != domain.SessionLifecycleStopped &&
 		(session.RehearsalPurpose == "" || session.LifecycleState != domain.SessionLifecycleActive) {
 		return TimingSessionSelection{}, fmt.Errorf("%w: only eligible rehearsals or active rehearsals with a recorded purpose can be approved", domain.ErrConflict)
+	}
+	if review, ok := ctx.Value(timingSelectionReviewKey{}).(TimingSelectionReview); ok {
+		if review.RuntimeSnapshotID != session.RuntimeSnapshotID {
+			return TimingSessionSelection{}, domain.ErrConflict
+		}
+		var current TimingSelectionMode
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT mode FROM timing_session_selection WHERE session_id = ?), 'AUTO')`, sessionID).Scan(&current); err != nil {
+			return TimingSessionSelection{}, err
+		}
+		if current != review.Mode {
+			return TimingSessionSelection{}, domain.ErrConflict
+		}
 	}
 	if mode == TimingSelectionAuto {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM timing_session_selection WHERE session_id = ?`, sessionID); err != nil {

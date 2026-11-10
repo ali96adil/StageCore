@@ -530,3 +530,40 @@ func TestTimingMutationsRollBackAfterCommitAuthorityEnds(t *testing.T) {
 		t.Fatalf("denied segments persisted: %v err=%v", segments, err)
 	}
 }
+
+func TestTimingApprovalRejectsConcurrentSelectionAndWrongSnapshot(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	session := f.rehearsal(t, "Review race", time.Minute, time.Minute, false)
+	service := New(f.store, f.clock)
+	wrong := store.WithTimingSelectionReview(ctx, store.TimingSelectionReview{
+		RuntimeSnapshotID: "other-snapshot", Mode: store.TimingSelectionAuto,
+	})
+	if _, err := service.SetSessionSelection(wrong, f.projectID, session.ID, store.TimingSelectionInclude, "reviewer"); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("wrong snapshot err=%v", err)
+	}
+	reviewed := store.WithTimingSelectionReview(ctx, store.TimingSelectionReview{
+		RuntimeSnapshotID: f.snapshot.ID, Mode: store.TimingSelectionAuto,
+	})
+	results := make(chan error, 2)
+	for _, mode := range []store.TimingSelectionMode{store.TimingSelectionInclude, store.TimingSelectionExclude} {
+		go func() {
+			_, err := service.SetSessionSelection(reviewed, f.projectID, session.ID, mode, "reviewer")
+			results <- err
+		}()
+	}
+	var succeeded, conflicted int
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, domain.ErrConflict):
+			conflicted++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("successful=%d conflicted=%d", succeeded, conflicted)
+	}
+}

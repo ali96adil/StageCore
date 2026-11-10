@@ -73,7 +73,7 @@ async function renderRehearsalApproval(container, projectID, session) {
   try {
     const { report } = await api(`${base}?runtime_snapshot_id=${encodeURIComponent(session.runtime_snapshot_id)}&session_id=${encodeURIComponent(session.session_id)}`);
     if (!current()) return;
-    const candidate = (report.sessions || []).find((item) => item.session_id === session.session_id);
+    const candidate = (report.sessions || []).find((item) => item.session_id === session.session_id && item.runtime_snapshot_id === session.runtime_snapshot_id);
     if (!candidate) {
       container.textContent = "No timing approval record is available for this rehearsal.";
       return;
@@ -95,13 +95,17 @@ async function renderRehearsalApproval(container, projectID, session) {
       }
       select.disabled = true;
       try {
-        await api(`${base}/sessions/${encodeURIComponent(session.session_id)}`, { method: "PUT", json: { mode: select.value } });
+        await api(`${base}/sessions/${encodeURIComponent(session.session_id)}`, { method: "PUT", json: { mode: select.value, review: { runtime_snapshot_id: session.runtime_snapshot_id, mode: candidate.selection_mode } } });
         if (current()) await renderRehearsalApproval(container, projectID, session);
       } catch (error) {
         if (!current()) return;
+        setMessage(globalMessage, errorMessage(error), "error");
+        if (error.status === 409 || error.status === 403) {
+          await renderRehearsalApproval(container, projectID, session);
+          return;
+        }
         select.value = candidate.selection_mode;
         select.disabled = false;
-        setMessage(globalMessage, errorMessage(error), "error");
       }
     });
   } catch (error) {

@@ -21,7 +21,7 @@ function harness(eligible) {
       calls.push([url, options]);
       return { report: { sessions: [
         { session_id: "other", selection_mode: "EXCLUDE", eligible: true },
-        { session_id: session.session_id, observation_count: 4, selection_mode: "AUTO", eligible },
+        { session_id: session.session_id, runtime_snapshot_id: session.runtime_snapshot_id, observation_count: 4, selection_mode: "AUTO", eligible },
       ] } };
     },
   };
@@ -38,6 +38,8 @@ test("approval reads the historical snapshot and writes only the reviewed rehear
   await h.change();
   assert.match(h.calls[1][0], /projects\/project%20A\/timing-intelligence\/sessions\/rehearsal%20A$/);
   assert.equal(h.calls[1][1].json.mode, "INCLUDE");
+  assert.equal(h.calls[1][1].json.review.mode, "AUTO");
+  assert.equal(h.calls[1][1].json.review.runtime_snapshot_id, session.runtime_snapshot_id);
 });
 
 test("a detached review cannot submit and an ineligible rehearsal is read-only", async () => {

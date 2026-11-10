@@ -29,9 +29,10 @@ type timingSegmentRequest struct {
 }
 
 type timingSelectionRequest struct {
-	Segment *timingSegmentRequest     `json:"segment,omitempty"`
-	Mode    store.TimingSelectionMode `json:"mode,omitempty"`
-	Paused  *bool                     `json:"paused,omitempty"`
+	Review  *store.TimingSelectionReview `json:"review,omitempty"`
+	Segment *timingSegmentRequest        `json:"segment,omitempty"`
+	Mode    store.TimingSelectionMode    `json:"mode,omitempty"`
+	Paused  *bool                        `json:"paused,omitempty"`
 }
 
 func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntelligenceService) Option {
@@ -88,7 +89,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			}
 			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 			if body.Segment != nil {
-				if body.Mode != "" || body.Paused != nil || body.Segment.Excluded == nil {
+				if body.Mode != "" || body.Paused != nil || body.Review != nil || body.Segment.Excluded == nil {
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
@@ -102,7 +103,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				return
 			}
 			if body.Paused != nil {
-				if body.Mode != "" {
+				if body.Mode != "" || body.Review != nil {
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
@@ -112,6 +113,19 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				}
 				writeJSON(w, http.StatusOK, map[string]bool{"capture_paused": *body.Paused})
 				return
+			}
+			if body.Review != nil {
+				switch body.Review.Mode {
+				case store.TimingSelectionAuto, store.TimingSelectionInclude, store.TimingSelectionExclude:
+				default:
+					writeTimingMutationError(w, domain.ErrInvalidInput)
+					return
+				}
+				if strings.TrimSpace(body.Review.RuntimeSnapshotID) == "" {
+					writeTimingMutationError(w, domain.ErrInvalidInput)
+					return
+				}
+				ctx = store.WithTimingSelectionReview(ctx, *body.Review)
 			}
 			selection, err := service.SetSessionSelection(
 				ctx, r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
