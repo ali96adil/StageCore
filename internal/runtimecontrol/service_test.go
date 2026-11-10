@@ -838,3 +838,55 @@ func TestShowAdmissionRollsBackWhenJournalWriteFails(t *testing.T) {
 		t.Fatalf("replay = %+v error=%+v", result, result.Error)
 	}
 }
+
+func TestSessionlessBlackoutClearCannotOverlapShowAdmission(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return true, "", nil
+	}
+	clearing := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	h.service.emergencySafety = func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		if !enabled {
+			close(clearing)
+			<-release
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	done := make(chan contracts.CommandResult, 1)
+	go func() {
+		done <- h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{ProjectID: h.project.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000005"})
+	}()
+	select {
+	case <-clearing:
+	case result := <-done:
+		t.Fatalf("clear did not enter safety handler: %+v", result)
+	case <-time.After(time.Second):
+		t.Fatal("clear did not start")
+	}
+	req := StartRequest{ProjectID: h.project.ID, Mode: domain.SessionShow, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000006"}
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandRejected ||
+		result.Error == nil || result.Error.ErrorCode != "PROJECT_OUTPUT_TRANSITION_BUSY" {
+		t.Fatalf("SHOW overlapped a sessionless clear: %+v", result)
+	}
+	applied := h.service.ProjectBlackout(ctx, ProjectEmergencyRequest{ProjectID: h.project.ID, Issuer: "operator", Enabled: true, RequestID: "12345678-0000-7000-8000-000000000007"})
+	if applied.Status != contracts.CommandCompleted {
+		t.Fatalf("emergency apply was blocked: %+v", applied)
+	}
+	close(release)
+	if result := <-done; result.Status != contracts.CommandCompleted {
+		t.Fatalf("clear = %+v", result)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000008"
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("SHOW retry = %+v", result)
+	}
+}

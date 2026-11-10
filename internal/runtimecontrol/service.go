@@ -89,6 +89,7 @@ type Service struct {
 	// Block GO while a STOP/Session exit is in flight so no new Cue is
 	// admitted after the STOP snapshot has been taken.
 	stopping map[string]bool
+	projectOutputTransitions map[string]struct{}
 }
 
 type activeRun struct {
@@ -145,11 +146,29 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
 		stopping: make(map[string]bool),
+		projectOutputTransitions: make(map[string]struct{}),
 	}
 	for _, option := range options {
 		option(service)
 	}
 	return service
+}
+
+// The sessionless clear may release outputs, so it cannot overlap admission
+// of an operational session for the same project. Emergency apply stays on
+// its independent path.
+func (s *Service) beginProjectOutputTransition(projectID string) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, busy := s.projectOutputTransitions[projectID]; busy {
+		return nil, false
+	}
+	s.projectOutputTransitions[projectID] = struct{}{}
+	return func() {
+		s.mu.Lock()
+		delete(s.projectOutputTransitions, projectID)
+		s.mu.Unlock()
+	}, true
 }
 
 func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Session, contracts.CommandResult) {
@@ -247,6 +266,12 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		}
 	}
 	startWarning := strings.Join(startWarnings, " ")
+
+	releaseTransition, ok := s.beginProjectOutputTransition(project.ID)
+	if !ok {
+		return finish(rejected(command.CommandID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another output transition is in progress for this Project", project.ID))
+	}
+	defer releaseTransition()
 
 	if s.manualOutputFence != nil {
 		release, err := s.manualOutputFence(ctx)
@@ -488,6 +513,13 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	project, err := s.store.GetProject(ctx, req.ProjectID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "PROJECT_LOOKUP_FAILED", err, req.ProjectID)
+	}
+	if !req.Enabled {
+		releaseTransition, ok := s.beginProjectOutputTransition(project.ID)
+		if !ok {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another output transition is in progress for this Project", project.ID)
+		}
+		defer releaseTransition()
 	}
 	if active, err := s.store.ActiveSessionForProject(ctx, project.ID); err != nil {
 		return failed(req.RequestID, "SESSION_LOOKUP_FAILED")
