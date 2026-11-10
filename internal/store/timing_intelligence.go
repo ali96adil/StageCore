@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -81,6 +82,9 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 		if _, err := tx.ExecContext(ctx, `DELETE FROM timing_session_selection WHERE session_id = ?`, sessionID); err != nil {
 			return TimingSessionSelection{}, fmt.Errorf("clear timing session selection: %w", err)
 		}
+		if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+			return TimingSessionSelection{}, err
+		}
 		return TimingSessionSelection{SessionID: sessionID, Mode: TimingSelectionAuto}, tx.Commit()
 	}
 	now := s.clock.Now().UTC()
@@ -93,6 +97,9 @@ func (s *Store) SetTimingSessionSelection(ctx context.Context, projectID, sessio
 			updated_at_us = excluded.updated_at_us`,
 		sessionID, mode, strings.TrimSpace(updatedBy), clock.UnixMicros(now)); err != nil {
 		return TimingSessionSelection{}, fmt.Errorf("set timing session selection: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return TimingSessionSelection{}, err
 	}
 	return TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: strings.TrimSpace(updatedBy), UpdatedAt: now}, tx.Commit()
 }

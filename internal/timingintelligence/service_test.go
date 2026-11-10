@@ -2,11 +2,13 @@ package timingintelligence
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -482,4 +484,49 @@ func TestNewRehearsalTimingRequiresReversibleApproval(t *testing.T) {
 	report(preview.ID, 2, true)
 	selectMode(preview.ID, store.TimingSelectionExclude)
 	report(preview.ID, 1, false)
+}
+
+func TestTimingMutationsRollBackAfterCommitAuthorityEnds(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	finished := f.rehearsal(t, "Finished rehearsal", time.Minute, time.Minute, false)
+	active, err := f.store.CreateSession(ctx, f.snapshot.ID, domain.SessionRehearsal, "Active rehearsal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(f.store, f.clock)
+	report, err := service.Report(ctx, f.projectID, ReportOptions{
+		RuntimeSnapshotID: f.snapshot.ID, ReviewSessionID: finished.ID,
+		SectionFromCueID: f.cues[0].ID, SectionToCueID: f.cues[2].ID,
+	})
+	if err != nil || len(report.SegmentReview.Points) == 0 {
+		t.Fatalf("timing observations=%+v err=%v", report.SegmentReview, err)
+	}
+	point := report.SegmentReview.Points[0].Sequence
+	denied := errors.New("timing authority ended at commit")
+	guarded := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return denied
+	})
+	if _, err := service.SetSessionSelection(guarded, f.projectID, finished.ID, store.TimingSelectionExclude, "operator"); !errors.Is(err, denied) {
+		t.Fatalf("selection err=%v", err)
+	}
+	if err := service.SetTimingCapturePaused(guarded, f.projectID, active.ID, "operator", true); !errors.Is(err, denied) {
+		t.Fatalf("pause err=%v", err)
+	}
+	segment := store.TimingSegment{First: point, Last: point, Excluded: true}
+	if err := service.SetTimingSegment(guarded, f.projectID, finished.ID, "operator", segment); !errors.Is(err, denied) {
+		t.Fatalf("segment err=%v", err)
+	}
+	selections, err := f.store.ListTimingSessionSelections(ctx, f.projectID)
+	if err != nil || len(selections) != 0 {
+		t.Fatalf("denied selections persisted: %v err=%v", selections, err)
+	}
+	paused, err := f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil || paused[active.ID] {
+		t.Fatalf("denied pause persisted: %v err=%v", paused, err)
+	}
+	segments, err := f.store.ListTimingSegments(ctx, f.projectID)
+	if err != nil || len(segments[finished.ID]) != 0 {
+		t.Fatalf("denied segments persisted: %v err=%v", segments, err)
+	}
 }

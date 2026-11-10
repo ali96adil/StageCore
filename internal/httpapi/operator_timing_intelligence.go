@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -82,13 +83,14 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 				return
 			}
+			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 			if body.Segment != nil {
 				if body.Mode != "" || body.Paused != nil || body.Segment.Excluded == nil {
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
 				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
-				err := service.SetTimingSegment(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
+				err := service.SetTimingSegment(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
 				if err != nil {
 					writeTimingMutationError(w, err)
 					return
@@ -101,7 +103,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
-				if err := service.SetTimingCapturePaused(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused); err != nil {
+				if err := service.SetTimingCapturePaused(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused); err != nil {
 					writeProjectStoreError(w, err)
 					return
 				}
@@ -109,7 +111,7 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				return
 			}
 			selection, err := service.SetSessionSelection(
-				r.Context(), r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
+				ctx, r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
 			)
 			if err != nil {
 				writeTimingMutationError(w, err)

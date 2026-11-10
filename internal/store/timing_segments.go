@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -99,6 +100,9 @@ func (s *Store) SetTimingSegment(ctx context.Context, projectID, sessionID, acto
 		) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'P2', '{}', ?)
 	`, eventID, sessionID, timingSegmentSelection, now, now, actor, projectID, snapshotID, string(payload))
 	if err != nil {
+		return err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit()
