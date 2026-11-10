@@ -122,6 +122,17 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"comparison":"MISMATCH"`)) {
 		t.Fatalf("visual check GET=%d: %s", res.Code, res.Body.String())
 	}
+	other, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Other show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep this fixture at the database boundary so the test never sends a device command.
+	if _, err := h.db.DB.ExecContext(ctx, "UPDATE stage_device_assignments SET project_id = ?, assignment_state = 'BLOCKED', assignment_epoch = assignment_epoch + 1 WHERE device_id = ?", other.ID, laserID); err != nil {
+		t.Fatal(err)
+	}
+	if res := post(payload, true); res.Code != http.StatusNotFound {
+		t.Fatalf("foreign StageLaser observation returned %d: %s", res.Code, res.Body)
+	}
 	revokeRequest := authenticatedMutationRequest(t, http.MethodPost, path, []byte(payload), owner.Token, owner.CSRFToken)
 	revokeRequest.Body = &firmwareUploadRevokeReader{ReadCloser: revokeRequest.Body, revoke: func() {
 		if err := h.auth.Logout(ctx, owner.Token); err != nil {

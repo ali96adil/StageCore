@@ -76,7 +76,12 @@ func (r *Repository) RecordStageLaserVisualCheck(
 		FROM stage_devices d
 		LEFT JOIN stage_device_runtime_state s ON s.device_id = d.device_id
 		WHERE d.device_id = ? AND d.enabled = 1
-	`, deviceID).Scan(&protocol, &kind, &profile, &connection, &stateJSON); err != nil {
+		  AND (d.project_id IS NULL OR d.project_id = ?)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM stage_device_assignments a
+		    WHERE a.device_id = d.device_id AND a.project_id IS NOT NULL AND a.project_id <> ?
+		  )
+	`, deviceID, projectID, projectID).Scan(&protocol, &kind, &profile, &connection, &stateJSON); err != nil {
 		return StageLaserVisualCheck{}, err
 	}
 	if protocol != ProtocolVersion2 || kind != string(DeviceGeneric) ||

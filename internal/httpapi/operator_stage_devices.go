@@ -497,6 +497,10 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						if writeProjectMutationDenied(w, err) {
 							return
 						}
+						if errors.Is(err, sql.ErrNoRows) {
+							writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+							return
+						}
 						status := http.StatusConflict
 						if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 							status = http.StatusBadRequest
