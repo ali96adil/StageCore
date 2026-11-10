@@ -10,8 +10,18 @@ import (
 )
 
 func (s *Store) ActiveOperationalSessionType(ctx context.Context) (domain.SessionType, error) {
+	return activeOperationalSessionType(ctx, s.db)
+}
+
+// ActiveOperationalSessionTypeInTransaction reads the operational state at
+// the same database boundary as a write that must be restricted to idle mode.
+func ActiveOperationalSessionTypeInTransaction(ctx context.Context, tx *sql.Tx) (domain.SessionType, error) {
+	return activeOperationalSessionType(ctx, tx)
+}
+
+func activeOperationalSessionType(ctx context.Context, q queryer) (domain.SessionType, error) {
 	var sessionType string
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT session_type
 		FROM sessions
 		WHERE status = 'ACTIVE'

@@ -194,3 +194,41 @@ func TestProjectAccessAPIRejectsMutationDuringShowAndUnknownTargets(t *testing.T
 		t.Fatal("grant was changed during SHOW")
 	}
 }
+
+func TestProjectAccessRollsBackGrantAndAuditIfAuthorityChangesDuringRequest(t *testing.T) {
+	for _, mode := range []string{"logout", "show"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setupProjectAccessAPI(t)
+			ctx := context.Background()
+			req := authenticatedMutationRequest(t, http.MethodPut,
+				"/api/v1/projects/"+f.projectID+"/access/users/"+f.operatorID,
+				[]byte(`{"permissions":["project.view"]}`), f.owner.Token, f.owner.CSRFToken)
+			want := http.StatusForbidden
+			req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+				if mode == "show" {
+					want = http.StatusLocked
+					startShowSession(t, ctx, f.projects)
+				} else if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+					t.Fatal(err)
+				}
+			}}
+			rec := httptest.NewRecorder()
+			f.handler.ServeHTTP(rec, req)
+			if rec.Code != want {
+				t.Fatalf("invalid grant request got %d, want %d: %s", rec.Code, want, rec.Body)
+			}
+			if err := f.access.Check(ctx, f.operatorID, f.projectID, projectaccess.ProjectView); err == nil {
+				t.Fatal("rejected request created a grant")
+			}
+			records, err := f.audit.List(ctx, 40)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range records {
+				if record.EventType == "project.permissions.replace" {
+					t.Fatal("rejected request committed a success audit record")
+				}
+			}
+		})
+	}
+}

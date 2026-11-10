@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 )
 
@@ -153,6 +154,7 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 			return fmt.Errorf("remove project membership: %w", err)
 		}
 		if err := writeGrantAudit(ctx, tx, audit, prepared); err != nil { return err }
+		if err := capability.CheckWriteAuthorization(ctx, tx); err != nil { return err }
 		return tx.Commit()
 	}
 	nowUS := s.now().UTC().UnixMicro()
@@ -178,6 +180,7 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 		}
 	}
 	if err := writeGrantAudit(ctx, tx, audit, prepared); err != nil { return err }
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil { return err }
 	if err := tx.Commit(); err != nil { return fmt.Errorf("commit project grants: %w", err) }
 	return nil
 }

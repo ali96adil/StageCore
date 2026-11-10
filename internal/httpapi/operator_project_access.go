@@ -2,11 +2,15 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -53,9 +57,7 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			userID := strings.TrimSpace(r.PathValue("user_id"))
 
-			// Freeze changes whenever an operational Session is active. The
-			// future cutover must introduce an atomic SHOW/GO authority fence
-			// rather than a simplistic stale read of this status.
+			// Report an active Session early and recheck in the write transaction.
 			active, err := projects.ActiveOperationalSessionType(r.Context())
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_SESSION_UNKNOWN"})
@@ -90,7 +92,27 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			}
 			// This mutation and its success audit event commit in ONE DB
 			// transaction. If audit fails, no Project grant is changed.
-			err = access.SetPermissionsAudited(r.Context(), session.User.ID, userID, projectID, permissions, audit)
+			writeCtx := capability.WithWriteAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
+				role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
+				if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && role != userauth.RoleOwner) {
+					return projectaccess.ErrDenied
+				}
+				if err != nil {
+					return err
+				}
+				active, err = store.ActiveOperationalSessionTypeInTransaction(ctx, tx)
+				if err == nil && active != "" {
+					return domain.ErrShowConfigurationLocked
+				}
+				return err
+			})
+			err = access.SetPermissionsAudited(writeCtx, session.User.ID, userID, projectID, permissions, audit)
+			if errors.Is(err, domain.ErrShowConfigurationLocked) {
+				writeJSON(w, http.StatusLocked, map[string]any{
+					"error_code": "PROJECT_ACCESS_SESSION_ACTIVE", "session_type": active,
+				})
+				return
+			}
 			if err != nil {
 				writeProjectAccessError(w, err)
 				return
