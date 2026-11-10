@@ -845,6 +845,11 @@ func TestSessionlessBlackoutClearCannotOverlapShowAdmission(t *testing.T) {
 	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
 		return true, "", nil
 	}
+	var manualEnabled bool
+	h.service.manualOutputStop = func(_ context.Context, _ string, enabled bool) error {
+		manualEnabled = enabled
+		return nil
+	}
 	clearing := make(chan struct{})
 	release := make(chan struct{})
 	t.Cleanup(func() {
@@ -882,8 +887,8 @@ func TestSessionlessBlackoutClearCannotOverlapShowAdmission(t *testing.T) {
 		t.Fatalf("emergency apply was blocked: %+v", applied)
 	}
 	close(release)
-	if result := <-done; result.Status != contracts.CommandCompleted {
-		t.Fatalf("clear = %+v", result)
+	if result := <-done; result.Status != contracts.CommandFailed || !manualEnabled {
+		t.Fatalf("superseded clear = %+v manual blackout=%t", result, manualEnabled)
 	}
 	req.RequestID = "12345678-0000-7000-8000-000000000008"
 	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandCompleted {

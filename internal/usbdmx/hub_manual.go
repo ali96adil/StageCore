@@ -102,6 +102,10 @@ func (h *HubManual) SetBlackout(ctx context.Context, projectID string, enabled b
 		return nil
 	}
 	h.mu.Lock()
+	if !enabled && ctx.Err() != nil {
+		h.mu.Unlock()
+		return ctx.Err()
+	}
 	if !enabled && h.fault != nil {
 		err := h.fault
 		h.mu.Unlock()

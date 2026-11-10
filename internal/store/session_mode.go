@@ -90,10 +90,10 @@ func (s *Store) completeOperationalExit(ctx context.Context, sessionID string, s
 	return tx.Commit()
 }
 
-// CompleteSessionBlackout records the journal and replay result together.
+// CompleteBlackout records the journal and replay result together.
 // Clearing the latch also belongs to this transaction. An applied latch is
 // persisted separately before any output dispatch.
-func (s *Store) CompleteSessionBlackout(ctx context.Context, sessionID, clearActor string, event contracts.EventEnvelope, result contracts.CommandResult) error {
+func (s *Store) CompleteBlackout(ctx context.Context, sessionID *string, clearActor string, event contracts.EventEnvelope, result contracts.CommandResult) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -101,7 +101,10 @@ func (s *Store) CompleteSessionBlackout(ctx context.Context, sessionID, clearAct
 	defer tx.Rollback()
 
 	if clearActor != "" {
-		cleared, err := tx.ExecContext(ctx, setSessionBlackoutSQL, 0, clearActor, clock.UnixMicros(s.clock.Now().UTC()), sessionID)
+		if sessionID == nil {
+			return domain.ErrInvalidInput
+		}
+		cleared, err := tx.ExecContext(ctx, setSessionBlackoutSQL, 0, clearActor, clock.UnixMicros(s.clock.Now().UTC()), *sessionID)
 		if err != nil {
 			return err
 		}
@@ -112,7 +115,7 @@ func (s *Store) CompleteSessionBlackout(ctx context.Context, sessionID, clearAct
 			return err
 		}
 	}
-	if _, err := s.appendEvent(ctx, tx, &sessionID, event); err != nil {
+	if _, err := s.appendEvent(ctx, tx, sessionID, event); err != nil {
 		return err
 	}
 	if err := s.finishCommand(ctx, tx, result.CommandID, result); err != nil {

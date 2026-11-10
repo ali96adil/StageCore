@@ -522,12 +522,25 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "PROJECT_LOOKUP_FAILED", err, req.ProjectID)
 	}
-	if !req.Enabled {
+	safetyCtx := ctx
+	fenceKey := "project-blackout:" + project.ID
+	if req.Enabled {
+		if !s.beginStoppingCues(fenceKey) {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "Emergency Blackout apply is already in progress", project.ID)
+		}
+		defer s.endStoppingCues(fenceKey)
+	} else {
 		releaseTransition, ok := s.beginProjectOutputTransition(project.ID)
 		if !ok {
 			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another output transition is in progress for this Project", project.ID)
 		}
 		defer releaseTransition()
+		var releaseClear func()
+		safetyCtx, releaseClear = s.beginBlackoutClear(ctx, fenceKey)
+		if releaseClear == nil {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another Project blackout transition is in progress", project.ID)
+		}
+		defer releaseClear()
 	}
 	if active, err := s.store.ActiveSessionForProject(ctx, project.ID); err != nil {
 		return failed(req.RequestID, "SESSION_LOOKUP_FAILED")
@@ -551,7 +564,7 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -578,9 +591,12 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	if req.Enabled && s.manualOutputStop != nil {
 		manualErr = s.manualOutputStop(ctx, project.ID, true)
 	}
-	report, safetyErr := s.emergencySafety(ctx, synthetic, command, req.Enabled)
+	report, safetyErr := s.emergencySafety(safetyCtx, synthetic, command, req.Enabled)
+	if !req.Enabled && safetyErr == nil {
+		safetyErr = safetyCtx.Err()
+	}
 	if !req.Enabled && safetyErr == nil && s.manualOutputStop != nil {
-		manualErr = s.manualOutputStop(ctx, project.ID, false)
+		manualErr = s.manualOutputStop(safetyCtx, project.ID, false)
 	}
 	if manualErr != nil {
 		safetyErr = fmt.Errorf("manual USB-DMX zero unconfirmed: %v; managed safety: %v", manualErr, safetyErr)
@@ -588,19 +604,22 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	eventType := "runtime.edit_blackout.cleared"
 	if req.Enabled {
 		eventType = "runtime.edit_blackout.applied"
+	} else if safetyErr != nil {
+		eventType = "runtime.edit_blackout.clear_failed"
 	}
 	eventPayload := report
 	if len(eventPayload) == 0 {
 		eventPayload = json.RawMessage(`{}`)
 	}
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), nil, contracts.EventEnvelope{
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
-	})
+	}
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload}
 	if safetyErr != nil {
-		return finish(contracts.CommandResult{
+		result = contracts.CommandResult{
 			CommandID: command.CommandID,
 			Status: contracts.CommandFailed,
 			Payload: eventPayload,
@@ -609,13 +628,12 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 				Message: "sessionless managed-output blackout completed with a partial failure: " + safetyErr.Error(),
 				Retryable: true, AffectedEntityID: project.ID,
 			},
-		})
+		}
 	}
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID,
-		Status: contracts.CommandCompleted,
-		Payload: eventPayload,
-	})
+	if err := s.store.CompleteBlackout(context.WithoutCancel(ctx), nil, "", event, result); err != nil {
+		return finish(failed(command.CommandID, "PROJECT_BLACKOUT_COMMIT_FAILED"))
+	}
+	return result
 }
 
 func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResult {
@@ -836,7 +854,7 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		recordCtx = clearCtx
 		clearActor = strings.TrimSpace(req.Issuer)
 	}
-	if err := s.store.CompleteSessionBlackout(recordCtx, session.ID, clearActor, event, result); err != nil {
+	if err := s.store.CompleteBlackout(recordCtx, &session.ID, clearActor, event, result); err != nil {
 		if req.Enabled {
 			return finish(resultFromStoreError(command.CommandID, "EMERGENCY_BLACKOUT_COMMIT_FAILED", err, session.ID))
 		}
@@ -849,7 +867,7 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 			Message: "managed-output Emergency Blackout clear could not be committed; safety latch remains active",
 			Retryable: true, AffectedEntityID: session.ID,
 		}
-		if err := s.store.CompleteSessionBlackout(context.WithoutCancel(ctx), session.ID, "", event, result); err != nil {
+		if err := s.store.CompleteBlackout(context.WithoutCancel(ctx), &session.ID, "", event, result); err != nil {
 			return finish(result)
 		}
 	}
