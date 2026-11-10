@@ -1185,6 +1185,9 @@ async function renderRuntime(startPolling = false) {
   const active = runtime.session;
   const ended = state.runtimeEndedRehearsal;
   const endedRehearsal = ended?.user === user && ended.projectID === projectID ? ended : null;
+  const mayReviewTiming = ["OWNER", "TECHNICIAN"].includes(user?.role) &&
+    ((active?.type === "REHEARSAL" && active.rehearsal_purpose === "TIMING_CAPTURE") ||
+      (!active && endedRehearsal?.purpose === "TIMING_CAPTURE"));
   const remembered = state.runtimeCueReceipt;
   const receipt = remembered?.user === user && remembered.projectID === projectID &&
     remembered.sessionID === active?.session_id ? remembered : null;
@@ -1320,6 +1323,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
     ${endedRehearsal && !active ? '<button id="runtimeRehearsalSummary" class="button" type="button">Review ended rehearsal</button>' : ""}
+    ${mayReviewTiming ? '<button id="runtimeRehearsalApproval" class="button ghost" type="button">Review timing approval</button>' : ""}
     ${receiptMarkup}
     ${runtimeIssueMarkup}`;
 
@@ -1334,6 +1338,11 @@ async function renderRuntime(startPolling = false) {
   el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
   el("stopSessionButton")?.addEventListener("click", () => stopSessionRuntime(active));
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
+  // Opening Timing never approves a rehearsal: the existing reviewed,
+  // reversible INCLUDE/EXCLUDE API remains the sole confirmation path.
+  el("runtimeRehearsalApproval")?.addEventListener("click", () => {
+    renderTimingIntelligenceWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
+  });
   el("runtimeRehearsalSummary")?.addEventListener("click", async () => {
     setPage("sessions");
     try { await renderSessionDetail(endedRehearsal.sessionID); }
@@ -1492,7 +1501,7 @@ async function stopSessionRuntime(active) {
     if (!current()) return;
     const sessionID = stopped.result?.payload?.session_id;
     if (sessionID && active?.type === "REHEARSAL" && active.session_id === sessionID) {
-      state.runtimeEndedRehearsal = { user, projectID, sessionID };
+      state.runtimeEndedRehearsal = { user, projectID, sessionID, purpose: active.rehearsal_purpose };
     }
     state.runtimeForceExitAvailable = false;
     await renderRuntime(true);
