@@ -50,6 +50,12 @@ jobs:
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
       - name: Test
         run: go test ./...
+      - name: Browser Cue Delivery
+        if: matrix.go == '1.26.x'
+        run: |
+          export STAGECORE_TEST_CHROME="$(command -v google-chrome)"
+          test -n "$STAGECORE_TEST_CHROME"
+          go test ./internal/httpapi -run '^TestBrowserCueDeliveryThroughPersistedTrace$' -count=1
       - name: Vet
         run: go vet ./...
       - name: Race tests
