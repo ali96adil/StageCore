@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -28,8 +29,8 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.ProjectID == "" || input.DeviceID == "" || input.CommandType == "" || input.Issuer == "" {
 		return DeviceCommand{}, false, fmt.Errorf("%w: project, device, command type and issuer are required", ErrInvalidState)
 	}
-	capability := RequiredCapability(input.CommandType)
-	if capability == "" {
+	requiredCapability := RequiredCapability(input.CommandType)
+	if requiredCapability == "" {
 		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported command type %q", ErrInvalidState, input.CommandType)
 	}
 	device, err := r.GetDevice(ctx, input.DeviceID)
@@ -70,8 +71,8 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	default:
 		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported Stage Device protocol", ErrInvalidState)
 	}
-	if !contains(device.Capabilities, capability) {
-		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, capability)
+	if !contains(device.Capabilities, requiredCapability) {
+		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, requiredCapability)
 	}
 	now := r.now().UTC()
 	if input.DeadlineAt != nil {
@@ -130,7 +131,7 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.SessionID != "" {
 		session = input.SessionID
 	}
-	_, err = r.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, r.db, `
 		INSERT INTO stage_device_commands
 		(command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		 issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status)
@@ -138,6 +139,9 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	`, commandID, input.ProjectID, session, input.DeviceID, input.CommandType,
 		input.RuntimeSnapshotID, now.UnixMicro(), deadline,
 		input.Issuer, input.CorrelationID, input.CausationID, input.Priority, input.IdempotencyKey, string(payload))
+	if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		return DeviceCommand{}, false, err
+	}
 	if err != nil {
 		if input.IdempotencyKey != "" {
 			existing, getErr := r.getCommandByIdempotency(ctx, input.DeviceID, input.IdempotencyKey)

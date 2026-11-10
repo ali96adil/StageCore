@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
@@ -1217,5 +1218,57 @@ func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.
 		got.StateQuality != stagelaser.StateQualityTracked ||
 		got.IPAddress != "192.168.3.77" {
 		t.Fatalf("StageLaser inventory observation=%+v", got)
+	}
+}
+
+func TestOperatorStageDeviceDispatchRollsBackWhenSessionExpiresBeforeInsertCommit(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Device command test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	auth, err := userauth.New(h.db.DB, userauth.WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expireOnCommand := false
+	devices, err := deviceexperience.NewRepository(h.db.DB, deviceexperience.WithClock(func() time.Time {
+		if expireOnCommand {
+			now = login.Session.ExpiresAt
+		}
+		return now
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "tablet-1", ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet 1", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(auth, devices, runtime, projects)).Handler()
+	expireOnCommand = true
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/stage-devices/"+device.ID+"/commands",
+		[]byte(`{"command_type":"TABLET_PLAY","payload":{"media":"01.mp4"}}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expired command returned %d: %s", rec.Code, rec.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_commands").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("expired command was persisted: %d, %v", count, err)
 	}
 }

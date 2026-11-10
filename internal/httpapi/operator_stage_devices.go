@@ -1485,7 +1485,7 @@ func stageDeviceDispatchContext(r *http.Request, auth *userauth.Service, session
 	token, _ := browserSessionToken(r)
 	csrf := r.Header.Get(csrfHeader)
 	ownerOnly := qualificationAccess(r, nil) != nil
-	return capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+	dispatch := capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
 		current, err := auth.ValidateCSRF(ctx, token, csrf)
 		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
 			userauth.Authorize(current.User.Role, userauth.PermissionRuntimeControl) != nil ||
@@ -1493,6 +1493,14 @@ func stageDeviceDispatchContext(r *http.Request, auth *userauth.Service, session
 			return capability.ErrDispatchAuthorityRevoked
 		}
 		return nil
+	})
+	return capability.WithWriteAuthorization(dispatch, func(ctx context.Context, tx *sql.Tx) error {
+		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
+		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil &&
+			(userauth.Authorize(role, userauth.PermissionRuntimeControl) != nil || (ownerOnly && role != userauth.RoleOwner))) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return err
 	})
 }
 
