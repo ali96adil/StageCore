@@ -78,3 +78,48 @@ test("an older approval report cannot overwrite the latest rehearsal review", as
   await first;
   assert.equal(container.innerHTML, latestHTML, "stale approval replaced latest review");
 });
+
+test("session-history approval ignores a late report after switching projects", async () => {
+  const h = harness(true);
+  h.container.innerHTML = "";
+  let deliver;
+  h.ctx.api = () => new Promise(resolve => { deliver = resolve; });
+  const pending = h.open();
+  assert.equal(typeof deliver, "function");
+  h.ctx.state.project = { project_id: "project B" };
+  deliver({ report: { sessions: [{
+    session_id: session.session_id, runtime_snapshot_id: session.runtime_snapshot_id,
+    observation_count: 3, selection_mode: "INCLUDE", eligible: true,
+  }] } });
+  await pending;
+  assert.equal(h.container.innerHTML, "", "old Project timing evidence appeared after switch");
+});
+
+test("session-history approval ignores a late report after switching users", async () => {
+  const h = harness(true);
+  h.container.innerHTML = "";
+  let deliver;
+  h.ctx.api = () => new Promise(resolve => { deliver = resolve; });
+  const pending = h.open();
+  h.ctx.state.user = { user_id: "another-user" };
+  deliver({ report: { sessions: [{
+    session_id: session.session_id, runtime_snapshot_id: session.runtime_snapshot_id,
+    observation_count: 3, selection_mode: "INCLUDE", eligible: true,
+  }] } });
+  await pending;
+  assert.equal(h.container.innerHTML, "", "old user's approval evidence appeared after switch");
+});
+
+test("switching user or Project disables stale approval controls before mutation", async () => {
+  for (const switchScope of [
+    h => { h.ctx.state.project = { project_id: "project B" }; },
+    h => { h.ctx.state.user = { user_id: "another-user" }; },
+  ]) {
+    const h = harness(true);
+    await h.open();
+    h.select.value = "INCLUDE";
+    switchScope(h);
+    await h.change();
+    assert.equal(h.calls.length, 1, "old review sent a write after scope switch");
+  }
+});
