@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -323,6 +324,9 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ?, updated_at_us = ? WHERE project_id = ?`, newRevisionID, nowUS, projectID); err != nil {
 		return domain.ProjectRevision{}, fmt.Errorf("activate draft successor: %w", err)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.ProjectRevision{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.ProjectRevision{}, fmt.Errorf("commit draft fork: %w", err)
 	}
@@ -332,7 +336,6 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		CreatedAt: now, CreatedBy: createdBy, ChangeNote: changeNote,
 	}, nil
 }
-
 
 func remapForkedCueExecutionPolicy(raw json.RawMessage, cueIDs map[string]string) (json.RawMessage, error) {
 	if len(raw) == 0 {

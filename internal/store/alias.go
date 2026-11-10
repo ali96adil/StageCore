@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -28,7 +29,7 @@ func (s *Store) CreateAlias(ctx context.Context, alias domain.ProjectDeviceAlias
 	if alias.LogicalType == "" {
 		alias.LogicalType = "GENERIC"
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO project_device_aliases (alias_id, project_id, logical_name, logical_type, target_ref, group_name, project_config_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, alias.ID, alias.ProjectID, strings.TrimSpace(alias.LogicalName), alias.LogicalType, alias.TargetRef, alias.GroupName, cfg)
 	if err != nil {
@@ -51,7 +52,7 @@ func (s *Store) UpdateAliasConfiguration(ctx context.Context, projectID, aliasID
 	if err != nil {
 		return domain.ProjectDeviceAlias{}, fmt.Errorf("alias project config: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE project_device_aliases
 		SET project_config_json = ?
 		WHERE project_id = ? AND alias_id = ?`,
@@ -92,7 +93,7 @@ func (s *Store) DeleteAlias(ctx context.Context, projectID, aliasID string) erro
 	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		DELETE FROM project_device_aliases
 		WHERE project_id = ? AND alias_id = ?`, projectID, aliasID)
 	if err != nil {

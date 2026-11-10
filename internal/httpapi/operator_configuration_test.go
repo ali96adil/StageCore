@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -191,5 +193,74 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	handler.ServeHTTP(viewerRes, viewerReq)
 	if viewerRes.Code != http.StatusForbidden {
 		t.Fatalf("VIEWER routing edit status=%d, want 403", viewerRes.Code)
+	}
+}
+
+func TestConfigurationWriteRevocationPreservesValidatedRevision(t *testing.T) {
+	for _, qualified := range []bool{false, true} {
+		f := setupProjectAccessAPI(t)
+		ctx := context.Background()
+		project, err := f.projects.GetProject(ctx, f.projectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+			t.Fatal(err)
+		}
+		options := []Option{WithOperatorConfiguration(f.h.auth, f.projects)}
+		credential := f.owner
+		if qualified {
+			options = append(options, WithProjectRouteQualification(f.access))
+			editor, err := f.h.auth.CreateUser(ctx, "config-editor", f.h.password, userauth.RoleTechnician)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential, err = f.h.auth.Login(ctx, editor.Username, f.h.password, "127.0.0.3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.operatorID = editor.ID
+			if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+				[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		handler := New(options...).Handler()
+		body := []byte(`{"name":"revoked","source_ref":"osc","event_type":"trigger","enabled":true}`)
+		request := func(projectID string) *http.Request {
+			return authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+projectID+"/inputs", body, credential.Token, credential.CSRFToken)
+		}
+		if qualified {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, request(f.otherID))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("cross-project mutation returned %d: %s", rec.Code, rec.Body)
+			}
+		}
+		req := request(f.projectID)
+		req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+			var err error
+			if qualified {
+				err = f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil)
+			} else {
+				err = f.h.auth.Logout(ctx, credential.Token)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		want := http.StatusForbidden
+		if qualified {
+			want = http.StatusNotFound
+		}
+		if rec.Code != want {
+			t.Fatalf("qualified=%t revoked configuration returned %d: %s", qualified, rec.Code, rec.Body)
+		}
+		after, err := f.projects.GetProject(ctx, f.projectID)
+		if err != nil || after.CurrentRevisionID != project.CurrentRevisionID {
+			t.Fatalf("revoked edit forked the project: %+v, %v", after, err)
+		}
 	}
 }
