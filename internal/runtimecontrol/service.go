@@ -742,6 +742,8 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	eventType := "runtime.emergency_blackout.cleared"
 	if req.Enabled {
 		eventType = "runtime.emergency_blackout.applied"
+	} else if safetyErr != nil {
+		eventType = "runtime.emergency_blackout.clear_failed"
 	}
 	eventPayload := report
 	if len(eventPayload) == 0 {

@@ -398,3 +398,45 @@ func TestShowExitRechecksGrantAfterStopSafety(t *testing.T) {
 		t.Fatalf("revoked SHOW exit changed active Session: %+v, %v", current, err)
 	}
 }
+
+func TestEmergencyBlackoutClearKeepsLatchAfterBrowserRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionShow, "SHOW", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetSessionManagedOutputBlackout(ctx, active.ID, true, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	safetyReached := false
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry(), runtimecontrol.WithEmergencySafety(
+		func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+			safetyReached = !enabled
+			return json.RawMessage(`{}`), f.h.auth.Logout(ctx, f.owner.Token)
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/emergency-blackout",
+		[]byte(`{"enabled":false,"confirm":"CLEAR","request_id":"018f5b34-0f47-7cc0-9000-0a0000000113"}`), f.owner.Token, f.owner.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !safetyReached || res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("blackout clear after session revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
+	}
+	latched, err := f.projects.SessionManagedOutputBlackout(ctx, active.ID)
+	if err != nil || !latched {
+		t.Fatalf("revoked clear released GO latch: %t, %v", latched, err)
+	}
+}

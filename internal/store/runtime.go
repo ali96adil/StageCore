@@ -249,18 +249,19 @@ func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID s
 	if enabled {
 		value = 1
 	}
-	_, err = s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
-		VALUES (?, ?, ?, ?)
+		SELECT session_id, ?, ?, ? FROM sessions
+		WHERE session_id = ? AND status = 'ACTIVE'
 		ON CONFLICT(session_id) DO UPDATE SET
 			managed_output_blackout = excluded.managed_output_blackout,
 			updated_by = excluded.updated_by,
 			updated_at_us = excluded.updated_at_us
-	`, session.ID, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()))
+	`, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()), session.ID)
 	if err != nil {
 		return fmt.Errorf("set session managed-output blackout: %w", err)
 	}
-	return nil
+	return requireOneRow(result)
 }
 
 func (s *Store) SessionManagedOutputBlackout(ctx context.Context, sessionID string) (bool, error) {

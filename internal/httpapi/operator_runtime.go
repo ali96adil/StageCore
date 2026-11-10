@@ -245,7 +245,12 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, "", intent) {
 			return
 		}
-		result := runtime.ProjectBlackout(r.Context(), runtimecontrol.ProjectEmergencyRequest{
+		var scoped []projectaccess.Permission
+		if body.Enabled {
+			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		result := runtime.ProjectBlackout(ctx, runtimecontrol.ProjectEmergencyRequest{
 			ProjectID: r.PathValue("project_id"),
 			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
@@ -281,7 +286,12 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, intent) {
 			return
 		}
-		result := runtime.EmergencyBlackout(r.Context(), runtimecontrol.EmergencyRequest{
+		var scoped []projectaccess.Permission
+		if body.Enabled {
+			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		result := runtime.EmergencyBlackout(ctx, runtimecontrol.EmergencyRequest{
 			SessionID: active.ID,
 			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
@@ -302,7 +312,12 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopCue) {
 			return
 		}
-		result := runtime.StopCue(r.Context(), runtimecontrol.StopRequest{
+		needed := projectaccess.RehearsalControl
+		if active.Type == domain.SessionShow {
+			needed = projectaccess.ShowStop
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.ProjectView, needed)
+		result := runtime.StopCue(ctx, runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
