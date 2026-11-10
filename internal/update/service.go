@@ -204,6 +204,9 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 }
 
 func (s *Service) rollback(ctx context.Context, result Result, snapshot Snapshot, doctorOpts doctor.Options, cause error) (Result, error) {
+	// The installation may have changed managed state before its caller canceled.
+	// Finish the recovery even if that caller is no longer waiting.
+	ctx = context.WithoutCancel(ctx)
 	result.RolledBack = true
 	if _, err := s.commands.Output(ctx, "systemctl", "stop", "stagecore-hub.service"); err != nil {
 		return result, errors.Join(cause, fmt.Errorf("%w: stop failed candidate: %v", ErrRollbackFailed, err))

@@ -66,7 +66,10 @@ type fakeCommands struct {
 	errs  map[string]error
 }
 
-func (f *fakeCommands) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+func (f *fakeCommands) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	call := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	f.calls = append(f.calls, call)
 	if f.errs != nil {

@@ -146,3 +146,28 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 		t.Fatalf("restored snapshot lost its Cue: %+v, %v", manifest.Cues, err)
 	}
 }
+
+func TestUpdateCancellationStillRestartsRestoredInstallation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	commands := &fakeCommands{}
+	snapshots := &fakeSnapshots{}
+	service := testService(&fakeInstaller{}, &fakeDoctor{}, snapshots, commands)
+	service.installer = rollbackFixtureInstaller(func(_ context.Context, opts deployment.Options) (deployment.Result, error) {
+		result := deployment.Result{Effective: opts}
+		if opts.DryRun {
+			return result, nil
+		}
+		cancel()
+		return result, context.Canceled
+	})
+
+	result, err := service.Apply(ctx, testOptions(false))
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrRollbackFailed) ||
+		!result.RolledBack || snapshots.restored != 1 || result.RollbackReport.Overall != doctor.OverallReady {
+		t.Fatalf("canceled installation did not recover: %+v restored=%d err=%v", result, snapshots.restored, err)
+	}
+	if len(commands.calls) != 5 || commands.calls[4] != "systemctl start stagecore-hub.service" {
+		t.Fatalf("restored installation was not restarted: %v", commands.calls)
+	}
+}
