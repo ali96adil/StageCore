@@ -488,11 +488,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_VISUAL_CHECK_CONFIRMATION_REQUIRED"})
 						return
 					}
+					ctx := projectMutationContext(r, auth, session, userauth.PermissionCompanionPair, access, projectaccess.DeviceConfigure)
 					check, err := devices.RecordStageLaserVisualCheck(
-						r.Context(), deviceID, projectID, session.User.ID,
+						ctx, deviceID, projectID, session.User.ID,
 						input.VisualState, input.ExpectedDeviceReportedState, input.ExpectedDeviceBootID,
 					)
 					if err != nil {
+						if writeProjectMutationDenied(w, err) {
+							return
+						}
 						status := http.StatusConflict
 						if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 							status = http.StatusBadRequest

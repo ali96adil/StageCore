@@ -122,6 +122,21 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"comparison":"MISMATCH"`)) {
 		t.Fatalf("visual check GET=%d: %s", res.Code, res.Body.String())
 	}
+	revokeRequest := authenticatedMutationRequest(t, http.MethodPost, path, []byte(payload), owner.Token, owner.CSRFToken)
+	revokeRequest.Body = &firmwareUploadRevokeReader{ReadCloser: revokeRequest.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, revokeRequest)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("visual check after logout returned %d: %s", denied.Code, denied.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT count(*) FROM stage_device_stagelaser_visual_checks WHERE device_id = ?", laserID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("visual checks after rejected write=%d, err=%v", count, err)
+	}
 }
 
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {

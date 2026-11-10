@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/google/uuid"
 )
 
@@ -63,6 +64,9 @@ func (r *Repository) RecordStageLaserVisualCheck(
 		return StageLaserVisualCheck{}, err
 	}
 	defer tx.Rollback()
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return StageLaserVisualCheck{}, err
+	}
 
 	var protocol, kind, profile, connection string
 	var stateJSON sql.NullString
