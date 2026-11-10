@@ -20,7 +20,9 @@ async function loadSessions() {
 }
 
 async function renderSessions() {
+  const current = beginSessionMemoryRead();
   const sessions = await loadSessions();
+  if (!current()) return;
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">SESSION MEMORY</p><h1>Rehearsal / Show history</h1><p>Structured runtime history stored on this Hub. Raw logs are not required for normal inspection.</p></div>
@@ -114,11 +116,18 @@ async function renderRehearsalApproval(container, projectID, session) {
   }
 }
 
+function beginSessionMemoryRead() {
+  const request = { user: state.user, projectID: state.project.project_id };
+  state.sessionMemoryRequest = request;
+  return () => state.sessionMemoryRequest === request && state.user === request.user &&
+    state.project?.project_id === request.projectID && state.page === "sessions";
+}
+
 async function renderSessionDetail(sessionID, executionID = "") {
-  const user = state.user;
+  const current = beginSessionMemoryRead();
   const projectID = state.project.project_id;
   const detail = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/sessions/${encodeURIComponent(sessionID)}`);
-  if (state.user !== user || state.project?.project_id !== projectID || state.page !== "sessions") return;
+  if (!current()) return;
   const session = detail.session;
   const traces = detail.cue_executions || [];
   const rehearsalSummary = !executionID && session.session_type === "REHEARSAL" && session.ended_at;

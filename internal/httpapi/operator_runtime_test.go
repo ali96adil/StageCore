@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
+	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -44,7 +45,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(WithOperatorRuntime(h.auth, projectStore, runtime), WithProjectRouteQualification(access)).Handler()
+	handler := New(WithOperatorRuntime(h.auth, projectStore, runtime), WithOperatorMemory(h.auth, projectStore, sessionmemory.New(projectStore)), WithProjectRouteQualification(access)).Handler()
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +256,37 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	}
 	if jumpResponse.Result.Status != contracts.CommandCompleted {
 		t.Fatalf("Jump result=%+v", jumpResponse.Result)
+	}
+
+	trace := httptest.NewRecorder()
+	handler.ServeHTTP(trace, authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/sessions/"+start.Session.ID, owner.Token))
+	if trace.Code != http.StatusOK {
+		t.Fatalf("trace status=%d body=%s", trace.Code, trace.Body)
+	}
+	var history struct {
+		CueExecutions []struct {
+			ID string `json:"cue_execution_id"`
+		} `json:"cue_executions"`
+	}
+	if err := json.Unmarshal(trace.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []contracts.CommandResult{goResponse.Result, jumpResponse.Result} {
+		var receipt struct {
+			ID string `json:"cue_execution_id"`
+		}
+		if err := json.Unmarshal(result.Payload, &receipt); err != nil || receipt.ID == "" {
+			t.Fatalf("missing execution in receipt: %s err=%v", result.Payload, err)
+		}
+		count := 0
+		for _, execution := range history.CueExecutions {
+			if execution.ID == receipt.ID {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("receipt %s resolved to %d persisted traces", receipt.ID, count)
+		}
 	}
 	active, err := projectStore.ActiveSessionForProject(ctx, project.ID)
 	if err != nil || active == nil || active.CurrentCueID == nil || *active.CurrentCueID != second.ID {
