@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -130,7 +131,7 @@ func recheckProjectMutation(w http.ResponseWriter, r *http.Request, auth *userau
 func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
 	qualified := qualificationAccess(r, access) != nil
 	projectID := r.PathValue("project_id")
-	return store.WithProjectMutationAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
+	return capability.WithWriteAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
 		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
 		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && userauth.Authorize(role, permission) != nil) {
 			return userauth.ErrForbidden

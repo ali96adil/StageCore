@@ -8,24 +8,10 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
-
-type projectMutationAuthorizationKey struct{}
-
-// WithProjectMutationAuthorization binds the browser authority check to the
-// transaction committing a project metadata or authoring mutation.
-func WithProjectMutationAuthorization(ctx context.Context, authorize func(context.Context, *sql.Tx) error) context.Context {
-	return context.WithValue(ctx, projectMutationAuthorizationKey{}, authorize)
-}
-
-func authorizeProjectMutation(ctx context.Context, tx *sql.Tx) error {
-	if authorize, ok := ctx.Value(projectMutationAuthorizationKey{}).(func(context.Context, *sql.Tx) error); ok && authorize != nil {
-		return authorize(ctx, tx)
-	}
-	return nil
-}
 
 type CreateProjectParams struct {
 	Name        string
@@ -68,7 +54,7 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (domai
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ? WHERE project_id = ?`, revisionID, projectID); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, fmt.Errorf("set current revision: %w", err)
 	}
-	if err := authorizeProjectMutation(ctx, tx); err != nil {
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Project{}, domain.ProjectRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -126,7 +112,7 @@ func (s *Store) RenameProject(ctx context.Context, projectID, newName string) (d
 		current.Name = newName
 		current.UpdatedAt = clock.FromUnixMicros(clock.UnixMicros(now))
 	}
-	if err := authorizeProjectMutation(ctx, tx); err != nil {
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Project{}, err
 	}
 	if err := tx.Commit(); err != nil {

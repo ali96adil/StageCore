@@ -216,7 +216,13 @@ func (i *Installer) Install(ctx context.Context, packageID, actor string) (Insta
 	if err := verifyPayload(finalPath, contentHash, size); err != nil {
 		return Installation{}, err
 	}
-	return i.persistInstalled(ctx, pkg, actor, relativePath, contentHash, size)
+	item, err := i.persistInstalled(ctx, pkg, actor, relativePath, contentHash, size)
+	if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		if cleanupErr := os.Remove(finalPath); cleanupErr != nil {
+			return Installation{}, errors.Join(err, fmt.Errorf("remove revoked extension payload: %w", cleanupErr))
+		}
+	}
+	return item, err
 }
 
 func (i *Installer) Get(ctx context.Context, installationID string) (Installation, error) {
@@ -255,6 +261,9 @@ func (i *Installer) persistInstalled(ctx context.Context, pkg Package, actor, re
 		SizeBytes: size,
 		InstalledBy: actor,
 	})
+	if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		return Installation{}, err
+	}
 	if err != nil {
 		if existing, getErr := i.library.store.GetExtensionInstallationByPackageID(ctx, pkg.PackageID); getErr == nil {
 			return i.inflateAndVerify(ctx, existing)
