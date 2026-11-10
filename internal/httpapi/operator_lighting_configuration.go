@@ -51,7 +51,7 @@ func registerOperatorLightingConfigurationRoutes(
 	devices *deviceexperience.Repository,
 	stageStore *store.Store,
 ) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -71,6 +71,9 @@ func registerOperatorLightingConfigurationRoutes(
 		allDevices, err := devices.ListDevices(r.Context(), projectID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_DEVICES_UNAVAILABLE", "detail": err.Error()})
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

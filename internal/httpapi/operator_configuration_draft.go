@@ -21,11 +21,14 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 		if len(audits) > 0 {
 			audit = audits[0]
 		}
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration/lock", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration/lock", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			lock, err := stageStore.ShowConfigurationLockState(r.Context(), projectID)
 			if err != nil {
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"show_configuration_lock": lock})

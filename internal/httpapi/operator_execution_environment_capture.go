@@ -31,7 +31,7 @@ func WithOperatorExecutionEnvironmentCapture(auth *userauth.Service, stageStore 
 func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault) {
 	base := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/assets/{asset_key}"
 
-	mux.HandleFunc("GET "+base+"/vault-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET "+base+"/vault-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, _, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
 		if !ok {
 			return
@@ -44,16 +44,21 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			"size_bytes":               asset.SizeBytes,
 			"vault_available":          false,
 		}
+		deliverStatus := func() {
+			if allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				writeJSON(w, http.StatusOK, status)
+			}
+		}
 		if asset.CapturePolicy != executionenv.CaptureContentBound || asset.SizeBytes == nil {
 			status["reason"] = "REFERENCE_ONLY"
-			writeJSON(w, http.StatusOK, status)
+			deliverStatus()
 			return
 		}
 
 		object, err := stageStore.GetVaultObject(r.Context(), asset.ContentHash)
 		if errors.Is(err, domain.ErrNotFound) {
 			status["reason"] = "NOT_IN_VAULT"
-			writeJSON(w, http.StatusOK, status)
+			deliverStatus()
 			return
 		}
 		if err != nil {
@@ -62,19 +67,19 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		}
 		if object.SizeBytes != *asset.SizeBytes {
 			status["reason"] = "SIZE_MISMATCH"
-			writeJSON(w, http.StatusOK, status)
+			deliverStatus()
 			return
 		}
 		file, _, err := vault.OpenObject(r.Context(), asset.ContentHash)
 		if err != nil {
 			status["reason"] = "VAULT_OBJECT_UNAVAILABLE"
-			writeJSON(w, http.StatusOK, status)
+			deliverStatus()
 			return
 		}
 		_ = file.Close()
 		status["vault_available"] = true
 		status["reason"] = "AVAILABLE"
-		writeJSON(w, http.StatusOK, status)
+		deliverStatus()
 	}))
 
 	mux.HandleFunc("POST "+base+"/capture", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {

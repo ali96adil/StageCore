@@ -43,7 +43,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/rebuild-plan"
 
 	mux.HandleFunc("GET "+path, withPermission(auth, userauth.PermissionProjectRead, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
 		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore)
 		if !ok {
@@ -52,6 +52,9 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		plan, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID)
 		if err != nil {
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE")
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentRebuildPlanView(plan))

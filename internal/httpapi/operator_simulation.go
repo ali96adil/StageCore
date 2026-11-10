@@ -65,10 +65,13 @@ func WithOperatorSimulation(auth *userauth.Service, control *simulationcontrol.S
 }
 
 func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service, control *simulationcontrol.Service) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		status, err := control.Status(r.Context(), r.PathValue("project_id"))
 		if err != nil {
 			writeSimulationError(w, err)
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, status)

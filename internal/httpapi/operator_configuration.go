@@ -120,7 +120,7 @@ func WithOperatorConfiguration(auth *userauth.Service, stageStore *store.Store) 
 }
 
 func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -148,6 +148,9 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		cues, err := stageStore.ListCues(r.Context(), revision.ID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -520,28 +523,50 @@ func targetView(value domain.ProjectDeviceAlias) targetConfigurationView {
 	return targetConfigurationView{ID: value.ID, LogicalName: value.LogicalName, LogicalType: value.LogicalType, TargetRef: value.TargetRef, GroupName: value.GroupName, Configuration: value.ProjectConfig}
 }
 func targetViews(values []domain.ProjectDeviceAlias) []targetConfigurationView {
-	out := make([]targetConfigurationView, 0, len(values)); for _, value := range values { out = append(out, targetView(value)) }; return out
+	out := make([]targetConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, targetView(value))
+	}
+	return out
 }
 func inputView(value domain.InputDefinition) inputConfigurationView {
 	return inputConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, SourceRef: value.SourceRef, EventType: value.EventType, ValueSchema: value.ValueSchema, Enabled: value.Enabled}
 }
 func inputViews(values []domain.InputDefinition) []inputConfigurationView {
-	out := make([]inputConfigurationView, 0, len(values)); for _, value := range values { out = append(out, inputView(value)) }; return out
+	out := make([]inputConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, inputView(value))
+	}
+	return out
 }
 func outputView(value domain.OutputDefinition) outputConfigurationView {
 	return outputConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, TargetRef: value.TargetRef, CapabilityKey: value.CapabilityKey, ValueSchema: value.ValueSchema, Criticality: value.Criticality}
 }
 func outputViews(values []domain.OutputDefinition) []outputConfigurationView {
-	out := make([]outputConfigurationView, 0, len(values)); for _, value := range values { out = append(out, outputView(value)) }; return out
+	out := make([]outputConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, outputView(value))
+	}
+	return out
 }
 func routeView(value domain.Route) routeConfigurationView {
 	actions := make([]routeActionConfigurationView, 0, len(value.Actions))
-	for _, action := range value.Actions { actions = append(actions, routeActionConfigurationView{ID: action.ID, OutputID: action.OutputID, CueID: action.CueID, Parameters: action.Parameters}) }
+	for _, action := range value.Actions {
+		actions = append(actions, routeActionConfigurationView{ID: action.ID, OutputID: action.OutputID, CueID: action.CueID, Parameters: action.Parameters})
+	}
 	return routeConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, InputID: value.InputID, ConditionDefinition: value.ConditionDefinition, TransformDefinition: value.TransformDefinition, DelayMS: value.DelayMS, DebounceMS: value.DebounceMS, PriorityClass: value.PriorityClass, ErrorPolicy: value.ErrorPolicy, Enabled: value.Enabled, Actions: actions}
 }
 func routeViews(values []domain.Route) []routeConfigurationView {
-	out := make([]routeConfigurationView, 0, len(values)); for _, value := range values { out = append(out, routeView(value)) }; return out
+	out := make([]routeConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, routeView(value))
+	}
+	return out
 }
 func cueConfigurationChoices(values []domain.Cue) []cueSummaryView {
-	out := make([]cueSummaryView, 0, len(values)); for _, value := range values { out = append(out, cueSummaryView{ID: value.ID, DisplayLabel: value.DisplayLabel, Name: value.Name, OrderIndex: value.OrderIndex}) }; return out
+	out := make([]cueSummaryView, 0, len(values))
+	for _, value := range values {
+		out = append(out, cueSummaryView{ID: value.ID, DisplayLabel: value.DisplayLabel, Name: value.Name, OrderIndex: value.OrderIndex})
+}
+	return out
 }

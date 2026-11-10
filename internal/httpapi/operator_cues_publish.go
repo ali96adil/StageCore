@@ -83,7 +83,7 @@ func WithOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 }
 
 func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, publisher *publish.Service) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/cues", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/cues", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, err := projectStore.GetProject(r.Context(), r.PathValue("project_id"))
 		if err != nil {
 			writeProjectStoreError(w, err)
@@ -101,6 +101,9 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 		revision, err := projectStore.GetRevision(r.Context(), project.CurrentRevisionID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "REVISION_UNAVAILABLE"})
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"revision": makeRevisionView(revision), "cues": items})
@@ -181,7 +184,7 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/validation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/validation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, err := projectStore.GetProject(r.Context(), r.PathValue("project_id"))
 		if err != nil {
 			writeProjectStoreError(w, err)
@@ -190,6 +193,9 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 		report, err := publisher.Validate(r.Context(), project.ID, project.CurrentRevisionID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "VALIDATION_UNAVAILABLE"})
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, report)

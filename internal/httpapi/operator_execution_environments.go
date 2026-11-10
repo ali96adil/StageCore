@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/domain"
-	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -54,7 +54,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments"
 	item := collection + "/{execution_environment_id}"
 
-	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -76,6 +76,9 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		roleViews := make([]machineRoleView, 0, len(roles))
 		for _, role := range roles {
 			roleViews = append(roleViews, makeMachineRoleView(role))
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision":               makeRevisionView(revision),
