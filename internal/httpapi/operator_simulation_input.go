@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/simulationinput"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -41,7 +42,7 @@ func WithOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinpu
 			if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 				return
 			}
-			result := inputs.Inject(r.Context(), simulationinput.InjectRequest{
+			result := inputs.Inject(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationinput.InjectRequest{
 				ProjectID: r.PathValue("project_id"),
 				Issuer: session.User.ID,
 				RequestID: strings.TrimSpace(body.RequestID),
