@@ -30,7 +30,7 @@ func TestActiveSimulationSessionRejectsGrantRevokedDuringStatusRead(t *testing.T
 	if err != nil { t.Fatal(err) }
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil { t.Fatal(err) }
-	viewer, err := h.auth.CreateUser(ctx, "simulation-revoked-viewer", h.password, userauth.RoleViewer)
+	viewer, err := h.auth.CreateUser(ctx, "simulation-revoked-operator", h.password, userauth.RoleOperator)
 	if err != nil { t.Fatal(err) }
 	login, err := h.auth.Login(ctx, viewer.Username, h.password, "127.0.0.1")
 	if err != nil { t.Fatal(err) }
