@@ -90,19 +90,18 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			return
 		}
 
-		grant, err := currentProjectRouteGrant(r)
-		if !writeProjectQualificationError(w, err) {
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
 			return
 		}
 		result := runtime.OperateExecutionEnvironment(r.Context(), companionchannel.EnvironmentOperationRequest{
 			IssuerBrowserSessionID:      session.ID,
-			IssuerRequiresProjectGrants: grant.access != nil,
+			IssuerRequiresProjectGrants: qualificationAccess(r, nil) != nil,
 			OperationID:                 body.OperationID,
 			EnvironmentManifestID:       environment.ID,
 			Kind:                        body.Kind,
 			TimeoutMS:                   body.TimeoutMS,
 		})
-		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
 			return
 		}
 		writeJSON(w, http.StatusOK, executionEnvironmentOperationView{
