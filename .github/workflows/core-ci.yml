@@ -36,6 +36,8 @@ jobs:
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
         run: |
+          node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/timing-intelligence.js
           node --check internal/operatorweb/static/phase4.js
           node --check internal/operatorweb/static/cue-studio.js
           node --check internal/operatorweb/static/guided-ux.js
