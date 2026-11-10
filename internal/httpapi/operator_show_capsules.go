@@ -59,6 +59,23 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 		exportRoot := filepath.Join(root, "exports")
 		importRoot := filepath.Join(root, "imports")
 
+		recheckRead := func(w http.ResponseWriter, r *http.Request, session userauth.Session, permissions ...projectaccess.Permission) bool {
+			token, _ := browserSessionToken(r)
+			current, err := auth.ValidatePassive(r.Context(), token)
+			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+				return false
+			}
+			if userauth.Authorize(current.User.Role, userauth.PermissionProjectRead) != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+				return false
+			}
+			if len(permissions) == 0 {
+				return allowScopedOwner(w, current, access)
+			}
+			return allowScopedProject(w, r, current, access, permissions...)
+		}
+
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/show-capsule/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			if !allowScopedProject(w, r, session, access, projectaccess.CapsuleExport, projectaccess.MediaRead) {
 				return
@@ -75,7 +92,7 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				writeProjectStoreError(w, err)
 				return
 			}
-			if !allowScopedProject(w, r, session, access, projectaccess.CapsuleExport, projectaccess.MediaRead) {
+			if !recheckRead(w, r, session, projectaccess.CapsuleExport, projectaccess.MediaRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"manifest": manifest})
@@ -170,6 +187,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				}
 				return entries[i].CapsuleID < entries[j].CapsuleID
 			})
+			if !recheckRead(w, r, session) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"capsules": entries,
 				"presentation": map[string]any{
@@ -190,6 +210,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			plan, err := service.PlanImport(r.Context(), path)
 			if err != nil {
 				writeShowCapsuleError(w, err)
+				return
+			}
+			if !recheckRead(w, r, session) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"plan": plan})

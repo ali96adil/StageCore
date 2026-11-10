@@ -23,6 +23,7 @@ type fakeShowCapsuleService struct {
 	lastMode         showcapsule.ExportMode
 	lastImportedBy   string
 	onExport         func()
+	onPlan           func()
 }
 
 func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID string, options showcapsule.BuildOptions) (showcapsule.Manifest, error) {
@@ -50,6 +51,9 @@ func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root str
 
 func (f *fakeShowCapsuleService) PlanImport(_ context.Context, path string) (showcapsule.ImportPlan, error) {
 	f.planCalls++
+	if f.onPlan != nil {
+		f.onPlan()
+	}
 	f.lastPath = path
 	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, nil
 }
@@ -214,5 +218,31 @@ func TestShowCapsuleExportRechecksSessionAtPublication(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") {
 		t.Fatalf("revoked export got HTTP %d, %d calls, %s", rec.Code, service.exportCalls, rec.Body.String())
+	}
+}
+
+func TestLegacyShowCapsulePlanWithholdsResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{onPlan: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodGet, "/api/v1/show-capsules/imports/"+capsuleID+"/plan", nil, login.Token, "")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized || service.planCalls != 1 || strings.Contains(res.Body.String(), capsuleID) {
+		t.Fatalf("revoked plan response=%d body=%s calls=%d", res.Code, res.Body, service.planCalls)
 	}
 }
