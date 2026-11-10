@@ -18,6 +18,7 @@ import (
 )
 
 type runtimeHarness struct {
+	database *db.Handle
 	store    *store.Store
 	service  *Service
 	project  domain.Project
@@ -78,7 +79,7 @@ func newRuntimeHarnessWithPolicies(t *testing.T, policies []json.RawMessage, cue
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &runtimeHarness{store: s, service: New(s, registry), project: project, snapshot: published, cues: cues}
+	return &runtimeHarness{database: h, store: s, service: New(s, registry), project: project, snapshot: published, cues: cues}
 }
 
 func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
@@ -764,5 +765,42 @@ func TestShowStructuralPreflightBlockStillRejects(t *testing.T) {
 	if session.ID != "" || result.Status != contracts.CommandRejected ||
 		result.Error == nil || result.Error.ErrorCode != "SHOW_PREFLIGHT_BLOCKED" {
 		t.Fatalf("structural Preflight block should reject SHOW: result=%+v session=%+v", result, session)
+	}
+}
+
+func TestShowExitRollsBackWhenJournalWriteFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	ctx := context.Background()
+	session, err := h.store.CreateSession(ctx, h.snapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_show_exit BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.exited' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StopRequest{SessionID: session.ID, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000001"}
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandFailed {
+		t.Fatalf("stop = %+v", result)
+	}
+	current, err := h.store.GetSessionFoundation(ctx, session.ID)
+	if err != nil || current.LifecycleState != domain.SessionLifecycleActive {
+		t.Fatalf("session committed without event: %+v err=%v", current, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_show_exit"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000002"
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("retry = %+v error=%+v", result, result.Error)
+	}
+	if result := h.service.StopSession(ctx, req); result.Status != contracts.CommandCompleted {
+		t.Fatalf("replay = %+v", result)
+	}
+	events, err := h.store.ListEvents(ctx, session.ID)
+	if err != nil || len(events) != 1 || events[0].EventType != "show.exited" {
+		t.Fatalf("events = %+v err=%v", events, err)
 	}
 }

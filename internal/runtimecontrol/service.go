@@ -401,24 +401,21 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if err := s.runRehearsalOutputs(ctx, session, command, outputs); err != nil {
 		return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_EXTERNAL_STOP_FAILED", err.Error(), session.ID))
 	}
-	if err := s.store.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {
-		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
-	}
 	eventType := "rehearsal.stopped"
 	if session.Type == domain.SessionShow {
 		eventType = "show.exited"
 	}
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
-	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload}
+	if err := s.store.CompleteOperationalStop(ctx, session.ID, contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
-	}); err != nil {
-		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
+	}, result); err != nil {
+		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
 	}
-	resultPayload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
-	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload})
+	return result
 }
 
 func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contracts.CommandResult {

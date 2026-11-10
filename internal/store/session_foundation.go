@@ -262,6 +262,11 @@ func (s *Store) ListSessionFoundationsForProject(ctx context.Context, projectID 
 	return out, rows.Err()
 }
 
+const endSessionLifecycleSQL = `
+		UPDATE sessions
+		SET status = ?, lifecycle_state = ?, end_reason = ?, ended_at_us = ?
+		WHERE session_id = ? AND status = 'ACTIVE' AND lifecycle_state = 'ACTIVE'`
+
 func (s *Store) EndSessionLifecycle(ctx context.Context, sessionID string, lifecycle domain.SessionLifecycleState, reason string) error {
 	var coarse domain.SessionStatus
 	switch lifecycle {
@@ -285,10 +290,7 @@ func (s *Store) EndSessionLifecycle(ctx context.Context, sessionID string, lifec
 		return fmt.Errorf("%w: terminal session lifecycle required", domain.ErrInvalidInput)
 	}
 
-	result, err := capability.ExecAuthorized(ctx, s.db, `
-		UPDATE sessions
-		SET status = ?, lifecycle_state = ?, end_reason = ?, ended_at_us = ?
-		WHERE session_id = ? AND status = 'ACTIVE' AND lifecycle_state = 'ACTIVE'`,
+	result, err := capability.ExecAuthorized(ctx, s.db, endSessionLifecycleSQL,
 		coarse, lifecycle, strings.TrimSpace(reason), clock.UnixMicros(s.clock.Now()), sessionID)
 	if err != nil {
 		return fmt.Errorf("end session lifecycle: %w", err)

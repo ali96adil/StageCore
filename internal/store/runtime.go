@@ -423,6 +423,10 @@ func (s *Store) ListActionExecutions(ctx context.Context, cueExecutionID string)
 }
 
 func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
+	return s.appendEvent(ctx, s.db, sessionID, event)
+}
+
+func (s *Store) appendEvent(ctx context.Context, q execer, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
 	if event.EventID == "" {
 		var err error
 		event.EventID, err = stageid.New()
@@ -448,7 +452,7 @@ func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contra
 	if err != nil {
 		return contracts.EventEnvelope{}, fmt.Errorf("event payload: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO event_records (event_id, session_id, event_type, schema_version, occurred_at_us, observed_at_us, source_ref, project_id, runtime_snapshot_id, correlation_id, causation_id, priority, trace_context_json, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.EventID, nullableString(sessionID), event.EventType, event.SchemaVersion, clock.UnixMicros(event.OccurredAt), clock.UnixMicros(event.ObservedAt), event.Source, event.ProjectID, nullableText(event.RuntimeSnapshotID), nullableText(event.CorrelationID), nullableText(event.CausationID), event.Priority, trace, payload)
+	result, err := q.ExecContext(ctx, `INSERT INTO event_records (event_id, session_id, event_type, schema_version, occurred_at_us, observed_at_us, source_ref, project_id, runtime_snapshot_id, correlation_id, causation_id, priority, trace_context_json, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.EventID, nullableString(sessionID), event.EventType, event.SchemaVersion, clock.UnixMicros(event.OccurredAt), clock.UnixMicros(event.ObservedAt), event.Source, event.ProjectID, nullableText(event.RuntimeSnapshotID), nullableText(event.CorrelationID), nullableText(event.CausationID), event.Priority, trace, payload)
 	if err != nil {
 		return contracts.EventEnvelope{}, fmt.Errorf("append event: %w", err)
 	}
@@ -516,9 +520,13 @@ func (s *Store) ReserveCommand(ctx context.Context, command contracts.CommandEnv
 }
 
 func (s *Store) FinishCommand(ctx context.Context, commandID string, result contracts.CommandResult) error {
+	return s.finishCommand(ctx, s.db, commandID, result)
+}
+
+func (s *Store) finishCommand(ctx context.Context, q execer, commandID string, result contracts.CommandResult) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil { return fmt.Errorf("marshal command result: %w", err) }
-	res, err := s.db.ExecContext(ctx, `UPDATE command_records SET status = ?, result_json = ?, updated_at_us = ? WHERE command_id = ? AND status = 'ACCEPTED'`, result.Status, string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
+	res, err := q.ExecContext(ctx, `UPDATE command_records SET status = ?, result_json = ?, updated_at_us = ? WHERE command_id = ? AND status = 'ACCEPTED'`, result.Status, string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
 	if err != nil { return fmt.Errorf("finish command: %w", err) }
 	return requireOneRow(res)
 }

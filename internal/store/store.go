@@ -24,6 +24,10 @@ func New(database *sql.DB, c clock.Clock) *Store {
 	return &Store{db: database, clock: c}
 }
 
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }

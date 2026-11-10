@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -46,4 +49,33 @@ func (s *Store) EndSession(ctx context.Context, sessionID string, status domain.
 	default:
 		return fmt.Errorf("%w: terminal session status required", domain.ErrInvalidInput)
 	}
+}
+
+// CompleteOperationalStop commits the terminal session, its event, and the
+// replayable command result together after the runtime confirms output safety.
+func (s *Store) CompleteOperationalStop(ctx context.Context, sessionID string, event contracts.EventEnvelope, result contracts.CommandResult) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	updated, err := tx.ExecContext(ctx, endSessionLifecycleSQL, domain.SessionCompleted,
+		domain.SessionLifecycleCompleted, "", clock.UnixMicros(s.clock.Now()), sessionID)
+	if err != nil {
+		return err
+	}
+	if err := requireOneRow(updated); err != nil {
+		return err
+	}
+	if _, err := s.appendEvent(ctx, tx, &sessionID, event); err != nil {
+		return err
+	}
+	if err := s.finishCommand(ctx, tx, result.CommandID, result); err != nil {
+		return err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
