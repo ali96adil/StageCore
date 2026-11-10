@@ -293,7 +293,8 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
 		CausationID: command.CommandID, Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
 	}); err != nil {
-		_ = s.store.EndSession(context.WithoutCancel(ctx), session.ID, domain.SessionAborted)
+		rollbackCtx := capability.WithWriteAuthorization(context.WithoutCancel(ctx), nil)
+		_ = s.store.EndSession(rollbackCtx, session.ID, domain.SessionAborted)
 		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
 	}
 	resultData := map[string]any{

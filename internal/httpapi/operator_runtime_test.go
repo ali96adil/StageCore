@@ -355,3 +355,46 @@ func TestShowAdmissionRechecksGrantAfterPreflight(t *testing.T) {
 		t.Fatalf("revoked SHOW changed runtime state: %+v, %v", active, err)
 	}
 }
+
+func TestShowExitRechecksGrantAfterStopSafety(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionShow, "SHOW", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowEnterExit}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, grants); err != nil {
+		t.Fatal(err)
+	}
+	safetyReached := false
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry(), runtimecontrol.WithSessionStopSafety(
+		func(_ context.Context, stopped domain.Session, _ contracts.CommandEnvelope) error {
+			safetyReached = true
+			return f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, stopped.ProjectID, nil)
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/stop-session",
+		[]byte(`{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000112"}`), f.operator.Token, f.operator.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !safetyReached || res.Code != http.StatusNotFound {
+		t.Fatalf("SHOW exit after grant revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
+	}
+	current, err := f.projects.ActiveSessionForProject(ctx, f.projectID)
+	if err != nil || current == nil || current.ID != active.ID {
+		t.Fatalf("revoked SHOW exit changed active Session: %+v, %v", current, err)
+	}
+}

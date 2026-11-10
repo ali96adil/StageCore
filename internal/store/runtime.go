@@ -506,7 +506,7 @@ func (s *Store) ReserveCommand(ctx context.Context, command contracts.CommandEnv
 	if issuedAt.IsZero() { issuedAt = now }
 	correlationID := command.CorrelationID
 	if correlationID == "" { correlationID = command.CommandID }
-	_, err := s.db.ExecContext(ctx, `INSERT INTO command_records (command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', '{}', ?, ?)`, command.CommandID, command.CommandType, command.SchemaVersion, clock.UnixMicros(issuedAt), command.ProjectID, command.RuntimeSnapshotID, command.IdempotencyKey, correlationID, clock.UnixMicros(now), clock.UnixMicros(now))
+	_, err := capability.ExecAuthorized(ctx, s.db, `INSERT INTO command_records (command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', '{}', ?, ?)`, command.CommandID, command.CommandType, command.SchemaVersion, clock.UnixMicros(issuedAt), command.ProjectID, command.RuntimeSnapshotID, command.IdempotencyKey, correlationID, clock.UnixMicros(now), clock.UnixMicros(now))
 	if err != nil {
 		if existing, found, lookupErr := s.FindCommandRecord(ctx, command); lookupErr == nil && found { return existing, false, nil }
 		return domain.CommandRecord{}, false, fmt.Errorf("reserve command: %w", err)

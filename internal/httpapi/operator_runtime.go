@@ -129,8 +129,12 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
+		permission := userauth.PermissionRuntimeControl
+		needed := projectaccess.RehearsalControl
 		if active.Type == domain.SessionShow {
-			if err := userauth.Authorize(session.User.Role, userauth.PermissionShowEnterExit); err != nil {
+			permission = userauth.PermissionShowEnterExit
+			needed = projectaccess.ShowEnterExit
+			if err := userauth.Authorize(session.User.Role, permission); err != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
 			}
@@ -147,7 +151,8 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeForceExit) {
 				return
 			}
-			result := runtime.ForceStopSession(r.Context(), runtimecontrol.StopRequest{
+			ctx := projectMutationContext(r, auth, session, permission, nil)
+			result := runtime.ForceStopSession(ctx, runtimecontrol.StopRequest{
 				SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			})
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
@@ -159,7 +164,8 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopSession) {
 			return
 		}
-		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
+		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectView, needed)
+		result := runtime.StopSession(ctx, runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			RehearsalTabletStopSessionID:   body.RehearsalTabletStopSessionID,
 			RehearsalExternalStopSessionID: body.RehearsalExternalStopSessionID,

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -284,7 +285,7 @@ func (s *Store) EndSessionLifecycle(ctx context.Context, sessionID string, lifec
 		return fmt.Errorf("%w: terminal session lifecycle required", domain.ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE sessions
 		SET status = ?, lifecycle_state = ?, end_reason = ?, ended_at_us = ?
 		WHERE session_id = ? AND status = 'ACTIVE' AND lifecycle_state = 'ACTIVE'`,
