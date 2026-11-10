@@ -165,7 +165,10 @@ func (s *Store) CreateSessionAtPosition(ctx context.Context, p CreateSessionFoun
 		return domain.Session{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	// Preserve the transaction-scoped browser grant check at session creation.
+	// A grant revoked after selecting the published Snapshot must not
+	// create an active Simulation (or other foundation) Session.
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO sessions (
 			session_id, project_id, runtime_snapshot_id, session_type, name,
 			started_at_us, status, current_cue_id, session_contract_version, lifecycle_state,

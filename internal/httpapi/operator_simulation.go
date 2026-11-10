@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -86,7 +87,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !writeProjectQualificationError(w, func() error { _, err := currentProjectRouteGrant(r); return err }()) {
 			return
 		}
-		created, result := control.Start(r.Context(), simulationcontrol.StartRequest{
+		created, result := control.Start(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"),
 			Name: body.Name,
 			Issuer: session.User.ID,

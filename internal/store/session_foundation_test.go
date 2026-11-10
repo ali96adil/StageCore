@@ -2,10 +2,12 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/db"
@@ -301,5 +303,26 @@ func TestCommandReplayCannotReadAnotherProjectOrOperation(t *testing.T) {
 	}
 	if record, found, err := s.FindCommandRecord(ctx, command); err != nil || !found || record.ProjectID != first.ID {
 		t.Fatalf("same-scope replay returned record=%+v found=%t err=%v", record, found, err)
+	}
+}
+
+func TestSessionFoundationRespectsRevokedAuthorizationAtInsert(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	project, published, _ := createSessionFoundationFixture(t, s)
+	revoked := errors.New("simulation grant revoked before insert")
+	guarded := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return revoked
+	})
+	_, err := s.CreateSessionAtPosition(guarded, store.CreateSessionFoundationParams{
+		SnapshotID: published.ID, SessionType: domain.SessionSimulation, Name: "must not persist",
+		StartPosition: domain.SessionStartPosition{Kind: domain.SessionStartBeginning},
+	})
+	if !errors.Is(err, revoked) {
+		t.Fatalf("revoked session write returned %v, want wrapped revocation", err)
+	}
+	active, err := s.ActiveSessionForProject(ctx, project.ID)
+	if err != nil || active != nil {
+		t.Fatalf("revoked Simulation Session persisted: %+v, err=%v", active, err)
 	}
 }
