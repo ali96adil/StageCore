@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -20,7 +21,7 @@ type oscQueryDiscoveryRuntime interface {
 
 func registerOperatorOSCQueryDiscoveryRoute(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, runtime oscQueryDiscoveryRuntime) {
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/oscquery/discover"
-	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -50,11 +51,25 @@ func registerOperatorOSCQueryDiscoveryRoute(mux *http.ServeMux, auth *userauth.S
 		}
 		// The OSCQuery endpoint is explicitly local to the VDMX Companion.
 		// Never proxy the browser-supplied URL to a workstation.
-		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
 			return
 		}
-		result := runtime.DiscoverOSCQuery(r.Context(), assignment.CompanionID, "http://127.0.0.1:2345/")
-		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+		ctx := capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+			request := r.WithContext(ctx)
+			if err := validateLiveProjectBrowser(request, auth, session, userauth.PermissionProjectEdit); err != nil {
+				return err
+			}
+			if _, err := currentProjectRouteGrant(request); err != nil {
+				return err
+			}
+			active, err := stageStore.GetActiveRoleAssignment(ctx, role.ID)
+			if err != nil || active.ID != assignment.ID || active.CompanionID != assignment.CompanionID {
+				return capability.ErrDispatchAuthorityRevoked
+			}
+			return nil
+		})
+		result := runtime.DiscoverOSCQuery(ctx, assignment.CompanionID, "http://127.0.0.1:2345/")
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
 			return
 		}
 		if result.Status != "COMPLETED" {

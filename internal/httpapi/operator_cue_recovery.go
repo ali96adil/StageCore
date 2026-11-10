@@ -54,19 +54,25 @@ func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *s
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/cue-editor-recovery", withPermission(auth, userauth.PermissionProjectEdit, handle))
 }
 
-// Recheck immediately before returning protected project data, including
-// when staged project ACL enforcement is disabled.
-func allowLiveProjectRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission) bool {
+// Recheck the exact browser session and current role independently of staged ACL.
+func validateLiveProjectBrowser(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission) error {
 	token, _ := browserSessionToken(r)
 	current, err := auth.ValidatePassive(r.Context(), token)
 	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		return userauth.ErrSessionInvalid
+	}
+	return userauth.Authorize(current.User.Role, permission)
+}
+
+func allowLiveProjectRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission) bool {
+	switch err := validateLiveProjectBrowser(r, auth, session, permission); {
+	case errors.Is(err, userauth.ErrSessionInvalid):
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error_code": "SESSION_INVALID"})
 		return false
-	}
-	if userauth.Authorize(current.User.Role, permission) != nil {
+	case err != nil:
 		writeJSON(w, http.StatusForbidden, map[string]string{"error_code": "FORBIDDEN"})
 		return false
 	}
-	_, err = currentProjectRouteGrant(r)
+	_, err := currentProjectRouteGrant(r)
 	return writeProjectQualificationError(w, err)
 }

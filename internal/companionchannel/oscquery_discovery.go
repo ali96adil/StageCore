@@ -3,10 +3,12 @@ package companionchannel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/google/uuid"
 )
 
@@ -80,7 +82,13 @@ func (c *RuntimeChannel) DiscoverOSCQuery(ctx context.Context, companionID, endp
 	if err != nil || len(data) > maxRuntimeMessage {
 		return fail(id, "OSCQUERY_REQUEST_INVALID")
 	}
-	if err := connection.send(data); err != nil {
+	if err := connection.sendAuthorized(ctx, data); err != nil {
+		if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return fail(id, capability.DispatchAuthorityRevokedCode)
+		}
+		if ctx.Err() != nil {
+			return fail(id, "CANCELLED")
+		}
 		return fail(id, "COMPANION_DISCONNECTED")
 	}
 	timer := time.NewTimer(5 * time.Second)

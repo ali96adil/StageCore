@@ -64,6 +64,11 @@ func TestAuthenticatedExecutionEnvironmentOperationIdentityAndTruthfulness(t *te
 		t.Fatalf("revoked dispatch=%+v executions=%d", blocked, executions.Load())
 	}
 
+	discovery := runtime.DiscoverOSCQuery(revoked, companionID, "http://127.0.0.1:2345/")
+	if discovery.ErrorCode != capability.DispatchAuthorityRevokedCode {
+		t.Fatalf("revoked OSCQuery discovery reached transport: %+v", discovery)
+	}
+
 	capture := companionchannel.EnvironmentOperationRequest{
 		OperationID: "env-op-capture",
 		EnvironmentManifestID: manifest.ID,
