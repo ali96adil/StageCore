@@ -123,3 +123,29 @@ test("switching user or Project disables stale approval controls before mutation
     assert.equal(h.calls.length, 1, "old review sent a write after scope switch");
   }
 });
+
+test("a conflicting approval reloads the reviewed snapshot without replaying the write", async () => {
+  const h = harness(true);
+  const calls = [];
+  let mode = "AUTO";
+  h.ctx.globalMessage = {};
+  h.ctx.errorMessage = error => error.message;
+  h.ctx.setMessage = () => {};
+  h.ctx.api = async (url, options) => {
+    calls.push([url, options]);
+    if (options?.method === "PUT") {
+      mode = "EXCLUDE";
+      throw Object.assign(new Error("selection changed"), { status: 409 });
+    }
+    return { report: { sessions: [{
+      session_id: session.session_id, runtime_snapshot_id: session.runtime_snapshot_id,
+      observation_count: 4, selection_mode: mode, eligible: true,
+    }] } };
+  };
+  await h.open();
+  h.select.value = "INCLUDE";
+  await h.change();
+  assert.equal(h.select.value, "EXCLUDE");
+  assert.deepEqual(calls.map(([, options]) => options?.method || "GET"), ["GET", "PUT", "GET"]);
+  assert.equal(calls[2][0], calls[0][0], "conflict refresh must use the original snapshot and rehearsal");
+});

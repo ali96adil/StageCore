@@ -211,3 +211,29 @@ test("offline drafts survive account switching and damaged unrelated recovery re
   assert.equal(reopened.value(), "unsynced recording notes");
   await settle();
 });
+
+test("account switch during a pending recovery write retains only the original account's draft", async () => {
+  const storage = new Map();
+  let deliver;
+  const requests = [];
+  const editor = openEditor({ storage, async api(_, options) {
+    requests.push(options?.method || "GET");
+    if (options?.method === "PUT") return new Promise(resolve => { deliver = resolve; });
+    return { generation: "" };
+  } });
+  await settle();
+  editor.edit("owner's unsent Cue");
+  editor.flush();
+  await settle();
+  assert.equal(typeof deliver, "function");
+  editor.switchUser("another account");
+  deliver({ generation: "older-session-generation" });
+  await settle();
+  editor.saved();
+  await settle();
+  assert.deepEqual(requests, ["GET", "PUT"]);
+  assert.equal(openEditor({ storage, user: "another account" }).local.hidden, true);
+  const reopened = openEditor({ storage });
+  reopened.local.onclick();
+  assert.equal(reopened.value(), "owner's unsent Cue");
+});
