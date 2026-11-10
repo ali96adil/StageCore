@@ -36,6 +36,9 @@ func withOperatorSimulationReportReader(auth *userauth.Service, reports simulati
 			sessionID := strings.TrimSpace(r.PathValue("session_id"))
 			report, err := reports.Generate(r.Context(), sessionID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeSimulationReportError(w, err)
 				return
 			}

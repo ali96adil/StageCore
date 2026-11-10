@@ -70,6 +70,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		status, err := control.Status(r.Context(), r.PathValue("project_id"))
 		if err != nil {
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeSimulationError(w, err)
 			return
 		}
