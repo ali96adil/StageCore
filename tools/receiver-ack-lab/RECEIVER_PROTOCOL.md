@@ -137,9 +137,10 @@ and a track that Live reports can be armed. `/stagecore/ableton/transport`
 requires `STAGECORE_LIVE_ALLOW_TRANSPORT=1` and confirms Song `is_playing`
 after the Live API transport call. Arm and Set-wide transport are off by default.
 Immediate readback must match; a delayed application or unsupported property
-produces no applied receipt. These receipts cover the property itself. Clip,
-scene, media and rendering commands without independently attributable
-application feedback have no ACK mapping here.
+produces no applied receipt. These receipts cover the property itself.
+The opt-in Ableton Clip and Scene mappings below are separate: they require
+LiveAPI playback feedback from the exact bound Clip(s). VDMX Media and Render
+have **no execution-confirmed ACK mapping** yet.
 
 To reduce accidental or forged loopback feedback, a VDMX lab mapping can
 optionally set `STAGECORE_VDMX_FEEDBACK_SOURCE_PORT` to the actual **UDP
@@ -193,3 +194,39 @@ firing once. Application ACK requires all bound Clips to be independently
 observed playing in the expected slots, without recording, before the
 deadline. Partial playback and queued launches remain unconfirmed.
 Qualification with the installed Live and Max versions is still required.
+
+
+### VDMX Media / Render: required application-evidence contract (NOT implemented)
+
+**Do not enable `require_application_ack` for a VDMX Media or Render Cue
+until a real VDMX application integration implements and qualifies this
+contract.** The current OSC adapter handles only dedicated Control Surface
+property transitions. No generic OSC send response, UDP echo, OSCQuery
+published value, transport acceptance, or local process liveness may be
+promoted to `APP_REPORTED_APPLIED` for Media/Render.
+
+| Stage | Required observation | Result if absent |
+|---|---|---|
+| Command sent | Companion submitted the signed Hub execution envelope to the private loopback bridge | Sending alone is **not** an ACK |
+| Transport accepted | The local gateway claimed the exact scope, challenge, execution ID and receiver deadline | `APP_REPORTED_RECEIVED` is not confirmation of playback |
+| Media executed | An instrumented VDMX application callback proves the **exact** bound media asset, layer/deck and playback instance transitioned to the requested state **after** the claim; identity/generation and time are checked | Timeout / unconfirmed; no automatic resend |
+| Render executed | An instrumented VDMX render callback proves a **new** frame for the commanded layer/output, including frame sequence and generation bound to this execution | Timeout / unconfirmed; a Control Surface value is insufficient |
+| Application failed | The instrumented receiver reports a concrete rejected/failed transition | Failed, without an applied receipt |
+
+The instrumented adapter must carry the pending `execution_id`,
+`correlation_id`, Hub challenge and seven-field `application_ack.scope`
+unchanged across both reports; honor the deadline and one-time claim; and
+reject unsolicited, duplicated or stale reports. Rebind and reconnect must
+advance receiver/application identity so old events cannot finish new
+executions. The Hub verifies the signed two-stage receipt and its original
+dispatch scope. None of these application callbacks, even after successful
+qualification, proves projector or physical screen output.
+
+Commission the following negative cases on a disposable VDMX project before
+declaring Media/Render software-qualified: OSC sent but media never starts;
+queued launch still waiting; wrong asset/layer; already-playing media; stale
+frame from before GO; wrong render generation; missing feedback; wrong
+receiver scope/challenge; lost network or app reconnect; delayed feedback
+after the deadline; and duplicate execution ID. Every case must fail closed
+with no false application-applied receipt. Qualify STOP, Jump and Blackout
+separately and preserve existing unsigned OSC workflows unchanged.
