@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 	goStored, releaseGO := make(chan struct{}), make(chan struct{})
 	browserResult := make(chan string, 1)
 	var goRequests sync.Map
-	var delayedGORequestID string
+	var delayedGORequestID atomic.Value
 	goPath := "/api/v1/projects/" + project.ID + "/runtime/go"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -141,7 +142,8 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 				writeJSON(w, rec.Code, map[string]string{"error": rec.Body.String()})
 				return
 			}
-			if retry && command.RequestID == delayedGORequestID {
+			firstGO, _ := delayedGORequestID.Load().(string)
+			if retry && command.RequestID == firstGO {
 				// Return the original delayed GO result for an explicit replay.
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(rec.Body.Bytes())
@@ -150,7 +152,7 @@ func TestBrowserCueDeliveryThroughPersistedTrace(t *testing.T) {
 			select {
 			case <-goStored:
 			default:
-				delayedGORequestID = command.RequestID
+				delayedGORequestID.Store(command.RequestID)
 				close(goStored)
 				select {
 				case <-releaseGO:
