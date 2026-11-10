@@ -205,3 +205,56 @@ test("opt-in Clip ACK requires exact Live playback after fire, without replaying
   assert.equal((await run("queued", 350)).status, 504);
   assert.equal(fires, 2);
 });
+
+test("opt-in Scene ACK waits for every bound Clip and rejects partial playback or a changed Scene", async t => {
+  const {port, dispatch} = await harness(t, "ABLETON");
+  const handlers = new Map();
+  let sceneID = 9, fires = 0, playing = new Set(), mode = "full";
+  const types = {1:"Song", 7:"Track", 8:"Track", 9:"Scene", 10:"Scene", 11:"ClipSlot", 12:"ClipSlot", 13:"Clip", 14:"Clip"};
+  const context = vm.createContext({
+    LiveAPI: class {
+      constructor(_, path) {
+        this.id = path === "live_set" ? 1 : path === "this_device canonical_parent" ? 7 : Number(path.slice(3));
+        this.type = types[this.id];
+      }
+      get(property) {
+        const first = [7, 11, 13].includes(this.id);
+        const active = playing.has(first ? 13 : 14);
+        return {name:["StageCore Test"], scenes:["id", sceneID], tracks:["id", 7, "id", 8],
+          can_be_armed:[0], clip_slots:["id", first ? 11 : 12], has_clip:[1],
+          clip:["id", first ? 13 : 14], is_triggered:[0], is_recording:[0],
+          is_playing:[Number(active)], playing_slot_index:[active ? 0 : -1]}[property];
+      }
+      call(method) {
+        assert.equal(this.type, "Scene");
+        assert.equal(method, "fire");
+        fires++;
+        setTimeout(() => {playing.add(13); if (mode === "full") playing.add(14);}, 50);
+      }
+    },
+    Task: class {
+      constructor(fn) { this.fn = fn; }
+      schedule(delay) { setTimeout(this.fn, delay).unref(); }
+    },
+    outlet(_index, name, ...args) {handlers.get(name)(...args);}
+  });
+  vm.runInContext(fs.readFileSync(__dirname + "/stagecore_live_track.js", "utf8"), context);
+  registerLiveReceiver({
+    addHandler(name, fn) {handlers.set(name, fn);},
+    async outlet(name, phase, ticket, ...args) {
+      if (phase === "apply" && mode === "rebound") sceneID = 10;
+      context[name](phase, ticket, ...args);
+    },
+    post() {},
+  }, {port, token, trackName:"StageCore Test", allowScene:true});
+  const run = (id, timeout) => pumpUntil(handlers.get("poll"),
+    dispatch(id, "/stagecore/ableton/scene/fire", {type:"int32", value:0}, timeout));
+  assert.equal((await run("full")).status, 200);
+  assert.equal(fires, 1);
+  playing.clear(); mode = "partial";
+  assert.equal((await run("partial", 350)).status, 504);
+  assert.equal(fires, 2);
+  playing.clear(); mode = "rebound";
+  assert.equal((await run("rebound", 350)).status, 504);
+  assert.equal(fires, 2);
+});

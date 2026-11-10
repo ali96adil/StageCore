@@ -160,3 +160,16 @@ both the matching playing slot and the exact non-recording Clip's playing
 state within the command deadline. A launch queued beyond the deadline is
 unconfirmed and is not fired again. Installed Live/Max testing remains
 required for quantized playback and scheduler behavior.
+
+### Ableton Scene playback mapping
+
+The Max receiver can opt into `/stagecore/ableton/scene/fire` with
+`STAGECORE_LIVE_ALLOW_SCENE=1` and one Int32 zero-based Scene index
+(0–255). Use a dedicated Live Set with exclusive Scene control and one
+ordinary Clip per Track in the mapped Scene. The receiver rejects empty
+slots, armed Tracks, and Scenes with already-playing or queued target
+Clips. It binds the exact Song, Scene, Tracks, slots, and Clips before
+firing once. Application ACK requires all bound Clips to be independently
+observed playing in the expected slots, without recording, before the
+deadline. Partial playback and queued launches remain unconfirmed.
+Qualification with the installed Live and Max versions is still required.

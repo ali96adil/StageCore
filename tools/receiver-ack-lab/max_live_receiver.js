@@ -3,7 +3,7 @@
 const { randomUUID } = require("node:crypto");
 const { createApplicationReceiver } = require("./application_receiver");
 
-function registerLiveReceiver(max, {port, token, trackName, allowArm = false, allowTransport = false, allowClip = false}) {
+function registerLiveReceiver(max, {port, token, trackName, allowArm = false, allowTransport = false, allowClip = false, allowScene = false}) {
   if (typeof trackName !== "string" || !trackName.trim() || trackName.length > 80) {
     throw new Error("configure the dedicated Live track name");
   }
@@ -45,10 +45,11 @@ function registerLiveReceiver(max, {port, token, trackName, allowArm = false, al
       if (allowArm) operations.set("/stagecore/ableton/arm", "arm");
       if (allowTransport) operations.set("/stagecore/ableton/transport", "transport");
       if (allowClip) operations.set("/stagecore/ableton/clip/fire", "clip");
+      if (allowScene) operations.set("/stagecore/ableton/scene/fire", "scene");
       const operation = operations.get(address);
       if (command.capability !== "osc.send" || !operation ||
           !Array.isArray(args) || args.length !== 1 || args[0]?.type !== "int32" ||
-          !(operation === "clip"
+          !((operation === "clip" || operation === "scene")
             ? Number.isInteger(args[0].value) && args[0].value >= 0 && args[0].value <= 255
             : [0, 1].includes(args[0].value))) throw new Error("unmapped Ableton action");
       const value = args[0].value;
@@ -78,7 +79,8 @@ if (require.main === module) {
     trackName: process.env.STAGECORE_LIVE_TRACK,
     allowArm: process.env.STAGECORE_LIVE_ALLOW_ARM === "1",
     allowTransport: process.env.STAGECORE_LIVE_ALLOW_TRANSPORT === "1",
-    allowClip: process.env.STAGECORE_LIVE_ALLOW_CLIP === "1"
+    allowClip: process.env.STAGECORE_LIVE_ALLOW_CLIP === "1",
+    allowScene: process.env.STAGECORE_LIVE_ALLOW_SCENE === "1"
   });
 }
 
