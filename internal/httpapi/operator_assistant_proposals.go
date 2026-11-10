@@ -43,7 +43,7 @@ type assistantChecklistPayload struct {
 }
 
 func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, audit *securityaudit.Service) {
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/assistant/proposals/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/assistant/proposals/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var input assistantProposalRequest
 		if !decodeBoundedJSON(w, r, &input) {
@@ -65,6 +65,12 @@ func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.
 		sealed, err := assistant.SealProposal(input.Proposal, time.Now().UTC().Add(assistantProposalPreviewTTL))
 		if err != nil {
 			writeAssistantProposalError(w, err)
+			return
+		}
+		// Preview reads a protected Project revision after parsing an untrusted
+		// body. Revalidate both the browser session and its Project grant before
+		// returning a sealed proposal if either changed during the request.
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
