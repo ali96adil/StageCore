@@ -74,7 +74,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					return
 				}
 			}
-			restored, discarded, err := stageStore.DiscardProjectDraft(browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionProjectEdit), projectID, session.User.ID, input.Reason)
+			restored, discarded, err := stageStore.DiscardProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit), projectID, session.User.ID, input.Reason)
 			if err != nil {
 				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), nil)
 				writeProjectStoreError(w, err)

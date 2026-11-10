@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -86,7 +88,9 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if inputRes.Code != http.StatusCreated {
 		t.Fatalf("input status=%d body=%s", inputRes.Code, inputRes.Body.String())
 	}
-	var input struct{ ID string `json:"input_id"` }
+	var input struct {
+		ID string `json:"input_id"`
+	}
 	if err := json.Unmarshal(inputRes.Body.Bytes(), &input); err != nil || input.ID == "" {
 		t.Fatalf("input decode=%v body=%s", err, inputRes.Body.String())
 	}
@@ -97,11 +101,12 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if outputRes.Code != http.StatusCreated {
 		t.Fatalf("output status=%d body=%s", outputRes.Code, outputRes.Body.String())
 	}
-	var output struct{ ID string `json:"output_id"` }
+	var output struct {
+		ID string `json:"output_id"`
+	}
 	if err := json.Unmarshal(outputRes.Body.Bytes(), &output); err != nil || output.ID == "" {
 		t.Fatalf("output decode=%v body=%s", err, outputRes.Body.String())
 	}
-
 
 	updateOutputRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/outputs/"+output.ID, map[string]any{
 		"name": "Projector OSC", "target_ref": "PROJECTOR-MAIN", "capability_key": "local.echo", "value_schema": map[string]any{}, "criticality": "NORMAL",
@@ -118,7 +123,9 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if routeRes.Code != http.StatusCreated {
 		t.Fatalf("route status=%d body=%s", routeRes.Code, routeRes.Body.String())
 	}
-	var route struct{ ID string `json:"route_id"` }
+	var route struct {
+		ID string `json:"route_id"`
+	}
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &route); err != nil || route.ID == "" {
 		t.Fatalf("route decode=%v body=%s", err, routeRes.Body.String())
 	}
@@ -262,5 +269,80 @@ func TestConfigurationWriteRevocationPreservesValidatedRevision(t *testing.T) {
 		if err != nil || after.CurrentRevisionID != project.CurrentRevisionID {
 			t.Fatalf("revoked edit forked the project: %+v, %v", after, err)
 		}
+	}
+}
+
+type pausedConfigurationBody struct {
+	io.ReadCloser
+	started chan struct{}
+	resume  <-chan struct{}
+}
+
+func (b *pausedConfigurationBody) Read(p []byte) (int, error) {
+	if b.started != nil {
+		close(b.started)
+		b.started = nil
+		<-b.resume
+	}
+	return b.ReadCloser.Read(p)
+}
+
+func TestConfigurationConcurrentGrantRevocationBlocksDraftWrite(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	editor, err := f.h.auth.CreateUser(ctx, "concurrent-config-editor", f.h.password, userauth.RoleTechnician)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := f.h.auth.Login(ctx, editor.Username, f.h.password, "127.0.0.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, editor.ID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorConfiguration(f.h.auth, f.projects), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/inputs",
+		[]byte(`{"name":"revoked","source_ref":"osc","event_type":"trigger","enabled":true}`), credential.Token, credential.CSRFToken)
+	started, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	req.Body = &pausedConfigurationBody{ReadCloser: req.Body, started: started, resume: resume}
+	rec := httptest.NewRecorder()
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(rec, req)
+	}()
+	released := false
+	defer func() {
+		if !released {
+			close(resume)
+		}
+		<-done
+	}()
+	select {
+	case <-started:
+	case <-done:
+		t.Fatalf("request did not reach the body: %d %s", rec.Code, rec.Body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not start")
+	}
+
+	revoke := callProjectAccess(t, f, &f.owner, http.MethodPut, f.projectID, editor.ID, `{"permissions":[]}`, true)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("grant revocation returned %d: %s", revoke.Code, revoke.Body)
+	}
+	close(resume)
+	released = true
+	<-done
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("revoked write returned %d: %s", rec.Code, rec.Body)
+	}
+	inputs, err := f.projects.ListInputs(ctx, project.CurrentRevisionID)
+	if err != nil || len(inputs) != 0 {
+		t.Fatalf("revoked write changed draft inputs: %+v, %v", inputs, err)
 	}
 }
