@@ -22,7 +22,7 @@ type assistantWorkspaceTaskRequest struct {
 }
 
 func registerOperatorAssistantWorkspaceRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, server *Server) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/assistant/status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/assistant/status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -36,6 +36,9 @@ func registerOperatorAssistantWorkspaceRoutes(mux *http.ServeMux, auth *userauth
 		providerState := "UNAVAILABLE"
 		if availability.Provider {
 			providerState = "AVAILABLE"
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"provider_state": providerState,
@@ -70,6 +73,9 @@ func registerOperatorAssistantWorkspaceRoutes(mux *http.ServeMux, auth *userauth
 			writeAssistantWorkspaceError(w, assistant.ErrProviderUnavailable)
 			return
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		response, err := current.Respond(r.Context(), assistant.WorkspaceTaskInput{
 			RequestID:         strings.TrimSpace(input.RequestID),
 			ProjectID:         project.ID,
@@ -81,6 +87,9 @@ func registerOperatorAssistantWorkspaceRoutes(mux *http.ServeMux, auth *userauth
 			Scope:             input.Scope,
 			Prompt:            strings.TrimSpace(input.Prompt),
 		})
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		if err != nil {
 			writeAssistantWorkspaceError(w, err)
 			return

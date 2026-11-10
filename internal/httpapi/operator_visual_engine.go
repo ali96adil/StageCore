@@ -53,7 +53,7 @@ func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, d
 }
 
 func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -116,6 +116,9 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 			}
 		}
 
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, visualEngineWorkspaceView{
 			ProjectID:               projectID,
 			RevisionID:              revision.ID,

@@ -44,7 +44,7 @@ func WithOperatorStageLaserController(
 			return
 		}
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stagelaser-controller", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stagelaser-controller", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
 				writeProjectStoreError(w, err)
@@ -60,6 +60,9 @@ func WithOperatorStageLaserController(
 				if stageLaserAuthoringDevice(device, projectID) {
 					out = append(out, device)
 				}
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))

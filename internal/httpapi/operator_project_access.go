@@ -45,6 +45,9 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 				writeProjectAccessError(w, err)
 				return
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
+				return
+			}
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]any{
 				"project_id": projectID, "user_id": userID, "permissions": grants,
@@ -120,6 +123,9 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			grants, err := access.PermissionsForUser(r.Context(), session.User.ID, userID, projectID)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_READBACK_FAILED"})
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
 				return
 			}
 			w.Header().Set("Cache-Control", "no-store")

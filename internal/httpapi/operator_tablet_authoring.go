@@ -52,7 +52,7 @@ func WithOperatorTabletAuthoring(auth *userauth.Service, devices *deviceexperien
 		if s == nil || s.mux == nil || auth == nil || devices == nil || stageStore == nil {
 			return
 		}
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/tablet-controller/scenes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/tablet-controller/scenes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			project, err := stageStore.GetProject(r.Context(), projectID)
 			if err != nil {
@@ -98,6 +98,9 @@ func WithOperatorTabletAuthoring(auth *userauth.Service, devices *deviceexperien
 				}
 				return scenes[i].OrderIndex < scenes[j].OrderIndex
 			})
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"revision": makeRevisionView(revision),
 				"scenes":   scenes,
