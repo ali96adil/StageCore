@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -164,6 +165,9 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 		action.ErrorPolicy = json.RawMessage(errorPolicy)
 		cue.Actions = append(cue.Actions, action)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Cue{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Cue{}, fmt.Errorf("commit replace cue: %w", err)
 	}
@@ -223,6 +227,9 @@ func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) er
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cues WHERE cue_id = ? AND revision_id = ?`, cueID, revisionID); err != nil {
 		return fmt.Errorf("delete cue: %w", err)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

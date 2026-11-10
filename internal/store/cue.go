@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -87,6 +88,9 @@ func (s *Store) CreateCueWithActions(ctx context.Context, cue domain.Cue, action
 		action.TimeoutPolicy = json.RawMessage(timeoutPolicy)
 		action.ErrorPolicy = json.RawMessage(errorPolicy)
 		cue.Actions = append(cue.Actions, action)
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Cue{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.Cue{}, fmt.Errorf("commit create cue: %w", err)

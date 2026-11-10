@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -52,7 +53,8 @@ func WithOperatorCueReorder(auth *userauth.Service, projectStore *store.Store) O
 				}
 			}
 
-			revision, err := projectStore.EnsureProjectDraft(r.Context(), project.ID, session.User.ID, "Operator Web Cue reorder after Publish")
+			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			revision, err := projectStore.EnsureProjectDraft(writeCtx, project.ID, session.User.ID, "Operator Web Cue reorder after Publish")
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
@@ -78,7 +80,7 @@ func WithOperatorCueReorder(auth *userauth.Service, projectStore *store.Store) O
 				}
 			}
 
-			cues, err := projectStore.ReorderDraftCues(r.Context(), revision.ID, orderedIDs)
+			cues, err := projectStore.ReorderDraftCues(writeCtx, revision.ID, orderedIDs)
 			if err != nil {
 				writeCueMutationError(w, err)
 				return

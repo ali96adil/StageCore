@@ -7,22 +7,23 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 type actionWriteRequest struct {
-	ActionID       string          `json:"action_id"`
-	OrderIndex     int             `json:"order_index"`
-	ExecutionMode  string          `json:"execution_mode"`
-	TargetRef      string          `json:"target_ref"`
-	CapabilityKey  string          `json:"capability_key"`
-	Parameters     json.RawMessage `json:"parameters"`
-	TimeoutPolicy  json.RawMessage `json:"timeout_policy"`
-	ErrorPolicy    json.RawMessage `json:"error_policy"`
-	PriorityClass  string          `json:"priority_class"`
-	Enabled        bool            `json:"enabled"`
+	ActionID      string          `json:"action_id"`
+	OrderIndex    int             `json:"order_index"`
+	ExecutionMode string          `json:"execution_mode"`
+	TargetRef     string          `json:"target_ref"`
+	CapabilityKey string          `json:"capability_key"`
+	Parameters    json.RawMessage `json:"parameters"`
+	TimeoutPolicy json.RawMessage `json:"timeout_policy"`
+	ErrorPolicy   json.RawMessage `json:"error_policy"`
+	PriorityClass string          `json:"priority_class"`
+	Enabled       bool            `json:"enabled"`
 }
 
 type cueWriteRequest struct {
@@ -58,16 +59,16 @@ type cueView struct {
 }
 
 type actionView struct {
-	ID             string          `json:"action_id"`
-	OrderIndex     int             `json:"order_index"`
-	ExecutionMode  string          `json:"execution_mode"`
-	TargetRef      string          `json:"target_ref"`
-	CapabilityKey  string          `json:"capability_key"`
-	Parameters     json.RawMessage `json:"parameters"`
-	TimeoutPolicy  json.RawMessage `json:"timeout_policy"`
-	ErrorPolicy    json.RawMessage `json:"error_policy"`
-	PriorityClass  string          `json:"priority_class"`
-	Enabled        bool            `json:"enabled"`
+	ID            string          `json:"action_id"`
+	OrderIndex    int             `json:"order_index"`
+	ExecutionMode string          `json:"execution_mode"`
+	TargetRef     string          `json:"target_ref"`
+	CapabilityKey string          `json:"capability_key"`
+	Parameters    json.RawMessage `json:"parameters"`
+	TimeoutPolicy json.RawMessage `json:"timeout_policy"`
+	ErrorPolicy   json.RawMessage `json:"error_policy"`
+	PriorityClass string          `json:"priority_class"`
+	Enabled       bool            `json:"enabled"`
 }
 
 func WithOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, publisher *publish.Service) Option {
@@ -106,18 +107,19 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/cues", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		projectID := r.PathValue("project_id")
-		revision, err := projectStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator Web edit after Publish")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
 		var body cueWriteRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		projectID := r.PathValue("project_id")
+		revision, err := projectStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator Web edit after Publish")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
 		cue, actions := body.toDomain(revision.ID, "")
-		created, err := projectStore.CreateCueWithActions(r.Context(), cue, actions)
+		created, err := projectStore.CreateCueWithActions(writeCtx, cue, actions)
 		if err != nil {
 			writeCueMutationError(w, err)
 			return
@@ -126,16 +128,17 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/cues/{cue_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		mapped, revision, ok := ensureEditableCue(w, r, projectStore, session)
-		if !ok {
-			return
-		}
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
 		var body cueWriteRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
+		if !ok {
+			return
+		}
 		cue, actions := body.toDomain(revision.ID, mapped.ID)
-		updated, err := projectStore.ReplaceDraftCue(r.Context(), cue, actions)
+		updated, err := projectStore.ReplaceDraftCue(writeCtx, cue, actions)
 		if err != nil {
 			writeCueMutationError(w, err)
 			return
@@ -144,15 +147,16 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/cues/{cue_id}/duplicate", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		mapped, revision, ok := ensureEditableCue(w, r, projectStore, session)
-		if !ok {
-			return
-		}
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
 		var body duplicateCueRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		created, err := projectStore.DuplicateDraftCue(r.Context(), revision.ID, mapped.ID, body.DisplayLabel, body.Name, body.OrderIndex)
+		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
+		if !ok {
+			return
+		}
+		created, err := projectStore.DuplicateDraftCue(writeCtx, revision.ID, mapped.ID, body.DisplayLabel, body.Name, body.OrderIndex)
 		if err != nil {
 			writeCueMutationError(w, err)
 			return
@@ -161,15 +165,16 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/cues/{cue_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		mapped, revision, ok := ensureEditableCue(w, r, projectStore, session)
+		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
 		if !ok {
 			return
 		}
-		if err := projectStore.DeleteDraftCue(r.Context(), revision.ID, mapped.ID); err != nil {
+		if err := projectStore.DeleteDraftCue(writeCtx, revision.ID, mapped.ID); err != nil {
 			writeCueMutationError(w, err)
 			return
 		}
@@ -281,6 +286,9 @@ func makeCueView(cue domain.Cue) cueView {
 }
 
 func writeProjectStoreError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "NOT_FOUND"})
@@ -292,6 +300,9 @@ func writeProjectStoreError(w http.ResponseWriter, err error) {
 }
 
 func writeCueMutationError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrInvalidInput):
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CUE_INVALID"})

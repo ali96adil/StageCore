@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -40,7 +41,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED", "show_configuration_lock": lock})
 				return
 			}
-			revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
+			revision, err := stageStore.EnsureProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), projectID, session.User.ID, "Operator routing edit")
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
@@ -73,7 +74,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					return
 				}
 			}
-			restored, discarded, err := stageStore.DiscardProjectDraft(r.Context(), projectID, session.User.ID, input.Reason)
+			restored, discarded, err := stageStore.DiscardProjectDraft(browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionProjectEdit), projectID, session.User.ID, input.Reason)
 			if err != nil {
 				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), nil)
 				writeProjectStoreError(w, err)

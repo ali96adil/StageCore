@@ -267,3 +267,37 @@ func authenticatedReadRequest(method, path, token string) *http.Request {
 	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: token})
 	return req
 }
+
+func TestRevokedCueEditDoesNotForkValidatedRevision(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Old show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorCuePublish(h.auth, projects, publish.New(projects, capability.NewRegistry()))).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/cues",
+		[]byte(`{"name":"revoked","order_index":1,"enabled":true}`), owner.Token, owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("revoked edit got %d: %s", rec.Code, rec.Body)
+	}
+	after, err := projects.GetProject(ctx, project.ID)
+	if err != nil || after.CurrentRevisionID != revision.ID {
+		t.Fatalf("revoked edit changed revision: %+v, %v", after, err)
+	}
+}
