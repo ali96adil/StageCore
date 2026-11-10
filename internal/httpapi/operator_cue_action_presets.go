@@ -30,6 +30,9 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowCuePrivateRead(w, r, auth, session) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"presets": presets})
 		case http.MethodPost:
 			var request struct {

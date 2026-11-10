@@ -197,3 +197,20 @@ func TestCueEditorPrivateWritesRecheckProjectGrantAtCommit(t *testing.T) {
 		})
 	}
 }
+
+func TestCuePrivateReadRejectsSessionRevokedBeforeDelivery(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := authenticatedMutationRequest(t, http.MethodGet, "/api/v1/projects/example/cue-editor-recovery", nil, owner.Token, "")
+	if err := h.auth.Logout(ctx, owner.Token); err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	if allowCuePrivateRead(res, req, h.auth, owner.Session) || res.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked session returned status %d", res.Code)
+	}
+}

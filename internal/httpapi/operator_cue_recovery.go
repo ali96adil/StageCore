@@ -44,9 +44,29 @@ func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *s
 			writeProjectStoreError(w, err)
 			return
 		}
+		if r.Method == http.MethodGet && !allowCuePrivateRead(w, r, auth, session) {
+			return
+		}
 		writeJSON(w, http.StatusOK, recovery)
 	}
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/cue-editor-recovery", withPermission(auth, userauth.PermissionProjectEdit, handle))
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/cue-editor-recovery", withPermission(auth, userauth.PermissionProjectEdit, handle))
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/cue-editor-recovery", withPermission(auth, userauth.PermissionProjectEdit, handle))
+}
+
+// Recheck immediately before returning private editor material, including
+// when staged project ACL enforcement is disabled.
+func allowCuePrivateRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session) bool {
+	token, _ := browserSessionToken(r)
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	if userauth.Authorize(current.User.Role, userauth.PermissionProjectEdit) != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error_code": "FORBIDDEN"})
+		return false
+	}
+	_, err = currentProjectRouteGrant(r)
+	return writeProjectQualificationError(w, err)
 }
