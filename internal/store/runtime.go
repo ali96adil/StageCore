@@ -440,8 +440,17 @@ func (s *Store) ListActionExecutions(ctx context.Context, cueExecutionID string)
 	return out, rows.Err()
 }
 
+// authorizedEventExecer preserves the caller's transaction-scoped browser
+// authorization when events are appended outside an existing transaction.
+// Internal callers with their own *sql.Tx remain responsible for its guard.
+type authorizedEventExecer struct{ db *sql.DB }
+
+func (e authorizedEventExecer) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return capability.ExecAuthorized(ctx, e.db, query, args...)
+}
+
 func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
-	return s.appendEvent(ctx, s.db, sessionID, event)
+	return s.appendEvent(ctx, authorizedEventExecer{db: s.db}, sessionID, event)
 }
 
 func (s *Store) appendEvent(ctx context.Context, q execer, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {

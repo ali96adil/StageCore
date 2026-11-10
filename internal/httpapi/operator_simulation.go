@@ -176,7 +176,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		writeJSON(w, http.StatusOK, map[string]any{"checkpoint": checkpoint, "replay": false})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/faults", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/faults", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body simulationFaultRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -185,7 +185,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		err := control.ConfigureFault(r.Context(), active.ID, simulator.FaultScenario{
+		err := control.ConfigureFault(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, simulator.FaultScenario{
 			TargetRef: body.TargetRef,
 			Capability: body.Capability,
 			Behavior: body.Behavior,
@@ -201,7 +201,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		writeJSON(w, http.StatusCreated, map[string]any{"configured": true, "scope": "SIMULATION_ONLY"})
 	}))
 
-	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/simulation/faults", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/simulation/faults", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body simulationFaultClearRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -210,14 +210,14 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		if err := control.ClearFault(r.Context(), active.ID, body.TargetRef, body.Capability); err != nil {
+		if err := control.ClearFault(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Capability); err != nil {
 			writeSimulationError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"cleared": true})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/targets/state", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/targets/state", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body simulationTargetStateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -226,19 +226,19 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		if err := control.SetTargetOnline(r.Context(), active.ID, body.TargetRef, body.Online); err != nil {
+		if err := control.SetTargetOnline(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Online); err != nil {
 			writeSimulationError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"updated": true, "scope": "SIMULATION_ONLY"})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/reset", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/reset", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		active, ok := activeSimulationSession(w, r, control)
 		if !ok {
 			return
 		}
-		if err := control.ResetTwin(r.Context(), active.ID); err != nil {
+		if err := control.ResetTwin(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID); err != nil {
 			writeSimulationError(w, err)
 			return
 		}
