@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -22,6 +23,7 @@ type Vault struct {
 	objectsRoot string
 	store       *store.Store
 	capacity    *storagehealth.Policy
+	objectMu    sync.Mutex // serializes promotion and rollback removal in this Vault
 }
 
 type Option func(*Vault)
@@ -130,6 +132,8 @@ func (v *Vault) ImportManaged(ctx context.Context, p ImportParams, r io.Reader) 
 	}
 
 	contentHash := hex.EncodeToString(hasher.Sum(nil))
+	v.objectMu.Lock()
+	defer v.objectMu.Unlock()
 	relativePath := objectRelativePath(contentHash)
 	objectPath := filepath.Join(v.root, filepath.FromSlash(relativePath))
 	if err := os.MkdirAll(filepath.Dir(objectPath), directoryMode); err != nil {

@@ -260,9 +260,13 @@ func (s *Store) ListProjectMediaRequirements(ctx context.Context, projectID stri
 }
 
 func (s *Store) GetVaultObject(ctx context.Context, contentHash string) (VaultObject, error) {
+	return getVaultObject(ctx, s.db, contentHash)
+}
+
+func getVaultObject(ctx context.Context, q queryer, contentHash string) (VaultObject, error) {
 	var object VaultObject
 	var createdUS int64
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		SELECT content_hash, size_bytes, relative_path, created_at_us
 		FROM vault_objects WHERE content_hash = ?`, strings.ToLower(strings.TrimSpace(contentHash))).Scan(
 		&object.ContentHash, &object.SizeBytes, &object.RelativePath, &createdUS,

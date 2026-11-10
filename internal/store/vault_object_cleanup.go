@@ -16,7 +16,12 @@ import (
 // untouched so rollback cleanup can never delete content another workflow uses.
 func (s *Store) DeleteVaultObjectIfUnreferenced(ctx context.Context, contentHash string) (VaultObject, bool, error) {
 	contentHash = strings.ToLower(strings.TrimSpace(contentHash))
-	object, err := s.GetVaultObject(ctx, contentHash)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return VaultObject{}, false, fmt.Errorf("begin Vault rollback cleanup: %w", err)
+	}
+	defer tx.Rollback()
+	object, err := getVaultObject(ctx, tx, contentHash)
 	if errors.Is(err, domain.ErrNotFound) {
 		return VaultObject{}, false, nil
 	}
@@ -26,7 +31,7 @@ func (s *Store) DeleteVaultObjectIfUnreferenced(ctx context.Context, contentHash
 
 	var referenced int
 	pattern := "%" + contentHash + "%"
-	err = s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		SELECT CASE WHEN
 			EXISTS (SELECT 1 FROM media_content_versions WHERE content_hash = ?)
 			OR EXISTS (SELECT 1 FROM software_packages WHERE content_hash = ?)
@@ -44,7 +49,7 @@ func (s *Store) DeleteVaultObjectIfUnreferenced(ctx context.Context, contentHash
 	if referenced != 0 {
 		return object, false, nil
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM vault_objects WHERE content_hash = ?`, contentHash)
+	result, err := tx.ExecContext(ctx, `DELETE FROM vault_objects WHERE content_hash = ?`, contentHash)
 	if err != nil {
 		// A concurrent foreign-key reference wins over cleanup. Retaining bytes is
 		// the safe outcome, so treat that race as a non-removal.
@@ -56,6 +61,9 @@ func (s *Store) DeleteVaultObjectIfUnreferenced(ctx context.Context, contentHash
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return VaultObject{}, false, fmt.Errorf("delete unreferenced Vault object rows affected: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return VaultObject{}, false, fmt.Errorf("commit Vault rollback cleanup: %w", err)
 	}
 	return object, rows == 1, nil
 }
