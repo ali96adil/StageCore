@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { webcrypto } = require("node:crypto");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const test = require("node:test");
@@ -10,7 +11,7 @@ const binder = source.slice(source.indexOf("  function bindEditorRecovery("), so
 const draft = (value) => ({ fields: [value], links: [], actions: [] });
 const settle = () => new Promise(setImmediate);
 
-function openEditor({ storage, base = "original", user = "owner", project = "project", cue = "cue", api }) {
+function openEditor({ storage, legacy = new Map(), base = "original", user = "owner", project = "project", cue = "cue", api }) {
   const nodes = new Map();
   const timers = new Map();
   let current = draft(base);
@@ -30,6 +31,15 @@ function openEditor({ storage, base = "original", user = "owner", project = "pro
   const dialog = element();
   nodes.set("cueDialog", dialog);
   nodes.set("actionsEditor", element());
+  function webStorage(values) {
+    return {
+      get length() { return values.size; },
+      key: (index) => [...values.keys()][index],
+      getItem: (key) => values.get(key),
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    };
+  }
   const ctx = {
     AbortController,
     MutationObserver: class { observe() {} disconnect() {} },
@@ -44,11 +54,9 @@ function openEditor({ storage, base = "original", user = "owner", project = "pro
     document: { createElement: element },
     window: {
       addEventListener() {}, confirm: () => true,
-      sessionStorage: {
-        getItem: (key) => storage.get(key),
-        setItem: (key, value) => storage.set(key, value),
-        removeItem: (key) => storage.delete(key),
-      },
+      crypto: webcrypto,
+      sessionStorage: webStorage(legacy),
+      localStorage: webStorage(storage),
     },
     api: api ?? (async () => { throw new TypeError("offline"); }),
     setTimeout(fn) { timers.set(++serial, fn); return serial; },
@@ -61,6 +69,8 @@ function openEditor({ storage, base = "original", user = "owner", project = "pro
     local: panel.children.find((child) => child.id === "sc009LocalRestore"),
     discard: panel.children.find((child) => child.id === "sc009LocalDiscard"),
     review: panel.children.at(-1),
+    choices: panel.children[4],
+    close() { dialog.open = false; dialog.close(); },
     value: () => current.fields[0],
     edit(value) { current = draft(value); form.input(); },
     flush() { for (const fn of timers.values()) fn(); timers.clear(); },
@@ -68,9 +78,11 @@ function openEditor({ storage, base = "original", user = "owner", project = "pro
   };
 }
 
-test("offline edit survives reload, is private to the account/project/Cue, and clears after save", async () => {
+test("offline edit survives a closed tab, is private to the account/project/Cue, and clears after save", async () => {
   const storage = new Map();
-  openEditor({ storage }).edit("offline notes");
+  const first = openEditor({ storage });
+  first.edit("offline notes");
+  first.close();
   assert.equal(storage.size, 1);
   for (const options of [{ user: "other" }, { project: "other" }, { cue: "other" }]) {
     assert.equal(openEditor({ storage, ...options }).local.hidden, true);
@@ -93,7 +105,8 @@ test("a changed baseline preserves the offline draft for review without applying
   assert.equal(stale.review.hidden, false);
   assert.match(stale.review.value, /unsynced edit/);
   stale.edit("new attempt before resolving");
-  assert.match([...storage.values()][0], /unsynced edit/);
+  assert.match([...storage.values()].join("\n"), /unsynced edit/);
+  assert.match([...storage.values()].join("\n"), /new attempt before resolving/);
   await settle();
 });
 
@@ -117,4 +130,36 @@ test("server generation conflict retains the local draft and never retries with 
   assert.equal(puts.length, 1);
   assert.equal(puts[0].generation, "");
   assert.match([...storage.values()][0], /local branch revised/);
+});
+
+test("overlapping editors keep independent drafts and discard only the selected revision", () => {
+  const storage = new Map();
+  const first = openEditor({ storage });
+  const second = openEditor({ storage });
+  first.edit("first revision");
+  second.edit("other tab");
+  const review = openEditor({ storage });
+  assert.equal(review.choices.hidden, false);
+  first.edit("first tab new revision");
+  review.discard.onclick();
+  assert.deepEqual([...storage.values()].map((raw) => JSON.parse(raw).draft.fields[0]).sort(),
+    ["first tab new revision", "other tab"]);
+  const reopened = openEditor({ storage });
+  reopened.choices.value = "1";
+  reopened.choices.onchange();
+  reopened.local.onclick();
+  assert.equal(reopened.value(), "first tab new revision");
+  reopened.saved();
+  assert.equal(JSON.parse([...storage.values()][0]).draft.fields[0], "other tab");
+});
+
+test("existing tab recovery migrates to durable storage when restored", () => {
+  const storage = new Map();
+  const legacy = new Map([['stagecore.cue-recovery.v1:["owner","project","cue"]',
+    JSON.stringify({ version: 1, cue_id: "cue", base: JSON.stringify(draft("original")), draft: draft("old local") })]]);
+  const editor = openEditor({ storage, legacy });
+  editor.local.onclick();
+  assert.equal(editor.value(), "old local");
+  assert.equal(legacy.size, 0);
+  assert.equal(storage.size, 1);
 });
