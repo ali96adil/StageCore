@@ -122,16 +122,22 @@ func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionTyp
 }
 
 func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
-	return s.createSession(ctx, snapshotID, sessionType, name, purpose, false)
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, false, nil)
 }
 
 // StartOperationalSession serializes admission with other session starts and
 // checks the initiating authority in the same transaction as the insert.
 func (s *Store) StartOperationalSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
-	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true)
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true, nil)
 }
 
-func (s *Store) createSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, exclusive bool) (domain.Session, error) {
+// StartRecordedOperationalSession records admission and its replay result in
+// the same transaction. The recorder builds envelopes without doing I/O.
+func (s *Store) StartRecordedOperationalSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, record func(domain.Session) (contracts.EventEnvelope, contracts.CommandResult)) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true, record)
+}
+
+func (s *Store) createSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, exclusive bool, record func(domain.Session) (contracts.EventEnvelope, contracts.CommandResult)) (domain.Session, error) {
 	if purpose != "" && (sessionType != domain.SessionRehearsal ||
 		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
 		return domain.Session{}, fmt.Errorf("%w: invalid rehearsal purpose", domain.ErrInvalidInput)
@@ -185,10 +191,7 @@ func (s *Store) createSession(ctx context.Context, snapshotID string, sessionTyp
 	if _, err := tx.ExecContext(ctx, statement, args...); err != nil {
 		return domain.Session{}, fmt.Errorf("insert session: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return domain.Session{}, fmt.Errorf("commit session admission: %w", err)
-	}
-	return domain.Session{
+	session := domain.Session{
 		ID:                sessionID,
 		ProjectID:         projectID,
 		RuntimeSnapshotID: snapshotID,
@@ -197,7 +200,20 @@ func (s *Store) createSession(ctx context.Context, snapshotID string, sessionTyp
 		RehearsalPurpose:  purpose,
 		StartedAt:         now,
 		Status:            domain.SessionActive,
-	}, nil
+	}
+	if record != nil {
+		event, result := record(session)
+		if _, err := s.appendEvent(ctx, tx, &session.ID, event); err != nil {
+			return domain.Session{}, err
+		}
+		if err := s.finishCommand(ctx, tx, result.CommandID, result); err != nil {
+			return domain.Session{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Session{}, fmt.Errorf("commit session admission: %w", err)
+	}
+	return session, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {

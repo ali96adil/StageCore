@@ -185,10 +185,10 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		snapshotID = snapshot.ID
 	}
 	command := commandEnvelope(req.RequestID, commandType, project.ID, snapshotID, req.Issuer, json.RawMessage(`{}`))
-	if existing, terminal, ok := s.reserve(ctx, command); !ok {
-		return domain.Session{}, existing
-	} else if terminal {
+	if existing, terminal, ok := s.reserve(ctx, command); terminal {
 		return sessionFromStoredResult(existing), existing
+	} else if !ok {
+		return domain.Session{}, existing
 	}
 
 	finish := func(result contracts.CommandResult) (domain.Session, contracts.CommandResult) {
@@ -262,62 +262,59 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 			return finish(rejected(command.CommandID, "SHOW_AUDIO_NOT_SAFE", "StageAudio must be reachable, stopped and confirmed before SHOW", snapshot.ID))
 		}
 	}
-	session, err := s.store.StartOperationalSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose)
+	var result contracts.CommandResult
+	record := func(session domain.Session) (contracts.EventEnvelope, contracts.CommandResult) {
+		eventType := "rehearsal.started"
+		if req.Mode == domain.SessionShow {
+			eventType = "show.entered"
+		}
+		eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
+		if purpose != "" {
+			eventPayload["rehearsal_purpose"] = purpose
+		}
+		if startWarning != "" {
+			eventPayload["degraded_start"] = true
+			eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
+		}
+		if deviceScopeWarning != "" {
+			eventPayload["device_scope_warning"] = deviceScopeWarning
+		}
+		if preflightWarning != "" {
+			eventPayload["preflight_warning"] = preflightWarning
+		}
+		payload, _ := json.Marshal(eventPayload)
+		event := contracts.EventEnvelope{
+			EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
+			ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
+			CausationID: command.CommandID, Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
+		}
+		resultData := map[string]any{
+			"session_id": session.ID, "session_type": session.Type,
+			"runtime_snapshot_id": session.RuntimeSnapshotID,
+		}
+		if startWarning != "" {
+			resultData["degraded_start"] = true
+			resultData["degraded_reasons"] = append([]string(nil), startWarnings...)
+		}
+		if deviceScopeWarning != "" {
+			resultData["device_scope_warning"] = deviceScopeWarning
+		}
+		if preflightWarning != "" {
+			resultData["preflight_warning"] = preflightWarning
+		}
+		if purpose != "" {
+			resultData["rehearsal_purpose"] = purpose
+		}
+		resultPayload, _ := json.Marshal(resultData)
+		result = contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
+		return event, result
+	}
+	session, err := s.store.StartRecordedOperationalSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose, record)
 	if releaseShowFence != nil {
 		releaseShowFence()
 	}
 	if err != nil {
 		return finish(resultFromStoreError(command.CommandID, "SESSION_START_FAILED", err, snapshot.ID))
-	}
-	eventType := "rehearsal.started"
-	if req.Mode == domain.SessionShow {
-		eventType = "show.entered"
-	}
-	eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
-	if purpose != "" {
-		eventPayload["rehearsal_purpose"] = purpose
-	}
-	if startWarning != "" {
-		eventPayload["degraded_start"] = true
-		eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
-	}
-	if deviceScopeWarning != "" {
-		eventPayload["device_scope_warning"] = deviceScopeWarning
-	}
-	if preflightWarning != "" {
-		eventPayload["preflight_warning"] = preflightWarning
-	}
-	payload, _ := json.Marshal(eventPayload)
-	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
-		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
-		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
-		CausationID: command.CommandID, Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
-	}); err != nil {
-		rollbackCtx := capability.WithWriteAuthorization(context.WithoutCancel(ctx), nil)
-		_ = s.store.EndSession(rollbackCtx, session.ID, domain.SessionAborted)
-		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
-	}
-	resultData := map[string]any{
-		"session_id": session.ID, "session_type": session.Type,
-		"runtime_snapshot_id": session.RuntimeSnapshotID,
-	}
-	if startWarning != "" {
-		resultData["degraded_start"] = true
-		resultData["degraded_reasons"] = append([]string(nil), startWarnings...)
-	}
-	if deviceScopeWarning != "" {
-		resultData["device_scope_warning"] = deviceScopeWarning
-	}
-	if preflightWarning != "" {
-		resultData["preflight_warning"] = preflightWarning
-	}
-	if purpose != "" {
-		resultData["rehearsal_purpose"] = purpose
-	}
-	resultPayload, _ := json.Marshal(resultData)
-	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
-	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
-		return domain.Session{}, failed(command.CommandID, "COMMAND_FINISH_FAILED")
 	}
 	return session, result
 }

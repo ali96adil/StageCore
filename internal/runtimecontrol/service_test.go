@@ -804,3 +804,37 @@ func TestShowExitRollsBackWhenJournalWriteFails(t *testing.T) {
 		t.Fatalf("events = %+v err=%v", events, err)
 	}
 }
+
+func TestShowAdmissionRollsBackWhenJournalWriteFails(t *testing.T) {
+	h := newRuntimeHarness(t)
+	h.service.showGate = func(context.Context, string, string) (bool, string, error) {
+		return true, "", nil
+	}
+	ctx := context.Background()
+	if _, err := h.database.DB.ExecContext(ctx, `
+		CREATE TRIGGER reject_show_admission BEFORE INSERT ON event_records
+		WHEN NEW.event_type = 'show.entered' BEGIN SELECT RAISE(ABORT, 'injected journal failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	req := StartRequest{ProjectID: h.project.ID, Mode: domain.SessionShow, Issuer: "operator", RequestID: "12345678-0000-7000-8000-000000000003"}
+	if _, result := h.service.StartSession(ctx, req); result.Status != contracts.CommandFailed || result.Error.ErrorCode != "SESSION_START_FAILED" {
+		t.Fatalf("admission = %+v error=%+v", result, result.Error)
+	}
+	active, err := h.store.ActiveSessionForProject(ctx, h.project.ID)
+	if err != nil || active != nil {
+		t.Fatalf("session committed without event: %+v err=%v", active, err)
+	}
+	if _, err := h.database.DB.ExecContext(ctx, "DROP TRIGGER reject_show_admission"); err != nil {
+		t.Fatal(err)
+	}
+	req.RequestID = "12345678-0000-7000-8000-000000000004"
+	started, result := h.service.StartSession(ctx, req)
+	if result.Status != contracts.CommandCompleted || started.ID == "" {
+		t.Fatalf("retry = %+v error=%+v", result, result.Error)
+	}
+	replayed, result := h.service.StartSession(ctx, req)
+	if result.Status != contracts.CommandCompleted || replayed.ID != started.ID {
+		t.Fatalf("replay = %+v error=%+v", result, result.Error)
+	}
+}
