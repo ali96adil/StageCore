@@ -52,8 +52,12 @@ func stageLaser58TestDatabase(t *testing.T, legacyColumn bool, values ...int) *s
 	if _, err := goose.EnsureDBVersion(database); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (57, 1)`); err != nil {
-		t.Fatal(err)
+	// Goose validates a continuous applied migration history, not just the
+	// current version marker. Model all 57 previously applied migrations.
+	for version := 1; version <= 57; version++ {
+		if _, err := database.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, version); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return database
 }
