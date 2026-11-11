@@ -27,6 +27,7 @@ type Server struct {
 	companionVaultScope       *store.Store
 	projectMediaDownload      bool
 	projectRouteQualification *projectaccess.Service
+	projectQualificationSet   bool
 	pluginAdminGuard          func(http.ResponseWriter, *http.Request)
 	software                  *software.Repository
 	bulk                      *bulk.Manager
@@ -119,7 +120,7 @@ func (s *Server) handleCompanionRuntime(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) Handler() http.Handler {
-	if s.pluginAdminGuard == nil && s.projectRouteQualification == nil {
+	if s.pluginAdminGuard == nil && !s.projectQualificationSet {
 		return s.mux
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +137,11 @@ func (s *Server) Handler() http.Handler {
 			if projectRouteIsQualified(pattern) {
 				r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
 			}
+		} else if s.projectQualificationSet && (projectURLPattern(pattern) || projectRouteIsQualified(pattern)) {
+			// An explicit qualification option with a missing service is a
+			// configuration error. Do not silently fall back to global roles.
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
+			return
 		}
 		s.mux.ServeHTTP(w, r)
 	})

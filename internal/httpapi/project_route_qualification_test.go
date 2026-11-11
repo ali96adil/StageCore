@@ -106,6 +106,32 @@ func TestSC024QualifiedPolicyPatternsExistInReviewedInventory(t *testing.T) {
 	}
 }
 
+func TestProjectRouteQualificationWithMissingServiceFailsClosed(t *testing.T) {
+	const path = "/api/v1/projects/project-id"
+	register := func(s *Server) {
+		s.mux.HandleFunc("GET "+projectRoute, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	misconfigured := New(WithProjectRouteQualification(nil), register).Handler()
+	response := httptest.NewRecorder()
+	misconfigured.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "PROJECT_ACCESS_UNAVAILABLE") {
+		t.Fatalf("explicit qualification with missing ACL service returned %d %q", response.Code, response.Body.String())
+	}
+
+	// The qualification switch is opt-in; the ordinary production legacy
+	// assembly remains unchanged until a complete coordinated cutover.
+	legacy := New(register).Handler()
+	response = httptest.NewRecorder()
+	legacy.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("legacy assembly changed without qualification option: %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestQualifiedRawDeviceCommandsRejectScopedOperator(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

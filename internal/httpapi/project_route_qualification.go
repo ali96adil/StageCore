@@ -26,7 +26,10 @@ type projectRouteGrant struct {
 // WithProjectRouteQualification applies the explicitly reviewed browser route
 // policy. Keep it out of the Hub assembly until the remaining routes qualify.
 func WithProjectRouteQualification(access *projectaccess.Service) Option {
-	return func(s *Server) { s.projectRouteQualification = access }
+	return func(s *Server) {
+		s.projectRouteQualification = access
+		s.projectQualificationSet = true
+	}
 }
 
 const projectRoute = "/api/v1/projects/{project_id}"
@@ -34,22 +37,22 @@ const envRoute = projectRoute + "/revisions/{revision_id}/execution-environments
 const envItem = envRoute + "/{execution_environment_id}"
 
 var projectRoutePermissions = map[string][]projectaccess.Permission{
- "GET " + cameraViewerPermissionsPath: {projectaccess.ProjectView, projectaccess.MediaRead},
-	"GET " + projectRoute + "/cue-action-presets": {projectaccess.CueEdit},
-	"POST " + projectRoute + "/cue-action-presets": {projectaccess.CueEdit},
+	"GET " + cameraViewerPermissionsPath:                         {projectaccess.ProjectView, projectaccess.MediaRead},
+	"GET " + projectRoute + "/cue-action-presets":                {projectaccess.CueEdit},
+	"POST " + projectRoute + "/cue-action-presets":               {projectaccess.CueEdit},
 	"DELETE " + projectRoute + "/cue-action-presets/{preset_id}": {projectaccess.CueEdit},
-	"GET " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},
-	"PUT " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},
-	"DELETE " + projectRoute + "/cue-editor-recovery": {projectaccess.CueEdit},
-	"GET " + projectRoute + "/cues":                                                  {projectaccess.ProjectView},
-	"POST " + projectRoute + "/cues":                                                 {projectaccess.CueEdit},
-	"POST " + projectRoute + "/cues/reorder":                                         {projectaccess.CueEdit},
-	"PUT " + projectRoute + "/cues/{cue_id}":                                         {projectaccess.CueEdit},
-	"POST " + projectRoute + "/cues/{cue_id}/duplicate":                              {projectaccess.CueEdit},
-	"DELETE " + projectRoute + "/cues/{cue_id}":                                      {projectaccess.CueEdit},
-	"POST " + projectRoute + "/publish":                                              {projectaccess.SnapshotPublish},
-	"POST " + projectRoute + "/configuration/draft":                                  {projectaccess.ProjectEdit},
-	"DELETE " + projectRoute + "/configuration/draft":                                {projectaccess.ProjectEdit},
+	"GET " + projectRoute + "/cue-editor-recovery":               {projectaccess.CueEdit},
+	"PUT " + projectRoute + "/cue-editor-recovery":               {projectaccess.CueEdit},
+	"DELETE " + projectRoute + "/cue-editor-recovery":            {projectaccess.CueEdit},
+	"GET " + projectRoute + "/cues":                              {projectaccess.ProjectView},
+	"POST " + projectRoute + "/cues":                             {projectaccess.CueEdit},
+	"POST " + projectRoute + "/cues/reorder":                     {projectaccess.CueEdit},
+	"PUT " + projectRoute + "/cues/{cue_id}":                     {projectaccess.CueEdit},
+	"POST " + projectRoute + "/cues/{cue_id}/duplicate":          {projectaccess.CueEdit},
+	"DELETE " + projectRoute + "/cues/{cue_id}":                  {projectaccess.CueEdit},
+	"POST " + projectRoute + "/publish":                          {projectaccess.SnapshotPublish},
+	"POST " + projectRoute + "/configuration/draft":              {projectaccess.ProjectEdit},
+	"DELETE " + projectRoute + "/configuration/draft":            {projectaccess.ProjectEdit},
 	"GET " + envRoute:                                                                {projectaccess.ProjectView},
 	"POST " + envRoute:                                                               {projectaccess.ProjectEdit},
 	"PUT " + envItem:                                                                 {projectaccess.ProjectEdit},
@@ -189,9 +192,9 @@ var ownerRouteQualification = map[string]bool{
 	"POST " + projectRoute + "/tablet-controller/devices/{device_id}/assign":                 true,
 	"POST " + projectRoute + "/tablet-controller/live-flash":                                 true,
 	"POST " + projectRoute + "/usb-dmx/manual":                                               true,
-	"POST /api/v1/projects": true,
-	"POST /api/v1/show-templates/{template_id}/materialize": true,
-	"POST /api/v1/show-templates/import/materialize": true,
+	"POST /api/v1/projects":                                       true,
+	"POST /api/v1/show-templates/{template_id}/materialize":       true,
+	"POST /api/v1/show-templates/import/materialize":              true,
 	"POST /api/v1/show-capsules/imports/{capsule_id}/materialize": true,
 	"PUT " + projectRoute + "/access/users/{user_id}":             true,
 }
