@@ -31,6 +31,7 @@ import (
 
 type captureUploadHarness struct {
 	ctx        context.Context
+	handle     *db.Handle
 	store      *store.Store
 	auth       *companionauth.Service
 	credential companionauth.RuntimeSessionCredential
@@ -39,6 +40,7 @@ type captureUploadHarness struct {
 	role       domain.MachineRole
 	assignment domain.RoleAssignment
 	runtimeSnapshotID string
+	projectID         string
 	vault      *vault.Vault
 	bulk       *bulk.Manager
 	handler    http.Handler
@@ -81,8 +83,9 @@ func newCaptureUploadHarness(t *testing.T, mode bulk.Mode, qualified ...bool) *c
 	}
 	handler := httpapi.New(options...).Handler()
 	return &captureUploadHarness{
-		ctx: ctx, store: stageStore, auth: auth, credential: credential, session: session,
+		ctx: ctx, handle: handle, store: stageStore, auth: auth, credential: credential, session: session,
 		environment: environment, role: role, assignment: assignment, runtimeSnapshotID: runtimeSnapshot.ID,
+		projectID: project.ID,
 		vault: v, bulk: manager, handler: handler,
 	}
 }
@@ -268,6 +271,54 @@ func TestCompanionCaptureUploadStopsReadingAfterAssignmentLoss(t *testing.T) {
 				t.Fatalf("revoked upload reached Vault: %v", err)
 			}
 		})
+	}
+}
+
+func TestCompanionCaptureUploadStopsWhenIssuerProjectGrantIsRevokedDuringRead(t *testing.T) {
+	h := newCaptureUploadHarness(t, bulk.ModeEdit)
+	access, err := projectaccess.New(h.handle.DB)
+	if err != nil { t.Fatal(err) }
+	now := time.Now().UTC().UnixMicro()
+	for _, user := range []struct{ id, role string }{{"capture-owner", "OWNER"}, {"capture-operator", "OPERATOR"}} {
+		if _, err := h.handle.DB.ExecContext(h.ctx, `
+			INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
+			VALUES (?, ?, 'unused', ?, ?, ?)`, user.id, user.id, user.role, now, now); err != nil { t.Fatal(err) }
+	}
+	if _, err := h.handle.DB.ExecContext(h.ctx, `
+		INSERT INTO browser_sessions (session_id, user_id, token_sha256, csrf_sha256, issued_at_us, expires_at_us, last_seen_at_us)
+		VALUES ('capture-issuer', 'capture-operator', ?, ?, ?, ?, ?)`, []byte("capture-issuer"), []byte("capture-issuer"), now, now+int64(time.Hour/time.Microsecond), now); err != nil { t.Fatal(err) }
+	setPermissions := func(permissions ...projectaccess.Permission) {
+		t.Helper()
+		if err := access.SetPermissions(h.ctx, "capture-owner", "capture-operator", h.projectID,
+			append(permissions, projectaccess.ProjectView)); err != nil { t.Fatal(err) }
+	}
+	setPermissions(projectaccess.RehearsalControl, projectaccess.MediaRead)
+	payload := bytes.Repeat([]byte("grant-revocation-capture"), 8<<10)
+	sum := sha256.Sum256(payload)
+	ticket, err := h.store.CreateCompanionUploadTicket(h.ctx, store.CreateCompanionUploadTicketParams{
+		IssuerBrowserSessionID: "capture-issuer", IssuerRequiresProjectGrants: true,
+		CompanionID: h.session.CompanionID, RuntimeSessionID: h.session.ID,
+		OperationID: "capture-issuer-grant-loss", EnvironmentManifestID: h.environment.ID,
+		MachineRoleID: h.role.ID, RuntimeSnapshotID: h.runtimeSnapshotID,
+		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash: hex.EncodeToString(sum[:]), ExpectedSizeBytes: int64(len(payload)),
+		ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+	})
+	if err != nil { t.Fatal(err) }
+	body := bytes.NewReader(payload)
+	reader := &releaseAssignmentReader{source: body, release: func() { setPermissions(projectaccess.MediaRead) }}
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, h.request(ticket, reader, int64(len(payload))))
+	if response.Code != http.StatusConflict || body.Len() == 0 {
+		t.Fatalf("revoked issuer grant did not stop upload: status=%d unread=%d body=%s", response.Code, body.Len(), response.Body.String())
+	}
+	stored, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
+	if err != nil { t.Fatal(err) }
+	if stored.Status != store.CompanionUploadTicketCancelled || stored.TerminalAt == nil {
+		t.Fatalf("issuer grant loss ticket=%+v", stored)
+	}
+	if _, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked issuer upload registered a Vault object: %v", err)
 	}
 }
 
