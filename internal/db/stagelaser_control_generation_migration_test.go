@@ -52,7 +52,7 @@ func stageLaser58TestDatabase(t *testing.T, legacyColumn bool, values ...int) *s
 	if _, err := goose.EnsureDBVersion(database); err != nil {
 		t.Fatal(err)
 	}
-	if err := goose.SetVersion(database, 57); err != nil {
+	if _, err := database.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (57, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	return database
