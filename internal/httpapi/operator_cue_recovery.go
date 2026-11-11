@@ -61,7 +61,11 @@ func validateLiveProjectBrowser(r *http.Request, auth *userauth.Service, session
 	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
 		return userauth.ErrSessionInvalid
 	}
-	return userauth.Authorize(current.User.Role, permission)
+	if err := userauth.Authorize(current.User.Role, permission); err != nil &&
+		!scopedProjectRoleMayUsePermission(r, current.User.Role, permission) {
+		return err
+	}
+	return nil
 }
 
 func allowLiveProjectRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission) bool {

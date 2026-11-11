@@ -169,7 +169,8 @@ type sessionTokenHandler func(http.ResponseWriter, *http.Request, userauth.Sessi
 func withPermission(service *userauth.Service, permission userauth.Permission, next sessionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		withAuthenticatedSession(service, isUnsafeMethod(r.Method), func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
-			if err := userauth.Authorize(session.User.Role, permission); err != nil {
+			if err := userauth.Authorize(session.User.Role, permission); err != nil &&
+				!scopedProjectRoleMayUsePermission(r, session.User.Role, permission) {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
 			}

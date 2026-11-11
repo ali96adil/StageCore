@@ -266,6 +266,50 @@ func currentProjectRouteGrant(r *http.Request) (projectRouteGrant, error) {
 	return grant, grant.access.CheckAll(r.Context(), current.User.ID, strings.TrimSpace(r.PathValue("project_id")), grant.needed...)
 }
 
+// scopedProjectRoleMayUseMutation lets OPERATOR and TECHNICIAN accounts use
+// capabilities explicitly granted for this Project. The normal role ceiling
+// stays in force unless this exact request has already passed the Project
+// route policy. VIEWER remains read-only regardless of persisted grants.
+func scopedProjectRoleMayUseMutation(role string) bool {
+	return role == userauth.RoleOperator || role == userauth.RoleTechnician
+}
+
+func scopedProjectRoleMayUsePermission(r *http.Request, role string, permission userauth.Permission) bool {
+	if !scopedProjectRoleMayUseMutation(role) {
+		return false
+	}
+	grant, err := currentProjectRouteGrant(r)
+	if err != nil || grant.access == nil {
+		return false
+	}
+	return scopedProjectPermissionBackedByACL(permission, grant.needed)
+}
+
+func scopedProjectPermissionBackedByACL(permission userauth.Permission, scoped []projectaccess.Permission) bool {
+	for _, capability := range scoped {
+		switch permission {
+		case userauth.PermissionProjectEdit, userauth.PermissionNoteWrite:
+			if capability == projectaccess.ProjectEdit || capability == projectaccess.ProjectRename ||
+				capability == projectaccess.CueEdit || capability == projectaccess.SnapshotPublish ||
+				capability == projectaccess.MediaUpload || capability == projectaccess.MediaManage ||
+				capability == projectaccess.DeviceConfigure || capability == projectaccess.RehearsalControl ||
+				capability == projectaccess.CapsuleExport || capability == projectaccess.LightingManual ||
+				capability == projectaccess.AudioControl {
+				return true
+			}
+		case userauth.PermissionSnapshotPublish:
+			if capability == projectaccess.SnapshotPublish {
+				return true
+			}
+		case userauth.PermissionRuntimeControl:
+			if capability == projectaccess.RehearsalControl {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func writeProjectQualificationError(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return true

@@ -116,12 +116,15 @@ func withOperatorProjects(auth *userauth.Service, projectStore *store.Store, acc
 func recheckProjectMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) bool {
 	token, _ := browserSessionToken(r)
 	current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
-	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
-		userauth.Authorize(current.User.Role, permission) != nil {
+	access = qualificationAccess(r, access)
+	roleDenied := err == nil && userauth.Authorize(current.User.Role, permission) != nil
+	if roleDenied && access != nil && len(scoped) > 0 && scopedProjectRoleMayUseMutation(current.User.Role) {
+		roleDenied = !scopedProjectRoleMayUsePermission(r, current.User.Role, permission)
+	}
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID || roleDenied {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 		return false
 	}
-	access = qualificationAccess(r, access)
 	if len(scoped) == 0 {
 		return allowScopedOwner(w, current, access)
 	}
@@ -144,7 +147,9 @@ func projectMutationContextForPermissions(r *http.Request, auth *userauth.Servic
 			return err
 		}
 		for _, permission := range permissions {
-			if userauth.Authorize(role, permission) != nil {
+			if userauth.Authorize(role, permission) != nil &&
+				!(qualified && len(scoped) > 0 && scopedProjectRoleMayUseMutation(role) &&
+					scopedProjectPermissionBackedByACL(permission, scoped)) {
 				return userauth.ErrForbidden
 			}
 		}

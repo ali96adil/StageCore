@@ -106,7 +106,8 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			}
 			current, err := auth.ValidatePassive(r.Context(), token)
 			if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
-				userauth.Authorize(current.User.Role, userauth.PermissionProjectEdit) != nil {
+				(userauth.Authorize(current.User.Role, userauth.PermissionProjectEdit) != nil &&
+					!scopedProjectRoleMayUsePermission(r, current.User.Role, userauth.PermissionProjectEdit)) {
 				return userauth.ErrForbidden
 			}
 			return nil

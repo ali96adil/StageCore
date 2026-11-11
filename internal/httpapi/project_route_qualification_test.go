@@ -11,9 +11,11 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -130,6 +132,97 @@ func TestProjectRouteQualificationWithMissingServiceFailsClosed(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("legacy assembly changed without qualification option: %d %q", response.Code, response.Body.String())
 	}
+}
+
+func TestScopedProjectCapabilityCannotReplaceUnrelatedGlobalPermission(t *testing.T) {
+	if scopedProjectPermissionBackedByACL(userauth.PermissionCompanionPair, []projectaccess.Permission{projectaccess.DeviceConfigure}) {
+		t.Fatal("Project device.configure capability replaced the unrelated global Companion pairing permission")
+	}
+	if scopedProjectPermissionBackedByACL(userauth.PermissionProjectEdit, []projectaccess.Permission{projectaccess.DeviceConfigure}) != true {
+		t.Fatal("Project device.configure capability did not satisfy a project mutation route")
+	}
+}
+
+func TestQualifiedProjectRoleMatrixAndCrossProjectIsolation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerLogin, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "scoped-role-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := h.auth.CreateUser(ctx, "scoped-role-viewer", h.password, userauth.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerLogin, err := h.auth.Login(ctx, viewer.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectA, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectB, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Private B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, ownerLogin.Session.User.ID, operator.ID, projectA.ID, []projectaccess.Permission{
+		projectaccess.ProjectView, projectaccess.ProjectRename, projectaccess.CueEdit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, ownerLogin.Session.User.ID, viewer.ID, projectA.ID, []projectaccess.Permission{
+		projectaccess.ProjectView,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		WithOperatorProjects(h.auth, projects),
+		WithOperatorCuePublish(h.auth, projects, publish.New(projects, capability.NewRegistry())),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := func(login userauth.Credential, method, path, body string, want int) string {
+		t.Helper()
+		req := authenticatedExecutionEnvironmentRequest(t, login.Token, login.CSRFToken, method, path, []byte(body))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != want {
+			t.Fatalf("%s %s returned %d want %d: %s", method, path, response.Code, want, response.Body.String())
+		}
+		return response.Body.String()
+	}
+	if body := request(ownerLogin, http.MethodGet, "/api/v1/projects", "", http.StatusOK); !strings.Contains(body, projectA.ID) || !strings.Contains(body, projectB.ID) {
+		t.Fatalf("Owner did not retain Hub-wide Project visibility: %s", body)
+	}
+	for _, login := range []userauth.Credential{operatorLogin, viewerLogin} {
+		if body := request(login, http.MethodGet, "/api/v1/projects", "", http.StatusOK); !strings.Contains(body, projectA.ID) || strings.Contains(body, projectB.ID) {
+			t.Fatalf("scoped user Project listing crossed membership: %s", body)
+		}
+		request(login, http.MethodGet, "/api/v1/projects/"+projectA.ID, "", http.StatusOK)
+		request(login, http.MethodGet, "/api/v1/projects/"+projectB.ID, "", http.StatusNotFound)
+	}
+	request(operatorLogin, http.MethodPatch, "/api/v1/projects/"+projectA.ID, `{"name":"Operator renamed A"}`, http.StatusOK)
+	request(operatorLogin, http.MethodPatch, "/api/v1/projects/"+projectB.ID, `{"name":"Must stay private"}`, http.StatusNotFound)
+	const cueBody = `{"display_label":"1","name":"Scoped Cue","order_index":1,"cue_type":"STANDARD","criticality":"NORMAL","enabled":true,"execution_policy":{},"actions":[]}`
+	request(operatorLogin, http.MethodPost, "/api/v1/projects/"+projectA.ID+"/cues", cueBody, http.StatusCreated)
+	request(operatorLogin, http.MethodPost, "/api/v1/projects/"+projectB.ID+"/cues", cueBody, http.StatusNotFound)
+	request(operatorLogin, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/cue-editor-recovery", "", http.StatusOK)
+	request(viewerLogin, http.MethodPatch, "/api/v1/projects/"+projectA.ID, `{"name":"Viewer cannot rename"}`, http.StatusNotFound)
+	request(viewerLogin, http.MethodPost, "/api/v1/projects/"+projectA.ID+"/cues", cueBody, http.StatusNotFound)
+	request(viewerLogin, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/cue-editor-recovery", "", http.StatusNotFound)
 }
 
 func TestQualifiedRawDeviceCommandsRejectScopedOperator(t *testing.T) {
