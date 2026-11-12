@@ -66,6 +66,7 @@ type stageDeviceRouteHooks struct {
 	StageLaserAssignment func(context.Context, deviceexperience.StageLaserAssignmentInput, string, func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error)
 	SoftwareTransfer func(context.Context, deviceexperience.TransferPreflightInput, string, func(context.Context) error) (deviceexperience.TransferCommitRecord, error)
 	LightingActivation func(context.Context, deviceexperience.LightingActivationInput, string, func(context.Context) error) (deviceexperience.LightingActivationCommit, error)
+	BeforeSnapshotSyncResponse func()
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -81,6 +82,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		stageLaserAssignment := runtime.ExecuteStageLaserAssignmentAuthorized
 		softwareTransfer := runtime.ExecuteReservedSoftwareTransferAuthorized
 		lightingActivation := runtime.ExecuteLightingActivationAuthorized
+		beforeSnapshotSyncResponse := func() {}
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -96,6 +98,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			if hooks[0].LightingActivation != nil {
 				lightingActivation = hooks[0].LightingActivation
+			}
+			if hooks[0].BeforeSnapshotSyncResponse != nil {
+				beforeSnapshotSyncResponse = hooks[0].BeforeSnapshotSyncResponse
 			}
 		}
 
@@ -266,7 +271,13 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
 					return err
 				}
-				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair); err != nil {
+					return err
+				}
+				if qualificationAccess(r, nil) != nil && next.User.Role != userauth.RoleOwner {
+					return userauth.ErrForbidden
+				}
+				return nil
 			}
 
 			items, err := devices.ListDevices(r.Context(), projectID)
@@ -296,6 +307,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			results := make([]runtimeSnapshotDeviceSyncResult, 0)
 			complete := true
+			effectMayHaveBeenCommitted := false
 			for _, device := range items {
 				if !device.Enabled || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
 					device.Assignment == nil {
@@ -386,6 +398,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "Tablet assignment committed but fresh Runtime Snapshot reconnect did not become READY in time."
@@ -424,6 +437,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "StageLaser safe rebind committed but fresh Runtime Snapshot reconnect did not become READY in time."
@@ -450,6 +464,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					if rebind.Reassign != nil {
 						result.AssignmentEpoch = rebind.Reassign.ToEpoch
 					} else if rebind.Activation != nil {
@@ -460,6 +475,16 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 			}
 
+			beforeSnapshotSyncResponse()
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended during Snapshot synchronization; refetch device assignments before taking further action.",
+					"effect_may_have_been_committed": effectMayHaveBeenCommitted,
+					"retryable": false,
+				})
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"runtime_snapshot_id": input.RuntimeSnapshotID,
 				"complete": complete,

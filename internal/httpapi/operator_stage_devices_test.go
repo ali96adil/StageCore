@@ -14,8 +14,10 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -224,6 +226,60 @@ func TestStageLaserAssignmentSuppressesCommittedRecordAfterOwnerRevocation(t *te
 	}
 	if _, leaked := body["assignment"]; leaked {
 		t.Fatalf("revoked Owner received committed assignment record: %+v", body)
+	}
+}
+
+func TestStageDeviceSnapshotSyncSuppressesResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot sync response revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedBeforeResponse := false
+	handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil,
+		stageDeviceRouteHooks{BeforeSnapshotSyncResponse: func() {
+			revokedBeforeResponse = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner before response: %v", err)
+			}
+		}})).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/stage-devices/sync-runtime-snapshot",
+		[]byte(`{"runtime_snapshot_id":"`+published.ID+`"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revokedBeforeResponse {
+		t.Fatal("test did not revoke the Owner session at the final response boundary")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != false || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful Snapshot sync response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received Snapshot sync results: %+v", body)
 	}
 }
 

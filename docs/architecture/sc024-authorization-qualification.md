@@ -289,3 +289,13 @@ extension lifecycle routes, the multi-device Snapshot sync delivery path,
 the full maintenance/plugin endpoint matrix, and isolated installed-copy
 recovery/Hub health. This fence does not qualify extension package changes
 under an active real stage installation.
+
+The multi-device Snapshot synchronization response now has a final live
+session/role/CSRF check after its device loop and before returning accumulated
+results. It reports whether this request may already have committed a device
+assignment and marks the response non-retryable. The regression
+`TestStageDeviceSnapshotSyncSuppressesResultsAfterOwnerRevocation` was first
+observed returning HTTP 200 with the Snapshot ID/results after logout; it now
+passes under Race and verifies response suppression when no device operation
+was performed. Assignment/transfer/activation post-commit fences from the
+prior checkpoint remain in place. Production ACL remains disabled.
