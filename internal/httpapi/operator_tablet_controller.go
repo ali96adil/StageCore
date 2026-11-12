@@ -289,11 +289,24 @@ type tabletControllerRuntime interface {
 	ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error)
 }
 
+type tabletRelayFlashDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+func writeTabletFlashAuthorityEnded(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":                     "TABLET_LIVE_FLASH_AUTHORITY_REVOKED",
+		"effect_may_have_been_sent": true,
+		"retryable":                 false,
+	})
+}
+
 func WithOperatorTabletController(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
 	runtime tabletControllerRuntime,
 	stageStore *store.Store,
+	flashDoers ...tabletRelayFlashDoer,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || runtime == nil || stageStore == nil {
@@ -439,39 +452,81 @@ func WithOperatorTabletController(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_LIVE_FLASH_REQUEST_INVALID"})
 				return
 			}
-			client := &http.Client{
-				Timeout: 3 * time.Second,
-				Transport: &http.Transport{Proxy: nil},
-				CheckRedirect: func(*http.Request, []*http.Request) error {
-					return fmt.Errorf("relay redirects are not allowed")
-				},
-			}
 			if err := capability.CheckDispatch(request.Context()); err != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "TABLET_LIVE_FLASH_AUTHORITY_REVOKED"})
 				return
 			}
-			response, err := client.Do(request)
+			var doer tabletRelayFlashDoer
+			if len(flashDoers) > 0 {
+				doer = flashDoers[0]
+			}
+			if doer == nil {
+				doer = &http.Client{
+					Timeout: 3 * time.Second,
+					Transport: &http.Transport{Proxy: nil},
+					CheckRedirect: func(*http.Request, []*http.Request) error {
+						return fmt.Errorf("relay redirects are not allowed")
+					},
+				}
+			}
+			response, err := doer.Do(request)
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_UNAVAILABLE", "detail": err.Error()})
+				if capability.CheckDispatch(request.Context()) != nil {
+					writeTabletFlashAuthorityEnded(w)
+					return
+				}
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_UNAVAILABLE",
+					"detail":                    err.Error(),
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				response.Body.Close()
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			defer response.Body.Close()
 			body, err := io.ReadAll(io.LimitReader(response.Body, 8<<10))
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				if capability.CheckDispatch(request.Context()) != nil {
+					writeTabletFlashAuthorityEnded(w)
+					return
+				}
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			if response.StatusCode < 200 || response.StatusCode >= 300 {
 				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"error": "TABLET_LIVE_FLASH_RELAY_REJECTED",
-					"relay_status": response.StatusCode,
-					"detail": strings.TrimSpace(string(body)),
+					"error":                     "TABLET_LIVE_FLASH_RELAY_REJECTED",
+					"relay_status":              response.StatusCode,
+					"detail":                    strings.TrimSpace(string(body)),
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
 				})
 				return
 			}
 			var relayState map[string]any
 			if len(body) != 0 && json.Unmarshal(body, &relayState) != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"state": state, "relay": relayState})

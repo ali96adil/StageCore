@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +29,76 @@ func (f tabletControllerDispatchFunc) Dispatch(ctx context.Context, input device
 
 func (tabletControllerDispatchFunc) ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error) {
 	return deviceexperience.TabletAssignmentCommit{}, nil
+}
+
+type tabletRelayFlashDoerFunc func(*http.Request) (*http.Response, error)
+
+func (f tabletRelayFlashDoerFunc) Do(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestTabletLiveFlashSuppressesRelayResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Tablet flash revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestSent := false
+	doer := tabletRelayFlashDoerFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.String() != "http://127.0.0.1:9081/api/v0/flash?state=on" {
+			t.Fatalf("unexpected relay request: %s %s", request.Method, request.URL)
+		}
+		requestSent = true // The relay may already have applied the requested state.
+		if err := h.auth.Logout(request.Context(), owner.Token); err != nil {
+			return nil, err
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"state":"on"}`)),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
+	})
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		WithOperatorTabletController(h.auth, devices, runtime, stageStore, doer),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/tablet-controller/live-flash",
+		[]byte(`{"url":"http://127.0.0.1:9081/api/v0/stream","state":"on"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !requestSent {
+		t.Fatal("mock relay was not called before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "TABLET_LIVE_FLASH_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable relay response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["relay"]; leaked {
+		t.Fatalf("revoked Owner received relay success data: %+v", body)
+	}
 }
 
 func TestTabletControllerSuppressesAcceptedResultsAfterOwnerRevocation(t *testing.T) {
