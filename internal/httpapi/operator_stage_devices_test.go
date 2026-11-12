@@ -358,6 +358,93 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	}
 }
 
+func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
+	for _, operation := range []string{"software-transfer", "lighting-activation"} {
+		t.Run(operation, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Committed operation revoke", CreatedBy: "owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			devices, err := deviceexperience.NewRepository(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const deviceID = "v2-operation-response-revoke"
+			if operation == "software-transfer" {
+				if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+					ID: deviceID, Kind: deviceexperience.DeviceGeneric, DisplayName: "Transfer Node",
+					ProtocolVersion: deviceexperience.ProtocolVersion2, ProfileID: lightingnode.ProfileID, Enabled: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER", "1")
+			} else {
+				t.Setenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION", "1")
+			}
+			runtime := devicechannel.New(devices, nil)
+			defer runtime.Close()
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			committed := false
+			hooks := stageDeviceRouteHooks{}
+			if operation == "software-transfer" {
+				hooks.SoftwareTransfer = func(_ context.Context, input deviceexperience.TransferPreflightInput, _ string, reauthorize func(context.Context) error) (deviceexperience.TransferCommitRecord, error) {
+					if err := reauthorize(ctx); err != nil {
+						return deviceexperience.TransferCommitRecord{}, err
+					}
+					committed = true
+					if err := h.auth.Logout(ctx, owner.Token); err != nil {
+						return deviceexperience.TransferCommitRecord{}, err
+					}
+					return deviceexperience.TransferCommitRecord{TransferID: "committed-transfer", DeviceID: input.DeviceID, ToProjectID: input.TargetProjectID, ToEpoch: input.ExpectedEpoch + 1, NextState: "BLOCKED"}, nil
+				}
+			} else {
+				hooks.LightingActivation = func(_ context.Context, input deviceexperience.LightingActivationInput, _ string, reauthorize func(context.Context) error) (deviceexperience.LightingActivationCommit, error) {
+					if err := reauthorize(ctx); err != nil {
+						return deviceexperience.LightingActivationCommit{}, err
+					}
+					committed = true
+					if err := h.auth.Logout(ctx, owner.Token); err != nil {
+						return deviceexperience.LightingActivationCommit{}, err
+					}
+					return deviceexperience.LightingActivationCommit{ActivationID: "committed-activation", DeviceID: input.DeviceID, ProjectID: input.ProjectID, RuntimeSnapshotID: input.RuntimeSnapshotID, State: "ACTIVE"}, nil
+				}
+			}
+			handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil, hooks)).Handler()
+			path := "/api/v1/stage-devices/" + deviceID + "/assignment/software-transfer"
+			payload := `{"expected_project_id":"","target_project_id":"` + project.ID + `","expected_assignment_epoch":1,"confirm":"BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"}`
+			if operation == "lighting-activation" {
+				path = "/api/v1/projects/" + project.ID + "/stage-devices/" + deviceID + "/lighting-activation"
+				payload = `{"runtime_snapshot_id":"snapshot-current","expected_assignment_epoch":4,"confirm":"APPLY_PUBLISHED_CONFIG_AND_ACTIVATE_LIGHTING_SOFTWARE_ONLY"}`
+			}
+			request := authenticatedMutationRequest(t, http.MethodPost, path, []byte(payload), owner.Token, owner.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !committed {
+				t.Fatal("test operation did not commit before revoking Owner session")
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+				body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+				t.Fatalf("revoked Owner received success or retryable committed response: HTTP %d %+v", response.Code, body)
+			}
+			for _, key := range []string{"transfer", "activation"} {
+				if _, leaked := body[key]; leaked {
+					t.Fatalf("revoked Owner received committed %s record: %+v", key, body)
+				}
+			}
+		})
+	}
+}
+
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

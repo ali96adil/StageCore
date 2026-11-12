@@ -64,6 +64,8 @@ type stageDeviceRouteHooks struct {
 	Dispatch       stageDeviceCommandDispatcher
 	CurrentV2Scope func(string) (devicechannel.V2RuntimeScope, bool)
 	StageLaserAssignment func(context.Context, deviceexperience.StageLaserAssignmentInput, string, func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error)
+	SoftwareTransfer func(context.Context, deviceexperience.TransferPreflightInput, string, func(context.Context) error) (deviceexperience.TransferCommitRecord, error)
+	LightingActivation func(context.Context, deviceexperience.LightingActivationInput, string, func(context.Context) error) (deviceexperience.LightingActivationCommit, error)
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -77,6 +79,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		dispatchCommand := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
 		currentV2Scope := runtime.CurrentV2Scope
 		stageLaserAssignment := runtime.ExecuteStageLaserAssignmentAuthorized
+		softwareTransfer := runtime.ExecuteReservedSoftwareTransferAuthorized
+		lightingActivation := runtime.ExecuteLightingActivationAuthorized
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -86,6 +90,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			if hooks[0].StageLaserAssignment != nil {
 				stageLaserAssignment = hooks[0].StageLaserAssignment
+			}
+			if hooks[0].SoftwareTransfer != nil {
+				softwareTransfer = hooks[0].SoftwareTransfer
+			}
+			if hooks[0].LightingActivation != nil {
+				lightingActivation = hooks[0].LightingActivation
 			}
 		}
 
@@ -993,7 +1003,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteReservedSoftwareTransferAuthorized(
+			record, err := softwareTransfer(
 				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
 					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair), intent, actor, reauthorize)
 			if err != nil {
@@ -1002,6 +1012,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "STAGE_DEVICE_SOFTWARE_TRANSFER_NOT_COMMITTED",
 					"note": "VERIFY_HUB_ASSIGNMENT_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the software-transfer commit; refetch device assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}
@@ -1169,7 +1188,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteLightingActivationAuthorized(
+			record, err := lightingActivation(
 				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
 					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.LightingActivationInput{
@@ -1186,6 +1205,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					"error": "LIGHTING_ACTIVATION_NOT_COMMITTED",
 					"detail": err.Error(),
 					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_SOFTWARE_ZERO_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the lighting activation commit; refetch device assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}
