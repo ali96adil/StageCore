@@ -250,17 +250,20 @@ Core CI run `43240030135` passed Go 1.27, Go 1.26 tests, Browser Cue
 Delivery, Vet, Go 1.26 Race, and Linux ARM64 product builds. Camera Relay run
 `43240030290` passed. Companion run `43240030394` attempt 2 passed Swift
 build/tests; its real macOS acceptance job is still queued, so Companion CI
-is not yet complete. Production Assembler and Migration 53 are unchanged.
-Production ACL remains disabled.
+was not yet complete at that code checkpoint. The follow-up exact-head checks
+on documentation checkpoint `f9e98b8341143a301c3e7003e466e012e50b59fe` all
+passed: Core run `43245218960` including Race and Linux ARM64, Companion run
+`43245222086` including the real macOS replacement/media acceptance job, and
+Camera Relay run `43245218842`. Production Assembler and Migration 53 are
+unchanged. Production ACL remains disabled.
 
 **Decision remains: SC-024 is not software-qualified.** The broader audit is
 incomplete for remaining maintenance/extension paths and multi-device
 Snapshot synchronization responses. A disposable installed-copy update,
 restore and Linux Hub service health cycle is also outstanding. Hardware
 qualification remains separate. Continue on the existing remote
-`integration/stagecore-rc` branch from code checkpoint
-`2797b284452e5f844cfd0e7005a498c6aa7ca9f9`. Core and Camera CI are green;
-the Companion macOS acceptance job for run `43240030394` attempt 2 is queued
-and has not started, while its Swift build/tests passed. Do not count that
-acceptance as complete. Keep Production ACL disabled and the partial-activation
-source guard intact.
+`integration/stagecore-rc` branch from documentation checkpoint
+`f9e98b8341143a301c3e7003e466e012e50b59fe` (code checkpoint
+`2797b284452e5f844cfd0e7005a498c6aa7ca9f9`). All exact-head Core, Companion
+and Camera Relay CI runs listed above passed. Keep Production ACL disabled and
+the partial-activation source guard intact.
