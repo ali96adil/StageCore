@@ -78,6 +78,25 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 	if err := access.SetPermissions(ctx, ownerID, operator.ID, project.ID, aclBeforeRollback); err != nil {
 		t.Fatal(err)
 	}
+	preview, err := access.PreviewProjectCutover(ctx, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.ReadOnly || preview.Enforced || preview.ReadyForCutover || preview.ProjectCount != 1 {
+		t.Fatalf("isolated cutover preview should remain read-only and blocked: %+v", preview)
+	}
+	var preparedOperator *projectaccess.CutoverUserImpact
+	for i := range preview.Users {
+		if preview.Users[i].UserID == operator.ID {
+			preparedOperator = &preview.Users[i]
+			break
+		}
+	}
+	if preparedOperator == nil || preparedOperator.PreparedVisibleProjects != 1 ||
+		preparedOperator.PreparedGOPermittedProjects != 1 || preparedOperator.PreparedStopGrantedProjects != 1 ||
+		preparedOperator.PreparedBlackoutEngageGrantedProjects != 1 {
+		t.Fatalf("impact preview omitted the isolated Operator's independent project grants: %+v", preview.Users)
+	}
 	cue, err := baselineStore.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, Name: "Preserved Cue", OrderIndex: 0, Enabled: true,
 	}, nil)
@@ -141,6 +160,48 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 	opts.Deployment.VaultRoot = filepath.Join(fixture.DataRoot, "vault")
 	opts.Deployment.SystemdUnit = fixture.SystemdUnit
 	opts.BackupRoot = fixture.BackupRoot
+	dryRunOpts := opts
+	dryRunOpts.DryRun = true
+	dryRunService := &Service{
+		installer: installer,
+		doctor:    &fakeDoctor{reports: []doctor.Report{readyReport()}},
+		snapshots: snapshotter,
+		commands:  &fakeCommands{},
+		euid:      func() int { return 0 },
+		showGuard: activeShow,
+	}
+	dryRunResult, err := dryRunService.Apply(ctx, dryRunOpts)
+	if err != nil || !dryRunResult.DryRun || dryRunResult.BackupPath != "" || candidateProject != "" {
+		t.Fatalf("isolated update dry-run unexpectedly changed the installation: %+v, %v", dryRunResult, err)
+	}
+	assertFile(t, filepath.Join(fixture.InstallRoot, "bin", "stagecore-hub"), "old-hub")
+	dryRunDB := open()
+	dryRunStore := store.New(dryRunDB.DB, clock.Real{})
+	if _, err := dryRunStore.GetProject(ctx, project.ID); err != nil {
+		t.Fatalf("dry-run lost baseline Project: %v", err)
+	}
+	dryRunAccess, err := projectaccess.New(dryRunDB.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, permission := range aclBeforeRollback {
+		if err := dryRunAccess.Check(ctx, operator.ID, project.ID, permission); err != nil {
+			t.Fatalf("dry-run changed baseline Project grant %s: %v", permission, err)
+		}
+	}
+	dryRunSnapshot, err := dryRunStore.GetRuntimeSnapshot(ctx, published.ID)
+	if err != nil || dryRunSnapshot.ProjectID != published.ProjectID ||
+		dryRunSnapshot.RevisionID != published.RevisionID ||
+		dryRunSnapshot.SnapshotVersion != published.SnapshotVersion ||
+		dryRunSnapshot.Status != domain.SnapshotPublished ||
+		dryRunSnapshot.ContentHash != published.ContentHash ||
+		!bytes.Equal(dryRunSnapshot.Manifest, published.Manifest) {
+		t.Fatalf("dry-run changed published Snapshot identity or bytes: %+v err=%v", dryRunSnapshot, err)
+	}
+	if err := dryRunDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	result, err := service.Apply(ctx, opts)
 	if !errors.Is(err, ErrPostflightBlocked) || errors.Is(err, ErrRollbackFailed) ||
 		!result.RolledBack || result.RollbackReport.Overall != doctor.OverallReady || candidateProject == "" {

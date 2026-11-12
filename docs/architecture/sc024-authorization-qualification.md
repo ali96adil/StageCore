@@ -366,3 +366,13 @@ response is a plain 403 and does not claim a commit or invite replay of a
 device operation. The two regressions plus Firmware upload, manifest issuance
 and post-transport send revocation checks pass under Race; the full
 `internal/httpapi` package passes locally. Production ACL remains disabled.
+
+The disposable update rollback rehearsal now runs the Owner Impact Preview and
+an update dry-run against the same temporary installation fixture before
+simulating candidate installation failure. It verifies the preview remains
+read-only and blocked, the Operator's project visibility plus GO/STOP/Blackout
+grants are intact, the dry-run leaves the prior bundle, database grants and
+published Snapshot untouched, and automatic rollback restores SQLite
+integrity, Snapshot identity/hash and the exact baseline grants. The focused
+Race run passed. The installer and service manager remain mocked in this
+test, so it does not qualify a real Linux service restart or Hub health check.
