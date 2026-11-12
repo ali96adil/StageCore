@@ -163,3 +163,64 @@ these software tests.
 `221289307e29e67a79ee0a2c229f7e77e0b0b97e`, PR #534. Start with the next
 uncovered asynchronous endpoint group and the disposable installed-copy
 recovery rehearsal; do not change Production Assembler or enable ACL.
+
+## SC-024 continuation · 2026-11-12 · final response fences
+
+The next dispatch-response review added final live-authority checks to the
+single Stage Device command and StageLaser visual-resync routes. If authority
+ends after transport acceptance, the handler suppresses command identifiers
+and results and returns a non-retryable response that says the external effect
+may already have been sent. Regression tests
+`TestStageDeviceCommandSuppressesAcceptedResultAfterOwnerRevocation` and
+`TestStageLaserResyncSuppressesAcceptedResultAfterOwnerRevocation` were first
+observed failing against the old behavior and pass with the fix. Focused
+`internal/httpapi` Race tests pass locally.
+
+The same review checked Companion capture upload fencing. Existing regression
+tests exercise assignment and issuing-project-grant revocation during request
+body reads, cancelled ticket state, and absence of stored Vault bytes; the
+ticket/receipt code also has replay and terminal-state coverage. These checks
+are simulated with temporary databases and do not qualify old deployed
+Companion binaries on hardware.
+
+Latest code checkpoint `b0993a2608361a909b0fc6f202809e86cf72ae9f` is pushed
+to `integration/stagecore-rc`. Core CI run `43234033413` passed Go 1.27,
+Go 1.26 tests, Browser Cue Delivery, Vet, Go 1.26 Race, and Linux ARM64
+product builds. Companion Core run `43234033619` and Camera Relay run
+`43234033375` passed. Local isolated rollback/Snapshot Race tests in
+`internal/update` and `internal/projectaccess` also passed on temporary
+databases.
+
+One remaining code-level boundary is the HTTP response after the transactional
+Stage Device software-transfer, StageLaser-assignment, and lighting-activation
+operations return. Their runtime transactions reauthorize before committing,
+but the HTTP handlers have no deterministic post-commit revocation regression
+seam; they can still return the operation record if authority ends in the
+small interval before response delivery. Qualifying this requires extracting
+an internal runtime-operation interface or equivalent test seam, then adding
+red-first tests and suppressing the record after a failed final check. This
+must preserve the fact that a committed assignment is not rolled back and is
+not safe to retry blindly.
+
+The updater tests exercise dry-run non-mutation and automatic rollback against
+temporary SQLite state, including project grants and Snapshot hashes. A full
+disposable installed-bundle run with the real Linux service manager, Hub
+restart and health checks has not been performed on this macOS host. The
+Migration/impact-preview/restore rehearsal as an installed copy remains open.
+Production Assembler and Migration 53 remain unchanged; Production ACL remains
+disabled.
+
+**Decision: SC-024 is not software-qualified.** Remaining software blockers
+are the post-commit operation-response fence above, the full endpoint-to-
+permission reconciliation for still-unreviewed plugin/extension and
+maintenance flows, and installed-copy migration/update/recovery/health
+qualification. Hardware-only blockers include deployed legacy Companion
+compatibility, real device-side STOP/Blackout and StageAudio behavior, and
+physical confirmation of in-flight output semantics. No hardware or real
+output was used.
+
+**Resume at:** remote `integration/stagecore-rc` HEAD
+`b0993a2608361a909b0fc6f202809e86cf72ae9f`, Draft PR #534. Start with
+post-commit fencing for Stage Device transfer/assignment/lighting activation;
+add a failing regression before code changes. Keep Production ACL disabled
+and the partial-activation source guard intact.
