@@ -11,10 +11,13 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/deployment"
-	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/doctor"
+	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/hubsecurity"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 type rollbackFixtureInstaller func(context.Context, deployment.Options) (deployment.Result, error)
@@ -38,8 +41,41 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 
 	baseline := open()
 	baselineStore := store.New(baseline.DB, clock.Real{})
-	project, revision, err := baselineStore.CreateProject(ctx, store.CreateProjectParams{Name: "Rollback rehearsal"})
+	security, err := hubsecurity.Open(ctx, baseline.DB, fixture.DataRoot)
 	if err != nil {
+		t.Fatal(err)
+	}
+	setupCode, err := security.GenerateSetupCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID, err := security.ClaimFirstOwner(ctx, setupCode.Code, "Rollback Owner", "rollback-owner-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users, err := userauth.New(baseline.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := users.CreateUser(ctx, "rollback-operator", "rollback-operator-password", userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(baseline.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := baselineStore.CreateProject(ctx, store.CreateProjectParams{Name: "Rollback rehearsal", CreatedBy: ownerID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aclBeforeRollback := []projectaccess.Permission{
+		projectaccess.ProjectView,
+		projectaccess.ShowGO,
+		projectaccess.ShowStop,
+		projectaccess.ShowBlackoutEngage,
+	}
+	if err := access.SetPermissions(ctx, ownerID, operator.ID, project.ID, aclBeforeRollback); err != nil {
 		t.Fatal(err)
 	}
 	cue, err := baselineStore.CreateCueWithActions(ctx, domain.Cue{
@@ -69,6 +105,13 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 				t.Fatal(err)
 			}
 			candidateProject = added.ID
+			candidateAccess, err := projectaccess.New(candidate.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := candidateAccess.SetPermissions(ctx, ownerID, operator.ID, project.ID, nil); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := candidate.DB.ExecContext(ctx, "DELETE FROM runtime_snapshots WHERE runtime_snapshot_id = ?", published.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -144,6 +187,18 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 	manifest, err := snapshot.Decode(got.Manifest)
 	if err != nil || len(manifest.Cues) != 1 || manifest.Cues[0].ID != cue.ID {
 		t.Fatalf("restored snapshot lost its Cue: %+v, %v", manifest.Cues, err)
+	}
+	restoredAccess, err := projectaccess.New(restored.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, permission := range aclBeforeRollback {
+		if err := restoredAccess.Check(ctx, operator.ID, project.ID, permission); err != nil {
+			t.Fatalf("rollback did not restore Project ACL %s: %v", permission, err)
+		}
+	}
+	if err := restoredAccess.Check(ctx, operator.ID, candidateProject, projectaccess.ProjectView); !errors.Is(err, projectaccess.ErrNotFound) && !errors.Is(err, projectaccess.ErrDenied) {
+		t.Fatalf("candidate-only Project ACL lookup returned %v", err)
 	}
 }
 
