@@ -46,12 +46,22 @@ func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
 }
 
 func WithVault(v *stagevault.Vault) Option {
-	return func(s *Server) { s.vault = v }
+	return func(s *Server) {
+		s.vault = v
+		if v != nil {
+			s.companionVaultScope = v.CompanionScopeStore()
+		}
+	}
 }
 
-// WithCompanionVaultScope limits authenticated Vault downloads to the role's published Snapshot.
+// WithCompanionVaultScope overrides the Vault catalog used for Companion read authorization.
+// Nil leaves the scope inferred from WithVault in place.
 func WithCompanionVaultScope(projects *store.Store) Option {
-	return func(s *Server) { s.companionVaultScope = projects }
+	return func(s *Server) {
+		if projects != nil {
+			s.companionVaultScope = projects
+		}
+	}
 }
 
 func WithSoftwareRepository(repository *software.Repository) Option {

@@ -19,22 +19,23 @@ func (s *Server) handleVaultObject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.companionVaultScope == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "VAULT_SCOPE_UNAVAILABLE"})
+		return
+	}
 
 	contentHash := strings.ToLower(strings.TrimSpace(r.PathValue("content_hash")))
 	authorize := func() bool {
 		current, err := s.companionAuth.ValidateRuntimeSession(r.Context(), token)
 		return err == nil && current.ID == session.ID && current.CompanionID == session.CompanionID
 	}
-	status, code := http.StatusGone, companionauth.CodeSessionInvalid
-	if s.companionVaultScope != nil {
-		scope := s.authorizeCompanionVaultRead(r.Context(), session, token, contentHash)
-		if scope == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})
-			return
-		}
-		authorize = scope.active
-		status, code = http.StatusNotFound, "VAULT_OBJECT_NOT_FOUND"
+	scope := s.authorizeCompanionVaultRead(r.Context(), session, token, contentHash)
+	if scope == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})
+		return
 	}
+	authorize = scope.active
+	status, code := http.StatusNotFound, "VAULT_OBJECT_NOT_FOUND"
 	file, object, err := s.vault.OpenObject(r.Context(), contentHash)
 	if errors.Is(err, domain.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VAULT_OBJECT_NOT_FOUND"})

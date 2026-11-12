@@ -16,6 +16,9 @@ type companionVaultReadScope struct {
 	assignmentID string
 	roleID       string
 	snapshotID   string
+	projectID    string
+	contentHash  string
+	legacy       bool
 }
 
 func (s *Server) authorizeCompanionVaultRead(ctx context.Context, session domain.CompanionRuntimeSession, token, hash string) *companionVaultReadScope {
@@ -24,8 +27,22 @@ func (s *Server) authorizeCompanionVaultRead(ctx context.Context, session domain
 		return nil
 	}
 	role, err := s.companionVaultScope.GetMachineRole(ctx, assignment.MachineRoleID)
-	if err != nil || role.Retired || role.RequiredRuntimeSnapshotID == nil {
+	if err != nil || role.Retired {
 		return nil
+	}
+	if role.RequiredRuntimeSnapshotID == nil {
+		// Roles created before Runtime Snapshot binding remain compatible, but
+		// their hash access is limited to media registered in the assigned
+		// project's catalog.
+		found, err := s.companionVaultScope.ProjectHasMediaContentHash(ctx, role.ProjectID, hash)
+		if err != nil || !found {
+			return nil
+		}
+		return &companionVaultReadScope{
+			ctx: ctx, server: s, token: token, sessionID: session.ID, companionID: session.CompanionID,
+			assignmentID: assignment.ID, roleID: role.ID, projectID: role.ProjectID,
+			contentHash: hash, legacy: true,
+		}
 	}
 	required, err := s.companionVaultScope.GetRuntimeSnapshot(ctx, *role.RequiredRuntimeSnapshotID)
 	if err != nil || required.ProjectID != role.ProjectID || required.Status != domain.SnapshotPublished {
@@ -50,6 +67,7 @@ func (s *Server) authorizeCompanionVaultRead(ctx context.Context, session domain
 		return &companionVaultReadScope{
 			ctx: ctx, server: s, token: token, sessionID: session.ID, companionID: session.CompanionID,
 			assignmentID: assignment.ID, roleID: role.ID, snapshotID: required.ID,
+			projectID: role.ProjectID, contentHash: hash,
 		}
 	}
 	return nil
@@ -60,11 +78,7 @@ func (scope *companionVaultReadScope) active() bool {
 	if err != nil || session.ID != scope.sessionID || session.CompanionID != scope.companionID {
 		return false
 	}
-	projects := scope.server.companionVaultScope
-	assignment, err := projects.GetActiveRoleAssignmentForCompanion(scope.ctx, scope.companionID)
-	if err != nil || assignment.ID != scope.assignmentID || assignment.MachineRoleID != scope.roleID {
-		return false
-	}
-	role, err := projects.GetMachineRole(scope.ctx, scope.roleID)
-	return err == nil && !role.Retired && role.RequiredRuntimeSnapshotID != nil && *role.RequiredRuntimeSnapshotID == scope.snapshotID
+	current := scope.server.authorizeCompanionVaultRead(scope.ctx, session, scope.token, scope.contentHash)
+	return current != nil && current.assignmentID == scope.assignmentID && current.roleID == scope.roleID &&
+		current.projectID == scope.projectID && current.snapshotID == scope.snapshotID && current.legacy == scope.legacy
 }

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -58,7 +57,6 @@ func startDeviceGateway(
 		httpapi.WithTabletCameraViewer(application.CompanionAuth, application.DeviceExperience, application.DeviceRuntime, cameraViewer),
 		httpapi.WithStageDeviceFirmwareArtifacts(application.CompanionAuth, application.DeviceUpdateArtifacts),
 		httpapi.WithVault(application.Vault),
-		companionVaultScopeOption(application),
 	)
 	server := &http.Server{
 		Addr:              listenAddress,
@@ -215,11 +213,4 @@ func (g *deviceGateway) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return err
-}
-
-func companionVaultScopeOption(application *app.App) httpapi.Option {
-	if os.Getenv("STAGECORE_SCOPED_COMPANION_VAULT") == "1" {
-		return httpapi.WithCompanionVaultScope(application.Store)
-	}
-	return httpapi.WithCompanionVaultScope(nil)
 }

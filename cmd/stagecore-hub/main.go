@@ -407,7 +407,6 @@ func main() {
 		httpapi.WithCompanionAuth(application.CompanionAuth),
 		httpapi.WithCompanionRuntime(application.CompanionRuntime),
 		httpapi.WithVault(application.Vault),
-		companionVaultScopeOption(application),
 		httpapi.WithCompanionCaptureUpload(application.CompanionAuth, application.Store, application.Vault, application.Bulk),
 		httpapi.WithSoftwareRepository(application.Software),
 		httpapi.WithBulkManager(application.Bulk),

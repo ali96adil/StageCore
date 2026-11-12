@@ -34,9 +34,20 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	s := store.New(handle.DB, clock.Real{})
 	auth := companionauth.New(s, nil)
 	credential := pairedRuntimeCredential(t, ctx, auth)
+	session, err := auth.ValidateRuntimeSession(ctx, credential.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	project, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Transfer Test"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := s.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{RoleKey: "LEGACY-TRANSFER", DisplayName: "Legacy transfer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AssignMachineRole(ctx, role.ID, session.CompanionID); err != nil {
 		t.Fatal(err)
 	}
 	v, err := vault.Open(t.TempDir(), s)
@@ -84,7 +95,7 @@ func TestVaultObjectDownloadRequiresSessionAndSupportsRange(t *testing.T) {
 	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
 		t.Fatalf("Cache-Control=%q", got)
 	}
-	session, err := auth.ValidateRuntimeSession(ctx, credential.Token)
+	session, err = auth.ValidateRuntimeSession(ctx, credential.Token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +183,7 @@ func TestScopedCompanionVaultDeniesCrossProjectAndStopsAfterRelease(t *testing.T
 	if _, err := s.CreateRuntimeSnapshot(ctx, revision.ID, "test", hex.EncodeToString(digest[:]), manifest); err != nil {
 		t.Fatal(err)
 	}
-	api := httpapi.New(httpapi.WithCompanionAuth(auth), httpapi.WithVault(v), httpapi.WithCompanionVaultScope(s))
+	api := httpapi.New(httpapi.WithCompanionAuth(auth), httpapi.WithVault(v))
 	request := func(hash, byteRange string, writer http.ResponseWriter) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/vault/objects/"+hash, nil)
 		req.RemoteAddr = "127.0.0.1:41001"
@@ -213,6 +224,93 @@ func TestScopedCompanionVaultDeniesCrossProjectAndStopsAfterRelease(t *testing.T
 		t.Fatalf("released stream wrote %d bytes", len(got))
 	}
 	assertDenied(managed.Object.ContentHash)
+	releasedRange := httptest.NewRecorder()
+	request(managed.Object.ContentHash, "bytes=65536-", releasedRange)
+	if releasedRange.Code != http.StatusNotFound {
+		t.Fatalf("released assignment range returned HTTP %d", releasedRange.Code)
+	}
+	assignment, err = s.AssignMachineRole(ctx, role.ID, session.CompanionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionRange := &releaseVaultResponse{
+		ResponseRecorder: httptest.NewRecorder(),
+		release: func() {
+			if err := auth.Revoke(ctx, session.CompanionID, "owner", "range session revocation", true); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	request(managed.Object.ContentHash, "bytes=0-131071", sessionRange)
+	if sessionRange.Code != http.StatusPartialContent || sessionRange.Body.Len() == 0 || sessionRange.Body.Len() > 64<<10 {
+		t.Fatalf("revoked session range wrote status=%d bytes=%d", sessionRange.Code, sessionRange.Body.Len())
+	}
+	revokedRange := httptest.NewRecorder()
+	request(managed.Object.ContentHash, "bytes=65536-", revokedRange)
+	if revokedRange.Code != http.StatusGone {
+		t.Fatalf("revoked session range retry returned HTTP %d", revokedRange.Code)
+	}
+}
+
+func TestLegacyCompanionVaultIsProjectBoundWithoutRuntimeSnapshot(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	s := store.New(handle.DB, clock.Real{})
+	auth := companionauth.New(s, nil)
+	credential := pairedRuntimeCredential(t, ctx, auth)
+	session, err := auth.ValidateRuntimeSession(ctx, credential.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Legacy assigned project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Legacy foreign project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := s.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{RoleKey: "LEGACY-MEDIA", DisplayName: "Legacy media role"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AssignMachineRole(ctx, role.ID, session.CompanionID); err != nil {
+		t.Fatal(err)
+	}
+	v, err := vault.Open(t.TempDir(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importMedia := func(projectID, payload string) store.ManagedMedia {
+		t.Helper()
+		media, err := v.ImportManaged(ctx, vault.ImportParams{ProjectID: projectID, Name: "Legacy media", OriginalFilename: "media.bin"}, bytes.NewBufferString(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return media
+	}
+	assigned := importMedia(project.ID, "legacy assigned-project media")
+	foreign := importMedia(other.ID, "legacy foreign-project media")
+	api := httpapi.New(httpapi.WithCompanionAuth(auth), httpapi.WithVault(v))
+	request := func(hash string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/vault/objects/"+hash, nil)
+		req.RemoteAddr = "127.0.0.1:41002"
+		req.Header.Set("Authorization", "StageCoreSession "+credential.Token)
+		response := httptest.NewRecorder()
+		api.Handler().ServeHTTP(response, req)
+		return response
+	}
+	if response := request(assigned.Object.ContentHash); response.Code != http.StatusOK || response.Body.String() != "legacy assigned-project media" {
+		t.Fatalf("legacy project media response=%d body=%q", response.Code, response.Body.String())
+	}
+	if response := request(foreign.Object.ContentHash); response.Code != http.StatusNotFound {
+		t.Fatalf("legacy foreign-project media returned %d", response.Code)
+	}
 }
 
 type releaseVaultResponse struct {

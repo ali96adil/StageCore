@@ -88,6 +88,15 @@ func (v *Vault) Root() string {
 	return v.root
 }
 
+// CompanionScopeStore returns the authoritative media catalog used to fence
+// hash-addressed Companion Vault reads to an assigned Project or Snapshot.
+func (v *Vault) CompanionScopeStore() *store.Store {
+	if v == nil {
+		return nil
+	}
+	return v.store
+}
+
 func (v *Vault) StorageStatus() storagehealth.Status {
 	if v == nil {
 		return storagehealth.Status{State: storagehealth.Unavailable, Reason: "Vault is unavailable"}
