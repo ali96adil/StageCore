@@ -63,6 +63,7 @@ type stageDeviceCommandDispatcher func(context.Context, *devicechannel.Runtime, 
 type stageDeviceRouteHooks struct {
 	Dispatch       stageDeviceCommandDispatcher
 	CurrentV2Scope func(string) (devicechannel.V2RuntimeScope, bool)
+	StageLaserAssignment func(context.Context, deviceexperience.StageLaserAssignmentInput, string, func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error)
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -75,12 +76,16 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		}
 		dispatchCommand := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
 		currentV2Scope := runtime.CurrentV2Scope
+		stageLaserAssignment := runtime.ExecuteStageLaserAssignmentAuthorized
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
 			}
 			if hooks[0].CurrentV2Scope != nil {
 				currentV2Scope = hooks[0].CurrentV2Scope
+			}
+			if hooks[0].StageLaserAssignment != nil {
+				stageLaserAssignment = hooks[0].StageLaserAssignment
 			}
 		}
 
@@ -1069,7 +1074,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteStageLaserAssignmentAuthorized(
+			record, err := stageLaserAssignment(
 				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
 					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.StageLaserAssignmentInput{
@@ -1086,6 +1091,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					"error": "STAGELASER_ASSIGNMENT_NOT_COMMITTED",
 					"detail": err.Error(),
 					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_DEVICE_STATE_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the assignment commit; refetch the current assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}

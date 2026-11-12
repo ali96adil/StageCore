@@ -166,6 +166,67 @@ func TestStageDeviceCommandSuppressesAcceptedResultAfterOwnerRevocation(t *testi
 	}
 }
 
+func TestStageLaserAssignmentSuppressesCommittedRecordAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "StageLaser commit response revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := false
+	assign := func(_ context.Context, input deviceexperience.StageLaserAssignmentInput, actor string, reauthorize func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error) {
+		if err := reauthorize(ctx); err != nil {
+			return deviceexperience.StageLaserAssignmentCommit{}, err
+		}
+		if actor == "" {
+			t.Fatal("assignment actor was empty")
+		}
+		committed = true // Simulate a completed assignment transaction.
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.StageLaserAssignmentCommit{}, err
+		}
+		return deviceexperience.StageLaserAssignmentCommit{
+			AssignmentID: "committed-assignment", DeviceID: input.DeviceID,
+			ToProjectID: input.TargetProjectID, ToRuntimeSnapshotID: input.TargetRuntimeSnapshotID,
+			ToEpoch: input.ExpectedEpoch + 1, NextState: "ACTIVE",
+			StateQuality: stagelaser.StateQualityTracked,
+		}, nil
+	}
+	handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil,
+		stageDeviceRouteHooks{StageLaserAssignment: assign})).Handler()
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/test-laser/stagelaser-assignment"
+	request := authenticatedMutationRequest(t, http.MethodPost, path,
+		[]byte(`{"runtime_snapshot_id":"snapshot-current","expected_assignment_epoch":4,"confirm":"VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER"}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !committed {
+		t.Fatal("test operation did not commit before revoking Owner session")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received success or retryable committed response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["assignment"]; leaked {
+		t.Fatalf("revoked Owner received committed assignment record: %+v", body)
+	}
+}
+
 func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
