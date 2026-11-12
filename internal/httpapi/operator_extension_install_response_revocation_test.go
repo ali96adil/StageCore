@@ -63,8 +63,9 @@ func newExtensionSetRevocationFixture(t *testing.T) *extensionSetRevocationFixtu
 		SchemaVersion: extension.ManifestSchemaVersion,
 		ExtensionID:   extensionID,
 		Version:       "1.0.0",
-		Kind:          extension.KindAddon,
+		Kind:          extension.KindPlugin,
 		Source:        extension.SourceLocal,
+		Permissions:   []string{"network.udp.send"},
 		Name:          extension.LocalizedText{EN: "Restore Addon", ArIQ: "إضافة استعادة"},
 		Summary:       extension.LocalizedText{EN: "Qualification addon", ArIQ: "إضافة تأهيل"},
 		Compatibility: extension.Compatibility{
@@ -110,6 +111,33 @@ func newExtensionSetRevocationFixture(t *testing.T) *extensionSetRevocationFixtu
 	return &extensionSetRevocationFixture{
 		app: app, store: stageStore, repository: repository, library: library, installer: installer,
 		audit: audit, handler: handler, owner: owner, packageID: softwarePackage.ID, set: set,
+	}
+}
+
+func TestExtensionPermissionDecisionSuppressesCommittedResultAfterRevocation(t *testing.T) {
+	fixture := newExtensionSetRevocationFixture(t)
+	installed, err := fixture.installer.InstallPlanned(context.Background(), fixture.packageID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := extension.NewPermissionReviewer(fixture.installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorExtensionPermissionReview(fixture.app.auth, reviewer, fixture.audit)).Handler()
+	revokeExtensionSessionAfterAudit(t, fixture, "extension.permission.review")
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/extensions/installations/"+installed.InstallationID+"/permissions/network.udp.send",
+		[]byte(`{"decision":"APPROVED"}`), fixture.owner.Token, fixture.owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) || strings.Contains(response.Body.String(), `"status":"APPROVED"`) {
+		t.Fatalf("revoked permission decision leaked its result or allowed replay: status=%d body=%s", response.Code, response.Body.String())
+	}
+	review, err := reviewer.Get(context.Background(), installed.InstallationID)
+	if err != nil || len(review.Items) != 1 || review.Items[0].Decision != extension.PermissionDecisionApproved {
+		t.Fatalf("permission decision should remain committed after response revocation: review=%+v err=%v", review, err)
 	}
 }
 
