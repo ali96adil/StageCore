@@ -24,6 +24,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -119,6 +120,10 @@ func TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix(t *testing.T) {
 	companionRuntime := companionchannel.NewRuntime(projects, companionAuth)
 	t.Cleanup(companionRuntime.Close)
 	bulkManager := bulk.New(func(context.Context) (bulk.Mode, error) { return bulk.ModeEdit, nil })
+	audit, err := securityaudit.New(h.db.DB, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	capsules := &fakeShowCapsuleService{}
 	audio := &fakeStageAudio{}
 	audioScope := &StageAudioProjectScope{ProjectID: projectA.ID, Access: access, Vault: objects}
@@ -139,7 +144,10 @@ func TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix(t *testing.T) {
 		WithCompanionAuth(companionAuth),
 		WithCompanionRuntime(companionRuntime),
 		WithVault(objects),
+		WithCompanionVaultScope(projects),
 		WithCompanionCaptureUpload(companionAuth, projects, objects, bulkManager),
+		WithOperatorProjectAccess(h.auth, access, projects, audit),
+		WithOwnerCapsuleImportReview(h.auth, capsules, root),
 		WithOwnerPluginAdministration(h.auth),
 		WithProjectRouteQualification(access),
 		WithBulkManager(bulkManager),
@@ -179,6 +187,10 @@ func TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix(t *testing.T) {
 	if !strings.Contains(ownerListing, projectA.ID) || !strings.Contains(ownerListing, projectB.ID) {
 		t.Fatalf("Owner did not retain cross-project administration in scoped assembly: %s", ownerListing)
 	}
+	request(owner, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/access/users/"+operator.ID, "", http.StatusOK)
+	request(operatorLogin, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/access/users/"+operator.ID, "", http.StatusForbidden)
+	request(owner, http.MethodGet, "/api/v1/show-capsules/imports/review", "", http.StatusOK)
+	request(operatorLogin, http.MethodGet, "/api/v1/show-capsules/imports/review", "", http.StatusForbidden)
 	const cueBody = `{"display_label":"1","name":"Unified cue","order_index":1,"cue_type":"STANDARD","criticality":"NORMAL","enabled":true,"execution_policy":{},"actions":[]}`
 	request(operatorLogin, http.MethodPost, "/api/v1/projects/"+projectA.ID+"/cues", cueBody, http.StatusCreated)
 	request(operatorLogin, http.MethodPost, "/api/v1/projects/"+projectB.ID+"/cues", cueBody, http.StatusNotFound)
