@@ -2,8 +2,8 @@ package httpapi
 
 import (
 	"context"
-	"database/sql"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,12 +28,16 @@ import (
 
 const operatorFirmwareManifestTTL = 5 * time.Minute
 
+type firmwareMaintenanceSender interface {
+	SendFirmwareMaintenance(context.Context, string) (deviceupdate.UpdateRecord, error)
+}
+
 func WithOperatorStageDeviceFirmware(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
 	artifacts *deviceupdate.ArtifactRegistry,
 	updates *deviceupdate.LifecycleStore,
-	runtime *devicechannel.Runtime,
+	runtime firmwareMaintenanceSender,
 	stageStore *store.Store,
 	audit *securityaudit.Service,
 ) Option {
@@ -70,7 +74,7 @@ func WithOperatorStageDeviceFirmware(
 				if err := r.ParseMultipartForm(1 << 20); err != nil {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_UPLOAD_INVALID",
-						"detail": "Firmware upload must be bounded multipart form data.",
+						"detail":     "Firmware upload must be bounded multipart form data.",
 					})
 					return
 				}
@@ -85,7 +89,7 @@ func WithOperatorStageDeviceFirmware(
 				if qualification != deviceupdate.QualificationQualified {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_QUALIFICATION_REQUIRED",
-						"detail": "Explicit QUALIFIED promotion is required.",
+						"detail":     "Explicit QUALIFIED promotion is required.",
 					})
 					return
 				}
@@ -128,7 +132,7 @@ func WithOperatorStageDeviceFirmware(
 				actualSHA := hex.EncodeToString(hasher.Sum(nil))
 				if expectedSHA == "" || expectedSHA != actualSHA {
 					writeJSON(w, http.StatusBadRequest, map[string]any{
-						"error_code": "STAGE_DEVICE_FIRMWARE_SHA256_MISMATCH",
+						"error_code":    "STAGE_DEVICE_FIRMWARE_SHA256_MISMATCH",
 						"actual_sha256": actualSHA,
 					})
 					return
@@ -148,16 +152,16 @@ func WithOperatorStageDeviceFirmware(
 					return
 				}
 				metadata := deviceupdate.ArtifactMetadata{
-					ArtifactID: artifactID,
-					DeviceID: device.ID,
-					ProfileID: device.ProfileID,
-					Version: version,
-					SourceRevision: sourceRevision,
-					Qualification: deviceupdate.QualificationQualified,
-					SizeBytes: sizeBytes,
-					SHA256: actualSHA,
+					ArtifactID:       artifactID,
+					DeviceID:         device.ID,
+					ProfileID:        device.ProfileID,
+					Version:          version,
+					SourceRevision:   sourceRevision,
+					Qualification:    deviceupdate.QualificationQualified,
+					SizeBytes:        sizeBytes,
+					SHA256:           actualSHA,
 					OriginalFilename: originalFilename,
-					CreatedAt: time.Now().UTC(),
+					CreatedAt:        time.Now().UTC(),
 				}
 
 				authorize := firmwareMutationAuthorization(r, auth, session)
@@ -180,39 +184,39 @@ func WithOperatorStageDeviceFirmware(
 					}
 					writeJSON(w, status, map[string]any{
 						"error_code": code,
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
 
 				appendAudit(r, audit, securityaudit.Event{
-					EventType: "stage_device.firmware_artifact.qualified",
-					ActorUserID: session.User.ID,
+					EventType:     "stage_device.firmware_artifact.qualified",
+					ActorUserID:   session.User.ID,
 					ActorUsername: session.User.Username,
-					ResourceType: "stage_device_firmware_artifact",
-					ResourceID: imported.ArtifactID,
-					Result: securityaudit.ResultSuccess,
+					ResourceType:  "stage_device_firmware_artifact",
+					ResourceID:    imported.ArtifactID,
+					Result:        securityaudit.ResultSuccess,
 					Metadata: map[string]any{
-						"device_id": imported.DeviceID,
-						"profile_id": imported.ProfileID,
-						"version": imported.Version,
-						"source_revision": imported.SourceRevision,
-						"sha256": imported.SHA256,
-						"size_bytes": imported.SizeBytes,
+						"device_id":         imported.DeviceID,
+						"profile_id":        imported.ProfileID,
+						"version":           imported.Version,
+						"source_revision":   imported.SourceRevision,
+						"sha256":            imported.SHA256,
+						"size_bytes":        imported.SizeBytes,
 						"original_filename": imported.OriginalFilename,
-						"qualification": imported.Qualification,
+						"qualification":     imported.Qualification,
 					},
 				})
 
 				writeJSON(w, http.StatusCreated, map[string]any{
-					"artifact": imported,
+					"artifact":      imported,
 					"artifact_path": deviceupdate.ArtifactPath(imported.ArtifactID),
-					"detail": "Exact uploaded bytes verified and registered as QUALIFIED for this device.",
+					"detail":        "Exact uploaded bytes verified and registered as QUALIFIED for this device.",
 				})
 			}),
 		)
 
-	s.mux.HandleFunc(
+		s.mux.HandleFunc(
 			"GET /api/v1/stage-devices/{device_id}/firmware-artifacts",
 			withPermission(auth, userauth.PermissionDeviceFirmwareManage, func(
 				w http.ResponseWriter,
@@ -236,10 +240,10 @@ func WithOperatorStageDeviceFirmware(
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]any{
-					"device_id": device.ID,
-					"profile_id": device.ProfileID,
+					"device_id":       device.ID,
+					"profile_id":      device.ProfileID,
 					"current_version": device.ClientVersion,
-					"artifacts": items,
+					"artifacts":       items,
 				})
 			}),
 		)
@@ -275,9 +279,9 @@ func WithOperatorStageDeviceFirmware(
 				}
 				if active != "" {
 					writeJSON(w, http.StatusConflict, map[string]any{
-						"error_code": "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE",
+						"error_code":   "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE",
 						"session_type": active,
-						"detail": "Firmware maintenance is unavailable while any operational Session is active.",
+						"detail":       "Firmware maintenance is unavailable while any operational Session is active.",
 					})
 					return
 				}
@@ -292,7 +296,7 @@ func WithOperatorStageDeviceFirmware(
 				if err := firmwareMaintenanceStateReady(device); err != nil {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_NOT_SAFE",
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
@@ -322,7 +326,7 @@ func WithOperatorStageDeviceFirmware(
 				if err != nil {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_MANIFEST_REJECTED",
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
@@ -344,35 +348,35 @@ func WithOperatorStageDeviceFirmware(
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_UPDATE_PERSIST_FAILED",
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
 
 				appendAudit(r, audit, securityaudit.Event{
-					EventType: "stage_device.firmware_update.issued",
-					ActorUserID: session.User.ID,
+					EventType:     "stage_device.firmware_update.issued",
+					ActorUserID:   session.User.ID,
 					ActorUsername: session.User.Username,
-					ResourceType: "stage_device_firmware_update",
-					ResourceID: manifest.UpdateID,
-					Result: securityaudit.ResultSuccess,
+					ResourceType:  "stage_device_firmware_update",
+					ResourceID:    manifest.UpdateID,
+					Result:        securityaudit.ResultSuccess,
 					Metadata: map[string]any{
-						"device_id": manifest.DeviceID,
-						"profile_id": manifest.ProfileID,
+						"device_id":       manifest.DeviceID,
+						"profile_id":      manifest.ProfileID,
 						"current_version": manifest.CurrentVersion,
-						"target_version": manifest.TargetVersion,
+						"target_version":  manifest.TargetVersion,
 						"source_revision": manifest.SourceRevision,
-						"artifact_path": manifest.ArtifactPath,
-						"expires_at": manifest.ExpiresAt.Format(time.RFC3339Nano),
-						"delivery_state": "NOT_SENT",
+						"artifact_path":   manifest.ArtifactPath,
+						"expires_at":      manifest.ExpiresAt.Format(time.RFC3339Nano),
+						"delivery_state":  "NOT_SENT",
 					},
 				})
 
 				writeJSON(w, http.StatusCreated, map[string]any{
-					"manifest": manifest,
-					"update": record,
+					"manifest":       manifest,
+					"update":         record,
 					"delivery_state": "NOT_SENT",
-					"detail": "Manifest is persisted but not sent. Delivery requires the explicit maintenance send action.",
+					"detail":         "Manifest is persisted but not sent. Delivery requires the explicit maintenance send action.",
 				})
 			}),
 		)
@@ -429,7 +433,7 @@ func WithOperatorStageDeviceFirmware(
 				}
 				if active != "" {
 					writeJSON(w, http.StatusConflict, map[string]any{
-						"error_code": "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE",
+						"error_code":   "STAGE_DEVICE_FIRMWARE_SESSION_ACTIVE",
 						"session_type": active,
 					})
 					return
@@ -452,7 +456,7 @@ func WithOperatorStageDeviceFirmware(
 				if record.State != deviceupdate.UpdateIssued {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_UPDATE_STATE_CONFLICT",
-						"state": record.State,
+						"state":      record.State,
 					})
 					return
 				}
@@ -467,7 +471,7 @@ func WithOperatorStageDeviceFirmware(
 				if err := firmwareMaintenanceStateReady(device); err != nil {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_NOT_SAFE",
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
@@ -475,7 +479,7 @@ func WithOperatorStageDeviceFirmware(
 					record.Manifest.CurrentVersion != device.ClientVersion {
 					writeJSON(w, http.StatusConflict, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_DEVICE_CHANGED",
-						"detail": "Device profile or firmware version changed after manifest issuance.",
+						"detail":     "Device profile or firmware version changed after manifest issuance.",
 					})
 					return
 				}
@@ -503,24 +507,37 @@ func WithOperatorStageDeviceFirmware(
 					}
 					writeJSON(w, status, map[string]any{
 						"error_code": code,
-						"detail": err.Error(),
+						"detail":     err.Error(),
 					})
 					return
 				}
 
 				appendAudit(r, audit, securityaudit.Event{
-					EventType: "stage_device.firmware_update.sent",
-					ActorUserID: session.User.ID,
+					EventType:     "stage_device.firmware_update.sent",
+					ActorUserID:   session.User.ID,
 					ActorUsername: session.User.Username,
-					ResourceType: "stage_device_firmware_update",
-					ResourceID: sent.Manifest.UpdateID,
-					Result: securityaudit.ResultSuccess,
+					ResourceType:  "stage_device_firmware_update",
+					ResourceID:    sent.Manifest.UpdateID,
+					Result:        securityaudit.ResultSuccess,
 					Metadata: map[string]any{
-						"device_id": sent.Manifest.DeviceID,
+						"device_id":             sent.Manifest.DeviceID,
 						"connection_generation": sent.ConnectionGeneration,
-						"state": sent.State,
+						"state":                 sent.State,
 					},
 				})
+				// A transport write is an irreversible boundary. If live authority
+				// ended while sending or auditing, suppress the success payload but
+				// tell the client that the command may already have been accepted;
+				// retrying could duplicate the firmware operation.
+				if err := capability.CheckDispatch(dispatch); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code":                capability.DispatchAuthorityRevokedCode,
+						"detail":                    "Authorization ended after the firmware send boundary; check update status before taking further action.",
+						"effect_may_have_been_sent": true,
+						"retryable":                 false,
+					})
+					return
+				}
 				writeJSON(w, http.StatusAccepted, map[string]any{
 					"update": sent,
 					"detail": "Maintenance request sent on the exact authenticated v2 connection.",
@@ -631,29 +648,29 @@ func buildStageDeviceFirmwareManifest(
 		return deviceupdate.Manifest{}, err
 	}
 	manifest := deviceupdate.Manifest{
-		SchemaVersion: deviceupdate.SchemaVersion1,
-		UpdateID: updateID,
-		DeviceID: device.ID,
-		ProfileID: device.ProfileID,
-		CurrentVersion: device.ClientVersion,
-		TargetVersion: metadata.Version,
-		SourceRevision: metadata.SourceRevision,
-		Qualification: metadata.Qualification,
-		ArtifactPath: deviceupdate.ArtifactPath(metadata.ArtifactID),
-		ArtifactSize: metadata.SizeBytes,
-		ArtifactSHA256: metadata.SHA256,
-		IssuedAt: now.UTC(),
-		ExpiresAt: now.UTC().Add(operatorFirmwareManifestTTL),
+		SchemaVersion:    deviceupdate.SchemaVersion1,
+		UpdateID:         updateID,
+		DeviceID:         device.ID,
+		ProfileID:        device.ProfileID,
+		CurrentVersion:   device.ClientVersion,
+		TargetVersion:    metadata.Version,
+		SourceRevision:   metadata.SourceRevision,
+		Qualification:    metadata.Qualification,
+		ArtifactPath:     deviceupdate.ArtifactPath(metadata.ArtifactID),
+		ArtifactSize:     metadata.SizeBytes,
+		ArtifactSHA256:   metadata.SHA256,
+		IssuedAt:         now.UTC(),
+		ExpiresAt:        now.UTC().Add(operatorFirmwareManifestTTL),
 		RollbackRequired: device.ProfileID == stagelaser.ProfileID,
 	}
 	if metadata.DeviceID != device.ID || metadata.ProfileID != device.ProfileID {
 		return deviceupdate.Manifest{}, fmt.Errorf("artifact target does not match the selected device/profile")
 	}
 	if err := deviceupdate.ValidateManifest(manifest, deviceupdate.ValidationContext{
-		ExpectedDeviceID: device.ID,
+		ExpectedDeviceID:  device.ID,
 		ExpectedProfileID: device.ProfileID,
-		Now: now.UTC(),
-		RequireRollback: device.ProfileID == stagelaser.ProfileID,
+		Now:               now.UTC(),
+		RequireRollback:   device.ProfileID == stagelaser.ProfileID,
 	}); err != nil {
 		return deviceupdate.Manifest{}, err
 	}

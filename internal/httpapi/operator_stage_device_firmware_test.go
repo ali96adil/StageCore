@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
@@ -26,29 +28,29 @@ import (
 func readyStageLaserDevice(t *testing.T) deviceexperience.Device {
 	t.Helper()
 	observation := stagelaser.Observation{
-		SchemaVersion: stagelaser.SchemaVersion1,
-		FirmwareVersion: "0.1.0",
+		SchemaVersion:          stagelaser.SchemaVersion1,
+		FirmwareVersion:        "0.1.0",
 		ControlContractVersion: stagelaser.ControlContractVersion,
-		ArmState: stagelaser.ArmDisarmed,
-		LogicalState: stagelaser.StateOff,
-		StateQuality: stagelaser.StateQualityTracked,
-		DriverKind: stagelaser.DriverMechanicalRelay,
-		Limits: stagelaser.DefaultMechanicalLimits(),
+		ArmState:               stagelaser.ArmDisarmed,
+		LogicalState:           stagelaser.StateOff,
+		StateQuality:           stagelaser.StateQualityTracked,
+		DriverKind:             stagelaser.DriverMechanicalRelay,
+		Limits:                 stagelaser.DefaultMechanicalLimits(),
 	}
 	raw, err := json.Marshal(observation)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return deviceexperience.Device{
-		ID: "23c45a07-7286-4afc-91d9-7e54df72aeee",
-		ProfileID: stagelaser.ProfileID,
-		Kind: deviceexperience.DeviceGeneric,
-		ClientVersion: "0.1.0",
+		ID:              "23c45a07-7286-4afc-91d9-7e54df72aeee",
+		ProfileID:       stagelaser.ProfileID,
+		Kind:            deviceexperience.DeviceGeneric,
+		ClientVersion:   "0.1.0",
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
-		Enabled: true,
+		Enabled:         true,
 		Runtime: &deviceexperience.RuntimeState{
-			Connection: deviceexperience.ConnectionOnline,
-			Readiness: deviceexperience.ReadinessReady,
+			Connection:    deviceexperience.ConnectionOnline,
+			Readiness:     deviceexperience.ReadinessReady,
 			ObservedState: raw,
 		},
 	}
@@ -56,15 +58,15 @@ func readyStageLaserDevice(t *testing.T) deviceexperience.Device {
 
 func qualifiedStageLaserArtifact(device deviceexperience.Device) deviceupdate.ArtifactMetadata {
 	return deviceupdate.ArtifactMetadata{
-		ArtifactID: "018f2744-0cb0-7bf6-9637-4a3a467a7a31",
-		DeviceID: device.ID,
-		ProfileID: device.ProfileID,
-		Version: "0.2.0",
+		ArtifactID:     "018f2744-0cb0-7bf6-9637-4a3a467a7a31",
+		DeviceID:       device.ID,
+		ProfileID:      device.ProfileID,
+		Version:        "0.2.0",
 		SourceRevision: strings.Repeat("a", 40),
-		Qualification: deviceupdate.QualificationQualified,
-		SizeBytes: 123456,
-		SHA256: strings.Repeat("b", 64),
-		CreatedAt: time.Date(2026, 10, 7, 11, 0, 0, 0, time.UTC),
+		Qualification:  deviceupdate.QualificationQualified,
+		SizeBytes:      123456,
+		SHA256:         strings.Repeat("b", 64),
+		CreatedAt:      time.Date(2026, 10, 7, 11, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -130,6 +132,104 @@ func TestFirmwareMaintenanceRequiresOnlineReady(t *testing.T) {
 	}
 }
 
+type revokingFirmwareMaintenanceSender struct {
+	updates *deviceupdate.LifecycleStore
+	auth    *userauth.Service
+	token   string
+}
+
+func (s revokingFirmwareMaintenanceSender) SendFirmwareMaintenance(ctx context.Context, updateID string) (deviceupdate.UpdateRecord, error) {
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return deviceupdate.UpdateRecord{}, err
+	}
+	record, err := s.updates.MarkSent(ctx, updateID, "55555555-5555-4555-8555-555555555599", 1)
+	if err != nil {
+		return deviceupdate.UpdateRecord{}, err
+	}
+	// This represents a revocation racing immediately after the transport
+	// accepted the command. The accepted firmware effect cannot be recalled.
+	if err := s.auth.Logout(ctx, s.token); err != nil {
+		return deviceupdate.UpdateRecord{}, err
+	}
+	return record, nil
+}
+
+func TestFirmwareSendDoesNotDeliverSuccessAfterOwnerSessionRevokedPostWrite(t *testing.T) {
+	ctx := context.Background()
+	h := newAuthHarness(t)
+	stageStore := store.New(h.db.DB, clock.Real{})
+	const deviceID = "55555555-5555-4555-8555-555555555599"
+
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: deviceID, ProfileID: "stagecore.test-firmware", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Firmware Boundary Mock", Platform: "test", Architecture: "test",
+		ClientVersion: "0.1.0", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: []string{deviceupdate.FirmwareMaintenanceCapability}, Enabled: true,
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	// Set a test-only ready state so this endpoint reaches the mocked send
+	// boundary; no real device or runtime is involved.
+	if _, err := h.db.DB.ExecContext(ctx, `
+		INSERT INTO stage_device_runtime_state
+		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
+		VALUES (?, 'ONLINE', 'READY', ?, '{}', '{}')`, deviceID, time.Now().UnixMicro()); err != nil {
+		t.Fatal(err)
+	}
+	device, err = devices.GetDevice(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := buildStageDeviceFirmwareManifest(device, qualifiedStageLaserArtifact(device), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updates.Issue(ctx, manifest, "test-owner"); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeRuntime := revokingFirmwareMaintenanceSender{updates: updates, auth: h.auth, token: owner.Token}
+	handler := New(WithOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates, fakeRuntime, stageStore, nil)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+deviceID+"/firmware-updates/"+manifest.UpdateID+"/send",
+		nil, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "DISPATCH_AUTHORITY_REVOKED") {
+		t.Fatalf("revoked Owner received firmware send success: HTTP %d %s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("post-write revocation response must report irreversible boundary and prohibit retry: %+v", body)
+	}
+	if _, err := h.auth.ValidateCSRF(ctx, owner.Token, owner.CSRFToken); !errors.Is(err, userauth.ErrSessionInvalid) {
+		t.Fatalf("test sender did not revoke Owner session: %v", err)
+	}
+	record, err := updates.Get(ctx, manifest.UpdateID)
+	if err != nil || record.State != deviceupdate.UpdateSent {
+		t.Fatalf("already transmitted firmware effect was not truthfully retained as SENT: %+v err=%v", record, err)
+	}
+}
 
 func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 	h := newAuthHarness(t)
@@ -215,10 +315,10 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 		body := &bytes.Buffer{}
 		writer := multipart.NewWriter(body)
 		for key, value := range map[string]string{
-			"version": "0.2.0",
+			"version":         "0.2.0",
 			"source_revision": sourceRevision,
-			"sha256": shaValue,
-			"qualification": qualification,
+			"sha256":          shaValue,
+			"qualification":   qualification,
 		} {
 			if err := writer.WriteField(key, value); err != nil {
 				t.Fatal(err)
@@ -248,7 +348,7 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 			req.Header.Set(csrfHeader, csrf)
 		}
 		req.AddCookie(&http.Cookie{
-			Name: browserSessionCookie,
+			Name:  browserSessionCookie,
 			Value: credentialToken,
 		})
 		res := httptest.NewRecorder()
@@ -321,8 +421,8 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 		t.Fatalf("qualified upload status=%d body=%s", success.Code, success.Body.String())
 	}
 	var response struct {
-		Artifact deviceupdate.ArtifactMetadata `json:"artifact"`
-		ArtifactPath string `json:"artifact_path"`
+		Artifact     deviceupdate.ArtifactMetadata `json:"artifact"`
+		ArtifactPath string                        `json:"artifact_path"`
 	}
 	if err := json.Unmarshal(success.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
