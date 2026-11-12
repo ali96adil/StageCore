@@ -190,7 +190,9 @@ func TestQualifiedProjectRoleMatrixAndCrossProjectIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(
-		WithOperatorProjects(h.auth, projects),
+		// Exercise the same composition required at cutover: project-list
+		// filtering and route-level authorization must agree in one router.
+		WithScopedOperatorProjects(h.auth, projects, access),
 		WithOperatorCuePublish(h.auth, projects, publish.New(projects, capability.NewRegistry())),
 		WithProjectRouteQualification(access),
 	).Handler()
