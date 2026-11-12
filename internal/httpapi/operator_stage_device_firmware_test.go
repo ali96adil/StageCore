@@ -318,6 +318,144 @@ func TestFirmwareManifestSuppressesResultAfterOwnerRevocation(t *testing.T) {
 	}
 }
 
+func TestFirmwareArtifactListSuppressesDataAfterOwnerRevocation(t *testing.T) {
+	ctx := context.Background()
+	h := newAuthHarness(t)
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "55555555-5555-4555-8555-555555555584"
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, ProfileID: "stagecore.test-firmware", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Firmware List Response Mock", Platform: "test", Architecture: "test",
+		ClientVersion: "0.1.0", ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("fixture-only firmware list bytes")
+	sum := sha256.Sum256(payload)
+	if _, err := artifacts.ImportQualified(deviceupdate.ArtifactMetadata{
+		ArtifactID: "55555555-5555-4555-8555-555555555585", DeviceID: device.ID, ProfileID: device.ProfileID,
+		Version: "0.2.0", SourceRevision: strings.Repeat("a", 40), Qualification: deviceupdate.QualificationQualified,
+		SizeBytes: int64(len(payload)), SHA256: hex.EncodeToString(sum[:]), OriginalFilename: "firmware.bin",
+		CreatedAt: time.Now().UTC(),
+	}, bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerRevoked := false
+	handler := New(withOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates,
+		unusedFirmwareMaintenanceSender{}, store.New(h.db.DB, clock.Real{}), nil, stageDeviceFirmwareHooks{
+			BeforeArtifactListResponse: func() {
+				ownerRevoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner before artifact list response: %v", err)
+				}
+			},
+		})).Handler()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/stage-devices/"+device.ID+"/firmware-artifacts", nil)
+	request.RemoteAddr = "127.0.0.1:19451"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !ownerRevoked {
+		t.Fatal("test did not revoke Owner after reading artifact list and before response")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode {
+		t.Fatalf("revoked Owner received firmware artifact list: HTTP %d %+v", response.Code, result)
+	}
+	if _, leaked := result["artifacts"]; leaked {
+		t.Fatalf("revoked Owner received firmware artifact metadata: %+v", result)
+	}
+}
+
+func TestFirmwareUpdateStatusSuppressesDataAfterOwnerRevocation(t *testing.T) {
+	ctx := context.Background()
+	h := newAuthHarness(t)
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "55555555-5555-4555-8555-555555555586"
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, ProfileID: "stagecore.test-firmware", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Firmware Status Response Mock", Platform: "test", Architecture: "test",
+		ClientVersion: "0.1.0", ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := buildStageDeviceFirmwareManifest(device, deviceupdate.ArtifactMetadata{
+		ArtifactID: "55555555-5555-4555-8555-555555555587", DeviceID: device.ID, ProfileID: device.ProfileID,
+		Version: "0.2.0", SourceRevision: strings.Repeat("a", 40), Qualification: deviceupdate.QualificationQualified,
+		SizeBytes: 32, SHA256: strings.Repeat("b", 64),
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updates.Issue(ctx, manifest, "fixture-owner"); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerRevoked := false
+	handler := New(withOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates,
+		unusedFirmwareMaintenanceSender{}, store.New(h.db.DB, clock.Real{}), nil, stageDeviceFirmwareHooks{
+			BeforeUpdateStatusResponse: func() {
+				ownerRevoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner before firmware status response: %v", err)
+				}
+			},
+		})).Handler()
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/stage-devices/"+device.ID+"/firmware-updates/"+manifest.UpdateID, nil)
+	request.RemoteAddr = "127.0.0.1:19451"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !ownerRevoked {
+		t.Fatal("test did not revoke Owner after reading update status and before response")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode {
+		t.Fatalf("revoked Owner received firmware update status: HTTP %d %+v", response.Code, result)
+	}
+	if _, leaked := result["update"]; leaked {
+		t.Fatalf("revoked Owner received firmware update record: %+v", result)
+	}
+}
+
 func (s revokingFirmwareMaintenanceSender) SendFirmwareMaintenance(ctx context.Context, updateID string) (deviceupdate.UpdateRecord, error) {
 	if err := capability.CheckDispatch(ctx); err != nil {
 		return deviceupdate.UpdateRecord{}, err

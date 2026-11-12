@@ -352,3 +352,17 @@ automatic retry. Artifact upload, Manifest issuance and post-transport send
 revocation regressions pass under Race, and `internal/httpapi` passes in full.
 Any update already marked `SENT` remains recorded truthfully; this work never
 attempts to retract or replay a firmware operation.
+
+The follow-up Firmware read audit found two response-delivery gaps. Artifact
+listing and update-status reads validated `DeviceFirmwareManage` only when the
+request entered the handler, so a session revoked during the registry/SQLite
+read could still receive the response. The red-first regressions
+`TestFirmwareArtifactListSuppressesDataAfterOwnerRevocation` and
+`TestFirmwareUpdateStatusSuppressesDataAfterOwnerRevocation` each reproduced
+HTTP 200 with the data after logout. Both handlers now revalidate the same
+live session and permission immediately before delivery and suppress the
+payload after revocation. These reads have no external side effect, so the
+response is a plain 403 and does not claim a commit or invite replay of a
+device operation. The two regressions plus Firmware upload, manifest issuance
+and post-transport send revocation checks pass under Race; the full
+`internal/httpapi` package passes locally. Production ACL remains disabled.

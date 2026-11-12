@@ -33,8 +33,10 @@ type firmwareMaintenanceSender interface {
 }
 
 type stageDeviceFirmwareHooks struct {
-	BeforeArtifactResponse func()
-	BeforeManifestResponse func()
+	BeforeArtifactResponse     func()
+	BeforeManifestResponse     func()
+	BeforeArtifactListResponse func()
+	BeforeUpdateStatusResponse func()
 }
 
 func WithOperatorStageDeviceFirmware(
@@ -251,7 +253,7 @@ func withOperatorStageDeviceFirmware(
 			withPermission(auth, userauth.PermissionDeviceFirmwareManage, func(
 				w http.ResponseWriter,
 				r *http.Request,
-				_ userauth.Session,
+				session userauth.Session,
 			) {
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				device, err := devices.GetDevice(r.Context(), deviceID)
@@ -266,6 +268,15 @@ func withOperatorStageDeviceFirmware(
 				if err != nil && !errors.Is(err, deviceupdate.ErrArtifactNotFound) {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_ARTIFACTS_UNAVAILABLE",
+					})
+					return
+				}
+				if hooks.BeforeArtifactListResponse != nil {
+					hooks.BeforeArtifactListResponse()
+				}
+				if err := firmwareMutationAuthorization(r, auth, session)(r.Context()); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code": capability.DispatchAuthorityRevokedCode,
 					})
 					return
 				}
@@ -427,7 +438,7 @@ func withOperatorStageDeviceFirmware(
 			withPermission(auth, userauth.PermissionDeviceFirmwareManage, func(
 				w http.ResponseWriter,
 				r *http.Request,
-				_ userauth.Session,
+				session userauth.Session,
 			) {
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				updateID := strings.TrimSpace(r.PathValue("update_id"))
@@ -442,6 +453,15 @@ func withOperatorStageDeviceFirmware(
 				if err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 						"error_code": "STAGE_DEVICE_FIRMWARE_UPDATE_UNAVAILABLE",
+					})
+					return
+				}
+				if hooks.BeforeUpdateStatusResponse != nil {
+					hooks.BeforeUpdateStatusResponse()
+				}
+				if err := firmwareMutationAuthorization(r, auth, session)(r.Context()); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code": capability.DispatchAuthorityRevokedCode,
 					})
 					return
 				}
