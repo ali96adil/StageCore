@@ -122,6 +122,9 @@ func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.
 			return
 		}
 		appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultSuccess, "")
+		if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil, projectaccess.ProjectEdit) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"applied": true,
 			"kind":    op.Kind,

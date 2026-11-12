@@ -87,6 +87,11 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 			return
 		}
 		appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultSuccess, "")
+		for _, permission := range permissions {
+			if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil, projectaccess.ProjectEdit) {
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"applied":         true,
 			"atomic_batch":    true,
