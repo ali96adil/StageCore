@@ -10,11 +10,98 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+type tabletControllerDispatchFunc func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+
+func (f tabletControllerDispatchFunc) Dispatch(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+	return f(ctx, input)
+}
+
+func (tabletControllerDispatchFunc) ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error) {
+	return deviceexperience.TabletAssignmentCommit{}, nil
+}
+
+func TestTabletControllerSuppressesAcceptedResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Tablet dispatch revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-revoke-01"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet revoke", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: deviceID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessReady,
+		ObservedState: json.RawMessage(`{"project_id":"`+project.ID+`","runtime_snapshot_id":"snapshot-7"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := false
+	runtime := tabletControllerDispatchFunc(func(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true // Transport acceptance is an external effect and cannot be recalled.
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-tablet-command", CommandType: input.CommandType,
+				ProjectID: project.ID, RuntimeSnapshotID: "snapshot-7", Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		WithOperatorTabletController(h.auth, devices, runtime, stageStore),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/tablet-controller/commands",
+		[]byte(`{"device_ids":["`+deviceID+`"],"command_type":"TABLET_PLAY","payload":{"media_number":7}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !accepted {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil { t.Fatal(err) }
+	if response.Code != http.StatusForbidden || body["error"] != "TABLET_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received accepted command results: %+v", body)
+	}
+}
 
 func TestOperatorTabletControllerListsOnlyTabletPlayersAndGroups(t *testing.T) {
 	h := newAuthHarness(t)

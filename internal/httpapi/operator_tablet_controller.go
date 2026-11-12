@@ -284,10 +284,15 @@ type tabletCueActionDescriptor struct {
 // WithOperatorTabletController provides the tablet-specific Operator facade.
 // It deliberately reuses the canonical Stage Device runtime and Cue Engine
 // targets; no second transport, command queue, or playback authority is added.
+type tabletControllerRuntime interface {
+	Dispatch(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+	ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error)
+}
+
 func WithOperatorTabletController(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
-	runtime *devicechannel.Runtime,
+	runtime tabletControllerRuntime,
 	stageStore *store.Store,
 ) Option {
 	return func(s *Server) {
@@ -479,8 +484,8 @@ func WithOperatorTabletController(
 				return
 			}
 			input.CommandType = strings.TrimSpace(input.CommandType)
-			capability := deviceexperience.RequiredCapability(input.CommandType)
-			if capability == "" || !tabletRuntimeCapability(capability) {
+			requiredCapability := deviceexperience.RequiredCapability(input.CommandType)
+			if requiredCapability == "" || !tabletRuntimeCapability(requiredCapability) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
@@ -543,8 +548,9 @@ func WithOperatorTabletController(
 				Error       string                          `json:"error,omitempty"`
 			}
 			results := make([]result, 0, len(targets))
+			effectMayHaveBeenSent := false
 			for _, tablet := range targets {
-				if !containsString(tablet.Capabilities, capability) {
+				if !containsString(tablet.Capabilities, requiredCapability) {
 					results = append(results, result{DeviceID: tablet.ID, DisplayName: tablet.DisplayName, Error: "CAPABILITY_UNAVAILABLE"})
 					continue
 				}
@@ -554,6 +560,9 @@ func WithOperatorTabletController(
 					continue
 				}
 				payload := mergeTabletManifestScope(normalizedPayload, scope.TabletManifestID)
+				// A dispatch error can leave transport acceptance ambiguous, so once
+				// dispatch is attempted the response must not invite automatic replay.
+				effectMayHaveBeenSent = true
 				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         strings.TrimSpace(input.SessionID),
@@ -572,6 +581,14 @@ func WithOperatorTabletController(
 				}
 				copy := command
 				results = append(results, result{DeviceID: tablet.ID, DisplayName: tablet.DisplayName, Command: &copy})
+			}
+			if err := capability.CheckDispatch(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "TABLET_COMMAND_AUTHORITY_REVOKED",
+					"effect_may_have_been_sent": effectMayHaveBeenSent,
+					"retryable": false,
+				})
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
