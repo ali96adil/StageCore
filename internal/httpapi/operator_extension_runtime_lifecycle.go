@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -15,14 +16,23 @@ type operatorExtensionRuntimeLifecycle struct {
 	users      *userauth.Service
 	supervisor *extension.RuntimeSupervisor
 	audit      *securityaudit.Service
+	hooks      extensionRuntimeLifecycleHooks
+}
+
+type extensionRuntimeLifecycleHooks struct {
+	BeforeMutationResponse func()
 }
 
 func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service) Option {
+	return withOperatorExtensionRuntimeLifecycle(users, supervisor, audit, extensionRuntimeLifecycleHooks{})
+}
+
+func withOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service, hooks extensionRuntimeLifecycleHooks) Option {
 	return func(s *Server) {
 		if users == nil || supervisor == nil {
 			return
 		}
-		h := &operatorExtensionRuntimeLifecycle{users: users, supervisor: supervisor, audit: audit}
+		h := &operatorExtensionRuntimeLifecycle{users: users, supervisor: supervisor, audit: audit, hooks: hooks}
 		s.mux.HandleFunc("GET /api/v1/extensions/installations/{installation_id}/runtime", withPermission(users, userauth.PermissionProjectRead, h.status))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/enable", withPermission(users, userauth.PermissionPluginManage, h.enable))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/disable", withPermission(users, userauth.PermissionPluginManage, h.disable))
@@ -83,18 +93,27 @@ func (h *operatorExtensionRuntimeLifecycle) uninstall(w http.ResponseWriter, r *
 		}
 		response["error_code"] = code
 		h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultRejected, code, response["blockers"])
+		if h.beforeMutationResponseRevoked(w, r, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 
 	h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultSuccess, "", map[string]any{
-		"package_id": item.PackageID,
-		"extension_id": item.ExtensionID,
-		"version": item.Version,
-		"payload_removed": item.PayloadRemoved,
+		"package_id":             item.PackageID,
+		"extension_id":           item.ExtensionID,
+		"version":                item.Version,
+		"payload_removed":        item.PayloadRemoved,
 		"payload_already_absent": item.PayloadAlreadyAbsent,
-		"cleanup_warning": item.CleanupWarning,
+		"cleanup_warning":        item.CleanupWarning,
 	})
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	if h.writeRevokedMutationResponse(w, r, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -143,21 +162,57 @@ func (h *operatorExtensionRuntimeLifecycle) transition(w http.ResponseWriter, r 
 		}
 		response["error_code"] = code
 		h.record(r, session, eventType, installationID, securityaudit.ResultRejected, code, map[string]any{
-			"desired_state": item.DesiredState,
+			"desired_state":  item.DesiredState,
 			"observed_state": item.ObservedState,
-			"generation": item.Generation,
+			"generation":     item.Generation,
 		})
+		if h.beforeMutationResponseRevoked(w, r, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, eventType, installationID, securityaudit.ResultSuccess, "", map[string]any{
-		"extension_id": item.ExtensionID,
-		"version": item.Version,
-		"desired_state": item.DesiredState,
+		"extension_id":   item.ExtensionID,
+		"version":        item.Version,
+		"desired_state":  item.DesiredState,
 		"observed_state": item.ObservedState,
-		"generation": item.Generation,
+		"generation":     item.Generation,
 	})
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	if h.writeRevokedMutationResponse(w, r, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (h *operatorExtensionRuntimeLifecycle) beforeMutationResponseRevoked(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	return h.writeRevokedMutationResponse(w, r, session)
+}
+
+func (h *operatorExtensionRuntimeLifecycle) writeRevokedMutationResponse(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
+	if err := capability.CheckDispatch(r.Context()); err == nil {
+		if token, ok := browserSessionToken(r); ok {
+			if next, err := h.users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader)); err == nil &&
+				next.ID == session.ID && next.User.ID == session.User.ID &&
+				userauth.Authorize(next.User.Role, userauth.PermissionPluginManage) == nil &&
+				(qualificationAccess(r, nil) == nil || next.User.Role == userauth.RoleOwner) {
+				return false
+			}
+		}
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     capability.DispatchAuthorityRevokedCode,
+		"detail":                         "Authorization ended during extension lifecycle work; refresh installation and runtime status before taking further action.",
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return true
 }
 
 func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session userauth.Session, eventType, installationID, result, reason string, metadata any) {
@@ -165,14 +220,14 @@ func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session user
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: eventType,
-		ActorUserID: session.User.ID,
+		EventType:     eventType,
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_installation",
-		ResourceID: strings.TrimSpace(installationID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_installation",
+		ResourceID:    strings.TrimSpace(installationID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

@@ -299,3 +299,16 @@ observed returning HTTP 200 with the Snapshot ID/results after logout; it now
 passes under Race and verifies response suppression when no device operation
 was performed. Assignment/transfer/activation post-commit fences from the
 prior checkpoint remain in place. Production ACL remains disabled.
+
+The extension runtime lifecycle audit then found that a completed uninstall
+could return `payload_removed` and the installation identity after the Owner
+session ended during work. The new regression confirmed the uninstall had
+committed before the response and observed that result leak. Uninstall,
+enable, and disable now revalidate the exact browser session, CSRF token,
+`PluginManage` role, and dispatch gate before returning either results or
+operation details. Revocation produces a generic non-retryable 403 that
+reports the effect may have committed; it never repeats or undoes runtime or
+filesystem work. The regression
+`TestOperatorExtensionUninstallSuppressesCommittedResultAfterOwnerRevocation`
+and the uninstall RBAC/CSRF test pass under Race. Production ACL remains
+disabled.
