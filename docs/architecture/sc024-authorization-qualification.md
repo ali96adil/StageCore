@@ -224,3 +224,43 @@ output was used.
 post-commit fencing for Stage Device transfer/assignment/lighting activation;
 add a failing regression before code changes. Keep Production ACL disabled
 and the partial-activation source guard intact.
+
+## SC-024 continuation · 2026-11-12 · committed-operation responses
+
+The post-commit audit reproduced successful response leakage after the Owner
+session ended for StageLaser assignment, software-only Stage Device transfer,
+and Lighting activation. Each regression simulates a completed operation,
+revokes the browser session before handler delivery, and previously observed
+HTTP 202 with the operation record. The handlers now perform one final
+session/role/CSRF check before returning the record. On revocation they return
+403 with `effect_may_have_been_committed: true`, `retryable: false`, and no
+operation record. They do not attempt to undo a committed assignment or
+reactivate/replay device work.
+
+New coverage:
+`TestStageLaserAssignmentSuppressesCommittedRecordAfterOwnerRevocation` and
+`TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation`
+(software transfer and Lighting activation subtests). The focused tests passed
+under `go test -race`; the complete local `internal/httpapi` Race package also
+passed (`592.637s`).
+
+The code commits are `e58539c56ac0563db1d463537d66855865a8bec6` and
+`2797b284452e5f844cfd0e7005a498c6aa7ca9f9`, both pushed to the same branch.
+Core CI run `43240030135` passed Go 1.27, Go 1.26 tests, Browser Cue
+Delivery, Vet, Go 1.26 Race, and Linux ARM64 product builds. Camera Relay run
+`43240030290` passed. Companion run `43240030394` attempt 2 passed Swift
+build/tests; its real macOS acceptance job is still queued, so Companion CI
+is not yet complete. Production Assembler and Migration 53 are unchanged.
+Production ACL remains disabled.
+
+**Decision remains: SC-024 is not software-qualified.** The broader audit is
+incomplete for remaining maintenance/extension paths and multi-device
+Snapshot synchronization responses. A disposable installed-copy update,
+restore and Linux Hub service health cycle is also outstanding. Hardware
+qualification remains separate. Continue on the existing remote
+`integration/stagecore-rc` branch from code checkpoint
+`2797b284452e5f844cfd0e7005a498c6aa7ca9f9`. Core and Camera CI are green;
+the Companion macOS acceptance job for run `43240030394` attempt 2 is queued
+and has not started, while its Swift build/tests passed. Do not count that
+acceptance as complete. Keep Production ACL disabled and the partial-activation
+source guard intact.
