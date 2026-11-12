@@ -118,3 +118,48 @@ preview and recovery rehearsal; and independent device-side STOP/Blackout,
 StageAudio and already-in-flight output qualification. The test Router is a
 combined API qualification fixture, not a booted copy of the complete Hub
 production assembler.
+
+## SC-024 continuation · 2026-11-12 · dispatch response revocation
+
+Additional delivery-boundary regressions were reproduced and fixed in the
+integration branch:
+
+- Lighting commissioning `identify` and `apply-published-config` now recheck
+  the live dispatch authority after transport acceptance and before returning
+  command details. A command already accepted by the transport is reported as
+  possibly sent and non-retryable; the Hub does not claim it can retract it.
+- Tablet Controller command batches now recheck authority after dispatch and
+  suppress all accumulated command IDs/results if the Owner session ends.
+- Tablet live-flash now rechecks authority after the Relay call and response
+  read, before returning Relay state or error details. Ambiguous outcomes are
+  marked non-retryable. The Relay is mocked in the regression test.
+- Stage Device command batches now recheck authority after the dispatch loop
+  and suppress accepted command results when the Owner session ends mid-batch.
+
+Regression coverage includes
+`TestLightingCommissioningSuppressesSuccessAfterOwnerRevocationPostDispatch`,
+`TestTabletControllerSuppressesAcceptedResultsAfterOwnerRevocation`,
+`TestTabletLiveFlashSuppressesRelayResultAfterOwnerRevocation`, and
+`TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation`. The
+focused `internal/httpapi` Race tests passed locally. The last code checkpoint,
+`221289307e29e67a79ee0a2c229f7e77e0b0b97e`, passed Core CI including Go 1.26
+Race and Linux ARM64, Companion Core including the macOS acceptance job on its
+second attempt, and Camera Relay CI. The first Companion attempt was cancelled
+before its macOS job started; the retry completed successfully.
+
+Production Assembler and Migration 53 remain unchanged. Production ACL remains
+disabled. **Atomic ACL cutover is still not software-qualified.** The remaining
+software work is a complete endpoint-to-permission and final-delivery audit of
+the remaining maintenance, Companion ticket/upload, Capsule, Vault/media,
+plugin/extension and asynchronous adapter paths; a disposable installed-copy
+Migration, impact-preview, update dry-run, restore/rollback and health cycle;
+and old Companion/session/ticket compatibility qualification. Hardware-only
+qualification still includes real Companion deployment compatibility,
+device-side STOP/Blackout behavior, StageAudio revocation during a physical
+operation, and already-in-flight external effects. No hardware was used in
+these software tests.
+
+**Resume at:** remote branch `integration/stagecore-rc`, code checkpoint
+`221289307e29e67a79ee0a2c229f7e77e0b0b97e`, PR #534. Start with the next
+uncovered asynchronous endpoint group and the disposable installed-copy
+recovery rehearsal; do not change Production Assembler or enable ACL.

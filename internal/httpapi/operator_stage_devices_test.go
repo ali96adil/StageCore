@@ -53,6 +53,7 @@ func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testin
 		t.Fatal(err)
 	}
 	dispatchCalls := 0
+	accepted := false
 	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
 		dispatchCalls++
 		if err := capability.CheckDispatch(ctx); err != nil {
@@ -61,6 +62,7 @@ func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testin
 		if err := h.auth.Logout(ctx, owner.Token); err != nil {
 			return deviceexperience.DeviceCommand{}, err
 		}
+		accepted = true // The device transport accepted this command before authorization ended.
 		return deviceexperience.DeviceCommand{
 			DeviceID: input.DeviceID, Status: contracts.CommandAccepted,
 			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stage-device-command", CommandType: input.CommandType,
@@ -77,7 +79,7 @@ func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testin
 		owner.Token, owner.CSRFToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if dispatchCalls == 0 {
+	if dispatchCalls == 0 || !accepted {
 		t.Fatal("mock transport did not accept command before Owner revocation")
 	}
 	var body map[string]any
