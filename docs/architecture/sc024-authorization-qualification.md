@@ -324,3 +324,13 @@ disallowed. The regression
 `TestExtensionRuntimeProbeSuppressesResultAfterOwnerRevocation` passes under
 Race; the full `internal/httpapi` package passes. Production ACL remains
 disabled.
+
+Activation Staging also returned installation, permission and execution
+authorization details without a final session check. The regression
+`TestExtensionActivationStagingSuppressesResultAfterOwnerRevocation`
+reproduced the HTTP 200 leak after Owner logout. Success and error delivery
+now revalidate the same session and `PluginManage` authority; revoked callers
+get only a non-retryable response because temporary staging work may have
+occurred. The regression passes under Race together with the uninstall and
+Runtime Probe regressions, and the full `internal/httpapi` package passes.
+Production ACL remains disabled.
