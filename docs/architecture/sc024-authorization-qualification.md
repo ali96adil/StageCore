@@ -312,3 +312,15 @@ filesystem work. The regression
 `TestOperatorExtensionUninstallSuppressesCommittedResultAfterOwnerRevocation`
 and the uninstall RBAC/CSRF test pass under Race. Production ACL remains
 disabled.
+
+The extension runtime-probe response had the same late-delivery gap: an
+Owner could lose the session after a probe process had started and stopped,
+then still receive its installation and execution details. A deterministic
+regression observed that HTTP 200 response after logout. Runtime-probe
+success and error delivery now recheck the exact session, CSRF, `PluginManage`
+permission, dispatch gate, and qualification Owner gate. A revoked response
+contains no probe result and states that probing may have run, with retries
+disallowed. The regression
+`TestExtensionRuntimeProbeSuppressesResultAfterOwnerRevocation` passes under
+Race; the full `internal/httpapi` package passes. Production ACL remains
+disabled.

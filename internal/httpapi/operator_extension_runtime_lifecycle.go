@@ -196,15 +196,8 @@ func (h *operatorExtensionRuntimeLifecycle) beforeMutationResponseRevoked(w http
 }
 
 func (h *operatorExtensionRuntimeLifecycle) writeRevokedMutationResponse(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
-	if err := capability.CheckDispatch(r.Context()); err == nil {
-		if token, ok := browserSessionToken(r); ok {
-			if next, err := h.users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader)); err == nil &&
-				next.ID == session.ID && next.User.ID == session.User.ID &&
-				userauth.Authorize(next.User.Role, userauth.PermissionPluginManage) == nil &&
-				(qualificationAccess(r, nil) == nil || next.User.Role == userauth.RoleOwner) {
-				return false
-			}
-		}
+	if extensionManageResponseAuthorized(h.users, r, session) {
+		return false
 	}
 	writeJSON(w, http.StatusForbidden, map[string]any{
 		"error_code":                     capability.DispatchAuthorityRevokedCode,
@@ -213,6 +206,22 @@ func (h *operatorExtensionRuntimeLifecycle) writeRevokedMutationResponse(w http.
 		"retryable":                      false,
 	})
 	return true
+}
+
+func extensionManageResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session) bool {
+	if users == nil || capability.CheckDispatch(r.Context()) != nil {
+		return false
+	}
+	token, ok := browserSessionToken(r)
+	if !ok {
+		return false
+	}
+	next, err := users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	if err != nil || next.ID != session.ID || next.User.ID != session.User.ID ||
+		userauth.Authorize(next.User.Role, userauth.PermissionPluginManage) != nil {
+		return false
+	}
+	return qualificationAccess(r, nil) == nil || next.User.Role == userauth.RoleOwner
 }
 
 func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session userauth.Session, eventType, installationID, result, reason string, metadata any) {
