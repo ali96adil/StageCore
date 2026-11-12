@@ -340,3 +340,77 @@ func TestLegacyStageAudioFencesRevokedBrowserSession(t *testing.T) {
 		})
 	}
 }
+
+func TestStageAudioReportsUncertainEffectAfterInFlightAuthorityRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence := stageaudio.NewShowFence()
+	wrote := false
+	sidecar := audioLocalFunc(func(ctx context.Context, _ stageaudio.Request) (stageaudio.LocalReply, error) {
+		wrote = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+		return stageaudio.LocalReply{}, stageaudio.ErrInFlightAuthorityRevoked
+	})
+	handler := New(WithOperatorStageAudio(h.auth, stageStore, sidecar, nil, fence)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/system/audio/command",
+		[]byte(`{"operation":"STOP","deck":"A"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if !wrote {
+		t.Fatal("mock did not cross the sidecar write boundary")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusConflict || body["error_code"] != "STAGEAUDIO_AUTHORITY_ENDED_IN_FLIGHT" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("in-flight revocation must report uncertain effect and prohibit retry: HTTP %d %+v", response.Code, body)
+	}
+	if _, err := fence.AcquireShow(ctx, (&fakeStageAudio{}).Call); err == nil {
+		t.Fatal("in-flight revocation did not keep the StageAudio fence uncertain")
+	}
+}
+
+func TestStageAudioSuppressesAckAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote := false
+	sidecar := audioLocalFunc(func(ctx context.Context, _ stageaudio.Request) (stageaudio.LocalReply, error) {
+		wrote = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+		return stageaudio.LocalReply{Status: stageaudio.Status{Qualified: true}}, nil
+	})
+	handler := New(WithOperatorStageAudio(h.auth, stageStore, sidecar, nil)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/system/audio/command",
+		[]byte(`{"operation":"STOP","deck":"A"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if !wrote {
+		t.Fatal("mock did not acknowledge the command before revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusNotFound || body["error_code"] != "STAGEAUDIO_AUTHORITY_REVOKED_AFTER_ACK" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked session received success or retryable response: HTTP %d %+v", response.Code, body)
+	}
+}

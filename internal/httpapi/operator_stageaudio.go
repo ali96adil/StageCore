@@ -227,6 +227,15 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				Result: auditResult, Reason: reason,
 				Metadata: map[string]any{"operation": command.Operation, "deck": command.Deck},
 			})
+			if errors.Is(err, stageaudio.ErrInFlightAuthorityRevoked) {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error_code":                "STAGEAUDIO_AUTHORITY_ENDED_IN_FLIGHT",
+					"detail":                    "The sidecar may have accepted this command before authorization ended. Check current StageAudio state before taking further action.",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
 			if revoked {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
@@ -236,7 +245,12 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				return
 			}
 			if capability.CheckDispatch(dispatch) != nil {
-				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"error_code":                "STAGEAUDIO_AUTHORITY_REVOKED_AFTER_ACK",
+					"detail":                    "The sidecar acknowledged this command before authorization ended. Check current StageAudio state before taking further action.",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
