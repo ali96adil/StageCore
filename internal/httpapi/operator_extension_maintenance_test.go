@@ -19,6 +19,98 @@ import (
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
+type revokingExtensionMaintenanceSupervisor struct {
+	extensionMaintenanceSupervisor
+	update func(context.Context, string, string, string) (extension.UpdateResult, error)
+	repair func(context.Context, string, string) (extension.RepairResult, error)
+}
+
+func (s revokingExtensionMaintenanceSupervisor) UpdateInstallation(ctx context.Context, installationID, targetPackageID, actor string) (extension.UpdateResult, error) {
+	return s.update(ctx, installationID, targetPackageID, actor)
+}
+
+func (s revokingExtensionMaintenanceSupervisor) RepairInstallation(ctx context.Context, installationID, actor string) (extension.RepairResult, error) {
+	return s.repair(ctx, installationID, actor)
+}
+
+func TestExtensionMaintenanceSuppressesCommittedUpdateAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := false
+	supervisor := revokingExtensionMaintenanceSupervisor{update: func(_ context.Context, installationID, targetPackageID, actor string) (extension.UpdateResult, error) {
+		applied = true // Model an update that completed before the HTTP response.
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return extension.UpdateResult{}, err
+		}
+		return extension.UpdateResult{
+			InstallationID: installationID, ExtensionID: "test.extension", Direction: extension.UpdateDirectionUpdate,
+			FromPackageID: "package-old", FromVersion: "1.0.0", ToPackageID: targetPackageID, ToVersion: "2.0.0",
+		}, nil
+	}}
+	server := New()
+	registerOperatorExtensionMaintenanceRoutes(server.mux, h.auth, supervisor, nil)
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/extensions/installations/installation-1/update",
+		[]byte(`{"target_package_id":"package-new"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if !applied {
+		t.Fatal("test update did not complete before Owner session revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != "EXTENSION_MAINTENANCE_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_applied"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received success or retryable update response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["installation_id"]; leaked {
+		t.Fatalf("revoked Owner received committed extension update record: %+v", body)
+	}
+}
+
+func TestExtensionMaintenanceSuppressesCommittedRepairAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repaired := false
+	supervisor := revokingExtensionMaintenanceSupervisor{repair: func(_ context.Context, installationID, actor string) (extension.RepairResult, error) {
+		repaired = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return extension.RepairResult{}, err
+		}
+		return extension.RepairResult{InstallationID: installationID, PackageID: "package-1", ExtensionID: "test.extension", Version: "1.0.0", PayloadRepaired: true}, nil
+	}}
+	server := New()
+	registerOperatorExtensionMaintenanceRoutes(server.mux, h.auth, supervisor, nil)
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/extensions/installations/installation-1/repair", nil, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if !repaired {
+		t.Fatal("test repair did not complete before Owner session revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != "EXTENSION_MAINTENANCE_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_applied"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received success or retryable repair response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["package_id"]; leaked {
+		t.Fatalf("revoked Owner received committed extension repair record: %+v", body)
+	}
+}
+
 func TestOperatorExtensionMaintenanceUpdateRollbackRepairRBACAndCSRF(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

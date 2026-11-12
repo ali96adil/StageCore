@@ -267,3 +267,25 @@ qualification remains separate. Continue on the existing remote
 `2797b284452e5f844cfd0e7005a498c6aa7ca9f9`). All exact-head Core, Companion
 and Camera Relay CI runs listed above passed. Keep Production ACL disabled and
 the partial-activation source guard intact.
+
+## SC-024 continuation · extension maintenance response fence
+
+The extension maintenance audit found that update and repair responses could
+contain the completed operation record after the Owner session was revoked
+inside the supervisor call. The handlers now revalidate the same live browser
+session, CSRF token and `PluginManage` role before returning success or error
+details. The update-plan read also revalidates its session and `ProjectRead`
+permission before delivery. Update/repair audit records are written before
+the final response fence; a revoked caller receives only a non-retryable 403
+that says the operation may have applied, and must refresh installation
+status. No completed mutation is rolled back or automatically retried.
+
+Red-first HTTP regressions
+`TestExtensionMaintenanceSuppressesCommittedUpdateAfterOwnerRevocation` and
+`TestExtensionMaintenanceSuppressesCommittedRepairAfterOwnerRevocation`
+passed under focused Race testing alongside the existing update/rollback/
+repair RBAC test. Remaining qualification still includes the other
+extension lifecycle routes, the multi-device Snapshot sync delivery path,
+the full maintenance/plugin endpoint matrix, and isolated installed-copy
+recovery/Hub health. This fence does not qualify extension package changes
+under an active real stage installation.

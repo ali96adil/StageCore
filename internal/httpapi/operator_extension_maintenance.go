@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -16,7 +17,13 @@ type extensionUpdateRequest struct {
 	TargetPackageID string `json:"target_package_id"`
 }
 
-func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service) {
+type extensionMaintenanceSupervisor interface {
+	PlanUpdate(context.Context, string, string) (extension.UpdatePlan, error)
+	UpdateInstallation(context.Context, string, string, string) (extension.UpdateResult, error)
+	RepairInstallation(context.Context, string, string) (extension.RepairResult, error)
+}
+
+func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *userauth.Service, supervisor extensionMaintenanceSupervisor, audit *securityaudit.Service) {
 	if mux == nil || users == nil || supervisor == nil {
 		return
 	}
@@ -28,6 +35,10 @@ func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *usera
 			return
 		}
 		plan, err := supervisor.PlanUpdate(r.Context(), installationID, targetPackageID)
+		if err := reauthorizeExtensionMaintenance(r, users, userauth.Session{}, userauth.PermissionProjectRead, false); err != nil {
+			writeExtensionMaintenanceAuthorityEnded(w, false)
+			return
+		}
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_UPDATE_RESOURCE_NOT_FOUND"})
@@ -97,6 +108,10 @@ func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *usera
 				metadata["blockers"] = len(planErr.Plan.Blockers)
 			}
 			recordExtensionMaintenance(r, audit, session, eventType, installationID, securityaudit.ResultRejected, code, metadata)
+			if err := reauthorizeExtensionMaintenance(r, users, session, userauth.PermissionPluginManage, true); err != nil {
+				writeExtensionMaintenanceAuthorityEnded(w, true)
+				return
+			}
 			writeJSON(w, status, response)
 			return
 		}
@@ -114,6 +129,10 @@ func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *usera
 			"to_version": item.ToVersion,
 			"cleanup_warning": item.CleanupWarning,
 		})
+		if err := reauthorizeExtensionMaintenance(r, users, session, userauth.PermissionPluginManage, true); err != nil {
+			writeExtensionMaintenanceAuthorityEnded(w, true)
+			return
+		}
 		writeJSON(w, http.StatusOK, item)
 	}))
 
@@ -141,6 +160,10 @@ func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *usera
 				code = "EXTENSION_REPAIR_STORAGE_RESERVE"
 			}
 			recordExtensionMaintenance(r, audit, session, "extension.package.repair", installationID, securityaudit.ResultRejected, code, nil)
+			if err := reauthorizeExtensionMaintenance(r, users, session, userauth.PermissionPluginManage, true); err != nil {
+				writeExtensionMaintenanceAuthorityEnded(w, true)
+				return
+			}
 			writeJSON(w, status, map[string]any{"error_code": code})
 			return
 		}
@@ -151,8 +174,42 @@ func registerOperatorExtensionMaintenanceRoutes(mux *http.ServeMux, users *usera
 			"already_healthy": item.AlreadyHealthy,
 			"payload_repaired": item.PayloadRepaired,
 		})
+		if err := reauthorizeExtensionMaintenance(r, users, session, userauth.PermissionPluginManage, true); err != nil {
+			writeExtensionMaintenanceAuthorityEnded(w, true)
+			return
+		}
 		writeJSON(w, http.StatusOK, item)
 	}))
+}
+
+func reauthorizeExtensionMaintenance(r *http.Request, auth *userauth.Service, original userauth.Session, permission userauth.Permission, requireCSRF bool) error {
+	token, ok := browserSessionToken(r)
+	if !ok || auth == nil {
+		return userauth.ErrSessionInvalid
+	}
+	var current userauth.Session
+	var err error
+	if requireCSRF {
+		current, err = auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	} else {
+		current, err = auth.Validate(r.Context(), token)
+	}
+	if err != nil {
+		return err
+	}
+	if original.ID != "" && (current.ID != original.ID || current.User.ID != original.User.ID) {
+		return userauth.ErrForbidden
+	}
+	return userauth.Authorize(current.User.Role, permission)
+}
+
+func writeExtensionMaintenanceAuthorityEnded(w http.ResponseWriter, effectMayHaveBeenApplied bool) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code": "EXTENSION_MAINTENANCE_AUTHORITY_REVOKED",
+		"detail": "Authorization ended during extension maintenance; refresh installation status before taking further action.",
+		"effect_may_have_been_applied": effectMayHaveBeenApplied,
+		"retryable": false,
+	})
 }
 
 func recordExtensionMaintenance(r *http.Request, audit *securityaudit.Service, session userauth.Session, eventType, installationID, result, reason string, metadata any) {
