@@ -9,15 +9,89 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
+
+func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Stage Device batch revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"display-revoke-01", "display-revoke-02"} {
+		if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+			ID: id, ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay,
+			DisplayName: id, ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Capabilities: []string{"display.message.show"}, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatchCalls := 0
+	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		dispatchCalls++
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		return deviceexperience.DeviceCommand{
+			DeviceID: input.DeviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stage-device-command", CommandType: input.CommandType,
+				ProjectID: project.ID, Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, dispatch),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/stage-device-commands",
+		[]byte(`{"device_ids":["display-revoke-01","display-revoke-02"],"command_type":"DISPLAY_MESSAGE","payload":{"message":"Places"}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if dispatchCalls == 0 {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received accepted command results: %+v", body)
+	}
+}
 
 func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing.T) {
 	h := newAuthHarness(t)

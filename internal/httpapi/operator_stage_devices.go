@@ -60,10 +60,15 @@ func WithScopedOperatorStageDeviceReads(auth *userauth.Service, devices *devicee
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
 	runtime *devicechannel.Runtime, stageStore *store.Store, access *projectaccess.Service,
+	dispatchers ...stageDeviceCommandDispatcher,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || runtime == nil || stageStore == nil {
 			return
+		}
+		dispatchBatch := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
+		if len(dispatchers) > 0 && dispatchers[0] != nil {
+			dispatchBatch = dispatchers[0]
 		}
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -1370,13 +1375,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				Error    string                          `json:"error,omitempty"`
 			}
 			results := make([]batchResult, 0, len(targets))
+			effectMayHaveBeenSent := false
 			dispatch := stageDeviceDispatchContext(r, auth, session)
 			if err := capability.CheckDispatch(dispatch); err != nil {
 				writeStageDeviceCommandError(w, err)
 				return
 			}
 			for _, device := range targets {
-				command, dispatchErr := dispatchBrowserStageDevice(dispatch, runtime, deviceexperience.CreateCommandInput{
+				effectMayHaveBeenSent = true
+				command, dispatchErr := dispatchBatch(dispatch, runtime, deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         input.SessionID,
 					DeviceID:          device.ID,
@@ -1399,6 +1406,14 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				copy := command
 				results = append(results, batchResult{DeviceID: device.ID, Command: &copy})
+			}
+			if err := capability.CheckDispatch(dispatch); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error":                     "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED",
+					"effect_may_have_been_sent": effectMayHaveBeenSent,
+					"retryable":                 false,
+				})
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
@@ -1497,6 +1512,8 @@ func waitForStageDeviceScope(
 	}
 }
 
+
+type stageDeviceCommandDispatcher func(context.Context, *devicechannel.Runtime, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
 
 func dispatchBrowserStageDevice(ctx context.Context, runtime *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
 	if err := capability.CheckDispatch(ctx); err != nil {
