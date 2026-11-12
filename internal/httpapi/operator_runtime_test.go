@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -401,6 +402,86 @@ func TestShowAdmissionRechecksGrantAfterPreflight(t *testing.T) {
 	active, err := f.projects.ActiveSessionForProject(ctx, f.projectID)
 	if err != nil || active != nil {
 		t.Fatalf("revoked SHOW changed runtime state: %+v, %v", active, err)
+	}
+}
+
+func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateAlias(ctx, domain.ProjectDeviceAlias{
+		ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: project.CurrentRevisionID, DisplayLabel: "1", Name: "Revocable cue",
+		OrderIndex: 1, CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
+		ExecutionPolicy: json.RawMessage(`{"action_delay_ms":25}`),
+	}, []domain.Action{
+		{
+			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.revoke",
+			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+			PriorityClass: domain.PriorityP1, Enabled: true,
+		},
+		{
+			OrderIndex: 1, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.after-revoke",
+			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+			PriorityClass: domain.PriorityP1, Enabled: true,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionRehearsal, "revocation rehearsal", ""); err != nil {
+		t.Fatal(err)
+	}
+	var sentBeforeRevocation, sentAfterRevocation atomic.Int32
+	registry := capability.NewRegistry()
+	if err := registry.Register("sim.revoke", capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
+		sentBeforeRevocation.Add(1)
+		if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
+			[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+			t.Errorf("revoke SHOW GO grant: %v", err)
+		}
+		// This simulated action has already crossed its adapter boundary. The Hub
+		// cannot retract it; the following delayed action must remain unsent.
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register("sim.after-revoke", capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
+		sentAfterRevocation.Add(1)
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimecontrol.New(f.projects, registry)
+	handler := New(
+		WithScopedOperatorProjects(f.h.auth, f.projects, f.access),
+		WithOperatorRuntime(f.h.auth, f.projects, runtime),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/go",
+		[]byte(`{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000125"}`), f.operator.Token, f.operator.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if sentBeforeRevocation.Load() != 1 || sentAfterRevocation.Load() != 0 {
+		t.Fatalf("dispatch counts before/after grant revocation = %d/%d, want 1/0; response=%d %s",
+			sentBeforeRevocation.Load(), sentAfterRevocation.Load(), res.Code, res.Body.String())
 	}
 }
 

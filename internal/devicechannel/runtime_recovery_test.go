@@ -44,6 +44,81 @@ func TestRuntimeRevokedDispatchIsTerminalAndNeverSent(t *testing.T) {
 	}
 }
 
+func TestRuntimeRevocationAfterCommandAcceptancePreventsSocketWrite(t *testing.T) {
+	f := newRuntimeFixture(t)
+	device := f.connect(t)
+	defer device.Close()
+
+	boundary := make(chan struct{})
+	release := make(chan struct{})
+	authorized := true
+	ctx := capability.WithDispatchCheck(context.Background(), func(context.Context) error {
+		// Runtime.Dispatch has already committed the command before it asks the
+		// connection to perform this final pre-write authorization check.
+		close(boundary)
+		<-release
+		if !authorized {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	input := deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: testDeviceID, CommandType: "TABLET_PLAY",
+		Issuer: "operator:test", CorrelationID: "revoke-after-acceptance",
+		IdempotencyKey: "revoke-after-acceptance",
+		Payload:        json.RawMessage(`{"media":"01.mp4"}`), DeadlineAt: &deadline,
+	}
+	type dispatchResult struct {
+		command deviceexperience.DeviceCommand
+		err     error
+	}
+	dispatched := make(chan dispatchResult, 1)
+	go func() {
+		command, err := f.runtime.Dispatch(ctx, input)
+		dispatched <- dispatchResult{command: command, err: err}
+	}()
+
+	select {
+	case <-boundary:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatch never reached the socket write authorization boundary")
+	}
+	var commandID string
+	var status contracts.CommandStatus
+	if err := f.dbHandle.DB.QueryRowContext(context.Background(),
+		`SELECT command_id, status FROM stage_device_commands WHERE idempotency_key = ?`, input.IdempotencyKey,
+	).Scan(&commandID, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status != contracts.CommandAccepted {
+		t.Fatalf("command status at final write boundary = %s, want ACCEPTED", status)
+	}
+	// Model revocation after persistence but before the physical WebSocket write.
+	authorized = false
+	close(release)
+	var result dispatchResult
+	select {
+	case result = <-dispatched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoked dispatch did not finish")
+	}
+	if result.err != nil || result.command.Status != contracts.CommandFailed ||
+		!strings.Contains(string(result.command.Result), capability.DispatchAuthorityRevokedCode) ||
+		!strings.Contains(string(result.command.Result), `"retryable":false`) {
+		t.Fatalf("revoked accepted command=%+v err=%v", result.command, result.err)
+	}
+	_ = device.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	var message map[string]any
+	if err := websocket.JSON.Receive(device, &message); err == nil {
+		t.Fatalf("revoked command reached the socket: %+v", message)
+	}
+	stored, err := f.repo.GetCommand(context.Background(), commandID)
+	if err != nil || stored.Status != contracts.CommandFailed {
+		t.Fatalf("revoked command was not durably terminalized: %+v err=%v", stored, err)
+	}
+}
+
 func TestReconnectTerminatesInflightCommandWithoutReplay(t *testing.T) {
 	f := newRuntimeFixture(t)
 	ctx := context.Background()
