@@ -74,3 +74,47 @@ After recovery, verify the recorded previous revision, Doctor, restored
 Project visibility and the legacy authorization behavior in the disposable
 installation. Record the triggering failure and the resulting state. The
 existing source guard stays in place until an explicit coordinated cutover.
+
+## SC-024 continuation · 2026-11-12
+
+Starting at `63fb413d`, the integration branch adds isolated regressions for
+the asynchronous authorization boundary and a single test Router composed
+from the existing staged ACL options. `TestRuntimeRevocationAfterCommandAcceptancePreventsSocketWrite`
+observes a durably accepted Device command, revokes authority before the
+socket write, and requires a terminal non-retryable failure with no WebSocket
+command. `TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation`
+allows the action already across the simulated adapter boundary to finish,
+then proves a delayed action is not dispatched after the live project grant
+is revoked. These tests make no claim that external work already sent can be
+retracted.
+
+`TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix` composes the staged
+Project list, Cue, Runtime, Project Files/download, Capsule, StageAudio,
+Companion Vault/capture, project grant administration, Owner import review,
+and device metadata/controller options in one temporary-database Router. It
+checks Owner, Operator and Viewer behavior, cross-Project denial, Companion
+hash isolation, and Owner-only boundaries. Existing qualification tests also
+cover closed/wrong Project Sessions, foreign Snapshots, live STOP and
+Blackout grants, missing ACL fail-closed behavior, and the production
+partial-activation source guard.
+
+The isolated updater rollback regression now changes Project grants and
+removes a published Snapshot in the candidate database, then verifies that
+rollback restores the original Project visibility, GO, STOP, Blackout,
+Snapshot manifest/hash, SQLite integrity and foreign-key state. The
+Migration 53 compatibility and read-only Owner impact-preview tests pass on
+temporary databases; the preview remains `ready_for_cutover: false`. This is
+not a complete disposable installed-bundle dry-run/impact-preview/restore
+rehearsal, which remains outstanding. No production assembler or Migration
+53 change was made. No real STOP/Blackout or device output was sent.
+
+**Decision: Atomic Project ACL cutover is not software-qualified.** The
+current production assembly remains legacy and the partial-activation source
+guard remains active. Remaining blockers are the full endpoint-to-permission
+and delivery-boundary reconciliation for all asynchronous adapters and
+maintenance paths; compatibility qualification for existing Companion
+deployments and tickets; a disposable installed-copy migration, impact
+preview and recovery rehearsal; and independent device-side STOP/Blackout,
+StageAudio and already-in-flight output qualification. The test Router is a
+combined API qualification fixture, not a booted copy of the complete Hub
+production assembler.
