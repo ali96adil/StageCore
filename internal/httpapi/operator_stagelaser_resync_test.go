@@ -3,14 +3,18 @@ package httpapi
 import (
     "bytes"
     "context"
+    "encoding/json"
     "net/http"
     "net/http/httptest"
     "strings"
     "testing"
 
+    "github.com/ali96adil/StageCore/internal/capability"
     "github.com/ali96adil/StageCore/internal/clock"
+    "github.com/ali96adil/StageCore/internal/contracts"
     "github.com/ali96adil/StageCore/internal/devicechannel"
     "github.com/ali96adil/StageCore/internal/deviceexperience"
+    "github.com/ali96adil/StageCore/internal/projectaccess"
     "github.com/ali96adil/StageCore/internal/stagelaser"
     "github.com/ali96adil/StageCore/internal/store"
 )
@@ -65,6 +69,96 @@ func TestStageLaserAttendedResyncIsExplicitAndDoesNotAuthorizeUnassignedDevice(t
     if count != 0 {
         t.Fatalf("unauthorized resync created %d commands", count)
     }
+}
+
+func TestStageLaserResyncSuppressesAcceptedResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "StageLaser resync revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "stagelaser-resync-revoke"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: stagelaser.ProfileID,
+		ProtocolVersion: deviceexperience.ProtocolVersion2, DisplayName: "StageLaser resync",
+		Capabilities: stagelaser.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const snapshotID = "51111111-2222-4333-8444-555555555551"
+	if _, err := h.db.DB.ExecContext(ctx, `UPDATE stage_device_assignments SET project_id=?, assignment_epoch=2,
+		assignment_state='ACTIVE', runtime_snapshot_id=?, updated_at_us=updated_at_us+1 WHERE device_id=?`,
+		project.ID, snapshotID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: deviceID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker,
+		ObservedState: json.RawMessage(`{"boot_id":"boot-1","logical_state":"OFF","arm_state":"DISARMED","state_quality":"TRACKED"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := false
+	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stagelaser-resync", CommandType: input.CommandType,
+				ProjectID: project.ID, RuntimeSnapshotID: snapshotID, Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			Dispatch: dispatch,
+			CurrentV2Scope: func(string) (devicechannel.V2RuntimeScope, bool) {
+				return devicechannel.V2RuntimeScope{Generation: 1, ProjectID: project.ID, RuntimeSnapshotID: snapshotID,
+					AssignmentEpoch: 2, CommandsEnabled: true}, true
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/stage-devices/"+deviceID+"/stagelaser-resync",
+		[]byte(`{"state":"OFF","expected_boot_id":"boot-1","confirm":"PHYSICALLY_VERIFIED_STATE_RESYNC_SOFTWARE_ONLY"}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !accepted {
+		t.Fatal("mock transport did not accept resync before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable resync response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["command"]; leaked {
+		t.Fatalf("revoked Owner received accepted resync command: %+v", body)
+	}
 }
 
 func TestStageLaserResyncOperatorUIExplainsSoftwareStateOnly(t *testing.T) {

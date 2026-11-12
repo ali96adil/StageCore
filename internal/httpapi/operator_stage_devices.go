@@ -58,17 +58,30 @@ func WithScopedOperatorStageDeviceReads(auth *userauth.Service, devices *devicee
 	return withOperatorStageDevices(auth, devices, runtime, stageStore, access)
 }
 
+type stageDeviceCommandDispatcher func(context.Context, *devicechannel.Runtime, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+
+type stageDeviceRouteHooks struct {
+	Dispatch       stageDeviceCommandDispatcher
+	CurrentV2Scope func(string) (devicechannel.V2RuntimeScope, bool)
+}
+
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
 	runtime *devicechannel.Runtime, stageStore *store.Store, access *projectaccess.Service,
-	dispatchers ...stageDeviceCommandDispatcher,
+	hooks ...stageDeviceRouteHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || runtime == nil || stageStore == nil {
 			return
 		}
-		dispatchBatch := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
-		if len(dispatchers) > 0 && dispatchers[0] != nil {
-			dispatchBatch = dispatchers[0]
+		dispatchCommand := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
+		currentV2Scope := runtime.CurrentV2Scope
+		if len(hooks) > 0 {
+			if hooks[0].Dispatch != nil {
+				dispatchCommand = hooks[0].Dispatch
+			}
+			if hooks[0].CurrentV2Scope != nil {
+				currentV2Scope = hooks[0].CurrentV2Scope
+			}
 		}
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -1218,7 +1231,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_STALE_BOOT_RELOAD_REQUIRED"})
 				return
 			}
-			scope, online := runtime.CurrentV2Scope(device.ID)
+			scope, online := currentV2Scope(device.ID)
 			if !online || !scope.CommandsEnabled ||
 				scope.ProjectID != projectID ||
 				scope.RuntimeSnapshotID != device.Assignment.RuntimeSnapshotID ||
@@ -1229,7 +1242,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			payload, _ := json.Marshal(map[string]string{"state": input.State})
 			correlationID, _ := stageid.New()
 			deadline := time.Now().UTC().Add(10 * time.Second)
-			command, err := dispatchBrowserStageDevice(stageDeviceDispatchContext(r, auth, session), runtime, deviceexperience.CreateCommandInput{
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			command, err := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 				ProjectID: projectID, DeviceID: device.ID,
 				RuntimeSnapshotID: device.Assignment.RuntimeSnapshotID,
 				CommandType: stagelaser.CommandStateResync,
@@ -1238,7 +1252,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				Priority: "P1", Payload: payload, DeadlineAt: &deadline,
 			})
 			if err != nil {
+				if capability.CheckDispatch(dispatch) != nil {
+					writeStageDeviceDispatchAuthorityEnded(w, true)
+					return
+				}
 				writeStageDeviceCommandError(w, err)
+				return
+			}
+			if capability.CheckDispatch(dispatch) != nil {
+				writeStageDeviceDispatchAuthorityEnded(w, true)
 				return
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{
@@ -1290,7 +1312,8 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
 				return
 			}
-			command, err := dispatchBrowserStageDevice(stageDeviceDispatchContext(r, auth, session), runtime, deviceexperience.CreateCommandInput{
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			command, err := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 				ProjectID:         commandProjectID,
 				SessionID:         input.SessionID,
 				DeviceID:          device.ID,
@@ -1305,7 +1328,15 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				DeadlineAt:        input.DeadlineAt,
 			})
 			if err != nil {
+				if capability.CheckDispatch(dispatch) != nil {
+					writeStageDeviceDispatchAuthorityEnded(w, true)
+					return
+				}
 				writeStageDeviceCommandError(w, err)
+				return
+			}
+			if capability.CheckDispatch(dispatch) != nil {
+				writeStageDeviceDispatchAuthorityEnded(w, true)
 				return
 			}
 			status := http.StatusAccepted
@@ -1383,7 +1414,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			for _, device := range targets {
 				effectMayHaveBeenSent = true
-				command, dispatchErr := dispatchBatch(dispatch, runtime, deviceexperience.CreateCommandInput{
+				command, dispatchErr := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         input.SessionID,
 					DeviceID:          device.ID,
@@ -1408,11 +1439,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				results = append(results, batchResult{DeviceID: device.ID, Command: &copy})
 			}
 			if err := capability.CheckDispatch(dispatch); err != nil {
-				writeJSON(w, http.StatusForbidden, map[string]any{
-					"error":                     "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED",
-					"effect_may_have_been_sent": effectMayHaveBeenSent,
-					"retryable":                 false,
-				})
+				writeStageDeviceDispatchAuthorityEnded(w, effectMayHaveBeenSent)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
@@ -1513,8 +1540,6 @@ func waitForStageDeviceScope(
 }
 
 
-type stageDeviceCommandDispatcher func(context.Context, *devicechannel.Runtime, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
-
 func dispatchBrowserStageDevice(ctx context.Context, runtime *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
 	if err := capability.CheckDispatch(ctx); err != nil {
 		return deviceexperience.DeviceCommand{}, err
@@ -1570,6 +1595,14 @@ func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 	}
 	writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_COMMAND_REJECTED", "detail": err.Error()})
+}
+
+func writeStageDeviceDispatchAuthorityEnded(w http.ResponseWriter, effectMayHaveBeenSent bool) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":                     "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED",
+		"effect_may_have_been_sent": effectMayHaveBeenSent,
+		"retryable":                 false,
+	})
 }
 
 func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, groupName, locationName string, deviceIDs []string) ([]deviceexperience.Device, bool) {

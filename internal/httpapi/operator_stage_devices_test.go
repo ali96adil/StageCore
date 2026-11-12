@@ -70,7 +70,7 @@ func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testin
 		}, nil
 	})
 	handler := New(
-		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, dispatch),
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{Dispatch: dispatch}),
 		WithProjectRouteQualification(access),
 	).Handler()
 	request := authenticatedMutationRequest(t, http.MethodPost,
@@ -92,6 +92,77 @@ func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testin
 	}
 	if _, leaked := body["results"]; leaked {
 		t.Fatalf("revoked Owner received accepted command results: %+v", body)
+	}
+}
+
+func TestStageDeviceCommandSuppressesAcceptedResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Stage Device command revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "display-single-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay,
+		DisplayName: deviceID, ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"display.message.show"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := false
+	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stage-device-single", CommandType: input.CommandType,
+				ProjectID: project.ID, Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{Dispatch: dispatch}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+deviceID+"/commands",
+		[]byte(`{"command_type":"DISPLAY_MESSAGE","payload":{"message":"Places"}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !accepted {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["command"]; leaked {
+		t.Fatalf("revoked Owner received accepted command result: %+v", body)
 	}
 }
 
