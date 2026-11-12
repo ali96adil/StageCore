@@ -37,6 +37,9 @@ func (h *operatorExtensionSetManifest) export(w http.ResponseWriter, r *http.Req
 		return
 	}
 	h.record(r, session, "extension.set_manifest.export", securityaudit.ResultSuccess, "", map[string]any{"extension_count": len(manifest.Extensions)})
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="stagecore-extension-set.json"`)
 	w.Header().Set("Cache-Control", "no-store")
@@ -44,12 +47,15 @@ func (h *operatorExtensionSetManifest) export(w http.ResponseWriter, r *http.Req
 	_, _ = w.Write(raw)
 }
 
-func (h *operatorExtensionSetManifest) planRestore(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionSetManifest) planRestore(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	raw, ok := readExtensionSetManifest(w, r)
 	if !ok {
 		return
 	}
 	plan, err := h.service.PlanRestore(r.Context(), raw)
+	if !recheckExtensionManageReadResponse(w, r, h.users, session) {
+		return
+	}
 	if err != nil {
 		if errors.Is(err, extension.ErrExtensionSetInvalid) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "EXTENSION_SET_INVALID"})
@@ -88,19 +94,25 @@ func (h *operatorExtensionSetManifest) restore(w http.ResponseWriter, r *http.Re
 		}
 		response["error_code"] = code
 		h.record(r, session, "extension.set_manifest.restore", securityaudit.ResultRejected, code, map[string]any{
-			"plan_status": result.Plan.Status,
-			"blockers": len(result.Plan.Blockers),
+			"plan_status":              result.Plan.Status,
+			"blockers":                 len(result.Plan.Blockers),
 			"installed_before_failure": len(result.Installed),
 		})
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, "extension.set_manifest.restore", securityaudit.ResultSuccess, "", map[string]any{
-		"plan_status": result.Plan.Status,
-		"installed": len(result.Installed),
+		"plan_status":                 result.Plan.Status,
+		"installed":                   len(result.Installed),
 		"permission_reviews_restored": result.Plan.PermissionReviewsRestored,
-		"runtime_intent_restored": result.Plan.RuntimeIntentRestored,
+		"runtime_intent_restored":     result.Plan.RuntimeIntentRestored,
 	})
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -128,14 +140,14 @@ func (h *operatorExtensionSetManifest) record(r *http.Request, session userauth.
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: eventType,
-		ActorUserID: session.User.ID,
+		EventType:     eventType,
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_set_manifest",
-		ResourceID: "installed-extensions",
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_set_manifest",
+		ResourceID:    "installed-extensions",
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

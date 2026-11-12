@@ -196,32 +196,68 @@ func (h *operatorExtensionRuntimeLifecycle) beforeMutationResponseRevoked(w http
 }
 
 func (h *operatorExtensionRuntimeLifecycle) writeRevokedMutationResponse(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
-	if extensionManageResponseAuthorized(h.users, r, session) {
-		return false
-	}
-	writeJSON(w, http.StatusForbidden, map[string]any{
-		"error_code":                     capability.DispatchAuthorityRevokedCode,
-		"detail":                         "Authorization ended during extension lifecycle work; refresh installation and runtime status before taking further action.",
-		"effect_may_have_been_committed": true,
-		"retryable":                      false,
-	})
-	return true
+	return writeRevokedExtensionMutationResponse(w, r, h.users, session)
 }
 
 func extensionManageResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session) bool {
 	if users == nil || capability.CheckDispatch(r.Context()) != nil {
 		return false
 	}
+	return extensionPermissionResponseAuthorized(users, r, session, userauth.PermissionPluginManage)
+}
+
+func extensionPermissionResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session, permission userauth.Permission) bool {
+	if users == nil {
+		return false
+	}
 	token, ok := browserSessionToken(r)
 	if !ok {
 		return false
 	}
-	next, err := users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	var next userauth.Session
+	var err error
+	if isUnsafeMethod(r.Method) {
+		next, err = users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	} else {
+		next, err = users.ValidatePassive(r.Context(), token)
+	}
 	if err != nil || next.ID != session.ID || next.User.ID != session.User.ID ||
-		userauth.Authorize(next.User.Role, userauth.PermissionPluginManage) != nil {
+		userauth.Authorize(next.User.Role, permission) != nil {
 		return false
 	}
 	return qualificationAccess(r, nil) == nil || next.User.Role == userauth.RoleOwner
+}
+
+func recheckExtensionReadResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session, permission userauth.Permission) bool {
+	if extensionPermissionResponseAuthorized(users, r, session, permission) {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	return false
+}
+
+func recheckExtensionManageReadResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session) bool {
+	if extensionManageResponseAuthorized(users, r, session) {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	return false
+}
+
+func writeRevokedExtensionMutationResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session) bool {
+	if extensionManageResponseAuthorized(users, r, session) {
+		return false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     capability.DispatchAuthorityRevokedCode,
+		"detail":                         "Authorization ended during extension administration; refresh installation status before taking further action.",
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return true
 }
 
 func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session userauth.Session, eventType, installationID, result, reason string, metadata any) {
