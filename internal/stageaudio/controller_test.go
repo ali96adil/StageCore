@@ -185,8 +185,10 @@ func TestVaultLoadRequiresCanonicalObjectAndTracksVersion(t *testing.T) {
 	}
 	if err := os.Remove(path); err != nil { t.Fatal(err) }
 	if err := os.WriteFile(path, []byte("test"), 0600); err != nil { t.Fatal(err) }
+	canonicalPath, err := filepath.EvalSymlinks(path)
+	if err != nil { t.Fatal(err) }
 	status := command(t, controller, request)
-	if status.Decks[DeckA].VaultVersionID != "version-a" || len(sender.Calls) != 2 || sender.Calls[1].Args[1] != path {
+	if status.Decks[DeckA].VaultVersionID != "version-a" || len(sender.Calls) != 2 || sender.Calls[1].Args[1] != canonicalPath {
 		t.Fatalf("incorrect scoped playback: %+v %+v", status, sender.Calls)
 	}
 	if status := command(t, controller, Request{Operation: "STOP", Deck: DeckA}); status.Decks[DeckA].VaultVersionID != "" {
