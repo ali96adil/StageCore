@@ -138,6 +138,186 @@ type revokingFirmwareMaintenanceSender struct {
 	token   string
 }
 
+type unusedFirmwareMaintenanceSender struct{}
+
+func (unusedFirmwareMaintenanceSender) SendFirmwareMaintenance(context.Context, string) (deviceupdate.UpdateRecord, error) {
+	return deviceupdate.UpdateRecord{}, errors.New("firmware send was not expected in artifact upload test")
+}
+
+func TestFirmwareArtifactUploadSuppressesResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "55555555-5555-4555-8555-555555555581", ProfileID: "stagecore.test-firmware",
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Firmware Upload Response Mock",
+		Platform: "test", Architecture: "test", ClientVersion: "0.1.0",
+		ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("fixture-only firmware bytes")
+	sum := sha256.Sum256(payload)
+	expectedSHA := hex.EncodeToString(sum[:])
+	ownerRevoked := false
+	handler := New(withOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates,
+		unusedFirmwareMaintenanceSender{}, stageStore, nil, stageDeviceFirmwareHooks{
+			BeforeArtifactResponse: func() {
+				ownerRevoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner before artifact response: %v", err)
+				}
+			},
+		})).Handler()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for key, value := range map[string]string{
+		"version": "0.2.0", "source_revision": strings.Repeat("a", 40),
+		"sha256": expectedSHA, "qualification": deviceupdate.QualificationQualified,
+	} {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part, err := writer.CreateFormFile("firmware", "firmware.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/stage-devices/"+device.ID+"/firmware-artifacts", body)
+	request.RemoteAddr = "127.0.0.1:19451"
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set(csrfHeader, owner.CSRFToken)
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !ownerRevoked {
+		t.Fatal("test did not revoke Owner after artifact publication and before response")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		result["effect_may_have_been_committed"] != true || result["retryable"] != false {
+		t.Fatalf("revoked Owner received artifact upload result or retryable response: HTTP %d %+v", response.Code, result)
+	}
+	if _, leaked := result["artifact"]; leaked {
+		t.Fatalf("revoked Owner received firmware artifact metadata after publication: %+v", result)
+	}
+	items, err := artifacts.ListForDevice(device.ID)
+	if err != nil || len(items) != 1 || items[0].SHA256 != expectedSHA {
+		t.Fatalf("artifact publication was not retained truthfully after response suppression: %+v err=%v", items, err)
+	}
+}
+
+func TestFirmwareManifestSuppressesResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "55555555-5555-4555-8555-555555555582"
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, ProfileID: "stagecore.test-firmware", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Firmware Manifest Response Mock", Platform: "test", Architecture: "test",
+		ClientVersion: "0.1.0", ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		INSERT INTO stage_device_runtime_state
+		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
+		VALUES (?, 'ONLINE', 'READY', ?, '{}', '{}')`, deviceID, time.Now().UnixMicro()); err != nil {
+		t.Fatal(err)
+	}
+	device, err = devices.GetDevice(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("fixture-only firmware manifest bytes")
+	sum := sha256.Sum256(payload)
+	artifact, err := artifacts.ImportQualified(deviceupdate.ArtifactMetadata{
+		ArtifactID: "55555555-5555-4555-8555-555555555583", DeviceID: device.ID, ProfileID: device.ProfileID,
+		Version: "0.2.0", SourceRevision: strings.Repeat("a", 40), Qualification: deviceupdate.QualificationQualified,
+		SizeBytes: int64(len(payload)), SHA256: hex.EncodeToString(sum[:]), OriginalFilename: "firmware.bin",
+		CreatedAt: time.Now().UTC(),
+	}, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerRevoked := false
+	handler := New(withOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates,
+		unusedFirmwareMaintenanceSender{}, stageStore, nil, stageDeviceFirmwareHooks{
+			BeforeManifestResponse: func() {
+				ownerRevoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner before manifest response: %v", err)
+				}
+			},
+		})).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+device.ID+"/firmware-updates",
+		[]byte(`{"artifact_id":"`+artifact.ArtifactID+`"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !ownerRevoked {
+		t.Fatal("test did not revoke Owner after manifest issuance and before response")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		result["effect_may_have_been_committed"] != true || result["retryable"] != false {
+		t.Fatalf("revoked Owner received issued firmware manifest or retryable response: HTTP %d %+v", response.Code, result)
+	}
+	if _, leaked := result["manifest"]; leaked {
+		t.Fatalf("revoked Owner received firmware manifest after issuance: %+v", result)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM stage_device_firmware_updates WHERE state='ISSUED'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("manifest issuance was not retained after response suppression: count=%d err=%v", count, err)
+	}
+}
+
 func (s revokingFirmwareMaintenanceSender) SendFirmwareMaintenance(ctx context.Context, updateID string) (deviceupdate.UpdateRecord, error) {
 	if err := capability.CheckDispatch(ctx); err != nil {
 		return deviceupdate.UpdateRecord{}, err

@@ -334,3 +334,21 @@ get only a non-retryable response because temporary staging work may have
 occurred. The regression passes under Race together with the uninstall and
 Runtime Probe regressions, and the full `internal/httpapi` package passes.
 Production ACL remains disabled.
+
+Firmware Artifact upload also returned its newly committed Artifact metadata
+if the browser session ended after publication but before delivery. A
+test-only callback reproduced HTTP 201 and metadata after logout, while
+confirming the Artifact remained published. The route now performs a final
+exact-session/CSRF/role check after publication and audit; revoked callers
+receive no Artifact details and a non-retryable response that says publication
+may have committed. The new regression passes under Race alongside firmware
+send/authority and upload integrity tests; the full `internal/httpapi`
+package passes. Production ACL remains disabled.
+
+Firmware update issuance received the same final-response fence. Its regression
+confirms that a revoked Owner receives no Manifest or update record after the
+`ISSUED` record commits; the response reports the uncertain commit and forbids
+automatic retry. Artifact upload, Manifest issuance and post-transport send
+revocation regressions pass under Race, and `internal/httpapi` passes in full.
+Any update already marked `SENT` remains recorded truthfully; this work never
+attempts to retract or replay a firmware operation.

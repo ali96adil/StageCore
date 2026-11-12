@@ -32,6 +32,11 @@ type firmwareMaintenanceSender interface {
 	SendFirmwareMaintenance(context.Context, string) (deviceupdate.UpdateRecord, error)
 }
 
+type stageDeviceFirmwareHooks struct {
+	BeforeArtifactResponse func()
+	BeforeManifestResponse func()
+}
+
 func WithOperatorStageDeviceFirmware(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
@@ -40,6 +45,19 @@ func WithOperatorStageDeviceFirmware(
 	runtime firmwareMaintenanceSender,
 	stageStore *store.Store,
 	audit *securityaudit.Service,
+) Option {
+	return withOperatorStageDeviceFirmware(auth, devices, artifacts, updates, runtime, stageStore, audit, stageDeviceFirmwareHooks{})
+}
+
+func withOperatorStageDeviceFirmware(
+	auth *userauth.Service,
+	devices *deviceexperience.Repository,
+	artifacts *deviceupdate.ArtifactRegistry,
+	updates *deviceupdate.LifecycleStore,
+	runtime firmwareMaintenanceSender,
+	stageStore *store.Store,
+	audit *securityaudit.Service,
+	hooks stageDeviceFirmwareHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil ||
@@ -207,6 +225,18 @@ func WithOperatorStageDeviceFirmware(
 						"qualification":     imported.Qualification,
 					},
 				})
+				if hooks.BeforeArtifactResponse != nil {
+					hooks.BeforeArtifactResponse()
+				}
+				if err := authorize(r.Context()); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code":                     capability.DispatchAuthorityRevokedCode,
+						"detail":                         "Authorization ended after firmware artifact publication; refresh the device artifact list before taking further action.",
+						"effect_may_have_been_committed": true,
+						"retryable":                      false,
+					})
+					return
+				}
 
 				writeJSON(w, http.StatusCreated, map[string]any{
 					"artifact":      imported,
@@ -371,7 +401,18 @@ func WithOperatorStageDeviceFirmware(
 						"delivery_state":  "NOT_SENT",
 					},
 				})
-
+				if hooks.BeforeManifestResponse != nil {
+					hooks.BeforeManifestResponse()
+				}
+				if err := firmwareMutationAuthorization(r, auth, session)(r.Context()); err != nil {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code":                     capability.DispatchAuthorityRevokedCode,
+						"detail":                         "Authorization ended after firmware update issuance; check update status before taking further action.",
+						"effect_may_have_been_committed": true,
+						"retryable":                      false,
+					})
+					return
+				}
 				writeJSON(w, http.StatusCreated, map[string]any{
 					"manifest":       manifest,
 					"update":         record,
