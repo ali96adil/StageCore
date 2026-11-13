@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -411,6 +412,89 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	var count int
 	if err := h.db.DB.QueryRowContext(ctx, "SELECT count(*) FROM stage_device_stagelaser_visual_checks WHERE device_id = ?", laserID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("visual checks after rejected write=%d, err=%v", count, err)
+	}
+}
+
+func TestStageDeviceOwnerReadSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Revoked laser visual read", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const laserID = "stagelaser-visual-read-revoke"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: laserID, Kind: deviceexperience.DeviceGeneric, ProfileID: stagelaser.ProfileID,
+		DisplayName: "Laser visual revocation", Platform: "esp32", Architecture: "riscv32",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: stagelaser.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observed := json.RawMessage(`{"logical_state":"OFF","boot_id":"boot-visual-read","arm_state":"DISARMED","state_quality":"TRACKED"}`)
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: laserID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker, ObservedState: observed, NetworkState: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	actor, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RecordStageLaserVisualCheck(ctx, laserID, project.ID, actor.Session.User.ID, "ON", "OFF", "boot-visual-read"); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var currentToken, expectedRoute string
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(h.auth, devices, runtime, stageStore, access,
+		stageDeviceRouteHooks{BeforeOwnerReadResponse: func(route string) {
+			if route != expectedRoute {
+				return
+			}
+			revoked = true
+			if err := h.auth.Logout(ctx, currentToken); err != nil {
+				t.Errorf("revoke Owner session before %s result delivery: %v", route, err)
+			}
+		}})).Handler()
+	routes := []struct {
+		name string
+		path string
+		leak string
+	}{
+		{name: "inventory", path: "/api/v1/stage-devices/inventory", leak: laserID},
+		{name: "unassigned", path: "/api/v1/stage-devices/unassigned", leak: laserID},
+		{name: "transfer-status", path: "/api/v1/stage-devices/" + laserID + "/assignment/transfer-status", leak: laserID},
+		{name: "stagelaser-visual-check", path: "/api/v1/projects/" + project.ID + "/stage-devices/" + laserID + "/stagelaser-visual-check", leak: `"visual_state":"ON"`},
+		{name: "network-cockpit", path: "/api/v1/network/cockpit", leak: `"targets"`},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentToken, expectedRoute, revoked = owner.Token, route.name, false
+			req := httptest.NewRequest(http.MethodGet, route.path, nil)
+			req.RemoteAddr = "127.0.0.1:20202"
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), route.leak) {
+				t.Fatalf("revoked Owner received %s result: HTTP %d %s (hook ran=%t)", route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
 	}
 }
 

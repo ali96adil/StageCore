@@ -67,6 +67,7 @@ type stageDeviceRouteHooks struct {
 	SoftwareTransfer func(context.Context, deviceexperience.TransferPreflightInput, string, func(context.Context) error) (deviceexperience.TransferCommitRecord, error)
 	LightingActivation func(context.Context, deviceexperience.LightingActivationInput, string, func(context.Context) error) (deviceexperience.LightingActivationCommit, error)
 	BeforeSnapshotSyncResponse func()
+	BeforeOwnerReadResponse func(route string)
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -511,6 +512,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGELASER_VISUAL_CHECK_UNAVAILABLE"})
 						return
 					}
+					if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+						hooks[0].BeforeOwnerReadResponse("stagelaser-visual-check")
+					}
+					if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+						return
+					}
 					writeJSON(w, http.StatusOK, map[string]any{
 						"visual_check": latest, "advisory_only": true,
 					})
@@ -638,6 +645,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				out = append(out, view)
 			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("inventory")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))
 
@@ -683,6 +696,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					view.Readiness = item.Runtime.Readiness
 				}
 				out = append(out, view)
+			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("unassigned")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))
@@ -842,6 +861,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				if liveActive {
 					status = "ACTIVE_CURRENT_SCOPE_READY"
 				}
+			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("transfer-status")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"assignment": assignment,
@@ -1570,12 +1595,40 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			items, err := devices.Cockpit(r.Context(), 15*time.Second)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "NETWORK_COCKPIT_FAILED", "detail": err.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "NETWORK_COCKPIT_FAILED"})
+				return
+			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("network-cockpit")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"targets": items, "stale_after_ms": 15000})
 		}))
 	}
+}
+
+func reauthorizeScopedOwnerRead(w http.ResponseWriter, r *http.Request,
+	auth *userauth.Service, session userauth.Session, access *projectaccess.Service, permissions ...userauth.Permission,
+) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	token, ok := browserSessionToken(r)
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if !ok || err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	if !allowScopedOwner(w, current, access) {
+		return false
+	}
+	for _, permission := range permissions {
+		if userauth.Authorize(current.User.Role, permission) != nil {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+			return false
+		}
+	}
+	return true
 }
 
 
