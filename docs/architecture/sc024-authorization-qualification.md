@@ -298,9 +298,11 @@ Red-first tests
 `TestShowCapsuleMaterializeSuppressesErrorsAfterSessionRevocation` reproduced
 HTTP 422/503 error disclosure after logout. They now pass with the expected
 authorization boundary. The full `internal/httpapi` package passes locally
-(`53.539s`), as does its full Race run with an expanded 20-minute Go test
-timeout (`795.012s`); focused Race tests, `go vet`, and `git diff --check` also
-pass. The exact pushed-base Core workflow `43466920955` has Go 1.27 and normal
+(`53.539s`); focused Race tests cover the current three Capsule changes. The
+full Race package passed on the preceding code checkpoint in `795.012s` with
+an expanded 20-minute Go test timeout. The current unpushed code will receive
+exact-head Race CI after push. `go vet` and `git diff --check` also pass. The
+exact pushed-base Core workflow `43466920955` has Go 1.27 and normal
 Go 1.26 checks complete, with Race running and Linux ARM64 pending. Companion
 `43466920915` and Camera Relay `43466920848` pass on that base. These three
 local commits are not yet covered by remote CI.
@@ -1151,3 +1153,20 @@ installed-copy migration/update/impact-preview/restore rehearsal, and old
 Companion deployment compatibility remain open. Hardware STOP/Blackout,
 StageAudio operation revocation, and independent laser-safe-off remain
 pending. **SC-024 is not software-qualified.**
+
+## Current resume snapshot · 2026-11-13
+
+The last pushed StageCore commit is
+`45677c187f45a61ffd3edd2ee37a4e742fbb23fe` on
+`integration/stagecore-rc` (Draft PR #534). The next local code group is
+`0a29378`, `e2fbb29`, and `cdab5e2`, followed by documentation checkpoints
+`da98097` and this resume update. The full `internal/httpapi` test and focused
+Race tests for the current changes pass; the full Race run passed on the
+preceding code checkpoint and will run in CI for the new exact head. `go vet`
+and diff checks pass. Core CI
+`43466920955` on the pushed base has Go 1.27, Go 1.26 tests, Browser Cue
+Delivery and Vet passed; Race is in progress and ARM64 is pending. Companion
+`43466920915` and Camera Relay `43466920848` pass on the same base. Push the
+local group normally only after those Core jobs finish successfully; then
+wait for CI on the new exact head. Keep the Production Assembler and ACL
+source guard unchanged until all Software Qualification blockers close.
