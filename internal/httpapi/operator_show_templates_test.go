@@ -220,6 +220,32 @@ func TestShowTemplateExportWithholdsProjectDataAfterLogout(t *testing.T) {
 	}
 }
 
+func TestShowTemplateExportSuppressesErrorsAfterLogout(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowTemplateService{
+		exportErr: errors.New("project template export failed"),
+		onExport: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during template export: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowTemplates(h.auth, service)).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000811/template-export", login.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
+		strings.Contains(response.Body.String(), "SHOW_TEMPLATE_UNAVAILABLE") || service.exportCalls != 1 {
+		t.Fatalf("revoked Owner received template export error: status=%d calls=%d body=%s", response.Code, service.exportCalls, response.Body.String())
+	}
+}
+
 func TestShowTemplateMaterializationSuppressesCommittedResultAfterLogout(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

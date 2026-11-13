@@ -108,6 +108,9 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/template-export", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			value, err := service.ExportProject(r.Context(), strings.TrimSpace(r.PathValue("project_id")))
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeShowTemplateError(w, err)
 				return
 			}
