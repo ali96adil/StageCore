@@ -780,6 +780,30 @@ func TestQualifiedFirmwareArtifactUploadRBACCSRFAndIntegrity(t *testing.T) {
 		handler.ServeHTTP(res, req)
 		return res
 	}
+	t.Run("revoked_owner_gets_no_hash_details_after_upload_validation_error", func(t *testing.T) {
+		revokedOwner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.9")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, contentType := makeUpload(strings.Repeat("0", 64), deviceupdate.QualificationQualified)
+		request := httptest.NewRequest(http.MethodPost, path, body)
+		request.RemoteAddr = "127.0.0.9:19901"
+		request.Header.Set("Content-Type", contentType)
+		request.Header.Set(csrfHeader, revokedOwner.CSRFToken)
+		request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: revokedOwner.Token})
+		request.Body = &firmwareUploadRevokeReader{ReadCloser: request.Body, revoke: func() {
+			if err := h.auth.Logout(ctx, revokedOwner.Token); err != nil {
+				t.Errorf("revoke Owner during firmware upload: %v", err)
+			}
+		}}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden ||
+			!strings.Contains(response.Body.String(), capability.DispatchAuthorityRevokedCode) ||
+			strings.Contains(response.Body.String(), "actual_sha256") {
+			t.Fatalf("revoked Owner received firmware validation details: HTTP %d %s", response.Code, response.Body.String())
+		}
+	})
 
 	missingCSRF := doUpload(owner.Token, "", expectedSHA, deviceupdate.QualificationQualified)
 	if missingCSRF.Code != http.StatusForbidden {
