@@ -178,7 +178,7 @@ func TestIsolatedSystemdUnitIsConstrainedAndNotEnabled(t *testing.T) {
 		"ExecStart=/opt/stagecore-rc-qualification/bin/stagecore-hub",
 		"EnvironmentFile=/etc/stagecore-rc-qualification/stagecore.env",
 		"PrivateDevices=yes", "DevicePolicy=closed", "PrivateNetwork=yes", "IPAddressDeny=any", "IPAddressAllow=localhost",
-		"RestrictAddressFamilies=AF_INET AF_INET6", "InaccessiblePaths=", "ProtectSystem=strict",
+		"RestrictAddressFamilies=AF_INET AF_INET6", "InaccessiblePaths=-/var/lib/stagecore -/var/backups/stagecore", "ProtectSystem=strict",
 		"ReadWritePaths=/var/lib/stagecore-rc-qualification/data /var/lib/stagecore-rc-qualification/vault",
 		"Restart=no", "UMask=0077",
 	} {
