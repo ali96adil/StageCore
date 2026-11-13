@@ -25,6 +25,7 @@ type fakeShowCapsuleService struct {
 	lastImportedBy            string
 	previewErr                error
 	onPreview                 func()
+	planErr                   error
 	onExport                  func()
 	afterExportAuthorize      func()
 	onPlan                    func()
@@ -66,7 +67,7 @@ func (f *fakeShowCapsuleService) PlanImport(_ context.Context, path string) (sho
 		f.onPlan()
 	}
 	f.lastPath = path
-	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, nil
+	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, f.planErr
 }
 
 func (f *fakeShowCapsuleService) Materialize(ctx context.Context, path string, options showcapsule.MaterializeOptions) (showcapsule.MaterializeResult, error) {
@@ -258,6 +259,37 @@ func TestShowCapsulePreviewSuppressesErrorsAfterSessionRevocation(t *testing.T) 
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
 		strings.Contains(response.Body.String(), "PROJECTS_UNAVAILABLE") || service.previewCalls != 1 {
 		t.Fatalf("revoked Owner received capsule preview error: status=%d calls=%d body=%s", response.Code, service.previewCalls, response.Body.String())
+	}
+}
+
+func TestShowCapsulePlanSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		planErr: errors.New("capsule readiness lookup failed"),
+		onPlan: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule plan: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/show-capsules/imports/"+capsuleID+"/plan", login.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
+		strings.Contains(response.Body.String(), "CAPSULE_VERIFICATION_FAILED") || service.planCalls != 1 {
+		t.Fatalf("revoked Owner received capsule plan error: status=%d calls=%d body=%s", response.Code, service.planCalls, response.Body.String())
 	}
 }
 

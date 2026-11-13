@@ -217,6 +217,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			}
 			plan, err := service.PlanImport(r.Context(), path)
 			if err != nil {
+				if !recheckRead(w, r, session) {
+					return
+				}
 				writeShowCapsuleError(w, err)
 				return
 			}
