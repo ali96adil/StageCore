@@ -409,3 +409,44 @@ grouped branch push. No SC-024 code has been installed on the Pi; its isolated
 systemd Update/Rollback qualification remains at the previously qualified
 HEAD. Project ACL activation remains blocked by the outstanding endpoint
 matrix, compatibility, and deployment-cutover work above.
+
+## SC-024 continuation · 2026-11-13 · read and committed-result fences
+
+Four additional response-boundary gaps were reproduced with red-first
+regressions and fixed on `integration/stagecore-rc`:
+
+- Extension readiness and runtime status now revalidate the exact live browser
+  session and current read permission immediately before delivery. Revoked
+  callers receive `403`, `Cache-Control: no-store`, and no installation or
+  assessment data.
+- Offline extension bundle import and trusted catalog sync revalidate the
+  exact Owner session, CSRF token, `PluginManage` permission and dispatch gate
+  after audit. A revoked caller receives only a non-retryable response that
+  reports the package import may already have committed.
+- Show Capsule export and materialization recheck session, role, CSRF and the
+  scoped Project grant after the service returns. A committed operation is
+  not undone; the response suppresses capsule/project details and marks the
+  effect uncertain and non-retryable.
+- Execution-environment capture rechecks committed mutation authority after
+  Vault publication and manifest update. Its regression confirms the object
+  and manifest stay committed when the Owner session ends before response
+  delivery; the response contains no object hash and forbids blind retry.
+
+The tests exercise temporary SQLite/Vault roots and fake Capsule services;
+no production Hub, live StageAudio, DMX, OSC, MIDI, Tablet or Laser endpoint is
+used. Focused `internal/httpapi` Race tests pass for the four groups. Their
+initial red runs observed HTTP 200/201 and disclosed results after the session
+was revoked. The grouped branch push and exact-HEAD CI are pending.
+
+The route registration digest and Migration 53 remain unchanged. Production
+Assembler still uses legacy authorization and its partial-activation source
+guard remains active. This batch closes response-delivery findings only; it
+does not establish complete endpoint-to-permission coverage or atomic ACL
+cutover. **SC-024 remains not software-qualified.** Next audit the complete
+route-to-policy matrix, remaining Companion/Vault ticket compatibility and
+async maintenance/device paths, then run isolated Production-like assembly
+and installed-copy migration/impact-preview/recovery tests. Hardware
+qualification and Production ACL activation remain separate pending steps.
+
+**Resume at:** `integration/stagecore-rc` after the grouped push for this
+batch; preserve Production ACL disabled and all stable service/data evidence.
