@@ -1235,9 +1235,8 @@ owner review.
 Latest pushed StageCore HEAD is `f648ed277afdebd8ce4825c88e9618665e70d800`
 on `integration/stagecore-rc`; Draft PR #534 remains open. Its exact-head
 Companion CI `43489543293` and Camera Relay CI `43489543145` passed. Core CI
-`43489543455` has Go 1.27 passed; Go 1.26 Test, Browser Cue Delivery and Vet
-passed, Race is running, and Linux ARM64 is pending. Do not push again until
-this run completes so the workflow is not cancelled.
+`43489543455` passed Go 1.26/1.27, Browser Cue Delivery, Vet, Race, and Linux
+ARM64. All three workflows passed on the pushed base.
 
 The prior five-commit push and four follow-up commits are covered by exact-head
 Core, Companion and Camera Relay checks. Three newer code commits are local:
@@ -1255,17 +1254,23 @@ Camera viewer Race tests passed (`7.610s`), Cue authoring and reorder focused
 Race tests passed (`6.162s`), and `go vet ./internal/httpapi` plus
 `git diff --check` passed. The local code HEAD before this resume checkpoint is
 `5ed785c42d346dc3fdd90e531144c04b4ec4b9e0`; it is three commits ahead of the
-pushed head. The checkpoint and related-component matrix are the next local
-documentation commit. After CI on `f648ed2` completes successfully, push this
-four-commit group normally and require full exact-head CI before Pi use.
+pushed head. The checkpoint and matrix are committed in `98db49e`; this resume
+note adds the read-only sudo rule-source observation. The five local commits
+after `f648ed2` are ready for normal push; require full exact-head CI before
+Pi use.
 
 Read-only Pi check: `stagecore-hub.service` and `stagecore-camera-relay.service`
 are active; `stagecore-rc-qualification.service` is inactive. `sudo -n -l`
-shows password-required unrestricted sudo plus passwordless direct
-`stagecore-hub` start/stop/restart and qualification-helper commands including
-`service-stop` and `physical-command`. No sudoers rule or service was changed;
-the root-owned policy files and external callers still need owner review before
-any restriction that could affect stable operations.
+shows password-required unrestricted sudo plus passwordless fixed RC
+qualification, direct `stagecore-hub` start/stop/restart, and helper commands
+including `service-stop` and `physical-command`. No sudoers rule or service
+was changed;
+the directory lists `90-stagecore-codex`, `stagecore-hub`, and
+`stagecore-qualification` as root-owned mode-0440 files, but their contents
+remain unreadable without interactive sudo. The dedicated RC wrapper is not a
+production service dependency. Source-to-rule attribution and external caller
+usage still need owner review before restricting production service recovery
+or physical-command authority.
 
 Keep the Production Assembler, Migration 53 and ACL source guard unchanged;
 Production ACL remains disabled. **SC-024 is not software-qualified.** Full
