@@ -376,3 +376,36 @@ published Snapshot untouched, and automatic rollback restores SQLite
 integrity, Snapshot identity/hash and the exact baseline grants. The focused
 Race run passed. The installer and service manager remain mocked in this
 test, so it does not qualify a real Linux service restart or Hub health check.
+
+## SC-024 continuation · 2026-11-13 · runtime response fences
+
+Three asynchronous result-delivery regressions were reproduced and fixed
+with fake outputs only:
+
+- USB-DMX manual output now rechecks the exact Owner session and current
+  output gates after finishing its command record and before returning a
+  result. If the Owner session ends after the final zero frame, the response
+  suppresses the output result, reports that output may already have been
+  sent, and prohibits retry. `TestUSBManualRouteDoesNotReturnSuccessAfterOwnerRevocation`
+  first observed HTTP 200 after logout and now passes.
+- Qualified Runtime GO and JUMP now recheck the exact active Session intent
+  after cue processing. Revoking `rehearsal.control` while retaining
+  `project.view` no longer returns the accepted cue execution result;
+  `TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation` observed the
+  old HTTP 200 result and now verifies the committed-effect/non-retryable
+  denial. Project ACL remains qualification-only and is not enabled in the
+  production assembler.
+- Project and Session Emergency Blackout routes now recheck the browser
+  mutation authority before returning the safety result. The regression
+  `TestEmergencyBlackoutSuppressesResultAfterOwnerRevocation` confirms that a
+  latched blackout remains engaged while the revoked caller receives no result
+  record and must not retry. The clear-path revocation regression now checks
+  the same non-retryable committed-effect response and confirms that the GO
+  latch remains set.
+
+The three focused regressions and their adjacent Runtime/USB-DMX tests pass
+locally. Full Core/Companion/Camera Relay CI for these commits is pending the
+grouped branch push. No SC-024 code has been installed on the Pi; its isolated
+systemd Update/Rollback qualification remains at the previously qualified
+HEAD. Project ACL activation remains blocked by the outstanding endpoint
+matrix, compatibility, and deployment-cutover work above.
