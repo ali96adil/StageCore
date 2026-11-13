@@ -518,9 +518,25 @@ Follow-up local regressions extend this qualification evidence:
   migrates a fixture containing an active version-53 capture ticket through
   Migration 54, then proves its empty legacy issuer defaults, authorization,
   and completion are preserved. It passes under Race.
+- Rehearsal start previously returned HTTP 201 with an active Session ID when
+  `rehearsal.control` was removed by a SQLite trigger at the session commit,
+  while `project.view` remained. The route now revalidates the exact browser
+  session, CSRF, role, route scope and the mode-specific grant before delivery.
+  If the start committed, a revoked caller receives no Session or command
+  result, with both committed-effect field spellings and `retryable: false`;
+  the active rehearsal remains recorded because the Hub must not pretend it
+  was rolled back. `TestRehearsalStartSuppressesResultAfterGrantRevocationAtCommit`
+  fails against the old 201 behavior and passes under Race. The fixture starts
+  only an in-process REHEARSAL and sends no device command.
 
-**Resume at:** local `integration/stagecore-rc` HEAD `ef4f003` (two commits
+The new runtime-start regression is local on top of the two earlier tests;
+local HEAD is `773557b`, four commits ahead of remote `9a8368123f92b8911783d30d49ea04a8144c0f43`.
+The exact pushed-HEAD Core workflow is still in Race with ARM64 pending; do not
+push another commit group until that run finishes, because the workflow's PR
+concurrency setting cancels its in-progress predecessor on the next push.
+
+**Resume at:** local `integration/stagecore-rc` HEAD `773557b` (four commits
 ahead of remote `9a8368123f92b8911783d30d49ea04a8144c0f43`). Check the exact
 pushed-HEAD CI, finish the remaining endpoint and installed-copy software
-audit, add 1–3 related small commits, then push the group to PR #534. Keep
+audit, add one related small commit, then push the group to PR #534. Keep
 Production ACL disabled.
