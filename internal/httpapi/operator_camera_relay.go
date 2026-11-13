@@ -158,10 +158,15 @@ func (v *ProjectCameraViewer) stream(w http.ResponseWriter, r *http.Request, che
 			jpeg[len(jpeg)-2] != 0xff || jpeg[len(jpeg)-1] != 0xd9 || ctx.Err() != nil {
 			return
 		}
-		if firstFrame {
-			if !writeProjectQualificationError(w, check(ctx)) || ctx.Err() != nil {
-				return
+		accessErr := check(ctx)
+		if accessErr != nil || ctx.Err() != nil {
+			if firstFrame && accessErr != nil {
+				writeProjectQualificationError(w, accessErr)
 			}
+			cancel()
+			return
+		}
+		if firstFrame {
 			w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+output.Boundary())
 			firstFrame = false
 		}

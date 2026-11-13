@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -185,5 +188,98 @@ func TestProjectCameraViewerRechecksBeforeFirstFrame(t *testing.T) {
 		strings.HasPrefix(resp.Header.Get("Content-Type"), "multipart/") {
 		t.Fatalf("revoked viewer got status %d, content type %q, %d bytes, err=%v",
 			resp.StatusCode, resp.Header.Get("Content-Type"), len(body), err)
+	}
+}
+
+func TestProjectCameraViewerDoesNotDeliverFrameAfterAccessRevocation(t *testing.T) {
+	firstFrameSent := make(chan struct{})
+	releaseSecondFrame := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseSecondFrame) }) }
+	defer release()
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=relay")
+		fmt.Fprint(w, "--relay\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xff\xd8\xff\xd9\r\n")
+		fmt.Fprint(w, "--relay\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n")
+		w.(http.Flusher).Flush()
+		close(firstFrameSent)
+		<-releaseSecondFrame
+		fmt.Fprint(w, "\xff\xd8\xff\xd9\r\n--relay--\r\n")
+		w.(http.Flusher).Flush()
+	}))
+	defer relay.Close()
+	tokenFile := filepath.Join(t.TempDir(), "viewer.token")
+	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("v", 32)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := NewProjectCameraViewer("project", strings.TrimPrefix(relay.URL, "http://"), tokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authorized atomic.Bool
+	authorized.Store(true)
+	var firstFrameRead atomic.Bool
+	var checks atomic.Int32
+	afterFirstFrameCheck := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		viewer.stream(w, r, func(context.Context) error {
+			checks.Add(1)
+			if !authorized.Load() {
+				return projectaccess.ErrDenied
+			}
+			if firstFrameRead.Load() {
+				select {
+				case afterFirstFrameCheck <- struct{}{}:
+				default:
+				}
+			}
+			return nil
+		})
+	}))
+	defer server.Close()
+	defer release()
+	client := server.Client()
+	client.Timeout = 5 * time.Second
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status=%d", resp.StatusCode)
+	}
+	_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || params["boundary"] == "" {
+		t.Fatalf("stream content type=%q parse error=%v", resp.Header.Get("Content-Type"), err)
+	}
+	frames := multipart.NewReader(resp.Body, params["boundary"])
+	first, err := frames.NextPart()
+	if err != nil {
+		t.Fatalf("read first frame: %v", err)
+	}
+	firstBytes := make([]byte, 4)
+	_, err = io.ReadFull(first, firstBytes)
+	if err != nil || firstBytes[0] != 0xff {
+		t.Fatalf("first frame bytes=%v error=%v", firstBytes, err)
+	}
+	firstFrameRead.Store(true)
+	select {
+	case <-firstFrameSent:
+	case <-time.After(time.Second):
+		t.Fatal("relay did not send its first frame")
+	}
+	select {
+	case <-afterFirstFrameCheck:
+	case <-time.After(2 * time.Second):
+		t.Fatal("viewer did not perform its periodic access check")
+	}
+	authorized.Store(false)
+	release()
+	second, err := frames.NextPart()
+	if err == nil {
+		secondBytes, _ := io.ReadAll(second)
+		if len(secondBytes) != 0 {
+			t.Fatalf("camera frame was delivered after access revocation: %v (checks=%d)", secondBytes, checks.Load())
+		}
 	}
 }
