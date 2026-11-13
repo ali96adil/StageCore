@@ -12,9 +12,66 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func TestStageLaserCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "stagelaser-cue-acl"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: stagelaser.ProfileID,
+		DisplayName: "Scoped laser", Platform: "esp32", Architecture: "riscv32",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: stagelaser.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=?, runtime_snapshot_id='acl-snapshot', assignment_epoch=2,
+		    assignment_state='ACTIVE', updated_at_us=updated_at_us+1
+		WHERE device_id=? AND assignment_state='UNASSIGNED'
+	`, f.projectID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorStageLaserController(f.h.auth, devices, f.projects, stageLaserControllerHooks{
+			BeforeCueAliasCreate: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke CueEdit before alias creation: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+f.projectID+"/stagelaser-controller/cue-actions",
+		[]byte(`{"device_id":"`+deviceID+`","command_type":"LASER_SET_ON"}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatalf("revoked Operator received StageLaser cue action: %s", response.Body.String())
+	}
+	aliases, err := f.projects.ListAliases(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("StageLaser target alias committed after CueEdit revocation: %+v", aliases)
+	}
+}
 
 func TestOperatorStageLaserCueActionTranslatorBuildsCanonicalDesiredState(t *testing.T) {
 	h := newAuthHarness(t)

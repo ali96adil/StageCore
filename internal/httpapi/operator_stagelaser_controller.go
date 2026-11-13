@@ -9,6 +9,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -34,10 +35,23 @@ type stageLaserCueActionDescriptor struct {
 	TimeoutPolicy json.RawMessage `json:"timeout_policy"`
 }
 
+type stageLaserControllerHooks struct {
+	BeforeCueAliasCreate func()
+}
+
 func WithOperatorStageLaserController(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
 	stageStore *store.Store,
+) Option {
+	return withOperatorStageLaserController(auth, devices, stageStore, stageLaserControllerHooks{})
+}
+
+func withOperatorStageLaserController(
+	auth *userauth.Service,
+	devices *deviceexperience.Repository,
+	stageStore *store.Store,
+	hooks stageLaserControllerHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || stageStore == nil {
@@ -67,8 +81,10 @@ func WithOperatorStageLaserController(
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))
 
-		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stagelaser-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/stagelaser-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			writeRequest := r.WithContext(writeCtx)
 			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
 				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
 				return
@@ -109,8 +125,11 @@ func WithOperatorStageLaserController(
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGELASER_TARGETS_UNAVAILABLE"})
 				return
 			}
-			targetRef, err := ensureStageLaserTargetAlias(r, stageStore, aliases, projectID, device)
+			targetRef, err := ensureStageLaserTargetAlias(writeRequest, stageStore, aliases, projectID, device, hooks.BeforeCueAliasCreate)
 			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_TARGET_FAILED", "detail": err.Error()})
 				return
 			}
@@ -123,6 +142,9 @@ func WithOperatorStageLaserController(
 				Priority: defaultStageLaserPriority(input.Priority, input.CommandType),
 				Parameters: parameters,
 				TimeoutPolicy: json.RawMessage(`{}`),
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"actions": []stageLaserCueActionDescriptor{action}})
 		}))
@@ -170,6 +192,7 @@ func ensureStageLaserTargetAlias(
 	aliases []domain.ProjectDeviceAlias,
 	projectID string,
 	device deviceexperience.Device,
+	beforeCreate func(),
 ) (string, error) {
 	for _, alias := range aliases {
 		if alias.LogicalType != devicechannel.StageDeviceLogicalType {
@@ -188,6 +211,9 @@ func ensureStageLaserTargetAlias(
 	config, err := json.Marshal(map[string]string{"device_id": device.ID})
 	if err != nil {
 		return "", err
+	}
+	if beforeCreate != nil {
+		beforeCreate()
 	}
 	created, err := stageStore.CreateAlias(r.Context(), domain.ProjectDeviceAlias{
 		ProjectID: projectID,
