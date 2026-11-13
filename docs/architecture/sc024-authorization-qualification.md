@@ -594,3 +594,47 @@ ahead of remote `78cb30c06f031ebff86a8e21f5fd45e54659497b` after this batch.
 Wait for exact-HEAD CI on the remote base before the grouped push. Continue the
 endpoint-level async delivery audit and isolated assembly qualification; keep
 Project ACL disabled.
+
+## SC-024 continuation · 2026-11-13 · simulation and editor response fences
+
+Three additional result-delivery gaps were reproduced with local regressions
+and fixed on the existing integration branch:
+
+- Every Simulation mutation (start, GO, STOP, start confirmation, checkpoint
+  capture/restore, fault configuration/clear, target state and twin reset) now
+  rechecks the active browser session and `rehearsal.control` before returning
+  a success or service error. Status-derived errors and “no active simulation”
+  responses also recheck the live project grant. The new start regression first
+  observed HTTP 201 with the committed Session and command result after grant
+  withdrawal; it now returns only a forbidden, non-retryable response that
+  truthfully says the Session may have committed.
+- Simulation input injection and Timing Intelligence mutations recheck live
+  authority before delivering execution/selection results. Red-first tests
+  revoked the Owner session after a simulated input completed and after timing
+  selection returned; both old responses exposed committed results. Simulation
+  injection still uses the simulation-safe executor and the physical probe
+  remains at zero calls.
+- Cue Action Preset create/delete responses and built-in/imported Show Template
+  materialization responses now fence the exact session after the service
+  returns. The preset and materialization regressions observed leaked records
+  before the fix. Committed operations remain committed when the caller loses
+  authority; callers receive no record and must inspect current state before
+  retrying. Existing Cue Editor tests still preserve not-found behavior when a
+  project grant is revoked before the write transaction commits.
+
+Focused regressions passed normally and under Race. The complete
+`internal/httpapi` package passed normally after the Simulation change; the
+focused Simulation, input, Timing Intelligence, Cue Editor/Preset and Template
+Race suites passed. The exact pushed base `a7b57d85aa5fa627fcae49752afc9cb1d050b21d`
+has Companion Core and Camera Relay CI green. Core Go 1.27 is green; Core Go
+1.26 Race is still running and ARM64 remains queued. These local commits are
+not yet on the remote and have not been installed on the Pi.
+
+Production Assembler, Migration 53, stable services/data and Project ACL
+activation are unchanged. This response-fencing batch does not close the
+complete endpoint-to-policy audit, legacy Companion compatibility, or the
+installed-copy Production-like migration/update/impact-preview/recovery
+qualification. **SC-024 remains not software-qualified.** Hardware qualification
+and Production Activation remain separate.
+
+**Resume at:** wait for exact-head Core CI on remote `a7b57d85aa5fa627fcae49752afc9cb1d050b21d`; then run the final focused/source-guard checks and push the tested local commit group to PR #534 without force. Continue route-to-policy reconciliation; keep Production ACL disabled.
