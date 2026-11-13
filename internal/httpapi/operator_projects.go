@@ -169,19 +169,29 @@ func recheckCommittedProjectMutation(w http.ResponseWriter, r *http.Request, aut
 	if err == nil {
 		return true
 	}
+	writeCommittedProjectMutationDenied(w, err)
+	return false
+}
+
+func writeCommittedProjectMutationDenied(w http.ResponseWriter, err error) bool {
 	status := http.StatusForbidden
 	errorCode := "FORBIDDEN"
 	if !errors.Is(err, userauth.ErrForbidden) && !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
 		status = http.StatusServiceUnavailable
 		errorCode = "PROJECT_ACCESS_UNAVAILABLE"
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, status, map[string]any{
 		"error_code":                     errorCode,
 		"effect_may_be_committed":        true,
 		"effect_may_have_been_committed": true,
 		"retryable":                      false,
 	})
-	return false
+	return true
+}
+
+func projectMutationAccessDenied(err error) bool {
+	return errors.Is(err, userauth.ErrForbidden) || errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound)
 }
 
 func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {

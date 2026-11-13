@@ -93,6 +93,74 @@ func TestLightingConfigurationDoesNotCommitAfterProjectGrantRevocation(t *testin
 	}
 }
 
+func TestLightingConfigurationReportsDraftForkAfterGrantRevocationBeforeBindingWrite(t *testing.T) {
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			f := setupLightingConfigurationACLFixture(t)
+			ctx := context.Background()
+			project, err := f.access.projects.GetProject(ctx, f.access.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prior := f.config
+			prior.Channels = append([]lightingnode.ChannelConfig(nil), f.config.Channels...)
+			prior.Channels[0].MaximumLevel = 40
+			if _, err := f.access.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+				DeviceID: f.deviceID, ProfileID: lightingnode.ProfileID, Configuration: prior,
+				Aliases: map[string]string{"front_warm": "warm_a"},
+			}, f.access.owner.Session.User.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.access.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+				t.Fatal(err)
+			}
+			option := Option(func(server *Server) {
+				registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+					BeforeBindingWrite: func() {
+						if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+							t.Errorf("revoke DeviceConfigure before binding write: %v", err)
+						}
+					},
+				})
+			})
+			handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+			path := "/api/v1/projects/" + f.access.projectID + "/lighting-controller/configuration/" + f.deviceID
+			var body []byte
+			if method == http.MethodPut {
+				body = f.body
+			} else {
+				path += "?confirm=true"
+			}
+			request := authenticatedMutationRequest(t, method, path, body, f.access.operator.Token, f.access.operator.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusForbidden || payload["effect_may_be_committed"] != true ||
+				payload["effect_may_have_been_committed"] != true || payload["retryable"] != false ||
+				payload["revision"] != nil || payload["binding"] != nil {
+				t.Fatalf("revoked request hid its partial draft effect incorrectly: status=%d body=%s", response.Code, response.Body.String())
+			}
+			current, err := f.access.projects.GetProject(ctx, f.access.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.CurrentRevisionID == project.CurrentRevisionID {
+				t.Fatal("EnsureProjectDraft committed no successor before the tested binding write")
+			}
+			bindings, err := f.access.projects.ListLightingNodeBindings(ctx, current.CurrentRevisionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(bindings) != 1 || bindings[0].Configuration.Channels[0].MaximumLevel != 40 {
+				t.Fatalf("revoked binding mutation unexpectedly committed or lost source state: %+v", bindings)
+			}
+		})
+	}
+}
+
 func TestLightingConfigurationSuppressesCommittedResultAfterGrantRevocation(t *testing.T) {
 	f := setupLightingConfigurationACLFixture(t)
 	ctx := context.Background()
