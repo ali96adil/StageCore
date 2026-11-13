@@ -61,6 +61,9 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 	if !serviceIdentityPattern.MatchString(opts.ServiceUser) || !serviceIdentityPattern.MatchString(opts.ServiceGroup) {
 		return fmt.Errorf("isolated service user and group must be simple system account names")
 	}
+	if opts.ServiceUser == "root" || opts.ServiceGroup == "root" {
+		return fmt.Errorf("isolated service must not run as root")
+	}
 	paths := map[string]string{
 		"bundle":        opts.BundleDir,
 		"install":       opts.InstallRoot,
@@ -103,6 +106,9 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 				return fmt.Errorf("isolated %s and %s paths must not overlap", managed[i].name, managed[j].name)
 			}
 		}
+		if pathOverlaps(managed[i].path, opts.SystemdUnit) {
+			return fmt.Errorf("isolated %s path must not overlap its systemd unit", managed[i].name)
+		}
 	}
 	for _, productionRoot := range []string{
 		DefaultInstallRoot,
@@ -115,12 +121,77 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 				return fmt.Errorf("isolated %s path overlaps protected production root %s", label, productionRoot)
 			}
 		}
+		if pathOverlaps(opts.SystemdUnit, productionRoot) {
+			return fmt.Errorf("isolated systemd unit overlaps protected production root %s", productionRoot)
+		}
 	}
 	if pathOverlaps(opts.SystemdUnit, DefaultUnitPath) {
 		return fmt.Errorf("isolated systemd unit path overlaps the production unit")
 	}
 	if pathOverlaps(opts.BundleDir, filepath.Join(opts.InstallRoot, "bin")) {
 		return fmt.Errorf("isolated release bundle must be outside the managed bin directory")
+	}
+	return nil
+}
+
+// ValidateIsolatedRuntimePaths validates roots used by Doctor and runtime
+// update paths when the bundle source is not part of the operation.
+func ValidateIsolatedRuntimePaths(opts Options) error {
+	if !IsolatedService(opts) {
+		return nil
+	}
+	name, err := SystemdServiceName(opts.SystemdUnit)
+	if err != nil {
+		return err
+	}
+	if name != opts.ServiceName || opts.SystemdUnit == DefaultUnitPath || pathOverlaps(opts.SystemdUnit, DefaultUnitPath) {
+		return fmt.Errorf("isolated systemd target must have a unique non-production service identity")
+	}
+	if err := validateIsolatedListenOptions(opts); err != nil {
+		return err
+	}
+	paths := map[string]string{
+		"install": opts.InstallRoot, "configuration": opts.ConfigRoot,
+		"data": opts.DataRoot, "vault": opts.VaultRoot,
+	}
+	for label, path := range paths {
+		if !filepath.IsAbs(path) || hasParentPathComponent(path) || !isolatedPathPattern.MatchString(path) {
+			return fmt.Errorf("isolated %s path is not safe", label)
+		}
+		if err := rejectSymlinkPath(path); err != nil {
+			return fmt.Errorf("isolated %s path: %w", label, err)
+		}
+	}
+	if !filepath.IsAbs(opts.SystemdUnit) || hasParentPathComponent(opts.SystemdUnit) || !isolatedPathPattern.MatchString(opts.SystemdUnit) {
+		return fmt.Errorf("isolated systemd unit path is not safe")
+	}
+	if err := rejectSymlinkPath(opts.SystemdUnit); err != nil {
+		return fmt.Errorf("isolated systemd unit path: %w", err)
+	}
+	type namedRoot struct{ name, path string }
+	roots := make([]namedRoot, 0, len(paths))
+	for name, path := range paths {
+		roots = append(roots, namedRoot{name: name, path: path})
+	}
+	for i := range roots {
+		for j := i + 1; j < len(roots); j++ {
+			if pathOverlaps(roots[i].path, roots[j].path) {
+				return fmt.Errorf("isolated %s and %s paths must not overlap", roots[i].name, roots[j].name)
+			}
+		}
+		if pathOverlaps(roots[i].path, opts.SystemdUnit) {
+			return fmt.Errorf("isolated %s path must not overlap its systemd unit", roots[i].name)
+		}
+	}
+	for _, productionRoot := range []string{DefaultInstallRoot, DefaultConfigRoot, "/var/lib/stagecore", "/var/backups/stagecore"} {
+		for label, path := range paths {
+			if pathOverlaps(path, productionRoot) {
+				return fmt.Errorf("isolated %s path overlaps protected production root %s", label, productionRoot)
+			}
+		}
+		if pathOverlaps(opts.SystemdUnit, productionRoot) {
+			return fmt.Errorf("isolated systemd unit overlaps protected production root %s", productionRoot)
+		}
 	}
 	return nil
 }
@@ -132,7 +203,7 @@ func ValidateIsolatedUpdatePaths(opts Options, backupRoot string) error {
 	if err := ValidateIsolatedInstallPaths(opts); err != nil {
 		return err
 	}
-	if !filepath.IsAbs(backupRoot) || hasParentPathComponent(backupRoot) {
+	if !filepath.IsAbs(backupRoot) || hasParentPathComponent(backupRoot) || !isolatedPathPattern.MatchString(backupRoot) {
 		return fmt.Errorf("isolated rollback root must be absolute and contain no parent traversal")
 	}
 	if err := rejectSymlinkPath(backupRoot); err != nil {

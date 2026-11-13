@@ -40,6 +40,7 @@ func runDoctor(args []string) int {
 	installRoot := fs.String("install-root", defaults.InstallRoot, "StageCore installation root")
 	configRoot := fs.String("config-root", defaults.ConfigRoot, "StageCore deployment configuration root")
 	unitPath := fs.String("systemd-unit", defaults.SystemdUnit, "stagecore-hub systemd unit path")
+	serviceName := fs.String("service-name", "", "explicit systemd service name (must match --systemd-unit)")
 	httpTimeout := fs.Duration("http-timeout", defaults.HTTPTimeout, "timeout for each local Hub health request")
 	localeDefault := strings.TrimSpace(os.Getenv("STAGECORE_LOCALE"))
 	if localeDefault == "" {
@@ -74,6 +75,7 @@ func runDoctor(args []string) int {
 		InstallRoot: strings.TrimSpace(*installRoot),
 		ConfigRoot:  strings.TrimSpace(*configRoot),
 		SystemdUnit: strings.TrimSpace(*unitPath),
+		ServiceName: strings.TrimSpace(*serviceName),
 		HTTPTimeout: *httpTimeout,
 	})
 	if *jsonOutput {
