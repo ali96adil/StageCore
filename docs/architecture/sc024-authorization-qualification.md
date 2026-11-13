@@ -540,3 +540,37 @@ ahead of remote `9a8368123f92b8911783d30d49ea04a8144c0f43`). Check the exact
 pushed-HEAD CI, finish the remaining endpoint and installed-copy software
 audit, add one related small commit, then push the group to PR #534. Keep
 Production ACL disabled.
+
+## SC-024 continuation · 2026-11-13 · STOP response fences
+
+An Owner session revocation during the SHOW stop-safety boundary previously
+returned the runtime's rejected command result directly. A mocked safety hook
+can stand in for a STOP that may already have reached an external output, so
+the response must not invite a blind retry. The red-first regression
+`TestShowExitSuppressesResultAfterSessionRevocationDuringSafety` reproduced
+that response and now verifies the browser result is suppressed, the response
+is non-retryable with `effect_may_be_committed: true`, and the SHOW remains
+active because authorization ended before the lifecycle transaction commit.
+
+The same final live-authority fence is now applied after normal Session STOP,
+forced Session STOP, and Cue STOP. The grant-revoked Operator regression
+`TestShowExitRechecksGrantAfterStopSafety` now checks the committed-effect
+contract. Mocked outputs and temporary SQLite are used; no physical output is
+sent. Focused Runtime/GO/JUMP/STOP/Blackout Race tests and the full
+`internal/httpapi` package pass locally. Core, Companion, and Camera Relay CI
+for pushed HEAD `78cb30c06f031ebff86a8e21f5fd45e54659497b` is in progress;
+do not push the local STOP fence before those runs complete. The previous
+five-commit group is on the remote branch. Local code HEAD is
+`9c45ffdf2d5eda6b7b0ffaa4c413f1b736fbd9c1`.
+
+This closes the reviewed STOP response-delivery boundary only. The overall
+route-to-policy audit and disposable Production-like installed-copy
+migration/update/rollback assembly remain open. Production Assembler,
+Migration 53, stable services and Project ACL activation are unchanged.
+**SC-024 remains not software-qualified.**
+
+**Resume at:** `integration/stagecore-rc` local HEAD
+`9c45ffdf2d5eda6b7b0ffaa4c413f1b736fbd9c1`, one local commit ahead of remote
+`78cb30c06f031ebff86a8e21f5fd45e54659497b`. Wait for exact-HEAD CI, then
+continue the endpoint-level async delivery audit and isolated assembly
+qualification; keep Project ACL disabled.
