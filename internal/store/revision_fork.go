@@ -18,49 +18,55 @@ import (
 // Snapshot), it creates a complete editable successor revision while leaving
 // the validated source and all Runtime Snapshots immutable.
 func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, changeNote string) (domain.ProjectRevision, error) {
+	revision, _, err := s.EnsureProjectDraftWithStatus(ctx, projectID, createdBy, changeNote)
+	return revision, err
+}
+
+// EnsureProjectDraftWithStatus also reports whether this call committed a new successor revision.
+func (s *Store) EnsureProjectDraftWithStatus(ctx context.Context, projectID, createdBy, changeNote string) (domain.ProjectRevision, bool, error) {
 	if err := s.RequireProjectConfigurationMutable(ctx, projectID); err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	project, err := s.GetProject(ctx, projectID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	source, err := s.GetRevision(ctx, project.CurrentRevisionID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	if source.Status == domain.RevisionDraft {
-		return source, nil
+		return source, false, nil
 	}
 	if source.Status != domain.RevisionValidated {
-		return domain.ProjectRevision{}, fmt.Errorf("%w: current revision cannot be forked from %s", domain.ErrConflict, source.Status)
+		return domain.ProjectRevision{}, false, fmt.Errorf("%w: current revision cannot be forked from %s", domain.ErrConflict, source.Status)
 	}
 
 	cues, err := s.ListCues(ctx, source.ID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	inputs, err := s.ListInputs(ctx, source.ID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	outputs, err := s.ListOutputs(ctx, source.ID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	routes, err := s.ListRoutes(ctx, source.ID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	executionEnvironments, err := s.ListExecutionEnvironmentManifests(ctx, source.ID)
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	executionEnvironmentSnapshots := make(map[string][]ExecutionEnvironmentSnapshot, len(executionEnvironments))
 	for _, environment := range executionEnvironments {
 		snapshots, err := s.ListExecutionEnvironmentSnapshots(ctx, environment.ID)
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		executionEnvironmentSnapshots[environment.ID] = snapshots
 	}
@@ -72,7 +78,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			if err == domain.ErrNotFound {
 				continue
 			}
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		copy := plan
 		executionEnvironmentRebuildPlans[environment.ID] = &copy
@@ -80,47 +86,47 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 
 	newRevisionID, err := stageid.New()
 	if err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	now := s.clock.Now().UTC()
 	nowUS := clock.UnixMicros(now)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.ProjectRevision{}, fmt.Errorf("begin draft fork: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("begin draft fork: %w", err)
 	}
 	defer tx.Rollback()
 
 	var currentRevisionID string
 	if err := tx.QueryRowContext(ctx, `SELECT current_revision_id FROM projects WHERE project_id = ?`, projectID).Scan(&currentRevisionID); err != nil {
 		if err == sql.ErrNoRows {
-			return domain.ProjectRevision{}, domain.ErrNotFound
+			return domain.ProjectRevision{}, false, domain.ErrNotFound
 		}
-		return domain.ProjectRevision{}, fmt.Errorf("recheck project revision: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("recheck project revision: %w", err)
 	}
 	if currentRevisionID != source.ID {
-		return domain.ProjectRevision{}, domain.ErrConflict
+		return domain.ProjectRevision{}, false, domain.ErrConflict
 	}
 	var nextNumber int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_number), 0) + 1 FROM project_revisions WHERE project_id = ?`, projectID).Scan(&nextNumber); err != nil {
-		return domain.ProjectRevision{}, fmt.Errorf("next revision number: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("next revision number: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO project_revisions
 		(revision_id, project_id, revision_number, status, parent_revision_id, created_at_us, created_by, change_note)
 		VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?)
 	`, newRevisionID, projectID, nextNumber, source.ID, nowUS, createdBy, changeNote); err != nil {
-		return domain.ProjectRevision{}, fmt.Errorf("insert draft successor: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("insert draft successor: %w", err)
 	}
 
 	for _, environment := range executionEnvironments {
 		newEnvironmentID, err := stageid.New()
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		canonical, err := executionenv.CanonicalBytes(environment.Manifest)
 		if err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment canonical manifest: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone execution environment canonical manifest: %w", err)
 		}
 		var machineRoleID any
 		if environment.MachineRoleID != nil {
@@ -135,18 +141,18 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			environment.Manifest.AdapterKey, environment.Manifest.Application.Key,
 			string(canonical), environment.ContentSHA256, createdBy, nowUS, machineRoleID,
 		); err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone execution environment: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone execution environment: %w", err)
 		}
 		snapshotIDMap := make(map[string]string, len(executionEnvironmentSnapshots[environment.ID]))
 		for _, environmentSnapshot := range executionEnvironmentSnapshots[environment.ID] {
 			newEnvironmentSnapshotID, err := stageid.New()
 			if err != nil {
-				return domain.ProjectRevision{}, err
+				return domain.ProjectRevision{}, false, err
 			}
 			snapshotIDMap[environmentSnapshot.ID] = newEnvironmentSnapshotID
 			snapshotCanonical, err := executionenv.SnapshotCanonicalBytes(environmentSnapshot.Snapshot)
 			if err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot canonical data: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone execution environment snapshot canonical data: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO execution_environment_snapshots (
@@ -157,14 +163,14 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 				environmentSnapshot.Snapshot.SourceManifestSHA256, string(snapshotCanonical),
 				environmentSnapshot.ContentSHA256, createdBy, nowUS,
 			); err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone execution environment snapshot: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone execution environment snapshot: %w", err)
 			}
 		}
 
 		if sourcePlan := executionEnvironmentRebuildPlans[environment.ID]; sourcePlan != nil {
 			newSourceSnapshotID, ok := snapshotIDMap[sourcePlan.SourceSnapshotID]
 			if !ok {
-				return domain.ProjectRevision{}, fmt.Errorf("%w: assisted rebuild plan source snapshot missing during draft fork", domain.ErrConflict)
+				return domain.ProjectRevision{}, false, fmt.Errorf("%w: assisted rebuild plan source snapshot missing during draft fork", domain.ErrConflict)
 			}
 			var matchedSnapshot *ExecutionEnvironmentSnapshot
 			for i := range executionEnvironmentSnapshots[environment.ID] {
@@ -174,15 +180,15 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 				}
 			}
 			if matchedSnapshot == nil {
-				return domain.ProjectRevision{}, fmt.Errorf("%w: assisted rebuild plan source snapshot unavailable during draft fork", domain.ErrConflict)
+				return domain.ProjectRevision{}, false, fmt.Errorf("%w: assisted rebuild plan source snapshot unavailable during draft fork", domain.ErrConflict)
 			}
 			planCanonical, err := executionenv.AssistedRebuildPlanCanonicalBytes(sourcePlan.Plan, matchedSnapshot.Snapshot)
 			if err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone assisted rebuild plan canonical data: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone assisted rebuild plan canonical data: %w", err)
 			}
 			newPlanID, err := stageid.New()
 			if err != nil {
-				return domain.ProjectRevision{}, err
+				return domain.ProjectRevision{}, false, err
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO execution_environment_rebuild_plans (
@@ -194,7 +200,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 				sourcePlan.Plan.SourceSnapshotSHA256, string(planCanonical), sourcePlan.ContentSHA256,
 				createdBy, nowUS, createdBy, nowUS,
 			); err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone assisted rebuild plan: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone assisted rebuild plan: %w", err)
 			}
 		}
 	}
@@ -203,7 +209,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	for _, cue := range cues {
 		newCueID, err := stageid.New()
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		cueIDs[cue.ID] = newCueID
 	}
@@ -211,7 +217,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		newCueID := cueIDs[cue.ID]
 		policy, err := remapForkedCueExecutionPolicy(cue.ExecutionPolicy, cueIDs)
 		if err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone cue execution policy: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone cue execution policy: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO cues
@@ -219,12 +225,12 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, newCueID, newRevisionID, cue.DisplayLabel, cue.Name, cue.OrderIndex, cue.CueType,
 			cue.Criticality, boolInt(cue.Enabled), string(policy), cue.NotesSummary); err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone cue: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone cue: %w", err)
 		}
 		for _, action := range cue.Actions {
 			newActionID, err := stageid.New()
 			if err != nil {
-				return domain.ProjectRevision{}, err
+				return domain.ProjectRevision{}, false, err
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO actions
@@ -234,7 +240,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			`, newActionID, newCueID, action.OrderIndex, action.ExecutionMode, action.TargetRef,
 				action.CapabilityKey, string(action.Parameters), string(action.TimeoutPolicy),
 				string(action.ErrorPolicy), action.PriorityClass, boolInt(action.Enabled)); err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone action: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone action: %w", err)
 			}
 		}
 	}
@@ -243,7 +249,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	for _, input := range inputs {
 		newID, err := stageid.New()
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		inputIDs[input.ID] = newID
 		if _, err := tx.ExecContext(ctx, `
@@ -251,7 +257,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			(input_id, revision_id, name, source_ref, event_type, value_schema_json, enabled)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, newID, newRevisionID, input.Name, input.SourceRef, input.EventType, string(input.ValueSchema), boolInt(input.Enabled)); err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone input: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone input: %w", err)
 		}
 	}
 
@@ -259,7 +265,7 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 	for _, output := range outputs {
 		newID, err := stageid.New()
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		outputIDs[output.ID] = newID
 		if _, err := tx.ExecContext(ctx, `
@@ -268,18 +274,18 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, newID, newRevisionID, output.Name, output.TargetRef, output.CapabilityKey,
 			string(output.ValueSchema), output.Criticality); err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone output: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone output: %w", err)
 		}
 	}
 
 	for _, route := range routes {
 		newRouteID, err := stageid.New()
 		if err != nil {
-			return domain.ProjectRevision{}, err
+			return domain.ProjectRevision{}, false, err
 		}
 		newInputID, ok := inputIDs[route.InputID]
 		if !ok {
-			return domain.ProjectRevision{}, fmt.Errorf("%w: route input missing during draft fork", domain.ErrConflict)
+			return domain.ProjectRevision{}, false, fmt.Errorf("%w: route input missing during draft fork", domain.ErrConflict)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO routes
@@ -289,25 +295,25 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 		`, newRouteID, newRevisionID, route.Name, newInputID, string(route.ConditionDefinition),
 			string(route.TransformDefinition), route.DelayMS, route.DebounceMS, route.PriorityClass,
 			string(route.ErrorPolicy), boolInt(route.Enabled)); err != nil {
-			return domain.ProjectRevision{}, fmt.Errorf("clone route: %w", err)
+			return domain.ProjectRevision{}, false, fmt.Errorf("clone route: %w", err)
 		}
 		for _, action := range route.Actions {
 			newRouteActionID, err := stageid.New()
 			if err != nil {
-				return domain.ProjectRevision{}, err
+				return domain.ProjectRevision{}, false, err
 			}
 			var outputID, cueID any
 			if action.OutputID != nil {
 				mapped, ok := outputIDs[*action.OutputID]
 				if !ok {
-					return domain.ProjectRevision{}, fmt.Errorf("%w: route output missing during draft fork", domain.ErrConflict)
+					return domain.ProjectRevision{}, false, fmt.Errorf("%w: route output missing during draft fork", domain.ErrConflict)
 				}
 				outputID = mapped
 			}
 			if action.CueID != nil {
 				mapped, ok := cueIDs[*action.CueID]
 				if !ok {
-					return domain.ProjectRevision{}, fmt.Errorf("%w: route cue missing during draft fork", domain.ErrConflict)
+					return domain.ProjectRevision{}, false, fmt.Errorf("%w: route cue missing during draft fork", domain.ErrConflict)
 				}
 				cueID = mapped
 			}
@@ -316,25 +322,25 @@ func (s *Store) EnsureProjectDraft(ctx context.Context, projectID, createdBy, ch
 				(route_action_id, route_id, order_index, output_id, cue_id, parameters_json)
 				VALUES (?, ?, ?, ?, ?, ?)
 			`, newRouteActionID, newRouteID, action.OrderIndex, outputID, cueID, string(action.Parameters)); err != nil {
-				return domain.ProjectRevision{}, fmt.Errorf("clone route action: %w", err)
+				return domain.ProjectRevision{}, false, fmt.Errorf("clone route action: %w", err)
 			}
 		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET current_revision_id = ?, updated_at_us = ? WHERE project_id = ?`, newRevisionID, nowUS, projectID); err != nil {
-		return domain.ProjectRevision{}, fmt.Errorf("activate draft successor: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("activate draft successor: %w", err)
 	}
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
-		return domain.ProjectRevision{}, err
+		return domain.ProjectRevision{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.ProjectRevision{}, fmt.Errorf("commit draft fork: %w", err)
+		return domain.ProjectRevision{}, false, fmt.Errorf("commit draft fork: %w", err)
 	}
 	return domain.ProjectRevision{
 		ID: newRevisionID, ProjectID: projectID, RevisionNumber: nextNumber,
 		Status: domain.RevisionDraft, ParentRevisionID: &source.ID,
 		CreatedAt: now, CreatedBy: createdBy, ChangeNote: changeNote,
-	}, nil
+	}, true, nil
 }
 
 func remapForkedCueExecutionPolicy(raw json.RawMessage, cueIDs map[string]string) (json.RawMessage, error) {

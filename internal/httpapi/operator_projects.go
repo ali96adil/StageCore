@@ -194,6 +194,13 @@ func projectMutationAccessDenied(err error) bool {
 	return errors.Is(err, userauth.ErrForbidden) || errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound)
 }
 
+func writeProjectDraftMutationDenied(w http.ResponseWriter, err error, draftForked bool) bool {
+	if draftForked && projectMutationAccessDenied(err) {
+		return writeCommittedProjectMutationDenied(w, err)
+	}
+	return writeProjectMutationDenied(w, err)
+}
+
 func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
 	return projectMutationContextForPermissions(r, auth, session, []userauth.Permission{permission}, access, scoped...)
 }

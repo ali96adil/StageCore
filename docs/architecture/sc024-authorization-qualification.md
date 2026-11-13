@@ -1236,25 +1236,42 @@ Latest pushed StageCore HEAD is `be3a02df3892f08c6a44e4c0520822262b99862b`
 on `integration/stagecore-rc`; Draft PR #534 remains open. The first grouped
 push contains five commits: Lighting binding and three device Cue alias grant
 fences, plus the qualification checkpoint. Its exact-head Companion CI
-`43484250539` and Camera Relay CI `43484250710` passed; Core CI
-`43484250565` has Go 1.27 passed and Go 1.26 still running. Core CI on the
-previous exact base `5e5de32` completed successfully, including Race and
-Linux ARM64.
+`43484250539`, Camera Relay CI `43484250710`, and Core CI `43484250565` all
+passed. Core completed Go 1.26/1.27, Race and Linux ARM64. PR #534 is still
+open and draft at that pushed head.
 
 Three follow-up code commits are local: `27e61a2` reports partial Lighting
 draft forks, `5784eb5` honors scoped Assistant apply grants and reports
 partial Cue forks, and `5e57f2b` does the same for Visual Engine mode. Their
 red-first regressions and focused Race tests pass. The full
 `internal/httpapi` suite passed in `55.843s`; `go vet ./internal/httpapi` and
-`git diff --check` pass. This resume update and the related-component matrix
-are the fourth commit in the local group. Push the four commits normally and
-require full CI on their exact new head before any Pi code qualification. No
-code was installed on the Pi.
+`git diff --check` pass. The related-component matrix and this resume update
+are also local.
+
+The next local code checkpoint closes two configuration-edit delivery gaps.
+Red-first tests reproduced a validated-revision fork surviving a permission
+withdrawal before Input creation, and an `input_id` being returned after the
+grant was withdrawn after commit. Configuration handlers now know whether
+their request created a draft, report its partial committed effect if the
+second write is denied, and recheck session and project authority before
+delivering successful results for Targets, Inputs, Outputs and Routes. The
+existing `EnsureProjectDraft` API remains compatible; a status-aware sibling
+reports whether it created a revision. Tests verify the fork remains without
+the denied input, and a committed input remains stored while its result is
+suppressed.
+
+This change passed `go test ./internal/httpapi -count=1` (`57.889s`), focused
+configuration Race tests (`24.105s`), relevant Store fork tests, and
+`go vet ./internal/httpapi ./internal/store`. The red-first failures and the
+post-fix pass are both recorded in the local test history. These latest local
+changes have not been pushed or installed on Pi. Push the five-commit group
+normally after this checkpoint, then require full CI on its exact new head
+before any Pi qualification.
 
 Keep the Production Assembler, Migration 53 and ACL source guard unchanged;
 Production ACL remains disabled. **SC-024 is not software-qualified.** Full
 route-to-policy reconciliation, remaining asynchronous/maintenance delivery
-paths, installed-copy migration/update/impact-preview/restore qualification,
-and deployed legacy Companion/ticket compatibility remain open. Hardware
-STOP/Blackout, StageAudio revocation and independent laser-safe-off remain
-pending.
+paths beyond the fenced authoring handlers, installed-copy migration/update/
+impact-preview/restore qualification, and deployed legacy Companion/ticket
+compatibility remain open. Hardware STOP/Blackout, StageAudio revocation and
+independent laser-safe-off remain pending.

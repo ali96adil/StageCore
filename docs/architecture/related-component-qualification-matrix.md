@@ -5,13 +5,13 @@ head commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
 and StageLaser #56/#57 remain open at the heads listed below; all their
 latest PR checks pass. The latest pushed StageCore checkpoint is
 `be3a02df3892f08c6a44e4c0520822262b99862b` on `integration/stagecore-rc`
-(Draft PR #534). Core CI `43484250565` has Go 1.27 passed and Go 1.26 still
-running; Companion Core `43484250539` and Camera Relay `43484250710` pass.
-Core CI `43478623904` on the preceding exact base `5e5de32` completed
-successfully, including Race and Linux ARM64. Three local follow-up commits
-after `be3a02d` are not covered by remote CI and have not been installed on
-the Pi. Passing CI proves the listed build and automated checks only; it does
-not prove an installed application or physical output path.
+(Draft PR #534). Core CI `43484250565`, Companion Core `43484250539`, and
+Camera Relay `43484250710` all pass. Core CI completed Go 1.26/1.27, Race,
+and Linux ARM64. Four prior follow-up commits and the current configuration
+revocation-fence checkpoint are local, not covered by remote CI, and have not
+been installed on the Pi. Passing CI proves the listed build and automated
+checks only; it does not prove an installed application or physical output
+path.
 
 | Component and reviewed head | Implemented behavior and protocol | Automated evidence and current CI | ACK, retry, idempotency, safety, and reconnect | Software evidence vs. remaining qualification |
 | --- | --- | --- | --- | --- |

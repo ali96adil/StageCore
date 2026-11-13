@@ -346,3 +346,103 @@ func TestConfigurationConcurrentGrantRevocationBlocksDraftWrite(t *testing.T) {
 		t.Fatalf("revoked write changed draft inputs: %+v, %v", inputs, err)
 	}
 }
+
+func TestConfigurationDraftForkRevocationReportsCommittedEffect(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	editor, err := f.h.auth.CreateUser(ctx, "configuration-fork-editor", f.h.password, userauth.RoleTechnician)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := f.h.auth.Login(ctx, editor.Username, f.h.password, "127.0.0.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, editor.ID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorConfigurationHooks(f.h.auth, f.projects, operatorConfigurationHooks{AfterDraft: func() {
+			if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, editor.ID, f.projectID, nil); err != nil {
+				t.Fatal(err)
+			}
+		}}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/inputs",
+		[]byte(`{"name":"revoked","source_ref":"osc","event_type":"trigger","enabled":true}`), credential.Token, credential.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertCommittedMutationDenied(t, rec)
+	after, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil || after.CurrentRevisionID == project.CurrentRevisionID {
+		t.Fatalf("draft fork did not remain committed after the later write was denied: %+v, %v", after, err)
+	}
+	inputs, err := f.projects.ListInputs(ctx, after.CurrentRevisionID)
+	if err != nil || len(inputs) != 0 {
+		t.Fatalf("revoked input write changed the forked draft: %+v, %v", inputs, err)
+	}
+}
+
+func TestConfigurationRevocationBeforeResponseSuppressesCommittedResult(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	editor, err := f.h.auth.CreateUser(ctx, "configuration-response-editor", f.h.password, userauth.RoleTechnician)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := f.h.auth.Login(ctx, editor.Username, f.h.password, "127.0.0.6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, editor.ID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorConfigurationHooks(f.h.auth, f.projects, operatorConfigurationHooks{BeforeResponse: func() {
+			if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, editor.ID, f.projectID, nil); err != nil {
+				t.Fatal(err)
+			}
+		}}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/inputs",
+		[]byte(`{"name":"committed","source_ref":"osc","event_type":"trigger","enabled":true}`), credential.Token, credential.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertCommittedMutationDenied(t, rec)
+	if strings.Contains(rec.Body.String(), `"input_id"`) {
+		t.Fatalf("committed result was delivered after revocation: %s", rec.Body.String())
+	}
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := f.projects.ListInputs(ctx, project.CurrentRevisionID)
+	if err != nil || len(inputs) != 1 || inputs[0].Name != "committed" {
+		t.Fatalf("committed input missing after result suppression: %+v, %v", inputs, err)
+	}
+}
+
+func assertCommittedMutationDenied(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("revoked mutation status=%d body=%s, want committed-effect denial", rec.Code, rec.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode denial response: %v body=%s", err, rec.Body)
+	}
+	if body["effect_may_be_committed"] != true || body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("denial omitted committed-effect semantics: %#v", body)
+	}
+}

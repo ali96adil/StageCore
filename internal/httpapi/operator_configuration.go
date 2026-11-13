@@ -111,15 +111,24 @@ type routeConfigurationView struct {
 }
 
 func WithOperatorConfiguration(auth *userauth.Service, stageStore *store.Store) Option {
+	return withOperatorConfigurationHooks(auth, stageStore, operatorConfigurationHooks{})
+}
+
+type operatorConfigurationHooks struct {
+	AfterDraft     func()
+	BeforeResponse func()
+}
+
+func withOperatorConfigurationHooks(auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
-		registerOperatorConfigurationRoutes(s.mux, auth, stageStore)
+		registerOperatorConfigurationRoutes(s.mux, auth, stageStore, hooks)
 	}
 }
 
-func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
+func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) {
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
 		if !ok {
@@ -189,6 +198,9 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "TARGET_CREATE_FAILED"})
 			return
 		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusCreated, targetView(created))
 	}))
 
@@ -219,6 +231,9 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			}
 			return
 		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusOK, targetView(updated))
 	}))
 
@@ -237,6 +252,9 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			writeProjectStoreError(w, err)
 			return
 		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
@@ -247,13 +265,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
@@ -263,10 +284,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			EventType: strings.TrimSpace(body.EventType), ValueSchema: body.ValueSchema, Enabled: body.Enabled,
 		})
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "INPUT_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, inputView(created))
@@ -279,13 +303,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
@@ -296,10 +323,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			EventType: strings.TrimSpace(body.EventType), ValueSchema: body.ValueSchema, Enabled: body.Enabled,
 		})
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "INPUT_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, inputView(updated))
@@ -311,19 +341,25 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
 		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if err := stageStore.DeleteInput(writeCtx, revision.ID, strings.TrimSpace(r.PathValue("input_id"))); err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -336,13 +372,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
@@ -352,10 +391,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			CapabilityKey: strings.TrimSpace(body.CapabilityKey), ValueSchema: body.ValueSchema, Criticality: strings.TrimSpace(body.Criticality),
 		})
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "OUTPUT_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, outputView(created))
@@ -368,13 +410,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
@@ -386,10 +431,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			Criticality: strings.TrimSpace(body.Criticality),
 		})
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "OUTPUT_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, outputView(updated))
@@ -402,13 +450,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ConditionDefinition) == 0 {
 			body.ConditionDefinition = json.RawMessage(`null`)
@@ -434,10 +485,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			ErrorPolicy: body.ErrorPolicy, Enabled: body.Enabled,
 		}, actions)
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ROUTE_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, routeView(created))
@@ -450,13 +504,16 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
 		if err != nil {
 			if writeProjectMutationDenied(w, err) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ConditionDefinition) == 0 {
 			body.ConditionDefinition = json.RawMessage(`null`)
@@ -485,10 +542,13 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			ErrorPolicy: body.ErrorPolicy, Enabled: body.Enabled,
 		}, actions)
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ROUTE_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, routeView(updated))
@@ -500,23 +560,36 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
 		if err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeProjectStoreError(w, err)
 			return
 		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if err := stageStore.DeleteRoute(writeCtx, revision.ID, strings.TrimSpace(r.PathValue("route_id"))); err != nil {
-			if writeProjectMutationDenied(w, err) {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
 				return
 			}
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+}
+
+func recheckOperatorConfigurationMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, hooks operatorConfigurationHooks) bool {
+	if hooks.BeforeResponse != nil {
+		hooks.BeforeResponse()
+	}
+	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 }
 
 func targetView(value domain.ProjectDeviceAlias) targetConfigurationView {
@@ -567,6 +640,6 @@ func cueConfigurationChoices(values []domain.Cue) []cueSummaryView {
 	out := make([]cueSummaryView, 0, len(values))
 	for _, value := range values {
 		out = append(out, cueSummaryView{ID: value.ID, DisplayLabel: value.DisplayLabel, Name: value.Name, OrderIndex: value.OrderIndex})
-}
+	}
 	return out
 }
