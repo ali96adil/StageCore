@@ -1342,3 +1342,107 @@ safe-off, and Production Activation remain pending.
 `be13f86` while exact-head Core Race/ARM64 CI finishes. Draft PR #534 remains
 open. Continue the route/async authorization audit, preserve production ACL
 and the source guard, then push a normal 3–5 commit group and await its full CI.
+
+## SC-024 continuation · 2026-11-14 · Pi 4 authorization performance baseline
+
+The integration branch advanced normally from `be13f86` through eight small
+commits to code HEAD `3a35f0a63ed0f4947be0a271ac6c8b9035298395`. Draft PR #534
+remains open. Core CI `43504230469` passed Go 1.26 and 1.27 tests, Browser Cue
+Delivery, Vet, Race and Linux ARM64 product builds. Companion Core
+`43504230628` and Camera Relay `43504230748` passed at the same exact head.
+The local and remote branch heads matched after the push. The supplied
+historical count of 440 commits is stale; `git rev-list --count HEAD` reports
+1441 reachable commits.
+
+### ACL dispatch cost before any optimization
+
+`BenchmarkProjectRuntimeAuthorization` exercises the live browser `ValidateCSRF`
+and `CheckRuntimeIntent` SQLite-backed authorization boundary. GO, JUMP, STOP,
+Rehearsal GO, Emergency Blackout and a four-action compound cue are named
+scenarios. The compound scenario repeats session and Project grant checks for
+each action. The benchmark does not execute the rest of the HTTP cue route or
+call a device/adapter; action correctness and revocation are covered separately
+by simulator/mock integration tests. Each result below is the median of three
+3000-iteration runs with one Go CPU.
+
+| Scenario | Raspberry Pi 4 mean | Pi p95 | Pi p99 | M3 mean | M3 p95 | M3 p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SHOW GO authorization boundary | 0.916 ms | 1.086 ms | 1.490 ms | 0.102 ms | 0.116 ms | 0.137 ms |
+| SHOW JUMP authorization boundary | 0.921 ms | 1.139 ms | 1.651 ms | 0.103 ms | 0.121 ms | 0.141 ms |
+| SHOW STOP authorization boundary | 0.911 ms | 1.073 ms | 1.440 ms | 0.103 ms | 0.123 ms | 0.139 ms |
+| REHEARSAL GO authorization boundary | 0.916 ms | 1.134 ms | 1.450 ms | 0.104 ms | 0.125 ms | 0.144 ms |
+| Emergency Blackout authorization boundary | 0.906 ms | 1.069 ms | 1.445 ms | 0.104 ms | 0.123 ms | 0.137 ms |
+| Compound cue, four action checks | 3.643 ms | 4.237–4.611 ms | 5.446–6.134 ms | 0.416 ms | 0.466–0.489 ms | 0.512–0.539 ms |
+
+The ARM64 benchmark test binary was built from `3a35f0a` with
+`GOOS=linux GOARCH=arm64 CGO_ENABLED=0`; its SHA256 matched before and after
+transfer (`39c652c8c7c871cbc122033ad988c399692ca965be6a4cf90826fdfe2ac4a950`).
+It used only `testing.B.TempDir()` SQLite databases, reached Migration 58, and
+had no network, service, Vault, show-data or physical-output access. It ran
+with `GOMAXPROCS=1`, `nice 19` and idle `ionice`.
+
+The 75.499-second test process used 71.505 seconds user CPU and 3.986 seconds
+system CPU; peak RSS was 118,972 KiB (sampled peak 118,840 KiB). These are
+benchmark-process figures, not Hub memory measurements. Pi MemAvailable was
+7,390,640 KiB before and 7,436,464 KiB after. `/tmp` had 3,921,395,712 bytes
+free before and after the run while the temporary test binary was present.
+After removing that binary, `/tmp` returned to 156 MiB used (4%). Hub PID 1062
+and Camera Relay PID 1121 retained their prior start timestamps and remained
+active; current `NRestarts` is 0. `stagecore-rc-qualification.service` remained inactive.
+No service was stopped or restarted. The current SHOW/Rehearsal state was not
+read, so no claim is made about whether a live session was active during this
+isolated low-priority benchmark.
+
+The measured authorization cost is about 1.1 ms p95 per action and at most
+6.2 ms p99 for the four-action authorization component. The existing
+performance plan's simple-route evaluation target is p95 <= 20 ms. This is
+enough headroom to retain the immediate live SQLite revocation checks; no
+permission cache or other runtime optimization was added. There is no
+post-optimization measurement because no optimization was justified by this
+baseline. Full HTTP cue latency and Pi soak/burst tests remain separate work.
+The session-bound Emergency Blackout intent was measured; the sessionless
+Project blackout intent was not measured separately. systemd did not expose
+Hub/Camera `MemoryCurrent`, so reported peak RSS is for the benchmark process.
+
+### Regression and remaining qualification
+
+The full `internal/httpapi` suite passed at `7add54d` before the final firmware
+response fence. At final code HEAD, focused Firmware tests passed normally and
+under Race, as did focused GO/JUMP/compound/STOP/Blackout Race tests, the full
+`internal/projectaccess` Race package, `go vet ./internal/httpapi`, the SC-024
+route/source-guard tests, and `git diff --check`. A red-first firmware-upload
+test reproduced a stale Owner session receiving `actual_sha256` on a hash
+failure; the handler now rechecks before that error response. No firmware was
+sent.
+
+Migration 53 rollback-impact tests and Owner cutover-preview revocation tests
+remain green. Production Assembler, Migration 53, the partial-activation
+source guard and Production ACL state are unchanged; Project ACL remains
+disabled. **SC-024 is not software-qualified.** Remaining software gates are
+the final endpoint-to-policy and asynchronous delivery reconciliation, a
+complete production-like ACL migration/preview/restore rehearsal, compatibility
+evidence for already-deployed Companion/tickets, and a simple Owner-facing
+Project permission UX. The current Project Access API is preparation-only and
+the web app has no Project grant management page. Hardware STOP/Blackout,
+StageAudio during a physical operation, independent laser safe-off, and
+Production Activation remain pending.
+
+The component matrix now records linked PR heads and checks re-verified on
+2026-11-14. TabletPlayer #36, DMX Lighting #39, ESP32 Camera #20, and StageLaser
+#56/#57 remain open; their latest checks pass. CI does not replace their
+hardware/deployment qualifications.
+
+No sudoers change was made. The previously observed password-required broad
+sudo rule, direct production Hub systemctl grant and qualification-helper
+`physical-command` grant remain subject to root-file/source and caller audit;
+no authority was exercised during this session.
+
+**Resume at:** code head `3a35f0a63ed0f4947be0a271ac6c8b9035298395` on
+`integration/stagecore-rc`; Draft PR #534; SC-024 issue #511 remains open.
+Core, Companion and Camera Relay CI pass at this code head. Continue with the
+remaining endpoint/async ACL audit and a focused Owner-facing permissions UX
+proposal without wiring Project ACL into Production. The Pi performance
+baseline supports retaining live checks. Preserve the verified Pi backup,
+Production services and disabled ACL. The latest local checkpoint update is a
+documentation-only commit after this code head; group it with the next safe
+3–5 commit push. Prompt for the next session: **«كمل»**.
