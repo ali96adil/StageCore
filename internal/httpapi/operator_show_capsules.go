@@ -145,6 +145,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				return
 			}
 			if err := os.MkdirAll(exportRoot, 0o750); err != nil {
+				if !writeExportAuthorizationError(authorize(r.Context())) {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CAPSULE_STORAGE_UNAVAILABLE"})
 				return
 			}
@@ -158,6 +161,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				return
 			}
 			if err != nil {
+				if !writeExportAuthorizationError(authorize(r.Context())) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

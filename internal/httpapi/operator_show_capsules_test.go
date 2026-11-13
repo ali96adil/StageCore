@@ -26,6 +26,7 @@ type fakeShowCapsuleService struct {
 	previewErr                error
 	onPreview                 func()
 	planErr                   error
+	exportErr                 error
 	onExport                  func()
 	afterExportAuthorize      func()
 	onPlan                    func()
@@ -49,6 +50,9 @@ func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root str
 	f.lastMode = options.Mode
 	if f.onExport != nil {
 		f.onExport()
+	}
+	if f.exportErr != nil {
+		return showcapsule.ExportResult{}, f.exportErr
 	}
 	if options.AuthorizePublish != nil {
 		if err := options.AuthorizePublish(ctx); err != nil {
@@ -290,6 +294,33 @@ func TestShowCapsulePlanSuppressesErrorsAfterSessionRevocation(t *testing.T) {
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
 		strings.Contains(response.Body.String(), "CAPSULE_VERIFICATION_FAILED") || service.planCalls != 1 {
 		t.Fatalf("revoked Owner received capsule plan error: status=%d calls=%d body=%s", response.Code, service.planCalls, response.Body.String())
+	}
+}
+
+func TestShowCapsuleExportSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		exportErr: errors.New("capsule manifest build failed"),
+		onExport: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule export: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "FORBIDDEN") ||
+		strings.Contains(response.Body.String(), "PROJECTS_UNAVAILABLE") || service.exportCalls != 1 {
+		t.Fatalf("revoked Owner received capsule export error: status=%d calls=%d body=%s", response.Code, service.exportCalls, response.Body.String())
 	}
 }
 
