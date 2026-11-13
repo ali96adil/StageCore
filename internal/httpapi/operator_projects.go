@@ -163,10 +163,8 @@ func projectMutationAuthorityError(r *http.Request, auth *userauth.Service, sess
 }
 
 func recheckCommittedProjectMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) bool {
+	w.Header().Set("Cache-Control", "no-store")
 	access = qualificationAccess(r, access)
-	if access != nil {
-		w.Header().Set("Cache-Control", "no-store")
-	}
 	err := projectMutationAuthorityError(r, auth, session, permission, access, scoped...)
 	if err == nil {
 		return true

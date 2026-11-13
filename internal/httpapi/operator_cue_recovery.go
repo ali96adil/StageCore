@@ -75,6 +75,7 @@ func validateLiveProjectBrowser(r *http.Request, auth *userauth.Service, session
 }
 
 func allowLiveProjectRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission) bool {
+	w.Header().Set("Cache-Control", "no-store")
 	switch err := validateLiveProjectBrowser(r, auth, session, permission); {
 	case errors.Is(err, userauth.ErrSessionInvalid):
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error_code": "SESSION_INVALID"})

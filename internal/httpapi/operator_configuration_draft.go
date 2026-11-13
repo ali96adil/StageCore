@@ -104,6 +104,7 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					Result: securityaudit.ResultSuccess, Reason: strings.TrimSpace(input.Reason),
 					Metadata: map[string]any{"discarded": discarded, "restored_revision_id": restored.ID},
 				}); err != nil {
+					w.Header().Set("Cache-Control", "no-store")
 					writeJSON(w, http.StatusInternalServerError, map[string]any{
 						"error_code":                     "AUDIT_RECORD_FAILED",
 						"effect_may_be_committed":        true,
