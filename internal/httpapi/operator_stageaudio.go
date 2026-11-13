@@ -21,6 +21,10 @@ type StageAudioLocal interface {
 	Call(context.Context, stageaudio.Request) (stageaudio.LocalReply, error)
 }
 
+type stageAudioHooks struct {
+	BeforeStatusResponse func()
+}
+
 // WithOperatorStageAudio exposes an optional, OFF-by-default rehearsal audio
 // endpoint. A missing sidecar must not affect StageCore Cues or GO.
 func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fences ...*stageaudio.ShowFence) Option {
@@ -30,6 +34,10 @@ func WithOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, cli
 }
 
 func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fence *stageaudio.ShowFence, scope *StageAudioProjectScope) Option {
+	return withScopedOperatorStageAudio(auth, stageStore, client, audit, fence, scope, stageAudioHooks{})
+}
+
+func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Store, client StageAudioLocal, audit *securityaudit.Service, fence *stageaudio.ShowFence, scope *StageAudioProjectScope, hooks stageAudioHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil { return }
 		checkRuntime := func(ctx context.Context) (domain.SessionType, error) {
@@ -103,6 +111,13 @@ func WithScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 					return
 				}
 				if client == nil {
+					if hooks.BeforeStatusResponse != nil {
+						hooks.BeforeStatusResponse()
+					}
+					if !authorize(r, sessionUser, false) {
+						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+						return
+					}
 					writeJSON(w, http.StatusOK, map[string]any{
 						"available": false, "active_session": session, "error_code": "STAGEAUDIO_NOT_CONFIGURED",
 					})

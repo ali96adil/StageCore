@@ -224,6 +224,67 @@ func TestScopedStageAudioDoesNotDeliverStatusAfterGrantRevocation(t *testing.T) 
 	}
 }
 
+func TestScopedStageAudioOfflineStatusRechecksGrantBeforeDelivery(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Offline scoped audio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(projects).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	show, err := projects.CreateSession(ctx, published.ID, domain.SessionShow, "private show status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projects.EndSession(ctx, show.ID, domain.SessionCompleted)
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "offline-audio-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(withScopedOperatorStageAudio(h.auth, projects, nil, nil, stageaudio.NewShowFence(), scope,
+		stageAudioHooks{BeforeStatusResponse: func() {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke media.read before offline status delivery: %v", err)
+			}
+		}})).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/audio/status?project_id="+project.ID, nil)
+	req.RemoteAddr = "127.0.0.1:9127"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), `"active_session":"SHOW"`) || strings.Contains(res.Body.String(), "private show status") {
+		t.Fatalf("offline StageAudio status escaped after grant revocation: HTTP %d %s", res.Code, res.Body.String())
+	}
+}
+
 type audioLocalFunc func(context.Context, stageaudio.Request) (stageaudio.LocalReply, error)
 
 func (f audioLocalFunc) Call(ctx context.Context, req stageaudio.Request) (stageaudio.LocalReply, error) {
