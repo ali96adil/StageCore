@@ -15,20 +15,28 @@ import (
 	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
+type executionEnvironmentCaptureHooks struct {
+	BeforeResponse func()
+}
+
 // WithOperatorExecutionEnvironmentCapture adds the explicit local-file capture
 // path for F-025. The request body is streamed through the existing immutable
 // Vault; the manifest is promoted to CONTENT_BOUND only after Vault identity is
 // verified by Store.
 func WithOperatorExecutionEnvironmentCapture(auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault) Option {
+	return withOperatorExecutionEnvironmentCapture(auth, stageStore, vault, executionEnvironmentCaptureHooks{})
+}
+
+func withOperatorExecutionEnvironmentCapture(auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault, hooks executionEnvironmentCaptureHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil || vault == nil {
 			return
 		}
-		registerOperatorExecutionEnvironmentCaptureRoutes(s.mux, auth, stageStore, vault)
+		registerOperatorExecutionEnvironmentCaptureRoutes(s.mux, auth, stageStore, vault, hooks)
 	}
 }
 
-func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault) {
+func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, vault *stagevault.Vault, hooks executionEnvironmentCaptureHooks) {
 	base := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/assets/{asset_key}"
 
 	mux.HandleFunc("GET "+base+"/vault-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -133,6 +141,12 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		if err != nil {
 			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

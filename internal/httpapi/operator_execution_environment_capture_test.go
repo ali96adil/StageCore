@@ -166,6 +166,42 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 	if _, err := stageStore.GetVaultObject(ctx, blockedHash); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("frozen capture unexpectedly registered Vault object err=%v", err)
 	}
+
+	committedProject, committedRevision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Capture response revocation", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committedEnvironment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, committedRevision.ID, testVDMXExecutionEnvironmentManifest("response-revoked"), owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	revokedHandler := New(withOperatorExecutionEnvironmentCapture(h.auth, stageStore, v, executionEnvironmentCaptureHooks{
+		BeforeResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner after environment asset commit: %v", err)
+			}
+		},
+	})).Handler()
+	committedPayload := []byte("capture committed before response revocation")
+	committedDigest := sha256.Sum256(committedPayload)
+	committedHash := hex.EncodeToString(committedDigest[:])
+	committedPath := "/api/v1/projects/" + committedProject.ID + "/revisions/" + committedRevision.ID + "/execution-environments/" + committedEnvironment.ID + "/assets/workspace/capture"
+	committedRequest := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, committedPath, committedPayload)
+	committedResponse := httptest.NewRecorder()
+	revokedHandler.ServeHTTP(committedResponse, committedRequest)
+	if !revoked {
+		t.Fatal("test did not revoke Owner after execution environment capture commit")
+	}
+	if committedResponse.Code != http.StatusForbidden || !strings.Contains(committedResponse.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(committedResponse.Body.String(), `"retryable":false`) || strings.Contains(committedResponse.Body.String(), committedHash) {
+		t.Fatalf("revoked Owner received committed capture result: status=%d body=%s", committedResponse.Code, committedResponse.Body.String())
+	}
+	committedManifest, err := stageStore.GetExecutionEnvironmentManifest(ctx, committedEnvironment.ID)
+	if err != nil || committedManifest.Manifest.Assets[0].ContentHash != committedHash {
+		t.Fatalf("capture should remain committed after response revocation: manifest=%+v err=%v", committedManifest, err)
+	}
 }
 
 func TestOperatorExecutionEnvironmentCaptureSHOWLockRejectsBeforeVaultImport(t *testing.T) {
