@@ -1,5 +1,9 @@
 # SC-024 authorization qualification
 
+[Related component qualification matrix](related-component-qualification-matrix.md)
+records the reviewed TabletPlayer, ESP32 lighting/camera/laser, Mac Companion,
+StageAudio, VDMX, Ableton, and QLC+ evidence and its hardware blockers.
+
 [Route inventory](sc024-http-route-inventory.tsv) contains Hub registration expressions with the 18 indirect patterns resolved to their
 actual paths, plus the three standalone camera relay routes. GET registrations
 also serve HEAD through Go's ServeMux. Patterns are registration records,
