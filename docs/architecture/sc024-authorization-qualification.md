@@ -16,7 +16,7 @@ inventory, not proof that a route uses the prospective policy.
 | Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. File listing and availability recheck the live session and `media.read` grant at response delivery; downloads recheck both before and after each bounded read. | Activation and remaining execution-environment media and ticket flows. |
 | Companion Vault | `WithVault` always installs its backing media catalog for Companion read authorization; a missing scope fails closed. Roles with a published Runtime Snapshot can read only that role's registered required media; pre-Snapshot roles retain compatibility for media registered in their assigned Project only. Assignment and Runtime Session are rechecked before and after every bounded read, including range transfers. | Capture upload qualification checks the current device ticket before and after each bounded read. Cached capture receipts also match Companion connection, environment, Machine Role, Snapshot and operation. New browser-issued tickets also fence issuance, transfer, completion, and receipt replay to the issuing browser session. Qualification requests recheck the project runtime and media grants. Existing tickets retain their original scope. Hardware/deployment compatibility qualification remains open. |
 | SSE | The current feed emits a session-ready event and keepalive, with exact-session and user fencing and bounded writes. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
-| Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. Owner-only inventory, unassigned-device, transfer-status, StageLaser visual-check and Network Cockpit responses now recheck the live session and applicable Owner/pairing permission immediately before delivery. Setup AP maintenance rechecks authority after device ACKs and failures; if the effect may already have occurred, details are withheld with committed-effect flags and `retryable: false`. Firmware send responses also recheck authority after errors; ambiguous transport writes preserve the same non-retryable effect boundary. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Qualified Owner-only direct commands also carry live Owner/session authority to the device write boundary. Firmware and setup writes plus Tablet/Lighting/Laser assignment preparation also check live authority at the socket. Assignment commits recheck the originating browser session. Already-sent work and remaining asynchronous paths need qualification. |
+| Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. Owner-only inventory, unassigned-device, transfer-status, StageLaser visual-check and Network Cockpit responses now recheck the live session and applicable Owner/pairing permission immediately before delivery. Setup AP maintenance rechecks authority after device ACKs and failures; if the effect may already have occurred, details are withheld with committed-effect flags and `retryable: false`. Firmware send responses also recheck authority after errors; ambiguous transport writes preserve the same non-retryable effect boundary. All five browser Firmware maintenance routes send `Cache-Control: no-store`. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Qualified Owner-only direct commands also carry live Owner/session authority to the device write boundary. Firmware and setup writes plus Tablet/Lighting/Laser assignment preparation also check live authority at the socket. Assignment commits recheck the originating browser session. Already-sent work and remaining asynchronous paths need qualification. |
 | Plugin and extensions | Qualification-only Owner boundary for the 28 Hub-global extension and plugin administration registrations. | Qualified Cue dispatch rechecks the originating grant before the OSC plugin pipe write. Runtime probes check authority at process start and after handshake. Enable and Disable check before durable intent changes. Install/uninstall and permission writes also check live authority before changing durable state. |
 | Audio | Optional StageAudio project, Vault version and SHOW fence. Live grant/session checks before commands, at the Unix socket write, and after sidecar replies. Scoped LOAD and PLAY also fence the exact rehearsal at write time. | Unbound legacy audio is Owner-only in qualification. Hardware-side revocation during a device operation remains open. |
 | Camera relay | Optional standalone bearer authorization separates viewing from flash control. Active viewers are disconnected on credential rotation, and protected LAN listeners require TLS. | The opt-in Hub browser viewer checks project.view and media.read on the fixed configured project and revalidates the exact browser session and grants during streaming. Tablet delivery and deployment verification remain open. |
@@ -973,7 +973,26 @@ deployed legacy Companion compatibility remain open; hardware STOP/Blackout,
 StageAudio operation revocation and independent laser-safe-off acceptance
 also remain pending. **SC-024 is not software-qualified.**
 
-**Resume at:** remote `8470b197e356fd686d0836bd61a112da18ff513b`, with five
-local commits ready on `integration/stagecore-rc`. The Companion failed-job
-retry has passed. Push this group normally and wait for exact-head Core
-Race/ARM64 and Companion/Camera Relay CI. Keep Production ACL disabled.
+At this checkpoint the five-commit group was subsequently pushed to
+`integration/stagecore-rc` as `dc516dd9d797af01d12e5fdf5558f1f3bcd342a7`.
+The current local/remote status and exact-head CI are recorded below. Keep
+Production ACL disabled.
+
+## SC-024 continuation · 2026-11-13 · firmware response cache control
+
+A red-first test found that the Owner-gated Firmware artifact list returned
+HTTP 403 after response-boundary revocation without `Cache-Control: no-store`.
+The same cache gap applied to Firmware upload, manifest issue, update status,
+and send responses. Each of the five routes now marks all of its responses
+no-store before processing the request. Regressions assert the header on
+upload, list, manifest, status, successful-send revocation, and uncertain-send
+error paths.
+
+The focused route tests and their Race variants passed. Full
+`go test ./internal/httpapi -count=1`, `go vet ./internal/httpapi
+./internal/devicechannel`, and `git diff --check` passed. Code commit
+`06130bf` is local after remote `dc516dd`; Core run `43453654206` has passed
+Go 1.27 tests/vet and is running Go 1.26 Race; Companion run `43453654028`
+has passed Swift tests and is running its native macOS acceptance; Camera
+Relay run `43453654320` passed. This cache-control change is not on those
+remote CI runs.
