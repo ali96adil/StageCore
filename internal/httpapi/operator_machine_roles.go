@@ -80,17 +80,25 @@ type roleAssignmentView struct {
 	LastEvaluatedAt time.Time                  `json:"last_evaluated_at"`
 }
 
+type machineRoleHooks struct {
+	BeforeListResponse func()
+}
+
 func WithOperatorMachineRoles(auth *userauth.Service, stageStore *store.Store) Option {
+	return withOperatorMachineRoles(auth, stageStore, machineRoleHooks{})
+}
+
+func withOperatorMachineRoles(auth *userauth.Service, stageStore *store.Store, hooks machineRoleHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
-		registerOperatorMachineRoleRoutes(s.mux, auth, stageStore)
+		registerOperatorMachineRoleRoutes(s.mux, auth, stageStore, hooks)
 	}
 }
 
-func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/machine-roles", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks machineRoleHooks) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/machine-roles", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		roles, err := stageStore.ListMachineRoles(r.Context(), projectID)
 		if err != nil {
@@ -110,7 +118,12 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			}
 			roleViews = append(roleViews, view)
 		}
-		companions, err := stageStore.ListCompanions(r.Context())
+		var companions []domain.Companion
+		if session.User.Role == userauth.RoleOwner {
+			companions, err = stageStore.ListCompanions(r.Context())
+		} else {
+			companions, err = stageStore.ListProjectMachineRoleCompanions(r.Context(), projectID)
+		}
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "COMPANION_LIST_FAILED"})
 			return
@@ -131,6 +144,12 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 				AppliedRuntimeSnapshotID: companion.AppliedRuntimeSnapshotID,
 				LastSeenAt: companion.LastSeenAt,
 			})
+		}
+		if hooks.BeforeListResponse != nil {
+			hooks.BeforeListResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"roles": roleViews,

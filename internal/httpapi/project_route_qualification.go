@@ -94,7 +94,7 @@ var projectRoutePermissions = map[string][]projectaccess.Permission{
 	"PUT " + projectRoute + "/lighting-controller/configuration/{device_id}":         {projectaccess.DeviceConfigure},
 	"DELETE " + projectRoute + "/machine-roles/{machine_role_id}":                    {projectaccess.DeviceConfigure},
 	"DELETE " + projectRoute + "/machine-roles/{machine_role_id}/assignment":         {projectaccess.DeviceConfigure},
-	"GET " + projectRoute + "/machine-roles":                                         {projectaccess.ProjectView},
+	"GET " + projectRoute + "/machine-roles":                                         {projectaccess.ProjectView, projectaccess.DeviceConfigure},
 	"POST " + projectRoute + "/machine-roles":                                        {projectaccess.DeviceConfigure},
 	"POST " + projectRoute + "/machine-roles/{machine_role_id}/assignment":           {projectaccess.DeviceConfigure},
 	"POST " + projectRoute + "/machine-roles/{machine_role_id}/restore":              {projectaccess.DeviceConfigure},

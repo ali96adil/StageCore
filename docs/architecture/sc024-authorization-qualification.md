@@ -572,14 +572,25 @@ regression returns a redacted 404. The focused Tablet response tests pass under
 Race, and the Tablet HTTP tests pass normally. Its private hook only coordinates
 the test boundary and is not exposed by the public option.
 
+The Machine Role list also exposed the global Companion inventory to a
+project-scoped Technician. A two-Project regression first observed a Companion
+assigned to the foreign Project in the response. Non-Owner lists now include
+only unassigned Companions and Companions assigned within the requested
+Project; Owner retains the global inventory. The route's qualification policy
+now requires both `project.view` and `device.configure`, and the response
+rechecks live session and grants after loading roles and Companion metadata.
+The cross-Project, grant-revocation, Owner-inventory and existing Machine Role
+tests pass normally and under focused Race.
+
 These changes close the reviewed STOP and Tablet command-read delivery
-boundaries only. The overall route-to-policy audit and disposable
-Production-like installed-copy migration/update/rollback assembly remain open. Production Assembler,
+boundaries, plus the Machine Role cross-Project and response-delivery findings.
+The overall route-to-policy audit and disposable Production-like installed-copy
+migration/update/rollback assembly remain open. Production Assembler,
 Migration 53, stable services and Project ACL activation are unchanged.
 **SC-024 remains not software-qualified.**
 
-**Resume at:** local code checkpoint `74e80f5` on
-`integration/stagecore-rc`, with the STOP fence and this Tablet read fence
-awaiting grouped push after exact-HEAD CI for remote `78cb30c06f031ebff86a8e21f5fd45e54659497b`
-completes. Continue the endpoint-level async delivery audit and isolated
-assembly qualification; keep Project ACL disabled.
+**Resume at:** the current local `integration/stagecore-rc` tip, five commits
+ahead of remote `78cb30c06f031ebff86a8e21f5fd45e54659497b` after this batch.
+Wait for exact-HEAD CI on the remote base before the grouped push. Continue the
+endpoint-level async delivery audit and isolated assembly qualification; keep
+Project ACL disabled.
