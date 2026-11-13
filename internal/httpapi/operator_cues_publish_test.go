@@ -301,3 +301,54 @@ func TestRevokedCueEditDoesNotForkValidatedRevision(t *testing.T) {
 		t.Fatalf("revoked edit changed revision: %+v, %v", after, err)
 	}
 }
+
+func TestCueCreateSuppressesCommittedResultAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := projectStore.CreateProject(ctx, store.CreateProjectParams{
+		Name:      "cue response revocation boundary",
+		CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	handler := New(withOperatorCuePublish(
+		h.auth,
+		projectStore,
+		publish.New(projectStore, capability.NewRegistry()),
+		cuePublishHooks{BeforeResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/cues",
+		[]byte(`{"display_label":"1","name":"Opening","order_index":1,"cue_type":"STANDARD","criticality":"NORMAL","enabled":true,"execution_policy":{}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("response boundary hook did not revoke the Owner session")
+	}
+	if response.Code != http.StatusForbidden || bytes.Contains(response.Body.Bytes(), []byte(`"cue":`)) {
+		t.Fatalf("revoked cue creation exposed result: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"effect_may_be_committed":true`)) || !bytes.Contains(response.Body.Bytes(), []byte(`"retryable":false`)) {
+		t.Fatalf("revoked cue response lost commit uncertainty: %s", response.Body.String())
+	}
+	current, err := projectStore.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cues, err := projectStore.ListCues(ctx, current.CurrentRevisionID)
+	if err != nil || len(cues) != 1 || cues[0].Name != "Opening" {
+		t.Fatalf("committed cue was not retained truthfully: cues=%+v err=%v", cues, err)
+	}
+}
