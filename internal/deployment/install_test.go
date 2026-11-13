@@ -80,6 +80,9 @@ func TestIsolatedDefaultsAndEnvironmentCannotReachProductionEndpoints(t *testing
 		t.Fatal(err)
 	}
 	env := RenderEnvironment(normalized)
+	if !strings.Contains(env, "STAGECORE_HA_MODE=STANDALONE") {
+		t.Fatalf("isolated environment has a Hub-incompatible HA mode: %s", env)
+	}
 	if err := ValidateIsolatedEnvironment([]byte(env), normalized); err != nil {
 		t.Fatalf("rendered isolated environment rejected: %v", err)
 	}

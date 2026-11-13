@@ -651,8 +651,8 @@ func ValidateIsolatedEnvironment(content []byte, opts Options) error {
 			return fmt.Errorf("unsupported environment key %s", key)
 		}
 	}
-	if mode := strings.TrimSpace(values["STAGECORE_HA_MODE"]); mode != "standalone" {
-		return fmt.Errorf("isolated service requires STAGECORE_HA_MODE=standalone")
+	if mode := strings.TrimSpace(values["STAGECORE_HA_MODE"]); mode != "STANDALONE" {
+		return fmt.Errorf("isolated service requires STAGECORE_HA_MODE=STANDALONE")
 	}
 	expected := map[string]string{
 		"STAGECORE_DATA_ROOT":           opts.DataRoot,
@@ -757,7 +757,7 @@ func RenderEnvironment(opts Options) string {
 		"STAGECORE_OSC_PLUGIN_PATH=" + plugin,
 	}
 	if IsolatedService(opts) {
-		lines = append(lines, "STAGECORE_DEVICE_LISTEN="+opts.DeviceListen, "STAGECORE_HA_MODE=standalone")
+		lines = append(lines, "STAGECORE_DEVICE_LISTEN="+opts.DeviceListen, "STAGECORE_HA_MODE=STANDALONE")
 	}
 	return strings.Join(append(lines, ""), "\n")
 }
