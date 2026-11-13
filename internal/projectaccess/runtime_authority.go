@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// RuntimeIntent is a reviewed future authority boundary, NOT an action to
-// dispatch. The live Hub still uses its existing global runtime.control
-// checks; this helper is intentionally unwired from every GO/STOP route.
+// RuntimeIntent is the reviewed Project-grant authority boundary used by the
+// opt-in SC-024 qualification assembly. It authorizes an intent; it is not an
+// action dispatcher, and the production Hub still uses its global RBAC policy.
 type RuntimeIntent string
 
 const (

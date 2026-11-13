@@ -1,6 +1,7 @@
-// Package projectaccess implements StageCore's future Project-scoped access
-// policy. This initial package is intentionally NOT installed into HTTP, GO,
-// Vault, Companion or device routes; migration/data alone is not enforcement.
+// Package projectaccess implements StageCore's Project-scoped access policy.
+// It is wired only in opt-in SC-024 qualification assemblies; the production
+// Hub does not install it into HTTP, GO, Vault, Companion or device routes.
+// Migration/data alone is not enforcement.
 package projectaccess
 
 import (
