@@ -18,6 +18,7 @@ func WithOperatorCueReorder(auth *userauth.Service, projectStore *store.Store) O
 }
 
 type cueReorderHooks struct {
+	AfterDraft     func()
 	BeforeResponse func()
 }
 
@@ -62,10 +63,13 @@ func withOperatorCueReorder(auth *userauth.Service, projectStore *store.Store, h
 			}
 
 			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
-			revision, err := projectStore.EnsureProjectDraft(writeCtx, project.ID, session.User.ID, "Operator Web Cue reorder after Publish")
+			revision, draftForked, err := projectStore.EnsureProjectDraftWithStatus(writeCtx, project.ID, session.User.ID, "Operator Web Cue reorder after Publish")
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
+			}
+			if hooks.AfterDraft != nil {
+				hooks.AfterDraft()
 			}
 			orderedIDs := append([]string(nil), body.CueIDs...)
 			if revision.ID != sourceRevisionID {
@@ -90,6 +94,9 @@ func withOperatorCueReorder(auth *userauth.Service, projectStore *store.Store, h
 
 			cues, err := projectStore.ReorderDraftCues(writeCtx, revision.ID, orderedIDs)
 			if err != nil {
+				if writeProjectDraftMutationDenied(w, err, draftForked) {
+					return
+				}
 				writeCueMutationError(w, err)
 				return
 			}
