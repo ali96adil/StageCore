@@ -12,7 +12,7 @@ inventory, not proof that a route uses the prospective policy.
 
 | Surface | Qualified behavior | Remaining qualification before cutover |
 | --- | --- | --- |
-| Projects and Show Capsule | Explicit alternate assembly qualifies list, detail, dashboard, rename, preview, export and Owner-only creation, duplication and global import. | The qualification route registry additionally checks cue/draft/publish, project configuration, execution environments and runtime intent before service entry. Qualified browser GO and Jump recheck authorization at each action dispatch. Atomic coupling to the adapter and remaining mutations still need review. |
+| Projects and Show Capsule | Explicit alternate assembly qualifies list, detail, dashboard, rename, preview, export and Owner-only creation, duplication and global import. The Owner cutover impact endpoint is read-only and excluded from production assembly. | The qualification route registry additionally checks cue/draft/publish, project configuration, execution environments and runtime intent before service entry. Qualified browser GO and Jump recheck authorization at each action dispatch. Atomic coupling to the adapter and remaining mutations still need review. |
 | Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. Downloads recheck both grant and session before and after each bounded read. | Activation and remaining execution-environment media and ticket flows. |
 | Companion Vault | `WithVault` always installs its backing media catalog for Companion read authorization; a missing scope fails closed. Roles with a published Runtime Snapshot can read only that role's registered required media; pre-Snapshot roles retain compatibility for media registered in their assigned Project only. Assignment and Runtime Session are rechecked before and after every bounded read, including range transfers. | Capture upload qualification checks the current device ticket before and after each bounded read. Cached capture receipts also match Companion connection, environment, Machine Role, Snapshot and operation. New browser-issued tickets also fence issuance, transfer, completion, and receipt replay to the issuing browser session. Qualification requests recheck the project runtime and media grants. Existing tickets retain their original scope. Hardware/deployment compatibility qualification remains open. |
 | SSE | The current feed emits a session-ready event and keepalive, with exact-session and user fencing and bounded writes. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
@@ -744,3 +744,91 @@ remain separate.
 delivery audit, update this checkpoint after the grouped push, and wait for
 the exact-head Core Go 1.26 Race and ARM64 checks before pushing. Keep
 Production ACL disabled and make no sudoers or hardware changes.
+
+## SC-024 continuation · 2026-11-13 · project delivery and Owner impact route
+
+The latest endpoint review added final-delivery fences for project list,
+project detail/dashboard, create/duplicate/rename, configuration drafts, and
+Owner project-grant updates. Each result is withheld if the exact browser
+session or required live project authority ends before delivery. A committed
+write is not described as rolled back: response uncertainty includes both
+legacy `effect_may_be_committed` and canonical
+`effect_may_have_been_committed`, with `retryable: false`. Project metadata
+responses set `Cache-Control: no-store`.
+
+The delayed runtime regression now covers both GO and JUMP after revoking the
+project grant between actions. The first mock action may already have crossed
+its external boundary; the remaining action is not dispatched, and the result
+retains the truthful uncertain-effect state. STOP, emergency blackout, and
+Owner grant update regressions also assert the canonical uncertainty key.
+These tests use mocks and do not send real output.
+
+Added `GET /api/v1/project-access/cutover-preview` as a read-only Owner route
+available to explicit qualification assemblies. It returns `no-store`,
+rechecks the live Owner session and `user.manage` permission before response,
+and never claims cutover readiness. Owner, Operator, Viewer, grant immutability,
+session revocation, and route registration are covered in route and
+production-shaped assembly tests. It is deliberately not wired into the Hub
+Production Assembler. The reviewed HTTP inventory now contains 283
+registrations, 18 indirect patterns, and digest
+`f75ee5e8b2fc7fcf5ed62120ef65c903614d190e1ead792da69f49d80b5e2621`.
+
+The complete `internal/httpapi` package passed after the route was added to
+the production-shaped composition (`49.505s`); `internal/projectaccess` also
+passed (`4.363s`). `internal/update` passed (`1.243s`), and `go vet
+./internal/httpapi` passed. The Owner preview, ACL role matrix, route inventory
+and production non-activation guards passed, as did the focused Race set for
+project response delivery and GO/JUMP/Blackout. The full HTTP API Race package
+passed locally with `-timeout 45m` in `747.352s` (12m27s), with no race report.
+
+At this checkpoint local HEAD is `8d269dd0390ca1b9749c89ab9eb63287d1397c4f`,
+nine commits ahead of remote `88432f63edc71f115f5fc1c3a5cc79b1c2c54853`;
+the qualification route and test are still uncommitted. Remote Core run
+`43428647236` is for the remote base: Go 1.27 passed, Go 1.26 Race failed at
+its 20-minute test timeout while migrating the HTTP API test database, and
+Linux ARM64 was skipped. A prior attempt on the same commit timed out in a
+different capture-upload test while also opening a fresh test database. The
+race threshold needs correction before the next Core run. Companion Core run
+`43428647182` and Camera Relay run `43428647193` passed. These results do not
+cover the local commits. No code was installed on the Pi.
+
+### Sudo audit checkpoint
+
+Read-only `sudo -n -l` on `stagecore-pi` confirms a password-required
+`(ALL : ALL) ALL` grant plus passwordless direct `systemctl start|stop|restart
+production Hub`, the fixed RC qualification command, and the qualification
+helper's enumerated verbs including `physical-command`. The production Hub
+and Camera Relay are active; the isolated RC qualification service is
+inactive. The inspected RC wrapper pins its service and managed roots to the
+separate RC environment and passes fixed command arguments.
+
+The sudoers directory contains StageCore-specific drop-ins, but their
+contents could not be read: the passwordless command allowlist does not
+include file reads, and `sudo -n cat` correctly failed without prompting.
+Mapping each listed command to its exact source line is therefore not yet
+proven. The only matching systemd unit is the RC qualification unit; no
+production service depends on its wrapper as `ExecStart`. No sudoers or
+service change was made. The direct production-service rule may be needed for
+manual recovery, and `physical-command` grants real-output authority; keep
+both pending owner review.
+
+Production Assembler, Migration 53, stable services/data and Project ACL
+activation remain unchanged. The end-to-end route-to-policy audit and full
+disposable Production-like migration/update/preview/restore qualification
+still need closure. Software tests verify established Companion sessions
+remain valid past credential-token expiry until revoked, and Migration 54
+preserves an issuerless active upload ticket across upgrade. Compatibility
+with already-installed Companion deployments still needs operational
+qualification. **SC-024 remains not software-qualified.** Hardware
+Qualification and Production Activation are still pending.
+
+**Resume at:** branch `integration/stagecore-rc`, with ten local commits in two
+five-commit batches ahead of remote `88432f63edc71f115f5fc1c3a5cc79b1c2c54853`.
+The Owner impact route, tests, inventory, qualification report, related
+component matrix, and CI timeout update are committed. Resolve the current
+local tip with `git rev-parse HEAD` before continuing. The exact-base Race CI
+failed twice at `-timeout 20m`; the full HTTP API Race package passes locally
+in `747.352s`. The workflow keeps the full Race job with a `45m` timeout.
+Push the tested batches without force and wait for exact-HEAD full CI (including
+Race and Linux ARM64) before any Pi install. Keep Project ACL disabled and do
+not modify Pi sudoers or production services.

@@ -115,6 +115,7 @@ internal/httpapi/operator_oscquery_discovery.go	POST /api/v1/projects/{project_i
 internal/httpapi/operator_preflight.go	GET /api/v1/projects/{project_id}/preflight
 internal/httpapi/operator_project_access.go	GET /api/v1/projects/{project_id}/access/users/{user_id}
 internal/httpapi/operator_project_access.go	PUT /api/v1/projects/{project_id}/access/users/{user_id}
+internal/httpapi/operator_project_cutover_preview.go	GET /api/v1/project-access/cutover-preview
 internal/httpapi/operator_project_files_read.go	GET /api/v1/projects/{project_id}/files
 internal/httpapi/operator_project_files_read.go	GET /api/v1/projects/{project_id}/files/availability
 internal/httpapi/operator_project_media_download.go	GET /api/v1/projects/{project_id}/files/{version_id}/download

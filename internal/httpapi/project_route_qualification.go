@@ -166,6 +166,7 @@ var projectRoutePermissions = map[string][]projectaccess.Permission{
 // Hub-wide and raw device operations require an Owner during qualification.
 // A project configuration grant alone cannot send output.
 var ownerRouteQualification = map[string]bool{
+	ownerProjectCutoverPreviewRoute:                                                          true,
 	"POST " + projectRoute + "/stage-device-commands":                                        true,
 	"POST " + projectRoute + "/stage-devices/sync-runtime-snapshot":                          true,
 	"POST " + projectRoute + "/stage-devices/{device_id}/lighting-activation":                true,
@@ -192,11 +193,11 @@ var ownerRouteQualification = map[string]bool{
 	"POST " + projectRoute + "/tablet-controller/devices/{device_id}/assign":                 true,
 	"POST " + projectRoute + "/tablet-controller/live-flash":                                 true,
 	"POST " + projectRoute + "/usb-dmx/manual":                                               true,
-	"POST /api/v1/projects":                                       true,
-	"POST /api/v1/show-templates/{template_id}/materialize":       true,
-	"POST /api/v1/show-templates/import/materialize":              true,
-	"POST /api/v1/show-capsules/imports/{capsule_id}/materialize": true,
-	"PUT " + projectRoute + "/access/users/{user_id}":             true,
+	"POST /api/v1/projects":                                                                  true,
+	"POST /api/v1/show-templates/{template_id}/materialize":                                  true,
+	"POST /api/v1/show-templates/import/materialize":                                         true,
+	"POST /api/v1/show-capsules/imports/{capsule_id}/materialize":                            true,
+	"PUT " + projectRoute + "/access/users/{user_id}":                                        true,
 }
 
 func qualificationAccess(r *http.Request, explicit *projectaccess.Service) *projectaccess.Service {

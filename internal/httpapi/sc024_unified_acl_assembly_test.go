@@ -147,6 +147,7 @@ func TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix(t *testing.T) {
 		WithCompanionVaultScope(projects),
 		WithCompanionCaptureUpload(companionAuth, projects, objects, bulkManager),
 		WithOperatorProjectAccess(h.auth, access, projects, audit),
+		WithOwnerProjectCutoverPreview(h.auth, access),
 		WithOwnerCapsuleImportReview(h.auth, capsules, root),
 		WithOwnerPluginAdministration(h.auth),
 		WithProjectRouteQualification(access),
@@ -189,6 +190,12 @@ func TestSC024UnifiedScopedACLAssemblyRoleAndProjectMatrix(t *testing.T) {
 	}
 	request(owner, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/access/users/"+operator.ID, "", http.StatusOK)
 	request(operatorLogin, http.MethodGet, "/api/v1/projects/"+projectA.ID+"/access/users/"+operator.ID, "", http.StatusForbidden)
+	cutoverPreview := request(owner, http.MethodGet, "/api/v1/project-access/cutover-preview", "", http.StatusOK)
+	if !strings.Contains(cutoverPreview, "\"read_only\":true") || !strings.Contains(cutoverPreview, "\"enforced\":false") ||
+		strings.Contains(cutoverPreview, "\"ready_for_cutover\":true") {
+		t.Fatalf("production-shaped cutover preview did not retain the disabled/read-only state: %s", cutoverPreview)
+	}
+	request(operatorLogin, http.MethodGet, "/api/v1/project-access/cutover-preview", "", http.StatusForbidden)
 	request(owner, http.MethodGet, "/api/v1/show-capsules/imports/review", "", http.StatusOK)
 	request(operatorLogin, http.MethodGet, "/api/v1/show-capsules/imports/review", "", http.StatusForbidden)
 	const cueBody = `{"display_label":"1","name":"Unified cue","order_index":1,"cue_type":"STANDARD","criticality":"NORMAL","enabled":true,"execution_policy":{},"actions":[]}`

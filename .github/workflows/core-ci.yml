@@ -63,7 +63,10 @@ jobs:
         run: go vet ./...
       - name: Race tests
         if: matrix.go == '1.26.x'
-        run: go test -race -timeout 20m ./...
+        # The instrumented HTTP API suite needs longer than 20 minutes on
+        # hosted runners while applying fresh SQLite migrations per test.
+        # Keep all packages in the Race job and retain a finite deadlock guard.
+        run: go test -race -timeout 45m ./...
       - name: Linux ARM64 CGo-free product builds
         if: matrix.go == '1.26.x'
         env:
