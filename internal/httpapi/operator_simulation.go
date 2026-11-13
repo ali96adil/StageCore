@@ -58,15 +58,23 @@ type simulationTargetStateRequest struct {
 }
 
 func WithOperatorSimulation(auth *userauth.Service, control *simulationcontrol.Service) Option {
+	return withOperatorSimulation(auth, control, operatorSimulationHooks{})
+}
+
+type operatorSimulationHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorSimulation(auth *userauth.Service, control *simulationcontrol.Service, hooks operatorSimulationHooks) Option {
 	return func(s *Server) {
 		if auth == nil || control == nil {
 			return
 		}
-		registerOperatorSimulationRoutes(s.mux, auth, control)
+		registerOperatorSimulationRoutes(s.mux, auth, control, hooks)
 	}
 }
 
-func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service, control *simulationcontrol.Service) {
+func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service, control *simulationcontrol.Service, hooks operatorSimulationHooks) {
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		status, err := control.Status(r.Context(), r.PathValue("project_id"))
 		if err != nil {
@@ -91,15 +99,18 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		created, result := control.Start(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.StartRequest{
-			ProjectID: r.PathValue("project_id"),
-			Name: body.Name,
-			Issuer: session.User.ID,
-			RequestID: strings.TrimSpace(body.RequestID),
-			StartKind: domain.SessionStartPositionKind(strings.ToUpper(strings.TrimSpace(body.StartKind))),
-			StartCueID: body.StartCueID,
-			EndCueID: body.EndCueID,
+			ProjectID:    r.PathValue("project_id"),
+			Name:         body.Name,
+			Issuer:       session.User.ID,
+			RequestID:    strings.TrimSpace(body.RequestID),
+			StartKind:    domain.SessionStartPositionKind(strings.ToUpper(strings.TrimSpace(body.StartKind))),
+			StartCueID:   body.StartCueID,
+			EndCueID:     body.EndCueID,
 			CheckpointID: body.CheckpointID,
 		})
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": created})
 	}))
 
@@ -113,13 +124,16 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		result := control.Go(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.CueRequest{
-			SessionID: active.ID,
-			Issuer: session.User.ID,
-			RequestID: strings.TrimSpace(body.RequestID),
+			SessionID:            active.ID,
+			Issuer:               session.User.ID,
+			RequestID:            strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID,
-			RequestedCueID: body.RequestedCueID,
-			OperatorNote: body.OperatorNote,
+			RequestedCueID:       body.RequestedCueID,
+			OperatorNote:         body.OperatorNote,
 		})
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -133,6 +147,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		result := control.Stop(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationcontrol.StopRequest{SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID)})
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -142,6 +159,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		updated, err := control.ConfirmStartState(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, session.User.ID)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		if err != nil {
 			writeSimulationError(w, err)
 			return
@@ -155,6 +175,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		checkpoint, err := control.CaptureCheckpoint(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		if err != nil {
 			writeSimulationError(w, err)
 			return
@@ -172,6 +195,9 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		checkpoint, err := control.RestoreCheckpoint(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.CheckpointID)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		if err != nil {
 			writeSimulationError(w, err)
 			return
@@ -189,14 +215,17 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		err := control.ConfigureFault(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, simulator.FaultScenario{
-			TargetRef: body.TargetRef,
+			TargetRef:  body.TargetRef,
 			Capability: body.Capability,
-			Behavior: body.Behavior,
-			DelayMS: body.DelayMS,
-			ErrorCode: body.ErrorCode,
-			Message: body.Message,
-			Uses: body.Uses,
+			Behavior:   body.Behavior,
+			DelayMS:    body.DelayMS,
+			ErrorCode:  body.ErrorCode,
+			Message:    body.Message,
+			Uses:       body.Uses,
 		})
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
 		if err != nil {
 			writeSimulationError(w, err)
 			return
@@ -213,7 +242,11 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		if err := control.ClearFault(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Capability); err != nil {
+		err := control.ClearFault(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Capability)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
+		if err != nil {
 			writeSimulationError(w, err)
 			return
 		}
@@ -229,7 +262,11 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		if err := control.SetTargetOnline(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Online); err != nil {
+		err := control.SetTargetOnline(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID, body.TargetRef, body.Online)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
+		if err != nil {
 			writeSimulationError(w, err)
 			return
 		}
@@ -241,12 +278,23 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !ok {
 			return
 		}
-		if err := control.ResetTwin(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID); err != nil {
+		err := control.ResetTwin(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), active.ID)
+		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
+			return
+		}
+		if err != nil {
 			writeSimulationError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"reset": true, "scope": "SIMULATION_ONLY"})
 	}))
+}
+
+func authorizeSimulationResponse(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, hooks operatorSimulationHooks) bool {
+	if hooks.BeforeResponse != nil {
+		hooks.BeforeResponse()
+	}
+	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl)
 }
 
 type simulationStatusReader interface {
@@ -255,17 +303,17 @@ type simulationStatusReader interface {
 
 func activeSimulationSession(w http.ResponseWriter, r *http.Request, control simulationStatusReader) (domain.Session, bool) {
 	status, err := control.Status(r.Context(), r.PathValue("project_id"))
+	// Status may read session, checkpoint, cue and event data. Recheck before
+	// returning any status-derived error or absence result to a scoped actor.
+	if _, grantErr := currentProjectRouteGrant(r); !writeProjectQualificationError(w, grantErr) {
+		return domain.Session{}, false
+	}
 	if err != nil {
 		writeSimulationError(w, err)
 		return domain.Session{}, false
 	}
 	if status.Session == nil || status.Session.Type != domain.SessionSimulation || status.Session.Status != domain.SessionActive {
 		writeJSON(w, http.StatusConflict, map[string]any{"error_code": "SIMULATION_NOT_ACTIVE"})
-		return domain.Session{}, false
-	}
-	// Status may have performed multiple DB reads after the route's initial
-	// grant check; deny a revoked browser before any simulation mutation.
-	if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 		return domain.Session{}, false
 	}
 	return *status.Session, true
