@@ -1279,3 +1279,66 @@ paths, installed-copy migration/update/impact-preview/restore qualification,
 and deployed legacy Companion/ticket compatibility remain open. Hardware
 STOP/Blackout, StageAudio revocation and independent laser-safe-off remain
 pending.
+
+## SC-024 continuation · 2026-11-13 · failure-response and rollback fences
+
+Two red-first regressions found that scoped authorization was rechecked before
+successful response delivery but not before some failure responses:
+
+- Owner Project cutover preview returned `PROJECT_ACCESS_PREVIEW_UNAVAILABLE`
+  after the Owner session was revoked while preview generation failed. The
+  handler now rechecks the exact Owner session and permission before returning
+  either an error or the report.
+- Scoped StageAudio media listing returned `STAGEAUDIO_MEDIA_UNAVAILABLE`
+  when `media.read` was withdrawn immediately before file lookup. The handler
+  now rechecks the browser session and Project grant before reporting lookup
+  errors or returning media choices.
+
+The regression tests first observed HTTP 503 on the revoked requests; the
+fixed routes return a scoped denial and withhold the preview/media results.
+No StageAudio sidecar, camera, or stage device was contacted.
+
+Migration 53 now has an additional temporary-SQLite rollback test. It creates
+a prospective Project grant, rolls back to migration 52, verifies only the
+new membership/grant tables are removed, checks the legacy Project, Cue, and
+published Snapshot identity/bytes, then reapplies migration 53 and confirms
+that it creates no implicit grants.
+
+Local evidence at code HEAD `e95115d`:
+
+- `go test ./internal/httpapi -count=1 -timeout=15m` PASS (`57.927s`).
+- Focused `internal/httpapi` Race tests for cutover preview and StageAudio
+  media/status revocation PASS (`10.391s`).
+- `go vet ./internal/httpapi` and `git diff --check` PASS.
+- `go test ./internal/db -count=1` PASS (`0.903s`), including the Migration
+  53 rollback-impact test.
+
+The two authorization fixes and migration test are three local commits after
+pushed `be13f86aaefb34fbe56102dff9612a71514cdfee`. At this checkpoint,
+Companion Core and Camera Relay CI on `be13f86` pass; Core CI run
+`43493613268` has Go 1.27 tests and vet passing, with Go 1.26 Race still in
+progress and Linux ARM64 builds pending. Do not install or push this local
+group until the exact pushed-head CI completes; after normal grouped push,
+wait for exact-head CI before any Pi installation.
+
+Read-only Pi check still reports `stagecore-hub.service` and
+`stagecore-camera-relay.service` active and `stagecore-rc-qualification.service`
+inactive. No Pi files, services, sudo rules, firmware, or physical outputs
+changed. Sudo rules remain unaudited at the file-content/source-attribution
+level because root-owned files cannot be read with the active limited
+passwordless grants; the password-required unrestricted rule, direct Hub
+start/stop/restart grant, and helper `physical-command` remain unchanged for
+owner review.
+
+Production Assembler, Migration 53, and its partial-activation source guard
+remain unchanged; Project ACL is not active in production. SC-024 remains
+**not software-qualified**: complete route-to-policy reconciliation and
+production-shaped integration, remaining failure/async delivery fences, and
+old deployed Companion compatibility evidence still need completion. Hardware
+STOP/Blackout, StageAudio behavior during physical operation, laser independent
+safe-off, and Production Activation remain pending.
+
+**Resume at:** local `integration/stagecore-rc` HEAD `e95115d`; remote remains
+`be13f86` while exact-head Core Race/ARM64 CI finishes. Draft PR #534 remains
+open. Continue the route/async authorization audit, preserve production ACL
+and the source guard, then push a normal 3–5 commit group and await its full CI.
