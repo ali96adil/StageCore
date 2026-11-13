@@ -633,6 +633,77 @@ func TestProjectStageDeviceListSuppressesResultsAfterSessionRevocation(t *testin
 	}
 }
 
+func TestProjectLiveVideoSourcesSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped live sources revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sourceID = "scoped-live-source-revoke"
+	if _, err := devices.UpsertLiveSource(ctx, deviceexperience.LiveSource{
+		ID: sourceID, ProjectID: project.ID, Name: "Private camera source",
+		Class: deviceexperience.SourceNetworkStream, EndpointRef: "rtsp://stage-camera.invalid/live",
+		Config: json.RawMessage(`{}`), DesiredEnabled: true, Readiness: deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "live-source-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var token string
+	var revoked bool
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, projects, access, stageDeviceRouteHooks{
+			BeforeLiveVideoSourcesResponse: func() {
+				revoked = true
+				if err := h.auth.Logout(ctx, token); err != nil {
+					t.Errorf("revoke session before live-source delivery: %v", err)
+				}
+			},
+		},
+	)).Handler()
+	for _, login := range []userauth.Credential{owner, operatorLogin} {
+		t.Run(login.Session.User.Role, func(t *testing.T) {
+			token, revoked = login.Token, false
+			request := authenticatedReadRequest(http.MethodGet,
+				"/api/v1/projects/"+project.ID+"/live-video-sources", login.Token)
+			request.Host = "localhost"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			body := response.Body.String()
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(body, sourceID) ||
+				strings.Contains(body, "Private camera source") || strings.Contains(body, "stage-camera.invalid") {
+				t.Fatalf("revoked %s received live-source data: status=%d body=%s hook=%t", login.Session.User.Role, response.Code, body, revoked)
+			}
+		})
+	}
+}
+
 func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
 	for _, operation := range []string{"software-transfer", "lighting-activation"} {
 		t.Run(operation, func(t *testing.T) {

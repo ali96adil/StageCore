@@ -70,6 +70,7 @@ type stageDeviceRouteHooks struct {
 	BeforeOwnerReadResponse func(route string)
 	BeforeDeviceMetadataResponse func(route string)
 	BeforeProjectDeviceListResponse func()
+	BeforeLiveVideoSourcesResponse func()
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -88,6 +89,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		beforeSnapshotSyncResponse := func() {}
 		beforeDeviceMetadataResponse := func(string) {}
 		beforeProjectDeviceListResponse := func() {}
+		beforeLiveVideoSourcesResponse := func() {}
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -112,6 +114,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			if hooks[0].BeforeProjectDeviceListResponse != nil {
 				beforeProjectDeviceListResponse = hooks[0].BeforeProjectDeviceListResponse
+			}
+			if hooks[0].BeforeLiveVideoSourcesResponse != nil {
+				beforeLiveVideoSourcesResponse = hooks[0].BeforeLiveVideoSourcesResponse
 			}
 		}
 
@@ -1571,11 +1576,17 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "PROJECT_NOT_FOUND"})
 				return
 			}
 			sources, err := devices.ListLiveSources(r.Context(), projectID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "LIVE_SOURCE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
@@ -1584,8 +1595,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					sources = append(sources, source)
 				}
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			cameraStatus := probeTabletCameraRelay(r.Context(), tabletRelaySource(sources))
-			if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+			beforeLiveVideoSourcesResponse()
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "camera_status": cameraStatus})
