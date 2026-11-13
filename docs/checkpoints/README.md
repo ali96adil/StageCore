@@ -2,6 +2,7 @@
 
 Checkpoints are dated consistency reviews used at major engineering transitions. They do not replace the product baseline; they record what has been reviewed, which later decisions resolve older open questions, which implementation/prototype evidence exists, and what remains unproven before the next phase.
 
+- [2026-11-14 — Autonomous Software Completion Campaign Handoff](2026-11-14-autonomous-software-campaign.md) — records the exact Git/CI checkpoint, Mixed Cue and linked-chain performance results, SC-001..SC-025 matrix, verified Pi access boundary, safety limits and the next software task.
 - [2026-08-26 — Implementation Baseline Checkpoint](2026-08-26-implementation-baseline.md) — full transition review from planning/decision spikes toward M0 Core Persistence.
 - [2026-08-26 — Pre-M0 Finalization Checkpoint](2026-08-26-pre-m0-finalization.md) — closes known pre-M0 consistency gaps, pins implementation-entry choices through Addendum 002, and records that no known pre-M0 decision remains unowned.
 - [2026-08-26 — M0 Core Persistence Completion Checkpoint](2026-08-26-m0-core-persistence-complete.md) — records implementation and CI evidence that M0 is complete and transitions the project to M1 Cue Engine + Simulator.
