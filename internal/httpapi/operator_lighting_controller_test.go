@@ -15,8 +15,70 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func TestLightingCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "lighting-cue-acl"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Scoped lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities:    []string{lightingnode.CapabilityChannelsFade}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+		RevisionID: project.CurrentRevisionID, DeviceID: deviceID, ProfileID: lightingnode.ProfileID,
+		Configuration: lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{
+			{ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Front Warm", Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 80, Enabled: true},
+		}},
+		Aliases: map[string]string{"front_warm": "warm_a"},
+	}, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorLightingController(f.h.auth, devices, f.projects, lightingControllerHooks{
+			BeforeCueAliasCreate: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke CueEdit before alias creation: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+f.projectID+"/lighting-controller/cue-actions",
+		[]byte(`{"command_type":"LIGHTING_CHANNELS_FADE","fade_ms":1200,"levels":{"front_warm":55}}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatalf("revoked Operator received cue action: %s", response.Body.String())
+	}
+	aliases, err := f.projects.ListAliases(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("lighting target alias committed after CueEdit revocation: %+v", aliases)
+	}
+}
 
 func TestOperatorLightingCueActionsGroupAliasesPerNode(t *testing.T) {
 	h := newAuthHarness(t)

@@ -12,6 +12,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -79,7 +80,15 @@ type lightingTargetBinding struct {
 	CapabilityKey string
 }
 
+type lightingControllerHooks struct {
+	BeforeCueAliasCreate func()
+}
+
 func WithOperatorLightingController(auth *userauth.Service, devices *deviceexperience.Repository, stageStore *store.Store) Option {
+	return withOperatorLightingController(auth, devices, stageStore, lightingControllerHooks{})
+}
+
+func withOperatorLightingController(auth *userauth.Service, devices *deviceexperience.Repository, stageStore *store.Store, hooks lightingControllerHooks) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || stageStore == nil {
 			return
@@ -118,7 +127,7 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 			})
 		}))
 
-		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/lighting-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/lighting-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
 				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
@@ -129,6 +138,8 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 				writeProjectStoreError(w, err)
 				return
 			}
+			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			writeRequest := r.WithContext(writeCtx)
 			var input lightingCueActionRequest
 			if !decodeBoundedJSON(w, r, &input) {
 				return
@@ -193,8 +204,11 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_ALIAS_RESOLUTION_FAILED", "detail": err.Error()})
 					return
 				}
-				targetRef, err := ensureLightingTargetAlias(r, stageStore, aliases, projectID, device, capability)
+				targetRef, err := ensureLightingTargetAlias(writeRequest, stageStore, aliases, projectID, device, capability, hooks.BeforeCueAliasCreate)
 				if err != nil {
+					if writeProjectMutationDenied(w, err) {
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_TARGET_FAILED", "detail": err.Error()})
 					return
 				}
@@ -202,10 +216,13 @@ func WithOperatorLightingController(auth *userauth.Service, devices *deviceexper
 					DeviceID: device.ID, DisplayName: device.DisplayName,
 					TargetRef: targetRef, CapabilityKey: capability,
 					ExecutionMode: defaultLightingExecutionMode(input.ExecutionMode),
-					Priority: defaultLightingPriority(input.Priority, input.CommandType),
-					Parameters: parameters,
+					Priority:      defaultLightingPriority(input.Priority, input.CommandType),
+					Parameters:    parameters,
 					TimeoutPolicy: lightingTimeoutPolicy(input.CommandType, input.FadeMS),
 				})
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
 		}))
@@ -383,7 +400,7 @@ func lightingTimeoutPolicy(commandType string, fadeMS int64) json.RawMessage {
 	return raw
 }
 
-func ensureLightingTargetAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, device deviceexperience.Device, capability string) (string, error) {
+func ensureLightingTargetAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, device deviceexperience.Device, capability string, beforeCreate func()) (string, error) {
 	for _, alias := range aliases {
 		if alias.LogicalType != devicechannel.StageDeviceLogicalType {
 			continue
@@ -401,6 +418,9 @@ func ensureLightingTargetAlias(r *http.Request, stageStore *store.Store, aliases
 		return "", err
 	}
 	logicalName := "lighting." + lightingAliasSlug(device.ID) + "." + lightingAliasSlug(strings.TrimPrefix(capability, "lighting."))
+	if beforeCreate != nil {
+		beforeCreate()
+	}
 	created, err := stageStore.CreateAlias(r.Context(), domain.ProjectDeviceAlias{
 		ProjectID: projectID, LogicalName: logicalName, LogicalType: devicechannel.StageDeviceLogicalType,
 		TargetRef: device.ID, GroupName: device.GroupName, ProjectConfig: config,
