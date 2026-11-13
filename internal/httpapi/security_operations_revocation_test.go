@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -69,6 +70,35 @@ func TestSecurityOperationsWithholdResultsAfterOwnerSessionRevocation(t *testing
 				t.Fatalf("revoked Owner received permission inventory: %+v", payload)
 			}
 		})
+	}
+}
+
+func TestSecurityOperationDoesNotCreateSecretAfterRevocationWhileReadingBody(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	_, _, handler := newSecurityOperationsRevocationFixture(t, h, nil, nil)
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/security/secrets",
+		[]byte(`{"logical_name":"revoked-secret","value":"private-value"}`), owner.Token, owner.CSRFToken)
+	request.Body = &firmwareUploadRevokeReader{ReadCloser: request.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Errorf("revoke Owner while request body is read: %v", err)
+		}
+	}}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("revoked Owner response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, `SELECT count(*) FROM secret_records WHERE logical_name = 'revoked-secret'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("secret mutation was committed after the Owner session was revoked while reading the body")
 	}
 }
 
