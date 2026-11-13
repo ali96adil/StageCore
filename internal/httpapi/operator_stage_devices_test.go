@@ -498,6 +498,67 @@ func TestStageDeviceOwnerReadSuppressesResultsAfterSessionRevocation(t *testing.
 	}
 }
 
+func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "e4599675-5d92-4c8e-95ba-c2140209ad31"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: "stagecore.test-metadata",
+		DisplayName: "Private device metadata", Platform: "test", Architecture: "arm64",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var currentToken, expectedRoute string
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeDeviceMetadataResponse: func(route string) {
+				if route != expectedRoute {
+					return
+				}
+				revoked = true
+				if err := h.auth.Logout(ctx, currentToken); err != nil {
+					t.Errorf("revoke Owner session before %s response: %v", route, err)
+				}
+			},
+		},
+	)).Handler()
+	for _, route := range []struct {
+		name string
+		path string
+		leak string
+	}{
+		{name: "device", path: "/api/v1/stage-devices/" + deviceID, leak: "Private device metadata"},
+		{name: "assignment", path: "/api/v1/stage-devices/" + deviceID + "/assignment", leak: deviceID},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentToken, expectedRoute, revoked = owner.Token, route.name, false
+			request := authenticatedReadRequest(http.MethodGet, route.path, owner.Token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), route.leak) {
+				t.Fatalf("revoked Owner received %s data: status=%d body=%s hook=%t", route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
 func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
 	for _, operation := range []string{"software-transfer", "lighting-activation"} {
 		t.Run(operation, func(t *testing.T) {

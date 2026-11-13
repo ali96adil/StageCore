@@ -68,6 +68,7 @@ type stageDeviceRouteHooks struct {
 	LightingActivation func(context.Context, deviceexperience.LightingActivationInput, string, func(context.Context) error) (deviceexperience.LightingActivationCommit, error)
 	BeforeSnapshotSyncResponse func()
 	BeforeOwnerReadResponse func(route string)
+	BeforeDeviceMetadataResponse func(route string)
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -84,6 +85,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		softwareTransfer := runtime.ExecuteReservedSoftwareTransferAuthorized
 		lightingActivation := runtime.ExecuteLightingActivationAuthorized
 		beforeSnapshotSyncResponse := func() {}
+		beforeDeviceMetadataResponse := func(string) {}
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -102,6 +104,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			if hooks[0].BeforeSnapshotSyncResponse != nil {
 				beforeSnapshotSyncResponse = hooks[0].BeforeSnapshotSyncResponse
+			}
+			if hooks[0].BeforeDeviceMetadataResponse != nil {
+				beforeDeviceMetadataResponse = hooks[0].BeforeDeviceMetadataResponse
 			}
 		}
 
@@ -763,7 +768,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
 				return
 			}
-			if _, allowed := allowScopedDeviceMetadata(w, r, session, access, boundProject); !allowed {
+			beforeDeviceMetadataResponse("device")
+			permission := userauth.PermissionProjectRead
+			if access == nil && item.ProjectID == "" {
+				permission = userauth.PermissionCompanionPair
+			}
+			if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, permission) {
 				return
 			}
 			writeJSON(w, http.StatusOK, item)
@@ -800,7 +810,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGE_DEVICE_NOT_FOUND"})
 				return
 			}
-			if _, allowed := allowScopedDeviceMetadata(w, r, session, access, boundProject); !allowed {
+			beforeDeviceMetadataResponse("assignment")
+			permission := userauth.PermissionProjectRead
+			if access == nil && record.ProjectID == "" {
+				permission = userauth.PermissionCompanionPair
+			}
+			if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, permission) {
 				return
 			}
 			writeJSON(w, http.StatusOK, record)

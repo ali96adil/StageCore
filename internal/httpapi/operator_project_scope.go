@@ -69,3 +69,21 @@ func allowScopedDeviceMetadata(w http.ResponseWriter, r *http.Request, session u
 	}
 	return "", false
 }
+
+func reauthorizeScopedDeviceMetadata(w http.ResponseWriter, r *http.Request, auth *userauth.Service,
+	session userauth.Session, access *projectaccess.Service, expectedProject string, permission userauth.Permission,
+) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	token, ok := browserSessionToken(r)
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if !ok || err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	if userauth.Authorize(current.User.Role, permission) != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+		return false
+	}
+	_, allowed := allowScopedDeviceMetadata(w, r, current, access, expectedProject)
+	return allowed
+}
