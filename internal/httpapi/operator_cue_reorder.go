@@ -14,6 +14,14 @@ type cueReorderRequest struct {
 }
 
 func WithOperatorCueReorder(auth *userauth.Service, projectStore *store.Store) Option {
+	return withOperatorCueReorder(auth, projectStore, cueReorderHooks{})
+}
+
+type cueReorderHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorCueReorder(auth *userauth.Service, projectStore *store.Store, hooks cueReorderHooks) Option {
 	return func(s *Server) {
 		if auth == nil || projectStore == nil {
 			return
@@ -88,6 +96,12 @@ func WithOperatorCueReorder(auth *userauth.Service, projectStore *store.Store) O
 			items := make([]cueView, 0, len(cues))
 			for _, cue := range cues {
 				items = append(items, makeCueView(cue))
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"revision": makeRevisionView(revision), "cues": items})
 		}))
