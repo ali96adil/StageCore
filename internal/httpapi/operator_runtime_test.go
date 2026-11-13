@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,55 @@ import (
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func TestRehearsalStartSuppressesResultAfterGrantRevocationAtCommit(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.h.db.DB.ExecContext(ctx, fmt.Sprintf(`
+		CREATE TRIGGER revoke_rehearsal_grant_after_session_start
+		AFTER INSERT ON sessions
+		WHEN NEW.session_type = 'REHEARSAL' AND NEW.project_id = '%s'
+		BEGIN
+			DELETE FROM project_permission_grants
+			WHERE user_id = '%s' AND project_id = NEW.project_id AND permission = 'rehearsal.control';
+		END`, f.projectID, f.operatorID)); err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry())
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/start",
+		[]byte(`{"mode":"REHEARSAL","name":"Revoked at commit","request_id":"018f5b34-0f47-7cc0-9000-0a0000000199"}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), `"session"`) ||
+		!strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked operator received committed rehearsal result or retryable response: HTTP %d %s", response.Code, response.Body.String())
+	}
+	if err := f.access.Check(ctx, f.operatorID, f.projectID, projectaccess.ProjectView); err != nil {
+		t.Fatalf("test must preserve project.view: %v", err)
+	}
+	active, err := f.projects.ActiveSessionForProject(ctx, f.projectID)
+	if err != nil || active == nil || active.Type != domain.SessionRehearsal {
+		t.Fatalf("committed rehearsal state was not retained truthfully: %+v err=%v", active, err)
+	}
+}
 
 func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	h := newAuthHarness(t)

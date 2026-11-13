@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -124,6 +125,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			RehearsalPurpose: body.RehearsalPurpose,
 			Issuer:           session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
+		if created.ID != "" && !recheckCommittedRuntimeStart(w, r, auth, session, permission, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": makeSessionView(created)})
 	}))
 
@@ -361,6 +365,38 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		})
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
+}
+
+func recheckCommittedRuntimeStart(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, needed projectaccess.Permission) bool {
+	token, _ := browserSessionToken(r)
+	current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	if err == nil && (current.ID != session.ID || current.User.ID != session.User.ID || userauth.Authorize(current.User.Role, permission) != nil) {
+		err = userauth.ErrForbidden
+	}
+	if err == nil {
+		if access := qualificationAccess(r, nil); access != nil {
+			if _, routeErr := currentProjectRouteGrant(r); routeErr != nil {
+				err = routeErr
+			} else {
+				err = access.CheckAll(r.Context(), current.User.ID, strings.TrimSpace(r.PathValue("project_id")), projectaccess.ProjectView, needed)
+			}
+		}
+	}
+	if err == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	status, code := http.StatusForbidden, "FORBIDDEN"
+	if !errors.Is(err, userauth.ErrForbidden) && !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
+		status, code = http.StatusServiceUnavailable, "PROJECT_ACCESS_UNAVAILABLE"
+	}
+	writeJSON(w, status, map[string]any{
+		"error_code":                     code,
+		"effect_may_be_committed":        true,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return false
 }
 
 func activeRuntimeSession(w http.ResponseWriter, r *http.Request, projectStore *store.Store) (domain.Session, bool) {
