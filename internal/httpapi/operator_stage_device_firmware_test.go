@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -136,6 +137,7 @@ type revokingFirmwareMaintenanceSender struct {
 	updates *deviceupdate.LifecycleStore
 	auth    *userauth.Service
 	token   string
+	failure error
 }
 
 type unusedFirmwareMaintenanceSender struct{}
@@ -469,6 +471,9 @@ func (s revokingFirmwareMaintenanceSender) SendFirmwareMaintenance(ctx context.C
 	if err := s.auth.Logout(ctx, s.token); err != nil {
 		return deviceupdate.UpdateRecord{}, err
 	}
+	if s.failure != nil {
+		return record, s.failure
+	}
 	return record, nil
 }
 
@@ -537,7 +542,8 @@ func TestFirmwareSendDoesNotDeliverSuccessAfterOwnerSessionRevokedPostWrite(t *t
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+	if body["effect_may_be_committed"] != true || body["effect_may_have_been_committed"] != true ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
 		t.Fatalf("post-write revocation response must report irreversible boundary and prohibit retry: %+v", body)
 	}
 	if _, err := h.auth.ValidateCSRF(ctx, owner.Token, owner.CSRFToken); !errors.Is(err, userauth.ErrSessionInvalid) {
@@ -546,6 +552,80 @@ func TestFirmwareSendDoesNotDeliverSuccessAfterOwnerSessionRevokedPostWrite(t *t
 	record, err := updates.Get(ctx, manifest.UpdateID)
 	if err != nil || record.State != deviceupdate.UpdateSent {
 		t.Fatalf("already transmitted firmware effect was not truthfully retained as SENT: %+v err=%v", record, err)
+	}
+}
+
+func TestFirmwareSendSuppressesUncertainErrorAfterOwnerRevocation(t *testing.T) {
+	ctx := context.Background()
+	h := newAuthHarness(t)
+	stageStore := store.New(h.db.DB, clock.Real{})
+	const deviceID = "55555555-5555-4555-8555-555555555599"
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: deviceID, ProfileID: "stagecore.test-firmware", Kind: deviceexperience.DeviceGeneric,
+		DisplayName: "Firmware Error Boundary Mock", Platform: "test", Architecture: "test",
+		ClientVersion: "0.1.0", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities: []string{deviceupdate.FirmwareMaintenanceCapability}, Enabled: true,
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		INSERT INTO stage_device_runtime_state
+		(device_id, connection_state, readiness, last_seen_at_us, observed_state_json, network_state_json)
+		VALUES (?, 'ONLINE', 'READY', ?, '{}', '{}')`, deviceID, time.Now().UnixMicro()); err != nil {
+		t.Fatal(err)
+	}
+	device, err = devices.GetDevice(ctx, deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := deviceupdate.NewLifecycleStore(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := buildStageDeviceFirmwareManifest(device, qualifiedStageLaserArtifact(device), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updates.Issue(ctx, manifest, "test-owner"); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := deviceupdate.NewArtifactRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const privateDetail = "private simulated transport failure"
+	fakeRuntime := revokingFirmwareMaintenanceSender{
+		updates: updates, auth: h.auth, token: owner.Token,
+		failure: fmt.Errorf("%w: %s", devicechannel.ErrFirmwareMaintenanceOutcomeUncertain, privateDetail),
+	}
+	handler := New(WithOperatorStageDeviceFirmware(h.auth, devices, artifacts, updates, fakeRuntime, stageStore, nil)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+deviceID+"/firmware-updates/"+manifest.UpdateID+"/send",
+		nil, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), capability.DispatchAuthorityRevokedCode) {
+		t.Fatalf("revoked Owner received stale firmware error: HTTP %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), privateDetail) {
+		t.Fatalf("revoked Owner received private firmware transport details: %s", response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("uncertain firmware send was not reported safely: %+v", body)
 	}
 }
 

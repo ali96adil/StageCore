@@ -548,6 +548,19 @@ func withOperatorStageDeviceFirmware(
 				dispatch := firmwareMaintenanceContext(r, auth, session, stageStore)
 				sent, err := runtime.SendFirmwareMaintenance(dispatch, updateID)
 				if err != nil {
+					outcomeUncertain := errors.Is(err, devicechannel.ErrFirmwareMaintenanceOutcomeUncertain)
+					if errors.Is(capability.CheckDispatch(dispatch), capability.ErrDispatchAuthorityRevoked) {
+						failure := map[string]any{"error_code": capability.DispatchAuthorityRevokedCode}
+						if outcomeUncertain {
+							failure["effect_may_be_committed"] = true
+							failure["effect_may_have_been_committed"] = true
+							failure["effect_may_have_been_sent"] = true
+							failure["retryable"] = false
+							failure["detail"] = "Authorization ended after the firmware send boundary; check update status before taking further action."
+						}
+						writeJSON(w, http.StatusForbidden, failure)
+						return
+					}
 					status := http.StatusConflict
 					code := "STAGE_DEVICE_FIRMWARE_SEND_REJECTED"
 					switch {
@@ -566,10 +579,17 @@ func withOperatorStageDeviceFirmware(
 					case errors.Is(err, deviceupdate.ErrUpdateState):
 						code = "STAGE_DEVICE_FIRMWARE_UPDATE_STATE_CONFLICT"
 					}
-					writeJSON(w, status, map[string]any{
+					failure := map[string]any{
 						"error_code": code,
 						"detail":     err.Error(),
-					})
+					}
+					if outcomeUncertain {
+						failure["effect_may_be_committed"] = true
+						failure["effect_may_have_been_committed"] = true
+						failure["effect_may_have_been_sent"] = true
+						failure["retryable"] = false
+					}
+					writeJSON(w, status, failure)
 					return
 				}
 
@@ -592,10 +612,12 @@ func withOperatorStageDeviceFirmware(
 				// retrying could duplicate the firmware operation.
 				if err := capability.CheckDispatch(dispatch); err != nil {
 					writeJSON(w, http.StatusForbidden, map[string]any{
-						"error_code":                capability.DispatchAuthorityRevokedCode,
-						"detail":                    "Authorization ended after the firmware send boundary; check update status before taking further action.",
-						"effect_may_have_been_sent": true,
-						"retryable":                 false,
+						"error_code":                     capability.DispatchAuthorityRevokedCode,
+						"detail":                         "Authorization ended after the firmware send boundary; check update status before taking further action.",
+						"effect_may_be_committed":        true,
+						"effect_may_have_been_committed": true,
+						"effect_may_have_been_sent":      true,
+						"retryable":                      false,
 					})
 					return
 				}
