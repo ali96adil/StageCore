@@ -74,6 +74,38 @@ func TestExtensionMaintenanceSuppressesCommittedUpdateAfterOwnerRevocation(t *te
 	}
 }
 
+func TestExtensionMaintenanceDoesNotDispatchUpdateAfterRevocationWhileReadingBody(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched := false
+	supervisor := revokingExtensionMaintenanceSupervisor{update: func(context.Context, string, string, string) (extension.UpdateResult, error) {
+		dispatched = true
+		return extension.UpdateResult{InstallationID: "installation-1"}, nil
+	}}
+	server := New()
+	registerOperatorExtensionMaintenanceRoutes(server.mux, h.auth, supervisor, nil)
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/extensions/installations/installation-1/update",
+		[]byte(`{"target_package_id":"package-new"}`), owner.Token, owner.CSRFToken)
+	request.Body = &firmwareUploadRevokeReader{ReadCloser: request.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Errorf("revoke Owner while request body is read: %v", err)
+		}
+	}}
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if dispatched {
+		t.Fatal("extension update was dispatched after its Owner session was revoked while reading the request body")
+	}
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("revoked Owner update response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+}
+
 func TestExtensionMaintenanceSuppressesCommittedRepairAfterOwnerRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
