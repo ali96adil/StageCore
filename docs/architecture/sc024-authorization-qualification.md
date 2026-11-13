@@ -682,3 +682,65 @@ cycle remain open. **SC-024 is still not software-qualified.**
 full HTTP API/source guard, append the grouped evidence, and push to PR #534
 without force. Continue the remaining async-maintenance route audit; keep
 Production ACL disabled.
+
+## SC-024 continuation · 2026-11-13 · extension and security administration delivery
+
+The follow-up Owner-result audit reproduced disclosure from the extension
+library after session revocation. `GET /api/v1/extensions`, package detail,
+and registration now recheck the live session and permission before releasing
+the result, including service-error responses. If registration committed
+before revocation, the registered package remains in the library while the
+HTTP result is withheld with `effect_may_have_been_committed: true` and
+`retryable: false`. Red-first regression cases observed the old HTTP 200/201
+results for list, detail, and register; the focused tests now pass.
+
+The global Security Operations routes now buffer their responses until the
+same session and route permission are checked again. This covers audit and
+secret reads, plugin permission reads/writes, user administration, and
+Companion pairing/revocation. Mutations whose caller loses authority return a
+non-retryable uncertain-effect response without exposing the completed
+record. Plugin permission storage commits before its runtime refresh; when
+refresh fails, the response now identifies the persisted effect and disables
+blind retry. Red-first tests reproduced both a leaked plugin-grant result
+after Owner logout and a refresh failure response that hid the stored grant.
+The route source guard now recognizes the shared authenticated wrapper and
+asserts that its final authorization check remains before buffered delivery.
+The route-pattern inventory digest did not change.
+
+`go test ./internal/httpapi -count=1` passes after these changes
+(`46.698s`). Focused Race tests for extension library, security operations,
+and route guards pass. The `88432f6` remote checkpoint has Companion Core and
+native replacement/media acceptance PASS (run `43428647182`), Camera Relay
+unit/Race/Vet/Linux ARM64 trial build PASS (run `43428647193`), and Core Go
+1.27 PASS. Its Go 1.26 Race was still running and Core ARM64 was queued in run
+`43428647236` when this entry was recorded. The new local commits have not
+been installed on the Pi.
+
+### Read-only sudo audit
+
+`sudo -n -l` shows the password-required `(ALL : ALL) ALL` rule, the fixed RC
+qualification helper, direct passwordless `systemctl start|stop|restart
+stagecore-hub`, and fixed helper operations including `physical-command`.
+That helper invokes the qualification command with `--allow-physical`; its
+bounded allowlist includes real Tablet and lighting commands. No systemd unit
+references the helper, and the RC update wrapper explicitly targets only
+`stagecore-rc-qualification.service`. The staged
+`/home/ali96adil/90-stagecore-codex.sudoers.new` draft contains only the fixed
+RC helper rule. The installed sudoers files are root-owned mode `0440` and
+could not be read without interactive sudo; no sudoers or service change was
+made. Keep the direct production-service and physical-command grants pending
+owner review, because they provide manual recovery and real-output authority.
+
+Production Assembler, Migration 53, stable services/data and Project ACL
+activation remain unchanged. Route-to-policy reconciliation, old Companion
+deployment/ticket compatibility, and the Production-like ACL migration,
+impact-preview and restore rehearsal still need completion. **SC-024 remains
+not software-qualified.** Hardware qualification and Production Activation
+remain separate.
+
+**Resume at:** local `integration/stagecore-rc` HEAD
+`fa4444b7a77c1eecaa5d6f50224db88a343df122`, three commits ahead of remote
+`88432f63edc71f115f5fc1c3a5cc79b1c2c54853`. Finish the remaining endpoint
+delivery audit, update this checkpoint after the grouped push, and wait for
+the exact-head Core Go 1.26 Race and ARM64 checks before pushing. Keep
+Production ACL disabled and make no sudoers or hardware changes.
