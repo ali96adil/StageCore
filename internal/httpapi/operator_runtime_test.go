@@ -456,6 +456,15 @@ func TestShowAdmissionRechecksGrantAfterPreflight(t *testing.T) {
 }
 
 func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) {
+	testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t, false)
+}
+
+func TestQualifiedDelayedJumpStopsDispatchAfterShowGrantRevocation(t *testing.T) {
+	testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t, true)
+}
+
+func testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T, jump bool) {
+	t.Helper()
 	f := setupProjectAccessAPI(t)
 	ctx := context.Background()
 	project, err := f.projects.GetProject(ctx, f.projectID)
@@ -467,7 +476,7 @@ func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.projects.CreateCueWithActions(ctx, domain.Cue{
+	cue, err := f.projects.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: project.CurrentRevisionID, DisplayLabel: "1", Name: "Revocable cue",
 		OrderIndex: 1, CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
 		ExecutionPolicy: json.RawMessage(`{"action_delay_ms":25}`),
@@ -482,7 +491,8 @@ func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) 
 			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
@@ -525,8 +535,14 @@ func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) 
 		WithOperatorRuntime(f.h.auth, f.projects, runtime),
 		WithProjectRouteQualification(f.access),
 	).Handler()
-	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/go",
-		[]byte(`{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000125"}`), f.operator.Token, f.operator.CSRFToken)
+	path := "/api/v1/projects/" + project.ID + "/runtime/go"
+	body := `{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000125"}`
+	if jump {
+		path = "/api/v1/projects/" + project.ID + "/runtime/jump"
+		body = fmt.Sprintf(`{"confirm":true,"cue_id":%q,"request_id":"018f5b34-0f47-7cc0-9000-0a0000000126"}`, cue.ID)
+	}
+	req := authenticatedMutationRequest(t, http.MethodPost, path,
+		[]byte(body), f.operator.Token, f.operator.CSRFToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if sentBeforeRevocation.Load() != 1 || sentAfterRevocation.Load() != 0 {
@@ -538,8 +554,9 @@ func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) 
 	}
 	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "cue_execution_id") ||
 		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
 		!strings.Contains(res.Body.String(), `"retryable":false`) {
-		t.Fatalf("revoked runtime intent received cue result or retryable response: HTTP %d %s", res.Code, res.Body.String())
+		t.Fatalf("revoked runtime intent (jump=%t) received cue result or retryable response: HTTP %d %s", jump, res.Code, res.Body.String())
 	}
 }
 
@@ -579,6 +596,7 @@ func TestShowExitRechecksGrantAfterStopSafety(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if !safetyReached || res.Code != http.StatusForbidden ||
 		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
 		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("SHOW exit after grant revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
 	}
@@ -621,6 +639,7 @@ func TestShowExitSuppressesResultAfterSessionRevocationDuringSafety(t *testing.T
 	if !safetyReached || res.Code != http.StatusForbidden || strings.Contains(res.Body.String(), "show.exited") ||
 		strings.Contains(res.Body.String(), `"session_id"`) ||
 		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
 		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("revoked Owner received committed SHOW-exit result or retryable response: HTTP %d %s", res.Code, res.Body.String())
 	}
@@ -665,6 +684,7 @@ func TestEmergencyBlackoutClearKeepsLatchAfterBrowserRevocation(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if !safetyReached || res.Code != http.StatusForbidden ||
 		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
 		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("blackout clear after session revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
 	}
@@ -709,6 +729,7 @@ func TestEmergencyBlackoutSuppressesResultAfterOwnerRevocation(t *testing.T) {
 	}
 	if res.Code != http.StatusForbidden || strings.Contains(res.Body.String(), "managed_output_blackout") ||
 		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
 		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("revoked Owner received Emergency Blackout result or retryable response: HTTP %d %s", res.Code, res.Body.String())
 	}

@@ -344,9 +344,10 @@ func recheckCommittedRuntimeIntent(w http.ResponseWriter, r *http.Request, sessi
 		status, code = http.StatusServiceUnavailable, "PROJECT_ACCESS_UNAVAILABLE"
 	}
 	writeJSON(w, status, map[string]any{
-		"error_code":              code,
-		"effect_may_be_committed": true,
-		"retryable":               false,
+		"error_code":                     code,
+		"effect_may_be_committed":        true,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
 	})
 	return false
 }
