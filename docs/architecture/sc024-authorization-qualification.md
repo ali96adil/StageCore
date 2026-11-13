@@ -1230,48 +1230,47 @@ confirmed no non-interactive general ticket. No sudoers file or service
 was changed; source-file attribution and actual external callers still need
 owner review.
 
-## Current resume snapshot · 2026-11-13 · project-edit partial effects
+## Current resume snapshot · 2026-11-13 · streaming and cue fork fences
 
-Latest pushed StageCore HEAD is `be3a02df3892f08c6a44e4c0520822262b99862b`
-on `integration/stagecore-rc`; Draft PR #534 remains open. The first grouped
-push contains five commits: Lighting binding and three device Cue alias grant
-fences, plus the qualification checkpoint. Its exact-head Companion CI
-`43484250539`, Camera Relay CI `43484250710`, and Core CI `43484250565` all
-passed. Core completed Go 1.26/1.27, Race and Linux ARM64. PR #534 is still
-open and draft at that pushed head.
+Latest pushed StageCore HEAD is `f648ed277afdebd8ce4825c88e9618665e70d800`
+on `integration/stagecore-rc`; Draft PR #534 remains open. Its exact-head
+Companion CI `43489543293` and Camera Relay CI `43489543145` passed. Core CI
+`43489543455` has Go 1.27 passed; Go 1.26 Test, Browser Cue Delivery and Vet
+passed, Race is running, and Linux ARM64 is pending. Do not push again until
+this run completes so the workflow is not cancelled.
 
-Three follow-up code commits are local: `27e61a2` reports partial Lighting
-draft forks, `5784eb5` honors scoped Assistant apply grants and reports
-partial Cue forks, and `5e57f2b` does the same for Visual Engine mode. Their
-red-first regressions and focused Race tests pass. The full
-`internal/httpapi` suite passed in `55.843s`; `go vet ./internal/httpapi` and
-`git diff --check` pass. The related-component matrix and this resume update
-are also local.
+The prior five-commit push and four follow-up commits are covered by exact-head
+Core, Companion and Camera Relay checks. Three newer code commits are local:
+`5237278` checks browser session and Project grants before every Camera Relay
+frame; `0e4e681` and `5ed785c` report a committed validated-revision fork if
+Cue reorder/create is denied after session revocation. Red-first stream test
+observed a JPEG frame after access removal; the frame-boundary check now stops
+the stream before it is written. Red-first Cue tests observed plain 403
+responses after a Draft fork; the corrected responses include committed
+effect fields, `retryable: false`, and no Cue details. No real camera or stage
+device was used.
 
-The next local code checkpoint closes two configuration-edit delivery gaps.
-Red-first tests reproduced a validated-revision fork surviving a permission
-withdrawal before Input creation, and an `input_id` being returned after the
-grant was withdrawn after commit. Configuration handlers now know whether
-their request created a draft, report its partial committed effect if the
-second write is denied, and recheck session and project authority before
-delivering successful results for Targets, Inputs, Outputs and Routes. The
-existing `EnsureProjectDraft` API remains compatible; a status-aware sibling
-reports whether it created a revision. Tests verify the fork remains without
-the denied input, and a committed input remains stored while its result is
-suppressed.
+After these three commits, the complete HTTP API suite passed in `57.358s`.
+Camera viewer Race tests passed (`7.610s`), Cue authoring and reorder focused
+Race tests passed (`6.162s`), and `go vet ./internal/httpapi` plus
+`git diff --check` passed. The local code HEAD before this resume checkpoint is
+`5ed785c42d346dc3fdd90e531144c04b4ec4b9e0`; it is three commits ahead of the
+pushed head. The checkpoint and related-component matrix are the next local
+documentation commit. After CI on `f648ed2` completes successfully, push this
+four-commit group normally and require full exact-head CI before Pi use.
 
-This change passed `go test ./internal/httpapi -count=1` (`57.889s`), focused
-configuration Race tests (`24.105s`), relevant Store fork tests, and
-`go vet ./internal/httpapi ./internal/store`. The red-first failures and the
-post-fix pass are both recorded in the local test history. These latest local
-changes have not been pushed or installed on Pi. Push the five-commit group
-normally after this checkpoint, then require full CI on its exact new head
-before any Pi qualification.
+Read-only Pi check: `stagecore-hub.service` and `stagecore-camera-relay.service`
+are active; `stagecore-rc-qualification.service` is inactive. `sudo -n -l`
+shows password-required unrestricted sudo plus passwordless direct
+`stagecore-hub` start/stop/restart and qualification-helper commands including
+`service-stop` and `physical-command`. No sudoers rule or service was changed;
+the root-owned policy files and external callers still need owner review before
+any restriction that could affect stable operations.
 
 Keep the Production Assembler, Migration 53 and ACL source guard unchanged;
 Production ACL remains disabled. **SC-024 is not software-qualified.** Full
 route-to-policy reconciliation, remaining asynchronous/maintenance delivery
-paths beyond the fenced authoring handlers, installed-copy migration/update/
-impact-preview/restore qualification, and deployed legacy Companion/ticket
-compatibility remain open. Hardware STOP/Blackout, StageAudio revocation and
-independent laser-safe-off remain pending.
+paths, installed-copy migration/update/impact-preview/restore qualification,
+and deployed legacy Companion/ticket compatibility remain open. Hardware
+STOP/Blackout, StageAudio revocation and independent laser-safe-off remain
+pending.
