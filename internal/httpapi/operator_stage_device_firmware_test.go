@@ -224,7 +224,8 @@ func TestFirmwareArtifactUploadSuppressesResultAfterOwnerRevocation(t *testing.T
 		t.Fatal(err)
 	}
 	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
-		result["effect_may_have_been_committed"] != true || result["retryable"] != false {
+		result["effect_may_have_been_committed"] != true || result["retryable"] != false ||
+		response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("revoked Owner received artifact upload result or retryable response: HTTP %d %+v", response.Code, result)
 	}
 	if _, leaked := result["artifact"]; leaked {
@@ -309,7 +310,8 @@ func TestFirmwareManifestSuppressesResultAfterOwnerRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
-		result["effect_may_have_been_committed"] != true || result["retryable"] != false {
+		result["effect_may_have_been_committed"] != true || result["retryable"] != false ||
+		response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("revoked Owner received issued firmware manifest or retryable response: HTTP %d %+v", response.Code, result)
 	}
 	if _, leaked := result["manifest"]; leaked {
@@ -381,7 +383,8 @@ func TestFirmwareArtifactListSuppressesDataAfterOwnerRevocation(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode {
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("revoked Owner received firmware artifact list: HTTP %d %+v", response.Code, result)
 	}
 	if _, leaked := result["artifacts"]; leaked {
@@ -451,7 +454,8 @@ func TestFirmwareUpdateStatusSuppressesDataAfterOwnerRevocation(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode {
+	if response.Code != http.StatusForbidden || result["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("revoked Owner received firmware update status: HTTP %d %+v", response.Code, result)
 	}
 	if _, leaked := result["update"]; leaked {
@@ -538,7 +542,8 @@ func TestFirmwareSendDoesNotDeliverSuccessAfterOwnerSessionRevokedPostWrite(t *t
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
-	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "DISPATCH_AUTHORITY_REVOKED") {
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "DISPATCH_AUTHORITY_REVOKED") ||
+		response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("revoked Owner received firmware send success: HTTP %d %s", response.Code, response.Body.String())
 	}
 	var body map[string]any
@@ -628,6 +633,9 @@ func TestFirmwareSendReportsUncertainOutcomeAndFencesRevocation(t *testing.T) {
 
 			if response.Code != tc.wantStatusCode {
 				t.Fatalf("firmware error HTTP status = %d, want %d: %s", response.Code, tc.wantStatusCode, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("firmware error response is cacheable: headers=%v", response.Header())
 			}
 			if tc.revokeOwner {
 				if !strings.Contains(response.Body.String(), capability.DispatchAuthorityRevokedCode) || strings.Contains(response.Body.String(), privateDetail) {

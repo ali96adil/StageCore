@@ -74,6 +74,7 @@ func withOperatorStageDeviceFirmware(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				device, err := devices.GetDevice(r.Context(), deviceID)
 				if err != nil || !firmwareMaintenanceDeviceEligible(device) {
@@ -255,6 +256,7 @@ func withOperatorStageDeviceFirmware(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				device, err := devices.GetDevice(r.Context(), deviceID)
 				if err != nil || !firmwareMaintenanceDeviceEligible(device) {
@@ -296,6 +298,7 @@ func withOperatorStageDeviceFirmware(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				var input struct {
 					ArtifactID string `json:"artifact_id"`
@@ -440,6 +443,7 @@ func withOperatorStageDeviceFirmware(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				updateID := strings.TrimSpace(r.PathValue("update_id"))
 				record, err := updates.Get(r.Context(), updateID)
@@ -476,6 +480,7 @@ func withOperatorStageDeviceFirmware(
 				r *http.Request,
 				session userauth.Session,
 			) {
+				w.Header().Set("Cache-Control", "no-store")
 				deviceID := strings.TrimSpace(r.PathValue("device_id"))
 				updateID := strings.TrimSpace(r.PathValue("update_id"))
 				if deviceID == "" || updateID == "" {
