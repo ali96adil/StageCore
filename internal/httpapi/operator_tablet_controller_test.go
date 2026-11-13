@@ -31,6 +31,57 @@ func (tabletControllerDispatchFunc) ExecuteTabletAssignmentAuthorized(context.Co
 	return deviceexperience.TabletAssignmentCommit{}, nil
 }
 
+func TestTabletCommandReadSuppressesDataAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-command-read-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet command read", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	command, _, err := devices.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: deviceID, CommandType: "TABLET_PLAY", Issuer: f.operator.Session.User.ID,
+		RuntimeSnapshotID: "snapshot-command-read", CorrelationID: "tablet-command-read-correlation",
+		IdempotencyKey: "tablet-command-read-key", Payload: json.RawMessage(`{"media_key":"01"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeCommandReadResponse: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke project view before response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller/commands/"+command.Envelope.CommandID,
+		f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), command.Envelope.CommandID) ||
+		strings.Contains(response.Body.String(), `"status"`) {
+		t.Fatalf("revoked Operator received Tablet command data: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 type tabletRelayFlashDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f tabletRelayFlashDoerFunc) Do(request *http.Request) (*http.Response, error) {

@@ -293,6 +293,10 @@ type tabletRelayFlashDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
+type tabletControllerHooks struct {
+	BeforeCommandReadResponse func()
+}
+
 func writeTabletFlashAuthorityEnded(w http.ResponseWriter) {
 	writeJSON(w, http.StatusForbidden, map[string]any{
 		"error":                     "TABLET_LIVE_FLASH_AUTHORITY_REVOKED",
@@ -306,6 +310,17 @@ func WithOperatorTabletController(
 	devices *deviceexperience.Repository,
 	runtime tabletControllerRuntime,
 	stageStore *store.Store,
+	flashDoers ...tabletRelayFlashDoer,
+) Option {
+	return withOperatorTabletController(auth, devices, runtime, stageStore, tabletControllerHooks{}, flashDoers...)
+}
+
+func withOperatorTabletController(
+	auth *userauth.Service,
+	devices *deviceexperience.Repository,
+	runtime tabletControllerRuntime,
+	stageStore *store.Store,
+	hooks tabletControllerHooks,
 	flashDoers ...tabletRelayFlashDoer,
 ) Option {
 	return func(s *Server) {
@@ -668,6 +683,12 @@ func WithOperatorTabletController(
 			device, err := devices.GetDevice(r.Context(), command.DeviceID)
 			if err != nil || device.Kind != deviceexperience.DeviceTabletPlayer {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "TABLET_COMMAND_NOT_FOUND"})
+				return
+			}
+			if hooks.BeforeCommandReadResponse != nil {
+				hooks.BeforeCommandReadResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
 				return
 			}
 			writeJSON(w, http.StatusOK, command)
