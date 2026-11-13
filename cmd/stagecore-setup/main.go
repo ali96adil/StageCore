@@ -21,6 +21,11 @@ func main() {
 	}
 	command := os.Args[1]
 	switch command {
+	case deployment.SystemdHealthProbeCommand:
+		if err := runHealthProbe(os.Args[2:]); err != nil {
+			fatal(err)
+		}
+		return
 	case "install":
 		runInstall(os.Args[2:])
 		return
