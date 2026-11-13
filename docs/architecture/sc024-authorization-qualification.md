@@ -563,14 +563,23 @@ do not push the local STOP fence before those runs complete. The previous
 five-commit group is on the remote branch. Local code HEAD is
 `9c45ffdf2d5eda6b7b0ffaa4c413f1b736fbd9c1`.
 
-This closes the reviewed STOP response-delivery boundary only. The overall
-route-to-policy audit and disposable Production-like installed-copy
-migration/update/rollback assembly remain open. Production Assembler,
+A separate async read review found that the Tablet command status route scoped
+the command to its URL Project but delivered the loaded record without a final
+grant/session check. `TestTabletCommandReadSuppressesDataAfterProjectGrantRevocation`
+reproduced HTTP 200 after `project.view` was withdrawn between the DB read and
+response. The route now performs `allowLiveProjectRead` before delivery; the
+regression returns a redacted 404. The focused Tablet response tests pass under
+Race, and the Tablet HTTP tests pass normally. Its private hook only coordinates
+the test boundary and is not exposed by the public option.
+
+These changes close the reviewed STOP and Tablet command-read delivery
+boundaries only. The overall route-to-policy audit and disposable
+Production-like installed-copy migration/update/rollback assembly remain open. Production Assembler,
 Migration 53, stable services and Project ACL activation are unchanged.
 **SC-024 remains not software-qualified.**
 
-**Resume at:** `integration/stagecore-rc` local HEAD
-`9c45ffdf2d5eda6b7b0ffaa4c413f1b736fbd9c1`, one local commit ahead of remote
-`78cb30c06f031ebff86a8e21f5fd45e54659497b`. Wait for exact-HEAD CI, then
-continue the endpoint-level async delivery audit and isolated assembly
-qualification; keep Project ACL disabled.
+**Resume at:** local code checkpoint `74e80f5` on
+`integration/stagecore-rc`, with the STOP fence and this Tablet read fence
+awaiting grouped push after exact-HEAD CI for remote `78cb30c06f031ebff86a8e21f5fd45e54659497b`
+completes. Continue the endpoint-level async delivery audit and isolated
+assembly qualification; keep Project ACL disabled.
