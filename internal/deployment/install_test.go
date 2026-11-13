@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ali96adil/StageCore/internal/config"
 )
 
 func TestDefaultOptionsMatchReferenceDeployment(t *testing.T) {
@@ -127,6 +129,34 @@ func TestValidateIsolatedEnvironmentUsesHubStandaloneToken(t *testing.T) {
 	lowercaseConfig := strings.Replace(string(legacyConfig), "STAGECORE_HA_MODE=STANDALONE", "STAGECORE_HA_MODE=standalone", 1)
 	if err := ValidateIsolatedEnvironment([]byte(lowercaseConfig), opts); err == nil || !strings.Contains(err.Error(), "STAGECORE_HA_MODE=STANDALONE") {
 		t.Fatalf("Hub-incompatible lowercase mode was accepted: %v", err)
+	}
+}
+
+func TestRenderedIsolatedEnvironmentLoadsInHubConfig(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-release")
+	opts.InstallRoot = "/opt/stagecore-rc-qualification"
+	opts.ConfigRoot = "/etc/stagecore-rc-qualification"
+	opts.DataRoot = "/var/lib/stagecore-rc-qualification/data"
+	opts.VaultRoot = "/var/lib/stagecore-rc-qualification/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	var err error
+	opts, err = normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(RenderEnvironment(opts), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			t.Setenv(key, value)
+		}
+	}
+
+	cfg, err := config.Load(nil)
+	if err != nil {
+		t.Fatalf("Hub rejected generated isolated environment: %v", err)
+	}
+	if cfg.HAMode != config.HAModeStandalone {
+		t.Fatalf("Hub HA mode = %q, want %q", cfg.HAMode, config.HAModeStandalone)
 	}
 }
 
