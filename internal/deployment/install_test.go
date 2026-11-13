@@ -200,6 +200,29 @@ func TestIsolatedSystemdUnitIsConstrainedAndNotEnabled(t *testing.T) {
 	}
 }
 
+func TestIsolatedSystemdUnitDeniesUnixDomainSockets(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-release")
+	opts.InstallRoot = "/opt/stagecore-rc-qualification"
+	opts.ConfigRoot = "/etc/stagecore-rc-qualification"
+	opts.DataRoot = "/var/lib/stagecore-rc-qualification/data"
+	opts.VaultRoot = "/var/lib/stagecore-rc-qualification/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	normalized, err := normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := RenderSystemdUnit(normalized)
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, "RestrictAddressFamilies=") {
+			if line != "RestrictAddressFamilies=AF_INET AF_INET6" {
+				t.Fatalf("isolated unit has an unsafe socket family allowlist: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatal("isolated unit is missing its socket family allowlist")
+}
+
 func TestValidateIsolatedUpdatePathsRejectsProductionAndOverlappingRoots(t *testing.T) {
 	root := t.TempDir()
 	base := Options{
