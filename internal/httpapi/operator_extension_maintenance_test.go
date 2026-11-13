@@ -104,6 +104,13 @@ func TestExtensionMaintenanceDoesNotDispatchUpdateAfterRevocationWhileReadingBod
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("revoked Owner update response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
 	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["effect_may_have_been_applied"] != false || body["retryable"] != false || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("pre-dispatch denial response overstated or cached the result: headers=%v body=%+v", response.Header(), body)
+	}
 }
 
 func TestExtensionMaintenanceSuppressesCommittedRepairAfterOwnerRevocation(t *testing.T) {
