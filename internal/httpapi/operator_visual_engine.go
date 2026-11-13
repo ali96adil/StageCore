@@ -44,15 +44,23 @@ type visualEngineModeView struct {
 }
 
 func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) Option {
+	return withOperatorVisualEngine(auth, stageStore, devices, visualEngineHooks{})
+}
+
+type visualEngineHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository, hooks visualEngineHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil || devices == nil {
 			return
 		}
-		registerOperatorVisualEngineRoutes(s.mux, auth, stageStore, devices)
+		registerOperatorVisualEngineRoutes(s.mux, auth, stageStore, devices, hooks)
 	}
 }
 
-func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) {
+func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository, hooks visualEngineHooks) {
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
@@ -177,6 +185,12 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 		}
 		if err := stageStore.SetVisualEngineMode(ctx, revision.ID, mode, session.User.ID); err != nil {
 			writeVisualEngineStoreError(w, err)
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusOK, visualEngineModeView{
