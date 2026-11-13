@@ -330,6 +330,27 @@ func qualifyRuntimeIntent(w http.ResponseWriter, r *http.Request, sessionID stri
 	return writeProjectQualificationError(w, err)
 }
 
+func recheckCommittedRuntimeIntent(w http.ResponseWriter, r *http.Request, sessionID string, intent projectaccess.RuntimeIntent) bool {
+	grant, err := currentProjectRouteGrant(r)
+	if err == nil && grant.access != nil {
+		err = grant.access.CheckRuntimeIntent(r.Context(), grant.user.User.ID, r.PathValue("project_id"), sessionID, intent)
+	}
+	if err == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	status, code := http.StatusNotFound, "PROJECT_NOT_FOUND"
+	if !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
+		status, code = http.StatusServiceUnavailable, "PROJECT_ACCESS_UNAVAILABLE"
+	}
+	writeJSON(w, status, map[string]any{
+		"error_code":              code,
+		"effect_may_be_committed": true,
+		"retryable":               false,
+	})
+	return false
+}
+
 func browserCueDispatchContext(r *http.Request, auth *userauth.Service, session userauth.Session, sessionID string, intent projectaccess.RuntimeIntent) context.Context {
 	grant, _ := r.Context().Value(projectRouteGrantKey{}).(projectRouteGrant)
 	projectID := strings.TrimSpace(r.PathValue("project_id"))

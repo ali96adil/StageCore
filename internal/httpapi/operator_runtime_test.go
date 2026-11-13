@@ -483,6 +483,14 @@ func TestQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T) 
 		t.Fatalf("dispatch counts before/after grant revocation = %d/%d, want 1/0; response=%d %s",
 			sentBeforeRevocation.Load(), sentAfterRevocation.Load(), res.Code, res.Body.String())
 	}
+	if err := f.access.Check(ctx, f.operator.Session.User.ID, project.ID, projectaccess.ProjectView); err != nil {
+		t.Fatalf("test must retain project.view while revoking runtime control: %v", err)
+	}
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "cue_execution_id") ||
+		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked runtime intent received cue result or retryable response: HTTP %d %s", res.Code, res.Body.String())
+	}
 }
 
 func TestShowExitRechecksGrantAfterStopSafety(t *testing.T) {

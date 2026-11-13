@@ -203,6 +203,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
 			return
 		}
+		if !recheckCommittedRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -241,6 +244,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
 		})
 		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
+		if !recheckCommittedRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
 			return
 		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
