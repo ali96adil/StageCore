@@ -18,6 +18,14 @@ type simulationInputInjectRequest struct {
 }
 
 func WithOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinput.Service) Option {
+	return withOperatorSimulationInputs(auth, inputs, simulationInputHooks{})
+}
+
+type simulationInputHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinput.Service, hooks simulationInputHooks) Option {
 	return func(s *Server) {
 		if auth == nil || inputs == nil {
 			return
@@ -43,13 +51,19 @@ func WithOperatorSimulationInputs(auth *userauth.Service, inputs *simulationinpu
 				return
 			}
 			result := inputs.Inject(projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl), simulationinput.InjectRequest{
-				ProjectID: r.PathValue("project_id"),
-				Issuer: session.User.ID,
-				RequestID: strings.TrimSpace(body.RequestID),
-				InputID: strings.TrimSpace(body.InputID),
-				Value: body.Value,
+				ProjectID:       r.PathValue("project_id"),
+				Issuer:          session.User.ID,
+				RequestID:       strings.TrimSpace(body.RequestID),
+				InputID:         strings.TrimSpace(body.InputID),
+				Value:           body.Value,
 				ConfirmCritical: body.ConfirmCritical,
 			})
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.RehearsalControl) {
+				return
+			}
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"scope": "SIMULATION_ONLY", "source": "TEST"})
 		}))
 	}

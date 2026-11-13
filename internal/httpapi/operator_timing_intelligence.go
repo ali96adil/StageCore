@@ -95,6 +95,9 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				}
 				segment := store.TimingSegment{First: body.Segment.First, Last: body.Segment.Last, Excluded: *body.Segment.Excluded}
 				err := service.SetTimingSegment(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, segment)
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				if err != nil {
 					writeTimingMutationError(w, err)
 					return
@@ -107,7 +110,11 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "TIMING_MUTATION_AMBIGUOUS"})
 					return
 				}
-				if err := service.SetTimingCapturePaused(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused); err != nil {
+				err := service.SetTimingCapturePaused(ctx, r.PathValue("project_id"), r.PathValue("session_id"), session.User.Username, *body.Paused)
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
+				if err != nil {
 					writeProjectStoreError(w, err)
 					return
 				}
@@ -130,6 +137,9 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 			selection, err := service.SetSessionSelection(
 				ctx, r.PathValue("project_id"), r.PathValue("session_id"), body.Mode, session.User.Username,
 			)
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+				return
+			}
 			if err != nil {
 				writeTimingMutationError(w, err)
 				return

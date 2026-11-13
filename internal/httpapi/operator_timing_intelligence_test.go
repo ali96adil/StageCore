@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,7 @@ type fakeTimingIntelligenceService struct {
 	lastSelectionMode store.TimingSelectionMode
 	lastUpdatedBy     string
 	beforeReport      func()
+	beforeSelection   func()
 }
 
 func (f *fakeTimingIntelligenceService) Report(_ context.Context, projectID string, options timingintelligence.ReportOptions) (timingintelligence.Report, error) {
@@ -40,6 +42,9 @@ func (f *fakeTimingIntelligenceService) SetSessionSelection(_ context.Context, p
 	f.lastSessionID = sessionID
 	f.lastSelectionMode = mode
 	f.lastUpdatedBy = updatedBy
+	if f.beforeSelection != nil {
+		f.beforeSelection()
+	}
 	return store.TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: updatedBy}, nil
 }
 
@@ -234,5 +239,40 @@ func TestTimingIntelligenceRejectsRevocationDuringReport(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if service.reportCalls != 1 || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "advisory_only") {
 		t.Fatalf("report calls=%d status=%d body=%s", service.reportCalls, res.Code, res.Body.String())
+	}
+}
+
+func TestTimingIntelligenceSuppressesMutationResultAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{beforeSelection: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	request := authenticatedMutationRequest(
+		t,
+		http.MethodPut,
+		"/api/v1/projects/project/timing-intelligence/sessions/session",
+		[]byte(`{"mode":"EXCLUDE"}`),
+		owner.Token,
+		owner.CSRFToken,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if service.selectionCalls != 1 || response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), `"selection"`) {
+		t.Fatalf("revoked timing mutation exposed result: calls=%d status=%d body=%s", service.selectionCalls, response.Code, response.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["effect_may_be_committed"] != true || payload["retryable"] != false {
+		t.Fatalf("revoked timing mutation lost commit uncertainty: %v", payload)
 	}
 }

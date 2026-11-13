@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -230,5 +231,57 @@ func TestOperatorSimulationReportAndInputRBACPreserveNoRealOutput(t *testing.T) 
 	}
 	if !foundSimulationExecution {
 		t.Fatalf("Simulation input did not leave canonical execution evidence: %+v", events)
+	}
+
+	secondInjectBody, _ := json.Marshal(simulationInputInjectRequest{
+		RequestID: "00000000-0000-7000-8000-000000000702",
+		InputID:   input.ID,
+		Value:     json.RawMessage(`1`),
+	})
+	revokedBeforeResponse := false
+	revokedHandler := New(withOperatorSimulationInputs(h.auth, inputService, simulationInputHooks{BeforeResponse: func() {
+		revokedBeforeResponse = true
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}})).Handler()
+	revokedRequest := authenticatedMutationRequest(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/simulation/inputs/inject",
+		secondInjectBody,
+		owner.Token,
+		owner.CSRFToken,
+	)
+	revokedResponse := httptest.NewRecorder()
+	revokedHandler.ServeHTTP(revokedResponse, revokedRequest)
+	if !revokedBeforeResponse {
+		t.Fatal("response boundary hook did not revoke the Owner session")
+	}
+	if revokedResponse.Code != http.StatusForbidden || strings.Contains(revokedResponse.Body.String(), `"result"`) {
+		t.Fatalf("revoked Simulation input exposed result: status=%d body=%s", revokedResponse.Code, revokedResponse.Body.String())
+	}
+	var revokedPayload map[string]any
+	if err := json.Unmarshal(revokedResponse.Body.Bytes(), &revokedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if revokedPayload["effect_may_be_committed"] != true || revokedPayload["retryable"] != false {
+		t.Fatalf("revoked Simulation input response lost commit uncertainty: %v", revokedPayload)
+	}
+	events, err = projectStore.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedExecutions := 0
+	for _, event := range events {
+		if event.EventType == "simulation.execution.completed" {
+			completedExecutions++
+		}
+	}
+	if completedExecutions != 2 {
+		t.Fatalf("expected both simulated inputs to remain committed, found %d execution events", completedExecutions)
+	}
+	if physical.calls != 0 {
+		t.Fatalf("revoked Simulation input reached physical executor %d time(s)", physical.calls)
 	}
 }
