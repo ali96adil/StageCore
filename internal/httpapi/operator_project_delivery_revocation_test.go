@@ -11,6 +11,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -265,5 +266,49 @@ func TestOperatorConfigurationDraftSuppressesResultsAfterSessionRevocation(t *te
 				t.Fatalf("draft discard did not restore the validated revision: %+v", stored)
 			}
 		})
+	}
+}
+
+func TestDiscardedProjectDraftReportsCommittedEffectWhenAuditWriteFails(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, validated, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "audit-failure-discard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, validated.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projects.EnsureProjectDraft(ctx, project.ID, "owner", "prepare audit-failure test"); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := securityaudit.New(h.db.DB, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `CREATE TRIGGER reject_test_audit BEFORE INSERT ON security_audit_records BEGIN SELECT RAISE(FAIL, 'simulated audit outage'); END`); err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorConfigurationDraft(h.auth, projects, audit)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/configuration/draft", []byte(`{"reason":"discard after authorization"}`), login.Token, login.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse audit failure response: %v body=%s", err, response.Body.String())
+	}
+	if response.Code != http.StatusInternalServerError || result["error_code"] != "AUDIT_RECORD_FAILED" ||
+		result["effect_may_be_committed"] != true || result["effect_may_have_been_committed"] != true || result["retryable"] != false {
+		t.Fatalf("committed draft discard did not report its uncertain audit outcome: HTTP %d %+v", response.Code, result)
+	}
+	stored, err := projects.GetProject(ctx, project.ID)
+	if err != nil || stored.CurrentRevisionID != validated.ID {
+		t.Fatalf("draft discard did not stay committed after audit failure: project=%+v err=%v", stored, err)
 	}
 }

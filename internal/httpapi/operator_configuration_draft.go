@@ -104,7 +104,12 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					Result: securityaudit.ResultSuccess, Reason: strings.TrimSpace(input.Reason),
 					Metadata: map[string]any{"discarded": discarded, "restored_revision_id": restored.ID},
 				}); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "AUDIT_RECORD_FAILED"})
+					writeJSON(w, http.StatusInternalServerError, map[string]any{
+						"error_code":                     "AUDIT_RECORD_FAILED",
+						"effect_may_be_committed":        true,
+						"effect_may_have_been_committed": true,
+						"retryable":                      false,
+					})
 					return
 				}
 			}
