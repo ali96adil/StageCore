@@ -24,6 +24,120 @@ func TestDefaultOptionsMatchReferenceDeployment(t *testing.T) {
 	if opts.ServiceUser != "stagecore" || opts.ServiceGroup != "stagecore" || opts.Listen != "127.0.0.1:7840" || opts.OperatorTLSListen != "0.0.0.0:7842" {
 		t.Fatalf("unexpected service defaults: %+v", opts)
 	}
+	if name, err := SystemdServiceName(opts.SystemdUnit); err != nil || name != DefaultServiceName {
+		t.Fatalf("default service identity = %q, %v", name, err)
+	}
+}
+
+func TestSystemdServiceNameRejectsShellSyntaxAndTraversal(t *testing.T) {
+	for _, path := range []string{
+		"relative/stagecore-rc.service",
+		"/etc/systemd/system/../stagecore-hub.service",
+		"/etc/systemd/system/stagecore-rc.service;id",
+		"/etc/systemd/system/-stagecore-rc.service",
+		"/etc/systemd/system/stagecore-hub.socket",
+	} {
+		t.Run(path, func(t *testing.T) {
+			if name, err := SystemdServiceName(path); err == nil {
+				t.Fatalf("unsafe unit path resolved to %q", name)
+			}
+		})
+	}
+}
+
+func TestNormalizeOptionsDerivesAndChecksServiceIdentity(t *testing.T) {
+	opts := DefaultOptions("/tmp/release")
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	normalized, err := normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.ServiceName != "stagecore-rc-qualification.service" {
+		t.Fatalf("derived service name = %q", normalized.ServiceName)
+	}
+
+	opts.ServiceName = DefaultServiceName
+	if _, err := normalizeOptions(opts); err == nil || !strings.Contains(err.Error(), "must match unit filename") {
+		t.Fatalf("mismatched service identity error = %v", err)
+	}
+}
+
+func TestValidateIsolatedUpdatePathsRejectsProductionAndOverlappingRoots(t *testing.T) {
+	root := t.TempDir()
+	base := Options{
+		BundleDir:   filepath.Join(root, "install", "bundles", "candidate"),
+		InstallRoot: filepath.Join(root, "install"),
+		ConfigRoot:  filepath.Join(root, "config"),
+		DataRoot:    filepath.Join(root, "data"),
+		VaultRoot:   filepath.Join(root, "vault"),
+		SystemdUnit: filepath.Join(root, "systemd", "stagecore-rc-qualification.service"),
+		ServiceName: "stagecore-rc-qualification.service",
+	}
+	backupRoot := filepath.Join(root, "update-backups")
+	if err := ValidateIsolatedUpdatePaths(base, backupRoot); err != nil {
+		bundlePath, _ := canonicalPath(base.BundleDir)
+		backupPath, backupErr := canonicalPath("/var/backups/stagecore")
+		t.Fatalf("safe isolated paths rejected: %v; bundle=%q => %q, protected=%q (%v)", err, base.BundleDir, bundlePath, backupPath, backupErr)
+	}
+
+	cases := []struct {
+		name string
+		edit func(*Options, *string)
+	}{
+		{"production data root", func(o *Options, _ *string) { o.DataRoot = DefaultDataRoot }},
+		{"overlapping install and config", func(o *Options, _ *string) { o.ConfigRoot = filepath.Join(o.InstallRoot, "etc") }},
+		{"production service unit", func(o *Options, _ *string) { o.SystemdUnit = DefaultUnitPath }},
+		{"production backup root", func(_ *Options, b *string) { *b = "/var/backups/stagecore/updates" }},
+		{"relative backup root", func(_ *Options, b *string) { *b = "../updates" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := base
+			backup := backupRoot
+			tc.edit(&opts, &backup)
+			if err := ValidateIsolatedUpdatePaths(opts, backup); err == nil {
+				t.Fatal("unsafe isolated target accepted")
+			}
+		})
+	}
+}
+
+func TestValidateIsolatedPathsRejectsSymlinkedRoots(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "data-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{
+		BundleDir:   filepath.Join(root, "install", "bundles"),
+		InstallRoot: filepath.Join(root, "install"),
+		ConfigRoot:  filepath.Join(root, "config"),
+		DataRoot:    link,
+		VaultRoot:   filepath.Join(root, "vault"),
+		SystemdUnit: filepath.Join(root, "systemd", "stagecore-rc-qualification.service"),
+		ServiceName: "stagecore-rc-qualification.service",
+	}
+	if err := ValidateIsolatedInstallPaths(opts); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked data root error = %v", err)
+	}
+}
+
+func TestInstallerRejectsIsolatedProductionPathsBeforePlatformOrCommands(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-bundle")
+	opts.InstallRoot = "/opt/stagecore-rc-test"
+	opts.ConfigRoot = "/etc/stagecore-rc-test"
+	opts.DataRoot = DefaultDataRoot
+	opts.VaultRoot = "/var/lib/stagecore-rc-test/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-test.service"
+	installer := NewInstaller()
+	installer.Runner = panicRunner{t: t}
+	if _, err := installer.Install(context.Background(), opts); err == nil || !strings.Contains(err.Error(), "protected production root") {
+		t.Fatalf("unsafe isolated install error = %v", err)
+	}
 }
 
 func TestNormalizeOptionsRejectsUnsafeOrUnsupportedValues(t *testing.T) {
@@ -236,9 +350,9 @@ func TestRenderEnvironmentAndSystemdUnit(t *testing.T) {
 
 func TestReadinessURLUsesLoopbackForWildcardListen(t *testing.T) {
 	cases := map[string]string{
-		"0.0.0.0:7840": "http://127.0.0.1:7840/health/ready",
-		":7840":        "http://127.0.0.1:7840/health/ready",
-		"[::]:7840":    "http://[::1]:7840/health/ready",
+		"0.0.0.0:7840":  "http://127.0.0.1:7840/health/ready",
+		":7840":         "http://127.0.0.1:7840/health/ready",
+		"[::]:7840":     "http://[::1]:7840/health/ready",
 		"10.0.0.2:7840": "http://10.0.0.2:7840/health/ready",
 	}
 	for listen, want := range cases {

@@ -22,16 +22,17 @@ import (
 )
 
 const (
-	DefaultInstallRoot = "/opt/stagecore"
-	DefaultConfigRoot  = "/etc/stagecore"
-	DefaultDataRoot    = "/var/lib/stagecore/data"
-	DefaultVaultRoot   = "/var/lib/stagecore/vault"
-	DefaultServiceUser = "stagecore"
-	DefaultServiceGroup = "stagecore"
-	DefaultListen      = "127.0.0.1:7840"
+	DefaultInstallRoot       = "/opt/stagecore"
+	DefaultConfigRoot        = "/etc/stagecore"
+	DefaultDataRoot          = "/var/lib/stagecore/data"
+	DefaultVaultRoot         = "/var/lib/stagecore/vault"
+	DefaultServiceUser       = "stagecore"
+	DefaultServiceGroup      = "stagecore"
+	DefaultServiceName       = "stagecore-hub.service"
+	DefaultListen            = "127.0.0.1:7840"
 	DefaultOperatorTLSListen = "0.0.0.0:7842"
-	DefaultUnitPath    = "/etc/systemd/system/stagecore-hub.service"
-	checksumFileName   = "SHA256SUMS"
+	DefaultUnitPath          = "/etc/systemd/system/stagecore-hub.service"
+	checksumFileName         = "SHA256SUMS"
 )
 
 var RequiredBinaries = []string{
@@ -42,21 +43,22 @@ var RequiredBinaries = []string{
 }
 
 type Options struct {
-	BundleDir      string
-	InstallRoot    string
-	ConfigRoot     string
-	DataRoot       string
-	VaultRoot      string
-	ServiceUser    string
-	ServiceGroup   string
-	Listen         string
+	BundleDir         string
+	InstallRoot       string
+	ConfigRoot        string
+	DataRoot          string
+	VaultRoot         string
+	ServiceUser       string
+	ServiceGroup      string
+	Listen            string
 	OperatorTLSListen string
-	ListenExplicit bool
-	SystemdUnit    string
-	ReplaceConfig  bool
-	NoStart        bool
-	DryRun         bool
-	ReadinessTimeout time.Duration
+	ListenExplicit    bool
+	SystemdUnit       string
+	ServiceName       string
+	ReplaceConfig     bool
+	NoStart           bool
+	DryRun            bool
+	ReadinessTimeout  time.Duration
 }
 
 type Result struct {
@@ -97,28 +99,28 @@ type Installer struct {
 
 func NewInstaller() *Installer {
 	return &Installer{
-		GOOS:   runtime.GOOS,
-		GOARCH: runtime.GOARCH,
-		EUID:   os.Geteuid,
-		Runner: execRunner{},
+		GOOS:       runtime.GOOS,
+		GOARCH:     runtime.GOARCH,
+		EUID:       os.Geteuid,
+		Runner:     execRunner{},
 		HTTPClient: &http.Client{Timeout: 2 * time.Second},
-		Now: time.Now,
+		Now:        time.Now,
 	}
 }
 
 func DefaultOptions(bundleDir string) Options {
 	return Options{
-		BundleDir:       bundleDir,
-		InstallRoot:     DefaultInstallRoot,
-		ConfigRoot:      DefaultConfigRoot,
-		DataRoot:        DefaultDataRoot,
-		VaultRoot:       DefaultVaultRoot,
-		ServiceUser:     DefaultServiceUser,
-		ServiceGroup:    DefaultServiceGroup,
-		Listen:          DefaultListen,
+		BundleDir:         bundleDir,
+		InstallRoot:       DefaultInstallRoot,
+		ConfigRoot:        DefaultConfigRoot,
+		DataRoot:          DefaultDataRoot,
+		VaultRoot:         DefaultVaultRoot,
+		ServiceUser:       DefaultServiceUser,
+		ServiceGroup:      DefaultServiceGroup,
+		Listen:            DefaultListen,
 		OperatorTLSListen: DefaultOperatorTLSListen,
-		SystemdUnit:     DefaultUnitPath,
-		ReadinessTimeout: 20 * time.Second,
+		SystemdUnit:       DefaultUnitPath,
+		ReadinessTimeout:  20 * time.Second,
 	}
 }
 
@@ -142,6 +144,11 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	effective, err := normalizeOptions(opts)
 	if err != nil {
 		return Result{}, err
+	}
+	if IsolatedService(effective) {
+		if err := ValidateIsolatedInstallPaths(effective); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := validatePlatform(i.GOOS, i.GOARCH); err != nil {
 		return Result{}, err
@@ -312,6 +319,13 @@ func normalizeOptions(opts Options) (Options, error) {
 	if strings.TrimSpace(opts.SystemdUnit) == "" {
 		opts.SystemdUnit = defaults.SystemdUnit
 	}
+	if strings.TrimSpace(opts.ServiceName) == "" {
+		name, nameErr := SystemdServiceName(opts.SystemdUnit)
+		if nameErr != nil {
+			return Options{}, nameErr
+		}
+		opts.ServiceName = name
+	}
 	if opts.ReadinessTimeout <= 0 {
 		opts.ReadinessTimeout = defaults.ReadinessTimeout
 	}
@@ -343,6 +357,13 @@ func normalizeOptions(opts Options) (Options, error) {
 		case "systemd unit":
 			opts.SystemdUnit = cleaned
 		}
+	}
+	nameFromPath, err := SystemdServiceName(opts.SystemdUnit)
+	if err != nil {
+		return Options{}, err
+	}
+	if opts.ServiceName != nameFromPath {
+		return Options{}, fmt.Errorf("systemd service name %q must match unit filename %q", opts.ServiceName, nameFromPath)
 	}
 	if opts.DataRoot == opts.VaultRoot {
 		return Options{}, fmt.Errorf("data root and vault root must be distinct deployment paths")
