@@ -128,6 +128,14 @@ func TestIsolatedDoctorValidatesSandboxAndTargetsOnlySelectedService(t *testing.
 		t.Fatalf("valid isolated systemd unit rejected: %+v", check)
 	}
 
+	withoutPrivateNetwork := strings.Replace(unit, "PrivateNetwork=yes\n", "", 1)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(withoutPrivateNetwork), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, check := checkSystemdUnit(opts, cfg, nil); ok || check.Status != Blocker || check.MessageKey != "unit.isolation" {
+		t.Fatalf("isolated unit without a private network namespace was accepted: ok=%v check=%+v", ok, check)
+	}
+
 	var calls [][]string
 	runner := NewRunner()
 	runner.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
