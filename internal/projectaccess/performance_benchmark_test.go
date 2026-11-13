@@ -16,6 +16,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+// BenchmarkProjectRuntimeAuthorization measures the live browser-session and
+// Project ACL checks used at runtime dispatch boundaries. It never invokes a
+// device or external adapter.
 func BenchmarkProjectRuntimeAuthorization(b *testing.B) {
 	ctx := context.Background()
 	handle, err := db.Open(ctx, db.Config{DataRoot: b.TempDir()})
@@ -91,7 +94,7 @@ func BenchmarkProjectRuntimeAuthorization(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				started := time.Now()
-				current, err := auth.ValidatePassive(ctx, credential.Token)
+				current, err := auth.ValidateCSRF(ctx, credential.Token, credential.CSRFToken)
 				if err == nil {
 					err = access.CheckRuntimeIntent(ctx, current.User.ID, scope.projectID, scope.sessionID, intent)
 				}
@@ -118,12 +121,16 @@ func BenchmarkProjectRuntimeAuthorization(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			started := time.Now()
-			current, err := auth.ValidatePassive(ctx, credential.Token)
-			if err == nil {
-				for action := 0; action < 4; action++ {
-					if err = access.CheckRuntimeIntent(ctx, current.User.ID, rehearsal.projectID, rehearsal.sessionID, projectaccess.RuntimeGO); err != nil {
-						break
-					}
+			var err error
+			for action := 0; action < 4; action++ {
+				current, validateErr := auth.ValidateCSRF(ctx, credential.Token, credential.CSRFToken)
+				if validateErr != nil {
+					err = validateErr
+					break
+				}
+				err = access.CheckRuntimeIntent(ctx, current.User.ID, rehearsal.projectID, rehearsal.sessionID, projectaccess.RuntimeGO)
+				if err != nil {
+					break
 				}
 			}
 			latencies[i] = time.Since(started).Nanoseconds()
