@@ -88,6 +88,8 @@ func collectHTTPRouteRegistrations(t *testing.T) []routeRegistration {
 						record.BrowserAuthenticated = name.Name == "withPermission" || name.Name == "withAuthenticatedSession" ||
 							// The local StageAudio GET wrapper is exercised through the real router.
 							(filename == "operator_stageaudio.go" && name.Name == "get" && strings.HasPrefix(pattern, "GET /api/v1/system/audio/"))
+					} else if selector, ok := wrapper.Fun.(*ast.SelectorExpr); ok && filename == "security_operations.go" && selector.Sel.Name == "route" {
+						record.BrowserAuthenticated = true
 					}
 				}
 			}
@@ -203,6 +205,23 @@ func TestSC024QualifiedBrowserRoutesUseLiveAuthentication(t *testing.T) {
 		// inventory. All reviewed indirect HTTP routes here are browser APIs.
 		if (qualified || strings.HasPrefix(record.Pattern, "DYNAMIC(")) && !record.BrowserAuthenticated {
 			t.Errorf("qualification bypass: %s %s lacks the browser middleware", record.Source, record.Pattern)
+		}
+	}
+}
+
+func TestSecurityOperationsRouteWrapperRechecksBeforeDelivery(t *testing.T) {
+	source, err := os.ReadFile("security_operations.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"return withPermission(s.users, permission",
+		"securityOperationResponseAuthorized(s.users, r, session, permission)",
+		"writeSecurityOperationAuthorityEnded(w, isUnsafeMethod(r.Method))",
+		"buffered.flush(w)",
+	} {
+		if !bytes.Contains(source, []byte(required)) {
+			t.Errorf("security operations response fence lost %q", required)
 		}
 	}
 }
