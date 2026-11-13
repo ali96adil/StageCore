@@ -229,6 +229,54 @@ post-commit fencing for Stage Device transfer/assignment/lighting activation;
 add a failing regression before code changes. Keep Production ACL disabled
 and the partial-activation source guard intact.
 
+## SC-024 continuation · 2026-11-13 · read-response revocation fences
+
+Four local commits after pushed HEAD `cb5cfb2c61898893c48ac9fcce40bdee995ad755`
+close additional authorization gaps on asynchronous and project-scoped read
+responses:
+
+- Timing Intelligence now rechecks the live browser session and project grant
+  before returning a report-generation error.
+- Project Stage Device listing rechecks the live session before returning
+  either device data or scoped-list errors. A revoked Owner previously received
+  the private device record; a revoked Operator previously received HTTP 200
+  with an empty list.
+- Live video-source listing rechecks before probing an eligible Relay and
+  before returning source details or read errors. The regression fixture uses
+  an RTSP URL that is not probed; no camera, relay, or stage device was called.
+- Show Capsule preview rechecks the session and both project grants before
+  returning a manifest-build error.
+
+The red-first regressions are
+`TestTimingIntelligenceDoesNotDeliverReportErrorAfterSessionRevocation`,
+`TestProjectStageDeviceListSuppressesResultsAfterSessionRevocation`,
+`TestProjectLiveVideoSourcesSuppressesResultsAfterSessionRevocation`, and
+`TestShowCapsulePreviewSuppressesErrorsAfterSessionRevocation`. They reproduced
+HTTP 503 error disclosure or HTTP 200 result delivery after logout, then passed
+with the final authority check. `go test ./internal/httpapi -count=1`, focused
+`internal/httpapi` Race tests for all four delivery boundaries,
+`go vet ./internal/httpapi ./internal/devicechannel`, and `git diff --check`
+pass locally. The current exact pushed-base Core workflow `43459674814` has
+passed Go 1.27 and Go 1.26 tests, Browser Cue Delivery and Vet; Race is still
+running and ARM64 is pending. Companion run `43459674704` and Camera Relay run
+`43459674681` pass at that base. The four local commits are not covered by
+remote CI until they are pushed.
+
+No Production Assembler or Migration 53 change was made; the source guard and
+disabled production ACL remain in place. **SC-024 is not software-qualified.**
+The full route-to-policy reconciliation, remaining asynchronous and maintenance
+delivery boundaries, deployed Companion/ticket compatibility, and disposable
+installed-copy migration/update/impact-preview/restore rehearsal remain open.
+Independent device STOP/Blackout, StageAudio revocation during physical work,
+and in-flight hardware effects remain hardware qualification. No device output
+or production data was used.
+
+**Resume at:** local `integration/stagecore-rc` HEAD `d70e703` plus this
+documentation checkpoint; remote remains `cb5cfb2c61898893c48ac9fcce40bdee995ad755`.
+Finish exact-base Core Race/ARM64 CI, then push the tested local group normally
+to the existing branch and Draft PR #534. Keep Production ACL disabled and do
+not install the new code on Pi before its complete CI passes.
+
 ## SC-024 continuation · 2026-11-12 · committed-operation responses
 
 The post-commit audit reproduced successful response leakage after the Owner
