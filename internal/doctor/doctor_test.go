@@ -136,6 +136,14 @@ func TestIsolatedDoctorValidatesSandboxAndTargetsOnlySelectedService(t *testing.
 		t.Fatalf("isolated unit without a private network namespace was accepted: ok=%v check=%+v", ok, check)
 	}
 
+	withHiddenRuntime := strings.Replace(unit, "InaccessiblePaths=-/var/lib/stagecore", "InaccessiblePaths=/run -/var/lib/stagecore", 1)
+	if err := os.WriteFile(opts.SystemdUnit, []byte(withHiddenRuntime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, check := checkSystemdUnit(opts, cfg, nil); ok || check.Status != Blocker || check.MessageKey != "unit.isolation" {
+		t.Fatalf("isolated unit hiding systemd's mount runtime was accepted: ok=%v check=%+v", ok, check)
+	}
+
 	var calls [][]string
 	runner := NewRunner()
 	runner.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {

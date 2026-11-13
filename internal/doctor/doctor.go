@@ -474,7 +474,7 @@ func validateIsolatedSystemdUnit(content string, opts Options, cfg *deploymentCo
 		"Restart": "no", "TimeoutStopSec": "30s", "KillSignal": "SIGTERM",
 		"NoNewPrivileges": "yes", "PrivateDevices": "yes", "DevicePolicy": "closed", "PrivateNetwork": "yes",
 		"PrivateTmp": "yes", "ProtectSystem": "strict", "ProtectHome": "yes",
-		"InaccessiblePaths": "/var/lib/stagecore /var/backups/stagecore /var/lib/stagecore-control /var/lib/stagecore-camera-relay /etc/stagecore /etc/stagecore-qualification-control /etc/stagecore-camera-relay /opt/stagecore /opt/stagecore-qualification-control /opt/stagecore-camera-relay /run /var/run /var/lib/dbus",
+		"InaccessiblePaths": "-/var/lib/stagecore -/var/backups/stagecore -/var/lib/stagecore-control -/var/lib/stagecore-camera-relay -/etc/stagecore -/etc/stagecore-qualification-control -/etc/stagecore-camera-relay -/opt/stagecore -/opt/stagecore-qualification-control -/opt/stagecore-camera-relay -/var/lib/dbus",
 		"ReadWritePaths":    cfg.DataRoot + " " + cfg.VaultRoot,
 		"IPAddressDeny":     "any", "IPAddressAllow": "localhost",
 		"RestrictAddressFamilies": "AF_INET AF_INET6", "ProtectClock": "yes",
