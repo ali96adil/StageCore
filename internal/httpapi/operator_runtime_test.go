@@ -577,12 +577,56 @@ func TestShowExitRechecksGrantAfterStopSafety(t *testing.T) {
 		[]byte(`{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000112"}`), f.operator.Token, f.operator.CSRFToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-	if !safetyReached || res.Code != http.StatusNotFound {
+	if !safetyReached || res.Code != http.StatusForbidden ||
+		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("SHOW exit after grant revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
 	}
 	current, err := f.projects.ActiveSessionForProject(ctx, f.projectID)
 	if err != nil || current == nil || current.ID != active.ID {
 		t.Fatalf("revoked SHOW exit changed active Session: %+v, %v", current, err)
+	}
+}
+
+func TestShowExitSuppressesResultAfterSessionRevocationDuringSafety(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionShow, "SHOW", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	safetyReached := false
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry(), runtimecontrol.WithSessionStopSafety(
+		func(_ context.Context, _ domain.Session, _ contracts.CommandEnvelope) error {
+			safetyReached = true
+			return f.h.auth.Logout(ctx, f.owner.Token)
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/stop-session",
+		[]byte(`{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000127"}`), f.owner.Token, f.owner.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !safetyReached || res.Code != http.StatusForbidden || strings.Contains(res.Body.String(), "show.exited") ||
+		strings.Contains(res.Body.String(), `"session_id"`) ||
+		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked Owner received committed SHOW-exit result or retryable response: HTTP %d %s", res.Code, res.Body.String())
+	}
+	current, err := f.projects.GetSession(ctx, active.ID)
+	if err != nil || current.Status != domain.SessionActive {
+		t.Fatalf("SHOW exit must not commit after authority is revoked before its transaction: %+v err=%v", current, err)
 	}
 }
 

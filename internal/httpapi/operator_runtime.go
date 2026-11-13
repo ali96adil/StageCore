@@ -166,6 +166,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			result := runtime.ForceStopSession(ctx, runtimecontrol.StopRequest{
 				SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			})
+			if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil) {
+				return
+			}
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
 				"forced":          true,
 				"safety_bypassed": true,
@@ -181,6 +184,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			RehearsalTabletStopSessionID:   body.RehearsalTabletStopSessionID,
 			RehearsalExternalStopSessionID: body.RehearsalExternalStopSessionID,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil, projectaccess.ProjectView, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -363,6 +369,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		result := runtime.StopCue(ctx, runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.ProjectView, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 }
