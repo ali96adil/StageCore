@@ -27,6 +27,7 @@ type fakeShowCapsuleService struct {
 	onPreview                 func()
 	planErr                   error
 	exportErr                 error
+	materializeErr            error
 	onExport                  func()
 	afterExportAuthorize      func()
 	onPlan                    func()
@@ -86,7 +87,7 @@ func (f *fakeShowCapsuleService) Materialize(ctx context.Context, path string, o
 	if f.afterMaterializeAuthorize != nil {
 		f.afterMaterializeAuthorize()
 	}
-	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, nil
+	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, f.materializeErr
 }
 
 func TestShowCapsuleAPIAuthenticationRBACCSRFAndPathBounds(t *testing.T) {
@@ -372,6 +373,39 @@ func TestShowCapsuleMaterializeSuppressesCommittedResultAfterFinalRevocation(t *
 	if rec.Code != http.StatusForbidden || service.materializeCalls != 1 || strings.Contains(rec.Body.String(), "project_id") ||
 		!strings.Contains(rec.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(rec.Body.String(), `"retryable":false`) {
 		t.Fatalf("revoked caller received materialized capsule result: HTTP %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestShowCapsuleMaterializeSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		materializeErr: errors.New("capsule restore postflight failed"),
+		afterMaterializeAuthorize: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule materialization: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/show-capsules/imports/"+capsuleID+"/materialize", nil, login.Token, login.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || service.materializeCalls != 1 ||
+		strings.Contains(response.Body.String(), "CAPSULE_VERIFICATION_FAILED") ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked Owner received capsule restore error without commit boundary: status=%d calls=%d body=%s", response.Code, service.materializeCalls, response.Body.String())
 	}
 }
 

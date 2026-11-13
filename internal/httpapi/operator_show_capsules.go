@@ -262,6 +262,10 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				return
 			}
 			if err != nil {
+				if authorize(r.Context()) != nil {
+					writeCapsuleCommittedMutationRevocation(w)
+					return
+				}
 				writeShowCapsuleError(w, err)
 				return
 			}
