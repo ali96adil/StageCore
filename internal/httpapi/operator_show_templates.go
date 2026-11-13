@@ -63,7 +63,13 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			}
 			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
 			result, err := service.Materialize(ctx, strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
-			if err != nil { writeShowTemplateError(w, err); return }
+			if err != nil {
+				writeShowTemplateError(w, err)
+				return
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result})
 		}))
 		s.mux.HandleFunc("POST /api/v1/show-templates/import/validate", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
@@ -84,7 +90,13 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			}
 			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
 			result, compatibility, err := service.MaterializeDocument(ctx, body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
-			if err != nil { writeShowTemplateError(w, err); return }
+			if err != nil {
+				writeShowTemplateError(w, err)
+				return
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result, "compatibility": compatibility})
 		}))
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/template-export", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
