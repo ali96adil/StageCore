@@ -82,6 +82,48 @@ func TestTabletCommandReadSuppressesDataAfterProjectGrantRevocation(t *testing.T
 	}
 }
 
+func TestTabletControllerListSuppressesDevicesAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-list-read-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Private tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeListResponse: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke project view before response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller", f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), deviceID) ||
+		strings.Contains(response.Body.String(), "Private tablet") {
+		t.Fatalf("revoked Operator received Tablet device data: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 type tabletRelayFlashDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f tabletRelayFlashDoerFunc) Do(request *http.Request) (*http.Response, error) {

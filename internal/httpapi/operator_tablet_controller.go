@@ -294,6 +294,7 @@ type tabletRelayFlashDoer interface {
 }
 
 type tabletControllerHooks struct {
+	BeforeListResponse        func()
 	BeforeCommandReadResponse func()
 }
 
@@ -346,6 +347,12 @@ func withOperatorTabletController(
 				}
 			}
 			sort.Strings(groups)
+			if hooks.BeforeListResponse != nil {
+				hooks.BeforeListResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"devices": tablets,
 				"groups":  groups,
