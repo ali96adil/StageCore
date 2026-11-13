@@ -13,17 +13,19 @@ import (
 )
 
 type fakeShowCapsuleService struct {
-	previewCalls     int
-	exportCalls      int
-	planCalls        int
-	materializeCalls int
-	lastProjectID    string
-	lastPath         string
-	lastExportRoot   string
-	lastMode         showcapsule.ExportMode
-	lastImportedBy   string
-	onExport         func()
-	onPlan           func()
+	previewCalls              int
+	exportCalls               int
+	planCalls                 int
+	materializeCalls          int
+	lastProjectID             string
+	lastPath                  string
+	lastExportRoot            string
+	lastMode                  showcapsule.ExportMode
+	lastImportedBy            string
+	onExport                  func()
+	afterExportAuthorize      func()
+	onPlan                    func()
+	afterMaterializeAuthorize func()
 }
 
 func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID string, options showcapsule.BuildOptions) (showcapsule.Manifest, error) {
@@ -46,6 +48,9 @@ func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root str
 			return showcapsule.ExportResult{}, err
 		}
 	}
+	if f.afterExportAuthorize != nil {
+		f.afterExportAuthorize()
+	}
 	return showcapsule.ExportResult{CapsuleID: "00000000-0000-7000-8000-000000000611", Manifest: showcapsule.Manifest{ExportMode: options.Mode}}, nil
 }
 
@@ -66,6 +71,9 @@ func (f *fakeShowCapsuleService) Materialize(ctx context.Context, path string, o
 		if err := options.AuthorizeWrite(ctx); err != nil {
 			return showcapsule.MaterializeResult{}, err
 		}
+	}
+	if f.afterMaterializeAuthorize != nil {
+		f.afterMaterializeAuthorize()
 	}
 	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, nil
 }
@@ -218,6 +226,57 @@ func TestShowCapsuleExportRechecksSessionAtPublication(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") {
 		t.Fatalf("revoked export got HTTP %d, %d calls, %s", rec.Code, service.exportCalls, rec.Body.String())
+	}
+}
+
+func TestShowCapsuleExportSuppressesCommittedResultAfterFinalRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{afterExportAuthorize: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") ||
+		!strings.Contains(rec.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(rec.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked caller received exported capsule result: HTTP %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestShowCapsuleMaterializeSuppressesCommittedResultAfterFinalRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{afterMaterializeAuthorize: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/show-capsules/imports/"+capsuleID+"/materialize", nil, login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.materializeCalls != 1 || strings.Contains(rec.Body.String(), "project_id") ||
+		!strings.Contains(rec.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(rec.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked caller received materialized capsule result: HTTP %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

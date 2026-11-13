@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/projectaccess"
@@ -157,6 +158,10 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				writeProjectStoreError(w, err)
 				return
 			}
+			if err := authorize(r.Context()); err != nil {
+				writeCapsuleCommittedMutationRevocation(w)
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{
 				"capsule_id":    result.CapsuleID,
 				"manifest":      result.Manifest,
@@ -248,9 +253,23 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				writeShowCapsuleError(w, err)
 				return
 			}
+			if err := authorize(r.Context()); err != nil {
+				writeCapsuleCommittedMutationRevocation(w)
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"result": result})
 		}))
 	}
+}
+
+func writeCapsuleCommittedMutationRevocation(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     capability.DispatchAuthorityRevokedCode,
+		"detail":                         "Authorization ended after the Show Capsule operation; verify current Capsule and Project state before taking further action.",
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
 }
 
 func parseShowCapsuleMode(w http.ResponseWriter, raw string) (showcapsule.ExportMode, bool) {
