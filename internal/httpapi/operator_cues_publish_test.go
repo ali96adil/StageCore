@@ -352,3 +352,51 @@ func TestCueCreateSuppressesCommittedResultAfterSessionRevocation(t *testing.T) 
 		t.Fatalf("committed cue was not retained truthfully: cues=%+v err=%v", cues, err)
 	}
 }
+
+func TestCueCreateReportsCommittedDraftForkAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := projectStore.CreateProject(ctx, store.CreateProjectParams{
+		Name:      "cue draft fork revocation",
+		CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projectStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(withOperatorCuePublish(
+		h.auth,
+		projectStore,
+		publish.New(projectStore, capability.NewRegistry()),
+		cuePublishHooks{AfterDraft: func() {
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/cues",
+		[]byte(`{"display_label":"1","name":"Opening","order_index":1,"cue_type":"STANDARD","criticality":"NORMAL","enabled":true,"execution_policy":{}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || bytes.Contains(response.Body.Bytes(), []byte(`"cue":`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"effect_may_be_committed":true`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"retryable":false`)) {
+		t.Fatalf("revoked cue create did not truthfully suppress its partial result: status=%d body=%s", response.Code, response.Body.String())
+	}
+	after, err := projectStore.GetProject(ctx, project.ID)
+	if err != nil || after.CurrentRevisionID == revision.ID {
+		t.Fatalf("expected validated revision fork to remain committed: %+v, %v", after, err)
+	}
+	cues, err := projectStore.ListCues(ctx, after.CurrentRevisionID)
+	if err != nil || len(cues) != 0 {
+		t.Fatalf("revoked cue create changed the forked revision: %+v, %v", cues, err)
+	}
+}

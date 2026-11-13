@@ -76,6 +76,7 @@ func WithOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 }
 
 type cuePublishHooks struct {
+	AfterDraft     func()
 	BeforeResponse func()
 }
 
@@ -124,14 +125,20 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 			return
 		}
 		projectID := r.PathValue("project_id")
-		revision, err := projectStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Operator Web edit after Publish")
+		revision, draftForked, err := projectStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator Web edit after Publish")
 		if err != nil {
 			writeProjectStoreError(w, err)
 			return
 		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		cue, actions := body.toDomain(revision.ID, "")
 		created, err := projectStore.CreateCueWithActions(writeCtx, cue, actions)
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeCueMutationError(w, err)
 			return
 		}
@@ -147,13 +154,16 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
+		mapped, revision, draftForked, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session, hooks.AfterDraft)
 		if !ok {
 			return
 		}
 		cue, actions := body.toDomain(revision.ID, mapped.ID)
 		updated, err := projectStore.ReplaceDraftCue(writeCtx, cue, actions)
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeCueMutationError(w, err)
 			return
 		}
@@ -169,12 +179,15 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
+		mapped, revision, draftForked, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session, hooks.AfterDraft)
 		if !ok {
 			return
 		}
 		created, err := projectStore.DuplicateDraftCue(writeCtx, revision.ID, mapped.ID, body.DisplayLabel, body.Name, body.OrderIndex)
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeCueMutationError(w, err)
 			return
 		}
@@ -190,11 +203,14 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		mapped, revision, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session)
+		mapped, revision, draftForked, ok := ensureEditableCue(w, r.WithContext(writeCtx), projectStore, session, hooks.AfterDraft)
 		if !ok {
 			return
 		}
 		if err := projectStore.DeleteDraftCue(writeCtx, revision.ID, mapped.ID); err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeCueMutationError(w, err)
 			return
 		}
@@ -256,39 +272,42 @@ func authorizeCueMutationResponse(w http.ResponseWriter, r *http.Request, auth *
 	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
 }
 
-func ensureEditableCue(w http.ResponseWriter, r *http.Request, projectStore *store.Store, session userauth.Session) (domain.Cue, domain.ProjectRevision, bool) {
+func ensureEditableCue(w http.ResponseWriter, r *http.Request, projectStore *store.Store, session userauth.Session, afterDraft func()) (domain.Cue, domain.ProjectRevision, bool, bool) {
 	projectID := r.PathValue("project_id")
 	requestedCueID := r.PathValue("cue_id")
 	project, err := projectStore.GetProject(r.Context(), projectID)
 	if err != nil {
 		writeProjectStoreError(w, err)
-		return domain.Cue{}, domain.ProjectRevision{}, false
+		return domain.Cue{}, domain.ProjectRevision{}, false, false
 	}
 	source, err := projectStore.GetCue(r.Context(), requestedCueID)
 	if err != nil || source.RevisionID != project.CurrentRevisionID {
 		writeProjectStoreError(w, domain.ErrNotFound)
-		return domain.Cue{}, domain.ProjectRevision{}, false
+		return domain.Cue{}, domain.ProjectRevision{}, false, false
 	}
-	revision, err := projectStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator Web edit after Publish")
+	revision, draftForked, err := projectStore.EnsureProjectDraftWithStatus(r.Context(), projectID, session.User.ID, "Operator Web edit after Publish")
 	if err != nil {
 		writeProjectStoreError(w, err)
-		return domain.Cue{}, domain.ProjectRevision{}, false
+		return domain.Cue{}, domain.ProjectRevision{}, false, false
+	}
+	if afterDraft != nil {
+		afterDraft()
 	}
 	if revision.ID == source.RevisionID {
-		return source, revision, true
+		return source, revision, draftForked, true
 	}
 	cues, err := projectStore.ListCues(r.Context(), revision.ID)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CUES_UNAVAILABLE"})
-		return domain.Cue{}, domain.ProjectRevision{}, false
+		return domain.Cue{}, domain.ProjectRevision{}, false, false
 	}
 	for _, cue := range cues {
 		if cue.OrderIndex == source.OrderIndex {
-			return cue, revision, true
+			return cue, revision, draftForked, true
 		}
 	}
 	writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_FORK_MAPPING_FAILED"})
-	return domain.Cue{}, domain.ProjectRevision{}, false
+	return domain.Cue{}, domain.ProjectRevision{}, false, false
 }
 
 func (body cueWriteRequest) toDomain(revisionID, cueID string) (domain.Cue, []domain.Action) {
