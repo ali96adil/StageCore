@@ -44,25 +44,26 @@ var RequiredBinaries = []string{
 }
 
 type Options struct {
-	BundleDir                 string
-	InstallRoot               string
-	ConfigRoot                string
-	DataRoot                  string
-	VaultRoot                 string
-	ServiceUser               string
-	ServiceGroup              string
-	Listen                    string
-	OperatorTLSListen         string
-	DeviceListen              string
-	ListenExplicit            bool
-	OperatorTLSListenExplicit bool
-	DeviceListenExplicit      bool
-	SystemdUnit               string
-	ServiceName               string
-	ReplaceConfig             bool
-	NoStart                   bool
-	DryRun                    bool
-	ReadinessTimeout          time.Duration
+	BundleDir                   string
+	InstallRoot                 string
+	ConfigRoot                  string
+	DataRoot                    string
+	VaultRoot                   string
+	ServiceUser                 string
+	ServiceGroup                string
+	Listen                      string
+	OperatorTLSListen           string
+	DeviceListen                string
+	ListenExplicit              bool
+	OperatorTLSListenExplicit   bool
+	DeviceListenExplicit        bool
+	SystemdUnit                 string
+	ServiceName                 string
+	ReplaceConfig               bool
+	PreserveStorageRootMetadata bool
+	NoStart                     bool
+	DryRun                      bool
+	ReadinessTimeout            time.Duration
 }
 
 type Result struct {
@@ -246,6 +247,13 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 		if err := ValidateSystemdOperationPath(effective); err != nil {
 			return Result{}, err
 		}
+		if _, err := os.Lstat(effective.SystemdUnit); err == nil {
+			if err := ValidateSystemdServiceTarget(ctx, effective, i.Runner.Output); err != nil {
+				return Result{}, fmt.Errorf("validate existing systemd target: %w", err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Result{}, fmt.Errorf("inspect existing systemd target: %w", err)
+		}
 	}
 
 	if err := i.ensureIdentity(ctx, effective.ServiceUser, effective.ServiceGroup, effective.DataRoot); err != nil {
@@ -261,11 +269,19 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	if err := ensureDirectory(effective.ConfigRoot, 0o755, 0, 0); err != nil {
 		return Result{}, err
 	}
-	if err := ensureDirectory(effective.DataRoot, 0o750, uid, gid); err != nil {
-		return Result{}, err
-	}
-	if err := ensureDirectory(effective.VaultRoot, 0o750, uid, gid); err != nil {
-		return Result{}, err
+	if effective.PreserveStorageRootMetadata {
+		for _, path := range []string{effective.DataRoot, effective.VaultRoot} {
+			if err := requireExistingDirectory(path); err != nil {
+				return Result{}, err
+			}
+		}
+	} else {
+		if err := ensureDirectory(effective.DataRoot, 0o750, uid, gid); err != nil {
+			return Result{}, err
+		}
+		if err := ensureDirectory(effective.VaultRoot, 0o750, uid, gid); err != nil {
+			return Result{}, err
+		}
 	}
 
 	for _, name := range RequiredBinaries {
@@ -293,6 +309,11 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 
 	if _, err := i.Runner.Output(ctx, "systemctl", "daemon-reload"); err != nil {
 		return Result{}, err
+	}
+	if _, usesRealSystemd := i.Runner.(execRunner); usesRealSystemd {
+		if err := ValidateSystemdServiceTarget(ctx, effective, i.Runner.Output); err != nil {
+			return Result{}, fmt.Errorf("validate loaded systemd target: %w", err)
+		}
 	}
 	if !IsolatedService(effective) {
 		if _, err := i.Runner.Output(ctx, "systemctl", "enable", effective.ServiceName); err != nil {
@@ -883,6 +904,17 @@ func ensureDirectory(path string, mode os.FileMode, uid, gid int) error {
 	}
 	if err := os.Chown(path, uid, gid); err != nil {
 		return fmt.Errorf("chown directory %s: %w", path, err)
+	}
+	return nil
+}
+
+func requireExistingDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect existing storage root %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("existing storage root %s must be a regular directory", path)
 	}
 	return nil
 }

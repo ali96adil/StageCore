@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,14 +43,16 @@ func (f *fakeDoctor) Run(_ context.Context, _ doctor.Options) doctor.Report {
 }
 
 type fakeSnapshots struct {
-	created  int
-	restored int
-	createErr error
+	created    int
+	restored   int
+	createErr  error
 	restoreErr error
+	options    []SnapshotOptions
 }
 
-func (f *fakeSnapshots) Create(_ context.Context, _ SnapshotOptions) (Snapshot, error) {
+func (f *fakeSnapshots) Create(_ context.Context, opts SnapshotOptions) (Snapshot, error) {
 	f.created++
+	f.options = append(f.options, opts)
 	if f.createErr != nil {
 		return Snapshot{}, f.createErr
 	}
@@ -218,6 +221,79 @@ func TestApplyInstallFailureAutomaticallyRollsBack(t *testing.T) {
 	}
 	if result.RollbackReport.Overall != doctor.OverallReady {
 		t.Fatalf("rollback health = %s", result.RollbackReport.Overall)
+	}
+}
+
+func TestApplyIsolatedServiceRollbackNeverTargetsProductionUnitsOrBackup(t *testing.T) {
+	root := t.TempDir()
+	serviceName := "stagecore-rc-test.service"
+	backupRoot := filepath.Join(root, "rollback")
+	installer := &fakeInstaller{errs: []error{nil, errors.New("candidate rejected")}}
+	diagnostics := &fakeDoctor{reports: []doctor.Report{readyReport(), readyReport()}}
+	snapshots := &fakeSnapshots{}
+	commands := &fakeCommands{}
+	service := testService(installer, diagnostics, snapshots, commands)
+	opts := Options{
+		Deployment: deployment.Options{
+			BundleDir:   filepath.Join(root, "release"),
+			InstallRoot: filepath.Join(root, "opt", "stagecore-rc-test"),
+			ConfigRoot:  filepath.Join(root, "etc", "stagecore-rc-test"),
+			DataRoot:    filepath.Join(root, "var", "lib", "stagecore-rc-test", "data"),
+			VaultRoot:   filepath.Join(root, "var", "lib", "stagecore-rc-test", "vault"),
+			SystemdUnit: filepath.Join(root, "systemd", serviceName),
+			ServiceName: serviceName, ServiceUser: "stagecore", ServiceGroup: "stagecore",
+			Listen: "127.0.0.1:17840",
+		},
+		BackupRoot: backupRoot,
+	}
+
+	result, err := service.Apply(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "candidate rejected") {
+		t.Fatalf("Apply() error = %v, want candidate failure", err)
+	}
+	if !result.RolledBack || snapshots.created != 1 || snapshots.restored != 1 {
+		t.Fatalf("isolated rollback state: result=%+v snapshots=%d/%d", result, snapshots.created, snapshots.restored)
+	}
+	if len(snapshots.options) != 1 || snapshots.options[0].BackupRoot != backupRoot ||
+		snapshots.options[0].Deployment.ServiceName != serviceName ||
+		snapshots.options[0].Deployment.VaultRoot != opts.Deployment.VaultRoot {
+		t.Fatalf("snapshot did not use the isolated roots: %+v", snapshots.options)
+	}
+	if len(installer.calls) != 2 || !installer.calls[1].PreserveStorageRootMetadata {
+		t.Fatalf("update installer may rewrite Data/Vault root ownership: %+v", installer.calls)
+	}
+	want := []string{
+		"systemctl stop " + serviceName,
+		"systemctl stop " + serviceName,
+		"systemctl daemon-reload",
+		"systemctl start " + serviceName,
+	}
+	if strings.Join(commands.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("isolated update/rollback targeted unexpected systemd units: got %v want %v", commands.calls, want)
+	}
+	for _, call := range commands.calls {
+		if strings.Contains(call, "stagecore-hub.service") || strings.Contains(call, "stagecore-camera-relay.service") || strings.Contains(call, DefaultBackupRoot) {
+			t.Fatalf("isolated update referenced production state: %s", call)
+		}
+	}
+}
+
+func TestApplyIsolatedServiceRequiresSeparateRollbackRoot(t *testing.T) {
+	installer := &fakeInstaller{}
+	diagnostics := &fakeDoctor{}
+	snapshots := &fakeSnapshots{}
+	commands := &fakeCommands{}
+	service := testService(installer, diagnostics, snapshots, commands)
+	opts := testOptions(false)
+	opts.Deployment.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	opts.Deployment.ServiceName = "stagecore-rc-qualification.service"
+	opts.BackupRoot = ""
+	_, err := service.Apply(context.Background(), opts)
+	if err == nil || !strings.Contains(err.Error(), "requires an explicit isolated rollback root") {
+		t.Fatalf("isolated update without its own rollback root error = %v", err)
+	}
+	if snapshots.created != 0 || len(commands.calls) != 0 || diagnostics.calls != 0 {
+		t.Fatalf("missing isolated rollback root reached an operation: snapshots=%d commands=%v doctor=%d", snapshots.created, commands.calls, diagnostics.calls)
 	}
 }
 

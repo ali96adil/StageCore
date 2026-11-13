@@ -21,7 +21,7 @@ import (
 const DefaultBackupRoot = "/var/backups/stagecore/updates"
 
 var (
-	ErrActiveShow        = errors.New("update is blocked while SHOW is active")
+	ErrActiveShow        = errors.New("update is blocked while SHOW or REHEARSAL is active")
 	ErrPreflightBlocked  = errors.New("pre-update validation is blocked")
 	ErrPostflightBlocked = errors.New("post-update validation is blocked")
 	ErrRollbackFailed    = errors.New("automatic rollback failed")
@@ -108,13 +108,9 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("update service is required")
 	}
 	s.normalize()
-	backupRoot := strings.TrimSpace(opts.BackupRoot)
-	if backupRoot == "" {
-		backupRoot = DefaultBackupRoot
-	}
-	backupRoot = filepath.Clean(backupRoot)
-	if !filepath.IsAbs(backupRoot) {
-		return Result{}, fmt.Errorf("update backup root must be an absolute path")
+	requestedBackupRoot := strings.TrimSpace(opts.BackupRoot)
+	if hasParentPathComponent(requestedBackupRoot) {
+		return Result{}, fmt.Errorf("update backup root must not contain parent traversal")
 	}
 
 	candidate := opts.Deployment
@@ -126,18 +122,46 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("validate update candidate: %w", err)
 	}
 	effective := plan.Effective
+	serviceName, err := deployment.SystemdServiceName(effective.SystemdUnit)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve update systemd target: %w", err)
+	}
+	if effective.ServiceName == "" {
+		effective.ServiceName = serviceName
+	} else if effective.ServiceName != serviceName {
+		return Result{}, fmt.Errorf("update service name %q must match unit filename %q", effective.ServiceName, serviceName)
+	}
 	effective.DryRun = false
 	effective.NoStart = false
 	effective.ReplaceConfig = false
+	effective.PreserveStorageRootMetadata = true
+	backupRoot := requestedBackupRoot
+	if deployment.IsolatedService(effective) {
+		if backupRoot == "" {
+			return Result{}, fmt.Errorf("isolated systemd service %s requires an explicit isolated rollback root", effective.ServiceName)
+		}
+		if err := deployment.ValidateIsolatedUpdatePaths(effective, backupRoot); err != nil {
+			return Result{}, fmt.Errorf("validate isolated update target: %w", err)
+		}
+		backupRoot = filepath.Clean(backupRoot)
+	} else {
+		if backupRoot == "" {
+			backupRoot = DefaultBackupRoot
+		}
+		backupRoot = filepath.Clean(backupRoot)
+		if !filepath.IsAbs(backupRoot) {
+			return Result{}, fmt.Errorf("update backup root must be an absolute path")
+		}
+	}
 	result := Result{
 		Effective: effective,
 		DryRun:    opts.DryRun,
 		Actions: []string{
 			"validate candidate release bundle and preserve deployment configuration",
 			"run stagecore doctor pre-update validation",
-			"verify no SHOW session is active",
-			fmt.Sprintf("stop stagecore-hub and create cold rollback snapshot under %s", backupRoot),
-			"install candidate release and wait for Hub readiness",
+			"verify no SHOW or REHEARSAL session is active",
+			fmt.Sprintf("stop %s and create a cold rollback snapshot under %s", effective.ServiceName, backupRoot),
+			fmt.Sprintf("install candidate release and wait for %s readiness", effective.ServiceName),
 			"run stagecore doctor post-update validation",
 			"automatically restore the rollback snapshot if installation or validation fails",
 		},
@@ -147,6 +171,7 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 		InstallRoot: effective.InstallRoot,
 		ConfigRoot:  effective.ConfigRoot,
 		SystemdUnit: effective.SystemdUnit,
+		ServiceName: effective.ServiceName,
 		HTTPTimeout: healthTimeout(effective.ReadinessTimeout),
 	}
 	result.Preflight = s.doctor.Run(ctx, doctorOpts)
@@ -166,20 +191,26 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 	if s.euid() != 0 {
 		return result, fmt.Errorf("update requires root privileges; rerun with sudo or use --dry-run")
 	}
+	if _, realSystemd := s.commands.(execCommands); realSystemd {
+		if err := deployment.ValidateSystemdServiceTarget(ctx, effective, s.commands.Output); err != nil {
+			return result, fmt.Errorf("validate systemd update target: %w", err)
+		}
+	}
 
-	if _, err := s.commands.Output(ctx, "systemctl", "stop", "stagecore-hub.service"); err != nil {
+	if _, err := s.commands.Output(ctx, "systemctl", "stop", effective.ServiceName); err != nil {
+		_, startErr := s.commands.Output(ctx, "systemctl", "start", effective.ServiceName)
+		if startErr != nil {
+			return result, errors.Join(fmt.Errorf("stop StageCore before rollback snapshot: %w", err), fmt.Errorf("restore selected service after stop failure: %w", startErr))
+		}
 		return result, fmt.Errorf("stop StageCore before rollback snapshot: %w", err)
 	}
 
 	snapshot, err := s.snapshots.Create(ctx, SnapshotOptions{
-		BackupRoot:  backupRoot,
-		InstallRoot: effective.InstallRoot,
-		ConfigRoot:  effective.ConfigRoot,
-		DataRoot:    effective.DataRoot,
-		SystemdUnit: effective.SystemdUnit,
+		BackupRoot: backupRoot,
+		Deployment: effective,
 	})
 	if err != nil {
-		_, startErr := s.commands.Output(ctx, "systemctl", "start", "stagecore-hub.service")
+		_, startErr := s.commands.Output(ctx, "systemctl", "start", effective.ServiceName)
 		if startErr != nil {
 			return result, errors.Join(fmt.Errorf("create rollback snapshot: %w", err), fmt.Errorf("restart unchanged StageCore after snapshot failure: %w", startErr))
 		}
@@ -208,20 +239,28 @@ func (s *Service) rollback(ctx context.Context, result Result, snapshot Snapshot
 	// Finish the recovery even if that caller is no longer waiting.
 	ctx = context.WithoutCancel(ctx)
 	result.RolledBack = true
-	if _, err := s.commands.Output(ctx, "systemctl", "stop", "stagecore-hub.service"); err != nil {
+	if _, err := s.commands.Output(ctx, "systemctl", "stop", result.Effective.ServiceName); err != nil {
 		return result, errors.Join(cause, fmt.Errorf("%w: stop failed candidate: %v", ErrRollbackFailed, err))
 	}
 	if err := s.snapshots.Restore(ctx, snapshot); err != nil {
 		return result, errors.Join(cause, fmt.Errorf("%w: restore snapshot: %v", ErrRollbackFailed, err))
 	}
-	for _, command := range [][]string{
-		{"daemon-reload"},
-		{"enable", "stagecore-hub.service"},
-		{"start", "stagecore-hub.service"},
-	} {
+	commands := [][]string{{"daemon-reload"}}
+	if !deployment.IsolatedService(result.Effective) {
+		commands = append(commands, []string{"enable", result.Effective.ServiceName})
+	}
+	for _, command := range commands {
 		if _, err := s.commands.Output(ctx, "systemctl", command...); err != nil {
 			return result, errors.Join(cause, fmt.Errorf("%w: systemctl %s: %v", ErrRollbackFailed, strings.Join(command, " "), err))
 		}
+	}
+	if _, realSystemd := s.commands.(execCommands); realSystemd {
+		if err := deployment.ValidateSystemdServiceTarget(ctx, result.Effective, s.commands.Output); err != nil {
+			return result, errors.Join(cause, fmt.Errorf("%w: restored systemd target is invalid: %v", ErrRollbackFailed, err))
+		}
+	}
+	if _, err := s.commands.Output(ctx, "systemctl", "start", result.Effective.ServiceName); err != nil {
+		return result, errors.Join(cause, fmt.Errorf("%w: systemctl start %s: %v", ErrRollbackFailed, result.Effective.ServiceName, err))
 	}
 	result.RollbackReport = s.doctor.Run(ctx, doctorOpts)
 	if result.RollbackReport.Overall == doctor.OverallBlocked {
@@ -276,7 +315,7 @@ func activeShow(ctx context.Context, dataRoot string) (bool, error) {
 	defer database.Close()
 	var found int
 	err = database.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM sessions WHERE status = 'ACTIVE' AND session_type = 'SHOW'
+	SELECT 1 FROM sessions WHERE status = 'ACTIVE' AND session_type IN ('SHOW', 'REHEARSAL')
 	)`).Scan(&found)
 	if err != nil {
 		return false, err

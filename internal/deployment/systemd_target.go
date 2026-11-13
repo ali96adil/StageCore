@@ -262,6 +262,11 @@ func pathOverlaps(a, b string) bool {
 	return pathWithin(canonicalA, canonicalB) || pathWithin(canonicalB, canonicalA)
 }
 
+// PathsOverlap reports overlap after resolving existing symlink prefixes.
+func PathsOverlap(a, b string) bool {
+	return pathOverlaps(a, b)
+}
+
 func pathWithin(root, candidate string) bool {
 	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(candidate))
 	if err != nil {

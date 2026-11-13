@@ -33,7 +33,7 @@ func runUpdate(args []string) {
 	operatorTLSListen := fs.String("operator-tls-listen", "", "Operator TLS listen address (defaults are environment-specific)")
 	deviceListen := fs.String("device-listen", "", "device API listen address (defaults are environment-specific)")
 	unitPath := fs.String("systemd-unit", defaults.Deployment.SystemdUnit, "systemd unit installation path")
-	backupRoot := fs.String("backup-root", defaults.BackupRoot, "root for verified automatic rollback snapshots")
+	backupRoot := fs.String("backup-root", "", "root for verified automatic rollback snapshots (required for an isolated service)")
 	dryRun := fs.Bool("dry-run", false, "validate candidate, Doctor state and SHOW gate without changing the host")
 	readinessTimeout := fs.Duration("readiness-timeout", defaults.Deployment.ReadinessTimeout, "maximum time to wait for candidate /health/ready")
 	if err := fs.Parse(args); err != nil {
