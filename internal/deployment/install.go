@@ -784,6 +784,7 @@ KillSignal=SIGTERM
 NoNewPrivileges=yes
 PrivateDevices=yes
 DevicePolicy=closed
+PrivateNetwork=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
