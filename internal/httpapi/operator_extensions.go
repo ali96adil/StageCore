@@ -19,6 +19,11 @@ type operatorExtensionLibrary struct {
 	users   *userauth.Service
 	library *extension.Library
 	audit   *securityaudit.Service
+	hooks   extensionLibraryHooks
+}
+
+type extensionLibraryHooks struct {
+	BeforeResponse func()
 }
 
 type registerExtensionRequest struct {
@@ -27,11 +32,15 @@ type registerExtensionRequest struct {
 }
 
 func WithOperatorExtensionLibrary(users *userauth.Service, library *extension.Library, audit *securityaudit.Service) Option {
+	return withOperatorExtensionLibrary(users, library, audit, extensionLibraryHooks{})
+}
+
+func withOperatorExtensionLibrary(users *userauth.Service, library *extension.Library, audit *securityaudit.Service, hooks extensionLibraryHooks) Option {
 	return func(s *Server) {
 		if users == nil || library == nil {
 			return
 		}
-		h := &operatorExtensionLibrary{users: users, library: library, audit: audit}
+		h := &operatorExtensionLibrary{users: users, library: library, audit: audit, hooks: hooks}
 		s.mux.HandleFunc("GET /api/v1/extensions", withPermission(users, userauth.PermissionProjectRead, h.list))
 		s.mux.HandleFunc("GET /api/v1/extensions/packages/{package_id}", withPermission(users, userauth.PermissionProjectRead, h.get))
 		s.mux.HandleFunc("POST /api/v1/extensions/register", withPermission(users, userauth.PermissionPluginManage, h.register))
@@ -50,8 +59,14 @@ func WithOperatorExtensionLibrary(users *userauth.Service, library *extension.Li
 	}
 }
 
-func (h *operatorExtensionLibrary) list(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionLibrary) list(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	items, err := h.library.List(r.Context(), strings.TrimSpace(r.URL.Query().Get("extension_id")))
+	if h.hooks.BeforeResponse != nil {
+		h.hooks.BeforeResponse()
+	}
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "EXTENSION_LIBRARY_UNAVAILABLE"})
 		return
@@ -59,8 +74,14 @@ func (h *operatorExtensionLibrary) list(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, map[string]any{"manifest_schema_version": extension.ManifestSchemaVersion, "extensions": items})
 }
 
-func (h *operatorExtensionLibrary) get(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionLibrary) get(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	item, err := h.library.Get(r.Context(), strings.TrimSpace(r.PathValue("package_id")))
+	if h.hooks.BeforeResponse != nil {
+		h.hooks.BeforeResponse()
+	}
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_PACKAGE_NOT_FOUND"})
 		return
@@ -79,6 +100,9 @@ func (h *operatorExtensionLibrary) register(w http.ResponseWriter, r *http.Reque
 	}
 	packageID := strings.TrimSpace(body.PackageID)
 	item, err := h.library.Register(r.Context(), packageID, body.Manifest, session.User.Username)
+	if h.hooks.BeforeResponse != nil {
+		h.hooks.BeforeResponse()
+	}
 	if err != nil {
 		status := http.StatusBadRequest
 		code := "EXTENSION_REGISTER_FAILED"
@@ -97,15 +121,21 @@ func (h *operatorExtensionLibrary) register(w http.ResponseWriter, r *http.Reque
 			code = "EXTENSION_OFFICIAL_SOURCE_FORBIDDEN"
 		}
 		h.record(r, session, packageID, securityaudit.ResultRejected, code, nil)
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
+		}
 		writeJSON(w, status, map[string]any{"error_code": code})
 		return
 	}
 	h.record(r, session, item.PackageID, securityaudit.ResultSuccess, "", map[string]any{
 		"extension_id": item.Manifest.ExtensionID,
-		"version": item.Manifest.Version,
-		"kind": item.Manifest.Kind,
-		"source": item.Manifest.Source,
+		"version":      item.Manifest.Version,
+		"kind":         item.Manifest.Kind,
+		"source":       item.Manifest.Source,
 	})
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -114,14 +144,14 @@ func (h *operatorExtensionLibrary) record(r *http.Request, session userauth.Sess
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: "extension.package.register",
-		ActorUserID: session.User.ID,
+		EventType:     "extension.package.register",
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_package",
-		ResourceID: strings.TrimSpace(resourceID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_package",
+		ResourceID:    strings.TrimSpace(resourceID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }
