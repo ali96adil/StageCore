@@ -232,3 +232,33 @@ func TestProjectAccessRollsBackGrantAndAuditIfAuthorityChangesDuringRequest(t *t
 		})
 	}
 }
+
+func TestProjectGrantMutationReportsCommittedResultAfterOwnerRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	responseBoundary := false
+	handler := New(withOperatorProjectAccessHooks(f.h.auth, f.access, f.projects, f.audit, operatorProjectAccessHooks{
+		BeforeResponse: func() {
+			responseBoundary = true
+			if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+				t.Errorf("revoke Owner session: %v", err)
+			}
+		},
+	})).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/projects/"+f.projectID+"/access/users/"+f.operatorID,
+		[]byte(`{"permissions":["project.view","rehearsal.control"]}`), f.owner.Token, f.owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !responseBoundary || response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), `"permissions"`) {
+		t.Fatalf("revoked Owner received grant result or retryable response: boundary=%t HTTP %d %s", responseBoundary, response.Code, response.Body.String())
+	}
+	grants, err := f.access.PermissionsForUser(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID)
+	if err != nil || len(grants) != 2 || grants[0] != projectaccess.ProjectView || grants[1] != projectaccess.RehearsalControl {
+		t.Fatalf("committed Owner grant update was lost: grants=%v err=%v", grants, err)
+	}
+}

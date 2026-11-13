@@ -23,17 +23,26 @@ import (
 // The API declares this explicitly on every successful response.
 func WithOperatorProjectAccess(auth *userauth.Service, access *projectaccess.Service,
 	projects *store.Store, audit *securityaudit.Service) Option {
+	return withOperatorProjectAccessHooks(auth, access, projects, audit, operatorProjectAccessHooks{})
+}
+
+type operatorProjectAccessHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorProjectAccessHooks(auth *userauth.Service, access *projectaccess.Service,
+	projects *store.Store, audit *securityaudit.Service, hooks operatorProjectAccessHooks) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || access == nil ||
 			projects == nil || audit == nil {
 			return
 		}
-		registerProjectAccessRoutes(s.mux, auth, access, projects, audit)
+		registerProjectAccessRoutes(s.mux, auth, access, projects, audit, hooks)
 	}
 }
 
 func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
-	access *projectaccess.Service, projects *store.Store, audit *securityaudit.Service) {
+	access *projectaccess.Service, projects *store.Store, audit *securityaudit.Service, hooks operatorProjectAccessHooks) {
 	const pattern = "/api/v1/projects/{project_id}/access/users/{user_id}"
 
 	mux.HandleFunc("GET "+pattern, withPermission(auth, userauth.PermissionUserManage,
@@ -122,10 +131,19 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			}
 			grants, err := access.PermissionsForUser(r.Context(), session.User.ID, userID, projectID)
 			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_READBACK_FAILED"})
+				w.Header().Set("Cache-Control", "no-store")
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error_code":                     "PROJECT_ACCESS_READBACK_FAILED",
+					"effect_may_be_committed":        true,
+					"effect_may_have_been_committed": true,
+					"retryable":                      false,
+				})
 				return
 			}
-			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil) {
 				return
 			}
 			w.Header().Set("Cache-Control", "no-store")
