@@ -106,6 +106,30 @@ func TestIsolatedDefaultsAndEnvironmentCannotReachProductionEndpoints(t *testing
 	}
 }
 
+func TestValidateIsolatedEnvironmentUsesHubStandaloneToken(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-release")
+	opts.InstallRoot = "/opt/stagecore-rc-qualification"
+	opts.ConfigRoot = "/etc/stagecore-rc-qualification"
+	opts.DataRoot = "/var/lib/stagecore-rc-qualification/data"
+	opts.VaultRoot = "/var/lib/stagecore-rc-qualification/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	var err error
+	opts, err = normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	legacyConfig := []byte(RenderEnvironment(opts))
+	if err := ValidateIsolatedEnvironment(legacyConfig, opts); err != nil {
+		t.Fatalf("Hub's STANDALONE token should be accepted: %v", err)
+	}
+
+	lowercaseConfig := strings.Replace(string(legacyConfig), "STAGECORE_HA_MODE=STANDALONE", "STAGECORE_HA_MODE=standalone", 1)
+	if err := ValidateIsolatedEnvironment([]byte(lowercaseConfig), opts); err == nil || !strings.Contains(err.Error(), "STAGECORE_HA_MODE=STANDALONE") {
+		t.Fatalf("Hub-incompatible lowercase mode was accepted: %v", err)
+	}
+}
+
 func TestIsolatedSystemdUnitIsConstrainedAndNotEnabled(t *testing.T) {
 	opts := DefaultOptions("/tmp/stagecore-rc-release")
 	opts.InstallRoot = "/opt/stagecore-rc-qualification"
