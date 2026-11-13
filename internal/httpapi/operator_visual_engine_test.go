@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -190,6 +192,70 @@ func TestOperatorVisualEngineModeMutatesDraftAndRejectsInvalidMode(t *testing.T)
 	}
 	if mode != visualengine.EngineModeExternal {
 		t.Fatalf("invalid request mutated mode=%q", mode)
+	}
+}
+
+func TestOperatorVisualEngineModeReportsDraftForkAfterProjectGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Visual Mode Grant Revocation", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "visual-mode-operator", "visual mode operator password", userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := h.auth.Login(ctx, operator.Username, "visual mode operator password", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ProjectEdit}); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantRevoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorVisualEngine(h.auth, stageStore, devices, visualEngineHooks{
+		BeforeModeWrite: func() {
+			grantRevoked = true
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke ProjectEdit before Visual Engine write: %v", err)
+			}
+		},
+	})).Handler()
+	response := visualEngineAuthenticatedRequest(handler, credential.Token, credential.CSRFToken, http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/visual-engine/mode", `{"engine_mode":"NATIVE"}`)
+	if !grantRevoked || response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), `"revision_id"`) || strings.Contains(response.Body.String(), `"engine_mode"`) {
+		t.Fatalf("revoked Visual Engine write concealed draft-fork effect or exposed state: revoked=%v status=%d body=%s", grantRevoked, response.Code, response.Body.String())
+	}
+	current, err := stageStore.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.CurrentRevisionID == revision.ID {
+		t.Fatal("expected the authorized draft fork to remain committed before grant withdrawal")
+	}
+	mode, err := stageStore.GetVisualEngineMode(ctx, current.CurrentRevisionID)
+	if err != nil || mode != visualengine.EngineModeExternal {
+		t.Fatalf("revoked mode write unexpectedly committed: mode=%s err=%v", mode, err)
 	}
 }
 

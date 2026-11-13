@@ -48,7 +48,8 @@ func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, d
 }
 
 type visualEngineHooks struct {
-	BeforeResponse func()
+	BeforeModeWrite func()
+	BeforeResponse  func()
 }
 
 func withOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository, hooks visualEngineHooks) Option {
@@ -177,13 +178,25 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 			return
 		}
 
+		project, err := stageStore.GetProject(r.Context(), projectID)
+		if err != nil {
+			writeVisualEngineStoreError(w, err)
+			return
+		}
 		ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		revision, err := stageStore.EnsureProjectDraft(ctx, projectID, session.User.ID, "Visual Engine mode edit")
 		if err != nil {
 			writeVisualEngineStoreError(w, err)
 			return
 		}
+		if hooks.BeforeModeWrite != nil {
+			hooks.BeforeModeWrite()
+		}
 		if err := stageStore.SetVisualEngineMode(ctx, revision.ID, mode, session.User.ID); err != nil {
+			if revision.ID != project.CurrentRevisionID && projectMutationAccessDenied(err) {
+				writeCommittedProjectMutationDenied(w, err)
+				return
+			}
 			writeVisualEngineStoreError(w, err)
 			return
 		}
