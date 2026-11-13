@@ -17,6 +17,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -86,6 +87,92 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	executions, err := restoredStore.ListCueExecutions(ctx, session.ID)
 	if err != nil || len(executions) != 1 || executions[0].Result != domain.ExecutionCompleted {
 		t.Fatalf("restored cue history=%#v err=%v", executions, err)
+	}
+}
+
+func TestStateBackupRestorePreservesProspectiveProjectGrants(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	h, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	s := store.New(h.DB, clock.Real{})
+	project, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "ACL backup show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ownerID = "backup-owner"
+	const operatorID = "backup-operator"
+	if _, err := h.DB.ExecContext(ctx, `
+		INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
+		VALUES (?, 'backup-owner', 'unused', 'OWNER', 1, 1),
+		       (?, 'backup-operator', 'unused', 'OPERATOR', 1, 1)`, ownerID, operatorID); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []projectaccess.Permission{
+		projectaccess.ProjectView,
+		projectaccess.CueEdit,
+		projectaccess.ShowGO,
+	}
+	if err := access.SetPermissions(ctx, ownerID, operatorID, project.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	service, err := backup.New(h, s, root, managerForStore(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.CreateStateBackup(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "restored-data")
+	if _, err := service.Restore(ctx, record.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := db.Open(ctx, db.Config{DataRoot: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	restoredAccess, err := projectaccess.New(restored.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := restoredAccess.PermissionsForUser(ctx, ownerID, operatorID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("restored grants=%v, want %v", got, want)
+	}
+	for _, expected := range want {
+		found := false
+		for _, actual := range got {
+			if actual == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("restored grants=%v, missing %q", got, expected)
+		}
+	}
+	if err := restoredAccess.Check(ctx, operatorID, project.ID, projectaccess.ShowGO); err != nil {
+		t.Fatalf("restored runtime authority failed: %v", err)
+	}
+	var integrity string
+	if err := restored.DB.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("restored ACL database integrity=%q err=%v", integrity, err)
+	}
+	var violations int
+	if err := restored.DB.QueryRowContext(ctx, "SELECT count(*) FROM pragma_foreign_key_check").Scan(&violations); err != nil || violations != 0 {
+		t.Fatalf("restored ACL foreign-key violations=%d err=%v", violations, err)
 	}
 }
 
