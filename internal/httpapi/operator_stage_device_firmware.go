@@ -114,6 +114,7 @@ func withOperatorStageDeviceFirmware(
 					})
 					return
 				}
+				authorize := firmwareMutationAuthorization(r, auth, session)
 
 				source, header, err := r.FormFile("firmware")
 				if err != nil {
@@ -152,6 +153,13 @@ func withOperatorStageDeviceFirmware(
 				}
 				actualSHA := hex.EncodeToString(hasher.Sum(nil))
 				if expectedSHA == "" || expectedSHA != actualSHA {
+					if err := authorize(r.Context()); err != nil {
+						w.Header().Set("Cache-Control", "no-store")
+						writeJSON(w, http.StatusForbidden, map[string]any{
+							"error_code": capability.DispatchAuthorityRevokedCode,
+						})
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{
 						"error_code":    "STAGE_DEVICE_FIRMWARE_SHA256_MISMATCH",
 						"actual_sha256": actualSHA,
@@ -185,7 +193,6 @@ func withOperatorStageDeviceFirmware(
 					CreatedAt:        time.Now().UTC(),
 				}
 
-				authorize := firmwareMutationAuthorization(r, auth, session)
 				imported, err := artifacts.ImportQualifiedWithAuthorization(metadata, source, func() error {
 					return authorize(r.Context())
 				})
