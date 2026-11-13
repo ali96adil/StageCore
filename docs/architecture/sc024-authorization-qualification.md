@@ -490,10 +490,12 @@ beam-off interlock and deployed tablet/camera/DMX behavior still require
 physical qualification.
 
 Production Assembler, Migration 53, stable services, and Project ACL state
-were not changed. At this checkpoint the new commits are local and not yet
-pushed. On remote base `bb09efcb750b655a4f3825511b54fbf28aa5b1f5`, Companion
-Core and Camera Relay CI pass; Go 1.27 and the Go 1.26 standard Test/browser
-and Vet steps pass, while Go 1.26 Race and Linux ARM64 remain in progress.
+were not changed. The prior four-commit group is on remote at
+`9a8368123f92b8911783d30d49ea04a8144c0f43`; the grant-revocation and
+Migration 54 compatibility tests below are local pending the next grouped
+push. On the exact pushed HEAD, Companion Core and Camera Relay CI pass; Core
+Go 1.27 and Go 1.26 Test/browser and Vet pass, while Go 1.26 Race and Linux
+ARM64 are in progress.
 The one full local `go test -race ./internal/httpapi -count=1` attempt timed
 out at its 10-minute limit inside the existing unified ACL role-matrix test
 while Argon2 password hashing was running; it reported no assertion failure.
@@ -504,7 +506,21 @@ endpoint-to-policy/delivery matrix, isolated Production-like assembly and
 installed-copy update/impact-preview/recovery cycle, and legacy Companion
 compatibility qualification.
 
-**Resume at:** local `integration/stagecore-rc` HEAD after these commits;
-check completion of the existing exact-base Race/ARM64 jobs, finish the
-remaining endpoint and installed-copy software audit, then push the grouped
-safe commits to PR #534. Keep Production ACL disabled.
+Follow-up local regressions extend this qualification evidence:
+
+- `TestQualifiedEnvironmentOperationSuppressesResultAfterGrantRevocation`
+  first reproduced a `404 PROJECT_NOT_FOUND` after VDMX returned, with no
+  committed-effect or retry fence. The final authority check now suppresses
+  the private result, returns `effect_may_have_been_committed: true` and
+  `retryable: false`, and leaves `project.view` intact after
+  `rehearsal.control` is withdrawn. It passes under Race.
+- `TestCompanionUploadBrowserIssuerMigrationPreservesLegacyActiveTicket`
+  migrates a fixture containing an active version-53 capture ticket through
+  Migration 54, then proves its empty legacy issuer defaults, authorization,
+  and completion are preserved. It passes under Race.
+
+**Resume at:** local `integration/stagecore-rc` HEAD `ef4f003` (two commits
+ahead of remote `9a8368123f92b8911783d30d49ea04a8144c0f43`). Check the exact
+pushed-HEAD CI, finish the remaining endpoint and installed-copy software
+audit, add 1–3 related small commits, then push the group to PR #534. Keep
+Production ACL disabled.
