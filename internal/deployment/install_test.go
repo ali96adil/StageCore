@@ -189,6 +189,9 @@ func TestIsolatedSystemdUnitIsConstrainedAndNotEnabled(t *testing.T) {
 	if strings.Contains(unit, "stagecore-hub.service") || strings.Contains(unit, "stagecore-camera-relay.service") || strings.Contains(unit, "[Install]") {
 		t.Fatalf("isolated unit references or enables a production unit:\n%s", unit)
 	}
+	if strings.Contains(unit, "/run") || strings.Contains(unit, "/var/run") {
+		t.Fatalf("isolated unit hides systemd's mount-namespace runtime paths:\n%s", unit)
+	}
 	defaultUnit := RenderSystemdUnit(DefaultOptions("/tmp/release"))
 	for _, marker := range []string{"Restart=on-failure", "ProtectSystem=strict", "[Install]", "WantedBy=multi-user.target"} {
 		if !strings.Contains(defaultUnit, marker) {

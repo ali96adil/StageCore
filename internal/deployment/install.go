@@ -766,6 +766,8 @@ func RenderSystemdUnit(opts Options) string {
 	envPath := filepath.Join(opts.ConfigRoot, "stagecore.env")
 	hub := filepath.Join(opts.InstallRoot, "bin", "stagecore-hub")
 	if IsolatedService(opts) {
+		// Keep /run available while systemd builds its mount namespace; the
+		// address-family allowlist below already denies AF_UNIX sockets.
 		return fmt.Sprintf(`[Unit]
 Description=StageCore isolated qualification Hub (%s)
 After=local-fs.target network.target
@@ -789,7 +791,7 @@ PrivateNetwork=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-InaccessiblePaths=-/var/lib/stagecore -/var/backups/stagecore -/var/lib/stagecore-control -/var/lib/stagecore-camera-relay -/etc/stagecore -/etc/stagecore-qualification-control -/etc/stagecore-camera-relay -/opt/stagecore -/opt/stagecore-qualification-control -/opt/stagecore-camera-relay /run /var/run -/var/lib/dbus
+InaccessiblePaths=-/var/lib/stagecore -/var/backups/stagecore -/var/lib/stagecore-control -/var/lib/stagecore-camera-relay -/etc/stagecore -/etc/stagecore-qualification-control -/etc/stagecore-camera-relay -/opt/stagecore -/opt/stagecore-qualification-control -/opt/stagecore-camera-relay -/var/lib/dbus
 ReadWritePaths=%s %s
 IPAddressDeny=any
 IPAddressAllow=localhost
