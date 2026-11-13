@@ -105,11 +105,19 @@ func WithScopedOperatorProjects(auth *userauth.Service, projectStore *store.Stor
 }
 
 func withOperatorProjects(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service) Option {
+	return withOperatorProjectsHooks(auth, projectStore, access, operatorProjectHooks{})
+}
+
+type operatorProjectHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorProjectsHooks(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service, hooks operatorProjectHooks) Option {
 	return func(s *Server) {
 		if auth == nil || projectStore == nil {
 			return
 		}
-		registerOperatorProjectRoutes(s.mux, auth, projectStore, access)
+		registerOperatorProjectRoutes(s.mux, auth, projectStore, access, hooks)
 	}
 }
 
@@ -170,9 +178,10 @@ func recheckCommittedProjectMutation(w http.ResponseWriter, r *http.Request, aut
 		errorCode = "PROJECT_ACCESS_UNAVAILABLE"
 	}
 	writeJSON(w, status, map[string]any{
-		"error_code":              errorCode,
-		"effect_may_be_committed": true,
-		"retryable":               false,
+		"error_code":                     errorCode,
+		"effect_may_be_committed":        true,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
 	})
 	return false
 }
@@ -224,7 +233,7 @@ func writeProjectMutationDenied(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service) {
+func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service, hooks operatorProjectHooks) {
 	mux.HandleFunc("GET /api/v1/projects", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projects, err := projectStore.ListProjects(r.Context())
 		if err != nil {
@@ -249,6 +258,33 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			if allowed == nil || allowed[project.ID] {
 				items = append(items, makeProjectView(project))
 			}
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
+		if qualifiedAccess := qualificationAccess(r, access); qualifiedAccess != nil {
+			ids, err := qualifiedAccess.AccessibleProjectIDs(r.Context(), session.User.ID)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
+				return
+			}
+			allowed = make(map[string]bool, len(ids))
+			for _, id := range ids {
+				allowed[id] = true
+			}
+			current := make([]projectView, 0, len(items))
+			for _, item := range items {
+				if allowed[item.ID] {
+					current = append(current, item)
+				}
+			}
+			items = current
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projects": items})
 	}))
@@ -279,6 +315,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				code = "PROJECT_CREATE_FAILED"
 			}
 			writeJSON(w, status, map[string]any{"error_code": code})
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -316,6 +358,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 					code, status = "PROJECT_DUPLICATE_CONFLICT", http.StatusConflict
 				}
 				writeJSON(w, status, map[string]any{"error_code": code})
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{
@@ -359,6 +407,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 				writeJSON(w, status, map[string]any{"error_code": code})
 				return
 			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, renamePermission, access, projectaccess.ProjectRename) {
+				return
+			}
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]any{"project": makeProjectView(project)})
 		},
@@ -372,7 +426,10 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -394,7 +451,10 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "DASHBOARD_UNAVAILABLE"})
 			return
 		}
-		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, dashboard)

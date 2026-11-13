@@ -12,7 +12,15 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type operatorConfigurationDraftHooks struct {
+	BeforeResponse func()
+}
+
 func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.Store, audits ...*securityaudit.Service) Option {
+	return withOperatorConfigurationDraft(auth, stageStore, operatorConfigurationDraftHooks{}, audits...)
+}
+
+func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationDraftHooks, audits ...*securityaudit.Service) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
@@ -47,6 +55,12 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			revision, err := stageStore.EnsureProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), projectID, session.User.ID, "Operator routing edit")
 			if err != nil {
 				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"draft_revision": makeRevisionView(revision)})
@@ -93,6 +107,12 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "AUDIT_RECORD_FAILED"})
 					return
 				}
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"discarded":        discarded,
