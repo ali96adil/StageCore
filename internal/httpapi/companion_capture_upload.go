@@ -145,6 +145,25 @@ func handleCompanionCaptureUpload(
 
 	manager.Complete(jobID)
 	w.Header().Set("Cache-Control", "no-store")
+	currentSession, sessionErr := auth.ValidateRuntimeSession(r.Context(), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "StageCoreSession ")))
+	issuerErr := stageStore.CheckCompanionUploadIssuer(r.Context(), store.CreateCompanionUploadTicketParams{
+		IssuerBrowserSessionID:      completed.IssuerBrowserSessionID,
+		IssuerRequiresProjectGrants: completed.IssuerRequiresProjectGrants,
+		CompanionID:                 completed.CompanionID,
+		RuntimeSessionID:            completed.RuntimeSessionID,
+		EnvironmentManifestID:       completed.EnvironmentManifestID,
+		MachineRoleID:               completed.MachineRoleID,
+		RuntimeSnapshotID:           completed.RuntimeSnapshotID,
+		Purpose:                     completed.Purpose,
+	})
+	if sessionErr != nil || currentSession.ID != session.ID || currentSession.CompanionID != session.CompanionID || issuerErr != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error_code":                     "CAPTURE_UPLOAD_AUTHORITY_REVOKED",
+			"effect_may_have_been_committed": true,
+			"retryable":                      false,
+		})
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ticket_id":    completed.ID,
 		"status":       completed.Status,

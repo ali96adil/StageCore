@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,62 +24,82 @@ import (
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
 	"github.com/ali96adil/StageCore/internal/httpapi"
-"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
 type captureUploadHarness struct {
-	ctx        context.Context
-	handle     *db.Handle
-	store      *store.Store
-	auth       *companionauth.Service
-	credential companionauth.RuntimeSessionCredential
-	session    domain.CompanionRuntimeSession
-	environment store.ExecutionEnvironmentManifest
-	role       domain.MachineRole
-	assignment domain.RoleAssignment
+	ctx               context.Context
+	handle            *db.Handle
+	store             *store.Store
+	auth              *companionauth.Service
+	credential        companionauth.RuntimeSessionCredential
+	session           domain.CompanionRuntimeSession
+	environment       store.ExecutionEnvironmentManifest
+	role              domain.MachineRole
+	assignment        domain.RoleAssignment
 	runtimeSnapshotID string
 	projectID         string
-	vault      *vault.Vault
-	bulk       *bulk.Manager
-	handler    http.Handler
+	vault             *vault.Vault
+	bulk              *bulk.Manager
+	handler           http.Handler
 }
 
 func newCaptureUploadHarness(t *testing.T, mode bulk.Mode, qualified ...bool) *captureUploadHarness {
 	t.Helper()
 	ctx := context.Background()
 	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = handle.Close() })
 	stageStore := store.New(handle.DB, clock.Real{})
 	auth := companionauth.New(stageStore, nil)
 	credential := pairedRuntimeCredential(t, ctx, auth)
 	session, err := stageStore.GetCompanionRuntimeSession(ctx, credential.SessionID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Capture Upload Test", CreatedBy: "test"})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	environment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, revision.ID, captureUploadManifest(), "test")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	role, err := stageStore.CreateMachineRole(ctx, project.ID, store.CreateMachineRoleParams{
 		RoleKey: "MAC-CAPTURE", DisplayName: "Capture Mac", Required: true,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	assignment, err := stageStore.AssignMachineRole(ctx, role.ID, session.CompanionID)
-	if err != nil { t.Fatal(err) }
-	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
 	runtimeSnapshot, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "test")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	v, err := vault.Open(t.TempDir(), stageStore)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager := bulk.New(func(context.Context) (bulk.Mode, error) { return mode, nil })
 	options := []httpapi.Option{httpapi.WithCompanionCaptureUpload(auth, stageStore, v, manager)}
 	if len(qualified) != 0 && qualified[0] {
 		access, err := projectaccess.New(handle.DB)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		options = append(options, httpapi.WithProjectRouteQualification(access))
 	}
 	handler := httpapi.New(options...).Handler()
@@ -86,7 +107,7 @@ func newCaptureUploadHarness(t *testing.T, mode bulk.Mode, qualified ...bool) *c
 		ctx: ctx, handle: handle, store: stageStore, auth: auth, credential: credential, session: session,
 		environment: environment, role: role, assignment: assignment, runtimeSnapshotID: runtimeSnapshot.ID,
 		projectID: project.ID,
-		vault: v, bulk: manager, handler: handler,
+		vault:     v, bulk: manager, handler: handler,
 	}
 }
 
@@ -94,18 +115,20 @@ func (h *captureUploadHarness) ticket(t *testing.T, operation string, payload []
 	t.Helper()
 	sum := sha256.Sum256(payload)
 	grant, err := h.store.CreateCompanionUploadTicket(h.ctx, store.CreateCompanionUploadTicketParams{
-		CompanionID: h.session.CompanionID,
-		RuntimeSessionID: h.session.ID,
-		OperationID: operation,
+		CompanionID:           h.session.CompanionID,
+		RuntimeSessionID:      h.session.ID,
+		OperationID:           operation,
 		EnvironmentManifestID: h.environment.ID,
-		MachineRoleID: h.role.ID,
-		RuntimeSnapshotID: h.runtimeSnapshotID,
-		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
-		ExpectedContentHash: hex.EncodeToString(sum[:]),
-		ExpectedSizeBytes: int64(len(payload)),
-		ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+		MachineRoleID:         h.role.ID,
+		RuntimeSnapshotID:     h.runtimeSnapshotID,
+		Purpose:               store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash:   hex.EncodeToString(sum[:]),
+		ExpectedSizeBytes:     int64(len(payload)),
+		ExpiresAt:             time.Now().UTC().Add(10 * time.Minute),
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return grant
 }
 
@@ -142,26 +165,132 @@ func TestCompanionCaptureUploadSuccessReplayAndCompletedTicketReference(t *testi
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	var body map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
 	if body["ticket_id"] != ticket.Ticket.ID || body["status"] != string(store.CompanionUploadTicketCompleted) {
 		t.Fatalf("response=%v", body)
 	}
 	storedTicket, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if storedTicket.Status != store.CompanionUploadTicketCompleted || storedTicket.TerminalAt == nil {
 		t.Fatalf("ticket=%+v", storedTicket)
 	}
 	object, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash)
-	if err != nil { t.Fatal(err) }
-	if object.SizeBytes != int64(len(payload)) { t.Fatalf("object=%+v", object) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.SizeBytes != int64(len(payload)) {
+		t.Fatalf("object=%+v", object)
+	}
 	removed, err := h.vault.RemoveObjectIfUnreferenced(h.ctx, object.ContentHash)
-	if err != nil { t.Fatal(err) }
-	if removed { t.Fatal("completed upload ticket did not protect its Vault object") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed {
+		t.Fatal("completed upload ticket did not protect its Vault object")
+	}
 
 	replay := httptest.NewRecorder()
 	h.handler.ServeHTTP(replay, h.request(ticket, bytes.NewReader(payload), int64(len(payload))))
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+}
+
+func TestCompanionCaptureUploadSuppressesResultAfterRuntimeSessionRevocation(t *testing.T) {
+	h := newCaptureUploadHarness(t, bulk.ModeEdit)
+	payload := []byte("capture whose session ends at commit")
+	ticket := h.ticket(t, "capture-runtime-revoked-at-commit", payload)
+	if _, err := h.handle.DB.ExecContext(h.ctx, `
+		CREATE TRIGGER revoke_companion_session_after_capture_commit
+		AFTER UPDATE OF status ON companion_upload_tickets
+		WHEN NEW.status = 'COMPLETED'
+		BEGIN
+			UPDATE companion_runtime_sessions SET revoked_at_us = 1
+			WHERE runtime_session_id = NEW.runtime_session_id;
+		END`); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, h.request(ticket, bytes.NewReader(payload), int64(len(payload))))
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), ticket.Ticket.ExpectedContentHash) {
+		t.Fatalf("revoked Companion received committed upload result: HTTP %d %s", response.Code, response.Body.String())
+	}
+	completed, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
+	if err != nil || completed.Status != store.CompanionUploadTicketCompleted {
+		t.Fatalf("committed upload ticket=%+v err=%v", completed, err)
+	}
+	if _, err := h.store.GetVaultObject(h.ctx, ticket.Ticket.ExpectedContentHash); err != nil {
+		t.Fatalf("committed capture object was incorrectly removed: %v", err)
+	}
+}
+
+func TestCompanionCaptureUploadSuppressesResultAfterIssuerGrantRevocation(t *testing.T) {
+	h := newCaptureUploadHarness(t, bulk.ModeEdit)
+	access, err := projectaccess.New(h.handle.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().UnixMicro()
+	for _, user := range []struct{ id, role string }{{"capture-owner-final", "OWNER"}, {"capture-operator-final", "OPERATOR"}} {
+		if _, err := h.handle.DB.ExecContext(h.ctx, `
+			INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
+			VALUES (?, ?, 'unused', ?, ?, ?)`, user.id, user.id, user.role, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	issuerSessionID := "capture-issuer-final"
+	if _, err := h.handle.DB.ExecContext(h.ctx, `
+		INSERT INTO browser_sessions (session_id, user_id, token_sha256, csrf_sha256, issued_at_us, expires_at_us, last_seen_at_us)
+		VALUES (?, 'capture-operator-final', ?, ?, ?, ?, ?)`, issuerSessionID, []byte(issuerSessionID), []byte(issuerSessionID), now, now+int64(time.Hour/time.Microsecond), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(h.ctx, "capture-owner-final", "capture-operator-final", h.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("capture whose project issuer grant ends at commit")
+	sum := sha256.Sum256(payload)
+	ticket, err := h.store.CreateCompanionUploadTicket(h.ctx, store.CreateCompanionUploadTicketParams{
+		IssuerBrowserSessionID: issuerSessionID, IssuerRequiresProjectGrants: true,
+		CompanionID: h.session.CompanionID, RuntimeSessionID: h.session.ID,
+		OperationID: "capture-issuer-revoked-at-commit", EnvironmentManifestID: h.environment.ID,
+		MachineRoleID: h.role.ID, RuntimeSnapshotID: h.runtimeSnapshotID,
+		Purpose:             store.CompanionUploadExecutionEnvironmentCapture,
+		ExpectedContentHash: hex.EncodeToString(sum[:]), ExpectedSizeBytes: int64(len(payload)),
+		ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.handle.DB.ExecContext(h.ctx, `
+		CREATE TRIGGER revoke_capture_issuer_after_completion
+		AFTER UPDATE OF status ON companion_upload_tickets
+		WHEN NEW.status = 'COMPLETED'
+		BEGIN
+			UPDATE browser_sessions SET revoked_at_us = 1 WHERE session_id = 'capture-issuer-final';
+		END`); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	h.handler.ServeHTTP(response, h.request(ticket, bytes.NewReader(payload), int64(len(payload))))
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), ticket.Ticket.ExpectedContentHash) {
+		t.Fatalf("revoked issuer received committed upload result: HTTP %d %s", response.Code, response.Body.String())
+	}
+	completed, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
+	if err != nil || completed.Status != store.CompanionUploadTicketCompleted {
+		t.Fatalf("committed upload ticket=%+v err=%v", completed, err)
 	}
 }
 
@@ -176,8 +305,12 @@ func TestCompanionCaptureUploadShowAndIdentityFailuresStayActive(t *testing.T) {
 		t.Fatalf("SHOW status=%d body=%s", showRes.Code, showRes.Body.String())
 	}
 	showStored, err := show.store.GetCompanionUploadTicket(show.ctx, showTicket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
-	if showStored.Status != store.CompanionUploadTicketActive { t.Fatalf("SHOW ticket=%+v", showStored) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if showStored.Status != store.CompanionUploadTicketActive {
+		t.Fatalf("SHOW ticket=%+v", showStored)
+	}
 
 	edit := newCaptureUploadHarness(t, bulk.ModeEdit)
 	lengthTicket := edit.ticket(t, "capture-http-length", payload)
@@ -187,34 +320,46 @@ func TestCompanionCaptureUploadShowAndIdentityFailuresStayActive(t *testing.T) {
 		t.Fatalf("length status=%d body=%s", lengthRes.Code, lengthRes.Body.String())
 	}
 	lengthStored, err := edit.store.GetCompanionUploadTicket(edit.ctx, lengthTicket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
-	if lengthStored.Status != store.CompanionUploadTicketActive { t.Fatalf("length ticket=%+v", lengthStored) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lengthStored.Status != store.CompanionUploadTicketActive {
+		t.Fatalf("length ticket=%+v", lengthStored)
+	}
 
 	hashTicket := edit.ticket(t, "capture-http-hash", payload)
 	wrong := bytes.Repeat([]byte{'x'}, len(payload))
-	if bytes.Equal(wrong, payload) { t.Fatal("wrong hash fixture matches payload") }
+	if bytes.Equal(wrong, payload) {
+		t.Fatal("wrong hash fixture matches payload")
+	}
 	hashRes := httptest.NewRecorder()
 	edit.handler.ServeHTTP(hashRes, edit.request(hashTicket, bytes.NewReader(wrong), int64(len(wrong))))
 	if hashRes.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("hash status=%d body=%s", hashRes.Code, hashRes.Body.String())
 	}
 	hashStored, err := edit.store.GetCompanionUploadTicket(edit.ctx, hashTicket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
-	if hashStored.Status != store.CompanionUploadTicketActive { t.Fatalf("hash ticket=%+v", hashStored) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hashStored.Status != store.CompanionUploadTicketActive {
+		t.Fatalf("hash ticket=%+v", hashStored)
+	}
 	if _, err := edit.store.GetVaultObject(edit.ctx, hashTicket.Ticket.ExpectedContentHash); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("hash mismatch committed object err=%v", err)
 	}
 }
 
 type releaseAssignmentReader struct {
-	source *bytes.Reader
-	once sync.Once
+	source  *bytes.Reader
+	once    sync.Once
 	release func()
 }
 
 func (r *releaseAssignmentReader) Read(p []byte) (int, error) {
 	n, err := r.source.Read(p)
-	if n > 0 { r.once.Do(r.release) }
+	if n > 0 {
+		r.once.Do(r.release)
+	}
 	return n, err
 }
 
@@ -236,7 +381,9 @@ func TestCompanionCaptureUploadAuthorityLossRejectsCompletionAndRollsBack(t *tes
 		t.Fatalf("authority-loss status=%d body=%s", res.Code, res.Body.String())
 	}
 	stored, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if stored.Status != store.CompanionUploadTicketCancelled || stored.TerminalAt == nil {
 		t.Fatalf("authority-loss ticket=%+v", stored)
 	}
@@ -244,7 +391,9 @@ func TestCompanionCaptureUploadAuthorityLossRejectsCompletionAndRollsBack(t *tes
 		t.Fatalf("authority-loss object metadata err=%v", err)
 	}
 	path, err := h.vault.ObjectPath(ticket.Ticket.ExpectedContentHash)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("authority-loss object file remains, stat err=%v", err)
 	}
@@ -277,20 +426,28 @@ func TestCompanionCaptureUploadStopsReadingAfterAssignmentLoss(t *testing.T) {
 func TestCompanionCaptureUploadStopsWhenIssuerProjectGrantIsRevokedDuringRead(t *testing.T) {
 	h := newCaptureUploadHarness(t, bulk.ModeEdit)
 	access, err := projectaccess.New(h.handle.DB)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().UnixMicro()
 	for _, user := range []struct{ id, role string }{{"capture-owner", "OWNER"}, {"capture-operator", "OPERATOR"}} {
 		if _, err := h.handle.DB.ExecContext(h.ctx, `
 			INSERT INTO local_users (user_id, username, password_hash, role, created_at_us, updated_at_us)
-			VALUES (?, ?, 'unused', ?, ?, ?)`, user.id, user.id, user.role, now, now); err != nil { t.Fatal(err) }
+			VALUES (?, ?, 'unused', ?, ?, ?)`, user.id, user.id, user.role, now, now); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := h.handle.DB.ExecContext(h.ctx, `
 		INSERT INTO browser_sessions (session_id, user_id, token_sha256, csrf_sha256, issued_at_us, expires_at_us, last_seen_at_us)
-		VALUES ('capture-issuer', 'capture-operator', ?, ?, ?, ?, ?)`, []byte("capture-issuer"), []byte("capture-issuer"), now, now+int64(time.Hour/time.Microsecond), now); err != nil { t.Fatal(err) }
+		VALUES ('capture-issuer', 'capture-operator', ?, ?, ?, ?, ?)`, []byte("capture-issuer"), []byte("capture-issuer"), now, now+int64(time.Hour/time.Microsecond), now); err != nil {
+		t.Fatal(err)
+	}
 	setPermissions := func(permissions ...projectaccess.Permission) {
 		t.Helper()
 		if err := access.SetPermissions(h.ctx, "capture-owner", "capture-operator", h.projectID,
-			append(permissions, projectaccess.ProjectView)); err != nil { t.Fatal(err) }
+			append(permissions, projectaccess.ProjectView)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	setPermissions(projectaccess.RehearsalControl, projectaccess.MediaRead)
 	payload := bytes.Repeat([]byte("grant-revocation-capture"), 8<<10)
@@ -300,11 +457,13 @@ func TestCompanionCaptureUploadStopsWhenIssuerProjectGrantIsRevokedDuringRead(t 
 		CompanionID: h.session.CompanionID, RuntimeSessionID: h.session.ID,
 		OperationID: "capture-issuer-grant-loss", EnvironmentManifestID: h.environment.ID,
 		MachineRoleID: h.role.ID, RuntimeSnapshotID: h.runtimeSnapshotID,
-		Purpose: store.CompanionUploadExecutionEnvironmentCapture,
+		Purpose:             store.CompanionUploadExecutionEnvironmentCapture,
 		ExpectedContentHash: hex.EncodeToString(sum[:]), ExpectedSizeBytes: int64(len(payload)),
 		ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := bytes.NewReader(payload)
 	reader := &releaseAssignmentReader{source: body, release: func() { setPermissions(projectaccess.MediaRead) }}
 	response := httptest.NewRecorder()
@@ -313,7 +472,9 @@ func TestCompanionCaptureUploadStopsWhenIssuerProjectGrantIsRevokedDuringRead(t 
 		t.Fatalf("revoked issuer grant did not stop upload: status=%d unread=%d body=%s", response.Code, body.Len(), response.Body.String())
 	}
 	stored, err := h.store.GetCompanionUploadTicket(h.ctx, ticket.Ticket.ID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if stored.Status != store.CompanionUploadTicketCancelled || stored.TerminalAt == nil {
 		t.Fatalf("issuer grant loss ticket=%+v", stored)
 	}
@@ -324,10 +485,10 @@ func TestCompanionCaptureUploadStopsWhenIssuerProjectGrantIsRevokedDuringRead(t 
 
 func captureUploadManifest() executionenv.Manifest {
 	return executionenv.Manifest{
-		SchemaVersion: executionenv.ManifestSchemaVersion,
+		SchemaVersion:  executionenv.ManifestSchemaVersion,
 		EnvironmentKey: "capture-upload",
-		Name: "Capture upload environment",
-		AdapterKey: "stagecore.adapter.vdmx",
+		Name:           "Capture upload environment",
+		AdapterKey:     "stagecore.adapter.vdmx",
 		Application: executionenv.ApplicationRequirement{
 			Key: "vdmx", Name: "VDMX", VersionConstraint: "8.x-tested",
 			Hosts: []executionenv.HostRequirement{{OS: "darwin", Architecture: "arm64"}},
