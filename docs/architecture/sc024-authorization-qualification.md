@@ -1171,28 +1171,53 @@ local group normally only after those Core jobs finish successfully; then
 wait for CI on the new exact head. Keep the Production Assembler and ACL
 source guard unchanged until all Software Qualification blockers close.
 
-## Current resume snapshot · 2026-11-13 · Tablet Controller list fence
+## SC-024 continuation · 2026-11-13 · lighting authoring grant fences
 
-Latest pushed HEAD is `592a0c32b5cda5b0646ab324430cdbccb345bdba` on
-`integration/stagecore-rc`; Draft PR #534 remains open. Four local commits
-are ahead: `dbacdb5` and `86342a6` add red-first Show Template error response
-fences, `1211e23` records that batch, and `6a95471` closes a Tablet Controller
-device-list disclosure after project grant revocation. The red regression
-reproduced HTTP 200 containing the Tablet ID and display name after `project.view`
-was withdrawn. Focused normal and Race tests pass after the final-delivery
-check. Earlier exact-package tests and vet for the Template batch passed;
-these four local commits are not included in remote CI.
+Red-first SQLite-backed regressions found that Lighting configuration save
+and delete passed raw request contexts into writes. Revoking `device.configure`
+after route entry could still persist the binding change. Both store writes
+now use `capability.ExecAuthorized` and the route's live Project mutation
+context, so the permission check runs inside the write transaction. The routes
+also recheck before delivery: if revocation follows a successful commit, the
+binding remains intact and the caller receives both committed-effect fields
+with `retryable: false`. Save-before-write, delete-before-write and
+post-commit response tests pass under Race.
 
-For pushed HEAD `592a0c3`, Core run `43472199434` has passed Go 1.27, normal Go
-1.26 tests and Vet. Go 1.26 Race remains in progress; Linux ARM64 is pending.
-Companion run `43472199432` has passed Swift CompanionCore and native macOS
-replacement/media acceptance after retrying the initially canceled runner.
-Camera Relay run `43472199457` passed. Do not push until the exact remote Core
-run completes Race and ARM64 successfully; then push the five-commit local
-group normally and require exact-head CI. Keep Production Assembler, Migration
-53, the source guard and Production ACL unchanged. **SC-024 is not
-software-qualified.** Remaining software work includes the full
-route-to-policy/delivery reconciliation, deployed Companion/ticket
-compatibility and disposable installed-copy migration/update/impact-preview/
-restore qualification. Hardware STOP/Blackout and physical StageAudio/laser
-qualification remain separate and uncompleted.
+The same test-first audit found that Lighting, Tablet and StageLaser Cue
+authoring could create project target aliases using an unguarded request
+context. Red regressions demonstrated a target alias persisted after
+`cue.edit` was revoked. Each route now supplies a scoped mutation context to
+the transactional alias write, suppresses the result if current authority
+ends, and returns the existing committed-effect denial if revocation occurs
+after an alias has committed. The three focused regressions and their
+existing authoring tests pass normally and under Race. No physical command or
+device connection was used.
+
+Full local verification for this batch: `go test ./internal/httpapi -count=1`
+passed (`54.623s`); `go test ./internal/store -count=1` passed (`5.262s`);
+`go vet ./internal/httpapi ./internal/store` and `git diff --check` passed.
+The focused Race tests for Lighting config save/delete, Tablet list and all
+three Cue alias cases passed. The full HTTP API Race package passed at the
+previous pushed code checkpoint; exact-head full Race CI remains required.
+
+## Current resume snapshot · 2026-11-13 · project authoring revocation
+
+Latest pushed HEAD is `5e5de3208db2b1f323a9558e7b5832aee62c6c02` on
+`integration/stagecore-rc`; Draft PR #534 remains open. Four code commits are
+local: `f18823e` guards Lighting binding writes, `8ab20be` fences Lighting
+Cue alias creation, `cc197b3` fences Tablet Cue alias creation, and `6d8695b`
+fences StageLaser Cue alias creation. This resume checkpoint is the fifth
+commit in the group. Local tests cover grant withdrawal before SQLite commit
+and immediately before result delivery; none of these changes is on the Pi.
+
+For pushed HEAD `5e5de32`, Core CI `43478623904` passed Go 1.27 tests/vet and
+normal Go 1.26 checks; Go 1.26 Race is still running and Linux ARM64 is
+pending. Companion CI `43478623421` and Camera Relay CI `43478623203` passed.
+Wait for Race and ARM64 on this exact pushed head before pushing the five
+local commits normally; then require full CI on their new exact head. Keep the
+Production Assembler, Migration 53 and source guard unchanged, and Production
+ACL disabled. **SC-024 is not software-qualified.** The full route-to-policy
+and async-delivery reconciliation, installed-copy migration/update/impact
+preview/restore qualification, and deployed legacy Companion/ticket
+compatibility remain open. Hardware STOP/Blackout, StageAudio revocation and
+independent laser-safe-off qualification remain pending.
