@@ -17,6 +17,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -296,6 +297,7 @@ type tabletRelayFlashDoer interface {
 type tabletControllerHooks struct {
 	BeforeListResponse        func()
 	BeforeCommandReadResponse func()
+	BeforeCueAliasCreate      func()
 }
 
 func writeTabletFlashAuthorityEnded(w http.ResponseWriter) {
@@ -706,6 +708,8 @@ func withOperatorTabletController(
 		// needs to expose target_ref, capability strings, or JSON configuration.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			writeRequest := r.WithContext(writeCtx)
 			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
 				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
 				return
@@ -750,8 +754,11 @@ func withOperatorTabletController(
 					writeJSON(w, http.StatusConflict, map[string]any{"error": "TABLET_CAPABILITY_UNAVAILABLE", "device_id": tablet.ID, "capability": capability})
 					return
 				}
-				targetRef, ensureErr := ensureTabletAlias(r, stageStore, aliases, projectID, tablet, capability)
+				targetRef, ensureErr := ensureTabletAlias(writeRequest, stageStore, aliases, projectID, tablet, capability, hooks.BeforeCueAliasCreate)
 				if ensureErr != nil {
+					if writeProjectMutationDenied(w, ensureErr) {
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_ALIAS_FAILED", "detail": ensureErr.Error()})
 					return
 				}
@@ -764,6 +771,9 @@ func withOperatorTabletController(
 					Priority:      defaultTabletPriority(input.Priority),
 					Parameters:    normalizedPayload,
 				})
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
 		}))
@@ -865,7 +875,7 @@ func mergeTabletManifestScope(payload json.RawMessage, manifestID string) json.R
 	return encoded
 }
 
-func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, tablet deviceexperience.Device, capability string) (string, error) {
+func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, tablet deviceexperience.Device, capability string, beforeCreate func()) (string, error) {
 	for _, alias := range aliases {
 		if alias.LogicalType != devicechannel.StageDeviceLogicalType { continue }
 		var cfg struct {
@@ -879,6 +889,7 @@ func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domai
 	config, err := json.Marshal(map[string]string{"device_id": tablet.ID, "capability_key": capability})
 	if err != nil { return "", err }
 	logicalName := "tablet." + tabletAliasSlug(tablet.ID) + "." + tabletAliasSlug(strings.TrimPrefix(capability, "tablet.media."))
+	if beforeCreate != nil { beforeCreate() }
 	created, err := stageStore.CreateAlias(r.Context(), domain.ProjectDeviceAlias{
 		ProjectID:     projectID,
 		LogicalName:   logicalName,

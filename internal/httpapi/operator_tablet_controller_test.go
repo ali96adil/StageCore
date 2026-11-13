@@ -470,6 +470,56 @@ func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
 	}
 }
 
+func TestTabletCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-cue-acl"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Scoped tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeCueAliasCreate: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke CueEdit before alias creation: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller/cue-actions",
+		[]byte(`{"device_ids":["`+deviceID+`"],"command_type":"TABLET_PLAY","payload":{"media_number":7}}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatalf("revoked Operator received Tablet cue action: %s", response.Body.String())
+	}
+	aliases, err := f.projects.ListAliases(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("Tablet target alias committed after CueEdit revocation: %+v", aliases)
+	}
+}
+
 func TestOperatorTabletControllerCueActionsCreateCanonicalAliasOnce(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
