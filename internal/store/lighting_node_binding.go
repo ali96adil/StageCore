@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
@@ -93,7 +94,7 @@ func (s *Store) SetLightingNodeBinding(ctx context.Context, revisionID string, b
 		return lightingnode.ProjectBinding{}, fmt.Errorf("encode lighting aliases: %w", err)
 	}
 	nowUS := clock.UnixMicros(s.clock.Now().UTC())
-	_, err = s.db.ExecContext(ctx,
+	_, err = capability.ExecAuthorized(ctx, s.db,
 		"INSERT INTO lighting_node_revision_bindings "+
 			"(revision_id, device_id, profile_id, configuration_json, aliases_json, updated_by, updated_at_us) "+
 			"VALUES (?, ?, ?, ?, ?, ?, ?) "+
@@ -185,7 +186,7 @@ func (s *Store) DeleteLightingNodeBinding(ctx context.Context, revisionID, devic
 	if err := s.RequireProjectConfigurationMutable(ctx, revision.ProjectID); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx,
+	result, err := capability.ExecAuthorized(ctx, s.db,
 		"DELETE FROM lighting_node_revision_bindings WHERE revision_id = ? AND device_id = ?",
 		revision.ID, deviceID,
 	)
