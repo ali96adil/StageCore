@@ -16,12 +16,12 @@ import (
 )
 
 type fakeExecutionEnvironmentOperationRuntime struct {
-	calls    int
-	request  companionchannel.EnvironmentOperationRequest
-	status   companionchannel.EnvironmentOperationStatus
-	errorCode string
-	summary  string
-	snapshot *executionenv.Snapshot
+	calls       int
+	request     companionchannel.EnvironmentOperationRequest
+	status      companionchannel.EnvironmentOperationStatus
+	errorCode   string
+	summary     string
+	snapshot    *executionenv.Snapshot
 	beforeReply func()
 }
 
@@ -268,7 +268,15 @@ func TestExecutionEnvironmentOperationRechecksRevokedSessionAtBothBoundaries(t *
 			}
 			res := httptest.NewRecorder()
 			handler.ServeHTTP(res, req)
-			if res.Code != http.StatusUnauthorized || runtime.calls != wantCalls || strings.Contains(res.Body.String(), runtime.summary) {
+			if boundary == "before dispatch" {
+				if res.Code != http.StatusUnauthorized || runtime.calls != wantCalls || strings.Contains(res.Body.String(), runtime.summary) {
+					t.Fatalf("pre-dispatch revocation status=%d calls=%d body=%s", res.Code, runtime.calls, res.Body)
+				}
+				return
+			}
+			if res.Code != http.StatusForbidden || runtime.calls != wantCalls || strings.Contains(res.Body.String(), runtime.summary) ||
+				!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
+				!strings.Contains(res.Body.String(), `"retryable":false`) {
 				t.Fatalf("status=%d calls=%d body=%s", res.Code, runtime.calls, res.Body)
 			}
 		})

@@ -2,11 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -101,7 +103,7 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			Kind:                        body.Kind,
 			TimeoutMS:                   body.TimeoutMS,
 		})
-		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+		if !recheckCommittedExecutionEnvironmentOperation(w, r, auth, session) {
 			return
 		}
 		writeJSON(w, http.StatusOK, executionEnvironmentOperationView{
@@ -115,4 +117,24 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 			CaptureUpload:   result.CaptureUpload,
 		})
 	}))
+}
+
+func recheckCommittedExecutionEnvironmentOperation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session) bool {
+	access := qualificationAccess(r, nil)
+	err := projectMutationAuthorityError(r, auth, session, userauth.PermissionRuntimeControl, access,
+		projectaccess.RehearsalControl, projectaccess.MediaRead)
+	if err == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	status, code := http.StatusForbidden, "FORBIDDEN"
+	if !errors.Is(err, userauth.ErrForbidden) && !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
+		status, code = http.StatusServiceUnavailable, "PROJECT_ACCESS_UNAVAILABLE"
+	}
+	writeJSON(w, status, map[string]any{
+		"error_code":                     code,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return false
 }
