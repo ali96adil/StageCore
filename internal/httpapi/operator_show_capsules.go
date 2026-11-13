@@ -90,6 +90,9 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 				Mode:              mode,
 			})
 			if err != nil {
+				if !recheckRead(w, r, session, projectaccess.CapsuleExport, projectaccess.MediaRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,8 @@ type fakeShowCapsuleService struct {
 	lastExportRoot            string
 	lastMode                  showcapsule.ExportMode
 	lastImportedBy            string
+	previewErr                error
+	onPreview                 func()
 	onExport                  func()
 	afterExportAuthorize      func()
 	onPlan                    func()
@@ -32,7 +35,10 @@ func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID stri
 	f.previewCalls++
 	f.lastProjectID = projectID
 	f.lastMode = options.Mode
-	return showcapsule.Manifest{ExportMode: options.Mode}, nil
+	if f.onPreview != nil {
+		f.onPreview()
+	}
+	return showcapsule.Manifest{ExportMode: options.Mode}, f.previewErr
 }
 
 func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root string, options showcapsule.BuildOptions) (showcapsule.ExportResult, error) {
@@ -226,6 +232,32 @@ func TestShowCapsuleExportRechecksSessionAtPublication(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") {
 		t.Fatalf("revoked export got HTTP %d, %d calls, %s", rec.Code, service.exportCalls, rec.Body.String())
+	}
+}
+
+func TestShowCapsulePreviewSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		previewErr: errors.New("capsule metadata lookup failed"),
+		onPreview: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule preview: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsule/preview", login.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
+		strings.Contains(response.Body.String(), "PROJECTS_UNAVAILABLE") || service.previewCalls != 1 {
+		t.Fatalf("revoked Owner received capsule preview error: status=%d calls=%d body=%s", response.Code, service.previewCalls, response.Body.String())
 	}
 }
 
