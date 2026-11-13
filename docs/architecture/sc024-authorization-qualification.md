@@ -454,3 +454,57 @@ qualification and Production ACL activation remain separate pending steps.
 
 **Resume at:** `integration/stagecore-rc` after the grouped push for this
 batch; preserve Production ACL disabled and all stable service/data evidence.
+
+## SC-024 continuation · 2026-11-13 · Companion and environment-operation response fences
+
+Two further response-boundary regressions were reproduced with temporary
+SQLite fixtures:
+
+- Companion capture upload previously returned HTTP 201 and the Vault hash
+  when a Companion runtime session was revoked by the same commit that marked
+  its upload ticket `COMPLETED`. It now revalidates the exact runtime session
+  and the issuing browser session/current project grants before response
+  delivery. Revocation returns a no-store, non-retryable committed-effect
+  denial; the already completed ticket and Vault object remain intact.
+  `TestCompanionCaptureUploadSuppressesResultAfterRuntimeSessionRevocation`
+  and `TestCompanionCaptureUploadSuppressesResultAfterIssuerGrantRevocation`
+  cover Companion-session and browser-issuer revocation respectively.
+- An execution-environment operation could finish through its Companion
+  runtime, then return `SESSION_INVALID` without indicating that OPEN,
+  reconnect, capture, or restore may already have reached VDMX. Its final
+  boundary now rechecks the exact browser session, CSRF, Runtime Control role,
+  and qualification Project grants. A lost authority suppresses operation
+  details and returns `effect_may_have_been_committed: true` and
+  `retryable: false`. Revocation before runtime dispatch remains a plain
+  denial. `TestExecutionEnvironmentOperationRechecksRevokedSessionAtBothBoundaries`
+  was red before the change and passes under Race afterward.
+
+The Companion capture upload regressions and adjacent replay, assignment
+revocation, issuer-grant revocation, and SHOW admission tests pass under Race.
+The focused operation/session revocation test also passes under Race. The
+related TabletPlayer, ESP32 DMX Lighting, Camera, and StageLaser PR heads and
+their current checks are recorded in
+[`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
+Those check results remain software evidence; the StageLaser independent
+beam-off interlock and deployed tablet/camera/DMX behavior still require
+physical qualification.
+
+Production Assembler, Migration 53, stable services, and Project ACL state
+were not changed. At this checkpoint the new commits are local and not yet
+pushed. On remote base `bb09efcb750b655a4f3825511b54fbf28aa5b1f5`, Companion
+Core and Camera Relay CI pass; Go 1.27 and the Go 1.26 standard Test/browser
+and Vet steps pass, while Go 1.26 Race and Linux ARM64 remain in progress.
+The one full local `go test -race ./internal/httpapi -count=1` attempt timed
+out at its 10-minute limit inside the existing unified ACL role-matrix test
+while Argon2 password hashing was running; it reported no assertion failure.
+It was not repeated. The changed Companion upload and environment-operation
+regressions passed their focused Race runs. SC-024 remains
+**not software-qualified**: remaining work includes the complete Hub
+endpoint-to-policy/delivery matrix, isolated Production-like assembly and
+installed-copy update/impact-preview/recovery cycle, and legacy Companion
+compatibility qualification.
+
+**Resume at:** local `integration/stagecore-rc` HEAD after these commits;
+check completion of the existing exact-base Race/ARM64 jobs, finish the
+remaining endpoint and installed-copy software audit, then push the grouped
+safe commits to PR #534. Keep Production ACL disabled.
