@@ -30,6 +30,7 @@ var (
 	ErrSetupAPMaintenanceCapabilityMissing = errors.New("setup AP maintenance capability missing")
 	ErrSetupAPMaintenanceInput             = errors.New("invalid setup AP maintenance input")
 	ErrSetupAPMaintenanceRejected          = errors.New("setup AP maintenance rejected by device")
+	ErrSetupAPMaintenanceOutcomeUncertain   = errors.New("setup AP maintenance outcome may have been committed")
 )
 
 type SetupAPPasswordResult struct {
@@ -135,10 +136,17 @@ func (r *Runtime) ConfigureSetupAPPassword(
 		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
 			current.close()
 		}
+		if !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			return SetupAPPasswordResult{}, fmt.Errorf("%w: send setup AP maintenance request: %w", ErrSetupAPMaintenanceOutcomeUncertain, err)
+		}
 		return SetupAPPasswordResult{}, fmt.Errorf("send setup AP maintenance request: %w", err)
 	}
 
-	return waitSetupAPResult(ctx, current.closed, resultCh)
+	result, err := waitSetupAPResult(ctx, current.closed, resultCh)
+	if err != nil && !errors.Is(err, ErrSetupAPMaintenanceRejected) {
+		return result, fmt.Errorf("%w: %w", ErrSetupAPMaintenanceOutcomeUncertain, err)
+	}
+	return result, err
 }
 
 func waitSetupAPResult(ctx context.Context, disconnected <-chan struct{}, resultCh <-chan SetupAPPasswordResult) (SetupAPPasswordResult, error) {
