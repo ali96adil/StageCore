@@ -207,6 +207,52 @@ func TestBrowserSameOriginAndRoleDenial(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedAPIResponsesAreNotCacheable(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := h.auth.CreateUser(ctx, "cache-policy-viewer", h.password, userauth.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerLogin, err := h.auth.Login(ctx, viewer.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := withPermission(h.auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, _ *http.Request, _ userauth.Session) {
+		writeJSON(w, http.StatusOK, map[string]string{"private": "operator state"})
+	})
+
+	tests := []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{name: "missing session", want: http.StatusUnauthorized},
+		{name: "insufficient role", token: viewerLogin.Token, want: http.StatusForbidden},
+		{name: "authorized response", token: owner.Token, want: http.StatusOK},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := authenticatedReadRequest(http.MethodGet, "/api/v1/private", test.token)
+			if test.token == "" {
+				request.Header.Del("Cookie")
+			}
+			response := httptest.NewRecorder()
+			protected(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("authenticated API response lacks no-store: status=%d headers=%v", response.Code, response.Header())
+			}
+		})
+	}
+}
+
 func TestAuthenticatedSSEClosesAfterSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	credential, err := h.auth.Login(context.Background(), "owner", h.password, "127.0.0.1")

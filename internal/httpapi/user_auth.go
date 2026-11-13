@@ -184,6 +184,10 @@ func withPermission(service *userauth.Service, permission userauth.Permission, n
 
 func withAuthenticatedSession(service *userauth.Service, requireCSRF bool, next sessionTokenHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Browser API responses can contain private Project, show and device
+		// state. Set this before authentication so success and denial responses
+		// share the same cache policy, including when a session expires.
+		w.Header().Set("Cache-Control", "no-store")
 		if !secureBrowserRequest(w, r) || !sameOriginRequest(w, r) {
 			return
 		}
