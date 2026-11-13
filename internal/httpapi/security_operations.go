@@ -155,7 +155,7 @@ func writeSecurityOperationAuthorityEnded(w http.ResponseWriter, mutation bool) 
 	response := map[string]any{"error_code": "FORBIDDEN"}
 	if mutation {
 		response = map[string]any{
-			"error_code":                     capability.DispatchAuthorityRevokedCode,
+			"error_code":                     "SECURITY_OPERATION_AUTHORITY_REVOKED",
 			"detail":                         "Authorization ended during security administration; verify current state before taking further action.",
 			"effect_may_have_been_committed": true,
 			"retryable":                      false,

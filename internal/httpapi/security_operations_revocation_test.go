@@ -57,7 +57,8 @@ func TestSecurityOperationsWithholdResultsAfterOwnerSessionRevocation(t *testing
 				t.Fatal(err)
 			}
 			if route.method == http.MethodPut {
-				if payload["effect_may_have_been_committed"] != true || payload["retryable"] != false {
+				if payload["error_code"] != "SECURITY_OPERATION_AUTHORITY_REVOKED" ||
+					payload["effect_may_have_been_committed"] != true || payload["retryable"] != false {
 					t.Fatalf("committed plugin permission outcome was not fenced truthfully: %+v", payload)
 				}
 				granted, err := plugins.Granted(ctx, oscplugin.PluginID)
