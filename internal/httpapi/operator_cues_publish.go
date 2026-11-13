@@ -85,7 +85,7 @@ func withOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 			return
 		}
 		registerOperatorCuePublishRoutes(s.mux, auth, projectStore, publisher, hooks)
-		registerCueEditorRecovery(s.mux, auth, projectStore)
+		registerCueEditorRecovery(s.mux, auth, projectStore, hooks.BeforeResponse)
 		registerCueActionPresets(s.mux, auth, projectStore, cueActionPresetHooks{})
 	}
 }

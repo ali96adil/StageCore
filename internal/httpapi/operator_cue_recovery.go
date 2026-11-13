@@ -11,7 +11,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *store.Store) {
+func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *store.Store, beforeMutationResponse func()) {
 	handle := func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 			return
@@ -45,6 +45,12 @@ func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *s
 			return
 		}
 		if r.Method == http.MethodGet && !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+			return
+		}
+		if r.Method != http.MethodGet && beforeMutationResponse != nil {
+			beforeMutationResponse()
+		}
+		if r.Method != http.MethodGet && !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 			return
 		}
 		writeJSON(w, http.StatusOK, recovery)

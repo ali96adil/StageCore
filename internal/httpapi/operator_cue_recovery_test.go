@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/capability"
@@ -212,5 +213,51 @@ func TestCuePrivateReadRejectsSessionRevokedBeforeDelivery(t *testing.T) {
 	res := httptest.NewRecorder()
 	if allowLiveProjectRead(res, req, h.auth, owner.Session, userauth.PermissionProjectEdit) || res.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked session returned status %d", res.Code)
+	}
+}
+
+func TestCueEditorRecoverySuppressesCommittedResultAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name:      "cue recovery response boundary",
+		CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	handler := New(withOperatorCuePublish(
+		h.auth,
+		stageStore,
+		publish.New(stageStore, capability.NewRegistry()),
+		cuePublishHooks{BeforeResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	)).Handler()
+	body := []byte(`{"document":{"cue_id":"","draft":{"raw":"{unfinished}"}}}`)
+	request := authenticatedMutationRequest(t, http.MethodPut, "/api/v1/projects/"+project.ID+"/cue-editor-recovery", body, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("response boundary hook did not revoke the Owner session")
+	}
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), `"generation"`) {
+		t.Fatalf("revoked recovery write exposed result: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) || !strings.Contains(response.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked recovery response lost commit uncertainty: %s", response.Body.String())
+	}
+	recovery, err := stageStore.CueEditorRecovery(ctx, project.ID, owner.Session.User.ID)
+	if err != nil || recovery.Generation == "" || string(recovery.Document) != `{"cue_id":"","draft":{"raw":"{unfinished}"}}` {
+		t.Fatalf("committed recovery was not retained truthfully: recovery=%+v err=%v", recovery, err)
 	}
 }
