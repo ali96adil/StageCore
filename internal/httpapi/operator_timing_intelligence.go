@@ -70,6 +70,9 @@ func WithOperatorTimingIntelligence(auth *userauth.Service, service TimingIntell
 				SectionToCueID:    toCue,
 			})
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

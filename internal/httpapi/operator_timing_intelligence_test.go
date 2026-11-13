@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,7 @@ type fakeTimingIntelligenceService struct {
 	reportCalls       int
 	lastProjectID     string
 	lastOptions       timingintelligence.ReportOptions
+	reportErr         error
 	selectionCalls    int
 	lastSessionID     string
 	lastSelectionMode store.TimingSelectionMode
@@ -32,6 +34,9 @@ func (f *fakeTimingIntelligenceService) Report(_ context.Context, projectID stri
 	f.lastOptions = options
 	if f.beforeReport != nil {
 		f.beforeReport()
+	}
+	if f.reportErr != nil {
+		return timingintelligence.Report{}, f.reportErr
 	}
 	return timingintelligence.Report{ProjectID: projectID, AdvisoryOnly: true}, nil
 }
@@ -239,6 +244,30 @@ func TestTimingIntelligenceRejectsRevocationDuringReport(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if service.reportCalls != 1 || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "advisory_only") {
 		t.Fatalf("report calls=%d status=%d body=%s", service.reportCalls, res.Code, res.Body.String())
+	}
+}
+
+func TestTimingIntelligenceDoesNotDeliverReportErrorAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{
+		reportErr: errors.New("private timing report failure"),
+		beforeReport: func() {
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	request := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/project/timing-intelligence", owner.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if service.reportCalls != 1 || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), "private timing report failure") {
+		t.Fatalf("revoked Owner received report error: calls=%d status=%d body=%s", service.reportCalls, response.Code, response.Body.String())
 	}
 }
 
