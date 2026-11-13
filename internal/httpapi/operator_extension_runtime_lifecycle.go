@@ -21,6 +21,7 @@ type operatorExtensionRuntimeLifecycle struct {
 
 type extensionRuntimeLifecycleHooks struct {
 	BeforeMutationResponse func()
+	BeforeReadResponse     func()
 }
 
 func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service) Option {
@@ -41,8 +42,14 @@ func withOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *
 	}
 }
 
-func (h *operatorExtensionRuntimeLifecycle) status(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionRuntimeLifecycle) status(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	item, err := h.supervisor.Status(r.Context(), strings.TrimSpace(r.PathValue("installation_id")))
+	if h.hooks.BeforeReadResponse != nil {
+		h.hooks.BeforeReadResponse()
+	}
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_INSTALLATION_NOT_FOUND"})

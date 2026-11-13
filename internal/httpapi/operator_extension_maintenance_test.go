@@ -213,6 +213,30 @@ func TestOperatorExtensionMaintenanceUpdateRollbackRepairRBACAndCSRF(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtimeRevoked := false
+	runtimeHandler := New(withOperatorExtensionRuntimeLifecycle(h.auth, supervisor, nil, extensionRuntimeLifecycleHooks{
+		BeforeReadResponse: func() {
+			runtimeRevoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner before runtime status response: %v", err)
+			}
+		},
+	})).Handler()
+	runtimeRequest := httptest.NewRequest(http.MethodGet, base+"/runtime", nil)
+	runtimeRequest.RemoteAddr = "127.0.0.1:19405"
+	runtimeRequest.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	runtimeResponse := httptest.NewRecorder()
+	runtimeHandler.ServeHTTP(runtimeResponse, runtimeRequest)
+	if !runtimeRevoked {
+		t.Fatal("test did not revoke Owner after extension runtime status read")
+	}
+	if runtimeResponse.Code != http.StatusForbidden || strings.Contains(runtimeResponse.Body.String(), installed.InstallationID) || runtimeResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked Owner received runtime status: status=%d headers=%v body=%s", runtimeResponse.Code, runtimeResponse.Header(), runtimeResponse.Body.String())
+	}
+	owner, err = h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	missingCSRF := httptest.NewRequest(http.MethodPost, base+"/update", bytes.NewReader(updateBody))
 	missingCSRF.RemoteAddr = "127.0.0.1:19403"
 	missingCSRF.Header.Set("Content-Type", "application/json")
