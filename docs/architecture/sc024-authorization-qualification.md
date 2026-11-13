@@ -996,3 +996,69 @@ Go 1.27 tests/vet and is running Go 1.26 Race; Companion run `43453654028`
 has passed Swift tests and is running its native macOS acceptance; Camera
 Relay run `43453654320` passed. This cache-control change is not on those
 remote CI runs.
+
+## SC-024 continuation · 2026-11-13 · browser cache and device metadata fences
+
+A red-first middleware regression found that authenticated browser APIs did
+not set `Cache-Control: no-store` consistently: unauthenticated `401`, denied
+role `403`, and successful private `200` responses all lacked the header. The
+browser-session middleware now sets `no-store` before transport, origin,
+session, CSRF, and role checks. Firmware maintenance routes retain explicit
+no-store headers and route tests for their success, revocation, and uncertain
+send responses.
+
+A second red-first regression found that
+`GET /api/v1/stage-devices/{device_id}` and its `/assignment` route returned
+HTTP 200 with device/assignment metadata after Owner logout at the response
+boundary. Both routes now revalidate the exact live session, current role,
+required global pairing/read permission, and current Project binding/grant
+immediately before delivery. Tests assert that both response payloads are
+withheld after session revocation. They use temporary SQLite and do not
+contact a device.
+
+Local evidence for the current four-commit group after remote
+`dc516dd9d797af01d12e5fdf5558f1f3bcd342a7`:
+
+- `06130bf` adds no-store to all five Firmware maintenance routes;
+  `22b3d99` records those response guards.
+- `94d31c8` applies a default no-store policy to authenticated browser APIs.
+- `ca7b37b` fences Stage Device detail and assignment responses after logout.
+- The red-first regressions failed with cacheable responses and leaked
+  metadata before their fixes. Focused tests and Race passed after the fixes;
+  full `go test ./internal/httpapi -count=1` passed (`50.931s`), as did
+  `go vet ./internal/httpapi ./internal/devicechannel` and `git diff --check`.
+
+The preceding remote checkpoint `dc516dd9d797af01d12e5fdf5558f1f3bcd342a7`
+has complete Core CI PASS in run `43453654206`, including Race and Linux
+ARM64. Companion Core run `43453654028` and Camera Relay run `43453654320`
+also passed. These runs do not include the four local commits; the grouped
+push and exact-head CI remain pending.
+
+Linked PRs remain open and unchanged: TabletPlayer #36 at
+`91613da1c8e0455a501c7be4b6df8ac1ce73a6bc` (Android run `42719885664`
+PASS); ESP32 DMX Lighting #39 at
+`3ad774988b2f78eb385f1046f7668a7f29049ab1` (Firmware CI `42759555665`
+PASS); ESP32 Camera #20 at
+`455b066c6520e1c8a576d26dd2afd4b377652dde` (firmware build
+`42761096513` PASS); and ESP32 StageLaser #56 at
+`b14a5789132549f2724f77b342bbe4c6b0fc880c` (Firmware CI `42765890415`
+PASS) plus #57 at `c4ff10b37dc2fbfd3ebe31e55f0f8d4869d3dc54` (Firmware CI
+`38054411190` PASS). These are software checks; board-specific SAFE_OFF,
+network recovery, installation, and physical output remain unqualified.
+
+Read-only Pi verification still shows `stagecore-hub.service` and
+`stagecore-camera-relay.service` active and `stagecore-rc-qualification.service`
+inactive. No service, sudo policy, data, firmware, or physical output changed.
+`sudo -n -l` lists a password-required `(ALL : ALL) ALL`, passwordless fixed
+RC helper, direct passwordless start/stop/restart of the production Hub, and
+fixed helper verbs including `physical-command`. `sudo -n cat` could not read
+root-owned sudoers files without a password; no permission removal was made
+because the production-service rule may be needed for recovery and the helper
+can command physical outputs. Keep those grants for owner review.
+
+Production Assembler and Migration 53 remain unchanged; Production ACL stays
+disabled. The complete route-to-policy reconciliation, production-shaped
+installed-copy migration/update/impact-preview/restore rehearsal, and old
+Companion deployment compatibility remain open. Hardware STOP/Blackout,
+StageAudio operation revocation, and independent laser-safe-off remain
+pending. **SC-024 is not software-qualified.**
