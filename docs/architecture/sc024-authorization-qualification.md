@@ -1170,3 +1170,24 @@ Delivery and Vet passed; Race is in progress and ARM64 is pending. Companion
 local group normally only after those Core jobs finish successfully; then
 wait for CI on the new exact head. Keep the Production Assembler and ACL
 source guard unchanged until all Software Qualification blockers close.
+
+## Current resume snapshot · 2026-11-13 · Show Template error fences
+
+Latest pushed HEAD is `592a0c32b5cda5b0646ab324430cdbccb345bdba` on
+`integration/stagecore-rc`; Draft PR #534 remains open. Two local commits
+(`dbacdb5`, `86342a6`) add red-first session-revocation error fences for
+catalog/document template materialization and project template export. The
+full `internal/httpapi` package, focused Race tests, `go vet`, and diff checks
+pass. The full HTTP API Race package passed on the preceding pushed code
+checkpoint; exact-head Race CI is the required next full run.
+
+For pushed HEAD `592a0c3`, Core run `43472199434` has passed Go 1.27 and normal
+Go 1.26 checks; Race is running and Linux ARM64 is pending. Companion run
+`43472199432` is queued and Camera Relay run `43472199457` passed. Wait for
+these exact-head checks before pushing the two local commits. Keep Production
+Assembler, Migration 53, the source guard and Production ACL unchanged.
+**SC-024 is not software-qualified.** Remaining software work includes the
+complete route-to-policy/delivery reconciliation, deployed Companion/ticket
+compatibility and a disposable installed-copy update/restore qualification.
+Hardware STOP/Blackout and physical StageAudio/laser qualification remain
+separate and uncompleted.
