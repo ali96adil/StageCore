@@ -559,6 +559,80 @@ func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing
 	}
 }
 
+func TestProjectStageDeviceListSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped device list revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "scoped-device-list-revoke"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: "stagecore.test-list",
+		DisplayName: "Private project device list", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ClientVersion: "0.1.0-test", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=?, assignment_state='ACTIVE', assignment_epoch=2
+		WHERE device_id=? AND assignment_state='UNASSIGNED'
+	`, project.ID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "device-list-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var token string
+	var revoked bool
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, projects, access, stageDeviceRouteHooks{
+			BeforeProjectDeviceListResponse: func() {
+				revoked = true
+				if err := h.auth.Logout(ctx, token); err != nil {
+					t.Errorf("revoke session before scoped device-list delivery: %v", err)
+				}
+			},
+		},
+	)).Handler()
+	for _, login := range []userauth.Credential{owner, operatorLogin} {
+		t.Run(login.Session.User.Role, func(t *testing.T) {
+			token, revoked = login.Token, false
+			request := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/stage-devices", login.Token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), deviceID) || strings.Contains(response.Body.String(), "Private project device list") {
+				t.Fatalf("revoked %s received scoped device list: status=%d body=%s hook=%t", login.Session.User.Role, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
 func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
 	for _, operation := range []string{"software-transfer", "lighting-activation"} {
 		t.Run(operation, func(t *testing.T) {

@@ -69,6 +69,7 @@ type stageDeviceRouteHooks struct {
 	BeforeSnapshotSyncResponse func()
 	BeforeOwnerReadResponse func(route string)
 	BeforeDeviceMetadataResponse func(route string)
+	BeforeProjectDeviceListResponse func()
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -86,6 +87,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		lightingActivation := runtime.ExecuteLightingActivationAuthorized
 		beforeSnapshotSyncResponse := func() {}
 		beforeDeviceMetadataResponse := func(string) {}
+		beforeProjectDeviceListResponse := func() {}
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -108,6 +110,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			if hooks[0].BeforeDeviceMetadataResponse != nil {
 				beforeDeviceMetadataResponse = hooks[0].BeforeDeviceMetadataResponse
 			}
+			if hooks[0].BeforeProjectDeviceListResponse != nil {
+				beforeProjectDeviceListResponse = hooks[0].BeforeProjectDeviceListResponse
+			}
 		}
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
@@ -122,6 +127,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
@@ -136,13 +144,17 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 						continue
 					}
 					if err != nil {
+						if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+							return
+						}
 						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
 						return
 					}
 				}
 				active = append(active, item)
 			}
-			if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+			beforeProjectDeviceListResponse()
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": active})
