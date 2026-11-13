@@ -83,6 +83,66 @@ func TestQualifiedEnvironmentOperationChecksPartialAndRevokedGrants(t *testing.T
 	}
 }
 
+func TestQualifiedEnvironmentOperationSuppressesResultAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "revoke-operation-grant", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Operation Grant Revocation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := stageStore.CreateExecutionEnvironmentManifest(
+		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("video"), owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setPermissions := func(permissions ...projectaccess.Permission) {
+		t.Helper()
+		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPermissions(projectaccess.ProjectView, projectaccess.MediaRead, projectaccess.RehearsalControl)
+	runtime := &fakeExecutionEnvironmentOperationRuntime{
+		status: companionchannel.EnvironmentOperationCompleted, summary: "private completed VDMX operation",
+		beforeReply: func() { setPermissions(projectaccess.ProjectView, projectaccess.MediaRead) },
+	}
+	handler := New(WithOperatorExecutionEnvironmentOperations(h.auth, stageStore, runtime), WithProjectRouteQualification(access)).Handler()
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID + "/execution-environments/" + environment.ID + "/operations"
+	req := authenticatedExecutionEnvironmentRequest(t, login.Token, login.CSRFToken, http.MethodPost, path,
+		[]byte(`{"operation_id":"grant-revoked-after-operation","kind":"OPEN","timeout_ms":5000}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if runtime.calls != 1 {
+		t.Fatalf("runtime calls=%d, want one operation before revocation", runtime.calls)
+	}
+	if err := access.Check(ctx, operator.ID, project.ID, projectaccess.ProjectView); err != nil {
+		t.Fatalf("test must preserve project visibility while revoking operation grant: %v", err)
+	}
+	if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), runtime.summary) ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked operator received operation result or retryable response: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSC024QualifiedPolicyPatternsExistInReviewedInventory(t *testing.T) {
 	raw, err := os.ReadFile("../../docs/architecture/sc024-http-route-inventory.tsv")
 	if err != nil {
