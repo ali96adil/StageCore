@@ -13,7 +13,8 @@ import (
 )
 
 type operatorConfigurationDraftHooks struct {
-	BeforeResponse func()
+	BeforeResponse               func()
+	BeforeAssistantCueDraftWrite func()
 }
 
 func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.Store, audits ...*securityaudit.Service) Option {
@@ -125,7 +126,9 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				"current_revision": makeRevisionView(restored),
 			})
 		}))
-		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit)
+		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit, operatorAssistantProposalHooks{
+			BeforeCueDraftWrite: hooks.BeforeAssistantCueDraftWrite,
+		})
 		registerOperatorAssistantProposalBatchRoutes(s.mux, auth, stageStore, audit)
 		registerOperatorAssistantWorkspaceRoutes(s.mux, auth, stageStore, s)
 	}

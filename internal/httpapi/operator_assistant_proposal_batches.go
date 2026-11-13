@@ -40,7 +40,8 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 		for _, op := range input.Proposal.Operations {
 			permission := assistantProposalPermission(op.Kind)
 			permissions = append(permissions, permission)
-			if err := userauth.Authorize(session.User.Role, permission); err != nil {
+			if err := userauth.Authorize(session.User.Role, permission); err != nil &&
+				!scopedProjectRoleMayUsePermission(r, session.User.Role, permission) {
 				appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultRejected, "permission denied")
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return

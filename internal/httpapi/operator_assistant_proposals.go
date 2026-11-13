@@ -27,6 +27,22 @@ var (
 	errAssistantProposalDraftRequired    = errors.New("assistant proposal draft required")
 )
 
+type operatorAssistantProposalHooks struct {
+	BeforeCueDraftWrite func()
+}
+
+type assistantProposalPartialCommitError struct {
+	cause error
+}
+
+func (err assistantProposalPartialCommitError) Error() string {
+	return "assistant proposal draft fork committed before item write failed: " + err.cause.Error()
+}
+
+func (err assistantProposalPartialCommitError) Unwrap() error {
+	return err.cause
+}
+
 type assistantProposalRequest struct {
 	Proposal assistant.DraftProposal `json:"proposal"`
 }
@@ -42,7 +58,11 @@ type assistantChecklistPayload struct {
 	Items     []string `json:"items"`
 }
 
-func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, audit *securityaudit.Service) {
+func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, audit *securityaudit.Service, hooks ...operatorAssistantProposalHooks) {
+	var hook operatorAssistantProposalHooks
+	if len(hooks) > 0 {
+		hook = hooks[0]
+	}
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/assistant/proposals/preview", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var input assistantProposalRequest
@@ -98,7 +118,8 @@ func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.
 		}
 		op := input.Proposal.Operations[0]
 		permission := assistantProposalPermission(op.Kind)
-		if err := userauth.Authorize(session.User.Role, permission); err != nil {
+		if err := userauth.Authorize(session.User.Role, permission); err != nil &&
+			!scopedProjectRoleMayUsePermission(r, session.User.Role, permission) {
 			appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultRejected, "permission denied")
 			writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 			return
@@ -115,7 +136,7 @@ func registerOperatorAssistantProposalRoutes(mux *http.ServeMux, auth *userauth.
 			return
 		}
 		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectEdit)
-		result, err := applyAssistantProposalOperation(r.WithContext(ctx), stageStore, projectID, session, input.Proposal.BaseRevisionID, op)
+		result, err := applyAssistantProposalOperation(r.WithContext(ctx), stageStore, projectID, session, input.Proposal.BaseRevisionID, op, hook.BeforeCueDraftWrite)
 		if err != nil {
 			appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, assistantProposalAuditResult(err), err.Error())
 			writeAssistantProposalError(w, err)
@@ -142,7 +163,7 @@ func assistantProposalPermission(kind assistant.ProposalOperationKind) userauth.
 	}
 }
 
-func applyAssistantProposalOperation(r *http.Request, stageStore *store.Store, projectID string, session userauth.Session, baseRevisionID string, op assistant.ProposalOperation) (any, error) {
+func applyAssistantProposalOperation(r *http.Request, stageStore *store.Store, projectID string, session userauth.Session, baseRevisionID string, op assistant.ProposalOperation, beforeCueDraftWrite func()) (any, error) {
 	if strings.TrimSpace(op.TargetID) != "" {
 		return nil, fmt.Errorf("%w: Slice C1 supports create proposals only", errAssistantProposalApplyUnsupported)
 	}
@@ -156,9 +177,16 @@ func applyAssistantProposalOperation(r *http.Request, stageStore *store.Store, p
 		if err != nil {
 			return nil, err
 		}
+		draftForked := revision.ID != baseRevisionID
+		if beforeCueDraftWrite != nil {
+			beforeCueDraftWrite()
+		}
 		cue, actions := body.toDomain(revision.ID, "")
 		created, err := stageStore.CreateCueWithActions(r.Context(), cue, actions)
 		if err != nil {
+			if draftForked {
+				return nil, assistantProposalPartialCommitError{cause: err}
+			}
 			return nil, err
 		}
 		return map[string]any{"revision": makeRevisionView(revision), "cue": makeCueView(created)}, nil
@@ -322,6 +350,21 @@ func assistantProposalAuditResult(err error) string {
 }
 
 func writeAssistantProposalError(w http.ResponseWriter, err error) {
+	var partial assistantProposalPartialCommitError
+	if errors.As(err, &partial) {
+		if projectMutationAccessDenied(partial.cause) {
+			writeCommittedProjectMutationDenied(w, partial.cause)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error_code":                     "ASSISTANT_PROPOSAL_PARTIALLY_COMMITTED",
+			"effect_may_be_committed":        true,
+			"effect_may_have_been_committed": true,
+			"retryable":                      false,
+		})
+		return
+	}
 	if writeProjectMutationDenied(w, err) {
 		return
 	}
