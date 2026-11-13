@@ -10,6 +10,10 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type scopedProjectFilesReadHooks struct {
+	BeforeResponse func(route string)
+}
+
 // WithScopedProjectFilesRead registers a NEW, independently scoped,
 // read-only Project Files surface when explicitly opted in by the Hub
 // assembler. Existing global /projects, Vault, Capsule and GO routes are
@@ -18,18 +22,28 @@ import (
 // Never replace this with a global role check or use a caller supplied
 // user/project identity without a validated browser session.
 func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Service) Option {
+	return withScopedProjectFilesRead(auth, access, scopedProjectFilesReadHooks{})
+}
+
+func withScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Service, hooks scopedProjectFilesReadHooks) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || access == nil {
 			return
 		}
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/files/availability",
-			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, _ string) {
+			withAuthenticatedSession(auth, false, func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
 				projectID := strings.TrimSpace(r.PathValue("project_id"))
 				if projectID == "" {
 					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_FILES_NOT_FOUND"})
 					return
 				}
 				if !checkFilesReadGrant(w, r, access, session.User.ID, projectID) {
+					return
+				}
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse("availability")
+				}
+				if !recheckScopedProjectFilesRead(w, r, auth, access, session, token) {
 					return
 				}
 				w.Header().Set("Cache-Control", "no-store")
@@ -76,6 +90,12 @@ func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 					writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
 					return
 				}
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse("files")
+				}
+				if !recheckScopedProjectFilesRead(w, r, auth, access, session, token) {
+					return
+				}
 				w.Header().Set("Cache-Control", "no-store")
 				writeJSON(w, http.StatusOK, map[string]any{
 					"workspace":          workspace,
@@ -85,6 +105,17 @@ func WithScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 				})
 			}))
 	}
+}
+
+func recheckScopedProjectFilesRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service,
+	access *projectaccess.Service, session userauth.Session, token string) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	return allowScopedProject(w, r, current, access, projectaccess.MediaRead)
 }
 
 func checkFilesReadGrant(w http.ResponseWriter, r *http.Request,
