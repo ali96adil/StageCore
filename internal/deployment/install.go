@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"debug/elf"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -326,7 +327,7 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	if _, err := i.Runner.Output(ctx, "systemctl", "restart", effective.ServiceName); err != nil {
 		return Result{}, err
 	}
-	if err := i.waitReady(ctx, result.ReadinessURL, effective.ReadinessTimeout); err != nil {
+	if err := i.waitReady(ctx, effective, result.ReadinessURL, effective.ReadinessTimeout); err != nil {
 		return Result{}, err
 	}
 	return result, nil
@@ -969,7 +970,12 @@ func writeFromReaderAtomic(destination string, source io.Reader, mode os.FileMod
 	return nil
 }
 
-func (i *Installer) waitReady(ctx context.Context, readinessURL string, timeout time.Duration) error {
+func (i *Installer) waitReady(ctx context.Context, opts Options, readinessURL string, timeout time.Duration) error {
+	if IsolatedService(opts) {
+		if _, realSystemd := i.Runner.(execRunner); realSystemd {
+			return i.waitReadyInSystemdNamespace(ctx, opts, readinessURL, timeout)
+		}
+	}
 	deadline := i.Now().Add(timeout)
 	var last string
 	for {
@@ -990,6 +996,39 @@ func (i *Installer) waitReady(ctx context.Context, readinessURL string, timeout 
 		}
 		if !i.Now().Before(deadline) {
 			return fmt.Errorf("stagecore-hub did not become ready at %s within %s; last result: %s", readinessURL, timeout, last)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func (i *Installer) waitReadyInSystemdNamespace(ctx context.Context, opts Options, readinessURL string, timeout time.Duration) error {
+	deadline := i.Now().Add(timeout)
+	var last string
+	for {
+		remaining := deadline.Sub(i.Now())
+		if remaining < time.Second {
+			return fmt.Errorf("%s did not become ready at %s within %s; last result: %s", opts.ServiceName, readinessURL, timeout, last)
+		}
+		probeTimeout := remaining
+		if probeTimeout > 2*time.Second {
+			probeTimeout = 2 * time.Second
+		}
+		output, err := SystemdNamespaceHealthProbe(ctx, opts, filepath.Join(opts.BundleDir, "stagecore-setup"), readinessURL, probeTimeout, SystemdCommandFunc(i.Runner.Output))
+		if err == nil {
+			var result SystemdHealthProbeResult
+			if decodeErr := json.Unmarshal(output, &result); decodeErr != nil {
+				last = "invalid health probe response: " + decodeErr.Error()
+			} else if result.HTTPStatus >= http.StatusOK && result.HTTPStatus < http.StatusMultipleChoices && result.Status == "READY" {
+				return nil
+			} else {
+				last = fmt.Sprintf("HTTP %d status=%s storage_state=%s", result.HTTPStatus, result.Status, result.StorageState)
+			}
+		} else {
+			last = err.Error()
 		}
 		select {
 		case <-ctx.Done():
