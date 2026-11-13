@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/usbdmx"
@@ -61,10 +62,16 @@ func WithOperatorUSBManualDMX(auth *userauth.Service, st *store.Store, manual *u
 					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "USB_DMX_INVALID_REQUEST"})
 					return
 				}
-				authorize := func(ctx context.Context) error {
+				authorizeOwner := func(ctx context.Context) error {
 					current, err := auth.ValidatePassive(ctx, token)
 					if err != nil || current.ID != session.ID || current.User.ID != session.User.ID || current.User.Role != userauth.RoleOwner {
 						return errors.New("owner authorization ended")
+					}
+					return nil
+				}
+				authorize := func(ctx context.Context) error {
+					if err := authorizeOwner(ctx); err != nil {
+						return err
 					}
 					active, err := st.ActiveOperationalSessionType(ctx)
 					if err != nil || active != "" {
@@ -102,7 +109,32 @@ func WithOperatorUSBManualDMX(auth *userauth.Service, st *store.Store, manual *u
 				}
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Second)
 				defer cancel()
-				if finishErr := st.FinishCommand(ctx, commandID, contracts.CommandResult{CommandID: commandID, Status: status}); finishErr != nil || err != nil {
+				finishErr := st.FinishCommand(ctx, commandID, contracts.CommandResult{CommandID: commandID, Status: status})
+				if err := authorizeOwner(r.Context()); err != nil {
+					w.Header().Set("Cache-Control", "no-store")
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error_code":                capability.DispatchAuthorityRevokedCode,
+						"detail":                    "Owner authorization ended after USB-DMX output; check output state before taking further action.",
+						"effect_may_have_been_sent": true,
+						"retryable":                 false,
+					})
+					return
+				}
+				if finishErr != nil {
+					writeJSON(w, http.StatusConflict, map[string]string{"error_code": "USB_DMX_MANUAL_UNCONFIRMED"})
+					return
+				}
+				if err := authorize(r.Context()); err != nil {
+					w.Header().Set("Cache-Control", "no-store")
+					writeJSON(w, http.StatusConflict, map[string]any{
+						"error_code":                "USB_DMX_AUTHORITY_UNAVAILABLE",
+						"detail":                    "USB-DMX output completed while its operational state or published snapshot changed; check output state before taking further action.",
+						"effect_may_have_been_sent": true,
+						"retryable":                 false,
+					})
+					return
+				}
+				if err != nil {
 					writeJSON(w, http.StatusConflict, map[string]string{"error_code": "USB_DMX_MANUAL_UNCONFIRMED"})
 					return
 				}
