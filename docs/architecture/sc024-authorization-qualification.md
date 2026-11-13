@@ -638,3 +638,47 @@ qualification. **SC-024 remains not software-qualified.** Hardware qualification
 and Production Activation remain separate.
 
 **Resume at:** wait for exact-head Core CI on remote `a7b57d85aa5fa627fcae49752afc9cb1d050b21d`; then run the final focused/source-guard checks and push the tested local commit group to PR #534 without force. Continue route-to-policy reconciliation; keep Production ACL disabled.
+
+## SC-024 continuation · 2026-11-13 · cue editor and visual mode fences
+
+The follow-up asynchronous-delivery review reproduced four more cases where a
+successful project mutation returned its record after the Owner session was
+revoked at the response boundary:
+
+- Cue create/replace/duplicate/delete and Snapshot publish now perform a final
+  live session, role, and project-scope recheck before returning a record or
+  validation output.
+- Cue Editor Recovery PUT/DELETE suppress their private generation or
+  recovery result after session revocation. A committed recovery remains in the
+  database; the caller receives `effect_may_be_committed: true` and
+  `retryable: false`.
+- Cue reorder rechecks `cue.edit` before returning the reordered revision and
+  list. The committed order is preserved while the revoked caller receives no
+  cue data.
+- Visual Engine mode changes recheck `project.edit` before returning the new
+  mode/revision. The committed mode remains truthful in storage if the Owner
+  session ends after the write.
+
+Red-first regressions observed HTTP 200/201 with cue, recovery, order and
+visual-mode data for the old handlers. The new tests pass normally and under
+focused Race. Simulation, input injection, Timing Intelligence, Cue Presets
+and Show Template suites remain green after the earlier batch. No output was
+sent to hardware.
+
+The code is local on `integration/stagecore-rc` after remote checkpoint
+`76f929c67b66723f75199ec15d2d35c24f793057`; four small commits are pending
+the next grouped push. Exact-head Core CI for `76f929c` (including Go 1.26
+Race and Linux ARM64) is in progress; Companion and Camera Relay CI passed.
+Run the full `internal/httpapi` package plus source guard, then wait for that
+Core run before pushing. These changes have not been installed on the Pi.
+
+Production Assembler, Migration 53, stable services/data and Project ACL
+activation remain unchanged. The complete route-to-policy reconciliation,
+legacy Companion compatibility and installed-copy Production-like recovery
+cycle remain open. **SC-024 is still not software-qualified.**
+
+**Resume at:** local `integration/stagecore-rc` (four commits ahead of remote
+`76f929c67b66723f75199ec15d2d35c24f793057`). Check exact-head Core CI, run the
+full HTTP API/source guard, append the grouped evidence, and push to PR #534
+without force. Continue the remaining async-maintenance route audit; keep
+Production ACL disabled.
