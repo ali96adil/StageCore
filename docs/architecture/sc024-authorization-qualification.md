@@ -13,7 +13,7 @@ inventory, not proof that a route uses the prospective policy.
 | Surface | Qualified behavior | Remaining qualification before cutover |
 | --- | --- | --- |
 | Projects and Show Capsule | Explicit alternate assembly qualifies list, detail, dashboard, rename, preview, export and Owner-only creation, duplication and global import. The Owner cutover impact endpoint is read-only and excluded from production assembly. | The qualification route registry additionally checks cue/draft/publish, project configuration, execution environments and runtime intent before service entry. Qualified browser GO and Jump recheck authorization at each action dispatch. Atomic coupling to the adapter and remaining mutations still need review. |
-| Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. Downloads recheck both grant and session before and after each bounded read. | Activation and remaining execution-environment media and ticket flows. |
+| Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. File listing and availability recheck the live session and `media.read` grant at response delivery; downloads recheck both before and after each bounded read. | Activation and remaining execution-environment media and ticket flows. |
 | Companion Vault | `WithVault` always installs its backing media catalog for Companion read authorization; a missing scope fails closed. Roles with a published Runtime Snapshot can read only that role's registered required media; pre-Snapshot roles retain compatibility for media registered in their assigned Project only. Assignment and Runtime Session are rechecked before and after every bounded read, including range transfers. | Capture upload qualification checks the current device ticket before and after each bounded read. Cached capture receipts also match Companion connection, environment, Machine Role, Snapshot and operation. New browser-issued tickets also fence issuance, transfer, completion, and receipt replay to the issuing browser session. Qualification requests recheck the project runtime and media grants. Existing tickets retain their original scope. Hardware/deployment compatibility qualification remains open. |
 | SSE | The current feed emits a session-ready event and keepalive, with exact-session and user fencing and bounded writes. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
 | Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Qualified Owner-only direct commands now also carry live Owner/session authority to the device write boundary. Firmware and setup writes plus Tablet/Lighting/Laser assignment preparation also check live authority at the socket. Assignment commits recheck the originating browser session. Already-sent work and remaining asynchronous paths need qualification. |
@@ -822,13 +822,55 @@ with already-installed Companion deployments still needs operational
 qualification. **SC-024 remains not software-qualified.** Hardware
 Qualification and Production Activation are still pending.
 
-**Resume at:** branch `integration/stagecore-rc`, with ten local commits in two
-five-commit batches ahead of remote `88432f63edc71f115f5fc1c3a5cc79b1c2c54853`.
-The Owner impact route, tests, inventory, qualification report, related
-component matrix, and CI timeout update are committed. Resolve the current
-local tip with `git rev-parse HEAD` before continuing. The exact-base Race CI
-failed twice at `-timeout 20m`; the full HTTP API Race package passes locally
-in `747.352s`. The workflow keeps the full Race job with a `45m` timeout.
-Push the tested batches without force and wait for exact-HEAD full CI (including
-Race and Linux ARM64) before any Pi install. Keep Project ACL disabled and do
-not modify Pi sudoers or production services.
+**Resume at:** branch `integration/stagecore-rc` local and remote
+`056c2bfc99c66943a11cd01946756fb4f84babb9`. The ten-commit grouped push is
+complete. Exact-HEAD Core run `43440138563` passed Go 1.26 Test, Browser Cue
+Delivery, Vet, Race, and Linux ARM64 CGo-free product builds; Go 1.27 also
+passed. Companion run `43440138457` and Camera Relay run `43440138599` passed.
+The Project Files and StageAudio fixes below are after this checkpoint and
+will require their own full CI run. The previous Core run timed out twice at
+`-timeout 20m`; the full HTTP API Race package passed locally in `747.352s`,
+and the full Race job now has a finite `45m` timeout. Keep Project ACL disabled
+and do not modify Pi sudoers or production services.
+
+## SC-024 continuation · 2026-11-13 · Project Files response authority
+
+A red-first response-boundary test reproduced two leaks in the opt-in scoped
+Project Files routes. `GET /files` returned HTTP 200 and workspace metadata
+after `media.read` was revoked after the database read; `/files/availability`
+returned HTTP 204 after its initial grant check was revoked. Both handlers now
+revalidate the exact browser session and live `media.read` grant immediately
+before delivery. Regressions cover grant removal and session revocation on
+both endpoints; revoked callers receive no workspace or availability result.
+The tests pass normally and under Race.
+
+The complete `internal/httpapi` package passed after the grant-revocation fix
+(`49.918s`), `go vet ./internal/httpapi` passed, and `git diff --check` passed.
+The existing full package Race run on the pushed code passed locally in
+`747.352s`; the grant and session response-boundary regressions pass under
+focused Race. The route inventory, no-partial-activation guard, and unified
+role/cross-project matrix tests passed again.
+No Production Assembler, Migration 53, live service, or Pi data changed.
+
+This Project Files fix and its session-revocation regression are local and not
+yet committed or included in CI. Remote remains
+`056c2bfc99c66943a11cd01946756fb4f84babb9`; exact-HEAD Core run `43440138563`
+passed Race and Linux ARM64. Companion Core passed run `43440138457`, and
+Camera Relay passed run `43440138599`. Include the local fixes in the next
+grouped push and wait for exact-head CI before any Pi install.
+
+## SC-024 continuation · 2026-11-13 · StageAudio offline status delivery
+
+A red-first test reproduced a scoped read leak in the optional, unconfigured
+StageAudio path. After reading the active operational session type, the
+handler returned `active_session: SHOW` without checking whether `media.read`
+had been revoked since request authorization. The offline-status path now
+rechecks the live browser session and exact scoped grant immediately before
+returning the status. The regression starts an isolated mock SHOW, revokes
+the Operator's grant at the response boundary, and verifies the session state
+is withheld. It passed normally and under focused Race. No sidecar or device
+was contacted.
+
+The Project Files and StageAudio fixes remain local and are not covered by the
+passing base-head CI runs. The updated `internal/httpapi` package and focused
+Race checks are being rerun before grouping and pushing both security fixes.
