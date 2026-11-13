@@ -93,6 +93,13 @@ func TestSecurityOperationDoesNotCreateSecretAfterRevocationWhileReadingBody(t *
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("revoked Owner response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
 	}
+	var denied map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &denied); err != nil {
+		t.Fatal(err)
+	}
+	if denied["effect_may_have_been_committed"] != false || denied["retryable"] != false || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("pre-dispatch denial response overstated or cached the result: headers=%v body=%+v", response.Header(), denied)
+	}
 	var count int
 	if err := h.db.DB.QueryRowContext(ctx, `SELECT count(*) FROM secret_records WHERE logical_name = 'revoked-secret'`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -102,33 +109,39 @@ func TestSecurityOperationDoesNotCreateSecretAfterRevocationWhileReadingBody(t *
 	}
 }
 
-func TestSecurityOperationDoesNotChangePluginPermissionAfterBodyRevocation(t *testing.T) {
+func TestSecurityOperationRechecksShowGateAfterReadingPluginPermissionBody(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
 	_, plugins, handler := newSecurityOperationsRevocationFixture(t, h, nil, nil)
+	stageStore := store.New(h.db.DB, clock.Real{})
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := plugins.Set(ctx, oscplugin.PluginID, oscplugin.PermissionUDPSend, false, owner.Session.User.Username); err != nil {
+		t.Fatalf("disable UDP send before SHOW-gate test: %v", err)
+	}
+	initial, err := plugins.Granted(ctx, oscplugin.PluginID)
+	if err != nil || containsString(initial, oscplugin.PermissionUDPSend) {
+		t.Fatalf("expected UDP send to start disabled for the SHOW-gate test: grants=%v err=%v", initial, err)
 	}
 	request := authenticatedMutationRequest(t, http.MethodPut,
 		"/api/v1/security/plugins/"+oscplugin.PluginID+"/permissions/"+oscplugin.PermissionUDPSend,
 		[]byte(`{"granted":true}`), owner.Token, owner.CSRFToken)
 	request.Body = &firmwareUploadRevokeReader{ReadCloser: request.Body, revoke: func() {
-		if err := h.auth.Logout(ctx, owner.Token); err != nil {
-			t.Errorf("revoke Owner while request body is read: %v", err)
-		}
+		startShowSession(t, ctx, stageStore)
 	}}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("revoked Owner response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "SHOW_ADMINISTRATION_BLOCKED") {
+		t.Fatalf("plugin grant during SHOW transition response=%d body=%s", response.Code, response.Body.String())
 	}
 	grants, err := plugins.Granted(ctx, oscplugin.PluginID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if containsString(grants, oscplugin.PermissionUDPSend) {
-		t.Fatal("plugin network permission was granted after the Owner session was revoked while reading the body")
+		t.Fatal("plugin network permission changed after SHOW started while the request body was read")
 	}
 }
 
