@@ -1171,23 +1171,28 @@ local group normally only after those Core jobs finish successfully; then
 wait for CI on the new exact head. Keep the Production Assembler and ACL
 source guard unchanged until all Software Qualification blockers close.
 
-## Current resume snapshot · 2026-11-13 · Show Template error fences
+## Current resume snapshot · 2026-11-13 · Tablet Controller list fence
 
 Latest pushed HEAD is `592a0c32b5cda5b0646ab324430cdbccb345bdba` on
-`integration/stagecore-rc`; Draft PR #534 remains open. Two local commits
-(`dbacdb5`, `86342a6`) add red-first session-revocation error fences for
-catalog/document template materialization and project template export. The
-full `internal/httpapi` package, focused Race tests, `go vet`, and diff checks
-pass. The full HTTP API Race package passed on the preceding pushed code
-checkpoint; exact-head Race CI is the required next full run.
+`integration/stagecore-rc`; Draft PR #534 remains open. Four local commits
+are ahead: `dbacdb5` and `86342a6` add red-first Show Template error response
+fences, `1211e23` records that batch, and `6a95471` closes a Tablet Controller
+device-list disclosure after project grant revocation. The red regression
+reproduced HTTP 200 containing the Tablet ID and display name after `project.view`
+was withdrawn. Focused normal and Race tests pass after the final-delivery
+check. Earlier exact-package tests and vet for the Template batch passed;
+these four local commits are not included in remote CI.
 
-For pushed HEAD `592a0c3`, Core run `43472199434` has passed Go 1.27 and normal
-Go 1.26 checks; Race is running and Linux ARM64 is pending. Companion run
-`43472199432` is queued and Camera Relay run `43472199457` passed. Wait for
-these exact-head checks before pushing the two local commits. Keep Production
-Assembler, Migration 53, the source guard and Production ACL unchanged.
-**SC-024 is not software-qualified.** Remaining software work includes the
-complete route-to-policy/delivery reconciliation, deployed Companion/ticket
-compatibility and a disposable installed-copy update/restore qualification.
-Hardware STOP/Blackout and physical StageAudio/laser qualification remain
-separate and uncompleted.
+For pushed HEAD `592a0c3`, Core run `43472199434` has passed Go 1.27, normal Go
+1.26 tests and Vet. Go 1.26 Race remains in progress; Linux ARM64 is pending.
+Companion run `43472199432` has passed Swift CompanionCore and native macOS
+replacement/media acceptance after retrying the initially canceled runner.
+Camera Relay run `43472199457` passed. Do not push until the exact remote Core
+run completes Race and ARM64 successfully; then push the five-commit local
+group normally and require exact-head CI. Keep Production Assembler, Migration
+53, the source guard and Production ACL unchanged. **SC-024 is not
+software-qualified.** Remaining software work includes the full
+route-to-policy/delivery reconciliation, deployed Companion/ticket
+compatibility and disposable installed-copy migration/update/impact-preview/
+restore qualification. Hardware STOP/Blackout and physical StageAudio/laser
+qualification remain separate and uncompleted.
