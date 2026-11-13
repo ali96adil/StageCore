@@ -402,6 +402,41 @@ func TestLegacyStageAudioFencesRevokedBrowserSession(t *testing.T) {
 	}
 }
 
+func TestScopedStageAudioMediaListSuppressesErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Revoked audio media", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil { t.Fatal(err) }
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	operator, err := h.auth.CreateUser(ctx, "audio-media-operator", h.password, userauth.RoleOperator)
+	if err != nil { t.Fatal(err) }
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.2")
+	if err != nil { t.Fatal(err) }
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil { t.Fatal(err) }
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(withScopedOperatorStageAudio(h.auth, projects, nil, nil, stageaudio.NewShowFence(), scope,
+		stageAudioHooks{BeforeMediaChoices: func() {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke media.read before choices lookup: %v", err)
+			}
+		}})).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/audio/media?project_id="+project.ID, nil)
+	req.RemoteAddr = "127.0.0.1:9128"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "STAGEAUDIO_MEDIA_UNAVAILABLE") {
+		t.Fatalf("revoked Operator received media lookup result after grant loss: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestStageAudioReportsUncertainEffectAfterInFlightAuthorityRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

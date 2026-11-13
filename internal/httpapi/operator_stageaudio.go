@@ -23,6 +23,7 @@ type StageAudioLocal interface {
 
 type stageAudioHooks struct {
 	BeforeStatusResponse func()
+	BeforeMediaChoices   func()
 }
 
 // WithOperatorStageAudio exposes an optional, OFF-by-default rehearsal audio
@@ -93,13 +94,16 @@ func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 					return
 				}
 				if scope != nil && operation == "FILES" {
-					choices, err := scope.choices(r.Context(), sessionUser.User.ID)
-					if err != nil {
-						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
-						return
+					if hooks.BeforeMediaChoices != nil {
+						hooks.BeforeMediaChoices()
 					}
+					choices, err := scope.choices(r.Context(), sessionUser.User.ID)
 					if !authorize(r, sessionUser, false) {
 						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+						return
+					}
+					if err != nil {
+						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_MEDIA_UNAVAILABLE"})
 						return
 					}
 					writeJSON(w, http.StatusOK, map[string]any{"media": choices})
