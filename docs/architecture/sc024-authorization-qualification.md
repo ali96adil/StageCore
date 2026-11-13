@@ -277,6 +277,47 @@ Finish exact-base Core Race/ARM64 CI, then push the tested local group normally
 to the existing branch and Draft PR #534. Keep Production ACL disabled and do
 not install the new code on Pi before its complete CI passes.
 
+## SC-024 continuation · 2026-11-13 · capsule error delivery fences
+
+Three local commits after pushed HEAD
+`45677c187f45a61ffd3edd2ee37a4e742fbb23fe` extend the Capsule delivery audit:
+
+- Import Plan errors now recheck the Owner session before returning capsule
+  verification details.
+- Export errors revalidate the exact session, role, CSRF token, and Project
+  grants before returning a store error. The production exporter stages to a
+  temporary directory and checks authority before its atomic promotion.
+- Materialize errors revalidate before returning details. If authority ended
+  while Restore was running, the response withholds details and reports
+  `effect_may_have_been_committed: true`, `retryable: false` so a caller cannot
+  blindly repeat a potentially committed restore.
+
+Red-first tests
+`TestShowCapsulePlanSuppressesErrorsAfterSessionRevocation`,
+`TestShowCapsuleExportSuppressesErrorsAfterSessionRevocation`, and
+`TestShowCapsuleMaterializeSuppressesErrorsAfterSessionRevocation` reproduced
+HTTP 422/503 error disclosure after logout. They now pass with the expected
+authorization boundary. The full `internal/httpapi` package passes locally
+(`53.539s`), as does its full Race run with an expanded 20-minute Go test
+timeout (`795.012s`); focused Race tests, `go vet`, and `git diff --check` also
+pass. The exact pushed-base Core workflow `43466920955` has Go 1.27 and normal
+Go 1.26 checks complete, with Race running and Linux ARM64 pending. Companion
+`43466920915` and Camera Relay `43466920848` pass on that base. These three
+local commits are not yet covered by remote CI.
+
+Production Assembler, Migration 53, the source guard, and real show data remain
+unchanged. **SC-024 is not software-qualified.** Remaining work includes the
+full route-to-policy and asynchronous delivery reconciliation, existing
+Companion/ticket compatibility, and a disposable installed-copy Migration,
+impact-preview, Update Dry-run, Restore/Rollback and Health rehearsal. Physical
+device STOP/Blackout, StageAudio and already-in-flight effects still need
+hardware qualification; no real output was sent.
+
+**Resume at:** local `integration/stagecore-rc` HEAD `cdab5e2`; remote
+`45677c187f45a61ffd3edd2ee37a4e742fbb23fe`, PR #534. Finish exact-base Core
+Race/ARM64 CI, then push the grouped local commits normally. Do not enable
+Production ACL or install unqualified code on Pi.
+
 ## SC-024 continuation · 2026-11-12 · committed-operation responses
 
 The post-commit audit reproduced successful response leakage after the Owner
