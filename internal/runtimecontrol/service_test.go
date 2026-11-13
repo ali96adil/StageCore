@@ -26,11 +26,11 @@ type runtimeHarness struct {
 	cues     []domain.Cue
 }
 
-func newRuntimeHarness(t *testing.T, cueParameters ...json.RawMessage) *runtimeHarness {
+func newRuntimeHarness(t testing.TB, cueParameters ...json.RawMessage) *runtimeHarness {
 	return newRuntimeHarnessWithPolicies(t, nil, cueParameters...)
 }
 
-func newRuntimeHarnessWithPolicies(t *testing.T, policies []json.RawMessage, cueParameters ...json.RawMessage) *runtimeHarness {
+func newRuntimeHarnessWithPolicies(t testing.TB, policies []json.RawMessage, cueParameters ...json.RawMessage) *runtimeHarness {
 	t.Helper()
 	ctx := context.Background()
 	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})

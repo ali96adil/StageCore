@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -134,6 +135,205 @@ func BenchmarkMixedCueGroupExecution(b *testing.B) {
 			}
 		})
 	}
+}
+
+// TestReference100Cue200ActionLinkedChainRunsOnlyInSimulation exercises the
+// reference project shape before its benchmark is run. It verifies terminal
+// persistence for every Action and keeps the physical executor as a tripwire.
+func TestReference100Cue200ActionLinkedChainRunsOnlyInSimulation(t *testing.T) {
+	f := newScaledMixedCuePerfFixture(t, 100, 200, false)
+	result := f.execute(t)
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("reference project status=%s error=%+v", result.Status, result.Error)
+	}
+	if calls := f.physicalHits.Load(); calls != 0 {
+		t.Fatalf("simulation reached the physical executor %d time(s)", calls)
+	}
+	var payload struct {
+		CueExecutionID string   `json:"cue_execution_id"`
+		LinkedCueIDs   []string `json:"linked_cue_ids"`
+	}
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.CueExecutionID == "" || len(payload.LinkedCueIDs) != 99 {
+		t.Fatalf("reference Cue group response=%s", result.Payload)
+	}
+	actions, err := f.store.ListActionExecutions(context.Background(), payload.CueExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 200 {
+		t.Fatalf("persisted Action count=%d want=200", len(actions))
+	}
+	for _, action := range actions {
+		if action.Result != domain.ExecutionCompleted {
+			t.Fatalf("Action %s result=%s want=%s", action.ActionID, action.Result, domain.ExecutionCompleted)
+		}
+	}
+}
+
+// BenchmarkMixedCueReferenceScale records full Engine completion at larger
+// project sizes. Flat cases model a large Mixed Cue; linked cases use a nested
+// chain of compound Cues with heterogeneous simulated outputs. ACL and HTTP
+// are outside the Engine boundary, matching BenchmarkMixedCueGroupExecution.
+func BenchmarkMixedCueReferenceScale(b *testing.B) {
+	scenarios := []struct {
+		name      string
+		cues      int
+		actions   int
+		scheduled bool
+	}{
+		{name: "FlatMixed_50Actions", cues: 1, actions: 50},
+		{name: "FlatMixed_100Actions", cues: 1, actions: 100},
+		{name: "FlatMixed_200Actions", cues: 1, actions: 200},
+		{name: "LinkedChain_25Cues_50Actions", cues: 25, actions: 50},
+		{name: "LinkedChain_50Cues_100Actions", cues: 50, actions: 100},
+		{name: "LinkedChain_100Cues_200Actions", cues: 100, actions: 200},
+		{name: "ScheduledLinked_25Cues_50Actions", cues: 25, actions: 50, scheduled: true},
+	}
+	for _, scenario := range scenarios {
+		scenario := scenario
+		b.Run(scenario.name, func(b *testing.B) {
+			f := newScaledMixedCuePerfFixture(b, scenario.cues, scenario.actions, scenario.scheduled)
+			latencies := make([]time.Duration, b.N)
+			var scheduleJitter []time.Duration
+			if scenario.scheduled {
+				scheduleJitter = make([]time.Duration, 0, b.N*scenario.cues)
+			}
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			b.ReportAllocs()
+			b.ReportMetric(float64(scenario.cues), "cues/op")
+			b.ReportMetric(float64(scenario.actions), "actions/op")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				command := f.command(b)
+				started := time.Now()
+				result := f.engine.ExecuteCueGo(context.Background(), f.sessionID, command)
+				latencies[i] = time.Since(started)
+				if result.Status != contracts.CommandCompleted {
+					b.Fatalf("execution %d status=%s error=%+v", i, result.Status, result.Error)
+				}
+				if calls := f.physicalHits.Load(); calls != 0 {
+					b.Fatalf("simulation reached the physical executor %d time(s)", calls)
+				}
+				if scenario.scheduled {
+					b.StopTimer()
+					jitters, err := f.readScheduleJitter(result)
+					if err != nil {
+						b.Fatal(err)
+					}
+					scheduleJitter = append(scheduleJitter, jitters...)
+					b.StartTimer()
+				}
+			}
+			b.StopTimer()
+			runtime.ReadMemStats(&after)
+			reportLatencyDistribution(b, latencies)
+			if len(scheduleJitter) != 0 {
+				reportDurationPercentiles(b, scheduleJitter, "schedule-jitter")
+			}
+			if b.N > 0 {
+				b.ReportMetric(float64(after.NumGC-before.NumGC)/float64(b.N), "gc/op")
+				b.ReportMetric(float64(after.PauseTotalNs-before.PauseTotalNs)/float64(b.N), "gc-pause-ns/op")
+			}
+		})
+	}
+}
+
+func newScaledMixedCuePerfFixture(tb testing.TB, cueCount, totalActions int, scheduled bool) *mixedCuePerfFixture {
+	tb.Helper()
+	if cueCount < 1 || totalActions < cueCount {
+		tb.Fatalf("invalid performance project shape: cues=%d actions=%d", cueCount, totalActions)
+	}
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: tb.TempDir()})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = handle.Close() })
+	projects := store.New(handle.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Mixed Cue Scale Performance", CreatedBy: "performance-test"})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	f := &mixedCuePerfFixture{handle: handle, store: projects, projectID: project.ID, firstActions: make(map[string]int64)}
+	physical := capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
+		f.physicalHits.Add(1)
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckNone, ResponseSummary: "guarded performance-test executor"}
+	})
+	f.engine = cueengine.NewWithExecutor(projects, simulator.NewSessionExecutor(projects, physical))
+
+	capabilities := []string{"tablet.media.play", "lighting.channels.set", "osc.send", "media.play"}
+	targets := []string{"tablet-actor-a", "lighting-front", "vdmx-main", "stage-display"}
+	modeCycle := []string{"PARALLEL", "PARALLEL_BARRIER", "SEQUENTIAL", "PARALLEL"}
+	actionIndex := 0
+	makeActions := func(count int) []domain.Action {
+		actions := make([]domain.Action, count)
+		for i := range actions {
+			index := actionIndex % len(capabilities)
+			actions[i] = domain.Action{
+				ExecutionMode: modeCycle[actionIndex%len(modeCycle)],
+				TargetRef:     targets[index], CapabilityKey: capabilities[index],
+				Parameters:    json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+				TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
+				PriorityClass: domain.PriorityP1, Enabled: true, OrderIndex: i,
+			}
+			actionIndex++
+		}
+		return actions
+	}
+
+	created := make([]domain.Cue, cueCount)
+	firstActionDelays := make(map[string]int64, cueCount)
+	for cueIndex := cueCount - 1; cueIndex >= 0; cueIndex-- {
+		policy := map[string]any{"start_delay_ms": int64(0)}
+		if scheduled {
+			policy["start_delay_ms"] = int64(cueIndex % 21)
+		}
+		if cueIndex+1 < cueCount {
+			policy["linked_cue_ids"] = []string{created[cueIndex+1].ID}
+			policy["linked_cue_mode"] = "TOGETHER"
+		}
+		policyJSON, err := json.Marshal(policy)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		count := totalActions / cueCount
+		if cueIndex < totalActions%cueCount {
+			count++
+		}
+		actions := makeActions(count)
+		cue, err := projects.CreateCueWithActions(ctx, domain.Cue{
+			RevisionID: revision.ID, DisplayLabel: fmt.Sprint(cueIndex + 1),
+			Name: fmt.Sprintf("Mixed Cue branch %03d", cueIndex+1), OrderIndex: cueIndex,
+			CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: policyJSON,
+		}, actions)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		created[cueIndex] = cue
+		if scheduled && len(cue.Actions) > 0 {
+			firstActionDelays[cue.Actions[0].ID] = int64(cueIndex % 21)
+		}
+	}
+	f.rootCueID = created[0].ID
+	f.firstActions = firstActionDelays
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		tb.Fatal(err)
+	}
+	runtimeSnapshot, _, err := snapshot.NewBuilder(projects).Create(ctx, revision.ID, "performance-test")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	session, err := projects.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionSimulation, "mixed cue scale performance")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	f.snapshotID = runtimeSnapshot.ID
+	f.sessionID = session.ID
+	return f
 }
 
 func newMixedCuePerfFixture(tb testing.TB, linked, scheduled bool) *mixedCuePerfFixture {
