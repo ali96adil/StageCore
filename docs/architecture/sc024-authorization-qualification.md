@@ -941,5 +941,39 @@ transport and no physical firmware action is sent.
 The focused firmware send response tests pass normally and under Race. The
 full `internal/httpapi` and `internal/devicechannel` packages pass locally;
 `go vet` for both and `git diff --check` pass. Exact-head CI for the prior
-push remains in progress; this firmware change is local and will be included
-only in a later grouped push after the current CI completes.
+push was pending when this section was recorded; the later result is captured
+in the qualification checkpoint below. This firmware change remains local
+until the queued Companion check is resolved.
+
+## SC-024 continuation · 2026-11-13 · qualification checkpoint
+
+Remote `integration/stagecore-rc` HEAD `8470b197e356fd686d0836bd61a112da18ff513b`
+passed Core CI run `43449132042`, including Go 1.26 Race and Linux ARM64.
+Camera Relay run `43449132159` passed. Companion Core run `43449132092`
+passed its Swift build/tests and, on the failed-job retry, the native macOS
+replacement/media, renderer, large-media resume, and real Companion
+acceptance checks. Its first queued attempt was canceled before a runner
+started; the single failed-job retry passed.
+
+Before recording this CI result, local HEAD was
+`77847edcdaa308de111b22fc88bde6d2b8865b9d`, four commits ahead of the remote.
+The local branch now has five commits ahead of the remote, including this
+documentation checkpoint. The group contains the firmware uncertain-send
+fence, regression matrix, and refreshed component evidence. The code tests pass:
+full `internal/httpapi` and `internal/devicechannel`, focused HTTP API Race,
+full `devicechannel` Race, `go vet` for both packages, and `git diff --check`.
+The red-first firmware-send test first returned HTTP 409 with private details
+after Owner logout; the fixed route returns a generic 403 with non-retryable
+uncertain-effect fields. No Pi installation, production service, physical
+output, or firmware was changed.
+
+Production Project ACL remains disabled. The broader route-to-policy audit,
+installed-copy migration/update/impact-preview/restore rehearsal, and
+deployed legacy Companion compatibility remain open; hardware STOP/Blackout,
+StageAudio operation revocation and independent laser-safe-off acceptance
+also remain pending. **SC-024 is not software-qualified.**
+
+**Resume at:** remote `8470b197e356fd686d0836bd61a112da18ff513b`, with five
+local commits ready on `integration/stagecore-rc`. The Companion failed-job
+retry has passed. Push this group normally and wait for exact-head Core
+Race/ARM64 and Companion/Camera Relay CI. Keep Production ACL disabled.
