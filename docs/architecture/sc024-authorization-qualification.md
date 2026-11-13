@@ -1200,24 +1200,61 @@ The focused Race tests for Lighting config save/delete, Tablet list and all
 three Cue alias cases passed. The full HTTP API Race package passed at the
 previous pushed code checkpoint; exact-head full Race CI remains required.
 
-## Current resume snapshot · 2026-11-13 · project authoring revocation
+## SC-024 continuation · 2026-11-13 · partial project-edit fences
 
-Latest pushed HEAD is `5e5de3208db2b1f323a9558e7b5832aee62c6c02` on
-`integration/stagecore-rc`; Draft PR #534 remains open. Four code commits are
-local: `f18823e` guards Lighting binding writes, `8ab20be` fences Lighting
-Cue alias creation, `cc197b3` fences Tablet Cue alias creation, and `6d8695b`
-fences StageLaser Cue alias creation. This resume checkpoint is the fifth
-commit in the group. Local tests cover grant withdrawal before SQLite commit
-and immediately before result delivery; none of these changes is on the Pi.
+Red-first PUT and DELETE regressions now cover revocation after `EnsureProjectDraft`
+forks a validated revision but before the Lighting binding transaction. The
+binding write rolls back; because the draft fork itself has committed, the
+route withholds revision/binding details and returns the established 403
+committed-effect response with `retryable: false`. The ordinary no-fork
+revocation path keeps its previous 404 response. The complete HTTP API suite
+and focused Race tests pass after preserving those API semantics.
 
-For pushed HEAD `5e5de32`, Core CI `43478623904` passed Go 1.27 tests/vet and
-normal Go 1.26 checks; Go 1.26 Race is still running and Linux ARM64 is
-pending. Companion CI `43478623421` and Camera Relay CI `43478623203` passed.
-Wait for Race and ARM64 on this exact pushed head before pushing the five
-local commits normally; then require full CI on their new exact head. Keep the
-Production Assembler, Migration 53 and source guard unchanged, and Production
-ACL disabled. **SC-024 is not software-qualified.** The full route-to-policy
-and async-delivery reconciliation, installed-copy migration/update/impact
-preview/restore qualification, and deployed legacy Companion/ticket
-compatibility remain open. Hardware STOP/Blackout, StageAudio revocation and
-independent laser-safe-off qualification remain pending.
+Assistant Cue proposal application had the same split transaction: a validated
+revision fork could survive a session withdrawal before cue creation. The
+red-first test proved the fork remained while the cue transaction rolled back.
+The route now reports the committed fork without revealing the item result or
+inviting retry. Assistant single and batch apply also honor an Operator's live
+`ProjectEdit` grant at their operation-specific RBAC checks; both paths now
+have scoped Operator integration coverage. Visual Engine mode has equivalent
+fork/revoke coverage and committed-effect handling. No device or physical
+output was used.
+
+The Pi was only inspected read-only in this continuation: production Hub and
+Camera Relay remained active, and `stagecore-rc-qualification.service` remained
+inactive. `sudo -n -l` showed password-required general `(ALL:ALL) ALL`, plus
+passwordless fixed RC qualification and qualification-helper commands. The
+helper allowlist includes production Hub stop/restart and `physical-command`.
+Root-owned sudoers files could not be read without a password, and `sudo -n id`
+confirmed no non-interactive general ticket. No sudoers file or service
+was changed; source-file attribution and actual external callers still need
+owner review.
+
+## Current resume snapshot · 2026-11-13 · project-edit partial effects
+
+Latest pushed StageCore HEAD is `be3a02df3892f08c6a44e4c0520822262b99862b`
+on `integration/stagecore-rc`; Draft PR #534 remains open. The first grouped
+push contains five commits: Lighting binding and three device Cue alias grant
+fences, plus the qualification checkpoint. Its exact-head Companion CI
+`43484250539` and Camera Relay CI `43484250710` passed; Core CI
+`43484250565` has Go 1.27 passed and Go 1.26 still running. Core CI on the
+previous exact base `5e5de32` completed successfully, including Race and
+Linux ARM64.
+
+Three follow-up code commits are local: `27e61a2` reports partial Lighting
+draft forks, `5784eb5` honors scoped Assistant apply grants and reports
+partial Cue forks, and `5e57f2b` does the same for Visual Engine mode. Their
+red-first regressions and focused Race tests pass. The full
+`internal/httpapi` suite passed in `55.843s`; `go vet ./internal/httpapi` and
+`git diff --check` pass. This resume update and the related-component matrix
+are the fourth commit in the local group. Push the four commits normally and
+require full CI on their exact new head before any Pi code qualification. No
+code was installed on the Pi.
+
+Keep the Production Assembler, Migration 53 and ACL source guard unchanged;
+Production ACL remains disabled. **SC-024 is not software-qualified.** Full
+route-to-policy reconciliation, remaining asynchronous/maintenance delivery
+paths, installed-copy migration/update/impact-preview/restore qualification,
+and deployed legacy Companion/ticket compatibility remain open. Hardware
+STOP/Blackout, StageAudio revocation and independent laser-safe-off remain
+pending.
