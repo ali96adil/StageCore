@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,6 +13,7 @@ const ownerProjectCutoverPreviewRoute = "GET /api/v1/project-access/cutover-prev
 
 type ownerProjectCutoverPreviewHooks struct {
 	BeforeResponse func()
+	Preview        func(context.Context, string) (projectaccess.CutoverImpactPreview, error)
 }
 
 // WithOwnerProjectCutoverPreview exposes the read-only cutover impact report
@@ -32,7 +34,19 @@ func withOwnerProjectCutoverPreview(auth *userauth.Service, access *projectacces
 				if !allowScopedOwner(w, session, access) {
 					return
 				}
-				preview, err := access.PreviewProjectCutover(r.Context(), session.User.ID)
+				var preview projectaccess.CutoverImpactPreview
+				var err error
+				if hooks.Preview != nil {
+					preview, err = hooks.Preview(r.Context(), session.User.ID)
+				} else {
+					preview, err = access.PreviewProjectCutover(r.Context(), session.User.ID)
+				}
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse()
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
+					return
+				}
 				if err != nil {
 					switch {
 					case errors.Is(err, projectaccess.ErrDenied):
@@ -42,12 +56,6 @@ func withOwnerProjectCutoverPreview(auth *userauth.Service, access *projectacces
 					default:
 						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_PREVIEW_UNAVAILABLE"})
 					}
-					return
-				}
-				if hooks.BeforeResponse != nil {
-					hooks.BeforeResponse()
-				}
-				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
 					return
 				}
 				writeJSON(w, http.StatusOK, preview)

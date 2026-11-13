@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,5 +103,31 @@ func TestOwnerProjectCutoverPreviewRouteIsReadOnlyOwnerOnlyAndRechecksSession(t 
 	revokedHandler.ServeHTTP(revokedResponse, authenticatedReadRequest(http.MethodGet, "/api/v1/project-access/cutover-preview", owner.Token))
 	if revokedResponse.Code != http.StatusUnauthorized || strings.Contains(revokedResponse.Body.String(), projectA.ID) || strings.Contains(revokedResponse.Body.String(), projectA.Name) {
 		t.Fatalf("revoked Owner received cutover impact data: HTTP %d %s", revokedResponse.Code, revokedResponse.Body.String())
+	}
+}
+
+func TestOwnerProjectCutoverPreviewSuppressesErrorAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(withOwnerProjectCutoverPreview(h.auth, access, ownerProjectCutoverPreviewHooks{
+		Preview: func(context.Context, string) (projectaccess.CutoverImpactPreview, error) {
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner session while report fails: %v", err)
+			}
+			return projectaccess.CutoverImpactPreview{}, errors.New("preview database failure")
+		},
+	}), WithProjectRouteQualification(access)).Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedReadRequest(http.MethodGet, "/api/v1/project-access/cutover-preview", owner.Token))
+	if response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), "PROJECT_ACCESS_PREVIEW_UNAVAILABLE") {
+		t.Fatalf("revoked Owner received cutover preview failure after authority ended: HTTP %d %s", response.Code, response.Body.String())
 	}
 }
