@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,9 @@ type fakeShowTemplateService struct {
 	importCalls      int
 	exportCalls      int
 	lastCreatedBy    string
+	materializeErr   error
+	documentErr      error
+	exportErr        error
 	onExport         func()
 	onMaterialize    func()
 }
@@ -46,7 +50,7 @@ func (f *fakeShowTemplateService) Materialize(_ context.Context, templateID stri
 	if f.onMaterialize != nil {
 		f.onMaterialize()
 	}
-	return showtemplate.MaterializeResult{TemplateID: templateID, ProjectID: "00000000-0000-7000-8000-000000000811", RevisionID: "00000000-0000-7000-8000-000000000812"}, nil
+	return showtemplate.MaterializeResult{TemplateID: templateID, ProjectID: "00000000-0000-7000-8000-000000000811", RevisionID: "00000000-0000-7000-8000-000000000812"}, f.materializeErr
 }
 func (f *fakeShowTemplateService) MaterializeDocument(_ context.Context, data []byte, request showtemplate.MaterializeRequest) (showtemplate.MaterializeResult, showtemplate.Compatibility, error) {
 	f.importCalls++
@@ -54,14 +58,14 @@ func (f *fakeShowTemplateService) MaterializeDocument(_ context.Context, data []
 	if f.onMaterialize != nil {
 		f.onMaterialize()
 	}
-	return showtemplate.MaterializeResult{TemplateID: "imported.test", ProjectID: "00000000-0000-7000-8000-000000000813", RevisionID: "00000000-0000-7000-8000-000000000814"}, showtemplate.Compatibility{Compatible: true}, nil
+	return showtemplate.MaterializeResult{TemplateID: "imported.test", ProjectID: "00000000-0000-7000-8000-000000000813", RevisionID: "00000000-0000-7000-8000-000000000814"}, showtemplate.Compatibility{Compatible: true}, f.documentErr
 }
 func (f *fakeShowTemplateService) ExportProject(_ context.Context, projectID string) (showtemplate.Template, error) {
 	f.exportCalls++
 	if f.onExport != nil {
 		f.onExport()
 	}
-	return showtemplate.Template{SchemaVersion: 1, MinAPIVersion: 1, MaxAPIVersion: 1, ID: "exported.test", Version: "1.0.0", Source: showtemplate.SourceExported}, nil
+	return showtemplate.Template{SchemaVersion: 1, MinAPIVersion: 1, MaxAPIVersion: 1, ID: "exported.test", Version: "1.0.0", Source: showtemplate.SourceExported}, f.exportErr
 }
 
 func TestShowTemplateAPIAuthenticationRBACAndCSRF(t *testing.T) {
@@ -244,5 +248,56 @@ func TestShowTemplateMaterializationSuppressesCommittedResultAfterLogout(t *test
 	}
 	if !strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) || !strings.Contains(response.Body.String(), `"retryable":false`) {
 		t.Fatalf("revoked materialization lost commit uncertainty: %s", response.Body.String())
+	}
+}
+
+func TestShowTemplateMaterializationSuppressesErrorsAfterLogout(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		path     string
+		body     []byte
+		setError func(*fakeShowTemplateService, error)
+	}{
+		{
+			name: "catalog template",
+			path: "/api/v1/show-templates/stagecore.starter.rehearsal/materialize",
+			body: []byte(`{"project_name":"Revoked draft"}`),
+			setError: func(service *fakeShowTemplateService, err error) {
+				service.materializeErr = err
+			},
+		},
+		{
+			name: "imported document",
+			path: "/api/v1/show-templates/import/materialize",
+			body: []byte(`{"template":{"schema_version":1},"project_name":"Revoked import"}`),
+			setError: func(service *fakeShowTemplateService, err error) {
+				service.documentErr = err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := &fakeShowTemplateService{onMaterialize: func() {
+				if err := h.auth.Logout(ctx, login.Token); err != nil {
+					t.Errorf("revoke Owner during template materialization: %v", err)
+				}
+			}}
+			test.setError(service, errors.New("template postflight failed"))
+			handler := New(WithOperatorShowTemplates(h.auth, service)).Handler()
+			request := authenticatedMutationRequest(t, http.MethodPost, test.path, test.body, login.Token, login.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden ||
+				strings.Contains(response.Body.String(), "SHOW_TEMPLATE_UNAVAILABLE") ||
+				!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+				!strings.Contains(response.Body.String(), `"retryable":false`) {
+				t.Fatalf("revoked Owner received template materialization error: status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }

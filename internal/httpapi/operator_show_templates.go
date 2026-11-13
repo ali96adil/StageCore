@@ -64,6 +64,9 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
 			result, err := service.Materialize(ctx, strings.TrimSpace(r.PathValue("template_id")), showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
 			if err != nil {
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+					return
+				}
 				writeShowTemplateError(w, err)
 				return
 			}
@@ -91,6 +94,9 @@ func WithOperatorShowTemplates(auth *userauth.Service, service ShowTemplateServi
 			ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil)
 			result, compatibility, err := service.MaterializeDocument(ctx, body.Template, showtemplate.MaterializeRequest{ProjectName: body.ProjectName, ProjectDescription: body.ProjectDescription, Locale: body.Locale, Values: body.Values, CreatedBy: session.User.ID})
 			if err != nil {
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil) {
+					return
+				}
 				writeShowTemplateError(w, err)
 				return
 			}
