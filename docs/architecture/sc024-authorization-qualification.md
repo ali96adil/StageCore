@@ -1446,3 +1446,43 @@ baseline supports retaining live checks. Preserve the verified Pi backup,
 Production services and disabled ACL. The latest local checkpoint update is a
 documentation-only commit after this code head; group it with the next safe
 3–5 commit push. Prompt for the next session: **«كمل»**.
+
+## SC-024 continuation · 2026-11-14 · maintenance dispatch and restore regression
+
+Local code head `d0fc10db2d843f691ce22845b235655fd6455455` adds a live
+Owner/session/CSRF recheck after the extension update body is decoded and
+immediately before Update or Repair dispatch. A red-first request-body test
+revoked the Owner session while the body was being read and proved that the
+old code still invoked Update; with the fix, neither Update nor its result is
+delivered. Authority-ended maintenance responses now use `Cache-Control:
+no-store`, and pre-dispatch denial reports that no effect was applied.
+
+The state-backup Restore suite now also writes prospective Project grants,
+backs up and restores to a separate data root, then verifies the Owner grant
+readback, runtime permission, SQLite integrity, and foreign keys. This confirms
+database-level grant preservation through the existing backup workflow; it
+does not qualify a complete installation/Vault recovery bundle.
+
+Focused `internal/backup` tests and the new grant-restore test passed normally
+and under Race. Extension-maintenance focused tests passed normally and under
+Race; `go vet ./internal/httpapi` and `git diff --check` passed. The old
+pre-fix regression failed specifically because it observed Update dispatch
+after revocation. No production service or show data was involved.
+
+These changes are four local commits after pushed code head `3a35f0a`
+(including the Pi performance documentation checkpoint). The checkpoint
+documentation is the fifth local commit and should be pushed with this group
+to `integration/stagecore-rc`; no force push. Full Core/Companion/Camera Relay
+CI for the grouped head is pending until that normal push. Draft PR #534 stays
+open. SC-024 remains not software-qualified: broad endpoint/policy and
+asynchronous result reconciliation, the Owner permissions UX, deployment
+compatibility, and full production-like restore/cutover evidence remain open.
+Project ACL stays disabled in Production.
+
+**Resume at:** local `d0fc10db2d843f691ce22845b235655fd6455455`; remote code
+head `3a35f0a63ed0f4947be0a271ac6c8b9035298395`; branch
+`integration/stagecore-rc`, Draft PR #534, SC-024 issue #511. Push the five
+reviewed local commits normally, wait for exact-head CI, then continue the
+endpoint/async audit with a failing regression for each reproducible issue.
+Keep production ACL disabled and Pi performance checks uncached unless new
+measurements justify otherwise. Next-session prompt: **«كمل»**.
