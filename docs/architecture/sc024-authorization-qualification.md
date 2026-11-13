@@ -16,7 +16,7 @@ inventory, not proof that a route uses the prospective policy.
 | Project Files and browser Vault | Scoped paginated listing and version-bound attachment downloads in the browser. Shared bytes do not grant a foreign project version. File listing and availability recheck the live session and `media.read` grant at response delivery; downloads recheck both before and after each bounded read. | Activation and remaining execution-environment media and ticket flows. |
 | Companion Vault | `WithVault` always installs its backing media catalog for Companion read authorization; a missing scope fails closed. Roles with a published Runtime Snapshot can read only that role's registered required media; pre-Snapshot roles retain compatibility for media registered in their assigned Project only. Assignment and Runtime Session are rechecked before and after every bounded read, including range transfers. | Capture upload qualification checks the current device ticket before and after each bounded read. Cached capture receipts also match Companion connection, environment, Machine Role, Snapshot and operation. New browser-issued tickets also fence issuance, transfer, completion, and receipt replay to the issuing browser session. Qualification requests recheck the project runtime and media grants. Existing tickets retain their original scope. Hardware/deployment compatibility qualification remains open. |
 | SSE | The current feed emits a session-ready event and keepalive, with exact-session and user fencing and bounded writes. It has no project payload. | Any future project event publisher must resolve project ownership and check delivery grants before writing. |
-| Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Qualified Owner-only direct commands now also carry live Owner/session authority to the device write boundary. Firmware and setup writes plus Tablet/Lighting/Laser assignment preparation also check live authority at the socket. Assignment commits recheck the originating browser session. Already-sent work and remaining asynchronous paths need qualification. |
+| Device | Staged device metadata reads require current audited V2 assignment and live project.view. Hub-wide inventory diagnostics are Owner-only in that assembly. Owner-only inventory, unassigned-device, transfer-status, StageLaser visual-check and Network Cockpit responses now recheck the live session and applicable Owner/pairing permission immediately before delivery. | Qualification reserves raw commands, transfers, setup and firmware mutations for Owner, and checks project configuration grants on mapped device edits. Qualified Cue dispatch rechecks the originating grant at the Stage Device socket write. Qualified Owner-only direct commands also carry live Owner/session authority to the device write boundary. Firmware and setup writes plus Tablet/Lighting/Laser assignment preparation also check live authority at the socket. Assignment commits recheck the originating browser session. Already-sent work and remaining asynchronous paths need qualification. |
 | Plugin and extensions | Qualification-only Owner boundary for the 28 Hub-global extension and plugin administration registrations. | Qualified Cue dispatch rechecks the originating grant before the OSC plugin pipe write. Runtime probes check authority at process start and after handshake. Enable and Disable check before durable intent changes. Install/uninstall and permission writes also check live authority before changing durable state. |
 | Audio | Optional StageAudio project, Vault version and SHOW fence. Live grant/session checks before commands, at the Unix socket write, and after sidecar replies. Scoped LOAD and PLAY also fence the exact rehearsal at write time. | Unbound legacy audio is Owner-only in qualification. Hardware-side revocation during a device operation remains open. |
 | Camera relay | Optional standalone bearer authorization separates viewing from flash control. Active viewers are disconnected on credential rotation, and protected LAN listeners require TLS. | The opt-in Hub browser viewer checks project.view and media.read on the fixed configured project and revalidates the exact browser session and grants during streaming. Tablet delivery and deployment verification remain open. |
@@ -874,3 +874,22 @@ was contacted.
 The Project Files and StageAudio fixes remain local and are not covered by the
 passing base-head CI runs. The updated `internal/httpapi` package and focused
 Race checks are being rerun before grouping and pushing both security fixes.
+
+## SC-024 continuation · 2026-11-13 · Owner device-read delivery
+
+The read-only Stage Device review found that several Owner-gated inventory and
+diagnostic handlers authorized at request entry but wrote their assembled
+results without checking whether the browser session still existed. A
+red-first test reproduced the leak in `GET /api/v1/stage-devices/inventory`:
+after logging out at the response boundary, the handler still returned device
+identity, assignment, runtime state, and capability data.
+
+The Owner read paths now revalidate the exact session, Owner boundary, and
+route permission immediately before writing their results: device inventory,
+unassigned-device listing, transfer status, StageLaser visual-check history,
+and Network Cockpit. The table-driven regression revokes the Owner session at
+each route's response boundary and requires HTTP 401 with no route payload.
+The Stage Device owner-read matrix passes normally and under focused Race. It
+uses local SQLite fixtures and does not contact hardware.
+
+This device-read fix is local after branch HEAD `f67ecf7c389e0ec322a04944f7d3396a44ca75a6` and is not included in CI. Core run `43444479730` is still in Go 1.26 Race; Companion run `43444479734` and Camera Relay run `43444479816` passed. Full `internal/httpapi`, vet, and diff checks remain required before the next push.
