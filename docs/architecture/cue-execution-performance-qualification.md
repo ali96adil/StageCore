@@ -60,6 +60,112 @@ tree, including test setup and migrations, not Hub service memory or a Pi
 deployment measurement. The per-GO allocation values are measured inside each
 benchmark scenario. This short run does not establish a soak or leak result.
 
+## Larger Mixed Cue and safety-command loads · 2026-11-14
+
+The scale benchmark adds 100 samples per case and executes the reference
+100-Cue/200-Action project before its benchmark. Flat Mixed Cues and nested
+linked chains run as `SIMULATION` sessions against a temporary SQLite
+database. The physical executor remains guarded and must stay at zero. Latency
+is full `Engine.ExecuteCueGo` completion; ACL, HTTP, and real adapter/device
+latency are excluded.
+
+| Workload | P50 | P95 | P99 | Latency jitter P95 | GC/op | GC pause/op | Allocations per GO |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed Cue, 50 Actions | 19.20 ms | 21.41 ms | 23.34 ms | 2.206 ms | 0.34 | 9.10 µs | 894,020 B; 16,629 allocs |
+| Flat Mixed Cue, 100 Actions | 39.55 ms | 41.41 ms | 43.02 ms | 1.959 ms | 0.75 | 19.52 µs | 1,770,056 B; 32,835 allocs |
+| Flat Mixed Cue, 200 Actions | 73.31 ms | 79.34 ms | 81.71 ms | 6.029 ms | 1.49 | 36.28 µs | 3,523,352 B; 65,270 allocs |
+| Linked chain, 25 Cues / 50 Actions | 19.63 ms | 21.22 ms | 23.30 ms | 1.583 ms | 0.38 | 9.79 µs | 961,776 B; 17,092 allocs |
+| Linked chain, 50 Cues / 100 Actions | 39.33 ms | 43.13 ms | 43.97 ms | 3.799 ms | 0.73 | 19.10 µs | 1,911,461 B; 33,804 allocs |
+| Linked chain, 100 Cues / 200 Actions | 78.70 ms | 82.30 ms | 84.51 ms | 3.597 ms | 1.48 | 38.63 µs | 3,808,384 B; 67,308 allocs |
+| Scheduled linked, 25 Cues / 50 Actions | 22.63 ms | 23.46 ms | 23.62 ms | 0.824 ms | 0.37 | 9.67 µs | 966,686 B; 17,144 allocs |
+
+The scheduled linked case's start-delay jitter was P50/P95/P99
+0.781/1.604/5.477 ms for configured delays from 0 through 20 ms. P99 is the
+maximum sample in these 100-sample runs, so it is a stress indicator, not a
+high-confidence tail estimate. `-benchmem` reports per-GO allocations; the
+GC columns are measured from runtime memory statistics around each case.
+
+### STOP and Emergency Blackout while GO is delayed
+
+The Runtime Control benchmark admits 1, 8, or 32 independent GO requests with
+60-second authored start delays, waits until every request is active, then
+times the terminal STOP response. Emergency Blackout uses a local simulated
+safety callback, latches the test session, cancels every delayed Cue, and
+persists its result. No device adapter or physical output is connected. These
+numbers include Runtime Control and SQLite work and are separate from Engine
+completion and ACL/HTTP latency.
+
+| Operation / delayed active Cues | P50 | P95 | P99 | Latency jitter P95 | GC/op | GC pause/op | Allocations per safety operation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| STOP / 1 | 0.502 ms | 0.710 ms | 0.951 ms | 0.208 ms | 0 | 0 ns | 13,869 B; 336 allocs |
+| STOP / 8 | 2.625 ms | 3.368 ms | 3.441 ms | 0.743 ms | 0.01 | 238 ns | 56,756 B; 1,276 allocs |
+| STOP / 32 | 10.89 ms | 12.71 ms | 14.15 ms | 1.824 ms | 0.05 | 1.07 µs | 204,340 B; 4,505 allocs |
+| Emergency Blackout / 1 | 0.618 ms | 0.904 ms | 1.159 ms | 0.287 ms | 0 | 0 ns | 18,736 B; 463 allocs |
+| Emergency Blackout / 8 | 2.977 ms | 3.713 ms | 3.929 ms | 0.736 ms | 0.02 | 541 ns | 64,055 B; 1,431 allocs |
+| Emergency Blackout / 32 | 11.17 ms | 12.49 ms | 12.99 ms | 1.316 ms | 0.06 | 1.40 µs | 208,886 B; 4,628 allocs |
+
+For this combined local run, `/usr/bin/time -l` reported 54.45 seconds wall,
+33.21 seconds user CPU, 15.94 seconds system CPU, and 223,526,912 bytes
+(about 213.2 MiB) maximum RSS for the whole Go test process tree. This is not
+Hub-only CPU/RAM and includes package startup, database migrations, and all
+benchmark cases.
+
+The isolated six-case safety benchmark took 23.33 seconds wall (18.92 user,
+3.80 system CPU) with 218,726,400 bytes (about 208.6 MiB) maximum process-tree
+RSS, including migration and setup. Only the timed operation window contributes
+to its GC and allocation metrics.
+
+### Sustained Rehearsal sequence
+
+`TestSustainedReferenceRehearsalRuns100Cues200Actions` and
+`BenchmarkSustainedReferenceRehearsal` use an actual REHEARSAL Session with 100
+sequential Cues and 200 Actions. Each Action is resolved only by the test
+registry's `simulator.Adapter`; that registry has no physical or network
+executor. The benchmark runs 20 complete rehearsals and records 2,000
+individual GO latency samples. Per-operation benchmark cost is the complete
+100-GO rehearsal; latency percentiles and jitter are per GO.
+
+| Rehearsal workload | Session mean | GO P50 | GO P95 | GO P99 | GO jitter P95 | GC / 100-GO session | GC pause / session | Allocations / 100-GO session |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before graph-validation fix | 414.01 ms | 4.121 ms | 5.324 ms | 6.028 ms | 1.409 ms | 84.9 | 1.458 ms | 217,224,530 B; 1,331,852 allocs |
+| After graph-validation fix | 305.29 ms | 3.008 ms | 4.176 ms | 4.795 ms | 1.172 ms | 15.05 | 0.347 ms | 39,004,484 B; 292,064 allocs |
+
+The sustained command took 9.42 seconds wall (7.42 user, 3.26 system CPU),
+with 219,201,536 bytes (about 209.0 MiB) maximum RSS for the entire Go test
+process tree, including fixture migration and setup. Per-session B/op and
+allocation counts cover the 100 timed GO requests; they are not retained Hub
+memory.
+
+CPU and allocation profiles of the 100-Cue/200-Action case show SQLite-backed
+event and execution persistence as the main sampled CPU cost: SQLite syscalls
+and `database/sql` `ExecContext` account for most CPU samples. The first
+allocation profile exposed repeated full-manifest indexing in
+`nestedCueIDs`: it called `resolveCueGroup` once per Cue, and every call copied
+the complete Cue index. `nestedCueIDs` now validates parent links and cycles
+with one index and one graph traversal. The same 20-rehearsal benchmark
+reduced allocations by 82% (217.2 MB to 39.0 MB per 100-GO session), GC count
+by 82% (84.9 to 15.05), and session time by 26% (414 to 305 ms). In the
+post-fix allocation profile, `resolveCueGroup` fell from 3.55 GiB to 41.5 MB
+over 20 sessions. `GetRuntimeSnapshot`/SQLite row decoding is now the largest
+remaining allocation site in that profile. This measured result justifies
+the bounded graph-validation change; it does not yet justify a snapshot cache
+or a persistence semantic change.
+
+The profile and benchmark use the same single-CPU M3 Mac workload. Their
+process-tree maximum RSS was 225,034,240 bytes (about 214.6 MiB) including
+database migrations and fixture setup. It is not a service-only RAM value or
+a Raspberry Pi measurement.
+
+### Pi 4 qualification state
+
+The local machine is Apple M3 Max (`darwin/arm64`), not Raspberry Pi. A
+read-only connection attempt to the explicitly named `stagecore-qualification`
+SSH alias failed during handshake before host identity was established. No
+remote command, service, test database, or device action ran. These scale and
+safety results are a Mac baseline only. The Pi 4 full-engine and
+burst/sustained rehearsal gates remain open and must not be inferred from
+GitHub ARM64 cross-builds or this Mac result.
+
 ## Separate ACL component measurements
 
 The live-session and Project authorization benchmark was run separately on the
@@ -76,10 +182,19 @@ authorization report and are not inferred from this Mac run.
 
 ## Verification
 
+- `go test ./internal/cueengine ./internal/runtimecontrol -count=1` passed.
+- `go test -race ./internal/cueengine ./internal/runtimecontrol -count=1` passed
+  (cueengine 59.987 s; runtimecontrol 64.641 s).
+- `go vet ./internal/cueengine ./internal/runtimecontrol` passed.
+- `TestNestedCueIDsValidatesManifestGraph` passed for valid nested links,
+  missing/disabled children, multiple parents and cycles.
 - `TestMixedCueNestedCompoundChainRunsOnlyInSimulation` passed: all six linked
   Cues and 24 Action executions completed, with zero physical-executor calls.
-- The full `internal/cueengine` test package passed, including its local UDP
-  loopback OSC tests.
+- `TestReference100Cue200ActionLinkedChainRunsOnlyInSimulation` passed with
+  99 linked children and 200 completed persisted Actions; the physical
+  executor tripwire stayed at zero.
+- `TestSustainedReferenceRehearsalRuns100Cues200Actions` passed with 100
+  completed Cues and 200 completed Actions using only `simulator.Adapter`.
 - The focused `internal/httpapi` SecurityOperation revocation and SHOW-gate
   tests passed. They also verify that a rejection before mutation remains
   marked `effect_may_have_been_committed=false` if the session is revoked while
@@ -89,14 +204,20 @@ authorization report and are not inferred from this Mac run.
 
 ## Resume checkpoint
 
-Continue on `integration/stagecore-rc` and Draft PR #534. This report is the
-checkpoint at the branch tip after the local Mixed Cue performance work and
-the preserved two-file security-operation change. The previous remote head
-`a1c2d68a5b2799058025fba31b7117477b97bdfe` completed Core CI successfully
-(run `43510385247`) before the next push. Recheck local and remote heads and
-the new exact-head CI after the normal fast-forward push.
+Continue on `integration/stagecore-rc` and Draft PR #534. The starting local
+and remote HEAD for this batch was
+`701cd7b5f7111153a98284734b8e1021249f4d18`; its Core CI run `43518665334`,
+Companion Core run `43518665379`, and Camera Relay run `43518665360` passed.
+This worktree adds a single-pass Cue-group validation, simulation-only
+Mixed/linked scale and STOP/Blackout benchmarks, the SC-001..025 status matrix,
+and a durable campaign handoff. Push only after verifying the remote still
+fast-forwards from the recorded base; then wait for exact-head CI before a
+further push.
 
-Next performance gates are full-engine ARM64/Pi 4 measurements in an isolated
-temporary database, then burst and sustained Rehearsal tests for the
-reference 100-Cue/200-Action project. Keep production services/data untouched
-and Production Project ACL disabled.
+Remaining performance gates are Pi 4 ARM64 execution in a verified isolated
+qualification environment, plus burst/sustained Pi runs. An explicit
+read-only SSH attempt to `stagecore-qualification` failed before host identity
+was established, so do not substitute the ambiguous Pi alias or infer a Pi
+result from CI cross-builds. Continue software work while Pi access is blocked.
+Keep production services/data untouched, physical outputs simulated, and
+Production Project ACL disabled.
