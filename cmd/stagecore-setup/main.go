@@ -47,10 +47,13 @@ func runInstall(args []string) {
 	vaultRoot := fs.String("vault-root", defaults.VaultRoot, "StageCore Vault root")
 	serviceUser := fs.String("service-user", defaults.ServiceUser, "system service user")
 	serviceGroup := fs.String("service-group", defaults.ServiceGroup, "system service group")
+	serviceName := fs.String("service-name", "", "explicit systemd service name (must match --systemd-unit)")
 	listen := fs.String("listen", defaults.Listen, "StageCore Hub HTTP listen address")
+	operatorTLSListen := fs.String("operator-tls-listen", "", "Operator TLS listen address (defaults are environment-specific)")
+	deviceListen := fs.String("device-listen", "", "device API listen address (defaults are environment-specific)")
 	unitPath := fs.String("systemd-unit", defaults.SystemdUnit, "systemd unit installation path")
 	replaceConfig := fs.Bool("replace-config", false, "replace an existing StageCore environment file instead of preserving it")
-	noStart := fs.Bool("no-start", false, "install and enable the service without starting/restarting it")
+	noStart := fs.Bool("no-start", false, "install the service without starting/restarting it")
 	dryRun := fs.Bool("dry-run", false, "validate the release and print the installation plan without changing the host")
 	readinessTimeout := fs.Duration("readiness-timeout", defaults.ReadinessTimeout, "maximum time to wait for /health/ready")
 	if err := fs.Parse(args); err != nil {
@@ -60,28 +63,38 @@ func runInstall(args []string) {
 		fmt.Fprintf(os.Stderr, "stagecore-setup install: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
 		os.Exit(2)
 	}
-	listenExplicit := false
+	listenExplicit, operatorTLSListenExplicit, deviceListenExplicit := false, false, false
 	fs.Visit(func(option *flag.Flag) {
-		if option.Name == "listen" {
+		switch option.Name {
+		case "listen":
 			listenExplicit = true
+		case "operator-tls-listen":
+			operatorTLSListenExplicit = true
+		case "device-listen":
+			deviceListenExplicit = true
 		}
 	})
 
 	opts := deployment.Options{
-		BundleDir:        strings.TrimSpace(*bundle),
-		InstallRoot:      strings.TrimSpace(*installRoot),
-		ConfigRoot:       strings.TrimSpace(*configRoot),
-		DataRoot:         strings.TrimSpace(*dataRoot),
-		VaultRoot:        strings.TrimSpace(*vaultRoot),
-		ServiceUser:      strings.TrimSpace(*serviceUser),
-		ServiceGroup:     strings.TrimSpace(*serviceGroup),
-		Listen:           strings.TrimSpace(*listen),
-		ListenExplicit:   listenExplicit,
-		SystemdUnit:      strings.TrimSpace(*unitPath),
-		ReplaceConfig:    *replaceConfig,
-		NoStart:          *noStart,
-		DryRun:           *dryRun,
-		ReadinessTimeout: *readinessTimeout,
+		BundleDir:                 strings.TrimSpace(*bundle),
+		InstallRoot:               strings.TrimSpace(*installRoot),
+		ConfigRoot:                strings.TrimSpace(*configRoot),
+		DataRoot:                  strings.TrimSpace(*dataRoot),
+		VaultRoot:                 strings.TrimSpace(*vaultRoot),
+		ServiceUser:               strings.TrimSpace(*serviceUser),
+		ServiceGroup:              strings.TrimSpace(*serviceGroup),
+		ServiceName:               strings.TrimSpace(*serviceName),
+		Listen:                    strings.TrimSpace(*listen),
+		ListenExplicit:            listenExplicit,
+		OperatorTLSListen:         strings.TrimSpace(*operatorTLSListen),
+		OperatorTLSListenExplicit: operatorTLSListenExplicit,
+		DeviceListen:              strings.TrimSpace(*deviceListen),
+		DeviceListenExplicit:      deviceListenExplicit,
+		SystemdUnit:               strings.TrimSpace(*unitPath),
+		ReplaceConfig:             *replaceConfig,
+		NoStart:                   *noStart,
+		DryRun:                    *dryRun,
+		ReadinessTimeout:          *readinessTimeout,
 	}
 	if opts.ReadinessTimeout < time.Second {
 		fatal(fmt.Errorf("readiness timeout must be at least 1s"))

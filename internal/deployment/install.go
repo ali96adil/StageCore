@@ -31,6 +31,7 @@ const (
 	DefaultServiceName       = "stagecore-hub.service"
 	DefaultListen            = "127.0.0.1:7840"
 	DefaultOperatorTLSListen = "0.0.0.0:7842"
+	DefaultDeviceListen      = "0.0.0.0:7841"
 	DefaultUnitPath          = "/etc/systemd/system/stagecore-hub.service"
 	checksumFileName         = "SHA256SUMS"
 )
@@ -43,22 +44,25 @@ var RequiredBinaries = []string{
 }
 
 type Options struct {
-	BundleDir         string
-	InstallRoot       string
-	ConfigRoot        string
-	DataRoot          string
-	VaultRoot         string
-	ServiceUser       string
-	ServiceGroup      string
-	Listen            string
-	OperatorTLSListen string
-	ListenExplicit    bool
-	SystemdUnit       string
-	ServiceName       string
-	ReplaceConfig     bool
-	NoStart           bool
-	DryRun            bool
-	ReadinessTimeout  time.Duration
+	BundleDir                 string
+	InstallRoot               string
+	ConfigRoot                string
+	DataRoot                  string
+	VaultRoot                 string
+	ServiceUser               string
+	ServiceGroup              string
+	Listen                    string
+	OperatorTLSListen         string
+	DeviceListen              string
+	ListenExplicit            bool
+	OperatorTLSListenExplicit bool
+	DeviceListenExplicit      bool
+	SystemdUnit               string
+	ServiceName               string
+	ReplaceConfig             bool
+	NoStart                   bool
+	DryRun                    bool
+	ReadinessTimeout          time.Duration
 }
 
 type Result struct {
@@ -119,6 +123,7 @@ func DefaultOptions(bundleDir string) Options {
 		ServiceGroup:      DefaultServiceGroup,
 		Listen:            DefaultListen,
 		OperatorTLSListen: DefaultOperatorTLSListen,
+		DeviceListen:      DefaultDeviceListen,
 		SystemdUnit:       DefaultUnitPath,
 		ReadinessTimeout:  20 * time.Second,
 	}
@@ -177,6 +182,16 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 			}
 			effective = adopted
 			effective.ListenExplicit = listenExplicit
+			effective.OperatorTLSListenExplicit = opts.OperatorTLSListenExplicit
+			effective.DeviceListenExplicit = opts.DeviceListenExplicit
+			if IsolatedService(effective) {
+				if err := ValidateIsolatedInstallPaths(effective); err != nil {
+					return Result{}, fmt.Errorf("isolated service deployment paths: %w", err)
+				}
+				if err := ValidateIsolatedEnvironment(existing, effective); err != nil {
+					return Result{}, fmt.Errorf("isolated service configuration: %w", err)
+				}
+			}
 			result.ConfigPreserved = true
 			if listenExplicit && requestedListen != adopted.Listen {
 				updated, updateErr := replaceEnvironmentValue(existing, "STAGECORE_LISTEN", requestedListen)
@@ -204,17 +219,19 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	result.Actions = append(result.Actions,
 		fmt.Sprintf("install systemd unit %s", effective.SystemdUnit),
 		"systemctl daemon-reload",
-		"systemctl enable stagecore-hub.service",
 	)
+	if !IsolatedService(effective) {
+		result.Actions = append(result.Actions, "systemctl enable "+effective.ServiceName)
+	}
 	if effective.NoStart {
-		result.Actions = append(result.Actions, "leave stagecore-hub stopped/not restarted (--no-start)")
+		result.Actions = append(result.Actions, fmt.Sprintf("leave %s stopped/not restarted (--no-start)", effective.ServiceName))
 	} else {
 		result.ReadinessURL, err = ReadinessURL(effective.Listen)
 		if err != nil {
 			return Result{}, err
 		}
 		result.Actions = append(result.Actions,
-			"systemctl restart stagecore-hub.service",
+			"systemctl restart "+effective.ServiceName,
 			fmt.Sprintf("wait for readiness at %s", result.ReadinessURL),
 		)
 	}
@@ -224,6 +241,11 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	}
 	if i.EUID() != 0 {
 		return Result{}, fmt.Errorf("installation requires root privileges; rerun with sudo or use --dry-run")
+	}
+	if _, usesRealSystemd := i.Runner.(execRunner); usesRealSystemd {
+		if err := ValidateSystemdOperationPath(effective); err != nil {
+			return Result{}, err
+		}
 	}
 
 	if err := i.ensureIdentity(ctx, effective.ServiceUser, effective.ServiceGroup, effective.DataRoot); err != nil {
@@ -272,13 +294,15 @@ func (i *Installer) Install(ctx context.Context, opts Options) (Result, error) {
 	if _, err := i.Runner.Output(ctx, "systemctl", "daemon-reload"); err != nil {
 		return Result{}, err
 	}
-	if _, err := i.Runner.Output(ctx, "systemctl", "enable", "stagecore-hub.service"); err != nil {
-		return Result{}, err
+	if !IsolatedService(effective) {
+		if _, err := i.Runner.Output(ctx, "systemctl", "enable", effective.ServiceName); err != nil {
+			return Result{}, err
+		}
 	}
 	if effective.NoStart {
 		return result, nil
 	}
-	if _, err := i.Runner.Output(ctx, "systemctl", "restart", "stagecore-hub.service"); err != nil {
+	if _, err := i.Runner.Output(ctx, "systemctl", "restart", effective.ServiceName); err != nil {
 		return Result{}, err
 	}
 	if err := i.waitReady(ctx, result.ReadinessURL, effective.ReadinessTimeout); err != nil {
@@ -310,12 +334,6 @@ func normalizeOptions(opts Options) (Options, error) {
 	if strings.TrimSpace(opts.ServiceGroup) == "" {
 		opts.ServiceGroup = defaults.ServiceGroup
 	}
-	if strings.TrimSpace(opts.Listen) == "" {
-		opts.Listen = defaults.Listen
-	}
-	if strings.TrimSpace(opts.OperatorTLSListen) == "" {
-		opts.OperatorTLSListen = defaults.OperatorTLSListen
-	}
 	if strings.TrimSpace(opts.SystemdUnit) == "" {
 		opts.SystemdUnit = defaults.SystemdUnit
 	}
@@ -325,6 +343,26 @@ func normalizeOptions(opts Options) (Options, error) {
 			return Options{}, nameErr
 		}
 		opts.ServiceName = name
+	}
+	if strings.TrimSpace(opts.Listen) == "" {
+		opts.Listen = defaults.Listen
+	}
+	if IsolatedService(opts) && opts.Listen == DefaultListen && !opts.ListenExplicit {
+		opts.Listen = "127.0.0.1:17840"
+	}
+	if strings.TrimSpace(opts.OperatorTLSListen) == "" || (IsolatedService(opts) && opts.OperatorTLSListen == DefaultOperatorTLSListen && !opts.OperatorTLSListenExplicit) {
+		if IsolatedService(opts) {
+			opts.OperatorTLSListen = "127.0.0.1:17842"
+		} else {
+			opts.OperatorTLSListen = defaults.OperatorTLSListen
+		}
+	}
+	if strings.TrimSpace(opts.DeviceListen) == "" || (IsolatedService(opts) && opts.DeviceListen == DefaultDeviceListen && !opts.DeviceListenExplicit) {
+		if IsolatedService(opts) {
+			opts.DeviceListen = "127.0.0.1:17841"
+		} else {
+			opts.DeviceListen = defaults.DeviceListen
+		}
 	}
 	if opts.ReadinessTimeout <= 0 {
 		opts.ReadinessTimeout = defaults.ReadinessTimeout
@@ -339,6 +377,9 @@ func normalizeOptions(opts Options) (Options, error) {
 		"vault root":       opts.VaultRoot,
 		"systemd unit":     opts.SystemdUnit,
 	} {
+		if IsolatedService(opts) && hasParentPathComponent(value) {
+			return Options{}, fmt.Errorf("isolated %s path must not contain parent traversal", label)
+		}
 		cleaned := filepath.Clean(strings.TrimSpace(value))
 		if !filepath.IsAbs(cleaned) {
 			return Options{}, fmt.Errorf("%s must be an absolute path: %q", label, value)
@@ -382,7 +423,48 @@ func normalizeOptions(opts Options) (Options, error) {
 		return Options{}, fmt.Errorf("invalid Operator TLS listen address %q: %w", opts.OperatorTLSListen, err)
 	}
 	opts.OperatorTLSListen = strings.TrimSpace(opts.OperatorTLSListen)
+	if _, _, err = net.SplitHostPort(strings.TrimSpace(opts.DeviceListen)); err != nil {
+		return Options{}, fmt.Errorf("invalid device listen address %q: %w", opts.DeviceListen, err)
+	}
+	opts.DeviceListen = strings.TrimSpace(opts.DeviceListen)
+	if IsolatedService(opts) {
+		if err := validateIsolatedListenOptions(opts); err != nil {
+			return Options{}, err
+		}
+	}
 	return opts, nil
+}
+
+func validateIsolatedListenOptions(opts Options) error {
+	seenPorts := map[string]string{}
+	for label, address := range map[string]string{
+		"Hub":          opts.Listen,
+		"Operator TLS": opts.OperatorTLSListen,
+		"Device":       opts.DeviceListen,
+	} {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("isolated %s listen address is invalid", label)
+		}
+		ip := net.ParseIP(strings.Trim(host, "[]"))
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("isolated %s listen address must use a loopback IP", label)
+		}
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return fmt.Errorf("isolated %s listen port is invalid", label)
+		}
+		for _, reserved := range []string{"7840", "7841", "7842", "9000", "9081"} {
+			if port == reserved {
+				return fmt.Errorf("isolated %s listen port conflicts with a production service", label)
+			}
+		}
+		if previous, exists := seenPorts[port]; exists {
+			return fmt.Errorf("isolated %s and %s listen ports must be distinct", label, previous)
+		}
+		seenPorts[port] = label
+	}
+	return nil
 }
 
 func validatePlatform(goos, goarch string) error {
@@ -514,12 +596,56 @@ func adoptExistingConfig(opts Options, content []byte) (Options, error) {
 	opts.DataRoot = values["STAGECORE_DATA_ROOT"]
 	opts.VaultRoot = values["STAGECORE_VAULT_ROOT"]
 	opts.Listen = values["STAGECORE_LISTEN"]
+	if value := strings.TrimSpace(values["STAGECORE_OPERATOR_TLS_LISTEN"]); value != "" {
+		opts.OperatorTLSListen = value
+	}
+	if value := strings.TrimSpace(values["STAGECORE_DEVICE_LISTEN"]); value != "" {
+		opts.DeviceListen = value
+	}
 	pluginDir := filepath.Dir(values["STAGECORE_OSC_PLUGIN_PATH"])
 	expectedBinDir := filepath.Join(opts.InstallRoot, "bin")
 	if filepath.Clean(pluginDir) != filepath.Clean(expectedBinDir) {
 		return Options{}, fmt.Errorf("existing STAGECORE_OSC_PLUGIN_PATH %q is outside managed binary directory %q", values["STAGECORE_OSC_PLUGIN_PATH"], expectedBinDir)
 	}
 	return normalizeOptions(opts)
+}
+
+func ValidateIsolatedEnvironment(content []byte, opts Options) error {
+	values, err := parseEnvironmentStrict(content)
+	if err != nil {
+		return err
+	}
+	allowed := map[string]struct{}{
+		"STAGECORE_DATA_ROOT":           {},
+		"STAGECORE_VAULT_ROOT":          {},
+		"STAGECORE_LISTEN":              {},
+		"STAGECORE_OPERATOR_TLS_LISTEN": {},
+		"STAGECORE_DEVICE_LISTEN":       {},
+		"STAGECORE_OSC_PLUGIN_PATH":     {},
+		"STAGECORE_HA_MODE":             {},
+	}
+	for key := range values {
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unsupported environment key %s", key)
+		}
+	}
+	if mode := strings.TrimSpace(values["STAGECORE_HA_MODE"]); mode != "standalone" {
+		return fmt.Errorf("isolated service requires STAGECORE_HA_MODE=standalone")
+	}
+	expected := map[string]string{
+		"STAGECORE_DATA_ROOT":           opts.DataRoot,
+		"STAGECORE_VAULT_ROOT":          opts.VaultRoot,
+		"STAGECORE_LISTEN":              opts.Listen,
+		"STAGECORE_OPERATOR_TLS_LISTEN": opts.OperatorTLSListen,
+		"STAGECORE_DEVICE_LISTEN":       opts.DeviceListen,
+		"STAGECORE_OSC_PLUGIN_PATH":     filepath.Join(opts.InstallRoot, "bin", "stagecore-osc-plugin"),
+	}
+	for key, want := range expected {
+		if strings.TrimSpace(values[key]) != want {
+			return fmt.Errorf("isolated service requires %s to match the test installation", key)
+		}
+	}
+	return validateIsolatedListenOptions(opts)
 }
 
 func replaceEnvironmentValue(content []byte, key, value string) ([]byte, error) {
@@ -574,22 +700,94 @@ func parseEnvironment(content []byte) (map[string]string, error) {
 	return values, nil
 }
 
+func parseEnvironmentStrict(content []byte) (map[string]string, error) {
+	seen := map[string]struct{}{}
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, _, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("invalid isolated environment line %q", line)
+		}
+		key = strings.TrimSpace(key)
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate environment key %s", key)
+		}
+		seen[key] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return parseEnvironment(content)
+}
+
 func RenderEnvironment(opts Options) string {
 	plugin := filepath.Join(opts.InstallRoot, "bin", "stagecore-osc-plugin")
-	return strings.Join([]string{
+	lines := []string{
 		"# Managed by stagecore-setup install. Review before using --replace-config.",
 		"STAGECORE_DATA_ROOT=" + opts.DataRoot,
 		"STAGECORE_VAULT_ROOT=" + opts.VaultRoot,
 		"STAGECORE_LISTEN=" + opts.Listen,
 		"STAGECORE_OPERATOR_TLS_LISTEN=" + opts.OperatorTLSListen,
 		"STAGECORE_OSC_PLUGIN_PATH=" + plugin,
-		"",
-	}, "\n")
+	}
+	if IsolatedService(opts) {
+		lines = append(lines, "STAGECORE_DEVICE_LISTEN="+opts.DeviceListen, "STAGECORE_HA_MODE=standalone")
+	}
+	return strings.Join(append(lines, ""), "\n")
 }
 
 func RenderSystemdUnit(opts Options) string {
 	envPath := filepath.Join(opts.ConfigRoot, "stagecore.env")
 	hub := filepath.Join(opts.InstallRoot, "bin", "stagecore-hub")
+	if IsolatedService(opts) {
+		return fmt.Sprintf(`[Unit]
+Description=StageCore isolated qualification Hub (%s)
+After=local-fs.target network.target
+Wants=network.target
+RequiresMountsFor=%s %s
+
+[Service]
+Type=simple
+User=%s
+Group=%s
+EnvironmentFile=%s
+WorkingDirectory=%s
+ExecStart=%s
+Restart=no
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=yes
+PrivateDevices=yes
+DevicePolicy=closed
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+InaccessiblePaths=/var/lib/stagecore /var/backups/stagecore /var/lib/stagecore-control /var/lib/stagecore-camera-relay /etc/stagecore /etc/stagecore-qualification-control /etc/stagecore-camera-relay /opt/stagecore /opt/stagecore-qualification-control /opt/stagecore-camera-relay /run /var/run /var/lib/dbus
+ReadWritePaths=%s %s
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_INET AF_INET6
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+IPAccounting=yes
+CPUAccounting=yes
+MemoryAccounting=yes
+UMask=0077
+LimitNOFILE=65536
+`, opts.ServiceName, opts.DataRoot, opts.VaultRoot, opts.ServiceUser, opts.ServiceGroup, envPath, opts.DataRoot, hub, opts.DataRoot, opts.VaultRoot)
+	}
 	return fmt.Sprintf(`[Unit]
 Description=StageCore Hub
 After=local-fs.target network.target

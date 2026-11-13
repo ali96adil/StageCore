@@ -62,6 +62,84 @@ func TestNormalizeOptionsDerivesAndChecksServiceIdentity(t *testing.T) {
 	}
 }
 
+func TestIsolatedDefaultsAndEnvironmentCannotReachProductionEndpoints(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-release")
+	opts.InstallRoot = "/opt/stagecore-rc-qualification"
+	opts.ConfigRoot = "/etc/stagecore-rc-qualification"
+	opts.DataRoot = "/var/lib/stagecore-rc-qualification/data"
+	opts.VaultRoot = "/var/lib/stagecore-rc-qualification/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	normalized, err := normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Listen != "127.0.0.1:17840" || normalized.OperatorTLSListen != "127.0.0.1:17842" || normalized.DeviceListen != "127.0.0.1:17841" {
+		t.Fatalf("isolated listeners are not loopback-only: %+v", normalized)
+	}
+	if err := ValidateIsolatedInstallPaths(normalized); err != nil {
+		t.Fatal(err)
+	}
+	env := RenderEnvironment(normalized)
+	if err := ValidateIsolatedEnvironment([]byte(env), normalized); err != nil {
+		t.Fatalf("rendered isolated environment rejected: %v", err)
+	}
+
+	for _, unsafe := range []string{
+		env + "STAGECORE_OSC_INPUT_LISTEN=0.0.0.0:9000\n",
+		env + "STAGECORE_USB_DMX_ENABLE=1\n",
+		env + "STAGECORE_HA_MODE=cluster\n",
+		env + "STAGECORE_DATA_ROOT=/var/lib/stagecore/data\n",
+	} {
+		if err := ValidateIsolatedEnvironment([]byte(unsafe), normalized); err == nil {
+			t.Fatalf("unsafe isolated environment accepted:\n%s", unsafe)
+		}
+	}
+	if _, err := normalizeOptions(Options{
+		BundleDir: "/tmp/stagecore-rc-release", InstallRoot: normalized.InstallRoot,
+		ConfigRoot: normalized.ConfigRoot, DataRoot: normalized.DataRoot, VaultRoot: normalized.VaultRoot,
+		SystemdUnit: normalized.SystemdUnit, Listen: "0.0.0.0:17840",
+	}); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("non-loopback isolated Hub listener error = %v", err)
+	}
+}
+
+func TestIsolatedSystemdUnitIsConstrainedAndNotEnabled(t *testing.T) {
+	opts := DefaultOptions("/tmp/stagecore-rc-release")
+	opts.InstallRoot = "/opt/stagecore-rc-qualification"
+	opts.ConfigRoot = "/etc/stagecore-rc-qualification"
+	opts.DataRoot = "/var/lib/stagecore-rc-qualification/data"
+	opts.VaultRoot = "/var/lib/stagecore-rc-qualification/vault"
+	opts.SystemdUnit = "/etc/systemd/system/stagecore-rc-qualification.service"
+	var err error
+	opts, err = normalizeOptions(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := RenderSystemdUnit(opts)
+	for _, marker := range []string{
+		"Description=StageCore isolated qualification Hub (stagecore-rc-qualification.service)",
+		"ExecStart=/opt/stagecore-rc-qualification/bin/stagecore-hub",
+		"EnvironmentFile=/etc/stagecore-rc-qualification/stagecore.env",
+		"PrivateDevices=yes", "DevicePolicy=closed", "IPAddressDeny=any", "IPAddressAllow=localhost",
+		"RestrictAddressFamilies=AF_INET AF_INET6", "InaccessiblePaths=", "ProtectSystem=strict",
+		"ReadWritePaths=/var/lib/stagecore-rc-qualification/data /var/lib/stagecore-rc-qualification/vault",
+		"Restart=no", "UMask=0077",
+	} {
+		if !strings.Contains(unit, marker) {
+			t.Fatalf("isolated unit missing %q:\n%s", marker, unit)
+		}
+	}
+	if strings.Contains(unit, "stagecore-hub.service") || strings.Contains(unit, "stagecore-camera-relay.service") || strings.Contains(unit, "[Install]") {
+		t.Fatalf("isolated unit references or enables a production unit:\n%s", unit)
+	}
+	defaultUnit := RenderSystemdUnit(DefaultOptions("/tmp/release"))
+	for _, marker := range []string{"Restart=on-failure", "ProtectSystem=strict", "[Install]", "WantedBy=multi-user.target"} {
+		if !strings.Contains(defaultUnit, marker) {
+			t.Fatalf("production default unit changed; missing %q", marker)
+		}
+	}
+}
+
 func TestValidateIsolatedUpdatePathsRejectsProductionAndOverlappingRoots(t *testing.T) {
 	root := t.TempDir()
 	base := Options{

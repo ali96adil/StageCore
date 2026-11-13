@@ -11,6 +11,8 @@ import (
 const SystemdUnitDirectory = "/etc/systemd/system"
 
 var serviceUnitNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]*\.service$`)
+var isolatedPathPattern = regexp.MustCompile(`^/[A-Za-z0-9_./@+-]+$`)
+var serviceIdentityPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*[$]?$`)
 
 // SystemdServiceName derives the only unit name that may be controlled for a
 // deployment. Unit names are passed as individual argv elements; shell syntax
@@ -38,6 +40,11 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 	if !IsolatedService(opts) {
 		return nil
 	}
+	normalized, err := normalizeOptions(opts)
+	if err != nil {
+		return err
+	}
+	opts = normalized
 	name, err := SystemdServiceName(opts.SystemdUnit)
 	if err != nil {
 		return err
@@ -48,6 +55,12 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 	if opts.ServiceName == DefaultServiceName {
 		return fmt.Errorf("isolated deployment cannot target %s", DefaultServiceName)
 	}
+	if err := validateIsolatedListenOptions(opts); err != nil {
+		return err
+	}
+	if !serviceIdentityPattern.MatchString(opts.ServiceUser) || !serviceIdentityPattern.MatchString(opts.ServiceGroup) {
+		return fmt.Errorf("isolated service user and group must be simple system account names")
+	}
 	paths := map[string]string{
 		"bundle":        opts.BundleDir,
 		"install":       opts.InstallRoot,
@@ -56,7 +69,7 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 		"vault":         opts.VaultRoot,
 	}
 	for label, path := range paths {
-		if !filepath.IsAbs(path) || hasParentPathComponent(path) {
+		if !filepath.IsAbs(path) || hasParentPathComponent(path) || !isolatedPathPattern.MatchString(path) {
 			return fmt.Errorf("isolated %s path must be absolute and contain no parent traversal", label)
 		}
 		if err := rejectSymlinkPath(path); err != nil {
@@ -68,6 +81,9 @@ func ValidateIsolatedInstallPaths(opts Options) error {
 	}
 	if err := rejectSymlinkPath(opts.SystemdUnit); err != nil {
 		return fmt.Errorf("isolated systemd unit path: %w", err)
+	}
+	if !isolatedPathPattern.MatchString(opts.SystemdUnit) {
+		return fmt.Errorf("isolated systemd unit path contains unsupported characters")
 	}
 	if pathOverlaps(opts.DataRoot, opts.VaultRoot) {
 		return fmt.Errorf("isolated Data Root and Vault Root must not overlap")
@@ -151,6 +167,10 @@ func ValidateSystemdOperationPath(opts Options) error {
 	}
 	if err := rejectSymlinkPath(opts.SystemdUnit); err != nil {
 		return err
+	}
+	canonicalUnit, err := canonicalPath(opts.SystemdUnit)
+	if err != nil || canonicalUnit != filepath.Clean(opts.SystemdUnit) {
+		return fmt.Errorf("systemd unit path must not resolve through a symlink")
 	}
 	if info, statErr := os.Lstat(opts.SystemdUnit); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
