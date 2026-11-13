@@ -102,6 +102,36 @@ func TestSecurityOperationDoesNotCreateSecretAfterRevocationWhileReadingBody(t *
 	}
 }
 
+func TestSecurityOperationDoesNotChangePluginPermissionAfterBodyRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	_, plugins, handler := newSecurityOperationsRevocationFixture(t, h, nil, nil)
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/security/plugins/"+oscplugin.PluginID+"/permissions/"+oscplugin.PermissionUDPSend,
+		[]byte(`{"granted":true}`), owner.Token, owner.CSRFToken)
+	request.Body = &firmwareUploadRevokeReader{ReadCloser: request.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Errorf("revoke Owner while request body is read: %v", err)
+		}
+	}}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("revoked Owner response=%d want=%d body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	grants, err := plugins.Granted(ctx, oscplugin.PluginID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsString(grants, oscplugin.PermissionUDPSend) {
+		t.Fatal("plugin network permission was granted after the Owner session was revoked while reading the body")
+	}
+}
+
 func TestSecurityPluginApplyFailureReportsCommittedEffect(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
