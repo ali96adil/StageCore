@@ -12,7 +12,20 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *store.Store) {
+type cueActionPresetHooks struct {
+	BeforeResponse func()
+}
+
+func withCueActionPresets(auth *userauth.Service, st *store.Store, hooks cueActionPresetHooks) Option {
+	return func(s *Server) {
+		if auth == nil || st == nil {
+			return
+		}
+		registerCueActionPresets(s.mux, auth, st, hooks)
+	}
+}
+
+func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *store.Store, hooks cueActionPresetHooks) {
 	handle := func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 			return
@@ -58,13 +71,32 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 			}
 			preset, err := st.CreateCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, request.Name, document)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 				return
 			}
 			writeJSON(w, http.StatusCreated, preset)
 		case http.MethodDelete:
-			if err := st.DeleteCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, r.PathValue("preset_id")); err != nil {
+			err := st.DeleteCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, r.PathValue("preset_id"))
+			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
