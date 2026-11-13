@@ -168,11 +168,13 @@ func (s *Service) Apply(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	doctorOpts := doctor.Options{
-		InstallRoot: effective.InstallRoot,
-		ConfigRoot:  effective.ConfigRoot,
-		SystemdUnit: effective.SystemdUnit,
-		ServiceName: effective.ServiceName,
-		HTTPTimeout: healthTimeout(effective.ReadinessTimeout),
+		BundleDir:         effective.BundleDir,
+		InstallRoot:       effective.InstallRoot,
+		ConfigRoot:        effective.ConfigRoot,
+		SystemdUnit:       effective.SystemdUnit,
+		ServiceName:       effective.ServiceName,
+		HealthProbeBinary: filepath.Join(effective.BundleDir, "stagecore-setup"),
+		HTTPTimeout:       healthTimeout(effective.ReadinessTimeout),
 	}
 	result.Preflight = s.doctor.Run(ctx, doctorOpts)
 	if result.Preflight.Overall == doctor.OverallBlocked {

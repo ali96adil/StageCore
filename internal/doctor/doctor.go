@@ -71,11 +71,13 @@ type Report struct {
 }
 
 type Options struct {
-	InstallRoot string
-	ConfigRoot  string
-	SystemdUnit string
-	ServiceName string
-	HTTPTimeout time.Duration
+	BundleDir         string
+	InstallRoot       string
+	ConfigRoot        string
+	SystemdUnit       string
+	ServiceName       string
+	HealthProbeBinary string
+	HTTPTimeout       time.Duration
 }
 
 type Filesystem struct {
@@ -162,10 +164,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) Report {
 			report.Checks = append(report.Checks, skippedCheck("pairing.summary", "check.skipped.database", "remedy.database"))
 		}
 
-		liveOK, liveCheck := r.checkHubLive(ctx, cfg.Listen, opts.HTTPTimeout)
+		liveOK, liveCheck := r.checkHubLive(ctx, opts, cfg.Listen, opts.HTTPTimeout)
 		report.Checks = append(report.Checks, liveCheck)
 		if liveOK {
-			report.Checks = append(report.Checks, r.checkHubReady(ctx, cfg.Listen, opts.HTTPTimeout))
+			report.Checks = append(report.Checks, r.checkHubReady(ctx, opts, cfg.Listen, opts.HTTPTimeout))
 		} else {
 			report.Checks = append(report.Checks, skippedCheck("hub.ready", "check.skipped.hub_live", "remedy.hub.active"))
 		}
@@ -205,6 +207,9 @@ func normalizeOptions(opts Options) (Options, error) {
 	if strings.TrimSpace(opts.SystemdUnit) == "" {
 		opts.SystemdUnit = defaults.SystemdUnit
 	}
+	if strings.TrimSpace(opts.BundleDir) != "" {
+		opts.BundleDir = filepath.Clean(opts.BundleDir)
+	}
 	if opts.HTTPTimeout <= 0 {
 		opts.HTTPTimeout = defaults.HTTPTimeout
 	}
@@ -220,6 +225,13 @@ func normalizeOptions(opts Options) (Options, error) {
 	opts.InstallRoot = filepath.Clean(opts.InstallRoot)
 	opts.ConfigRoot = filepath.Clean(opts.ConfigRoot)
 	opts.SystemdUnit = filepath.Clean(opts.SystemdUnit)
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) && strings.TrimSpace(opts.HealthProbeBinary) == "" {
+		if opts.BundleDir != "" {
+			opts.HealthProbeBinary = filepath.Join(opts.BundleDir, "stagecore-setup")
+		} else {
+			opts.HealthProbeBinary = filepath.Join(opts.InstallRoot, "bin", "stagecore-setup")
+		}
+	}
 	return opts, nil
 }
 
@@ -651,13 +663,13 @@ func inspectPairing(ctx context.Context, database *sql.DB) Check {
 	return Check{ID: "pairing.summary", Status: Ready, MessageKey: "pairing.ok", Detail: detail}
 }
 
-func (r *Runner) checkHubLive(ctx context.Context, listen string, timeout time.Duration) (bool, Check) {
+func (r *Runner) checkHubLive(ctx context.Context, opts Options, listen string, timeout time.Duration) (bool, Check) {
 	readyURL, err := deployment.ReadinessURL(listen)
 	if err != nil {
 		return false, Check{ID: "hub.live", Status: Blocker, MessageKey: "hub.live_error", Detail: err.Error(), RemedyKey: "remedy.hub.active"}
 	}
 	liveURL := strings.TrimSuffix(readyURL, "/ready") + "/live"
-	statusCode, payload, err := r.getHealth(ctx, liveURL, timeout)
+	statusCode, payload, err := r.getHealth(ctx, opts, liveURL, timeout)
 	if err != nil {
 		return false, Check{ID: "hub.live", Status: Blocker, MessageKey: "hub.live_error", Detail: err.Error(), RemedyKey: "remedy.hub.active"}
 	}
@@ -667,12 +679,12 @@ func (r *Runner) checkHubLive(ctx context.Context, listen string, timeout time.D
 	return true, Check{ID: "hub.live", Status: Ready, MessageKey: "hub.live_ok", Detail: liveURL}
 }
 
-func (r *Runner) checkHubReady(ctx context.Context, listen string, timeout time.Duration) Check {
+func (r *Runner) checkHubReady(ctx context.Context, opts Options, listen string, timeout time.Duration) Check {
 	readyURL, err := deployment.ReadinessURL(listen)
 	if err != nil {
 		return Check{ID: "hub.ready", Status: Blocker, MessageKey: "hub.ready_error", Detail: err.Error(), RemedyKey: "remedy.hub.ready"}
 	}
-	statusCode, payload, err := r.getHealth(ctx, readyURL, timeout)
+	statusCode, payload, err := r.getHealth(ctx, opts, readyURL, timeout)
 	if err != nil {
 		return Check{ID: "hub.ready", Status: Blocker, MessageKey: "hub.ready_error", Detail: err.Error(), RemedyKey: "remedy.hub.ready"}
 	}
@@ -688,7 +700,21 @@ type healthPayload struct {
 	StorageState string `json:"storage_state"`
 }
 
-func (r *Runner) getHealth(ctx context.Context, endpoint string, timeout time.Duration) (int, healthPayload, error) {
+func (r *Runner) getHealth(ctx context.Context, opts Options, endpoint string, timeout time.Duration) (int, healthPayload, error) {
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) {
+		output, err := deployment.SystemdNamespaceHealthProbe(ctx, deployment.Options{
+			BundleDir: opts.BundleDir, InstallRoot: opts.InstallRoot,
+			ServiceName: opts.ServiceName, SystemdUnit: opts.SystemdUnit,
+		}, opts.HealthProbeBinary, endpoint, timeout, deployment.SystemdCommandFunc(r.Command))
+		if err != nil {
+			return 0, healthPayload{}, err
+		}
+		var result deployment.SystemdHealthProbeResult
+		if err := json.Unmarshal(output, &result); err != nil {
+			return 0, healthPayload{}, fmt.Errorf("decode isolated health probe response: %w", err)
+		}
+		return result.HTTPStatus, healthPayload{Status: result.Status, StorageState: result.StorageState}, nil
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
