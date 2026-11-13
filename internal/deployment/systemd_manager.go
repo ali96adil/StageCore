@@ -19,7 +19,7 @@ func ValidateSystemdServiceTarget(ctx context.Context, opts Options, run systemd
 		return err
 	}
 	properties := []string{
-		"Id", "Names", "LoadState", "FragmentPath", "PartOf", "BindsTo",
+		"Id", "Names", "LoadState", "FragmentPath", "PrivateNetwork", "PrivateDevices", "DevicePolicy", "PartOf", "BindsTo",
 		"Conflicts", "Requires", "Requisite", "Upholds", "PropagatesStopTo",
 		"StopPropagatedFrom", "TriggeredBy", "Triggers", "BoundBy", "ConsistsOf",
 		"Before", "After", "Wants", "WantedBy", "RequiredBy",
@@ -60,6 +60,14 @@ func validateSystemdShowOutput(opts Options, output string) error {
 	}
 	if filepath.Clean(values["FragmentPath"]) != filepath.Clean(opts.SystemdUnit) {
 		return fmt.Errorf("systemd target %s resolves to %q instead of %q", opts.ServiceName, values["FragmentPath"], opts.SystemdUnit)
+	}
+	if IsolatedService(opts) {
+		if values["PrivateNetwork"] != "yes" {
+			return fmt.Errorf("isolated systemd target %s does not use a private network namespace", opts.ServiceName)
+		}
+		if values["PrivateDevices"] != "yes" || values["DevicePolicy"] != "closed" {
+			return fmt.Errorf("isolated systemd target %s does not close access to host devices", opts.ServiceName)
+		}
 	}
 	for _, property := range []string{
 		"PartOf", "BindsTo", "Conflicts", "Requires", "Requisite", "Upholds",
