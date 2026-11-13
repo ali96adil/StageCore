@@ -569,12 +569,58 @@ func TestEmergencyBlackoutClearKeepsLatchAfterBrowserRevocation(t *testing.T) {
 		[]byte(`{"enabled":false,"confirm":"CLEAR","request_id":"018f5b34-0f47-7cc0-9000-0a0000000113"}`), f.owner.Token, f.owner.CSRFToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-	if !safetyReached || res.Code != http.StatusServiceUnavailable {
+	if !safetyReached || res.Code != http.StatusForbidden ||
+		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"retryable":false`) {
 		t.Fatalf("blackout clear after session revocation returned %d (safety=%t): %s", res.Code, safetyReached, res.Body)
 	}
 	latched, err := f.projects.SessionManagedOutputBlackout(ctx, active.ID)
 	if err != nil || !latched {
 		t.Fatalf("revoked clear released GO latch: %t, %v", latched, err)
+	}
+}
+
+func TestEmergencyBlackoutSuppressesResultAfterOwnerRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionShow, "SHOW", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	safetyApplied := false
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry(), runtimecontrol.WithEmergencySafety(
+		func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+			safetyApplied = true
+			return json.RawMessage(`{"managed_output_blackout":true}`), f.h.auth.Logout(ctx, f.owner.Token)
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/runtime/emergency-blackout",
+		[]byte(`{"enabled":true,"confirm":"BLACKOUT","request_id":"018f5b34-0f47-7cc0-9000-0a0000000126"}`), f.owner.Token, f.owner.CSRFToken)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if !safetyApplied {
+		t.Fatal("test did not cross the mocked safety-output boundary")
+	}
+	if res.Code != http.StatusForbidden || strings.Contains(res.Body.String(), "managed_output_blackout") ||
+		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(res.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked Owner received Emergency Blackout result or retryable response: HTTP %d %s", res.Code, res.Body.String())
+	}
+	latched, err := f.projects.SessionManagedOutputBlackout(ctx, active.ID)
+	if err != nil || !latched {
+		t.Fatalf("revoked response undid the latched Emergency Blackout: latched=%t err=%v", latched, err)
 	}
 }
 

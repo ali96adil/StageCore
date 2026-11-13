@@ -286,6 +286,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			RequestID: strings.TrimSpace(body.RequestID),
 			Enabled:   body.Enabled,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
 			"sessionless":             true,
 			"managed_output_blackout": body.Enabled,
@@ -330,6 +333,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			RequestID: strings.TrimSpace(body.RequestID),
 			Enabled:   body.Enabled,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"managed_output_blackout": body.Enabled})
 	}))
 
