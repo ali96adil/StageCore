@@ -575,3 +575,52 @@ This entry supersedes the preceding push instruction.
   new exact-head Core CI. Then pursue the next verified software gap from the
   matrix (SC-011 Preflight drift/remedies or SC-024 route fencing) while keeping
   Pi performance and browser visual acceptance explicitly open.
+
+## Resume update — 2026-11-14 02:35 UTC
+
+- Local source HEAD is `14ea1caa762d912c5de86d098a54a27d58535beb` on
+  `integration/stagecore-rc`; pushed remote HEAD remains
+  `447849f43eaf89cd501a6bd1b345195a61725312`. The five local code commits are
+  `d67da3c`, `80f20a9`, `9bf2696`, `4f703ce`, and `14ea1ca`. No uncommitted
+  source changes remain; the matrix and this handoff are being updated. No
+  reset, clean, force push, branch change, or PR replacement was used.
+- Exact pushed-head Core run `43545195433` is still in progress: Go 1.26 tests,
+  Browser Cue Delivery and Vet passed, Go 1.27 CI passed, but the Go 1.26 Race
+  step is still running and ARM64 builds have not started. Companion/Swift run
+  `43545195409` and isolated/ARM64 run `43545195451` passed. Do not push the
+  local batch until `43545195433` completes; then confirm the branch still
+  fast-forwards from `447849f` and push normally to PR #534.
+- SC-024 changes add safe revoke of disabled-user grants and an Owner-only,
+  isolated, `PREPARED_NOT_ENFORCED` access-level editor. Stale async loads and
+  completed saves are bound to their original Project/User selection. The
+  production Hub still does not assemble Project ACL routes; production ACL is
+  not activated. Security UI tests cover 8 cases.
+- SC-011 follow-ons export the already evaluated Preflight report as a
+  timestamped JSON download, explain stale RTC clock consequences for local
+  authentication, and distinguish Companion MIDI inventory from Ableton
+  receipt/execution. Commit `14ea1ca` adds a read-only comparison of current
+  revision lighting bindings with the selected published Snapshot. Drift is an
+  advisory WARN with a remediation link; the published Snapshot remains the
+  runtime authority. Its red-first SQLite test proves match PASS and changed
+  lighting WARN without blocking SHOW. No output probes or device commands
+  were added.
+- Local verification: full UI Node suite 49/49; Preflight package tests pass;
+  `go test -race ./internal/preflight -count=1`, `go vet ./internal/preflight`,
+  both Preflight JavaScript syntax checks, and `git diff --check` pass. The
+  lighting drift regression failed before the service implementation as
+  expected, then passed. M3 benchmark evidence remains as recorded above;
+  Pi 4 performance qualification is still blocked by the explicitly named
+  `stagecore-qualification` SSH endpoint returning `websocket: bad handshake`
+  before a remote command could start. Do not infer Pi results from M3 or CI
+  ARM64 builds.
+- The current matrix records SC-011 report export, RTC/authentication guidance,
+  MIDI inventory-only semantics and lighting Snapshot drift, and the corrected
+  SC-024 UI test count. Related PR heads/CI states remain as recorded in
+  `related-component-qualification-matrix.md`; no linked repository was edited.
+- First action on resume: poll exact-head Core run `43545195433`. If it is
+  green and `origin/integration/stagecore-rc` is still `447849f`, push the
+  accumulated local commits and documentation to the same branch/PR, then
+  follow new exact-head CI. Next software review is the SC-024 route-to-policy
+  and in-flight revocation audit; keep ACL production-disabled. Preserve the
+  no-production/no-real-device boundaries, and continue keeping Pi ARM64
+  performance and real-browser visual/touch acceptance open.
