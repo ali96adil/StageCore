@@ -1401,3 +1401,34 @@ This entry supersedes the preceding push instruction.
   checkpoint, and watch all exact-head CI. Then continue an independent
   software gap. Pi/runtime qualification is Hardware Qualification Pending;
   production release and SC-024 activation remain separately gated.
+
+## Resume update — 2026-11-14 06:54 UTC · full-suite and fault-fixture follow-up
+
+- Local HEAD is `303228a1936d10ce56eaf70794e902d3a336adca`; remote stays at
+  `05c8c961325d38b8b39e069d807eee10d351f43c`. Six commits are ahead locally:
+  `f3ec183`, `8d9d427`, `0f411b9`, `b2a1a4d`, `ff67499`, `303228a`.
+  Worktree is clean. Do not push while exact-head Core CI `43566116341` is
+  still in its Go 1.26 Race tests; Go 1.27, Companion and Camera Relay checks
+  on `05c8c96` have passed.
+- Ran the full repository suite on this Mac with a short temp root:
+  `TMPDIR=/tmp go test ./... -count=1` passed. The three Linux offline-media
+  verification tests now skip explicitly on Darwin because their subject is
+  the Linux-only installer; Linux CI continues to execute them. The short
+  TMPDIR avoids macOS Unix-domain socket path limits in StageAudio tests.
+- Fixed the plugin fault fixture's `hang-once` mode to sleep rather than trigger
+  Go's all-goroutines-asleep process exit. The cancellation integration test
+  now waits until the fake records that it entered the faulting execution
+  before cancelling, avoiding a timing race during process startup. Full
+  `internal/pluginhost` tests and its Race suite pass.
+- Updated the existing embedded Operator UX contract for STOP ALL CUES. The
+  isolated Runtime status regression and HTTP API test pass, Operator Web
+  tests pass, all Node tests pass (67/67), `go vet` on HTTP API/Operator Web,
+  pluginhost and deployment passes, and JavaScript syntax/diff checks pass.
+- Strict SSH retry to `stagecore-qualification` again failed with
+  `websocket: bad handshake` before host identity; no Pi command ran. Pi ARM64
+  P95/P99/Jitter and CPU/RAM gates remain unqualified. Production and real
+  outputs remain untouched; SC-024 stays disabled in production.
+- Next: finish waiting for `43566116341`; verify the remote branch still equals
+  `05c8c96`, push the six local commits normally to the existing branch only
+  after all exact-head workflows pass, update PR #534's checkpoint, and watch
+  CI on the new exact SHA. Continue software gaps while Pi access is blocked.
