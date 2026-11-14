@@ -204,15 +204,12 @@ authorization report and are not inferred from this Mac run.
 
 ## Resume checkpoint
 
-Continue on `integration/stagecore-rc` and Draft PR #534. The starting local
-and remote HEAD for this batch was
-`701cd7b5f7111153a98284734b8e1021249f4d18`; its Core CI run `43518665334`,
-Companion Core run `43518665379`, and Camera Relay run `43518665360` passed.
-This worktree adds a single-pass Cue-group validation, simulation-only
-Mixed/linked scale and STOP/Blackout benchmarks, the SC-001..025 status matrix,
-and a durable campaign handoff. Push only after verifying the remote still
-fast-forwards from the recorded base; then wait for exact-head CI before a
-further push.
+Continue on `integration/stagecore-rc` and Draft PR #534. The performance
+batch is pushed at `814cf84b38a6b33379cfcd79270a5ba414e3d9d2`. Its exact-head
+Core CI run `43529309969` passed all five checks, including Go 1.26/1.27,
+isolated tests/ARM64 and both Swift Companion checks.
+The report, benchmarks and matrix do not imply a Pi performance pass.
+The run is complete; subsequent pushes must still wait for their exact-head CI.
 
 Remaining performance gates are Pi 4 ARM64 execution in a verified isolated
 qualification environment, plus burst/sustained Pi runs. An explicit

@@ -10,18 +10,30 @@
   linked-Cue graph validation.
 - Local qualification/documentation commit: `b7d48bc` — SC completion matrix,
   refreshed related-component heads and performance report.
-- These local commits were made after the recorded remote head. The worktree
-  was clean after both commits; the normal fast-forward push to the same PR
-  remains the next operation. Verify branch and remote again before pushing.
-- PR #534 was open/draft/mergeable at the verified base. No branch or PR was
-  created; no force push or merge was performed.
+- Handoff commit: `814cf84` — checkpoint record and index update. It was pushed
+  normally to `integration/stagecore-rc`; local and remote HEAD matched at
+  `814cf84b38a6b33379cfcd79270a5ba414e3d9d2` before the follow-on doc edits now
+  in the worktree.
+- Local SC-015 implementation commit: `af3e1ba` — explicit delivery-evidence
+  classification in the real Session trace, Hub dispatch-attempt count,
+  operator correlation/duration/evidence labels, translation and regressions.
+  It is not pushed yet; remote remains at `814cf84`.
+- PR #534 remains open/draft. No branch or PR was created; no force push or
+  merge was performed.
 
 ## CI and linked repositories
 
-At remote HEAD `701cd7b`, Core CI `43518665334`, Companion Core
-`43518665379`, and Camera Relay `43518665360` passed. These runs do not cover
-the local commits above. After the push, wait for Core CI and companion checks
-on the exact new PR head before pushing another batch.
+At remote HEAD `814cf84`, Core CI run `43529309969` passed all five checks:
+Go 1.26/1.27, isolated tests/ARM64, Companion replacement/media and
+Swift CompanionCore. This run is complete; after the next push, wait for CI on
+its exact HEAD before pushing again.
+
+Related StageCore issue PRs already cover SC-003 (#503, run `39030208327`),
+SC-002A (#504/#505, runs `39030641841` / `39033942474`) and the stacked
+StageAudio feature (#506–#508, runs `39035955572`, `39037378296`,
+`39038867865`). Their Go matrix checks pass and the PRs remain drafts. Do not
+duplicate their implementation on #534; physical Pi qualification is still
+separate.
 
 Last reviewed linked PRs and passing software checks remain the ones in
 [`related-component-qualification-matrix.md`](../architecture/related-component-qualification-matrix.md):
@@ -45,7 +57,8 @@ but target Pi audio output is not qualified.
   at zero.
 - Added `docs/architecture/software-completion-matrix.md` for SC-001..SC-025,
   with code/test evidence, remaining acceptance, affected components and
-  hardware requirements. It identifies SC-003 as the next code fix.
+  hardware requirements. Review found an existing green implementation for
+  SC-003 in PR #503 and existing #504/#505/#506–#508 stacks; do not repeat it.
 - Updated the performance and integration-qualification reports with exact
   remote heads/checks and the present Pi access boundary.
 
@@ -81,14 +94,19 @@ Passed on the local macOS arm64 host:
 
 ## Open work and boundaries
 
-1. Push these commits normally to `integration/stagecore-rc` after confirming
-   remote still equals the recorded base. Then monitor exact-head CI.
-2. Implement SC-003 Issue #503: preserve V1 ProjectID authorization, authorize
-   projectless V2 configuration only for enabled matching assignments in
-   BLOCKED/ACTIVE state, and reject wrong-project/preparing/unassigned cases.
-   Add PUT/DELETE/channel/alias/epoch regression tests before the fix.
-3. Continue SC-001 delivery diagnostics and SC-002 offline clock workflow from
-   the completion matrix; do not repeat the closed Mixed Cue baseline work.
+1. Local commit `af3e1ba` is ahead of remote `814cf84`; docs/matrix/handoff
+   corrections remain in the worktree. Core CI on remote `814cf84` passed all
+   five checks, so review and commit those docs, then push normally to the same
+   PR #534 and wait for CI on its exact new head.
+2. SC-015's session/Cue/Action evidence now makes
+   `COMPLETED + TRANSPORT_ONLY` report external execution as unknown. Delay,
+   timeout, duplicate-after-reconnect, offline-reconnect and signed application
+   ACK simulations already exist in Cue/Companion channel tests; don't copy
+   them. Remaining report work: connection/warning/snapshot/safety timeline,
+   filtering, comparison and safe export. SC-001 still lacks a first-party
+   Ableton execution provider/observation contract.
+3. Continue SC-002 beyond the existing #504/#505 status/preview stack. Do not
+   duplicate their work or add a host clock write without isolated qualification.
 4. Raspberry Pi 4 performance qualification remains open. The explicit
    read-only SSH attempt to `stagecore-qualification` failed during handshake
    before host identity was established. Do not run commands via the ambiguous
@@ -96,6 +114,27 @@ Passed on the local macOS arm64 host:
 5. Do not access production Hub/Camera Relay/data/Vault, send to real stage
    devices, flash firmware, merge to `main`, force-push, or enable production
    Project ACL/SC-024. Simulation and temporary databases only.
+
+## Local SC-015 follow-on
+
+The follow-on worktree changes (not covered by the completed CI run on `814cf84`)
+add delivery evidence derived only from the explicit ACK level. A Hub Action
+with `COMPLETED` plus `TRANSPORT_ONLY` reports `EXTERNAL_EXECUTION_UNKNOWN`;
+no downstream execution is inferred. Session Memory carries recorded dispatch
+attempts and shows Cue duration, correlation and a localized evidence label. A
+regression test covers completed CoreMIDI transport with unknown external
+execution, and the embedded UI contract requires that distinction.
+
+Focused checks passed before local commit `af3e1ba`:
+`go test ./internal/sessionmemory -count=1`, the two
+Session Memory/embedded Operator HTTP tests, their Race runs,
+`go test -race ./internal/operatorweb -count=1`, `go vet` for all three
+packages, `node --check internal/operatorweb/static/memory.js` and
+`git diff --check`. The full `go test -race ./internal/httpapi -count=1`
+exceeded the package's 10-minute timeout in the unrelated
+`TestStageDeviceSetupAPSuppressesACKAfterOwnerRevocation` Argon2 login test;
+the focused Session Memory/Operator HTTP tests pass under Race. Run the
+follow-on branch through exact-head Core CI after its push.
 
 ## Software/hardware/release state
 
