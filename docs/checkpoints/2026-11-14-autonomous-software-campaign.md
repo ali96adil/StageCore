@@ -1333,3 +1333,33 @@ This entry supersedes the preceding push instruction.
   and run IDs while preserving its older qualification history. The existing
   linked firmware/tablet PRs remain unchanged. Pi runtime qualification,
   production protections, and next software gaps are as recorded above.
+
+## Resume update — 2026-11-14 06:29 UTC · concurrent GO qualification
+
+- The newly pushed head remains `05c8c961325d38b8b39e069d807eee10d351f43c`.
+  Its exact runs: Core `43566116341` is still in progress; Companion Core
+  `43566116367` and Camera Relay `43566116321` are green. Do not push until the
+  current Core run completes.
+- Re-read open Issue #455 against the actual integration source. Concurrent GO
+  is partly implemented: RuntimeControl tracks active GO requests per Session,
+  Engine serializes selection/current-Cue advancement and releases before Cue
+  Actions, STOP CUE cancels all active runs, and Session STOP/Blackout snapshot
+  all active executions. Existing tests cover overlapping delayed GO, three
+  simultaneous distinct selections, late completion cursor fencing and STOP
+  of every delayed Cue. The matrix has been corrected from its stale single-run
+  claim.
+- Added a local simulated regression for Emergency Blackout with two Actions
+  blocked in a controlled executor: it verifies the durable latch and safe
+  state dispatch while both Cue runs remain active, then verifies both are
+  canceled before Blackout returns. This test and its matrix update are local
+  and unpushed at this checkpoint.
+- Verified `go test ./internal/runtimecontrol -count=1`, focused concurrent-GO,
+  STOP and Blackout tests under Race, `go vet ./internal/runtimecontrol`, and
+  `git diff --check`. Remaining #455 software gaps are the synchronous GO
+  response through action completion, lack of an explicit same-output conflict
+  policy, no active-execution management surface, and safe-but-unresolved RUNNING
+  row behavior after restart. Do not describe the issue as complete.
+- Keep production and all real outputs untouched. The next action is to commit
+  the regression and matrix evidence locally, then wait for Core run
+  `43566116341`; any later push must verify all three exact-head checks and the
+  remote SHA.

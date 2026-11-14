@@ -3,9 +3,12 @@ package runtimecontrol
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
@@ -93,7 +96,7 @@ func TestNextGoOverlapsPendingDelayWithoutCancellingFirstCue(t *testing.T) {
 	expected := h.cues[0].ID
 	second := h.service.Go(ctx, CueRequest{
 		SessionID: session.ID, Issuer: "owner",
-		RequestID: "00000000-0000-7000-8000-000000009003",
+		RequestID:            "00000000-0000-7000-8000-000000009003",
 		ExpectedCurrentCueID: &expected,
 	})
 	if second.Status != contracts.CommandCompleted {
@@ -194,6 +197,119 @@ func TestStopCancelsEveryOverlappingDelayedCue(t *testing.T) {
 	for _, row := range rows {
 		if row.Result != domain.ExecutionCancelled || row.CompletedAt == nil {
 			t.Fatalf("Cue not cancelled and persisted: %+v", row)
+		}
+	}
+}
+
+func TestEmergencyBlackoutDispatchesThenWaitsForEveryOverlappingCue(t *testing.T) {
+	h := newRuntimeHarness(t, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	ctx := context.Background()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009041",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+
+	entered := make(chan string, 2)
+	releaseActions := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseActions) }) }
+	defer release()
+	h.service.executor.inner = capability.ExecutorFunc(func(actionCtx context.Context, req capability.Request) capability.Result {
+		entered <- req.CueID
+		<-releaseActions
+		result := domain.ExecutionCompleted
+		code := ""
+		if actionCtx.Err() != nil {
+			result = domain.ExecutionCancelled
+			code = "CANCELLED"
+		}
+		return capability.Result{Result: result, AckLevel: contracts.AckNone, ErrorCode: code, ResponseSummary: "simulated executor"}
+	})
+	goResults := make(chan contracts.CommandResult, 2)
+	go func() {
+		goResults <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000009042",
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first simulated Cue action did not start")
+	}
+	go func() {
+		goResults <- h.service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner",
+			RequestID: "00000000-0000-7000-8000-000000009043",
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second simulated Cue action did not overlap the first")
+	}
+	if runs := h.service.activeRunsForSession(session.ID); len(runs) != 2 {
+		t.Fatalf("active Cue runs=%d, want both overlapping executions", len(runs))
+	}
+
+	safeStateDispatched := make(chan struct{})
+	h.service.emergencySafety = func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		latched, err := h.store.SessionManagedOutputBlackout(ctx, got.ID)
+		if err != nil || !enabled || !latched {
+			return nil, fmt.Errorf("simulated safe-state dispatch lacked the durable blackout latch: latched=%v err=%v", latched, err)
+		}
+		close(safeStateDispatched)
+		return json.RawMessage(`{"simulated":true}`), nil
+	}
+	blackoutDone := make(chan contracts.CommandResult, 1)
+	go func() {
+		blackoutDone <- h.service.EmergencyBlackout(ctx, EmergencyRequest{
+			SessionID: session.ID, Issuer: "owner", Enabled: true,
+			RequestID: "00000000-0000-7000-8000-000000009044",
+		})
+	}()
+	select {
+	case <-safeStateDispatched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Emergency Blackout waited for active Cues before simulated safe-state dispatch")
+	}
+	if runs := h.service.activeRunsForSession(session.ID); len(runs) != 2 {
+		t.Fatalf("Blackout dispatch was delayed until Cue completion; active runs=%d", len(runs))
+	}
+	select {
+	case result := <-blackoutDone:
+		t.Fatalf("Blackout returned before both active Cue executions terminated: %+v", result)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	for range 2 {
+		select {
+		case result := <-goResults:
+			if result.Status != contracts.CommandCancelled {
+				t.Fatalf("Blackout Cue result=%+v, want cancelled", result)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Blackout did not terminate every overlapping Cue")
+		}
+	}
+	select {
+	case result := <-blackoutDone:
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("Emergency Blackout=%+v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Emergency Blackout did not finish after all Cues terminated")
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != 2 {
+		t.Fatalf("Cue executions=%+v err=%v", executions, err)
+	}
+	for _, execution := range executions {
+		if execution.Result != domain.ExecutionCancelled {
+			t.Fatalf("Blackout left an execution without cancellation: %+v", execution)
 		}
 	}
 }
