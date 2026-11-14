@@ -22,6 +22,8 @@ func (c *mutableClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 
 type timingFixture struct {
 	store     *store.Store
+	handle    *db.Handle
+	dataRoot  string
 	clock     *mutableClock
 	projectID string
 	snapshot  domain.RuntimeSnapshot
@@ -32,7 +34,8 @@ func newTimingFixture(t *testing.T) timingFixture {
 	t.Helper()
 	ctx := context.Background()
 	stageClock := &mutableClock{now: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)}
-	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	dataRoot := t.TempDir()
+	handle, err := db.Open(ctx, db.Config{DataRoot: dataRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +63,7 @@ func newTimingFixture(t *testing.T) timingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return timingFixture{store: stageStore, clock: stageClock, projectID: project.ID, snapshot: runtimeSnapshot, cues: cues}
+	return timingFixture{store: stageStore, handle: handle, dataRoot: dataRoot, clock: stageClock, projectID: project.ID, snapshot: runtimeSnapshot, cues: cues}
 }
 
 func (f timingFixture) rehearsal(t *testing.T, name string, firstToSecond, secondToThird time.Duration, partial bool) domain.Session {
@@ -350,6 +353,97 @@ func TestTimingCapturePausePreservesRawEventsAndReanchorsTraining(t *testing.T) 
 	}
 	if count != 2 {
 		t.Fatalf("expected two journal changes, got %d", count)
+	}
+}
+
+func TestTimingCapturePauseSurvivesRestartClockJumpAndKeepsGOAvailable(t *testing.T) {
+	f := newTimingFixture(t)
+	ctx := context.Background()
+	service := New(f.store, f.clock)
+	session, err := f.store.CreateSessionAtPosition(ctx, store.CreateSessionFoundationParams{
+		SnapshotID: f.snapshot.ID, SessionType: domain.SessionRehearsal, Name: "Restart pause rehearsal",
+		StartPosition: domain.SessionStartPosition{Version: 1, Kind: domain.SessionStartBeginning, Metadata: json.RawMessage(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.executeCue(t, session.ID, f.cues[0].ID)
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", true); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Advance(15 * time.Second)
+	f.executeCue(t, session.ID, f.cues[1].ID)
+
+	if err := f.handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := db.Open(ctx, db.Config{DataRoot: f.dataRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	f.handle = reopened
+	f.store = store.New(reopened.DB, f.clock)
+	service = New(f.store, f.clock)
+	paused, err := f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !paused[session.ID] {
+		t.Fatal("paused capture state was lost after SQLite reopen")
+	}
+	// A duplicate request after restart must remain idempotent.
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", true); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a wall-clock correction while paused. The event journal, not
+	// timestamp ordering, remains authoritative for pause state.
+	f.clock.Advance(-time.Hour)
+	f.executeCue(t, session.ID, f.cues[2].ID) // GO continues while capture is paused.
+	if err := service.SetTimingCapturePaused(ctx, f.projectID, session.ID, "operator", false); err != nil {
+		t.Fatal(err)
+	}
+	f.executeCue(t, session.ID, f.cues[0].ID)
+	f.clock.Advance(2 * time.Second)
+	f.executeCue(t, session.ID, f.cues[1].ID)
+	if err := f.store.EndSessionLifecycle(ctx, session.ID, domain.SessionLifecycleCompleted, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	paused, err = f.store.TimingCapturePausedSessions(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused[session.ID] {
+		t.Fatal("resume state did not survive the persisted journal")
+	}
+	records, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 5 || records[0].TrainingExcluded || !records[1].TrainingExcluded ||
+		!records[2].TrainingExcluded || !records[3].TrainingExcluded || records[4].TrainingExcluded {
+		t.Fatalf("pause/restart/correction contaminated raw or training observations: %+v", records)
+	}
+	report, err := service.Report(ctx, f.projectID, ReportOptions{RuntimeSnapshotID: f.snapshot.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findTransition(t, report, f.cues[0].ID, f.cues[1].ID); got.SampleCount != 1 || got.MedianUS != int64(2*time.Second/time.Microsecond) {
+		t.Fatalf("training did not reanchor after resume and clock correction: %+v", got)
+	}
+	events, err := f.store.ListEvents(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pauseChanges := 0
+	for _, event := range events {
+		if event.EventType == "timing.capture_paused" || event.EventType == "timing.capture_resumed" {
+			pauseChanges++
+		}
+	}
+	if pauseChanges != 2 {
+		t.Fatalf("duplicate pause request created journal changes: got %d, want 2", pauseChanges)
 	}
 }
 

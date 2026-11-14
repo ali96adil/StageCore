@@ -29,6 +29,40 @@ func waitForCueAdvancement(t *testing.T, h *runtimeHarness, sessionID, wantCueID
 	}
 }
 
+func TestRehearsalGOContinuesWhileTimingCapturePaused(t *testing.T) {
+	h := newRuntimeHarness(t, json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`))
+	ctx := context.Background()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009101",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	if err := h.store.SetTimingCapturePaused(ctx, h.project.ID, session.ID, "owner", true); err != nil {
+		t.Fatal(err)
+	}
+	result := h.service.Go(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009102",
+	})
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("GO while capture paused=%+v", result)
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != 1 || executions[0].Result != domain.ExecutionCompleted {
+		t.Fatalf("Cue Engine did not complete the simulated GO: %+v err=%v", executions, err)
+	}
+	observations, err := h.store.ListTimingObservationRecords(ctx, h.project.ID)
+	if err != nil || len(observations) != 1 || !observations[0].TrainingExcluded {
+		t.Fatalf("paused timing observation should remain raw but excluded from learning: %+v err=%v", observations, err)
+	}
+	paused, err := h.store.TimingCapturePausedSessions(ctx, h.project.ID)
+	if err != nil || !paused[session.ID] {
+		t.Fatalf("capture pause state changed after GO: %+v err=%v", paused, err)
+	}
+}
+
 func TestNextGoOverlapsPendingDelayWithoutCancellingFirstCue(t *testing.T) {
 	h := newRuntimeHarnessWithPolicies(t,
 		[]json.RawMessage{

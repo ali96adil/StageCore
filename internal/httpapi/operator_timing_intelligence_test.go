@@ -24,6 +24,8 @@ type fakeTimingIntelligenceService struct {
 	lastSessionID     string
 	lastSelectionMode store.TimingSelectionMode
 	lastUpdatedBy     string
+	pauseCalls        int
+	lastPaused        bool
 	beforeReport      func()
 	beforeSelection   func()
 }
@@ -53,7 +55,12 @@ func (f *fakeTimingIntelligenceService) SetSessionSelection(_ context.Context, p
 	return store.TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: updatedBy}, nil
 }
 
-func (*fakeTimingIntelligenceService) SetTimingCapturePaused(context.Context, string, string, string, bool) error {
+func (f *fakeTimingIntelligenceService) SetTimingCapturePaused(_ context.Context, projectID, sessionID, updatedBy string, paused bool) error {
+	f.pauseCalls++
+	f.lastProjectID = projectID
+	f.lastSessionID = sessionID
+	f.lastUpdatedBy = updatedBy
+	f.lastPaused = paused
 	return nil
 }
 
@@ -161,6 +168,16 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	if service.selectionCalls != 0 {
 		t.Fatalf("forbidden VIEWER mutation reached timing service: calls=%d", service.selectionCalls)
 	}
+	viewerPause := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"paused":true}`))
+	viewerPause.RemoteAddr = "127.0.0.1:19005"
+	viewerPause.Header.Set("Content-Type", "application/json")
+	viewerPause.Header.Set(csrfHeader, viewer.CSRFToken)
+	viewerPause.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: viewer.Token})
+	viewerPauseRes := httptest.NewRecorder()
+	handler.ServeHTTP(viewerPauseRes, viewerPause)
+	if viewerPauseRes.Code != http.StatusForbidden || service.pauseCalls != 0 {
+		t.Fatalf("VIEWER pause status=%d pause calls=%d, want 403 and zero calls", viewerPauseRes.Code, service.pauseCalls)
+	}
 
 	missingCSRF := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"mode":"EXCLUDE"}`))
 	missingCSRF.RemoteAddr = "127.0.0.1:19006"
@@ -173,6 +190,15 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 0 {
 		t.Fatalf("CSRF-denied mutation reached timing service: calls=%d", service.selectionCalls)
+	}
+	missingPauseCSRF := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"paused":true}`))
+	missingPauseCSRF.RemoteAddr = "127.0.0.1:19006"
+	missingPauseCSRF.Header.Set("Content-Type", "application/json")
+	missingPauseCSRF.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	missingPauseCSRFRes := httptest.NewRecorder()
+	handler.ServeHTTP(missingPauseCSRFRes, missingPauseCSRF)
+	if missingPauseCSRFRes.Code != http.StatusForbidden || service.pauseCalls != 0 {
+		t.Fatalf("missing CSRF pause status=%d pause calls=%d, want 403 and zero calls", missingPauseCSRFRes.Code, service.pauseCalls)
 	}
 
 	ownerWrite := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"mode":"EXCLUDE"}`))
@@ -187,6 +213,17 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 1 || service.lastSessionID != sessionID || service.lastSelectionMode != store.TimingSelectionExclude || service.lastUpdatedBy != "owner" {
 		t.Fatalf("unexpected selection call: calls=%d session=%q mode=%q updated_by=%q", service.selectionCalls, service.lastSessionID, service.lastSelectionMode, service.lastUpdatedBy)
+	}
+	ownerPause := httptest.NewRequest(http.MethodPut, ownerWrite.URL.Path, strings.NewReader(`{"paused":true}`))
+	ownerPause.RemoteAddr = "127.0.0.1:19007"
+	ownerPause.Header.Set("Content-Type", "application/json")
+	ownerPause.Header.Set(csrfHeader, owner.CSRFToken)
+	ownerPause.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	ownerPauseRes := httptest.NewRecorder()
+	handler.ServeHTTP(ownerPauseRes, ownerPause)
+	if ownerPauseRes.Code != http.StatusOK || service.pauseCalls != 1 || !service.lastPaused ||
+		service.lastProjectID != projectID || service.lastSessionID != sessionID || service.lastUpdatedBy != "owner" {
+		t.Fatalf("OWNER pause status=%d body=%s service=%+v", ownerPauseRes.Code, ownerPauseRes.Body.String(), service)
 	}
 
 	for _, tc := range []struct {
