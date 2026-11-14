@@ -1,16 +1,18 @@
 # Related component qualification matrix
 
-Status refreshed 2026-11-14 14:43 UTC from the open PRs and exact head commits.
+Status refreshed 2026-11-14 14:51 UTC from the open PRs and exact head commits.
 TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
 #20 (`455b066`), and StageLaser #56 (`b14a578`) are open drafts; their listed
 exact-head CI runs pass. StageLaser #57 (`c4ff10b`) is open and not marked
 draft; its listed CI passes. StageCore #503–#508 and #514–#516 remain open at
 the heads listed below, with their listed Go 1.26/1.27 CI passing. StageCore
 Draft PR #534 remains at remote head `c1a4e492416d9cd894202fd660490493c92cb2ed`
-on `integration/stagecore-rc`; Core run `43603870346` is still running its
-Go 1.26 Race job, while Go 1.27, Companion `43603870310`, and Camera Relay
-`43603870345` have passed. Six local commits are ahead of remote and are not
-yet pushable until that exact-head Core run completes successfully.
+on `integration/stagecore-rc`; all exact-head checks now pass: Core
+`43603870346` (Go 1.26/1.27 Test, Browser Cue Delivery, Vet, Race, and Linux
+ARM64 builds), Companion `43603870310`, and Camera Relay `43603870345`. Eight
+preceding local commits are ahead of remote; this matrix/checkpoint refresh is
+the ninth commit in the batch. Push the nine commits normally after rechecking
+the remote SHA and PR state.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. No linked repository checkout is available in
 this workspace, so no other repository was modified.
