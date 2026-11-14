@@ -268,7 +268,7 @@ test("Cue Studio action clipboard crosses Projects only for the same editor sess
     actionCards: () => [], refreshActions() {},
   };
   const clipboard = vm.runInNewContext(
-    "let actionClipboard = null; " + source.slice(first, last) +
+    "let actionClipboard = null; let crossProjectPastedCards = []; let crossProjectPasteContext = null; " + source.slice(first, last) +
     "({copyActionToClipboard, pasteClipboardAction})", context
   );
   const card = {
@@ -361,7 +361,7 @@ test("Cue Studio copies selected Mixed-Cue actions in order as independent copie
     addActionEditor: (action) => inserted.push(action), expandCard() {}, refreshActions() {},
   };
   const clipboard = vm.runInNewContext(
-    "let actionClipboard = null; " + source.slice(first, last) +
+    "let actionClipboard = null; let crossProjectPastedCards = []; let crossProjectPasteContext = null; " + source.slice(first, last) +
     "({copySelectedActionsToClipboard, pasteClipboardAction})", context
   );
   clipboard.copySelectedActionsToClipboard();
@@ -423,7 +423,7 @@ test("Cue Studio applies a cross-Project target map to every copied action", () 
     };
   };
   const clipboard = vm.runInNewContext(
-    "let actionClipboard = null; " + source.slice(first, last) +
+    "let actionClipboard = null; let crossProjectPastedCards = []; let crossProjectPasteContext = null; " + source.slice(first, last) +
     "({applyCrossProjectTargetMap})",
     { cardField: (card, selector) => card.querySelector(selector), Event: EventStub },
   );
@@ -440,6 +440,25 @@ test("Cue Studio applies a cross-Project target map to every copied action", () 
   assert.equal(cards[1].input.value, "STAGE-LIGHT");
   assert.equal(cards[2].input.value, "VDMX", "an unselected mapping leaves its action unchanged");
   assert.deepEqual(events.map((entry) => entry[2]), ["change", "change"]);
+});
+
+test("Cue Studio target mapping expires when the Project or editor User changes", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function serializeActionCopy");
+  const last = source.indexOf("function duplicateCard", first);
+  const state = { user: {}, project: { project_id: "destination" } };
+  const clipboard = vm.runInNewContext(
+    "let actionClipboard = null; let crossProjectPastedCards = []; " +
+    "let crossProjectPasteContext = {user: state.user, projectID: 'destination'}; " +
+    source.slice(first, last) + "({isCurrentCrossProjectMapContext})",
+    { state },
+  );
+  assert.equal(clipboard.isCurrentCrossProjectMapContext(), true);
+  state.project = { project_id: "another-project" };
+  assert.equal(clipboard.isCurrentCrossProjectMapContext(), false);
+  state.project = { project_id: "destination" };
+  state.user = {};
+  assert.equal(clipboard.isCurrentCrossProjectMapContext(), false);
 });
 
 test("raw preview values copy only through unique representable logical channels", () => {

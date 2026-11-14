@@ -18,6 +18,7 @@
   let initialFormState = "";
   let actionClipboard = null;
   let crossProjectPastedCards = [];
+  let crossProjectPasteContext = null;
 
   function safeObject(raw) {
     try { return JSON.parse(raw || "{}"); } catch (_) { return {}; }
@@ -157,6 +158,12 @@
   }
 
   function refreshClipboardButtons() {
+    if (!isCurrentCrossProjectMapContext()) {
+      crossProjectPasteContext = null;
+      crossProjectPastedCards = [];
+    } else {
+      crossProjectPastedCards = crossProjectPastedCards.filter((card) => card?.isConnected !== false);
+    }
     const selectedCount = actionCards().filter((card) => cardField(card, ".sc008-action-select")?.checked).length;
     const copy = pick("sc008CopySelectedActions");
     if (copy) copy.disabled = !state.user || !state.project?.project_id || selectedCount === 0;
@@ -247,6 +254,9 @@
     }
     const inserted = actionCards().slice(-actions.length);
     crossProjectPastedCards = crossProject ? inserted : [];
+    crossProjectPasteContext = crossProject
+      ? { user: state.user, projectID: state.project.project_id }
+      : null;
     actionCards().forEach((item) => expandCard(item, item === inserted.at(-1)));
     refreshActions();
     inserted.at(-1)?.querySelector(".sc008-expand")?.focus();
@@ -273,7 +283,18 @@
     return changed;
   }
 
+  function isCurrentCrossProjectMapContext() {
+    return !!crossProjectPasteContext && crossProjectPasteContext.user === state.user &&
+      crossProjectPasteContext.projectID === state.project?.project_id;
+  }
+
   function showCrossProjectTargetMapDialog() {
+    if (!isCurrentCrossProjectMapContext()) {
+      crossProjectPasteContext = null;
+      crossProjectPastedCards = [];
+      refreshClipboardButtons();
+      return;
+    }
     const cards = crossProjectPastedCards.filter((card) => card?.isConnected !== false);
     const sourceTargets = [...new Set(cards.map((card) =>
       String(cardField(card, ".action-target")?.value || "").trim()).filter(Boolean))];
@@ -345,6 +366,7 @@
       const mapping = Object.fromEntries([...selects].map(([source, select]) => [source, select.value]));
       applyCrossProjectTargetMap(cards, mapping);
       crossProjectPastedCards = [];
+      crossProjectPasteContext = null;
       refreshActions();
       dialog.close();
     });
