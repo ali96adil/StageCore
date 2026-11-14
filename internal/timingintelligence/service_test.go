@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -565,11 +566,17 @@ func TestNewRehearsalTimingRequiresReversibleApproval(t *testing.T) {
 	report(preview.ID, 1, false)
 
 	capture := start(domain.RehearsalTimingCapture, 80*time.Second)
+	rawBeforeApproval, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	selectMode(capture.ID, store.TimingSelectionInclude)
 	pending := report(capture.ID, 1, false)
 	if pending.SelectionMode != store.TimingSelectionInclude || pending.Reason != "approved, pending completed or stopped rehearsal" {
 		t.Fatalf("active approval=%+v", pending)
 	}
+	selectMode(capture.ID, store.TimingSelectionInclude)
+	report(capture.ID, 1, false)
 	end(capture.ID)
 	report(capture.ID, 2, true)
 	selectMode(capture.ID, store.TimingSelectionAuto)
@@ -578,6 +585,13 @@ func TestNewRehearsalTimingRequiresReversibleApproval(t *testing.T) {
 	report(preview.ID, 2, true)
 	selectMode(preview.ID, store.TimingSelectionExclude)
 	report(preview.ID, 1, false)
+	rawAfterApproval, err := f.store.ListTimingObservationRecords(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rawBeforeApproval, rawAfterApproval) {
+		t.Fatalf("approval or revocation changed raw observations: before=%+v after=%+v", rawBeforeApproval, rawAfterApproval)
+	}
 }
 
 func TestTimingMutationsRollBackAfterCommitAuthorityEnds(t *testing.T) {
