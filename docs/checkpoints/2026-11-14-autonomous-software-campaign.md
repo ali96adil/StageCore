@@ -1758,3 +1758,20 @@ This entry supersedes the preceding push instruction.
   refresh interval batch to PR #534 only on success, update PR evidence and
   wait for all workflows on the new head. Do not contact the production-like
   Pi host or run Pi benchmarks until a verified isolated ARM64 target exists.
+
+## CI gate update — 2026-11-14 08:51 UTC · USB-DMX bounds head passed
+
+- Core CI `43575317269` passed on exact remote HEAD
+  `ead0b48e817e9039594328718a87a4438f27e13e`: Go 1.27 passed in 2m23s;
+  Go 1.26 completed Tests, Browser Cue Delivery, Vet, Race and Linux ARM64
+  product builds in 30m40s. Companion `43575317263` and Camera Relay
+  `43575317254` passed on that exact head.
+- Current local commits `a7f8598` and `995249b` record a deterministic
+  continuous-refresh scheduling floor (>=200 ms; configured ticker 250 ms)
+  and update the SC-025 matrix. Focused test passed 5 times normally and 3
+  times under Race; Vet passed. These commits were not part of `ead0b48` CI.
+- Push the local refresh interval batch normally to existing branch/PR #534
+  now that the old-head CI is green. Record the new head and run IDs in the PR
+  description, then wait for every exact-head workflow before more changes.
+  Full refresh tail jitter/CPU measurement under sustained load and isolated
+  Pi 4 qualification remain open. No production or real-device operations.
