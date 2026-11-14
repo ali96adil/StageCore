@@ -1796,3 +1796,37 @@ This entry supersedes the preceding push instruction.
   pipe-test commits normally to PR #534 and wait for exact-head CI before
   another push. Pi performance remains unqualified; do not run workloads on
   the production-like Pi alias or touch production/real outputs.
+
+## Resume update — 2026-11-14 09:04 UTC · close-state regression and current CI gate
+
+- Remote PR #534 remains at `11309b63ede84abcea2eca4b99f71fc0e57e79c6`.
+  Local `integration/stagecore-rc` is four commits ahead, ending at
+  `677d18d` (`test: verify closed Linux USB-DMX port quarantine`); the
+  worktree is clean. This last commit checks idempotent close and rejects a
+  packet write after close, updating the SC-025 matrix accordingly.
+- Focused package, Race, Vet, and Linux ARM64/AMD64 compile checks for the
+  pipe test batch had passed before the last close-state assertions were
+  added; the close-state assertions then passed focused package/Race/Vet and
+  ARM64/AMD64 test-binary compile checks. The exact Linux-tagged assertions
+  still require Linux CI execution.
+- Do not push until Core CI `43577820286` finishes on exact remote head
+  `11309b6`. At this checkpoint Go 1.27 passed; Go 1.26 Test, Browser Cue
+  Delivery and Vet passed; its Race step was running and Linux ARM64 build
+  pending. Companion `43577820339` and Camera Relay `43577820216` passed.
+- Read-only cross-repository review on 2026-11-14 found current related PRs
+  open on their existing heads: TabletPlayer #36 `91613da` (run
+  `42719885664` PASS), ESP32 DMX #39 `3ad7749` (six checks, run
+  `42759555665` PASS), ESP32 Camera #20 `455b066` (run `42761096513` PASS),
+  StageLaser #56 `b14a578` (run `42765890415` PASS), and #57 `c4ff10b` (run
+  `38054411190` PASS). No linked-repository files were changed.
+- Pi 4 engine/burst/sustained performance remains unqualified. The only
+  available host has production Hub/Camera services active alongside a
+  separate isolated qualification unit; the remembered SSH qualification
+  alias fails before session establishment. Do not run load there or use
+  hardware. No production service/data, real device, firmware or ACL setting
+  was touched; production ACL remains disabled.
+- Next: wait for Core `43577820286`. If green, update this checkpoint and the
+  related-component matrix with exact completed run results, then push local
+  commits normally to the same branch/PR #534 and follow all exact-head CI.
+  Diagnose any failure before pushing. Preserve the Pi and production safety
+  boundary.
