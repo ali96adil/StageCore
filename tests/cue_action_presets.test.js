@@ -23,6 +23,7 @@ async function openPresets({ presets, targets = [] }) {
   const user = { user_id: "operator" };
   const dialog = node("dialog");
   dialog.open = true;
+  const inserted = [];
   const workspace = node("section");
   workspace.append = (...items) => {
     workspace.children.push(...items);
@@ -37,7 +38,7 @@ async function openPresets({ presets, targets = [] }) {
     tr: (_arabic, english) => english,
     api: async () => ({ presets }),
     errorMessage: String,
-    addActionEditor() {},
+    addActionEditor(action) { inserted.push(action); },
     refreshActions() {},
   };
   await vm.runInNewContext(`${binder}\nbindActionPresets(workspace);`, context);
@@ -45,7 +46,7 @@ async function openPresets({ presets, targets = [] }) {
   panel.open = true;
   await panel.listeners.toggle();
   await new Promise(setImmediate);
-  return panel;
+  return { panel, inserted };
 }
 
 function find(root, tagName) {
@@ -63,10 +64,10 @@ function contentText(root) {
 
 test("Action preset preview exposes saved content and warns about a missing target", async () => {
   const action = {
-    target_ref: "VDMX-MAIN", capability_key: "osc.send", execution_mode: "PARALLEL",
+    action_id: "stored-action-id", target_ref: "VDMX-MAIN", capability_key: "osc.send", execution_mode: "PARALLEL",
     parameters: { address: "/scene/7", arguments: [7] }, timeout_policy: { timeout_ms: 1500 },
   };
-  const panel = await openPresets({ presets: [{ preset_id: "preset-a", name: "Scene 7", action }] });
+  const { panel, inserted } = await openPresets({ presets: [{ preset_id: "preset-a", name: "Scene 7", action }] });
   const list = find(panel, "ul");
   const row = list.children[0];
   const preview = find(row, "pre");
@@ -74,10 +75,16 @@ test("Action preset preview exposes saved content and warns about a missing targ
   assert.match(preview.textContent, /\/scene\/7/);
   assert.match(contentText(row), /VDMX-MAIN/);
   assert.match(contentText(row), /Target is not present in this Project configuration/);
+  const add = row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add to Cue");
+  add.onclick();
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].action_id, "");
+  assert.deepEqual(inserted[0].parameters, action.parameters);
+  assert.equal(action.action_id, "stored-action-id", "insertion must not mutate the stored preset");
 });
 
 test("Action preset preview confirms a target present in the current Project", async () => {
-  const panel = await openPresets({
+  const { panel } = await openPresets({
     presets: [{ preset_id: "preset-a", name: "Scene 7", action: { target_ref: "VDMX-MAIN", capability_key: "osc.send" } }],
     targets: [{ logical_name: "VDMX-MAIN" }],
   });
