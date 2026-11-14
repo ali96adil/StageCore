@@ -2526,3 +2526,55 @@ This entry supersedes the preceding push instruction.
   device action occurred. No production service/data/Vault, real stage output,
   firmware, or production ACL enforcement was changed. Keep #534 draft and do
   not merge/force-push.
+
+## Resume update — 2026-11-14 17:43 UTC · Pi 4 ARM64 performance campaign
+
+- Branch `integration/stagecore-rc`; Draft PR #534 remains open. The last
+  pushed Remote/PR SHA is `a90403b863009081447d1cb2ebbce88947ad1cf6`. Its
+  exact-head Core run `43618591866` passed Go 1.26 (including Race and Linux
+  ARM64 builds), Go 1.27, Browser and Vet; Companion Core `43618591864` and
+  Camera Relay `43618591875` passed. The local branch starts this docs batch
+  from checkpoint commit `2675428`; use `git rev-parse HEAD` for the current
+  local tip. No source changes are part of this performance-doc batch.
+- Pi 4 Model B Rev 1.4, Debian 13.6 `linux/arm64`, Linux 6.18.39, Go 1.27.1.
+  Test binaries were built from code `a90403b`; full binary hashes and sandbox
+  setup are in `docs/architecture/cue-execution-performance-qualification.md`.
+  Each run used unprivileged private user/network/mount/PID namespaces at nice
+  +19; `/dev`, `/opt`, `/var/lib`, `/home`, and `/run` were hidden by tmpfs.
+  Host CPU/memory were not cgroup-isolated. The simulator was the only output
+  adapter and the guarded physical-executor count stayed zero.
+- Correctness passed for the six-Cue/24-Action nested compound chain, eight-GO
+  burst, linked 100-Cue/200-Action reference project, and 100-Cue/200-Action
+  sustained Rehearsal. Performance runs covered 24-Action Mixed/linked cases
+  (1,000 samples each with Go CPUs 1 and 4), 50/100/200-Action and
+  25/50/100-Cue scale cases (100 samples), 4/8-GO bursts (100 bursts, CPUs
+  1/4), STOP/Blackout against 1/8/32 delayed GO requests (100 operations),
+  and 20 sustained reference rehearsals. Exact P50/P95/P99, latency/schedule
+  jitter, allocations, GC, and command resource totals are in the performance
+  report.
+- Notable Pi samples: flat Mixed 200 Actions P50/P95/P99
+  `468.0/480.4/492.5 ms`; linked 100 Cues/200 Actions
+  `500.1/531.8/588.1 ms`; scheduled linked 25/50 schedule jitter
+  `8.788/41.201/75.443 ms`; 8-GO burst P95 `593.5 ms` (`-cpu=1`) and
+  `870.7 ms` (`-cpu=4`); STOP/32 delayed Cues P95/P99
+  `998/1,134 ms`; Blackout/32 `1,028/1,059 ms`. Sustained 100-GO session
+  mean was `2.998 s`; per-GO P50/P95/P99 was `30.02/39.06/41.44 ms`.
+  These are low-priority samples, not SLO or hardware acceptance; P99 from
+  100-sample cases is the top sample, and no numeric pass threshold was given.
+- CPU profile samples show SQLite VDBE execution at 41.66%, Store event append
+  at 33.83% cumulative, and Linux syscalls at 7.16% flat. The allocation
+  profile included fixture creation; `readCueDraftStateTx` is fixture setup
+  outside the timed GO boundary and is not labeled an execution bottleneck.
+  No cache, event batching, or durability change was made; a performance
+  optimization must preserve persisted event order and be measured in a
+  scoped profile first.
+- This report update plus matrix/handoff changes have passed `git diff
+  --check`; no production service/data/Vault, ACL enforcement, real output,
+  firmware, or internet-dependent test was used. Remote/PR remain at `a90403b`.
+  Before normal push to #534, recheck remote/PR SHA and CI status. Do not
+  force-push, merge, enable production ACL, or interrupt a new exact-head run.
+- First next independent task: inspect and run Linux-tagged `internal/usbdmx`
+  host tests as an ARM64 binary inside the same device-hidden Pi namespace,
+  confirming no serial-device path can be opened. Then continue a reproducible
+  gap from the completion matrix; SC-009 Route history and SC-015's lack of
+  explicit per-output health events remain software-review candidates.

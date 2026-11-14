@@ -198,13 +198,134 @@ a Raspberry Pi measurement.
 
 ### Pi 4 qualification state
 
-The local machine is Apple M3 Max (`darwin/arm64`), not Raspberry Pi. A
-read-only connection attempt to the explicitly named `stagecore-qualification`
-SSH alias failed during handshake before host identity was established. No
-remote command, service, test database, or device action ran. These scale and
-safety results are a Mac baseline only. The Pi 4 full-engine and
-burst/sustained rehearsal gates remain open and must not be inferred from
-GitHub ARM64 cross-builds or this Mac result.
+The ARM64 qualification runs below used Raspberry Pi 4 Model B Rev 1.4,
+Debian 13.6 (`linux/arm64`), Linux 6.18.39, and Go 1.27.1. The static test
+binaries were cross-built from source commit `a90403b863009081447d1cb2ebbce88947ad1cf6`.
+The Cue Engine binary SHA-256 is
+`89fd092ce4d5c16b07ec38ab9fe55f6d97bc1d7854f09349eb8e3fd86f044c4a`; the
+Runtime Control binary SHA-256 is
+`15dc5c9beafb8c632b83c5f06f7c6edc217e623c6bd4490e43ba00b8841d60b5`.
+
+Each test ran as an unprivileged process at `nice +19` inside private user,
+network, mount, and PID namespaces. The sandbox mounted temporary filesystems
+over `/dev`, `/opt`, `/var/lib`, `/home`, and `/run`, checked that the sound
+device, production install/data paths, and Hub socket were hidden, and used a
+private `/tmp` scratch directory. The host's CPU and memory controller were
+not isolated; low scheduling priority was used to reduce competition with
+other host work. No command was sent to a service or device. Cue Actions used
+the Digital Twin, and guarded physical-executor counters remained zero.
+
+Cue Engine times cover command reservation, Snapshot lookup, linked-Cue
+resolution, scheduling, simulated dispatch, event persistence, and completion.
+They exclude HTTP, ACL checks, and real adapter/device latency. Runtime Control
+STOP/Blackout timings below include Runtime Control and SQLite work and use a
+simulated emergency callback; they are separate from Cue Engine and ACL
+measurements.
+
+#### Mixed and linked Cue Engine completion
+
+The 24-Action workload has 1,000 samples per row. Scale cases have 100 samples
+per row. `-test.cpu=1,4` sets Go's `GOMAXPROCS`; every process remains low
+priority. Latency jitter is P95 absolute deviation from the case median.
+Schedule jitter compares the configured per-Cue start delay with the first
+persisted Action start time relative to `cue.started`.
+
+| Workload | Go CPUs | P50 / P95 / P99 | Latency jitter P95 | Schedule jitter P50 / P95 / P99 | Allocations per GO |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed, 24 Actions | 1 | 68.98 / 74.84 / 80.48 ms | 6.693 ms | — | 439,639 B; 8,211 allocs |
+| Flat Mixed, 24 Actions | 4 | 73.73 / 84.60 / 114.2 ms | 10.866 ms | — | 454,732 B; 8,494 allocs |
+| Linked compound, 6 Cues / 24 Actions | 1 | 71.15 / 77.06 / 92.55 ms | 7.038 ms | — | 454,732 B; 8,399 allocs |
+| Linked compound, 6 Cues / 24 Actions | 4 | 76.88 / 106.8 / 120.0 ms | 29.970 ms | — | 473,973 B; 8,780 allocs |
+| Scheduled linked compound, 6 Cues / 24 Actions | 1 | 72.68 / 79.51 / 97.39 ms | 7.925 ms | 6.008 / 21.464 / 26.639 ms | 460,335 B; 8,501 allocs |
+| Scheduled linked compound, 6 Cues / 24 Actions | 4 | 79.42 / 98.36 / 122.7 ms | 18.942 ms | 1.270 / 1.695 / 2.252 ms | 474,730 B; 8,787 allocs |
+
+| Workload (`-cpu=1`) | P50 / P95 / P99 | Latency jitter P95 | Schedule jitter P50 / P95 / P99 | GC/op; pause/op | Allocations per GO |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed, 50 Actions | 123.8 / 129.6 / 136.2 ms | 5.775 ms | — | 0.24; 23.057 µs | 894,265 B; 16,634 allocs |
+| Flat Mixed, 100 Actions | 239.2 / 249.5 / 278.6 ms | 11.640 ms | — | 0.50; 48.743 µs | 1,770,294 B; 32,838 allocs |
+| Flat Mixed, 200 Actions | 468.0 / 480.4 / 492.5 ms | 14.183 ms | — | 1.07; 103.327 µs | 3,524,029 B; 65,280 allocs |
+| Linked, 25 Cues / 50 Actions | 130.3 / 143.1 / 235.3 ms | 12.812 ms | — | 0.28; 28.997 µs | 976,255 B; 17,379 allocs |
+| Linked, 50 Cues / 100 Actions | 257.1 / 270.9 / 273.9 ms | 14.051 ms | — | 0.65; 64.508 µs | 1,943,144 B; 34,436 allocs |
+| Linked, 100 Cues / 200 Actions | 500.1 / 531.8 / 588.1 ms | 31.718 ms | — | 1.35; 132.488 µs | 3,850,571 B; 68,129 allocs |
+| Scheduled linked, 25 Cues / 50 Actions | 133.6 / 139.0 / 142.4 ms | 6.211 ms | 8.788 / 41.201 / 75.443 ms | 0.30; 32.771 µs | 1,002,050 B; 17,847 allocs |
+
+#### Concurrent GO bursts
+
+Each row contains 100 simultaneous bursts. Each GO executes a nested,
+six-Cue/24-Action compound chain. GO latency is measured per request; burst
+latency is from the shared release barrier until every GO completes. Launch
+skew is reported separately from Cue schedule jitter.
+
+| GO per burst / Go CPUs | GO P50 / P95 / P99 | GO jitter P95 | Burst P50 / P95 / P99 | Burst jitter P95 | Launch skew P50 / P95 / P99 | GC/burst; pause | Allocations per burst |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 / 1 | 256.7 / 289.0 / 315.7 ms | 84.253 ms | 280.7 / 307.1 / 317.7 ms | 26.339 ms | 7.285 / 31.598 / 33.357 ms | 0.55; 56.063 µs | 1,869,514 B; 34,604 allocs |
+| 4 / 4 | 290.7 / 410.3 / 428.8 ms | 121.550 ms | 297.0 / 423.8 / 435.3 ms | 126.733 ms | 0.019 / 0.070 / 0.090 ms | 0.64; 133.543 µs | 1,903,650 B; 35,267 allocs |
+| 8 / 1 | 485.4 / 573.1 / 584.2 ms | 232.499 ms | 577.7 / 593.5 / 639.0 ms | 29.829 ms | 8.798 / 62.640 / 75.138 ms | 1.16; 117.535 µs | 3,762,147 B; 69,675 allocs |
+| 8 / 4 | 559.0 / 822.3 / 871.0 ms | 308.735 ms | 606.9 / 870.7 / 876.9 ms | 263.764 ms | 0.033 / 0.062 / 0.100 ms | 1.39; 306.132 µs | 3,808,898 B; 70,568 allocs |
+
+#### STOP and Emergency Blackout under delayed GO load
+
+These rows contain 100 operations each with 1, 8, or 32 active Cues delayed by
+60 seconds. The command cancels the delayed GO work. Blackout invokes only the
+test safety callback; it does not drive an adapter or fixture.
+
+| Operation / delayed active Cues | P50 / P95 / P99 | Latency jitter P95 | GC/op; pause/op | Allocations per operation |
+| --- | ---: | ---: | ---: | ---: |
+| STOP / 1 | 8.898 / 14.04 / 15.18 ms | 5.142 ms | 0; 0 ns | 19,618 B; 446 allocs |
+| STOP / 8 | 104.1 / 145.3 / 154.8 ms | 78.188 ms | 0; 0 ns | 221,648 B; 3,457 allocs |
+| STOP / 32 | 656.0 / 998.0 / 1,134 ms | 386.602 ms | 0.28; 29.940 µs | 2,341,385 B; 20,276 allocs |
+| Emergency Blackout / 1 | 10.30 / 14.70 / 16.05 ms | 5.036 ms | 0.01; 1.210 µs | 24,400 B; 568 allocs |
+| Emergency Blackout / 8 | 103.1 / 141.2 / 148.5 ms | 76.282 ms | 0; 0 ns | 210,447 B; 3,355 allocs |
+| Emergency Blackout / 32 | 650.0 / 1,028 / 1,059 ms | 396.044 ms | 0.07; 7.807 µs | 2,323,583 B; 20,233 allocs |
+
+#### Sustained 100-Cue / 200-Action Rehearsal
+
+`BenchmarkSustainedReferenceRehearsal` ran 20 sessions, each with 100
+sequential GO requests and 200 completed simulated Actions. The 2,000 GO
+samples had P50/P95/P99 `30.02/39.06/41.44 ms`, P95 latency jitter `10.016
+ms`, and a mean complete-session time of `2.998 s`. Each 100-GO session used
+`38,967,218 B` and `291,074` allocations, with 14.30 GC cycles and 1.426 ms
+GC pause. Process maximum RSS was 32,524 KiB.
+
+#### CPU/RAM envelope and profile
+
+The sandbox helper recorded whole test-process user/system CPU time and peak
+RSS. RSS includes test setup and SQLite migrations; it is not Pi service RSS.
+The shell's `/proc` view was not used to infer service CPU.
+
+| Command | Elapsed | User CPU | System CPU | Process maximum RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Mixed/linked 24-Action, 1,000 samples, `-cpu=1,4` | 703.879 s | 615.378 s | 111.442 s | 50,132 KiB |
+| Mixed/linked scale, 100 samples per case | 204.000 s | 185.478 s | 18.666 s | 37,092 KiB |
+| GO burst, 100 bursts per case, `-cpu=1,4` | 188.988 s | 178.551 s | 20.970 s | 47,320 KiB |
+| STOP/Blackout, 100 operations per case | 251.106 s | 238.317 s | 13.050 s | 38,840 KiB |
+| Sustained Rehearsal, 20 sessions | 66.163 s | 60.697 s | 5.553 s | 32,524 KiB |
+| 20-sample 100-Cue/200-Action CPU profile | 14.949 s | 13.718 s | 1.254 s | 38,404 KiB |
+
+The sampled CPU profile shows SQLite execution and durable event persistence
+as the largest observed Cue Engine cost: SQLite VDBE execution was 41.66% of
+CPU samples; `Store.appendEvent` had 33.83% cumulative samples, and Linux
+syscalls 7.16% flat. The allocation profile was captured for the whole test
+process and includes fixture construction, so its large `readCueDraftStateTx`
+allocation is excluded from the timed GO benchmark and is not attributed to
+runtime execution. The per-GO `-benchmem` figures above cover the timed Engine
+work. No snapshot cache, event batching, or durability change is justified
+without an isolated timed profile and an equivalence test for audit ordering.
+
+These results are performance evidence, not a completed release qualification:
+P99 is the nearest-rank top sample for 100-sample scale, burst, safety, and
+sustained cases. The 1,000-sample 24-Action cases provide a stronger tail
+sample. Some delayed-32 STOP/Blackout P95 results are around one second, and
+scheduled linked P99 jitter reached 75.443 ms in one scale case. No numeric
+acceptance thresholds were supplied, and low-priority CPU scheduling is not
+the production scheduler. Preserve these observations for an explicit timing
+acceptance decision; do not call them hardware acceptance.
+
+Correctness probes passed in the same sandbox for a six-Cue nested compound
+24-Action chain, an eight-GO burst, a linked 100-Cue/200-Action reference
+project, and a 100-Cue/200-Action Rehearsal. Every Action completed in the
+Digital Twin and the physical-executor probe remained at zero. Production
+services, ACL enforcement, data, Vault, and real outputs were not used.
 
 ## Separate ACL component measurements
 

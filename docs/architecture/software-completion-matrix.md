@@ -70,30 +70,37 @@ matrix:
 | [#483](https://github.com/ali96adil/StageCore/issues/483), [#459](https://github.com/ali96adil/StageCore/issues/459) | Cue-authoring freeze and peripheral-before-Hub rollout tracker; both describe deployed-source, verified-backup, compatibility and attended acceptance gates. | **Release / operational gates.** Green CI and this experimental branch do not authorize production authoring, rollout, or device updates. Preserve source pins, independent backups, current Snapshots, and all physical outputs until explicit acceptance. |
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 
-## Current campaign checkpoint — 2026-11-14 16:59 UTC
+## Current campaign checkpoint — 2026-11-14 17:40 UTC
 
-Draft PR #534 remains OPEN on `integration/stagecore-rc`. The ten preserved
-commits were pushed normally after Core CI `43616028757` passed on prior remote
-`e9ece08`; Companion Core `43616028766` and Camera Relay `43616028829` also
-passed on that prior exact SHA. The current local/remote/PR head is
-`a90403b863009081447d1cb2ebbce88947ad1cf6`. New exact-head workflows are
-active: Core `43618591866`, Companion Core `43618591864`, and Camera Relay
-`43618591875`. Do not push until all have completed and the branch/PR heads are
-rechecked.
+Draft PR #534 remains OPEN on `integration/stagecore-rc`. The last pushed
+remote/PR head is `a90403b863009081447d1cb2ebbce88947ad1cf6`. Its exact-head
+workflows have completed successfully: Core `43618591866` (Go 1.26 including
+Race and Linux ARM64 builds, Go 1.27, Browser and Vet), Companion Core
+`43618591864`, and Camera Relay `43618591875`. The local branch also contains
+docs-only checkpoint `2675428` and the Pi performance evidence now recorded in
+`cue-execution-performance-qualification.md`; use `git rev-parse HEAD` for the
+current local documentation tip. Before the next Push, recheck the remote and
+PR SHA and confirm no newer exact-head workflow is running.
 
-The pushed source includes StageAudio fake-process and missing-binary coverage,
-Show Capsule alias target-remapping coverage, SQLite/Vault reopen integrity
-coverage, and a Project duplicate fix that remaps only recognized identity
-fields while preserving coincidental UUID-valued filename/configuration
-strings. Focused tests passed; full `go test ./internal/store -count=1` passed,
-Race on the complete store package passed (177.107 s), and `go vet
-./internal/store` passed. The qualification SSH alias timed out during banner
-exchange; no remote command ran, so Pi 4 performance remains unqualified. Do
-not infer it from Mac results or ARM64 cross-builds.
+The remote source includes StageAudio fake-process and absent-binary coverage,
+Show Capsule alias target-remapping coverage, SQLite/Vault reopen integrity,
+and the Project duplication ID-remapping fix. Full `internal/store` normal and
+Race suites passed, as did `go vet ./internal/store` and focused Store,
+Show Capsule, and Vault checks. No source code changed in the Pi-report batch.
 
-Mac qualification already covers flat Mixed Cues, nested linked compound
-chains, 100-Cue/200-Action execution, scheduled actions, sustained rehearsal,
-STOP and Emergency Blackout; ACL-only timing is separate. Continue software
-work while the exact-head workflows run without interrupting them. Production
-Hub/Relay/data/Vault, real output and firmware remain untouched; production ACL
-stays disabled. Keep PR #534 in Draft and do not merge or force-push.
+Pi 4 Rev 1.4 ARM64 simulation qualification is now recorded for flat Mixed
+Cues, nested linked compound chains through 100 Cues/200 Actions, scheduled
+actions, 4/8-GO bursts, sustained 100-Cue Rehearsal, STOP and Emergency
+Blackout. Test outputs stayed inside a private namespace and the physical
+executor stayed at zero. ACL/HTTP and real output latency are excluded. The
+low-priority sample results identify SQLite event persistence as the largest
+observed CPU cost; 32 delayed GO requests raised STOP/Blackout P95 to about one
+second. The measured profile does not justify a durability or caching change.
+No supplied numeric timing threshold means this is evidence for qualification,
+not a Software Complete or Hardware Qualification pass.
+
+SC-024 remains opt-in/off in production. No production Hub/Relay/data/Vault,
+real stage output, firmware or production ACL enforcement was touched. Keep
+PR #534 in Draft; do not merge or force-push. Next independent qualification
+candidate: run the Linux-tagged `internal/usbdmx` software tests on the same
+device-hidden Pi namespace, then continue the highest reproducible matrix gap.
