@@ -45,6 +45,49 @@ func TestLinuxPortNilCannotWriteOrClaimSuccess(t *testing.T) {
 	}
 }
 
+func TestLinuxPortDefaultSyscallsUseIsolatedPipe(t *testing.T) {
+	pipe := [2]int{}
+	if err := unix.Pipe2(pipe[:], unix.O_CLOEXEC|unix.O_NONBLOCK); err != nil {
+		t.Fatalf("create isolated pipe: %v", err)
+	}
+	readFD, writeFD := pipe[0], pipe[1]
+	readOpen := true
+	port := &LinuxPort{fd: writeFD}
+	t.Cleanup(func() {
+		_ = port.Close()
+		if readOpen {
+			_ = unix.Close(readFD)
+		}
+	})
+
+	ready, events, err := pollSerialWrite(writeFD, 25)
+	if err != nil || ready != 1 || events&unix.POLLOUT == 0 {
+		t.Fatalf("isolated pipe should be writable: ready=%d events=%#x err=%v", ready, events, err)
+	}
+
+	var packet [FrameSize]byte
+	for i := range packet {
+		packet[i] = byte(i % 251)
+	}
+	if err := port.WritePacket(context.Background(), packet); err != nil {
+		t.Fatalf("default Linux write path: %v", err)
+	}
+	got := make([]byte, FrameSize)
+	n, err := unix.Read(readFD, got)
+	if err != nil || n != FrameSize || !bytes.Equal(got, packet[:]) {
+		t.Fatalf("pipe frame mismatch: bytes=%d err=%v", n, err)
+	}
+
+	if err := unix.Close(readFD); err != nil {
+		t.Fatal(err)
+	}
+	readOpen = false
+	ready, events, err = pollSerialWrite(writeFD, 25)
+	if err != nil || ready == 0 || events&(unix.POLLERR|unix.POLLHUP) == 0 {
+		t.Fatalf("closed pipe reader did not expose a poll fault: ready=%d events=%#x err=%v", ready, events, err)
+	}
+}
+
 func TestLinuxPortWritePacketCompletesShortWritesAcrossEAGAINAndEINTR(t *testing.T) {
 	var packet [FrameSize]byte
 	for i := range packet {
