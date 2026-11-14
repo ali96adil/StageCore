@@ -2133,3 +2133,32 @@ This entry supersedes the preceding push instruction.
 - Checks passed: focused test normal and Race; full `go test ./internal/timingintelligence -count=1` and `go test -race ./internal/timingintelligence -count=1`; `go vet ./internal/timingintelligence`; and `git diff --check`. Local branch is seven commits ahead of remote `2cad37b`; worktree was clean after commit.
 - The active remote CI is still for exact SHA `2cad37b5d27bf9987a1d61e5f960dbfa34b36fcd`, which predates all seven local commits: Go 1.27 and Go 1.26 tests, Browser Cue Delivery and Vet passed; Go 1.26 Race remains active and Linux ARM64 builds have not started. Companion `43594362838` and Camera Relay `43594362840` passed. No push until the complete Core gate finishes successfully.
 - After the CI gate, recheck the remote branch and PR #534, push the seven local commits normally to the existing branch, update PR description with the new exact-head checks, and wait for those checks before another source push. Continue with another partial software gap; keep production ACL disabled and all production/device/Vault boundaries intact.
+
+## Resume update — 2026-11-14 15:19 UTC · prepared Project access browser gate
+
+- Local commit `4c84b6b7ac1d18e23e5b5535d5e398c57abad2e4` adds the 123-Cue
+  real-browser search/filter/Inspector qualification. Local commit
+  `a8f93bc28de947325075e99e9347edba1e05f6bf` adds the real-Chrome Owner
+  Project-access editor gate and updates the SC-024 evidence row. Both are
+  local-only; remote remains `759bcbd21ae331759443c2c37fe451d0e96bc78a`.
+- The access browser test runs the actual Security page against temporary
+  SQLite and the optional qualification routes. It loads a Project and
+  Operator's existing grants, stores `OPERATE`, checks the UI's not-enforced
+  disclosure and verifies API readback. It confirms no publish, GO/JUMP/STOP,
+  or Emergency Blackout request occurs. It does not assemble production ACL.
+- Focused Chrome test passed normally and under Go Race; the existing
+  `tests/security_project_access.test.js` passed 8/8; JS syntax, `go vet
+  ./internal/httpapi`, and `git diff --check` passed. Existing API tests verify
+  the stored `OPERATE` permission set and that it does not grant Cue editing.
+- Exact pushed-head Camera Relay `43608326224` and Companion `43608326350`
+  pass. Core `43608326253` remained in progress at the last check, with Go
+  1.27 green and Go 1.26 Race still running. Wait for this run before pushing
+  either local commit, then recheck remote/PR SHA and completion. After a
+  normal push, update PR #534's description with the new browser evidence and
+  exact workflow links, then wait for every new exact-head check.
+- SC-024 remains partial: whole-server endpoint-to-policy/asynchronous
+  reconciliation, keyboard/touch/RTL browser checks, Companion compatibility,
+  and installed-copy backup/rollback/full-suite qualification remain. ACL is
+  not enforced in Production. Pi 4 engine performance remains blocked on a
+  verified isolated target; existing Mac measurements were not repeated.
+  Production services/data/Vault and physical outputs were not accessed.
