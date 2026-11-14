@@ -2013,6 +2013,15 @@ This entry supersedes the preceding push instruction.
 - Previous exact-head CI is complete (including the failure above), so the next action after recording this checkpoint is to recheck PR/remote SHA and push these local commits normally to the same branch. Update PR #534 with the new SHA and workflow IDs, then wait for Core/Companion/Camera Relay to pass before any further push.
 - No production, show data, Vault, physical output, firmware, or production ACL was touched. Keep Project ACL disabled, do not load the production-like Pi for performance tests, and keep PR #534 Draft.
 
+## Resume update — 2026-11-14 13:28 UTC · pushed SC-010 and SC-017 fix
+
+- Pushed four commits normally to existing branch/PR #534 after the completed `cf4f3ba` CI failure was diagnosed and locally fixed: `ef98830` checkpoint, `772bade` reduced-browser shell guard, `151d4f1` SC-010 descriptions and migration 62, and `fd740b8` this campaign checkpoint. Local and remote `integration/stagecore-rc` now match at `fd740b88a12d90a4874eff1fb69fc097b54ab330`; worktree was clean before this note. PR remains OPEN/DRAFT and its body now includes SC-010, SC-016, SC-017, SC-019 and current check links.
+- The completed `cf4f3ba` Core failure was the browser harness TypeError at `setShowSessionPresentation` because its temporary page does not include the app shell. The null guard is committed and the Chrome-backed browser test passes locally.
+- Current exact-head workflows are in progress for `fd740b8`: Core `43599903021`, Companion `43599903035`, and Camera Relay `43599903018`. Do not push any further commits while they run; inspect all outcomes and refresh PR/remote SHA before the next push.
+- SC-010 adds optional 280-character preset descriptions through Store/API and Cue Studio, searches and displays descriptions as text, and preserves the empty default for old rows. The main acceptance is project-scoped use; shared/cross-Project library import remains optional later work in Issue #489. Local API, migration, Store/schema, HTTP Race, Vet, Node 72/72, JS syntax and diff checks passed.
+- No production services/data/Vault, physical device commands, firmware, or production ACL changed. Pi 4 performance is still pending a safe isolated target; production ACL stays disabled and the PR stays Draft.
+- Next task: wait for all exact-head `fd740b8` checks. Once green, move to the next reproducible software gap or an isolated browser fixture if available, validate locally, update the matrix/handoff and push only to this existing PR.
+
 ## Resume update — 2026-11-14 12:40 UTC · SC-019 reversible approval evidence
 
 - Commit `e457922955124e86f8a3e6455f6246b05bc8951e` extends the existing timing approval regression: it records raw timing observations before approval, repeats INCLUDE while the Rehearsal is active, verifies the active candidate remains pending, then verifies learning after stop and reversibility through AUTO/EXCLUDE. It asserts the complete raw observation records are identical before and after all selection changes. No production implementation change was necessary; the completion matrix now records the verified test evidence.
