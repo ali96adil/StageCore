@@ -33,6 +33,7 @@ const f001Arabic = {
   "Security": "الأمان",
   "Sign out": "تسجيل الخروج",
   "Refresh": "تحديث",
+  "Download report": "تنزيل التقرير",
   "Continue": "متابعة",
   "Cancel": "إلغاء",
   "Clear": "مسح",
