@@ -3473,3 +3473,23 @@ This entry supersedes the preceding push instruction.
   real devices, or firmware were touched. No force push or merge. After the
   docs push, follow the exact-head Core/Companion/Relay CI and wait for Core
   Race/ARM64 before another push.
+
+## Resume update — 2026-11-14 22:09 UTC · 32-Cue STOP regression
+
+- Remote and PR #534 are at `b3a4be153f4c6ee909f29196c14480cbfe26bfa3`,
+  OPEN/Draft. Core run `43645947408` is exact-head: Go 1.27 passed and Go 1.26
+  Race is in progress after its full Test step passed. Companion
+  `43645947414` and Camera Relay `43645947412` passed on this head. Do not push
+  until Core Race and ARM64 finish.
+- Added `TestStopCancels32OverlappingDelayedCues` locally to match the highest
+  measured STOP concurrency. It launches 32 Rehearsal GO requests against
+  60-second simulator delays, invokes STOP, and asserts 32 cancelled command
+  results plus 32 persisted terminal Cue executions. Focused normal and Race
+  tests both pass; `go vet ./internal/runtimecontrol` and `git diff --check`
+  pass. This is a regression test only; no runtime implementation changed.
+- Added the test evidence to the performance report. The test uses the existing
+  simulator-only registry and no real outputs. Production ACL stays disabled;
+  production services/data/Vault, devices, and firmware remain untouched.
+- Next: let run `43645947408` complete, recheck branch/PR/CI exact heads, commit
+  the STOP regression and report/Handoff update, then push normally to #534.
+  Follow all checks at the new SHA before starting another push.

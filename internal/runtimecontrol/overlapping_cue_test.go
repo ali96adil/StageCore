@@ -201,6 +201,67 @@ func TestStopCancelsEveryOverlappingDelayedCue(t *testing.T) {
 	}
 }
 
+func TestStopCancels32OverlappingDelayedCues(t *testing.T) {
+	const activeCues = 32
+	policies := make([]json.RawMessage, activeCues)
+	parameters := make([]json.RawMessage, activeCues)
+	for i := range activeCues {
+		policies[i] = json.RawMessage(`{"start_delay_ms":60000}`)
+		parameters[i] = json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`)
+	}
+	h := newRuntimeHarnessWithPolicies(t, policies, parameters...)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: runtimeControlBenchID(91001),
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	goResults := make(chan contracts.CommandResult, activeCues)
+	for i := range activeCues {
+		requestID := runtimeControlBenchID(91100 + i)
+		go func() {
+			goResults <- h.service.Go(ctx, CueRequest{
+				SessionID: session.ID, Issuer: "owner", RequestID: requestID,
+			})
+		}()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(h.service.activeRunsForSession(session.ID)) != activeCues {
+		if time.Now().After(deadline) {
+			t.Fatalf("active delayed Cues=%d want=%d", len(h.service.activeRunsForSession(session.ID)), activeCues)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	stop := h.service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: runtimeControlBenchID(91201),
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP all %d delayed Cues=%+v", activeCues, stop)
+	}
+	for range activeCues {
+		select {
+		case result := <-goResults:
+			if result.Status != contracts.CommandCancelled {
+				t.Fatalf("GO after STOP=%+v, want CANCELLED", result)
+			}
+		case <-ctx.Done():
+			t.Fatalf("not all %d delayed Cues terminated after STOP: %v", activeCues, ctx.Err())
+		}
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != activeCues {
+		t.Fatalf("persisted Cue executions=%d want=%d err=%v", len(executions), activeCues, err)
+	}
+	for _, execution := range executions {
+		if execution.Result != domain.ExecutionCancelled || execution.CompletedAt == nil {
+			t.Errorf("STOP did not persist terminal cancellation: %+v", execution)
+		}
+	}
+}
+
 func TestEmergencyBlackoutDispatchesThenWaitsForEveryOverlappingCue(t *testing.T) {
 	h := newRuntimeHarness(t, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	ctx := context.Background()
