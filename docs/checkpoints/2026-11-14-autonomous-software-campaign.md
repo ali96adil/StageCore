@@ -2218,3 +2218,31 @@ This entry supersedes the preceding push instruction.
 - PR #534 remains OPEN/DRAFT at the remote SHA. Its body now reflects that
   exact SHA and links those workflow runs. The next push is the accumulated
   local batch to the existing branch only after run `43608326253` completes.
+
+## Resume update — 2026-11-14 15:46 UTC · 123-Cue and SC-024 browser batch pushed
+
+- After exact-head CI `43608326253` completed green for Core Go 1.26/1.27,
+  Race and Linux ARM64 builds, and after Companion/Camera Relay also passed,
+  pushed the six-commit batch normally to the existing branch and Draft PR
+  #534. New exact Local/Remote/PR HEAD is
+  `5b6e1e356f0a02395a2630962a1695df0ba70707`; no force push or merge.
+- The six commits add real-Chrome coverage for 123-Cue search/filter/Inspector
+  traversal and the prepared Owner grant editor; add the grant browser test to
+  Core CI's Browser Cue Delivery allowlist; update SC-012/SC-014/SC-024 and
+  cross-component matrices; and record checkpoints. The PR body was updated at
+  this HEAD with the evidence, local test results, and exact workflow links.
+- Local checks before push: full Chrome-enabled `go test ./internal/httpapi
+  -count=1` passed in 70.511s; the focused grant Chrome test passed normally
+  and under Race; `node --test tests/cue_list_filters.test.js` passed 5/5;
+  `node --test tests/security_project_access.test.js` passed 8/8; `go vet
+  ./internal/httpapi`, both browser-script syntax checks, workflow YAML parse,
+  and diff checks passed.
+- New exact-head CI at `5b6e1e3`: Core `43611749231` remains in progress;
+  Companion `43611749229` and Camera Relay `43611749232` passed. Updated the PR
+  body to reflect the current statuses. Wait for Core before another source
+  push. Current PR is OPEN/DRAFT.
+- SC-024 remains only prepared in qualification assembly; Production ACL is
+  not enabled. No production service/data/Vault access, physical device output,
+  firmware flash, or hardware performance run occurred. Pi 4 remains blocked
+  on verified isolated access. Continue with an evidence-backed software gap
+  while CI runs, but preserve this exact-head gate.
