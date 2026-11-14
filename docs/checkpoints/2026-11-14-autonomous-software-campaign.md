@@ -2379,3 +2379,25 @@ This entry supersedes the preceding push instruction.
   Pi 4 performance still needs verified isolated access. Next independent
   software batch: audit SC-024 grant/revoke behavior and route/session fences
   with temporary stores only; keep production ACL disabled.
+
+## Resume update — 2026-11-14 16:35 UTC · post-push CI and linked PR audit
+
+- Normal Push completed: remote `integration/stagecore-rc` and PR #534 now
+  point to `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3` (SC-016 batch
+  `bce7bc5` plus this checkpoint). Core run `43616028757`, Companion Core
+  `43616028766`, and Camera Relay CI `43616028829` started on that exact SHA
+  and are in progress. Do not push another HEAD until these checks complete.
+- Read-only linked PR audit: TabletPlayer #36 is OPEN/DRAFT, CLEAN, with Android
+  CI green at `91613da`; DMX Lighting #39 is OPEN/DRAFT, CLEAN, all six host/
+  firmware jobs green at `3ad7749`; Camera #20 is OPEN/DRAFT, CLEAN, hardware-
+  probe CI green at `455b066`; StageLaser #56 is OPEN/DRAFT, CLEAN, host and
+  no-actuation firmware CI green at `b14a578`; StageLaser #57 is OPEN, CLEAN,
+  host and no-actuation firmware CI green at `c4ff10b`. These PRs were not
+  modified. Their remaining physical acceptance is not inferred from CI.
+- SC-024 route inventory/dynamic registration tests and the production-shaped
+  isolated ACL assembly were inspected. The matrix already records route
+  classification, delayed-dispatch fences, independent STOP/Blackout grants,
+  Companion/session/upload scope, and explicitly pending full cutover review;
+  no concrete safe missing behavior was identified in this read-only audit.
+  Production ACL remains unassembled and disabled. Continue only with a
+  reproducible, testable software gap.
