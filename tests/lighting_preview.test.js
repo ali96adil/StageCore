@@ -371,12 +371,15 @@ test("Cue Studio draft history bounds checkpoints and discards redo on a new edi
   assert.equal(history.move(-1), "two");
 });
 
-test("Cue Studio history restores original action IDs and unknown Snapshot fields", () => {
+test("Cue Studio history undoes and redoes mixed Action order, policies, links and unknown fields", () => {
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
   const first = source.indexOf("function createDraftHistory");
   const last = source.indexOf("function bindDraftHistory", first);
   const fields = new Map();
-  let actions = [{action_id:"existing-id", execution_mode:"PARALLEL", parameters:{legacy_extension:{value:42}}, timeout_policy:{future_key:3}}];
+  let actions = [
+    {action_id:"existing-osc", order_index:0, execution_mode:"PARALLEL_BARRIER", target_ref:"VDMX", capability_key:"osc.send", parameters:{address:"/cue/start", legacy_extension:{value:42}}, timeout_policy:{start_delay_ms:75, future_key:3}, error_policy:{on_error:"CONTINUE", retry_before_dispatch:true}, priority_class:"P1", enabled:true},
+    {action_id:"existing-midi", order_index:1, execution_mode:"SEQUENTIAL", target_ref:"ABLETON", capability_key:"midi.send", parameters:{bytes:[144,60,100], legacy_mapping:{value:"stable"}}, timeout_policy:{timeout_ms:900}, error_policy:{on_error:"FAIL_CUE"}, priority_class:"P2", enabled:true},
+  ];
   const links = [{value:"child", checked:true}];
   const context = {
     pick(id) {
@@ -405,19 +408,34 @@ test("Cue Studio history restores original action IDs and unknown Snapshot field
   assert.notEqual(baseline, null);
   draft.draftHistory.reset(baseline);
   links[0].checked = false;
-  actions = [{action_id:"replacement", parameters:{}}];
+  actions = [
+    {action_id:"existing-midi", order_index:0, execution_mode:"PARALLEL", target_ref:"ABLETON", capability_key:"midi.send", parameters:{bytes:[144,64,88], legacy_mapping:{value:"edited"}}, timeout_policy:{timeout_ms:1100}, error_policy:{on_error:"CONTINUE"}, priority_class:"P2", enabled:false},
+    {action_id:"new-action", order_index:1, execution_mode:"SEQUENTIAL", target_ref:"LIGHTING", capability_key:"lighting.channels.fade", parameters:{levels:{warm:35}, fade_ms:400}, timeout_policy:{start_delay_ms:20}, error_policy:{}, priority_class:"P1", enabled:true},
+  ];
   fields.get("cueStartDelaySeconds").value = "0";
   fields.get("f018CueAt").value = "";
   draft.restoreDraftHistory(-1);
-  assert.equal(actions[0].action_id, "existing-id");
-  assert.equal(actions[0].execution_mode, "PARALLEL");
+  assert.deepEqual(actions.map(action => action.action_id), ["existing-osc", "existing-midi"]);
+  assert.deepEqual(actions.map(action => action.capability_key), ["osc.send", "midi.send"]);
+  assert.equal(actions[0].execution_mode, "PARALLEL_BARRIER");
   assert.equal(actions[0].parameters.legacy_extension.value, 42);
   assert.equal(actions[0].timeout_policy.future_key, 3);
+  assert.equal(actions[0].timeout_policy.start_delay_ms, 75);
+  assert.equal(actions[0].error_policy.retry_before_dispatch, true);
+  assert.equal(actions[1].parameters.legacy_mapping.value, "stable");
+  assert.equal(actions[1].enabled, true);
   assert.equal(fields.get("cueStartDelaySeconds").value, "1.25");
   assert.equal(links[0].checked, true);
   assert.equal(fields.get("f018CueAt").value, "00:02:03:04");
   draft.restoreDraftHistory(1);
-  assert.equal(actions[0].action_id, "replacement");
+  assert.deepEqual(actions.map(action => action.action_id), ["existing-midi", "new-action"]);
+  assert.deepEqual(actions.map(action => action.capability_key), ["midi.send", "lighting.channels.fade"]);
+  assert.equal(actions[0].parameters.bytes[1], 64);
+  assert.equal(actions[0].enabled, false);
+  assert.equal(actions[1].timeout_policy.start_delay_ms, 20);
+  assert.equal(fields.get("cueStartDelaySeconds").value, "0");
+  assert.equal(links[0].checked, false);
+  assert.equal(fields.get("f018CueAt").value, "");
 });
 
 test("Cue Inspector dry-run plans saved actions and diagnoses invalid links without dispatch", () => {
