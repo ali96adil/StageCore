@@ -45,3 +45,10 @@ test("runtime active execution panel lists each running Cue and execution ID", (
   assert.match(html, /exec-b/);
   assert.equal((html.match(/class="runtime-active-execution"/g) || []).length, 2);
 });
+
+test("operator STOP controls say STOP ALL CUES when targeting every active execution", () => {
+  assert.match(app, /id="stopCueButton"[^>]*>STOP ALL CUES/);
+  assert.match(app, /id="cueCheckStopButton"[^>]*>STOP ALL CUES/);
+  assert.match(app, /STOP ALL CUES interrupts every active Cue in this Session/);
+  assert.doesNotMatch(app, /STOP CUE interrupts ALL active Cues/);
+});

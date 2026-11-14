@@ -604,7 +604,7 @@ async function renderCues(message = "", messageKind = "success") {
         ${pill(runtimeMode, runtimeMode === "SHOW" ? "bad" : runtimeMode === "REHEARSAL" ? "good" : "neutral")}
       </div>
       <div class="toolbar" style="margin-top:12px">
-        <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP CUE</button>
+        <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP ALL CUES</button>
         <button id="cueCheckBlackoutButton" class="button danger" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">BLACKOUT</button>
         <button id="cueCheckClearButton" class="button ghost" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">CLEAR BLACKOUT</button>
         <button id="cueCheckOpenRuntime" class="button" type="button">Open Runtime</button>
@@ -761,7 +761,7 @@ async function testCueFromWorkspace(cueID) {
 }
 
 async function stopCueFromWorkspace() {
-  if (!confirm("Stop the currently running Cue? STOP CUE does not guarantee blackout.")) return;
+  if (!confirm("STOP ALL CUES interrupts every active Cue in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     if (!runtime.session) {
@@ -772,7 +772,7 @@ async function stopCueFromWorkspace() {
       method: "POST",
       json: { request_id: requestID() },
     });
-    await renderCues("Current Cue stop requested.");
+    await renderCues("STOP ALL CUES requested.");
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
@@ -1449,7 +1449,7 @@ async function renderRuntime(startPolling = false) {
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP ALL CUES</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
@@ -1463,7 +1463,7 @@ async function renderRuntime(startPolling = false) {
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
           ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopTablets" type="checkbox" value="${esc(active.session_id)}"> Stop tablet playback when ending this rehearsal</label>` : ""}
           ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopExternal" type="checkbox" value="${esc(active.session_id)}"> Run external STOP actions configured in this Snapshot</label>` : ""}
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP ALL CUES is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP ALL CUES interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -1570,7 +1570,7 @@ async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
 }
 
 async function stopCueRuntime() {
-  if (!confirm("STOP CUE interrupts ALL active Cues in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
+  if (!confirm("STOP ALL CUES interrupts every active Cue in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
