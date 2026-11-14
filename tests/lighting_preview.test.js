@@ -438,6 +438,49 @@ test("Cue Studio history undoes and redoes mixed Action order, policies, links a
   assert.equal(fields.get("f018CueAt").value, "");
 });
 
+test("Cue editor keyboard Undo/Redo shortcuts preserve native text-field history", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = source.indexOf("function bindDraftHistory");
+  const end = source.indexOf("function bindEditorRecovery", start);
+  const handlers = new Map();
+  const elements = new Map();
+  const deltas = [];
+  const form = {dataset: {}, addEventListener() {}};
+  const dialog = {open: true, addEventListener(type, handler) { handlers.set(type, handler); }};
+  const anchor = {after(button) { button.isConnected = true; elements.set(button.id, button); }};
+  const context = {
+    form, anchor,
+    pick(id) { return id === "cueDialog" ? dialog : id === "actionsEditor" ? {} : elements.get(id) || null; },
+    document: {createElement() { return {
+      isConnected: false, setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = value; },
+    }; }},
+    MutationObserver: class { observe() {} },
+    tr: (_ar, en) => en,
+    historyTimer: undefined,
+    clearTimeout() {},
+    setTimeout() { return 1; },
+    readDraftHistory: () => "current draft",
+    draftHistory: {reset() {}, current: () => "current draft", canMove: () => true},
+    recordDraftHistory() {},
+    refreshHistoryButtons() {},
+    restoreDraftHistory: (delta) => deltas.push(delta),
+  };
+  vm.runInNewContext(source.slice(start, end) + "\nbindDraftHistory(form, anchor);", context);
+  const dispatch = (values) => {
+    let prevented = false;
+    handlers.get("keydown")({...values, preventDefault() { prevented = true; }});
+    return prevented;
+  };
+  assert.equal(dispatch({code:"KeyZ", metaKey:true, target:{tagName:"DIV"}}), true);
+  assert.equal(dispatch({code:"KeyZ", ctrlKey:true, shiftKey:true, target:{tagName:"DIV"}}), true);
+  assert.equal(dispatch({code:"KeyY", metaKey:true, target:{tagName:"BUTTON"}}), true);
+  assert.equal(dispatch({code:"KeyZ", ctrlKey:true, target:{tagName:"TEXTAREA"}}), false);
+  assert.equal(dispatch({code:"KeyZ", ctrlKey:true, altKey:true, target:{tagName:"DIV"}}), false);
+  assert.deepEqual(deltas, [-1, 1, 1]);
+  assert.match(elements.get("sc009UndoDraft").attributes["aria-keyshortcuts"], /Meta\+Z/);
+  assert.match(elements.get("sc009RedoDraft").attributes["aria-keyshortcuts"], /Meta\+Shift\+Z/);
+});
+
 test("Cue Inspector dry-run plans saved actions and diagnoses invalid links without dispatch", () => {
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
   const start = source.indexOf("  function cueActionExecutionModeText(");

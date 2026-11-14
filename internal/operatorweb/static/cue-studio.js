@@ -733,6 +733,7 @@
       button.type = "button";
       button.className = "button ghost";
       button.textContent = label;
+      button.setAttribute("aria-keyshortcuts", delta < 0 ? "Control+Z Meta+Z" : "Control+Y Meta+Y Meta+Shift+Z Control+Shift+Z");
       button.onclick = () => restoreDraftHistory(delta);
       if (!button.isConnected) anchor.after(button);
     }
@@ -745,6 +746,19 @@
       form.addEventListener("input", schedule);
       form.addEventListener("change", schedule);
       new MutationObserver(schedule).observe(pick("actionsEditor"), {childList:true, subtree:true});
+      pick("cueDialog")?.addEventListener("keydown", (event) => {
+        if (!event || event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+        const target = event.target;
+        if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(String(target?.tagName || "").toUpperCase()) ||
+            target?.closest?.("input,textarea,select,[contenteditable='true']")) return;
+        const key = String(event.code || event.key || "").toLowerCase();
+        const isUndo = key === "keyz" || key === "z";
+        const isRedo = key === "keyy" || key === "y";
+        const delta = isUndo ? (event.shiftKey ? 1 : -1) : (isRedo ? 1 : 0);
+        if (!delta) return;
+        restoreDraftHistory(delta);
+        event.preventDefault();
+      });
       pick("cueDialog")?.addEventListener("close", (event) => {
         if (event.currentTarget.open) return;
         clearTimeout(historyTimer);
