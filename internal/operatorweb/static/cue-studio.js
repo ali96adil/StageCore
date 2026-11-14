@@ -148,6 +148,16 @@
     return null;
   }
 
+  function warnIfActionTargetUnavailable(action) {
+    const targets = state.f002Targets;
+    if (!Array.isArray(targets)) return;
+    const targetRef = String(action?.target_ref || "").trim();
+    if (targetRef && targets.some((target) => String(target.logical_name || "").trim() === targetRef)) return;
+    setMessage(globalMessage,
+      tr("الهدف غير متاح في إعدادات هذا المشروع. أضف الهدف أو أعد تعيينه قبل الاعتماد على هذا الكيو.", "Target is not available in this Project configuration. Add or remap the target before relying on this Cue."),
+      "warn");
+  }
+
   function copyActionToClipboard(card) {
     if (!state.user || !state.project?.project_id) return;
     try {
@@ -163,6 +173,7 @@
   function pasteClipboardAction() {
     const action = clipboardAction();
     if (!action) return;
+    warnIfActionTargetUnavailable(action);
     addActionEditor(structuredClone(action));
     const inserted = actionCards().at(-1);
     actionCards().forEach((item) => expandCard(item, item === inserted));

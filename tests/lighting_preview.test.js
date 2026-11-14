@@ -105,13 +105,17 @@ test("Cue Studio action clipboard stays in the current project and user session"
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
   const first = source.indexOf("function serializeActionCopy");
   const last = source.indexOf("function duplicateCard", first);
-  const state = { user: {}, project: { project_id: "project-a" } };
+  const state = { user: {}, project: { project_id: "project-a" }, f002Targets: [] };
+  let targetWarning;
   let pasted;
   const context = {
     state, structuredClone,
     f002SyncActionCard() {},
     cardField: (card, field) => card[field],
+    tr: (_arabic, english) => english,
     pick: () => null,
+    globalMessage: {},
+    setMessage: (_target, message, kind) => { targetWarning = {message, kind}; },
     addActionEditor: (action) => { pasted = action; },
     actionCards: () => [], refreshActions() {},
   };
@@ -125,16 +129,31 @@ test("Cue Studio action clipboard stays in the current project and user session"
     ".action-capability": { value: "osc.send" },
     ".action-parameters": { value: '{"address":"/screen","custom":true}' },
     ".action-timeout": { value: '{"start_delay_ms":120}' },
+    ".action-error": { value: '{"retry_before_dispatch":true}' },
+    ".action-mode": { value: "PARALLEL_BARRIER" },
+    ".action-priority": { value: "P0" },
+    ".action-enabled": { checked: false },
   };
   clipboard.copyActionToClipboard(card);
   clipboard.pasteClipboardAction();
+  assert.equal(targetWarning.kind, "warn");
+  assert.match(targetWarning.message, /target.*not available/i);
   assert.equal(pasted.action_id, "");
   assert.equal(pasted.target_ref, "VDMX");
   assert.equal(pasted.parameters.custom, true);
   assert.equal(pasted.timeout_policy.start_delay_ms, 120);
+  assert.equal(pasted.error_policy.retry_before_dispatch, true);
+  assert.equal(pasted.execution_mode, "PARALLEL_BARRIER");
+  assert.equal(pasted.priority_class, "P0");
+  assert.equal(pasted.enabled, false);
   pasted.parameters.custom = false;
   clipboard.pasteClipboardAction();
   assert.equal(pasted.parameters.custom, true);
+  state.f002Targets = [{ logical_name: "VDMX" }];
+  targetWarning = undefined;
+  clipboard.copyActionToClipboard(card);
+  clipboard.pasteClipboardAction();
+  assert.equal(targetWarning, undefined, "configured targets should not raise an availability warning");
   pasted = undefined;
   state.project = { project_id: "project-b" };
   clipboard.pasteClipboardAction();
