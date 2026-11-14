@@ -70,28 +70,31 @@ matrix:
 | [#483](https://github.com/ali96adil/StageCore/issues/483), [#459](https://github.com/ali96adil/StageCore/issues/459) | Cue-authoring freeze and peripheral-before-Hub rollout tracker; both describe deployed-source, verified-backup, compatibility and attended acceptance gates. | **Release / operational gates.** Green CI and this experimental branch do not authorize production authoring, rollout, or device updates. Preserve source pins, independent backups, current Snapshots, and all physical outputs until explicit acceptance. |
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 
-## Current campaign checkpoint — 2026-11-14 16:50 UTC
+## Current campaign checkpoint — 2026-11-14 16:58 UTC
 
 Draft PR #534 remains OPEN on `integration/stagecore-rc`. The verified remote
 branch and PR head are `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3`. Core CI run
-`43616028757` is still active on its Go 1.26 Race job; Go 1.27 passed. Companion
-Core `43616028766` and Camera Relay `43616028829` passed on that exact remote
-SHA. Do not push until Core completes, then recheck both remote and PR heads.
+`43616028757` completed successfully on that exact SHA, including Go 1.26/1.27,
+Race, Browser Cue Delivery and Linux ARM64 CGo-free builds. Companion Core
+`43616028766` and Camera Relay `43616028829` also passed. Recheck both remote
+and PR heads immediately before pushing.
 
-Local code HEAD before this checkpoint update is `4f9417695034850166f922250b83ab58a1efdbdc`,
-seven commits ahead of remote. It includes the StageAudio fake-process and
-missing-binary tests, Show Capsule target-alias remapping coverage, and a
-SQLite/Vault reopen integrity regression. Focused Show Capsule normal/Race/Vet
-and Vault package normal/Race/Vet checks passed. The worktree was clean before
-this checkpoint edit. The qualification SSH alias timed out during banner
-exchange; no remote command ran, so Pi 4 P95/P99, jitter, CPU/RAM and sustained
-ARM64 performance remain unqualified. Do not infer them from Mac results or
-cross-builds.
+Local code HEAD before this checkpoint update is
+`5d227167ecbb24cc8065a13f9b3bd2a052cb2fc8`, nine commits ahead of remote. It
+includes StageAudio fake-process and missing-binary coverage, Show Capsule
+alias target-remapping coverage, SQLite/Vault reopen integrity coverage, and a
+Project duplicate fix that remaps only recognized identity fields while
+preserving coincidental UUID-valued filename/configuration strings. Focused
+tests passed; full `go test ./internal/store -count=1` passed, Race on the
+complete store package passed (177.107 s), and `go vet ./internal/store` passed.
+The qualification SSH alias timed out during banner exchange; no remote
+command ran, so Pi 4 performance remains unqualified. Do not infer it from Mac
+results or ARM64 cross-builds.
 
 Mac qualification already covers flat Mixed Cues, nested linked compound
 chains, 100-Cue/200-Action execution, scheduled actions, sustained rehearsal,
-STOP and Emergency Blackout; ACL-only timing is separate. Continue software
-work on reproducible gaps from the matrix while waiting for exact-head Core CI.
-Production Hub/Relay/data/Vault, real output and firmware remain untouched;
-production ACL stays disabled. Keep PR #534 in Draft and do not merge or
-force-push.
+STOP and Emergency Blackout; ACL-only timing is separate. The exact-head CI
+gate is clear: recheck remote/PR SHA, push the preserved commits normally, and
+monitor CI for the new exact head. Production Hub/Relay/data/Vault, real output
+and firmware remain untouched; production ACL stays disabled. Keep PR #534 in
+Draft and do not merge or force-push.

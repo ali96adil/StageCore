@@ -2477,3 +2477,32 @@ This entry supersedes the preceding push instruction.
   without force, monitor their CI, then continue the highest reproducible
   software gap from the completion matrix. Keep Project ACL production-off and
   PR #534 draft/unmerged.
+
+## Resume update — 2026-11-14 16:58 UTC · Project duplicate reference safety
+
+- Reproduced a concrete SC-023 copy bug before fixing it: Project duplication
+  recursively rewrote every JSON string equal to a cloned ID, including a
+  `filename` and an unrelated literal setting. Updated the traversal to remap
+  only recognized identity fields (`media_asset_id`, `content_version_id`,
+  `machine_role_id`, `live_source_id`); identity references still clone while
+  literal values remain unchanged. The Project duplicate regression proves
+  both behaviors.
+- `go test ./internal/store -run 'TestDuplicateProject' -count=1`, focused
+  duplicate Race tests, `go vet ./internal/store`, full
+  `go test ./internal/store -count=1`, and full `go test -race
+  ./internal/store -count=1` passed. The complete store Race run took 177.107 s.
+  `git diff --check` passed.
+- Core CI `43616028757` completed successfully on remote `e9ece08`; Go 1.26 and
+  Go 1.27 checks, Race, Browser Cue Delivery and Linux ARM64 CGo-free builds all
+  passed. Companion Core `43616028766` and Camera Relay `43616028829` passed on
+  the same exact head. Local code HEAD is `5d227167ecbb24cc8065a13f9b3bd2a052cb2fc8`,
+  nine commits ahead of remote. No push has occurred; worktree was clean before
+  this documentation update.
+- Before push, verify remote `integration/stagecore-rc` and PR #534 still point
+  to `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3`. If unchanged, push the
+  accumulated commits normally to the existing branch and monitor the exact
+  new-head Core/Companion/Camera checks. Never force-push.
+- The Pi qualification SSH alias still fails during banner exchange; no remote
+  command has run. Pi P95/P99, jitter, CPU/RAM, schedule load and sustained
+  rehearsal remain pending. No production service/data, real output, firmware,
+  or production ACL was touched.
