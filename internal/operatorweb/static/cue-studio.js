@@ -791,6 +791,7 @@
     localDiscard.id = "sc009LocalDiscard";
     localDiscard.textContent = tr("احذف المسودة المحلية", "Discard local draft");
     const localReview = document.createElement("textarea");
+    localReview.id = "sc009LocalReview";
     localReview.hidden = true;
     localReview.readOnly = true;
     localReview.setAttribute("aria-label", tr("تعديلات المسودة المحلية", "Local draft edits"));
@@ -896,6 +897,139 @@
     const lifetime = new AbortController();
     const active = () => dialog.open && state.user === user && state.project?.project_id === projectID && panel.isConnected;
     const message = (ar, en) => { if (active()) status.textContent = tr(ar, en); };
+    const checkpointsPath = `/api/v1/projects/${encodeURIComponent(projectID)}/cues/${encodeURIComponent(cueID)}/editor-checkpoints`;
+    const checkpointSection = document.createElement("details");
+    checkpointSection.id = "sc009NamedCheckpoints";
+    checkpointSection.hidden = !cueID;
+    const checkpointSummary = document.createElement("summary");
+    checkpointSummary.textContent = tr("نقاط حفظ المسودة", "Draft checkpoints");
+    const checkpointStatus = document.createElement("p");
+    checkpointStatus.className = "muted";
+    checkpointStatus.setAttribute("role", "status");
+    const checkpointName = document.createElement("input");
+    checkpointName.maxLength = 64;
+    checkpointName.placeholder = tr("اسم نقطة الحفظ", "Checkpoint name");
+    checkpointName.setAttribute("aria-label", checkpointName.placeholder);
+    const checkpointSave = document.createElement("button");
+    checkpointSave.type = "button";
+    checkpointSave.className = "button";
+    checkpointSave.textContent = tr("احفظ نقطة", "Save checkpoint");
+    const checkpointList = document.createElement("select");
+    checkpointList.setAttribute("aria-label", tr("نقاط الحفظ", "Saved checkpoints"));
+    const checkpointPreview = document.createElement("textarea");
+    checkpointPreview.hidden = true;
+    checkpointPreview.readOnly = true;
+    checkpointPreview.setAttribute("aria-label", tr("معاينة نقطة الحفظ", "Checkpoint preview"));
+    const checkpointRestore = document.createElement("button");
+    checkpointRestore.type = "button";
+    checkpointRestore.className = "button ghost";
+    checkpointRestore.hidden = true;
+    checkpointRestore.textContent = tr("استرجع إلى المحرر", "Restore into editor");
+    const checkpointDelete = document.createElement("button");
+    checkpointDelete.type = "button";
+    checkpointDelete.className = "button ghost";
+    checkpointDelete.hidden = true;
+    checkpointDelete.textContent = tr("احذف نقطة الحفظ", "Delete checkpoint");
+    checkpointSection.append(checkpointSummary, checkpointStatus, checkpointName,
+      checkpointSave, checkpointList, checkpointPreview, checkpointRestore, checkpointDelete);
+    panel.append(checkpointSection);
+    let checkpointRecords = [];
+    let selectedCheckpoint = null;
+    const checkpointCanRestore = (record) => {
+      const saved = record?.document;
+      const draft = saved?.draft;
+      return saved?.version === 1 && saved.cue_id === cueID &&
+        draft?.fields?.length === historyFields.length && Array.isArray(draft.links) &&
+        draft.links.every((id) => typeof id === "string") && Array.isArray(draft.actions) &&
+        draft.actions.every((action) => action && typeof action === "object" && !Array.isArray(action)) &&
+        (!draft.timecode || (Array.isArray(draft.timecode) && draft.timecode.length === timecodeFields.length));
+    };
+    const renderCheckpointSelection = () => {
+      selectedCheckpoint = checkpointRecords.find((record) => record.checkpoint_id === checkpointList.value) || null;
+      checkpointPreview.hidden = !selectedCheckpoint;
+      checkpointRestore.hidden = !selectedCheckpoint || !checkpointCanRestore(selectedCheckpoint);
+      checkpointDelete.hidden = !selectedCheckpoint;
+      checkpointPreview.value = selectedCheckpoint ? JSON.stringify(selectedCheckpoint.document?.draft, null, 2) : "";
+    };
+    const renderCheckpointList = (preferredID = "") => {
+      checkpointList.textContent = "";
+      checkpointRecords.forEach((record) => {
+        const option = document.createElement("option");
+        option.value = record.checkpoint_id;
+        option.textContent = `${record.name} · ${record.created_at}`;
+        checkpointList.append(option);
+      });
+      checkpointList.hidden = checkpointRecords.length === 0;
+      checkpointList.value = checkpointRecords.some((record) => record.checkpoint_id === preferredID) ?
+        preferredID : (checkpointRecords[0]?.checkpoint_id || "");
+      renderCheckpointSelection();
+    };
+    checkpointList.onchange = renderCheckpointSelection;
+    checkpointSave.onclick = async () => {
+      if (!active()) return;
+      const name = checkpointName.value.trim();
+      const current = readDraftHistory(true);
+      if (!name || !current) {
+        checkpointStatus.textContent = tr("أدخل اسماً وتأكد من صلاحية حقول المسودة.", "Enter a name and make sure the draft fields are valid.");
+        return;
+      }
+      checkpointSave.disabled = true;
+      try {
+        const created = await api(checkpointsPath, {
+          method: "POST", json: { name, document: recoveryDocument(current) },
+        });
+        if (!active()) return;
+        checkpointRecords = [created, ...checkpointRecords.filter((record) => record.checkpoint_id !== created.checkpoint_id)].slice(0, 20);
+        checkpointName.value = "";
+        renderCheckpointList(created.checkpoint_id);
+        checkpointStatus.textContent = tr("حُفظت نقطة المسودة. لم يتغير الكيو المنشور.", "Draft checkpoint saved. The authored Cue was not changed.");
+      } catch (_) {
+        if (active()) checkpointStatus.textContent = tr("تعذّر حفظ نقطة المسودة.", "Could not save the draft checkpoint.");
+      } finally {
+        checkpointSave.disabled = false;
+      }
+    };
+    checkpointRestore.onclick = () => {
+      if (!active() || !checkpointCanRestore(selectedCheckpoint)) return;
+      const current = readDraftHistory(true);
+      const stale = !compatible(selectedCheckpoint.document);
+      if ((stale || current !== base) && !window.confirm(tr(
+        stale ? "تغيّر الكيو منذ نقطة الحفظ. استرجاعها إلى المحرر؟" : "استبدال التعديلات الحالية بمسودة نقطة الحفظ؟",
+        stale ? "The Cue changed since this checkpoint. Restore it into the editor?" : "Replace the current edits with this checkpoint draft?",
+      ))) return;
+      applyEditorDraft(selectedCheckpoint.document.draft);
+      recordDraftHistory();
+      checkpointStatus.textContent = tr("استُرجعت المسودة في المحرر فقط. احفظ الكيو عند الجاهزية.", "Draft restored into the editor only. Save the Cue when ready.");
+    };
+    checkpointDelete.onclick = async () => {
+      if (!active() || !selectedCheckpoint || !window.confirm(tr("حذف نقطة الحفظ المحددة؟", "Delete this checkpoint?"))) return;
+      const deleting = selectedCheckpoint;
+      checkpointDelete.disabled = true;
+      try {
+        await api(`${checkpointsPath}/${encodeURIComponent(deleting.checkpoint_id)}`, { method: "DELETE" });
+        if (!active()) return;
+        checkpointRecords = checkpointRecords.filter((record) => record.checkpoint_id !== deleting.checkpoint_id);
+        renderCheckpointList();
+        checkpointStatus.textContent = tr("حُذفت نقطة الحفظ.", "Checkpoint deleted.");
+      } catch (_) {
+        if (active()) checkpointStatus.textContent = tr("تعذّر حذف نقطة الحفظ.", "Could not delete the checkpoint.");
+      } finally {
+        checkpointDelete.disabled = false;
+      }
+    };
+    const loadCheckpoints = async () => {
+      if (!cueID) return;
+      try {
+        const result = await api(checkpointsPath);
+        if (!active()) return;
+        checkpointRecords = Array.isArray(result.checkpoints) ?
+          result.checkpoints.filter((record) => record?.cue_id === cueID && record?.checkpoint_id && record?.name) : [];
+        renderCheckpointList();
+        if (checkpointRecords.length) checkpointStatus.textContent = tr("تُحفظ هذه النقاط لهذا المستخدم والكيو فقط.", "These checkpoints are saved for this user and Cue only.");
+      } catch (_) {
+        if (active()) checkpointStatus.textContent = tr("تعذّر تحميل نقاط الحفظ.", "Could not load checkpoints.");
+      }
+    };
     const clearRecovery = async () => {
       if (generation) {
         await api(path, { method: "DELETE", headers: { "If-Match": generation } });
@@ -1040,6 +1174,7 @@
       }
     }
     load();
+    loadCheckpoints();
   }
 
   function bindActionPresets(workspace) {

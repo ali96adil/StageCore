@@ -11,7 +11,7 @@ const binder = source.slice(source.indexOf("  function bindEditorRecovery("), so
 const draft = (value) => ({ fields: [value], links: [], actions: [] });
 const settle = () => new Promise(setImmediate);
 
-function openEditor({ storage, legacy = new Map(), base = "original", user = "owner", project = "project", cue = "cue", api }) {
+function openEditor({ storage, legacy = new Map(), base = "original", user = "owner", project = "project", cue = "cue", api, checkpointsAPI }) {
   const nodes = new Map();
   const timers = new Map();
   let current = draft(base);
@@ -58,7 +58,14 @@ function openEditor({ storage, legacy = new Map(), base = "original", user = "ow
       sessionStorage: webStorage(legacy),
       localStorage: webStorage(storage),
     },
-    api: api ?? (async () => { throw new TypeError("offline"); }),
+    api: async (path, options) => {
+      if (path.endsWith("/editor-checkpoints")) {
+        if (checkpointsAPI) return checkpointsAPI(path, options);
+        if (!options) return { checkpoints: [] };
+      }
+      if (api) return api(path, options);
+      throw new TypeError("offline");
+    },
     setTimeout(fn) { timers.set(++serial, fn); return serial; },
     clearTimeout(id) { timers.delete(id); },
     form, workspace: element(), cue: { cue_id: cue },
@@ -66,9 +73,10 @@ function openEditor({ storage, legacy = new Map(), base = "original", user = "ow
   vm.runInNewContext(binder + "\nbindEditorRecovery(form, cue, workspace);", ctx);
   const panel = nodes.get("sc009EditorRecovery");
   return {
+    panel,
     local: panel.children.find((child) => child.id === "sc009LocalRestore"),
     discard: panel.children.find((child) => child.id === "sc009LocalDiscard"),
-    review: panel.children.at(-1),
+    review: panel.children.find((child) => child.id === "sc009LocalReview"),
     choices: panel.children[4],
     close() { dialog.open = false; dialog.close(); },
     value: () => current.fields[0],
@@ -236,4 +244,56 @@ test("account switch during a pending recovery write retains only the original a
   const reopened = openEditor({ storage });
   reopened.local.onclick();
   assert.equal(reopened.value(), "owner's unsent Cue");
+});
+
+test("named checkpoint previews and restores to the editor without saving the Cue", async () => {
+  const storage = new Map();
+  const calls = [];
+  const editor = openEditor({ storage, async api(path, options) {
+    calls.push({ path, method: options?.method || "GET" });
+    if (!options) return { generation: "" };
+    return { generation: "" };
+  }, async checkpointsAPI(path, options) {
+    calls.push({ path, method: options?.method || "GET", json: options?.json });
+    if (!options) return { checkpoints: [] };
+    if (options.method === "POST") return {
+      checkpoint_id: "checkpoint-1", cue_id: "cue", name: options.json.name,
+      created_at: "2026-11-14T00:00:00Z", document: options.json.document,
+    };
+    if (options.method === "DELETE") return {};
+    throw new Error("unexpected checkpoint request");
+  } });
+  await settle();
+  const section = editor.panel.children.find((child) => child.id === "sc009NamedCheckpoints");
+  assert.ok(section);
+  const [name, save, list, preview, restore, remove] = section.children.slice(2);
+  editor.edit("checkpoint rehearsal notes");
+  name.value = "Rehearsal pass 1";
+  await save.onclick();
+  assert.equal(list.value, "checkpoint-1");
+  assert.match(preview.value, /checkpoint rehearsal notes/);
+  assert.equal(restore.hidden, false);
+  editor.edit("later unsaved edit");
+  restore.onclick();
+  assert.equal(editor.value(), "checkpoint rehearsal notes");
+  assert.equal(calls.some((call) => call.method === "PUT" || call.path.endsWith("/cues/cue") && call.method === "POST"), false,
+    "restoring a checkpoint must not save the authored Cue");
+  await remove.onclick();
+  assert.equal(calls.some((call) => call.method === "DELETE" && call.path.endsWith("checkpoint-1")), true);
+  await settle();
+});
+
+test("late checkpoint list cannot populate a different Project editor", async () => {
+  const storage = new Map();
+  let resolveList;
+  const editor = openEditor({ storage, checkpointsAPI(_path, options) {
+    if (!options) return new Promise((resolve) => { resolveList = resolve; });
+    throw new Error("unexpected checkpoint write");
+  } });
+  await settle();
+  editor.switchProject("different-project");
+  resolveList({ checkpoints: [{ checkpoint_id: "stale", cue_id: "cue", name: "Stale", created_at: "now", document: { version: 1, cue_id: "cue", draft: draft("stale") } }] });
+  await settle();
+  const section = editor.panel.children.find((child) => child.id === "sc009NamedCheckpoints");
+  assert.equal(section.children[4].children.length, 0);
 });
