@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/pluginhost"
+	"github.com/ali96adil/StageCore/internal/pluginprotocol"
 )
 
 func TestOSCPluginCancellationIsTruthfulAndDoesNotReplay(t *testing.T) {
@@ -34,8 +36,38 @@ func TestOSCPluginCancellationIsTruthfulAndDoesNotReplay(t *testing.T) {
 	defer host.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(30*time.Millisecond, cancel)
-	result, err := host.Execute(ctx, request("exec-cancelled", port, 500))
+	defer cancel()
+	type executionResult struct {
+		result pluginprotocol.ExecutionResult
+		err    error
+	}
+	completed := make(chan executionResult, 1)
+	go func() {
+		result, err := host.Execute(ctx, request("exec-cancelled", port, 500))
+		completed <- executionResult{result: result, err: err}
+	}()
+	deadline := time.NewTimer(2 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+	for {
+		select {
+		case outcome := <-completed:
+			t.Fatalf("first execution completed before cancellation: result=%+v err=%v", outcome.result, outcome.err)
+		case <-ticker.C:
+			if _, err := os.Stat(marker); err == nil {
+				cancel()
+				goto waitForCancellation
+			}
+		case <-deadline.C:
+			cancel()
+			t.Fatal("plugin fault fixture did not begin its first execution")
+		}
+	}
+
+waitForCancellation:
+	outcome := <-completed
+	result, err := outcome.result, outcome.err
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v want context.Canceled", err)
 	}

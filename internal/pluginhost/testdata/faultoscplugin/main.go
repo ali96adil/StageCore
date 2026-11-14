@@ -93,7 +93,7 @@ func applyFaultOnce() {
 	case "crash-once":
 		os.Exit(41)
 	case "hang-once":
-		select {}
+		time.Sleep(24 * time.Hour)
 	}
 }
 
