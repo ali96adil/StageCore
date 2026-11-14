@@ -52,6 +52,9 @@ func TestInjectTestRoutesToRealOSCAndPersistsTruthfulTrace(t *testing.T) {
 	command := injectCommand(t, f, json.RawMessage(`1`))
 	result := engine.InjectTest(context.Background(), f.session.ID, command)
 	if result.Status != contracts.CommandCompleted {
+		if result.Error != nil {
+			t.Fatalf("status=%s error=%#v", result.Status, *result.Error)
+		}
 		t.Fatalf("result=%#v", result)
 	}
 
