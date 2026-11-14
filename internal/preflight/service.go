@@ -102,7 +102,7 @@ type Service struct {
 	storage            *storagehealth.Monitor
 	connected          ConnectionCheck
 	inspectEnvironment EnvironmentInspection
-	readRTC func() (offlineclock.RTC, error)
+	readRTC            func() (offlineclock.RTC, error)
 	now                func() time.Time
 	heartbeatTimeout   time.Duration
 }
@@ -198,16 +198,16 @@ func (s *Service) evaluateRTC(report *Report) {
 	const key = "clock.offline_rtc"
 	rtc, err := s.readRTC()
 	if err != nil {
-		report.add(Warn, key, "clock", "Offline RTC evidence unavailable", "Check the local RTC with stagecore clock.", "")
+		report.add(Warn, key, "clock", "Offline RTC evidence unavailable", "Check the local RTC with stagecore clock and compare it with a trusted local time reference. Offline boot and local authentication timing remain unqualified.", "")
 		return
 	}
 	evidence := offlineclock.Evaluate(s.now(), rtc, time.Time{})
 	if !evidence.RTCAgrees {
-		report.add(Warn, key, "clock", "Hub clock and RTC disagree or are implausible", "Verify both against a fresh trusted local reference before rehearsal.", "")
+		report.add(Warn, key, "clock", "Hub clock and RTC disagree or are implausible", "Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail.", "")
 		return
 	}
 	if !evidence.RTCBootEvidence {
-		report.add(Warn, key, "clock", "RTC agrees but was not reported as the boot clock", "Verify disconnected cold boot before relying on the RTC.", "")
+		report.add(Warn, key, "clock", "RTC agrees but was not reported as the boot clock", "Check the local RTC with stagecore clock and verify an internet-disconnected cold boot; agreement after startup does not prove the RTC supplied boot time. A stale Hub clock can invalidate local sign-in and session checks.", "")
 		return
 	}
 	report.add(Pass, key, "clock", "RTC boot evidence and clock agreement observed", "Check absolute time separately against a fresh trusted reference.", "")

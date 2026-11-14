@@ -34,6 +34,7 @@ const f001Arabic = {
   "Sign out": "تسجيل الخروج",
   "Refresh": "تحديث",
   "Download report": "تنزيل التقرير",
+  "Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail.": "شغّل stagecore clock، ثم قارن ساعة Hub وRTC بمرجع وقت محلي موثوق (على الشبكة المحلية) قبل البروفة. إذا كانت ساعة Hub خارج صلاحية الرموز، فقد يفشل تسجيل الدخول المحلي والتحقق من الجلسات.",
   "Continue": "متابعة",
   "Cancel": "إلغاء",
   "Clear": "مسح",

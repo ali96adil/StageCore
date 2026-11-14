@@ -100,4 +100,5 @@ test("Preflight report export uses the already loaded result without a second AP
 
 test("the report download control has an Arabic label", () => {
   assert.match(localization, /"Download report": "تنزيل التقرير"/);
+  assert.ok(localization.includes("Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail."));
 });

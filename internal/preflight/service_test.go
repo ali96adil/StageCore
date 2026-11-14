@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,24 @@ func TestPreflightDefaultHeartbeatTimeoutAllowsHeartbeatJitter(t *testing.T) {
 	service := New(nil, nil, nil)
 	if got, want := service.heartbeatTimeout, 15*time.Second; got != want {
 		t.Fatalf("heartbeat timeout=%s, want %s", got, want)
+	}
+}
+
+func TestPreflightRTCDriftExplainsLocalAuthenticationImpactAndRemedy(t *testing.T) {
+	now := time.Date(2026, time.November, 14, 2, 0, 0, 0, time.UTC)
+	rtc := offlineclock.RTC{Time: now.Add(-time.Minute), UsedAtBoot: true}
+	service := New(nil, nil, nil, WithClock(func() time.Time { return now }))
+	WithOfflineRTC(func() (offlineclock.RTC, error) { return rtc, nil })(service)
+	report := Report{Checks: []Check{}}
+	service.evaluateRTC(&report)
+	if len(report.Checks) != 1 || report.Checks[0].Status != Warn {
+		t.Fatalf("RTC drift report=%+v", report.Checks)
+	}
+	detail := report.Checks[0].Detail
+	if !strings.Contains(detail, "stagecore clock") ||
+		!strings.Contains(detail, "token validity window") ||
+		!strings.Contains(detail, "local sign-in") {
+		t.Fatalf("RTC warning omits operator remedy or authentication impact: %q", detail)
 	}
 }
 
@@ -64,8 +83,8 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 		}},
 		RequiredMedia: []snapshot.RequiredMedia{{
 			MachineRoleID: role.ID, RoleKey: role.RoleKey,
-			MediaAssetID: "00000000-0000-7000-8000-000000000603",
-			ContentVersionID: "00000000-0000-7000-8000-000000000604",
+			MediaAssetID:      "00000000-0000-7000-8000-000000000603",
+			ContentVersionID:  "00000000-0000-7000-8000-000000000604",
 			ChecksumAlgorithm: "SHA256", ContentHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 4096, Required: true,
 		}},
@@ -307,7 +326,7 @@ func TestPreflightMIDIDestinationInventory(t *testing.T) {
 	report := Report{
 		Status: Pass,
 		Checks: []Check{},
-		Roles: []RoleStatus{{MachineRoleID: role.ID, CompanionID: companionState.ID}},
+		Roles:  []RoleStatus{{MachineRoleID: role.ID, CompanionID: companionState.ID}},
 	}
 	targets := map[string]snapshot.Target{role.RoleKey: baseManifest.Targets[0]}
 	service.evaluateMIDIDestinations(ctx, &report, baseManifest, targets)
