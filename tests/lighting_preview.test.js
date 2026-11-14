@@ -390,6 +390,58 @@ test("Cue Studio copies selected Mixed-Cue actions in order as independent copie
   assert.deepEqual(inserted.slice(4).map((action) => action.action_id), ["", ""]);
 });
 
+test("Cue Studio applies a cross-Project target map to every copied action", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function serializeActionCopy");
+  const last = source.indexOf("function duplicateCard", first);
+  const events = [];
+  const EventStub = class {
+    constructor(type, options) { this.type = type; this.bubbles = options?.bubbles; }
+  };
+  const makeCard = (target, pickerValues = []) => {
+    const input = {
+      value: target,
+      dispatchEvent: (event) => events.push([target, "input", event.type]),
+    };
+    const picker = pickerValues.length ? {
+      value: target,
+      options: pickerValues.map((value) => ({ value })),
+      dispatchEvent(event) {
+        events.push([target, "picker", event.type]);
+        if (event.type === "change") input.value = this.value;
+      },
+    } : null;
+    return {
+      isConnected: true,
+      querySelector(selector) {
+        if (selector === ".action-target") return input;
+        if (selector === ".sc008-target-picker") return picker;
+        return null;
+      },
+      input,
+      picker,
+    };
+  };
+  const clipboard = vm.runInNewContext(
+    "let actionClipboard = null; " + source.slice(first, last) +
+    "({applyCrossProjectTargetMap})",
+    { cardField: (card, selector) => card.querySelector(selector), Event: EventStub },
+  );
+  const cards = [
+    makeCard("OLD-LIGHT", ["OLD-LIGHT", "STAGE-LIGHT"]),
+    makeCard("OLD-LIGHT", ["OLD-LIGHT", "STAGE-LIGHT"]),
+    makeCard("VDMX"),
+  ];
+  assert.equal(clipboard.applyCrossProjectTargetMap(cards, {
+    "OLD-LIGHT": "STAGE-LIGHT",
+    "VDMX": "",
+  }), 2);
+  assert.equal(cards[0].input.value, "STAGE-LIGHT");
+  assert.equal(cards[1].input.value, "STAGE-LIGHT");
+  assert.equal(cards[2].input.value, "VDMX", "an unselected mapping leaves its action unchanged");
+  assert.deepEqual(events.map((entry) => entry[2]), ["change", "change"]);
+});
+
 test("raw preview values copy only through unique representable logical channels", () => {
   const source = fs.readFileSync("internal/operatorweb/static/lighting-authoring.js", "utf8");
   const first = source.indexOf("function previewDMXByte");

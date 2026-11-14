@@ -17,6 +17,7 @@
   const cardField = (card, selector) => card.querySelector(selector);
   let initialFormState = "";
   let actionClipboard = null;
+  let crossProjectPastedCards = [];
 
   function safeObject(raw) {
     try { return JSON.parse(raw || "{}"); } catch (_) { return {}; }
@@ -167,6 +168,13 @@
         ? tr(`لصق ${actions.length} إجراءات`, `Paste ${actions.length} actions`)
         : tr("لصق إجراء", "Paste action");
     }
+    const mapTargets = pick("sc008MapCopiedTargets");
+    if (mapTargets) {
+      const hasTargets = crossProjectPastedCards.some((card) =>
+        String(cardField(card, ".action-target")?.value || "").trim());
+      mapTargets.disabled = !hasTargets || !(state.f002Targets || []).some((target) =>
+        String(target?.logical_name || "").trim());
+    }
   }
 
   function warnIfActionTargetUnavailable(action) {
@@ -238,9 +246,112 @@
       addActionEditor(structuredClone(action));
     }
     const inserted = actionCards().slice(-actions.length);
+    crossProjectPastedCards = crossProject ? inserted : [];
     actionCards().forEach((item) => expandCard(item, item === inserted.at(-1)));
     refreshActions();
     inserted.at(-1)?.querySelector(".sc008-expand")?.focus();
+  }
+
+  function applyCrossProjectTargetMap(cards, mapping) {
+    let changed = 0;
+    for (const card of cards || []) {
+      const input = cardField(card, ".action-target");
+      const source = String(input?.value || "").trim();
+      const destination = String(mapping?.[source] || "").trim();
+      if (!input || !source || !destination) continue;
+      const picker = cardField(card, ".sc008-target-picker");
+      if (picker && Array.from(picker.options || []).some((option) => option.value === destination)) {
+        picker.value = destination;
+        picker.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        input.value = destination;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      changed++;
+    }
+    return changed;
+  }
+
+  function showCrossProjectTargetMapDialog() {
+    const cards = crossProjectPastedCards.filter((card) => card?.isConnected !== false);
+    const sourceTargets = [...new Set(cards.map((card) =>
+      String(cardField(card, ".action-target")?.value || "").trim()).filter(Boolean))];
+    const destinationTargets = [...new Set((state.f002Targets || []).map((target) =>
+      String(target?.logical_name || "").trim()).filter(Boolean))];
+    if (!sourceTargets.length || !destinationTargets.length) return;
+
+    pick("sc008TargetMapDialog")?.remove();
+    const dialog = document.createElement("dialog");
+    dialog.id = "sc008TargetMapDialog";
+    dialog.className = "dialog sc008-target-map-dialog";
+    dialog.setAttribute("aria-labelledby", "sc008TargetMapTitle");
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const heading = document.createElement("div");
+    heading.className = "dialog-head";
+    const title = document.createElement("h2");
+    title.id = "sc008TargetMapTitle";
+    title.textContent = tr("تعيين أهداف الإجراءات المنسوخة", "Map copied action targets");
+    heading.append(title);
+    const guidance = document.createElement("p");
+    guidance.textContent = tr(
+      "اختر هدف هذا المشروع لكل هدف مصدر. هذا يغيّر مسودة الإجراءات فقط؛ راجع توافق الإجراء والهدف قبل النشر.",
+      "Choose a target in this Project for each source target. This only changes the Draft; verify action and target compatibility before publishing.",
+    );
+    form.append(heading, guidance);
+
+    const selects = new Map();
+    for (const source of sourceTargets) {
+      const label = document.createElement("label");
+      label.className = "sc008-target-map-row";
+      const sourceName = document.createElement("span");
+      sourceName.textContent = source;
+      const select = document.createElement("select");
+      select.required = true;
+      select.setAttribute("aria-label", tr(`هدف المشروع لهذا الإجراء: ${source}`, `Destination target for ${source}`));
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = tr("اختر هدفاً معرفاً…", "Choose a configured target…");
+      select.append(placeholder);
+      for (const destination of destinationTargets) {
+        const option = document.createElement("option");
+        option.value = destination;
+        option.textContent = destination;
+        select.append(option);
+      }
+      if (destinationTargets.includes(source)) select.value = source;
+      label.append(sourceName, select);
+      form.append(label);
+      selects.set(source, select);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "dialog-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "button ghost";
+    cancel.textContent = tr("إلغاء", "Cancel");
+    cancel.addEventListener("click", () => dialog.close());
+    const apply = document.createElement("button");
+    apply.type = "submit";
+    apply.className = "button primary";
+    apply.textContent = tr("تطبيق على المسودة", "Apply to Draft");
+    actions.append(cancel, apply);
+    form.append(actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const mapping = Object.fromEntries([...selects].map(([source, select]) => [source, select.value]));
+      applyCrossProjectTargetMap(cards, mapping);
+      crossProjectPastedCards = [];
+      refreshActions();
+      dialog.close();
+    });
+    dialog.append(form);
+    document.body.append(dialog);
+    dialog.showModal();
+    selects.values().next().value?.focus();
   }
 
   function duplicateCard(card) {
@@ -1483,6 +1594,14 @@
     paste.disabled = !clipboardAction();
     paste.onclick = pasteClipboardAction;
     if (!paste.isConnected) addButton?.after(paste);
+    const mapTargets = pick("sc008MapCopiedTargets") || document.createElement("button");
+    mapTargets.id = "sc008MapCopiedTargets";
+    mapTargets.className = "button ghost";
+    mapTargets.type = "button";
+    mapTargets.textContent = tr("تعيين أهداف النسخ", "Map copied targets");
+    mapTargets.disabled = true;
+    mapTargets.onclick = showCrossProjectTargetMapDialog;
+    if (!mapTargets.isConnected) paste.after(mapTargets);
     const copySelected = pick("sc008CopySelectedActions") || document.createElement("button");
     copySelected.id = "sc008CopySelectedActions";
     copySelected.className = "button ghost";
@@ -1490,7 +1609,7 @@
     copySelected.textContent = tr("نسخ المحدد للكيوهات", "Copy selected to other Cues");
     copySelected.disabled = true;
     copySelected.onclick = copySelectedActionsToClipboard;
-    if (!copySelected.isConnected) paste.after(copySelected);
+    if (!copySelected.isConnected) mapTargets.after(copySelected);
     const optional = createOptionalDetails(form);
     if (!optional.isConnected) workspace.after(optional);
     optional.open = !!(cue?.notes_summary || cue?.criticality === "CRITICAL" ||

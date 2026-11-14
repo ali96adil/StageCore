@@ -123,6 +123,19 @@
   border: 1px solid var(--line);
 }
 .sc008-dialog .sc008-action-card:focus-within { border-color: var(--accent); }
+
+.sc008-target-map-dialog {
+  width: min(620px, calc(100vw - 24px));
+  max-height: min(80dvh, 720px);
+  overflow: auto;
+}
+.sc008-target-map-dialog form { display: grid; gap: 14px; }
+.sc008-target-map-dialog p { color: var(--sc-text-secondary); margin: 0; }
+.sc008-target-map-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr); gap: 12px; align-items: center; }
+.sc008-target-map-row span { overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .sc008-target-map-row { grid-template-columns: 1fr; gap: 6px; }
+}
 .sc008-action-card .action-head {
   align-items: center;
   gap: 8px;
