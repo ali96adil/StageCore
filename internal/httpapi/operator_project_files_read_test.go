@@ -94,6 +94,8 @@ func TestScopedProjectFilesIsOptInAndNeverFallsBackToGlobalProjectRole(t *testin
 	if got := get(op.Token, listA); got.Code != http.StatusOK ||
 		!strings.Contains(got.Body.String(), `"read_only":true`) ||
 		!strings.Contains(got.Body.String(), a.ID) ||
+		!strings.Contains(got.Body.String(), `"entry_count":0`) ||
+		!strings.Contains(got.Body.String(), `"total_bytes":0`) ||
 		!strings.Contains(got.Body.String(), `"files":[]`) ||
 		!strings.Contains(got.Header().Get("Cache-Control"), "no-store") {
 		t.Fatalf("valid empty workspace not returned: %d %s", got.Code, got.Body.String())

@@ -30,6 +30,8 @@ type ProjectFile struct {
 type ProjectFileWorkspace struct {
 	ProjectID   string        `json:"project_id"`
 	ProjectName string        `json:"project_name"`
+	EntryCount  int64         `json:"entry_count"`
+	TotalBytes  int64         `json:"total_bytes"`
 	Files       []ProjectFile `json:"files"`
 	NextCursor  string        `json:"next_cursor,omitempty"`
 }
@@ -90,6 +92,15 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 		// A missing Project and a forbidden Project must look identical
 		// to callers of an eventual HTTP wrapper.
 		return ProjectFileWorkspace{}, ErrDenied
+	}
+	var entryCount, totalBytes int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(COALESCE(v.size_bytes, 0)), 0)
+		FROM media_assets a
+		LEFT JOIN media_content_versions v ON v.media_asset_id = a.media_asset_id
+		WHERE a.project_id = ?
+	`, projectID).Scan(&entryCount, &totalBytes); err != nil {
+		return ProjectFileWorkspace{}, fmt.Errorf("summarize Project Files: %w", err)
 	}
 	if after.Asset != "" {
 		err := s.db.QueryRowContext(ctx, `
@@ -163,7 +174,9 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 		return ProjectFileWorkspace{}, err
 	}
 	return ProjectFileWorkspace{
-		ProjectID: projectID, ProjectName: projectName, Files: files, NextCursor: nextCursor,
+		ProjectID: projectID, ProjectName: projectName,
+		EntryCount: entryCount, TotalBytes: totalBytes,
+		Files: files, NextCursor: nextCursor,
 	}, nil
 }
 

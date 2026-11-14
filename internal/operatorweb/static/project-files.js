@@ -16,6 +16,13 @@ const scFileCopy = {
   type: { en: "Type", "ar-IQ": "النوع" },
   size: { en: "Size", "ar-IQ": "الحجم" },
   policy: { en: "Storage policy", "ar-IQ": "سياسة التخزين" },
+  usage: { en: "File-version size total", "ar-IQ": "إجمالي أحجام نسخ الملفات" },
+  usageHint: {
+    en: "Logical bytes across file versions; shared Vault content may be physically stored once.",
+    "ar-IQ": "الحجم المنطقي لنسخ الملفات؛ قد يُخزّن محتوى Vault المشترك فعلياً مرة واحدة.",
+  },
+  showing: { en: "Showing", "ar-IQ": "المعروض" },
+  entries: { en: "entries", "ar-IQ": "عنصر" },
   empty: { en: "No media is registered for this Project yet.", "ar-IQ": "ماكو ملفات وسائط مسجّلة لهذا المشروع لحد الآن." },
   unavailable: { en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.", "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى." },
   pagination: { en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.", "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان." },
@@ -80,7 +87,8 @@ async function renderScopedProjectFiles(cursor = "") {
       if (!Number.isFinite(bytes) || bytes < 0) return "—";
       if (bytes < 1024) return `${bytes} B`;
       if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KiB`;
-      return `${(bytes / 1048576).toFixed(1)} MiB`;
+      if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MiB`;
+      return `${(bytes / 1073741824).toFixed(2)} GiB`;
     };
     const table = rows.length
       ? `<div class="table-wrap"><table>
@@ -105,11 +113,13 @@ async function renderScopedProjectFiles(cursor = "") {
       <section class="card" style="margin-bottom:14px">
         <div class="section-title-row">
           <h2>${esc(workspace.project_name)}</h2>
-          ${pill(String(rows.length) + " files", "neutral")}
+          ${pill(`${scFileT("showing")} ${rows.length} / ${esc(String(workspace.entry_count ?? rows.length))} ${scFileT("entries")}`, "neutral")}
         </div>
         <div class="toolbar" style="margin-top:12px">
+          ${pill(`${scFileT("usage")}: ${humanSize(workspace.total_bytes)}`, "neutral")}
           ${["AUDIO","VIDEO","IMAGE","OTHER"].map((kind) => pill(`${kind}: ${counts[kind]}`)).join("")}
         </div>
+        <small class="muted">${esc(scFileT("usageHint"))}</small>
       </section>
       <section class="card">
         ${payload.upload_available === true ? `<form id="projectFileUploadForm" class="project-file-upload-form">
