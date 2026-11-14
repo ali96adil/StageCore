@@ -178,6 +178,7 @@ func TestScopedProjectFilesRejectsInsecureRemoteTransport(t *testing.T) {
 func TestScopedProjectFilesRechecksGrantAtResponseDelivery(t *testing.T) {
 	for _, route := range []struct{ name, suffix string }{
 		{name: "files", suffix: "/files"},
+		{name: "files search", suffix: "/files?q=private"},
 		{name: "availability", suffix: "/files/availability"},
 	} {
 		for _, boundary := range []struct {
