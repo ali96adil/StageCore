@@ -86,6 +86,15 @@ func TestLinuxPortDefaultSyscallsUseIsolatedPipe(t *testing.T) {
 	if err != nil || ready == 0 || events&(unix.POLLERR|unix.POLLHUP) == 0 {
 		t.Fatalf("closed pipe reader did not expose a poll fault: ready=%d events=%#x err=%v", ready, events, err)
 	}
+	if err := port.Close(); err != nil {
+		t.Fatalf("close pipe-backed port: %v", err)
+	}
+	if err := port.WritePacket(context.Background(), packet); !errors.Is(err, ErrQuarantined) {
+		t.Fatalf("closed Linux port accepted a write: %v", err)
+	}
+	if err := port.Close(); err != nil {
+		t.Fatalf("repeated port close: %v", err)
+	}
 }
 
 func TestLinuxPortWritePacketCompletesShortWritesAcrossEAGAINAndEINTR(t *testing.T) {
