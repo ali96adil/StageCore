@@ -28,8 +28,11 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`scFilesNav.className = "nav-button hidden"`,
 		`files/availability`,
 		`/api/v1/projects/`,
-		`payload?.read_only`,
 		`payload?.scoped`,
+		`payload.upload_available === true`,
+		`projectFileUploadForm`,
+		`X-Project-File-Name`,
+		`api(base`,
 		`page_size: "100"`,
 		`workspace.next_cursor`,
 		`payload.download_available === true`,
@@ -39,7 +42,6 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`"ar-IQ":`,
 		`en:`,
 		`الملفات`,
-		`Read-only`,
 	} {
 		if !strings.Contains(source,required) {
 			t.Errorf("Project Files safety/locale contract missing %q",required)

@@ -120,6 +120,100 @@ func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
 	}
 }
 
+func TestSelfContainedCapsuleWarnsAndOmitsUnreferencedProjectFiles(t *testing.T) {
+	fixture := newCapsuleFixture(t)
+	defer fixture.db.Close()
+	ctx := context.Background()
+
+	tabletOnlyBytes := []byte("tablet-only rehearsal video")
+	tabletOnly, err := fixture.service.vault.ImportManaged(ctx, vault.ImportParams{
+		ProjectID: fixture.projectID, Name: "Tablet Video", AssetPolicy: store.MediaPolicyManaged,
+		OriginalFilename: "tablet-only.mp4",
+	}, strings.NewReader(string(tabletOnlyBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := fixture.service.BuildManifest(ctx, fixture.projectID, BuildOptions{
+		RuntimeSnapshotID: fixture.snapshotID,
+		Mode:              ExportSelfContained,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Media) != 1 || len(manifest.Objects) != 1 || manifest.Objects[0].ContentSHA256 != fixture.contentHash {
+		t.Fatalf("Capsule included unreferenced Project file: media=%+v objects=%+v", manifest.Media, manifest.Objects)
+	}
+	warnings := strings.Join(manifest.Warnings, "\n")
+	if !strings.Contains(warnings, "1 Project media file version(s)") ||
+		!strings.Contains(warnings, "tablet-only") ||
+		!strings.Contains(warnings, "Project Files") {
+		t.Fatalf("unreferenced Project file portability warning missing: %v", manifest.Warnings)
+	}
+	for _, object := range manifest.Objects {
+		if object.ContentSHA256 == tabletOnly.Version.ContentHash {
+			t.Fatal("unreferenced tablet-only file bytes were silently included")
+		}
+	}
+}
+
+func TestSelfContainedCapsuleIncludesOptionalSnapshotMedia(t *testing.T) {
+	fixture := newCapsuleFixture(t)
+	defer fixture.db.Close()
+	ctx := context.Background()
+	roles, err := fixture.store.ListMachineRoles(ctx, fixture.projectID)
+	if err != nil || len(roles) != 1 {
+		t.Fatalf("load fixture Machine Role: roles=%d err=%v", len(roles), err)
+	}
+	optionalBytes := []byte("optional media referenced by snapshot")
+	optional, err := fixture.service.vault.ImportManaged(ctx, vault.ImportParams{
+		ProjectID: fixture.projectID, Name: "Optional alternate", AssetPolicy: store.MediaPolicyManaged,
+		OriginalFilename: "alternate.wav",
+	}, strings.NewReader(string(optionalBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.AddMachineRoleMediaRequirement(ctx, roles[0].ID, optional.Version.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSnapshot, runtimeManifest, err := snapshot.NewBuilder(fixture.store).Create(ctx, fixture.revisionID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var optionalReference *snapshot.RequiredMedia
+	for i := range runtimeManifest.RequiredMedia {
+		if runtimeManifest.RequiredMedia[i].ContentVersionID == optional.Version.ID {
+			optionalReference = &runtimeManifest.RequiredMedia[i]
+			break
+		}
+	}
+	if optionalReference == nil || optionalReference.Required {
+		t.Fatalf("optional Runtime Snapshot media reference=%+v", optionalReference)
+	}
+
+	manifest, err := fixture.service.BuildManifest(ctx, fixture.projectID, BuildOptions{
+		RuntimeSnapshotID: runtimeSnapshot.ID,
+		Mode:              ExportSelfContained,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, media := range manifest.Media {
+		if media.ContentVersionID == optional.Version.ID {
+			if media.Required || !media.ContentIncluded || media.ContentSHA256 != optional.Version.ContentHash {
+				t.Fatalf("optional Snapshot media portability=%+v", media)
+			}
+			for _, object := range manifest.Objects {
+				if object.ContentSHA256 == optional.Version.ContentHash && object.Included {
+					return
+				}
+			}
+			t.Fatal("optional Snapshot media object bytes are not included")
+		}
+	}
+	t.Fatal("optional media referenced by the selected Snapshot was omitted")
+}
+
 func TestVerifyRejectsExternalCapsuleFiles(t *testing.T) {
 	fixture := newCapsuleFixture(t)
 	defer fixture.db.Close()

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -28,6 +29,32 @@ func (s *Store) GetMediaContentVersion(ctx context.Context, contentVersionID str
 	}
 	version.CreatedAt = clock.FromUnixMicros(createdUS)
 	return version, nil
+}
+
+// CountUnreferencedProjectMediaContentVersions counts immutable Project file
+// versions absent from the selected Runtime Snapshot without loading file rows
+// or Vault data into the Capsule preview process.
+func (s *Store) CountUnreferencedProjectMediaContentVersions(ctx context.Context, projectID string, referencedVersionIDs []string) (int64, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return 0, fmt.Errorf("%w: project is required", domain.ErrInvalidInput)
+	}
+	encodedReferences, err := json.Marshal(referencedVersionIDs)
+	if err != nil {
+		return 0, fmt.Errorf("encode Snapshot media references: %w", err)
+	}
+	var count int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM media_content_versions v
+		JOIN media_assets a ON a.media_asset_id = v.media_asset_id
+		WHERE a.project_id = ? AND v.content_version_id NOT IN (
+			SELECT value FROM json_each(?)
+		)`, projectID, string(encodedReferences)).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count unreferenced Project media content versions: %w", err)
+	}
+	return count, nil
 }
 
 // ProjectHasMediaContentHash reports whether a hash is registered as a media

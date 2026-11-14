@@ -134,6 +134,9 @@ func (s *Service) BuildManifest(ctx context.Context, projectID string, options B
 	if err := s.collectMedia(ctx, &manifest, runtimeManifest, objects); err != nil {
 		return Manifest{}, err
 	}
+	if err := s.warnOnUnreferencedProjectMedia(ctx, &manifest, runtimeManifest); err != nil {
+		return Manifest{}, err
+	}
 	if err := s.collectExecutionEnvironments(ctx, &manifest, revision.ID, objects); err != nil {
 		return Manifest{}, err
 	}
@@ -144,6 +147,25 @@ func (s *Service) BuildManifest(ctx context.Context, projectID string, options B
 		manifest.Objects = append(manifest.Objects, *object)
 	}
 	return Normalize(manifest)
+}
+
+func (s *Service) warnOnUnreferencedProjectMedia(ctx context.Context, manifest *Manifest,
+	runtimeManifest snapshot.Manifest,
+) error {
+	referenced := make([]string, 0, len(runtimeManifest.RequiredMedia))
+	for _, requirement := range runtimeManifest.RequiredMedia {
+		referenced = append(referenced, requirement.ContentVersionID)
+	}
+	omitted, err := s.store.CountUnreferencedProjectMediaContentVersions(ctx, manifest.Project.ProjectID, referenced)
+	if err != nil {
+		return err
+	}
+	if omitted > 0 {
+		manifest.Warnings = append(manifest.Warnings, fmt.Sprintf(
+			"%d Project media file version(s) are not referenced by this published Runtime Snapshot and are not included in this Show Capsule. This includes draft, tablet-only, and other unreferenced uploads; transfer them separately through Project Files.", omitted,
+		))
+	}
+	return nil
 }
 
 func (s *Service) Export(ctx context.Context, projectID, destinationRoot string, options BuildOptions) (ExportResult, error) {
