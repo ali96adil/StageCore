@@ -7,11 +7,17 @@ import (
 
 func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 	index, err := Read("index.html")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := Read("app.js")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	files, err := Read("project-files.js")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(index), `<script src="/project-files.js" defer></script>`) {
 		t.Fatal("Operator shell does not load Project Files UI")
 	}
@@ -19,8 +25,8 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`if (page === "files") await renderScopedProjectFiles();`,
 		`scFilesUpdateForProject(state.project?.project_id || "")`,
 	} {
-		if !strings.Contains(string(app),required) {
-			t.Fatalf("workspace has not integrated Files route/visibility: %s",required)
+		if !strings.Contains(string(app), required) {
+			t.Fatalf("workspace has not integrated Files route/visibility: %s", required)
 		}
 	}
 	source := string(files)
@@ -37,7 +43,7 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`workspace.next_cursor`,
 		`payload.download_available === true`,
 		`workspace.entry_count ?? rows.length`,
-		`workspace.total_bytes`,
+		`workspace.logical_bytes`,
 		`"File-version size total"`,
 		`"إجمالي أحجام نسخ الملفات"`,
 		`"Logical bytes across file versions; shared Vault content may be physically stored once."`,
@@ -52,8 +58,8 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`en:`,
 		`الملفات`,
 	} {
-		if !strings.Contains(source,required) {
-			t.Errorf("Project Files safety/locale contract missing %q",required)
+		if !strings.Contains(source, required) {
+			t.Errorf("Project Files safety/locale contract missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{
@@ -62,12 +68,12 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`/api/v1/projects"`,
 		`fetch("/api/v1/show-capsules"`,
 	} {
-		if strings.Contains(source,forbidden) {
-			t.Errorf("Files preview must not fall back to a global/risky endpoint: %q",forbidden)
+		if strings.Contains(source, forbidden) {
+			t.Errorf("Files preview must not fall back to a global/risky endpoint: %q", forbidden)
 		}
 	}
-	if !strings.Contains(source,`esc(item.media_asset_name)`) ||
-		!strings.Contains(source,`esc(item.original_filename || "—")`) {
+	if !strings.Contains(source, `esc(item.media_asset_name)`) ||
+		!strings.Contains(source, `esc(item.original_filename || "—")`) {
 		t.Fatal("Project file names must be HTML-escaped")
 	}
 }

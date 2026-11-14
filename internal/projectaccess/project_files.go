@@ -28,12 +28,12 @@ type ProjectFile struct {
 // A Project exists independently of whether it already has Media Assets.
 // ProjectID, never the display name, is the immutable workspace identity.
 type ProjectFileWorkspace struct {
-	ProjectID   string        `json:"project_id"`
-	ProjectName string        `json:"project_name"`
-	EntryCount  int64         `json:"entry_count"`
-	TotalBytes  int64         `json:"total_bytes"`
-	Files       []ProjectFile `json:"files"`
-	NextCursor  string        `json:"next_cursor,omitempty"`
+	ProjectID    string        `json:"project_id"`
+	ProjectName  string        `json:"project_name"`
+	EntryCount   int64         `json:"entry_count"`
+	LogicalBytes int64         `json:"logical_bytes"`
+	Files        []ProjectFile `json:"files"`
+	NextCursor   string        `json:"next_cursor,omitempty"`
 }
 
 var ErrWorkspacePaginationRequired = errors.New("projectaccess: Project Files exceed unpaged qualification limit")
@@ -93,13 +93,13 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 		// to callers of an eventual HTTP wrapper.
 		return ProjectFileWorkspace{}, ErrDenied
 	}
-	var entryCount, totalBytes int64
+	var entryCount, logicalBytes int64
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(COALESCE(v.size_bytes, 0)), 0)
 		FROM media_assets a
 		LEFT JOIN media_content_versions v ON v.media_asset_id = a.media_asset_id
 		WHERE a.project_id = ?
-	`, projectID).Scan(&entryCount, &totalBytes); err != nil {
+	`, projectID).Scan(&entryCount, &logicalBytes); err != nil {
 		return ProjectFileWorkspace{}, fmt.Errorf("summarize Project Files: %w", err)
 	}
 	if after.Asset != "" {
@@ -175,7 +175,7 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 	}
 	return ProjectFileWorkspace{
 		ProjectID: projectID, ProjectName: projectName,
-		EntryCount: entryCount, TotalBytes: totalBytes,
+		EntryCount: entryCount, LogicalBytes: logicalBytes,
 		Files: files, NextCursor: nextCursor,
 	}, nil
 }

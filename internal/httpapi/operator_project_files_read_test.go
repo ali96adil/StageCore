@@ -95,7 +95,7 @@ func TestScopedProjectFilesIsOptInAndNeverFallsBackToGlobalProjectRole(t *testin
 		!strings.Contains(got.Body.String(), `"read_only":true`) ||
 		!strings.Contains(got.Body.String(), a.ID) ||
 		!strings.Contains(got.Body.String(), `"entry_count":0`) ||
-		!strings.Contains(got.Body.String(), `"total_bytes":0`) ||
+		!strings.Contains(got.Body.String(), `"logical_bytes":0`) ||
 		!strings.Contains(got.Body.String(), `"files":[]`) ||
 		!strings.Contains(got.Header().Get("Cache-Control"), "no-store") {
 		t.Fatalf("valid empty workspace not returned: %d %s", got.Code, got.Body.String())
@@ -245,7 +245,7 @@ func TestScopedProjectFilesRechecksGrantAtResponseDelivery(t *testing.T) {
 				if response.Code != boundary.statusCode || strings.Contains(response.Body.String(), project.ID) || strings.Contains(response.Body.String(), project.Name) {
 					t.Fatalf("%s workspace result escaped after %s: HTTP %d %s", route.name, boundary.name, response.Code, response.Body.String())
 				}
-				for _, privateValue := range []string{"private media", "private.wav", `"entry_count":1`, `"total_bytes":2147483648`} {
+				for _, privateValue := range []string{"private media", "private.wav", `"entry_count":1`, `"logical_bytes":2147483648`} {
 					if strings.Contains(response.Body.String(), privateValue) {
 						t.Fatalf("%s exposed %q after %s: HTTP %d %s", route.name, privateValue, boundary.name, response.Code, response.Body.String())
 					}

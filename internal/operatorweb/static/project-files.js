@@ -117,7 +117,7 @@ async function renderScopedProjectFiles(cursor = "") {
           ${pill(`${scFileT("showing")} ${rows.length} / ${esc(String(workspace.entry_count ?? rows.length))} ${scFileT("entries")}`, "neutral")}
         </div>
         <div class="toolbar" style="margin-top:12px">
-          ${pill(`${scFileT("usage")}: ${humanSize(workspace.total_bytes)}`, "neutral")}
+          ${pill(`${scFileT("usage")}: ${humanSize(workspace.logical_bytes)}`, "neutral")}
           <span class="muted">${esc(scFileT("pageCategories"))}</span>
           ${["AUDIO","VIDEO","IMAGE","OTHER"].map((kind) => pill(`${kind}: ${counts[kind]}`)).join("")}
         </div>

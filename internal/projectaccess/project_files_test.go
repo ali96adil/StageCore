@@ -26,7 +26,7 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 	workspace, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, f.projectA)
 	if err != nil || workspace.ProjectID != f.projectA ||
 		workspace.ProjectName != "قرية صالح" || len(workspace.Files) != 0 ||
-		workspace.EntryCount != 0 || workspace.TotalBytes != 0 {
+		workspace.EntryCount != 0 || workspace.LogicalBytes != 0 {
 		t.Fatalf("new Project should have an empty logical workspace: %+v, %v", workspace, err)
 	}
 
@@ -51,7 +51,7 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 	}
 	workspace, err = f.a.ListScopedProjectFiles(ctx, f.operatorID, f.projectA)
 	if err != nil || len(workspace.Files) != len(media) ||
-		workspace.EntryCount != int64(len(media)) || workspace.TotalBytes != int64(128*len(media)) {
+		workspace.EntryCount != int64(len(media)) || workspace.LogicalBytes != int64(128*len(media)) {
 		t.Fatalf("qualified Project files: %+v err=%v", workspace, err)
 	}
 	byName := map[string]projectaccess.ProjectFile{}
@@ -83,7 +83,7 @@ func TestScopedProjectFilesIsEmptyInitiallyAndFollowsProjectIdentity(t *testing.
 		t.Fatalf("cloned workspace unavailable: %+v %v", copied, err)
 	}
 	if len(copied.Files) != len(media) || copied.EntryCount != int64(len(media)) ||
-		copied.TotalBytes != int64(128*len(media)) {
+		copied.LogicalBytes != int64(128*len(media)) {
 		t.Fatalf("cloned Project media refs or usage summary mismatch: %+v", copied)
 	}
 	for _, copiedFile := range copied.Files {
@@ -165,8 +165,8 @@ func TestProjectFileWorkspaceBoundsUnpagedListing(t *testing.T) {
 	if len(seen) != 501 || cursor != "" {
 		t.Fatalf("paginated workspace returned %d assets; next=%q", len(seen), cursor)
 	}
-	if workspace.EntryCount != 501 || workspace.TotalBytes != 0 {
-		t.Fatalf("paginated workspace summary = entries:%d bytes:%d", workspace.EntryCount, workspace.TotalBytes)
+	if workspace.EntryCount != 501 || workspace.LogicalBytes != 0 {
+		t.Fatalf("paginated workspace summary = entries:%d logical bytes:%d", workspace.EntryCount, workspace.LogicalBytes)
 	}
 
 	if _, err := f.a.ListScopedProjectFiles(ctx, f.ownerID, "unknown"); !errors.Is(err, projectaccess.ErrDenied) {

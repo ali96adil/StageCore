@@ -28,7 +28,7 @@ async function renderProjectFiles(language) {
       project_id: "show-a",
       project_name: "Evening Show",
       entry_count: 12,
-      total_bytes: 3 * 1024 * 1024 * 1024,
+      logical_bytes: 3 * 1024 * 1024 * 1024,
       files: [{
         media_asset_id: "asset-1",
         media_asset_name: "Opening audio",
