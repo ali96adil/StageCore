@@ -865,3 +865,103 @@ This entry supersedes the preceding push instruction.
   P95/P99/Jitter and real device acceptance remain pending the isolated Pi
   host. Production Hub/Relay, show data/Vault and production ACL remain
   untouched/disabled.
+
+## Resume update — 2026-11-14 03:28 UTC
+
+- Current pushed `integration/stagecore-rc` and PR #534 head:
+  `9d5b775aa94875591d9ff7964e3eb8057f775c9b`. The local search improvement is
+  committed as `ba495b867de432f7ac07cf089de57119464f9c98`; matrix and this
+  checkpoint update are local follow-on documentation. No reset, clean,
+  rebase, force push or production operation occurred.
+- SC-010 Cue Studio now offers a local search across preset names and nested
+  saved action JSON, including target/capability/parameters. The red-first
+  test failed before the input/filter existed, then passed with the change.
+  The feature keeps existing project/user scoping, API shape and schema.
+- Verification after the code commit: focused preset tests 5/5; full Node suite
+  55/55; `go test ./internal/operatorweb -count=1`; `go vet
+  ./internal/operatorweb`; JavaScript syntax; `git diff --check` all passed.
+- Exact pushed-head Core run `43551276214` is still active: Go 1.27 passed;
+  Go 1.26 Test, Browser Cue Delivery and Vet passed; Go 1.26 Race is running
+  and Linux ARM64 product builds are pending. Companion Core
+  `43551276183` (Swift Core plus full macOS replacement/media acceptance) and
+  Camera Relay `43551276104` passed. Do not push until Core completes and the
+  remote branch is verified unchanged.
+- Rechecked related PR heads and current associated CI: TabletPlayer #36
+  `91613da1` / run `42719885664`, DMX Lighting #39 `3ad7749` / run
+  `42759555665`, Camera #20 `455b066` / run `42761096513`, StageLaser #56
+  `b14a578` / run `42765890415`, and StageLaser #57 `c4ff10b` / run
+  `38054411190` are all open and their listed source/build checks pass.
+  Their installed/physical requirements remain separate; no related PR was
+  changed in this checkpoint.
+- Remaining: descriptions and safe cross-Project target mapping/import in
+  SC-010; Pi 4 ARM64 performance run remains unavailable after the known SSH
+  websocket handshake failure. Continue with the highest evidenced software
+  gap after the pending CI gate. Keep ACL production-disabled; do not touch
+  production Hub/Relay, show data/Vault or real devices.
+
+## Resume update — 2026-11-14 03:33 UTC
+
+- Follow-on code HEAD is `b6242b4dd12b9ae891d62268a29a037136ac10ab`, two
+  tested feature commits ahead of remote `9d5b775aa94875591d9ff7964e3eb8057f775c9b`;
+  the completion matrices and handoff have local documentation updates.
+- SC-010 also now lets the operator remap each missing target in a saved
+  Mixed-Cue action group to a target from the current Project. Each selection
+  applies only to the inserted Draft copy, never edits the saved preset, keeps
+  action order/parameters, and warns to verify compatibility before publish.
+  Leaving a target unchanged keeps the missing-target warning. This does not
+  import presets across Projects.
+- Red-first per-action remapping regression passed after implementation. Latest
+  focused preset tests 6/6 and full Node suite 56/56 passed; Operator web Go
+  tests and Vet, JS syntax, and `git diff --check` passed. No API, DB schema,
+  Snapshot, runtime dispatch or external output changed.
+- At 03:33 UTC, exact pushed-head Core CI `43551276214` remained in Go 1.26
+  Race after Go 1.26 Test/Browser Cue Delivery/Vet and Go 1.27 had passed;
+  Linux ARM64 product builds were pending. Companion `43551276183` and Camera
+  Relay `43551276104` passed. Do not push until the full Core run completes,
+  then verify remote still equals `9d5b775` before normal fast-forward push to
+  PR #534.
+- The related hardware PRs remain open with their exact-head software checks
+  passing: Tablet #36 `91613da`, DMX #39 `3ad7749`, Camera #20 `455b066`,
+  StageLaser #56 `b14a578`, and #57 `c4ff10b`. No related branch was modified.
+- First resume action: poll Core run `43551276214`; if successful, verify the
+  remote and push the three local commits (`ba495b8`, `b6242b4`, plus the
+  completion-matrix/handoff checkpoint) to the existing branch/PR, then follow
+  new exact-head CI. If CI fails, diagnose its failure before pushing. Continue
+  to SC-010 descriptions/cross-Project import and the next evidenced software
+  gap. Raspberry Pi 4 P95/P99/Jitter qualification remains blocked by the
+  unverified SSH websocket handshake; do not substitute Mac or CI cross-build
+  measurements. Production ACL remains disabled; production services/data,
+  original Vault/show files and real devices stay untouched.
+
+## Resume update — 2026-11-14 03:38 UTC
+
+- Local HEAD is `184b719d8b74cf12ae467680b0da4efe4e632b06`, four code/test
+  commits ahead of pushed PR #534 head `9d5b775aa94875591d9ff7964e3eb8057f775c9b`.
+  Three matrix/handoff files contain the pending documentation checkpoint.
+- SC-010 selector generation is now lazy: a missing-target section is collapsed
+  by default, and it groups Actions that share the same old target. This avoids
+  eagerly constructing action-by-target option lists for every saved preset.
+  The per-target map changes only inserted Draft copies; no saved preset or
+  execution path changes.
+- SC-005 evidence was extended: store duplication tests preserve the Cue label
+  and operator color, while a full self-contained Show Capsule round-trip test
+  checks the same metadata across export and materialization from the published
+  Snapshot. No production show or Vault was used.
+- Verification: SC-010 Node preset tests 6/6 and full Node suite 56/56; Cue
+  Studio JavaScript syntax and `go test`/`go vet` for `internal/operatorweb`;
+  full `go test ./internal/store ./internal/showcapsule -count=1` and Vet for
+  both packages; `git diff --check` all pass. No race-specific behavior was
+  changed in the store/capsule additions.
+- Exact pushed-head Core `43551276214` remains in Go 1.26 Race: Go 1.26
+  Test/Browser Cue Delivery/Vet and Go 1.27 passed; ARM64 product build is
+  pending. Companion `43551276183` and isolated/ARM64 Camera Relay
+  `43551276104` passed. Continue not to push until Race and ARM64 finish and
+  verify remote still equals `9d5b775`.
+- Next step once CI succeeds: review the four-commit source/test diff and the
+  updated completion matrices, create the fifth documentation checkpoint
+  commit, recheck exact remote head, then fast-forward push all five commits to
+  existing branch/PR #534 and monitor new exact-head CI. Afterward continue
+  the remaining cross-Project preset import/description gap and other highest
+  open software rows; Pi performance still requires a verified ARM64 host.
+  Production ACL stays disabled and production/device boundaries remain in
+  force.

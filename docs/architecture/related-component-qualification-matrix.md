@@ -1,18 +1,18 @@
 # Related component qualification matrix
 
-Status checked 2026-11-14 against the current open pull requests and exact
-head commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
+Status checked 2026-11-14 against current open pull requests and exact head
+commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
 StageLaser #56/#57, and StageCore #503–#508/#514–#516 remain open at the
-listed heads; their current reported checks pass. StageLaser #57 is open but
-not marked draft. The last pushed StageCore head is
-`558a6adf2765c79780ab290efb2e423bfd8ae5ee` on `integration/stagecore-rc`
-(Draft PR #534). Core run `43535359362` passes Go 1.27, isolated tests/ARM64,
-macOS Companion replacement/media and Swift CompanionCore. Its Go 1.26 Test,
-Browser Cue Delivery and Vet steps pass; the full Race step is still running
-and Linux ARM64 builds passed. The local follow-on batch is described in the
-current campaign handoff and must be tested on its exact new head after the
-normal push. Passing CI proves only the listed software checks, not an
-installed app or physical output path.
+listed heads; the exact-head CI runs listed below pass. StageLaser #57 is open
+but not marked draft. StageCore Draft PR #534 is at pushed head
+`9d5b775aa94875591d9ff7964e3eb8057f775c9b` on `integration/stagecore-rc`.
+Core run `43551276214` has Go 1.27 passed; Go 1.26 Test, Browser Cue Delivery
+and Vet passed, Race is in progress and Linux ARM64 builds are pending.
+Companion run `43551276183` (Swift Core and full macOS replacement/media
+acceptance) and Camera Relay run `43551276104` passed. The local follow-on
+`184b719` remains unpushed until that Core run completes. Passing CI proves
+only the listed software checks, not installed-app or physical output
+qualification.
 
 | Component and reviewed head | Implemented behavior and protocol | Automated evidence and current CI | ACK, retry, idempotency, safety, and reconnect | Software evidence vs. remaining qualification |
 | --- | --- | --- | --- | --- |
