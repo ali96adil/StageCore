@@ -965,3 +965,11 @@ This entry supersedes the preceding push instruction.
   open software rows; Pi performance still requires a verified ARM64 host.
   Production ACL stays disabled and production/device boundaries remain in
   force.
+
+## Resume update — 2026-11-14 03:43 UTC
+
+- The fifth checkpoint commit is now saved: local HEAD `45070db8400b83bb9ad2870cb04b3322700ef933`. The working tree is clean and the branch is five commits ahead of `origin/integration/stagecore-rc` at `9d5b775aa94875591d9ff7964e3eb8057f775c9b`.
+- Exact-head Core run `43551276214` is still in its Go 1.26 Race step; all earlier reported Go 1.26/1.27 test, Browser Cue Delivery, and Vet steps are successful. Linux ARM64 product build follows Race. Companion and Camera Relay on that exact head pass. No push has occurred.
+- The five-commit range is `ba495b8` preset search, `b6242b4` per-target Draft remapping, `46b76f9` lazy remap controls, `184b719` label/color duplicate and Capsule regressions, and `45070db` completion matrix/handoff documentation.
+- Local verification remains: Node 56/56, focused preset tests 6/6, Operator web Go tests/Vet, full Store and Show Capsule tests/Vet, JavaScript syntax and diff checks all pass. Exact remote pointer was read with `git ls-remote`; PR #534 remains open/draft at the same SHA.
+- Next action is unchanged: wait for Core Race and ARM64, diagnose any failure before pushing, then re-read remote SHA and fast-forward push to existing PR #534 only if it is still `9d5b775`. Follow new exact-head CI after push. Pi performance, production ACL cutoff, hardware, and deployment boundaries are unchanged.
