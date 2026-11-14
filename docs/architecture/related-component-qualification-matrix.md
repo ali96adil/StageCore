@@ -1,18 +1,19 @@
 # Related component qualification matrix
 
-Status refreshed 2026-11-14 21:43 UTC from the open PRs and exact head commits.
+Status refreshed 2026-11-14 22:00 UTC from the open PRs and exact head commits.
 TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
 #20 (`455b066`), and StageLaser #56 (`b14a578`) remain open drafts with passing
 checks. StageLaser #57 (`c4ff10b`) remains open and not marked draft, with
 passing checks. StageCore #503–#508 and #514–#516 remain open at the heads
 listed below; their listed Go 1.26/1.27 checks pass. StageCore Draft PR #534
-is at remote head `055e980ac668b0771e3ae799cfce6dbe78898a79` on
-`integration/stagecore-rc`. Core run `43643450987` is in progress: Go 1.27
-passed; Go 1.26 `Check Operator JS syntax`, Firmware Foundation, Test, Browser
-Cue Delivery and Vet passed; Race and Linux ARM64 product builds are still
-running. Companion `43643451012` and Camera Relay `43643451028` passed. The
-preceding exact-head run `43642337411` failed its Node ACL mock because the
-mock lacks global `document`; that is fixed with
+is at remote code head `055e980ac668b0771e3ae799cfce6dbe78898a79` on
+`integration/stagecore-rc`. Core run `43643450987` completed successfully:
+Go 1.26 and Go 1.27, Browser Cue Delivery, Race and Linux ARM64 CGo-free
+product builds all passed. Companion `43643451012` and Camera Relay
+`43643451028` passed. Documentation follow-on `850fdf9` contains this matrix
+refresh and does not change executable code; Core exact-head CI for that docs
+head will follow its normal push. The preceding exact-head run `43642337411`
+failed its Node ACL mock because the mock lacks global `document`; that is fixed with
 `element.ownerDocument?.activeElement`. Local Node ACL tests pass 8/8, the
 SC-024 Chrome grant/revoke test passes normally and under Race,
 `go vet ./internal/httpapi`, JS syntax and `git diff --check` pass. Mixed Cue

@@ -3439,3 +3439,37 @@ This entry supersedes the preceding push instruction.
   or merge. Next: wait for all exact-head Core jobs, record their final status,
   run `git diff --check` on the pending docs, and then push the small doc
   reconciliation batch normally to the same PR.
+
+## Resume update — 2026-11-14 22:00 UTC · Exact-head checks complete
+
+- Core run `43643450987` completed successfully at code head
+  `055e980ac668b0771e3ae799cfce6dbe78898a79`: Go 1.26/1.27 tests and Vet,
+  Operator JS syntax, Firmware Foundation contract, Browser Cue Delivery,
+  Race and Linux ARM64 CGo-free product builds all passed. Go 1.26 Race took
+  about 23 minutes. Companion Core `43643451012` and Camera Relay
+  `43643451028` also passed. No run was canceled.
+- `055e980` is pushed. Local docs-only commits `850fdf9` and this checkpoint
+  refresh are ahead of remote; verify remote and PR #534, then push them
+  normally together. The SC-024 focus/mock/revoke behavior remains covered by
+  local normal and Race Chrome tests and by Browser Cue Delivery on `055e980`.
+- The performance report now reconciles earlier Pi evidence with current code:
+  the requested simulated Pi 4 ARM64 Mixed/linked, scheduling, burst, sustained,
+  STOP and Blackout cases already ran from `a90403b`; Cue Engine/Runtime
+  Control/simulator/domain/publish execution source has no intervening diff.
+  We deliberately did not repeat the Pi run. No full-Cue SLO exists, the Pi
+  host controllers were not isolated, and delayed-32 safety tails remain about
+  one second. A later isolated SSH attempt failed before host identity and
+  remains a rerun constraint if relevant performance code changes.
+- The 32-delayed-Cue M3 diagnostic profile is exploratory only: benchmark
+  latencies under profiling are not baseline values, its profile includes
+  repeated migrations, and it does not justify altering durable event order
+  or grouping writes. No performance optimization was made.
+- A keyboard Arrow-key selection attempt was reverted after CDP events reached
+  the focused native select but did not change its selected value. Native
+  keyboard option selection remains an open test gap; the saved code and
+  successful browser test use actual Tab/Enter for Load/Save, then fixture-set
+  access levels. No publish, GO, STOP, or Blackout calls were sent.
+- Safety: production ACL stays disabled; no production services/data/Vault,
+  real devices, or firmware were touched. No force push or merge. After the
+  docs push, follow the exact-head Core/Companion/Relay CI and wait for Core
+  Race/ARM64 before another push.
