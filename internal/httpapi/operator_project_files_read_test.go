@@ -226,6 +226,13 @@ func TestScopedProjectFilesRechecksGrantAtResponseDelivery(t *testing.T) {
 					[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
 					t.Fatal(err)
 				}
+				if _, err := projects.RegisterManagedMedia(ctx, store.RegisterManagedMediaParams{
+					ProjectID: project.ID, Name: "private media", AssetPolicy: store.MediaPolicyManaged,
+					ContentHash: strings.Repeat("a", 64), SizeBytes: 2 << 30,
+					RelativePath: "objects/private", OriginalFilename: "private.wav",
+				}); err != nil {
+					t.Fatal(err)
+				}
 				hooks := scopedProjectFilesReadHooks{BeforeResponse: func(_ string) {
 					boundary.revoke(t, h, ctx, access, owner.Session, operator, project.ID)
 				}}
@@ -237,6 +244,11 @@ func TestScopedProjectFilesRechecksGrantAtResponseDelivery(t *testing.T) {
 				handler.ServeHTTP(response, req)
 				if response.Code != boundary.statusCode || strings.Contains(response.Body.String(), project.ID) || strings.Contains(response.Body.String(), project.Name) {
 					t.Fatalf("%s workspace result escaped after %s: HTTP %d %s", route.name, boundary.name, response.Code, response.Body.String())
+				}
+				for _, privateValue := range []string{"private media", "private.wav", `"entry_count":1`, `"total_bytes":2147483648`} {
+					if strings.Contains(response.Body.String(), privateValue) {
+						t.Fatalf("%s exposed %q after %s: HTTP %d %s", route.name, privateValue, boundary.name, response.Code, response.Body.String())
+					}
 				}
 			})
 		}

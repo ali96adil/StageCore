@@ -49,6 +49,9 @@ read route, checks Arabic RTL and English LTR usage totals, page/category labels
 keyboard focus and a 390 px viewport, and verifies upload/download controls stay
 absent without their separate grants/options. It uses temporary SQLite and
 synthetic Vault metadata only; it does not upload or open media bytes.
+`TestScopedProjectFilesRechecksGrantAtResponseDelivery` also seeds private file
+metadata and proves a read grant revoked at the response boundary suppresses
+the filename, entry count and byte total, under normal and Race execution.
 
 ## Integration and resilience coverage
 
