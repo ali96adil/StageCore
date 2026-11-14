@@ -169,6 +169,10 @@ input, textarea, select {
   padding: 9px 10px;
   outline: none;
 }
+:where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
 textarea { resize: vertical; line-height: 1.45; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(102, 179, 255, .12); }
 .check-row { align-self: end; display: flex; align-items: center; gap: 8px; min-height: 38px; }
