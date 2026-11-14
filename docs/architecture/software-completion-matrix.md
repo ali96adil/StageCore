@@ -75,14 +75,16 @@ displays concurrency and timing semantics and a local Draft path simulation
 for virtual offline, missing Companion/DMX, and assumed-latency scenarios.
 SC-011 now detects persisted Draft lighting drift from the selected published
 Snapshot, exports the exact Preflight report, explains RTC/authentication risk,
-and labels MIDI inventory as inventory evidence only. SC-010 now previews saved
-Action preset content and warns when its target is absent. SC-016's existing
-session-local copy path now warns on unavailable targets and has policy-fidelity
-coverage. Remaining SC-010, SC-016 and Preflight work is in the rows above.
+and labels MIDI inventory as inventory evidence only. SC-010 now supports
+ordered persistent multi-action Mixed-Cue presets while retaining the legacy
+single-action shape; saved content and missing targets are previewed. SC-016
+supports session-local single and multi-action copy/paste with policy fidelity,
+independent IDs and unavailable-target warnings. Remaining SC-010/016 target
+remapping, preset discovery and Preflight evidence reconciliation are in the
+rows above.
 
 The exact-head Core run on pushed HEAD `70a7061` is still running Go 1.26 Race;
-do not push local commits through `8690da0` and their checkpoints until that
-run completes.
+do not push local commits through `a023f39` until that run completes.
 SC-015 has a
 safe event timeline, warning categories, JSON export and summary comparison.
 Its canonical session stream still lacks per-output connection/health events;
