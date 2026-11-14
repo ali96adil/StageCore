@@ -320,6 +320,20 @@
 .sc008-dialog textarea {
   max-width: 100%;
 }
+.sc010-preset-search { margin-block: 8px; }
+.sc010-preset-remaps {
+  display: grid;
+  gap: 8px;
+  margin-block: 8px;
+}
+.sc010-preset-remap {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.sc010-preset-remap select { max-width: 100%; }
 @media (max-width: 720px) {
   .sc008-dialog { width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
   .sc008-dialog .sc008-form { padding: 12px; }

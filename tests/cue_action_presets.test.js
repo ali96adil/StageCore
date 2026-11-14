@@ -64,6 +64,13 @@ function find(root, tagName) {
   return null;
 }
 
+function findAll(root, tagName) {
+  return [
+    ...(root?.tagName === tagName.toUpperCase() ? [root] : []),
+    ...(root?.children || []).flatMap((child) => typeof child === "string" ? [] : findAll(child, tagName)),
+  ];
+}
+
 function contentText(root) {
   return [root?.textContent || "", ...(root?.children || []).map((child) => typeof child === "string" ? child : contentText(child))].join(" ");
 }
@@ -154,4 +161,32 @@ test("Action preset search matches nested Mixed-Cue targets and payloads", async
   search.listeners.input();
   assert.equal(rows[0].hidden, true);
   assert.equal(rows[1].hidden, false);
+});
+
+test("Missing Mixed-Cue preset targets can be explicitly remapped per action", async () => {
+  const actions = [
+    { action_id: "saved-light", target_ref: "OLD-LIGHT", capability_key: "lighting.channels.fade", parameters: { fade_ms: 900 } },
+    { action_id: "saved-osc", target_ref: "OLD-VISUAL", capability_key: "osc.send", parameters: { address: "/scene/4" } },
+  ];
+  const { panel, inserted } = await openPresets({
+    presets: [{ preset_id: "mixed-preset", name: "Warm scene", actions }],
+    targets: [{ logical_name: "LIGHTING" }, { logical_name: "VDMX" }],
+  });
+  const row = find(panel, "ul").children[0];
+  const remaps = findAll(row, "select").filter((item) => item.className === "sc010-target-remap");
+  assert.equal(remaps.length, 2);
+  remaps[0].value = "LIGHTING";
+  remaps[0].listeners.change();
+  remaps[1].value = "VDMX";
+  remaps[1].listeners.change();
+  assert.match(contentText(row), /Targets will be remapped in this Draft Cue only/);
+  remaps[0].value = "";
+  remaps[0].listeners.change();
+  assert.match(contentText(row), /Target is not present in this Project configuration/);
+  remaps[0].value = "LIGHTING";
+  remaps[0].listeners.change();
+  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 2 actions to Cue").onclick();
+  assert.deepEqual(inserted.map((action) => action.target_ref), ["LIGHTING", "VDMX"]);
+  assert.deepEqual(inserted.map((action) => action.action_id), ["", ""]);
+  assert.deepEqual(actions.map((action) => action.target_ref), ["OLD-LIGHT", "OLD-VISUAL"]);
 });

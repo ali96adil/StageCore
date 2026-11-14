@@ -1091,16 +1091,71 @@
         const row = document.createElement("li");
         const actions = Array.isArray(preset.actions) ? preset.actions : [preset.action].filter(Boolean);
         row.dataset.searchText = `${preset.name || ""} ${JSON.stringify(actions)}`.toLocaleLowerCase();
+        const targets = state.f002Targets || [];
         const targetPresent = actions.length > 0 && actions.every((action) => {
           const targetRef = String(action?.target_ref || "").trim();
-          return targetRef && (state.f002Targets || []).some((target) => target.logical_name === targetRef);
+          return targetRef && targets.some((target) => target.logical_name === targetRef);
         });
         const targetStatus = document.createElement("p");
         targetStatus.className = targetPresent ? "muted" : "message warn";
         targetStatus.setAttribute("role", targetPresent ? "status" : "alert");
+        const missingTargetNotice = tr(
+          "الهدف غير موجود في إعدادات هذا المشروع. أضف هدفاً أو أعد تعيينه قبل الاعتماد على هذا الكيو.",
+          "Target is not present in this Project configuration. Add or remap a target before relying on this Cue.",
+        );
         targetStatus.textContent = targetPresent
           ? tr("الهدف موجود في إعدادات هذا المشروع.", "Target is available in this Project configuration.")
-          : tr("الهدف غير موجود في إعدادات هذا المشروع. أضف هدفاً أو أعد تعيينه قبل الاعتماد على هذا الكيو.", "Target is not present in this Project configuration. Add or remap a target before relying on this Cue.");
+          : missingTargetNotice;
+        const remaps = document.createElement("div");
+        remaps.className = "sc010-preset-remaps";
+        const mappedTargets = new Map();
+        const missingTargetIndexes = [];
+        actions.forEach((action, index) => {
+          const originalTarget = String(action?.target_ref || "").trim();
+          if (originalTarget && targets.some((target) => target.logical_name === originalTarget)) return;
+          missingTargetIndexes.push(index);
+          const label = document.createElement("label");
+          label.className = "sc010-preset-remap";
+          const caption = document.createElement("span");
+          caption.textContent = tr(
+            `الإجراء ${index + 1} (${action?.capability_key || "بدون نوع"}) — الهدف البديل`,
+            `Action ${index + 1} (${action?.capability_key || "unknown capability"}) — replacement target`,
+          );
+          const select = document.createElement("select");
+          select.className = "sc010-target-remap";
+          select.setAttribute("aria-label", caption.textContent);
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = tr("أبقِ الهدف كما هو", "Keep current target");
+          select.append(empty);
+          const choices = new Set();
+          for (const target of targets) {
+            const logicalName = String(target?.logical_name || "").trim();
+            if (!logicalName || choices.has(logicalName)) continue;
+            choices.add(logicalName);
+            const option = document.createElement("option");
+            option.value = logicalName;
+            option.textContent = `${logicalName} · ${target.logical_type || ""}`;
+            select.append(option);
+          }
+          select.addEventListener("change", () => {
+            const replacement = String(select.value || "").trim();
+            if (replacement) mappedTargets.set(index, replacement);
+            else mappedTargets.delete(index);
+            if (missingTargetIndexes.every((missingIndex) => mappedTargets.has(missingIndex))) {
+              targetStatus.className = "message warn";
+              targetStatus.textContent = tr(
+                "ستُطبّق إعادة التعيين على نسخة المسودة فقط. تحقّق من توافق الهدف قبل النشر.",
+                "Targets will be remapped in this Draft Cue only. Verify target compatibility before publishing.",
+              );
+            } else {
+              targetStatus.className = "message warn";
+              targetStatus.textContent = missingTargetNotice;
+            }
+          });
+          label.append(caption, select);
+          remaps.append(label);
+        });
         const preview = document.createElement("details");
         const previewHeading = document.createElement("summary");
         previewHeading.textContent = actions.length > 1
@@ -1115,7 +1170,11 @@
           : tr("أضف إلى الكيو", "Add to Cue"));
         insert.onclick = () => {
           if (!active()) return;
-          for (const action of actions) addActionEditor({ ...structuredClone(action), action_id: "" });
+          actions.forEach((action, index) => {
+            const copy = structuredClone(action);
+            if (mappedTargets.has(index)) copy.target_ref = mappedTargets.get(index);
+            addActionEditor({ ...copy, action_id: "" });
+          });
           refreshActions();
         };
         const remove = button(tr("احذف القالب", "Delete preset"));
@@ -1131,7 +1190,9 @@
             remove.disabled = false;
           }
         };
-        row.append(preset.name, targetStatus, preview, insert, " ", remove);
+        row.append(preset.name, targetStatus);
+        if (remaps.children.length) row.append(remaps);
+        row.append(preview, insert, " ", remove);
         list.append(row);
       }
       filterRows();
