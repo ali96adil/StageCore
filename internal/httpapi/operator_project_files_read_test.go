@@ -253,7 +253,7 @@ func TestScopedProjectFilesRechecksGrantAtResponseDelivery(t *testing.T) {
 				if response.Code != boundary.statusCode || strings.Contains(response.Body.String(), project.ID) || strings.Contains(response.Body.String(), project.Name) {
 					t.Fatalf("%s workspace result escaped after %s: HTTP %d %s", route.name, boundary.name, response.Code, response.Body.String())
 				}
-				for _, privateValue := range []string{"private media", "private.wav", `"entry_count":1`, `"logical_bytes":2147483648`} {
+				for _, privateValue := range []string{"private media", "private.wav", `"entry_count":1`, `"match_count":1`, `"logical_bytes":2147483648`} {
 					if strings.Contains(response.Body.String(), privateValue) {
 						t.Fatalf("%s exposed %q after %s: HTTP %d %s", route.name, privateValue, boundary.name, response.Code, response.Body.String())
 					}
