@@ -1432,3 +1432,32 @@ This entry supersedes the preceding push instruction.
   `05c8c96`, push the six local commits normally to the existing branch only
   after all exact-head workflows pass, update PR #534's checkpoint, and watch
   CI on the new exact SHA. Continue software gaps while Pi access is blocked.
+
+## Resume update — 2026-11-14 07:00 UTC · overlap batch pushed
+
+- The seven-commit batch was pushed normally to the existing branch and PR:
+  `origin/integration/stagecore-rc` and Draft PR #534 now point to
+  `abe7ad8017744283acab76bfa4f3b76ad4797f52`. The local source worktree was
+  clean immediately after the push; this checkpoint update is the only local
+  follow-up being prepared.
+- The prior exact-head checks for `05c8c96` all passed, including the 34m29s
+  Go 1.26 Race + Linux ARM64 build job. New exact-head runs for `abe7ad8`:
+  Core `43568904863` and Companion Core `43568904858` are in progress;
+  Camera Relay `43568904853` passed. Do not push the pending checkpoint commit
+  or another feature until both in-progress runs finish and the branch SHA is
+  confirmed.
+- PR #534's opening summary now names the `abe7ad8` head, seven-commit scope,
+  tests, current run IDs, Pi blocker and production protections; its older
+  qualification archive is preserved.
+- The local full Go suite passed with `TMPDIR=/tmp`; the three Linux-only
+  offline-media verification tests are skipped on Darwin and remain exercised
+  by Linux CI. `go vet ./...`, `go test -race ./internal/pluginhost`, Node
+  67/67, focused HTTP API/Operator Web checks, JS syntax, and diff checks passed.
+- Pi 4 qualification still cannot start: the strict alias fails before host
+  identity (`websocket: bad handshake`). No command ran remotely. Keep this
+  classified as Hardware Qualification Pending; production services/data,
+  physical outputs, firmware and production ACL remain untouched.
+- Resume by checking Core `43568904863` and Companion `43568904858`. If green,
+  verify Remote HEAD, push the local checkpoint commit normally, then watch the
+  exact-head CI for that new HEAD before another push. Continue the next
+  software gap while respecting these CI gates.
