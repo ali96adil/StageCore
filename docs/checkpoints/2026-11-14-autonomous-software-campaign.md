@@ -2940,3 +2940,19 @@ This entry supersedes the preceding push instruction.
   handoff commit ahead of the clean remote `61fd27e`. The next action remains to
   wait for Go 1.26 Race and ARM64 build, verify the exact branch/PR head, then
   continue the campaign with the remaining policy-defined gaps.
+
+## Resume update — 2026-11-14 19:18 UTC · explicit logical byte field
+
+- Renamed the new Project Files response/UI field from `total_bytes` to
+  `logical_bytes`; the value is the sum of immutable file-version sizes and is
+  not a measurement of deduplicated physical Vault consumption. This makes the
+  additive qualification API's semantics explicit.
+- Local commit `add04d2aa639c5dbc95d7646fb1d26403441b73f` is validated and
+  committed. Local HEAD is three commits ahead of remote `61fd27e` (the two
+  handoff updates and this API naming refinement); worktree is clean.
+- After the rename, focused Store/UI/API tests, Project Files HTTP and Store
+  Race tests, `go vet`, Node UI tests/syntax, and the actual local 390×844 Chrome
+  gate passed. No production route assembly changed.
+- The current pushed-head CI on `61fd27e` is still in the Go 1.26 Race suite;
+  Go 1.27, all Companion checks and Relay are green. Keep all three local
+  commits unpushed until this exact-head run and ARM64 build complete.
