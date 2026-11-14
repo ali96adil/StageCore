@@ -3128,3 +3128,46 @@ This entry supersedes the preceding push instruction.
   Browser Cue Delivery gate and is running Vet; Companion `43636803043` and
   Relay `43636803216` are green. Race and ARM64 Core checks are still pending.
   Keep local commits unpushed until the complete exact-head CI finishes.
+
+## Resume update — 2026-11-14 20:40 UTC · SC-005 browser qualification and SC-024 keyboard pass
+
+- Local HEAD is `447691b560827a50967e3d9160d2ef0bd7594fe8`, seven commits
+  ahead of the remote/PR head `5fb3a6889e823aecb067b519c5a8b206f84cae21`.
+  The branch is clean. PR #534 is still OPEN and Draft. Local commits are
+  `a947e24`, `9ae3226`, `7e43e77`, `54a6b48`, `ee447fc`, `9626c49`, and
+  `447691b`. Do not push until Core run `43636803011` on exact head `5fb3a68`
+  completes; Companion `43636803043` and Camera Relay `43636803216` passed.
+- SC-005 browser work now exercises actual native Tab traversal to the Cue
+  Label editor field, verifies the 3px keyboard outline, and computes contrast
+  from rendered colors against composited backgrounds in Arabic RTL and
+  English LTR at 390×844. Measured in both locales: blue `4.75:1`, green
+  `5.41:1`, amber `6.71:1`, purple `4.99:1`, Cue text `14.73:1`, focus outline
+  `8.05:1`. The high-specificity theme rule preserves the outline for focused
+  form controls. The matrix marks SC-005 implemented in code.
+- SC-024's isolated Owner grant-editor browser test now sends an actual Chrome
+  Tab from Project to Account and verifies `:focus-visible` plus its 3px
+  outline at the ≤560px RTL breakpoint. It still saves only through the
+  optional qualification API and verifies `PREPARED_NOT_ENFORCED`; no
+  production route assembly or runtime request occurs. The matrix retains
+  end-to-end keyboard grant/revoke, touch, whole-server endpoint/asynchronous
+  delivery reconciliation, Companion compatibility, and installed-copy
+  migration/rollback qualification as open.
+- Local checks passed: Mixed Cue Chrome test normally and under Race; Project
+  grant Chrome test normally and under Race; measured-contrast assertions;
+  `go vet ./...` before the second test-only change and
+  `go vet ./internal/httpapi` after it; `tests/operator_accessibility.test.js`
+  (2/2); JavaScript syntax and `git diff --check`.
+- Core `43636803011` on `5fb3a68` continues in full Go 1.26 Race after
+  Go 1.26 tests, Browser Cue Delivery, and Vet passed; Go 1.27 passed. It had
+  run about 20 minutes at this update; ARM64 product builds are still pending.
+  Recheck the job rather than starting another remote workflow or pushing.
+- Pi 4 optimized-code requalification remains unavailable: the isolated
+  qualification SSH endpoint previously failed before shell access with
+  `websocket: bad handshake`. Mac metrics are not a substitute and the prior
+  Pi run predates linked-graph optimization. No physical device, production
+  service/data/Vault, production ACL, or firmware was touched.
+- First next action: wait for Core `43636803011`; if it succeeds, recheck
+  `git ls-remote`, OPEN/Draft PR #534 and the exact head, then push these seven
+  commits normally and follow the new exact-head checks. Continue the
+  remaining SC-024 route-to-policy/asynchronous review and independent
+  software-only work while Project ACL stays off.
