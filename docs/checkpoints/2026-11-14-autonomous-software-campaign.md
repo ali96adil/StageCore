@@ -3647,6 +3647,31 @@ This entry supersedes the preceding push instruction.
   commands, firmware, production Project ACL, force push, new branch/PR, or
   merge.
 
+## Resume update — 2026-11-14 23:38 UTC · batch pushed, exact-head CI active
+
+- Normal fast-forward push completed from `c52a453c2d838935e1f7601fa748cec2e43ec725`
+  to `460db92eb9a8457b840aa0ddd7aef1b5ebb91c43` on
+  `integration/stagecore-rc`, updating existing OPEN/Draft PR #534. Local,
+  remote and PR heads matched at `460db92`; the worktree was clean immediately
+  after push. This note is a local checkpoint commit; do not push it or any
+  further commit until the active Core run finishes.
+- Exact-head workflows: Core `43654085363` is still running Go 1.26 and Go
+  1.27 jobs; Companion Core `43654085383` passed both Swift checks; Camera
+  Relay `43654085434` passed. Wait for the full Core result before another
+  push, then verify remote, PR and workflow heads again.
+- Read-only SC-002/#501 review confirms PR #504 remains a read-only clock/RTC
+  dashboard and PR #505 is a local PHONE/MANUAL correction preview guarded by
+  Owner, CSRF and active-session checks. Neither writes the system clock;
+  neither qualifies RTC recovery or reauthentication after a real correction.
+  Local browser sessions are eight-hour absolute-expiry credentials rotated
+  offline by `/api/v1/auth/renew` while still valid. The clock test coverage
+  exercises expiry and RTC evidence but not a real WAN-off Pi cold boot. Do
+  not duplicate #504/#505 or run privileged clock commands. Next after CI is
+  to inspect the session/cookie behavior under deterministic clock correction
+  and identify a safe software-only regression; actual RTC and cold boot still
+  need an isolated Pi.
+- No service, clock, Project data, real device, or production ACL was touched.
+
 ## Resume update — 2026-11-14 22:55 UTC · browser gate repair pushed
 
 - Local, remote branch, and OPEN/Draft PR #534 are now at
