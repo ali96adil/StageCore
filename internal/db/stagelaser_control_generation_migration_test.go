@@ -62,18 +62,41 @@ func stageLaser58TestDatabase(t *testing.T, legacyColumn bool, values ...int) *s
 	return database
 }
 
+func migrateStageLaser58(database *sql.DB) error {
+	migrationMu.Lock()
+	defer migrationMu.Unlock()
+	goose.SetBaseFS(migrations.FS)
+	defer goose.SetBaseFS(nil)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return err
+	}
+	if err := goose.UpTo(database, ".", 57); err != nil {
+		return err
+	}
+	version, err := goose.GetDBVersion(database)
+	if err != nil {
+		return err
+	}
+	if version == 57 {
+		if err := ensureStageLaserControlGenerationColumn(database); err != nil {
+			return err
+		}
+	}
+	return goose.UpTo(database, ".", 58)
+}
+
 func TestStageLaser58AdoptsLegacyGenerations(t *testing.T) {
 	values := make([]int, 74)
 	for i := range values {
 		values[i] = i + 1
 	}
 	database := stageLaser58TestDatabase(t, true, values...)
-	if err := migrate(database); err != nil {
+	if err := migrateStageLaser58(database); err != nil {
 		t.Fatal(err)
 	}
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 60 {
-		t.Fatalf("version=%d err=%v; want 60 after applying all migrations", version, err)
+	if err != nil || version != 58 {
+		t.Fatalf("version=%d err=%v; want 58 after applying StageLaser migration", version, err)
 	}
 	var sequence int64
 	if err := database.QueryRow(`SELECT generation FROM stagelaser_control_sequence WHERE id=1`).Scan(&sequence); err != nil {
@@ -102,14 +125,14 @@ func TestStageLaser58AdoptsLegacyGenerations(t *testing.T) {
 		VALUES ('negative', -1)`); err == nil {
 		t.Fatal("generation lower bound is not enforced for legacy column")
 	}
-	if err := migrate(database); err != nil {
+	if err := migrateStageLaser58(database); err != nil {
 		t.Fatalf("second migration run must be idempotent: %v", err)
 	}
 }
 
 func TestStageLaser58AddsMissingColumn(t *testing.T) {
 	database := stageLaser58TestDatabase(t, false, 0, 0)
-	if err := migrate(database); err != nil {
+	if err := migrateStageLaser58(database); err != nil {
 		t.Fatal(err)
 	}
 	var sequence int64
@@ -130,7 +153,7 @@ func TestStageLaser58AddsMissingColumn(t *testing.T) {
 
 func TestStageLaser58RejectsDuplicateDeployedGeneration(t *testing.T) {
 	database := stageLaser58TestDatabase(t, true, 1, 1)
-	if err := migrate(database); err == nil {
+	if err := migrateStageLaser58(database); err == nil {
 		t.Fatal("migration accepted duplicate deployed generations")
 	}
 	version, err := goose.GetDBVersion(database)
@@ -141,14 +164,14 @@ func TestStageLaser58RejectsDuplicateDeployedGeneration(t *testing.T) {
 
 func TestStageLaser58RejectsInvalidDeployedGeneration(t *testing.T) {
 	database := stageLaser58TestDatabase(t, true, -1)
-	if err := migrate(database); err == nil {
+	if err := migrateStageLaser58(database); err == nil {
 		t.Fatal("migration accepted invalid deployed generation")
 	}
 }
 
 func TestStageLaser58RollbackPreservesCommandHistory(t *testing.T) {
 	database := stageLaser58TestDatabase(t, true, 74)
-	if err := migrate(database); err != nil {
+	if err := migrateStageLaser58(database); err != nil {
 		t.Fatal(err)
 	}
 	migrationMu.Lock()
