@@ -1648,3 +1648,36 @@ This entry supersedes the preceding push instruction.
   continue SC-008 and Mixed/linked Cue software acceptance locally without
   pushing until any later exact-head CI gate has completed; then proceed to
   the next matrix software gap.
+
+## Resume update — 2026-11-14 07:38 UTC · Linux USB-DMX write faults
+
+- Remote remains `bc31914bc944ce6735a6c10224a57d42b2bc00cb`; this work is local
+  on `integration/stagecore-rc` in commits `508d619` and `a785dfa`, after the
+  existing local handoff commit `06a9c6a`. The working tree is clean after the
+  checkpoint commit. Do not push until Core run `43571216920` on `bc31914`
+  completes; its Go 1.27 job passed and its Go 1.26 race job was still running
+  at this checkpoint. Companion/Camera runs for `bc31914` passed.
+- SC-025 Linux `WritePacket` now exposes only an internal writer/poller seam;
+  production defaults still call `unix.Write` and `unix.Poll`. Deterministic
+  Linux-tagged tests cover short-write byte ordering, EAGAIN/EINTR, zero
+  progress, HUP/ERR/NVAL, poll failure, and cancellation after a partial
+  frame. Matrix row SC-025 records the coverage and remaining qualifications.
+- Local validation passed: `go test ./internal/usbdmx -count=1`,
+  `go test -race ./internal/usbdmx -count=1`, `go vet ./internal/usbdmx`,
+  Linux ARM64 `go vet`, and Linux ARM64/AMD64 test-binary cross-compilation.
+  The macOS test executions do not run Linux-tagged port tests. The new exact
+  PR CI must execute those tests on Linux before treating runtime behavior as
+  verified; cross-compilation is not runtime evidence.
+- A read-only attempt to `stagecore-qualification` again failed with
+  `websocket: bad handshake` before opening a shell; no Pi command ran. Pi 4
+  engine/burst/sustained performance and SC-025 ARM64 USB qualification remain
+  open. Docker is installed locally but its daemon is unavailable, and no
+  qemu runner is installed.
+- Next: wait for Core `43571216920` on `bc31914`. If it passes, push the
+  accumulated local commits normally to the existing PR #534 branch, then
+  inspect the new exact-head Core Linux test/race/build result plus Companion
+  and Camera workflows. If any fail, diagnose before another change. Continue
+  with the highest proven software gap; keep Pi performance explicitly
+  unqualified until the isolated qualification alias becomes reachable.
+- Safety state unchanged: no production service/data/Vault access, physical
+  output, firmware action, or production Project ACL activation.
