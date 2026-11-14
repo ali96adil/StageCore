@@ -2667,3 +2667,37 @@ This entry supersedes the preceding push instruction.
   supported file-type contract, then close a reproducible software gap with
   isolated tests. Do not reopen SC-009 Route history as a candidate; do not
   repeat completed Mac/Pi performance cases without a specific reason.
+
+## Resume update — 2026-11-14 18:23 UTC · MIME category gate and CI release
+
+- Remote/PR HEAD remains `b1b3cb4198e109fe4807f1250f4e54a58cd0b084`;
+  local code HEAD before this checkpoint is
+  `3e7960bd2f1e6a9bf8e32798cabaeb4852fea49f`. Four local commits are ahead:
+  `ecedb3e` (USB-DMX refresh jitter evidence), `acd46db` (opt-in scoped Project
+  media upload), `6d5c519` (prior resume checkpoint), and `3e7960b` (known
+  extension/MIME category compatibility). The matrix change and this checkpoint
+  still need their own documentation commit. Re-read `git rev-parse HEAD` for
+  the post-checkpoint tip.
+- Exact remote Core run `43622805955` completed successfully on `b1b3cb4`:
+  Go 1.26 and 1.27 pass. Companion run `43622805947` and Camera Relay run
+  `43622805957` also pass. These runs tested only their exact remote source
+  SHA; they do not qualify the local commits. Recheck PR SHA/checks immediately
+  before a normal push, then follow all new exact-head CI to completion.
+- Upload validation now rejects known AUDIO/VIDEO/IMAGE filename categories
+  whose declared MIME top-level differs; syntactically valid
+  `application/octet-stream` remains accepted for browser/format ambiguity.
+  It does not decode file bytes, and downloads remain forced attachments with
+  `nosniff`. Focused projectaccess and HTTP tests, upload Race tests, route
+  inventory/production-activation guards, `go vet`, JS syntax, and diff checks
+  passed after this change.
+- Read-only companion PR survey found current heads/checks: TabletPlayer #36
+  `91613da` pass; ESP32 DMX #39 `3ad7749` all six checks pass; ESP32 Camera #20
+  `455b066` software hardware-probe check passes; StageLaser #56 `b14a578` both
+  no-actuation/host checks pass; StageLaser #57 `c4ff10b` both checks pass
+  (this PR is OPEN but not Draft). No sibling checkout existed in this workspace
+  to inspect or modify; no other repository was changed.
+- Pending SC-023 work: decide and test Capsule behavior for uploaded
+  unreferenced/draft Project files, assess per-Project quotas and retention, and
+  extend supported content verification based on demonstrated operator needs.
+  Continue to treat Hardware Qualification and production approval as separate
+  gates; StageCore ACL/SC-024 remains off in production.
