@@ -3600,6 +3600,30 @@ This entry supersedes the preceding push instruction.
 - Safety limits remain unchanged: no production service/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
 
+## Resume update — 2026-11-14 22:55 UTC · browser gate repair pushed
+
+- Local, remote branch, and OPEN/Draft PR #534 are now at
+  `c52a453c2d838935e1f7601fa748cec2e43ec725`. The batch contains the prior
+  local checkpoint `0ac5d50`, the browser fixture repair `66626e4`, and this
+  checkpoint `c52a453`. The push was a normal fast-forward from `774414d`.
+- Exact-head workflows have started: Core `43650575318` is in progress,
+  Camera Relay `43650575301` is in progress, and Companion Core `43650575320`
+  is queued. Do not push again until Core completes and the branch, PR, and
+  exact workflow heads are rechecked.
+- The failed `774414d` Core run `43649877977` was traced to the new browser
+  timeline fixture omitting the application's `fmtDate` helper. With that
+  fixture contract restored, the entire seven-test Browser Cue Delivery gate
+  passed locally on Chrome with Go 1.27.1/macOS ARM64. The test now sends
+  uncaught JavaScript errors to its failure report rather than waiting for its
+  30-second timeout. Go vet and diff checks passed.
+- Worktree was clean after the push. Next software gap: examine Companion's
+  authenticated WebSocket connect/disconnect, project assignment and session
+  timeline paths; add evidence only for scoped Hub transport, preserving
+  replacement fencing and explicitly avoiding claims of app, adapter, ACK or
+  physical output health. Keep any changes local while exact-head CI runs.
+- Safety remains unchanged: no production service/data/Vault, real-device
+  commands, firmware, production ACL activation, force push, or merge.
+
 ## Resume update — 2026-11-14 22:54 UTC · Core browser gate repair
 
 - PR #534 and `origin/integration/stagecore-rc` remain at
