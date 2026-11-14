@@ -283,9 +283,10 @@
     return changed;
   }
 
-  function isCurrentCrossProjectMapContext() {
+  function isCurrentCrossProjectMapContext(cards = []) {
     return !!crossProjectPasteContext && crossProjectPasteContext.user === state.user &&
-      crossProjectPasteContext.projectID === state.project?.project_id;
+      crossProjectPasteContext.projectID === state.project?.project_id &&
+      !cards.some((card) => card?.isConnected === false);
   }
 
   function showCrossProjectTargetMapDialog() {
@@ -362,6 +363,13 @@
     form.append(actions);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      if (!isCurrentCrossProjectMapContext(cards)) {
+        crossProjectPasteContext = null;
+        crossProjectPastedCards = [];
+        refreshActions();
+        dialog.close();
+        return;
+      }
       if (!form.reportValidity()) return;
       const mapping = Object.fromEntries([...selects].map(([source, select]) => [source, select.value]));
       applyCrossProjectTargetMap(cards, mapping);

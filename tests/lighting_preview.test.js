@@ -454,6 +454,8 @@ test("Cue Studio target mapping expires when the Project or editor User changes"
     { state },
   );
   assert.equal(clipboard.isCurrentCrossProjectMapContext(), true);
+  assert.equal(clipboard.isCurrentCrossProjectMapContext([{ isConnected: true }]), true);
+  assert.equal(clipboard.isCurrentCrossProjectMapContext([{ isConnected: false }]), false);
   state.project = { project_id: "another-project" };
   assert.equal(clipboard.isCurrentCrossProjectMapContext(), false);
   state.project = { project_id: "destination" };
