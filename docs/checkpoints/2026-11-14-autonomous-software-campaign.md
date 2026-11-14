@@ -1177,3 +1177,25 @@ This entry supersedes the preceding push instruction.
   before implementing. Production services, data, Vault, physical devices and
   production ACL remain untouched/disabled; Pi runtime qualification remains
   pending.
+
+## Resume update — 2026-11-14 04:44 UTC · new Cue recovery evidence
+
+- Remote HEAD is still `a3b6f5d7ec009b15fb878e8da995356cee18c939`; local HEAD is
+  `f47f88e0ce4afd0958ea68c9216b3b9abbc33d1b`, four commits ahead including
+  checkpoint docs, Undo/Redo shortcuts and their recovery regression. The
+  matrix update is pending a documentation commit. Nothing has been pushed
+  since `a3b6f5d`.
+- `tests/cue_recovery.test.js` now proves the existing Project/User recovery
+  handles a new Cue before it has a persistent Cue ID, both in local storage
+  and in Hub recovery. Named checkpoints stay hidden until the Cue exists.
+  This closes that SC-009 acceptance gap without changing runtime code.
+- Node suite passes 62/62; focused Cue recovery 11/11 and editor history
+  14/14 pass. JavaScript syntax and `git diff --check` pass.
+- On remote `a3b6f5d`, Camera Relay `43557284429` and Companion Core
+  `43557284414` pass; Go 1.27 in Core `43557284478` passes. Go 1.26 Race is
+  still running. Wait for the exact Core run to finish before pushing local
+  commits; re-read the remote first.
+- Project-wide Draft Undo/Redo remains the main SC-009 gap. Published Snapshots
+  and active runtime must remain immutable. Pi performance remains pending;
+  production services/data, Vault, devices and production ACL remain untouched
+  or disabled.
