@@ -9,20 +9,36 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 )
 
+func localSocketPath(t *testing.T) string {
+	t.Helper()
+	root := os.TempDir()
+	if runtime.GOOS != "windows" {
+		// Unix socket paths have a small fixed limit; t.TempDir includes the
+		// full test name and can exceed it on macOS even with a short TMPDIR.
+		root = "/tmp"
+	}
+	dir, err := os.MkdirTemp(root, "sa-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "a.sock")
+}
+
 func TestLocalClientOnlyUsesExplicitUnixSocket(t *testing.T) {
-	dir := t.TempDir()
 	for _, value := range []string{"", "http://localhost:1234", "relative.sock"} {
 		if _, err := NewLocalClient(value); err == nil {
 			t.Fatalf("invalid socket config accepted: %q", value)
 		}
 	}
-	path := filepath.Join(dir, "stageaudio.sock")
+	path := localSocketPath(t)
 	server, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +71,7 @@ func TestLocalClientOnlyUsesExplicitUnixSocket(t *testing.T) {
 	}
 }
 func TestLocalClientDoesNotWriteWhenAuthorityEnds(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audio.sock")
+	path := localSocketPath(t)
 	server, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +136,7 @@ func TestLocalClientRejectsSymlinkAndOrdinaryFile(t *testing.T) {
 }
 
 func TestLocalClientCancelsPendingReplyAndDoesNotReplayOnReconnect(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audio.sock")
+	path := localSocketPath(t)
 	server, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
