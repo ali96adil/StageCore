@@ -2177,5 +2177,15 @@ This entry supersedes the preceding push instruction.
 - Core `43608326253` has passed Go 1.27, Go 1.26 Test, Browser Cue Delivery,
   and Vet. Go 1.26 Race is still in progress and Linux ARM64 builds are
   pending. Companion `43608326350` and Camera Relay `43608326224` passed.
-  Wait for the full Core job, then verify the SHA and push these four commits
-  normally to the same PR if all checks succeed.
+  Wait for the full Core job, then verify the SHA and push the accumulated
+  five-commit local batch normally to the same PR if all checks succeed.
+
+## Resume update — 2026-11-14 15:23 UTC · full HTTP API package passed
+
+- Full local `STAGECORE_TEST_CHROME=... go test ./internal/httpapi -count=1`
+  passed in 70.511 seconds on local `9ffdd7e1cbcc7e7bab942ea8719e8db040f7b28b`.
+  This includes the 123-Cue Mixed/Linked browser flow and the Owner Project
+  access browser gate alongside the package's existing API tests.
+- Exact remote Core run `43608326253` still has Go 1.26 Race in progress;
+  Linux ARM64 product builds have not started. The local `integration/stagecore-rc`
+  branch is clean and four commits ahead of remote. Do not push yet.
