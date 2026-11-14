@@ -160,3 +160,52 @@ optimization. It does **not** establish Software Complete. Pi ARM64 execution,
 physical device integration/ACK/Blackout, and supervised acceptance remain
 `Hardware Qualification Pending`; production rollout and SC-024 enablement
 remain `Production Release Approval Pending`.
+
+## Resume update — 2026-11-14 00:49 UTC
+
+This section supersedes the older HEAD/CI pointers above for the current
+resume. Earlier entries are retained as history.
+
+- Branch: `integration/stagecore-rc`; Draft PR #534 remains open.
+- Last pushed Local/Remote HEAD: `558a6adf2765c79780ab290efb2e423bfd8ae5ee`.
+- Local HEAD before the checkpoint edit: `8b96dfb2776af1db0a05be3e6a304a7ad8fabef6`; four
+  functional commits are ahead and are not pushed. This checkpoint edit is
+  the fifth commit; read `git rev-parse HEAD` for its resulting tip. No pre-existing uncommitted user
+  changes were present at resume.
+- Local commits: `864071c` safe Session Memory event timeline,
+  `a52f4d8` same-Project completed Session comparison, `1007fa9` synthetic
+  120-Cue/240-Action linked-list filter test, and `8b96dfb` safe warning
+  categories. This handoff/matrix update is the fifth local commit.
+- Current exact pushed-head CI: run `43535359362` for Go. Go 1.27, isolated
+  tests/ARM64, Companion replacement/media, and Swift CompanionCore pass.
+  Go 1.26 JS/firmware/Test/Browser/Vet steps pass; its full Race step is still
+  in progress and ARM64 build has not started. **Do not push until the exact
+  run has completed.** This run does not include the four functional local commits.
+- Local verification after the Session Memory changes: focused Go tests in
+  `internal/sessionmemory` and `internal/operatorweb` pass; the authenticated
+  Session Memory HTTP API regression passes; `go vet` passes for
+  `sessionmemory`, `operatorweb`, and `httpapi`; `node --check` passes for the
+  changed UI/localization assets; the full Core Operator Node suite passes
+  (34 tests), and the 120-Cue/240-Action test passes in about 23 ms on this
+  Mac. Focused Race checks pass for `sessionmemory`, `operatorweb`, and the
+  authenticated Session Memory HTTP API.
+- SC-015 now projects only allowlisted session lifecycle, safety, device
+  command, and simulation events. Start warnings expose safe categories and a
+  count, not raw device/error text. Category filtering and sanitized JSON
+  export are implemented. Comparison reports summary counts, duration and
+  Snapshot match; it is not action-by-action. The current event store has no
+  per-output connection/health event stream, so Session Memory does not infer
+  connectivity from a sent command.
+- SC-012 search/filter code is already pushed at `558a6ad`; local regression
+  adds 120 linked Mixed Cues and 240 Actions. Real-browser keyboard/visual/
+  touch and RTL/LTR acceptance remains open.
+- The previous isolated Pi SSH attempt failed before host identity was
+  verified. No Pi performance qualification, real endpoint commands,
+  production services/data/Vault access, firmware flash, force push, merge, or
+  production ACL enablement occurred.
+- First task after this checkpoint: wait for run `43535359362` to finish. If
+  green, push these five commits normally to the existing branch/PR and wait
+  for the exact new head CI. Then investigate SC-001's missing Ableton-specific
+  execution/observation contract using simulated endpoints; do not equate MIDI
+  transport acceptance with Live execution. Continue to label Pi and physical
+  endpoint acceptance as hardware qualification.

@@ -1,15 +1,15 @@
 # StageCore software completion matrix
 
-Reviewed against `integration/stagecore-rc` at pushed HEAD
-`c67423461a8e32a76fff849b5dfdedd0b99c5543`, Issue #486 and child Issues
+Reviewed against `integration/stagecore-rc` at the last pushed HEAD
+`558a6adf2765c79780ab290efb2e423bfd8ae5ee`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-The current worktree contains SC-012 follow-on search/filter implementation
-not yet pushed. Core run `43533953848` at the pushed HEAD passed Go 1.27,
-isolated tests/ARM64 and both Companion checks; Go 1.26 failed its Node
-`cue_delivery.test.js` harness because it omitted the new `cueTraceCard`
-helper. Local fix `0ef6f84` and SC-012 tests pass; run a new exact-head CI after
-the local commits are pushed.
+At the 2026-11-14 resume checkpoint, four local commits add SC-015 timeline,
+safe export and same-Project Session comparison, plus a 120-Cue/240-Action
+linked-list filter regression. The exact pushed-head Core run `43535359362`
+has Go 1.27, ARM64 isolation and both Companion checks passing; Go 1.26 is
+still running Race. The local follow-ons must not be pushed until that run is
+complete.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
 qualification.
@@ -32,10 +32,10 @@ gap or missing implementation remains. Hardware is called out separately.
 | SC-009 · #488 | Undo/Redo and recoverable Draft editing history. | Cue Studio has browser Undo/Redo; migration 55 and `internal/store/cue_editor_recovery.go` persist per-user recoverable editor state with generation conflict detection; `operator_cue_recovery_test.go`. | **Partial.** Browser undo remains bounded/local; qualify atomic reversals across create/delete/reorder/actions/links, reload and multi-tab recovery, plus previewable durable named checkpoints/restore. | Cue Studio, Store, SQLite. No hardware required; SQLite restart/restore regression required. |
 | SC-010 · #489 | Reusable Actions and Cue presets with independent IDs and safe target remapping. | Migration 56, `internal/store/cue_action_presets.go`, `internal/httpapi/operator_cue_action_presets.go`; store/API/revocation and UI tests. | **Partial.** Action preset path exists; verify independent copies and project-specific target remapping through duplicate/import, and determine whether multi-action Cue templates/search are still required by the ticket. | Cue Studio, store, project import/duplicate. No hardware required. |
 | SC-011 · #490 | One-click, offline show-readiness Preflight with operator-level remedies. | Existing `/preflight` API and `internal/preflight` service/UI; device and environment Preflight tests, including deterministic warning/block conditions. | **Partial.** Integrate clock health, Ableton delivery readiness, snapshot/lighting drift and offline dependencies into one actionable report; validate evidence freshness and degraded/offline scenarios. | Hub, Companion, device inventory, media/snapshot. Software simulation first; real link/device readiness needs LAN and hardware qualification. |
-| SC-012 · #491 | Fast Cue search/filter/navigation on long lists without changing execution order. | Local commit `4352f67` adds client-only search across number, label, name, notes, nested linked actions/targets and multi-filters for action type (including Mixed), enabled state and linked/group state. Search preferences are saved per Project. `tests/cue_list_filters.test.js` exercises nested chain search, Mixed selection, combined filters, project isolation and stable row order. | **Partial.** Add error/readiness filters where source evidence exists and complete browser visual/keyboard/touch acceptance for 100+ Cues, RTL/LTR and narrow layouts. Filter view does not change Cue order, Draft or Snapshot. | Cue Studio, Operator UI. Node/helper tests are local-only until exact-head Core CI; no hardware required. |
+| SC-012 · #491 | Fast Cue search/filter/navigation on long lists without changing execution order. | Pushed `4352f67` adds client-only search across number, label, name, notes, nested linked actions/targets and multi-filters for action type (including Mixed), enabled state and linked/group state. Search preferences are saved per Project. Node tests cover nested chains, Mixed, combined filters, project isolation, malformed storage and order preservation; local `tests/cue_list_filters.test.js` now also covers a 120-Cue/240-Action linked list. | **Partial.** Add error/readiness filters only where a trustworthy source exists and complete real-browser visual/keyboard/touch acceptance for 100+ Cues, RTL/LTR and narrow layouts. Filter view does not change Cue order, Draft or Snapshot. | Cue Studio, Operator UI. Synthetic Node scaling test only; no hardware required. |
 | SC-013 · #492 | Explain a Draft Mixed/linked Cue execution plan without actuating hardware. | Existing Simulation/Digital Twin and report (`internal/simulationcontrol`, `internal/simulationreport`, `simulation.js`, `simulation-report.js`); `internal/cueengine/simulation_gate_integration_test.go`. | **Partial.** Existing report centers on Simulation; a Draft editor preview must show linked Cue expansion, per-action ordering/barrier/delay/fade/timeout and distinguish Draft analysis from Published Snapshot. | Cue Studio, Cue Engine, Digital Twin. Must stay simulator-only in automated checks. |
 | SC-014 · #493 | Cue Inspector with concise action/link/timing/readiness details and safe quick edits. | `cue-studio.js::cueInspector` renders a Cue Inspector/Dry-run and findings; Cue Studio contract coverage exists. | **Partial.** Verify persistent side panel/mobile layout, retained selection, notes and target summaries, unsaved-change guard and accessible quick edits in browser interaction tests. | Cue Studio, validation, responsive Operator UI. No hardware required. |
-| SC-015 · #494 | Real Rehearsal report distinguishing Hub dispatch, Companion receipt and externally observed execution. | `internal/sessionmemory` already returns project-scoped real-session Cue/Action traces with timestamps, result, correlation, latency and ACK. The current local follow-on adds delivery-evidence classification, recorded Hub dispatch attempts and operator-readable duration/correlation/evidence in Session Memory; the transport-only regression proves external execution stays unknown. | **Partial.** Complete per-output connection/warning/snapshot/safety timeline, filters and compare/export. Preserve `TRANSPORT_ONLY → EXTERNAL_EXECUTION_UNKNOWN`; do not label Cue `COMPLETED` alone as Ableton execution. | Runtime Control, Event Store, Companion and adapter status. Test with fake endpoints; actual Ableton reception needs supervised integration. |
+| SC-015 · #494 | Real Rehearsal report distinguishing Hub dispatch, Companion receipt and externally observed execution. | `internal/sessionmemory` returns project-scoped Cue/Action traces and ACK-derived delivery evidence; `TRANSPORT_ONLY` stays `EXTERNAL_EXECUTION_UNKNOWN`. The local follow-on adds a whitelisted session/safety/device/simulation event timeline, warning categories/counts without raw warning text, event-category filtering, sanitized JSON export and same-type/same-Project summary comparison including Snapshot match. Go, API, Race, contract and Node tests cover the projection and view. | **Partial.** The current canonical session stream has no per-output connection/health events, so the report cannot show a complete connection timeline; do not infer connectivity from command attempts. Comparison is aggregate, not action-by-action. Keep external execution unknown unless explicit ACK/readback evidence exists. | Runtime Control, Event Store, Companion and adapters. Timeline projection uses recorded events only; actual Ableton reception, endpoint connection state and output confirmation require adapter evidence/supervised integration. |
 | SC-016 · #495 | Copy/paste/duplicate Actions between Cues with safe independent identity and remapping. | `cue-studio.js` has action paste UI and store supports independent Action creation; Cue Studio contract checks. | **Partial.** Test selected-action clipboard, new IDs, payload/timing fidelity, target warnings/remap and unavailable system clipboard fallback. | Cue Studio and Draft Store. No hardware required. |
 | SC-017 · #496 | Clear Design/Rehearsal/Show workspaces that expose only appropriate controls. | Existing Operator workspaces, session mode/role gates and Workspace Profile state; `workspace_profile_contract_test.go`, role/SHOW-lock API tests. | **Partial.** Current workspace/profile foundation does not prove the requested end-to-end separation, especially stripped-down Show surface, selected Cue persistence and wrong-button prevention across roles/devices. | Operator shell, runtime, auth. Browser and permission tests; hardware only for final operator rehearsal. |
 | SC-018 · #497 | Responsive layout, screen-space and accessible density across desktop/tablet. | Responsive CSS breakpoints and mobile/touch StageAudio/tablet surfaces exist; static UI contract coverage. | **Partial.** No complete route-by-route visual/keyboard audit or screenshots at target desktop/tablet sizes. Add deterministic layout checks for overflow, focus, contrast and GO/STOP visibility. | All Operator web workspaces. Browser/emulator only; physical tablet fit is deployment acceptance. |
@@ -63,15 +63,16 @@ qualification evidence.
 ## Current highest next software task
 
 SC-003 is already implemented with green Go CI in open Draft PR #503; keep it
-there and do not add a duplicate patch to PR #534. SC-015 now reports the
-explicit ACK stage and keeps `COMPLETED + TRANSPORT_ONLY` external execution
-unknown. Existing Companion tests already cover timeout, duplicate after
-reconnect, offline attempt without replay, runtime reconnect and signed
-application ACK; do not duplicate these contracts. Remaining SC-015 software
-work is the bounded connection/warning/snapshot/safety event timeline plus
-safe export/compare. SC-001 lacks a first-party Ableton execution
-provider/observation contract; a supervised Live run remains needed for
-downstream evidence. SC-012 client-side search/filter is in the current local
-batch, with keyboard/visual acceptance still open. Continue SC-002 beyond the
-existing #504/#505 dashboard/preview stack; do not modify production data or
-enable Project ACL.
+there and do not add a duplicate patch to PR #534. SC-015's safe event
+timeline, warning categories, JSON export and summary comparison are now in
+the local batch. The known software gap is the absence of recorded per-output
+connection/health events; the report must not infer them. Existing Companion
+tests already cover timeout, duplicate after reconnect, offline attempt
+without replay, runtime reconnect and signed application ACK; do not duplicate
+these contracts. SC-001 remains the strongest next software investigation:
+there is no first-party Ableton-specific execution/observation contract, so
+inspect what can be bounded and regression-tested with simulation before
+claiming Live integration. SC-012 has synthetic 120/240 linked-list coverage;
+real-browser keyboard/visual/touch acceptance remains. Continue SC-002 beyond
+the existing #504/#505 dashboard/preview stack; do not modify production data
+or enable Project ACL.
