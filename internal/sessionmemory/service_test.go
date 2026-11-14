@@ -3,7 +3,10 @@ package sessionmemory
 import (
 	"context"
 	"encoding/json"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
@@ -158,6 +161,38 @@ func TestDeliveryEvidenceDoesNotPromoteTransportReceiptToExecution(t *testing.T)
 				t.Fatalf("delivery evidence=%q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSessionTimelineProjectsOnlyWhitelistedEventsAndSafeWarningCounts(t *testing.T) {
+	startPayload := json.RawMessage(`{"degraded_start":true,"degraded_reasons":["private endpoint detail","another private detail"],"device_scope_warning":"device-specific detail","preflight_warning":"credential detail"}`)
+	events := []contracts.EventEnvelope{
+		{EventID: "later", EventType: "runtime.emergency_blackout.applied", OccurredAt: time.Unix(20, 0), Priority: "P0", Payload: json.RawMessage(`{"device":"secret-device","response":"private"}`)},
+		{EventID: "ignored", EventType: "auth.login", OccurredAt: time.Unix(15, 0), Payload: json.RawMessage(`{"username":"private-user"}`)},
+		{EventID: "start", EventType: "rehearsal.started", OccurredAt: time.Unix(10, 0), Priority: "P1", Payload: startPayload},
+		{EventID: "device", EventType: "stage_device.command.completed", OccurredAt: time.Unix(30, 0), Priority: "P2", Payload: json.RawMessage(`{"command_type":"private-command","result":"private result"}`)},
+	}
+	got := make([]SessionEventTrace, 0, len(events))
+	for _, event := range events {
+		if trace, ok := projectSessionEvent(event); ok {
+			got = append(got, trace)
+		}
+	}
+	sort.SliceStable(got, func(i, j int) bool { return got[i].OccurredAt.Before(got[j].OccurredAt) })
+	if len(got) != 3 || got[0].EventID != "start" || got[1].EventID != "later" || got[2].EventID != "device" {
+		t.Fatalf("projected timeline=%+v", got)
+	}
+	if got[0].Category != "session" || got[0].WarningCount != 4 || got[1].Category != "safety" || got[2].Category != "device" {
+		t.Fatalf("timeline categories or warning count=%+v", got)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private endpoint", "device-specific detail", "credential detail", "secret-device", "private result", "private-user"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("timeline leaked raw event payload value %q: %s", secret, encoded)
+		}
 	}
 }
 

@@ -94,6 +94,101 @@ function cueTraceCard(cue) {
     </article>`;
 }
 
+const sessionEventLabels = {
+  "rehearsal.started": "Rehearsal started",
+  "rehearsal.stopped": "Rehearsal stopped",
+  "rehearsal.force_stopped": "Rehearsal force-stopped",
+  "show.entered": "SHOW entered",
+  "show.exited": "SHOW exited",
+  "show.force_exited": "SHOW force-exited",
+  "runtime.emergency_blackout.applied": "Emergency Blackout applied",
+  "runtime.emergency_blackout.cleared": "Emergency Blackout cleared",
+  "runtime.emergency_blackout.clear_failed": "Emergency Blackout clear failed",
+  "runtime.edit_blackout.applied": "Edit Blackout applied",
+  "runtime.edit_blackout.cleared": "Edit Blackout cleared",
+  "runtime.edit_blackout.clear_failed": "Edit Blackout clear failed",
+  "stage_device.command.accepted": "Device command accepted",
+  "stage_device.command.completed": "Device command completed",
+  "stage_device.command.timed_out": "Device command timed out",
+  "stage_device.command.cancelled": "Device command cancelled",
+  "stage_device.command.rejected": "Device command rejected",
+  "stage_device.command.failed": "Device command failed",
+  "simulation.stopped": "Simulation stopped",
+  "simulation.execution.completed": "Simulation action completed",
+  "simulation.execution.failed": "Simulation action failed",
+  "simulation.execution.timed_out": "Simulation action timed out",
+  "simulation.execution.cancelled": "Simulation action cancelled",
+};
+
+function sessionEventTimelineMarkup(events, category = "all") {
+  const filtered = category === "all" ? events : events.filter((event) => event.category === category);
+  if (!filtered.length) return `<div class="empty">No runtime events match this filter.</div>`;
+  return filtered.map((event) => `
+    <article class="action-editor">
+      <div class="section-title-row">
+        <div><p class="eyebrow">${esc(event.category || "event")} · ${esc(event.priority || "")}</p><h3>${esc(sessionEventLabels[event.event_type] || event.event_type)}</h3></div>
+        ${event.warning_count ? pill(`${event.warning_count} warning${event.warning_count === 1 ? "" : "s"}`, "warn") : ""}
+      </div>
+      <div class="meta" style="margin-top:8px"><span>${esc(fmtDate(event.occurred_at))}</span>${event.correlation_id ? `<span>Correlation ${esc(event.correlation_id)}</span>` : ""}</div>
+      <p class="mono muted" style="margin-top:6px">${esc(event.event_id)}</p>
+    </article>`).join("");
+}
+
+function sessionTraceExportProjection(session, cues, events) {
+  return {
+    export_version: 1,
+    session: {
+      session_id: session.session_id,
+      project_id: session.project_id,
+      session_type: session.session_type,
+      name: session.name,
+      runtime_snapshot_id: session.runtime_snapshot_id,
+      started_at: session.started_at,
+      ended_at: session.ended_at || null,
+      status: session.status,
+    },
+    cue_executions: cues.map((cue) => ({
+      cue_execution_id: cue.cue_execution_id,
+      cue_id: cue.cue_id,
+      display_label: cue.display_label,
+      name: cue.name,
+      correlation_id: cue.correlation_id,
+      trigger_source: cue.trigger_source,
+      started_at: cue.started_at,
+      completed_at: cue.completed_at || null,
+      result: cue.result,
+      interrupted: Boolean(cue.interrupted),
+      actions: (cue.actions || []).map((action) => ({
+        action_execution_id: action.action_execution_id,
+        action_id: action.action_id,
+        target_ref: action.target_ref,
+        capability_key: action.capability_key,
+        started_at: action.started_at,
+        completed_at: action.completed_at || null,
+        result: action.result,
+        latency_ms: action.latency_ms ?? null,
+        ack_level: action.ack_level,
+        delivery_evidence: action.delivery_evidence,
+        dispatch_attempts: action.dispatch_attempts ?? null,
+        error_code: action.error_code || null,
+        interrupted: Boolean(action.interrupted),
+      })),
+    })),
+    events,
+  };
+}
+
+function downloadSessionTrace(session, cues, events) {
+  const json = JSON.stringify(sessionTraceExportProjection(session, cues, events), null, 2);
+  const blobURL = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+  const link = document.createElement("a");
+  const safeName = String(session.name || session.session_id || "session").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "session";
+  link.href = blobURL;
+  link.download = `stagecore-session-${safeName}.json`;
+  link.click();
+  URL.revokeObjectURL(blobURL);
+}
+
 async function renderRehearsalApproval(container, projectID, session) {
   const user = state.user;
   // The same approval card may refresh twice before its first read returns.
@@ -155,13 +250,14 @@ function beginSessionMemoryRead() {
     state.project?.project_id === request.projectID && state.page === "sessions";
 }
 
-async function renderSessionDetail(sessionID, executionID = "") {
+async function renderSessionDetail(sessionID, executionID = "", eventCategory = "all") {
   const current = beginSessionMemoryRead();
   const projectID = state.project.project_id;
   const detail = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/sessions/${encodeURIComponent(sessionID)}`);
   if (!current()) return;
   const session = detail.session;
   const traces = detail.cue_executions || [];
+  const events = detail.events || [];
   const rehearsalSummary = !executionID && session.session_type === "REHEARSAL" && session.ended_at;
   const interrupted = traces.filter((cue) => cue.interrupted).length;
   const cues = executionID ? traces.filter((cue) => cue.cue_execution_id === executionID) : traces;
@@ -174,6 +270,10 @@ async function renderSessionDetail(sessionID, executionID = "") {
       <div class="meta"><span>Snapshot</span><span class="mono">${esc(session.runtime_snapshot_id)}</span></div>
       <p class="mono muted" style="margin-top:8px">Session ${esc(session.session_id)}</p>
     </article>
+    <section class="card" style="margin-bottom:16px">
+      <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device and simulation events. Connection state is shown only when an explicit event exists.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
+      <div class="actions-editor" style="margin-top:14px">${sessionEventTimelineMarkup(events, eventCategory)}</div>
+    </section>
     ${rehearsalSummary ? `<article class="card" style="margin-bottom:16px">
       <h2>Rehearsal summary</h2>
       <p>${traces.length} recorded Cue executions · ${interrupted} interrupted</p>
@@ -187,6 +287,8 @@ async function renderSessionDetail(sessionID, executionID = "") {
     approval.textContent = "Loading timing approval…";
     renderRehearsalApproval(approval, projectID, session);
   });
+  el("sessionEventCategory")?.addEventListener("change", (event) => renderSessionDetail(sessionID, executionID, event.target.value).catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
+  el("exportSessionTrace")?.addEventListener("click", () => downloadSessionTrace(session, traces, events));
   el("backSessions").addEventListener("click", () => renderSessions().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -85,14 +86,28 @@ type ActionTrace struct {
 	Interrupted       bool                   `json:"interrupted"`
 }
 
+// SessionEventTrace is a deliberately narrow projection of the canonical event
+// stream. Raw event payloads can contain device or operator supplied data, so
+// Session Memory exposes only the event identity and a small set of safe fields.
+type SessionEventTrace struct {
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	Category      string    `json:"category"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	Priority      string    `json:"priority,omitempty"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	WarningCount  int       `json:"warning_count,omitempty"`
+}
+
 type actionEvidence struct {
 	AckLevel         string
 	DispatchAttempts *int
 }
 
 type SessionDetail struct {
-	Session SessionSummary `json:"session"`
-	Cues    []CueTrace     `json:"cue_executions"`
+	Session SessionSummary      `json:"session"`
+	Cues    []CueTrace          `json:"cue_executions"`
+	Events  []SessionEventTrace `json:"events"`
 }
 
 func (s *Service) List(ctx context.Context, projectID string, limit int) ([]SessionSummary, error) {
@@ -140,7 +155,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 			actionMeta[action.ID] = action
 		}
 	}
-	evidenceByExecution, err := s.actionEvidenceByExecution(ctx, session.ID)
+	evidenceByExecution, events, err := s.sessionEventData(ctx, session.ID)
 	if err != nil {
 		return SessionDetail{}, err
 	}
@@ -184,7 +199,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 		}
 		traces = append(traces, trace)
 	}
-	return SessionDetail{Session: summary(session), Cues: traces}, nil
+	return SessionDetail{Session: summary(session), Cues: traces, Events: events}, nil
 }
 
 func deliveryEvidence(ackLevel string) string {
@@ -206,16 +221,18 @@ func deliveryEvidence(ackLevel string) string {
 	}
 }
 
-func (s *Service) actionEvidenceByExecution(ctx context.Context, sessionID string) (map[string]actionEvidence, error) {
+func (s *Service) sessionEventData(ctx context.Context, sessionID string) (map[string]actionEvidence, []SessionEventTrace, error) {
 	events, err := s.store.ListEvents(ctx, sessionID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	evidenceByExecution := make(map[string]actionEvidence)
+	traces := make([]SessionEventTrace, 0, len(events))
 	for _, event := range events {
-		switch event.EventType {
-		case "action.completed", "action.failed", "action.timed_out":
-		default:
+		if trace, ok := projectSessionEvent(event); ok {
+			traces = append(traces, trace)
+		}
+		if event.EventType != "action.completed" && event.EventType != "action.failed" && event.EventType != "action.timed_out" {
 			continue
 		}
 		var payload struct {
@@ -232,7 +249,61 @@ func (s *Service) actionEvidenceByExecution(ctx context.Context, sessionID strin
 			}
 		}
 	}
-	return evidenceByExecution, nil
+	sort.SliceStable(traces, func(i, j int) bool {
+		return traces[i].OccurredAt.Before(traces[j].OccurredAt)
+	})
+	return evidenceByExecution, traces, nil
+}
+
+func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool) {
+	category := ""
+	switch event.EventType {
+	case "rehearsal.started", "rehearsal.stopped", "rehearsal.force_stopped",
+		"show.entered", "show.exited", "show.force_exited":
+		category = "session"
+	case "runtime.emergency_blackout.applied", "runtime.emergency_blackout.cleared", "runtime.emergency_blackout.clear_failed",
+		"runtime.edit_blackout.applied", "runtime.edit_blackout.cleared", "runtime.edit_blackout.clear_failed":
+		category = "safety"
+	case "stage_device.command.accepted", "stage_device.command.completed", "stage_device.command.timed_out",
+		"stage_device.command.cancelled", "stage_device.command.rejected", "stage_device.command.failed":
+		category = "device"
+	case "simulation.stopped", "simulation.execution.completed", "simulation.execution.failed",
+		"simulation.execution.timed_out", "simulation.execution.cancelled":
+		category = "simulation"
+	default:
+		return SessionEventTrace{}, false
+	}
+	trace := SessionEventTrace{
+		EventID: event.EventID, EventType: event.EventType, Category: category,
+		OccurredAt: event.OccurredAt, CorrelationID: event.CorrelationID,
+	}
+	switch event.Priority {
+	case "P0", "P1", "P2", "P3":
+		trace.Priority = event.Priority
+	}
+	if category == "session" && (event.EventType == "rehearsal.started" || event.EventType == "show.entered") {
+		var warning struct {
+			DegradedStart   bool     `json:"degraded_start"`
+			DegradedReasons []string `json:"degraded_reasons"`
+			DeviceScope     string   `json:"device_scope_warning"`
+			Preflight       string   `json:"preflight_warning"`
+		}
+		if json.Unmarshal(event.Payload, &warning) == nil {
+			if warning.DegradedStart {
+				trace.WarningCount += len(warning.DegradedReasons)
+				if len(warning.DegradedReasons) == 0 {
+					trace.WarningCount++
+				}
+			}
+			if strings.TrimSpace(warning.DeviceScope) != "" {
+				trace.WarningCount++
+			}
+			if strings.TrimSpace(warning.Preflight) != "" {
+				trace.WarningCount++
+			}
+		}
+	}
+	return trace, true
 }
 
 func summary(session domain.Session) SessionSummary {

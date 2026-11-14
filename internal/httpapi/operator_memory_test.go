@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -41,6 +42,14 @@ func TestOperatorNotesAndSessionMemoryAPI(t *testing.T) {
 	}
 	session, err := projectStore.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionRehearsal, "Dress")
 	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := session.ID
+	if _, err := projectStore.AppendEvent(ctx, &sessionID, contracts.EventEnvelope{
+		EventType: "rehearsal.started", SchemaVersion: contracts.SchemaVersion1, Source: "test",
+		ProjectID: project.ID, RuntimeSnapshotID: runtimeSnapshot.ID, Priority: "P1",
+		Payload: json.RawMessage(`{"degraded_start":true,"degraded_reasons":["private test detail"]}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	memory := sessionmemory.New(projectStore)
@@ -116,7 +125,7 @@ func TestOperatorNotesAndSessionMemoryAPI(t *testing.T) {
 	detailReq := memoryReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/sessions/"+session.ID, owner.Token)
 	detailRes := httptest.NewRecorder()
 	handler.ServeHTTP(detailRes, detailReq)
-	if detailRes.Code != http.StatusOK || !strings.Contains(detailRes.Body.String(), session.ID) || !strings.Contains(detailRes.Body.String(), `"cue_executions":[]`) {
+	if detailRes.Code != http.StatusOK || !strings.Contains(detailRes.Body.String(), session.ID) || !strings.Contains(detailRes.Body.String(), `"cue_executions":[]`) || !strings.Contains(detailRes.Body.String(), `"category":"session"`) || !strings.Contains(detailRes.Body.String(), `"warning_count":1`) || strings.Contains(detailRes.Body.String(), "private test detail") {
 		t.Fatalf("session detail status=%d body=%s", detailRes.Code, detailRes.Body.String())
 	}
 
