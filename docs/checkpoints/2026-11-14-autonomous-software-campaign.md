@@ -1483,3 +1483,34 @@ This entry supersedes the preceding push instruction.
   all new exact-head CI before another push. Continue software work; Pi ARM64
   measurements remain blocked by the qualification SSH handshake, production
   services/data/outputs and ACL remain untouched.
+
+## Resume update — 2026-11-14 07:09 UTC · keyboard focus and Cue labels
+
+- Local feature commit `1cdae8609a3e752cb2b5386c00f7e29ed5f8db81` adds a global
+  visible keyboard focus outline for Operator controls and a structural test
+  that Cue display-label text remains present alongside supplemental color
+  styling. SC-005 and SC-018 now record that evidence while keeping browser
+  contrast, RTL, responsive and keyboard acceptance open.
+- Local HEAD is `1cdae86`; remote and Draft PR #534 remain at
+  `abe7ad8017744283acab76bfa4f3b76ad4797f52`. Three commits are ahead locally:
+  `4c68f94`, `4c15d95`, and `1cdae86`. The working tree was clean after the
+  feature commit.
+- Focused accessibility Node tests passed 2/2; all `tests/*.test.js` passed
+  69/69; `go test ./internal/operatorweb -count=1`, `go vet
+  ./internal/operatorweb`, JavaScript syntax checks, and `git diff --check`
+  passed. The earlier SC-009 backup/restore full package, focused Race and Vet
+  checks also passed.
+- Exact-head Core CI `43568904863` is still in progress on remote `abe7ad8`:
+  Go 1.27 and Go 1.26 test/Vet steps passed, Go 1.26 Race is running, and
+  Linux ARM64 product builds are pending. Companion `43568904858` and Camera
+  Relay `43568904853` passed. Do not push the local commits until Core CI is
+  complete and green, then recheck the remote SHA and push normally to the
+  existing branch/PR.
+- Pi 4 qualification remains blocked before host identity by the strict SSH
+  alias handshake; no Pi command ran. No physical output, production service,
+  production data/Vault, or production ACL was touched. SC-024 stays disabled
+  in production.
+- First task after the CI gate: push the four local commits including this
+  checkpoint to PR #534, refresh its opening status, and follow exact-head CI.
+  Then resume the next matrix gap, starting with SC-007 Draft-to-published
+  lighting reconciliation, using isolated tests/simulation only.
