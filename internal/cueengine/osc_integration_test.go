@@ -48,6 +48,7 @@ func TestCueGoRealOSCSendsTypedDatagramFromSnapshotTarget(t *testing.T) {
 	pluginPath := buildProductOSCPlugin(t)
 	host := pluginhost.New(pluginPath, nil, nil, nil, oscPluginManifest([]string{oscplugin.PermissionUDPSend}))
 	defer host.Close()
+	warmOSCPluginForCueTest(t, host)
 
 	registry := capability.NewRegistry()
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(host)); err != nil {
@@ -203,6 +204,7 @@ func TestCueGoRealOSCInvalidParametersFailTruthfully(t *testing.T) {
 	pluginPath := buildProductOSCPlugin(t)
 	host := pluginhost.New(pluginPath, nil, nil, nil, oscPluginManifest([]string{oscplugin.PermissionUDPSend}))
 	defer host.Close()
+	warmOSCPluginForCueTest(t, host)
 
 	registry := capability.NewRegistry()
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(host)); err != nil {
@@ -297,6 +299,13 @@ func oscPluginManifest(grants []string) pluginhost.Manifest {
 	}
 }
 
+func warmOSCPluginForCueTest(t *testing.T, host *pluginhost.Host) {
+	t.Helper()
+	if _, err := host.Probe(context.Background()); err != nil {
+		t.Fatalf("start OSC plugin outside the bounded Cue execution: %v", err)
+	}
+}
+
 func buildProductOSCPlugin(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -324,6 +333,7 @@ func TestQLCMappedFaderUsesOSCTransportWithoutApplicationACK(t *testing.T) {
 	fixture := newRealOSCFixture(t, listener.LocalAddr().(*net.UDPAddr).Port, "VIDEO-MAIN", parameters)
 	host := pluginhost.New(buildProductOSCPlugin(t), nil, nil, nil, oscPluginManifest([]string{oscplugin.PermissionUDPSend}))
 	defer host.Close()
+	warmOSCPluginForCueTest(t, host)
 	result := cueengine.NewWithExecutor(fixture.store, oscplugin.New(host)).
 		ExecuteCueGo(context.Background(), fixture.session.ID, commandFor(t, fixture))
 	if result.Status != contracts.CommandCompleted {
@@ -347,7 +357,9 @@ func TestQLCMappedFaderUsesOSCTransportWithoutApplicationACK(t *testing.T) {
 		if event.EventType != "action.completed" {
 			continue
 		}
-		var payload struct { AckLevel contracts.AckLevel `json:"ack_level"` }
+		var payload struct {
+			AckLevel contracts.AckLevel `json:"ack_level"`
+		}
 		if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.AckLevel != contracts.AckTransportOnly {
 			t.Fatalf("OSC evidence=%+v err=%v", payload, err)
 		}
