@@ -1199,3 +1199,16 @@ This entry supersedes the preceding push instruction.
   and active runtime must remain immutable. Pi performance remains pending;
   production services/data, Vault, devices and production ACL remain untouched
   or disabled.
+
+## Resume update — 2026-11-14 04:46 UTC · local documentation checkpoint
+
+- Local HEAD is `54f26edf3bf9632827eb171e93f918f58de1a43b`, five commits ahead
+  of remote `a3b6f5d7ec009b15fb878e8da995356cee18c939`; the working tree is
+  clean. Local commits include checkpoint status-doc updates, editor shortcuts,
+  and recovery tests for new unsaved Cues.
+- Exact-head Core `43557284478` remains in Go 1.26 Race; Go 1.27 is green.
+  Companion and Camera Relay runs `43557284414` and `43557284429` are green.
+  Do not push until Core completes and the remote branch still matches `a3b6f5d`.
+- Local UI evidence remains Node 62/62 with focused recovery 11/11 and history
+  14/14. Next SC-009 feature is project-wide Draft history; implementation has
+  not started. Production and hardware boundaries remain unchanged.

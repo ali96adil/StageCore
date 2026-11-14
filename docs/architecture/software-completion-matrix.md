@@ -1,6 +1,6 @@
 # StageCore software completion matrix
 
-Reviewed on `integration/stagecore-rc`: local HEAD `f47f88e0ce4afd0958ea68c9216b3b9abbc33d1b`, remote HEAD `a3b6f5d7ec009b15fb878e8da995356cee18c939`, Issue #486 and child Issues
+Reviewed on `integration/stagecore-rc`: local HEAD `54f26edf3bf9632827eb171e93f918f58de1a43b`, remote HEAD `a3b6f5d7ec009b15fb878e8da995356cee18c939`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
 At 2026-11-14 04:31 UTC, exact-head Core run `43553686731` on `ce927d6`
