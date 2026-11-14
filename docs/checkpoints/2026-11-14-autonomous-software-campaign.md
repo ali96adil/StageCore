@@ -1694,3 +1694,30 @@ This entry supersedes the preceding push instruction.
   the existing branch and PR #534 now that the old-head CI gate is clear; wait
   for every new exact-head workflow, particularly Linux runtime execution of
   `internal/usbdmx` tests, before starting the next push batch.
+
+## Resume update — 2026-11-14 08:10 UTC · USB-DMX request bounds
+
+- Remote PR head is `7b82afe6026dcadbe8e11fd64cb7656950cbae2b`; local follow-up
+  commits `877ac29` and `03b37b7` add only tests and the SC-025 matrix update.
+  The worktree is clean. Keep these local until the exact-head Core run below
+  completes; do not interrupt it with a push.
+- Manual USB-DMX tests now verify invalid channel count, generic timed output
+  duration, Hub timed duration and continuous lease bounds are rejected before
+  opening a port. Existing protocol tests cover exact full-universe framing;
+  existing lease tests cover expiry, STOP, blackout, authority loss, failed
+  refresh and failed final zero. The matrix retains refresh timing-under-load,
+  disconnect/reopen and real port identity as outstanding qualification.
+- Local checks passed: `go test ./internal/usbdmx -count=1`,
+  `go test -race ./internal/usbdmx -count=1`, `go vet ./internal/usbdmx`, and
+  Linux ARM64/AMD64 test-binary compilation. On pushed head `7b82afe`, Core
+  Go 1.27 (`43573536661`) passed, so the Linux-tagged port-fault tests executed
+  successfully on the Linux runner. Core Go 1.26 Race is still in progress;
+  Companion `43573536683` and Camera Relay `43573536650` passed.
+- Pi performance remains unqualified. The named qualification SSH alias still
+  fails before session establishment, and prior read-only evidence shows
+  production-like Hub/Camera services active on that host. Do not run the Pi
+  benchmark there; no Pi or real output was contacted during this batch.
+- Next: wait for Core `43573536661` to finish on `7b82afe`. On success, record
+  the exact result and push the local USB-DMX bounds test + matrix/handoff
+  commits normally to PR #534. Then follow all new exact-head workflows. On
+  failure, diagnose the failed job before pushing.
