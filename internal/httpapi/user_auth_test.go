@@ -280,6 +280,31 @@ func TestAuthenticatedSSEClosesAfterSessionRevocation(t *testing.T) {
 	if err != nil || line != "event: session\n" {
 		t.Fatalf("first SSE line=%q err=%v", line, err)
 	}
+	line, err = reader.ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "data: ") {
+		t.Fatalf("SSE data line=%q err=%v", line, err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(line), "data: ")), &payload); err != nil {
+		t.Fatalf("decode session-ready payload %q: %v", line, err)
+	}
+	if len(payload) != 4 {
+		t.Fatalf("session-ready event added an unreviewed field (possible Project payload): %s", line)
+	}
+	var eventType string
+	if err := json.Unmarshal(payload["type"], &eventType); err != nil || eventType != "session.ready" {
+		t.Fatalf("session-ready event type=%q err=%v", eventType, err)
+	}
+	for _, key := range []string{"user", "hub_id", "fingerprint"} {
+		if len(payload[key]) == 0 {
+			t.Fatalf("session-ready event is missing %q: %s", key, line)
+		}
+	}
+	for _, key := range []string{"project_id", "runtime_snapshot_id", "device_id", "session_id"} {
+		if _, exists := payload[key]; exists {
+			t.Fatalf("session-ready event disclosed scoped %q data: %s", key, line)
+		}
+	}
 	if _, err := reader.ReadString('\n'); err != nil {
 		t.Fatal(err)
 	}
