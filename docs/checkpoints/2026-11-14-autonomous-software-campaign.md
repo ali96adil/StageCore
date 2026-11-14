@@ -3624,6 +3624,37 @@ This entry supersedes the preceding push instruction.
 - Safety remains unchanged: no production service/data/Vault, real-device
   commands, firmware, production ACL activation, force push, or merge.
 
+## Resume update — 2026-11-14 23:17 UTC · linked integration PR audit
+
+- No worktree source changes were made in the linked repositories. Their
+  existing PR heads and latest checks match:
+  - TabletPlayer #36: `91613da1c8e0455a501c7be4b6df8ac1ce73a6bc`, OPEN/Draft,
+    `tablet-player` pass (run `42719885664`).
+  - ESP32 DMX #39: `3ad774988b2f78eb385f1046f7668a7f29049ab1`, OPEN/Draft,
+    build variants and host contract pass (run `42759555665`).
+  - ESP32 Camera #20: `455b066c6520e1c8a576d26dd2afd4b377652dde`, OPEN/Draft,
+    hardware-probe workflow pass (run `42761096513`).
+  - StageLaser #56: `b14a5789132549f2724f77b342bbe4c6b0fc880c`, OPEN/Draft,
+    no-actuation firmware build and host contract pass (run `42765890415`).
+  - StageLaser #57: `c4ff10b37dc2fbfd3ebe31e55f0f8d4869d3dc54`, OPEN (not Draft),
+    no-actuation firmware build and host contract pass (run `38054411190`,
+    exact to this current head).
+- These checks are on the exact current heads, all PRs report a clean merge
+  state, and no linked PR was changed or merged. Hardware acceptance for
+  probe/firmware behavior remains separate from these host/build checks.
+- Main PR #534 stays OPEN/Draft. Local HEAD is `7d1f03e`; remote remains
+  `c52a453`. Local commits ahead are `0b57512`, `dca2ef6`, `6e170f5`, and
+  `7d1f03e`. Core run `43650575318` is still running Go 1.26 Race on exact
+  remote head `c52a453`; ARM64 is pending. Companion Core and Camera Relay pass
+  on `c52a453`. No push until the Core run completes and exact heads are
+  rechecked.
+- Next: finish the `SC-001–SC-025` and Issue #511 evidence audit, including
+  Mac Companion, Camera Relay, StageAudio, OSC/VDMX/Ableton/QLC+ contracts and
+  the isolated Pi access gate, then push the already-tested Companion batch
+  normally when Core CI clears. Do not create a new branch or PR.
+- Safety remains unchanged: no production service/data/Vault, real-device
+  commands, firmware, production ACL activation, force push, or merge.
+
 ## Resume update — 2026-11-14 23:15 UTC · Companion transport qualification
 
 - Local HEAD is `6e170f5ac019e6f490a86618862f00938f9b3b37`; remote and OPEN/
