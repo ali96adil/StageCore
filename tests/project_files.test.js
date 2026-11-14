@@ -67,6 +67,7 @@ test("Project Files usage summary distinguishes total entries and logical Vault 
   const html = await renderProjectFiles("en");
   assert.match(html, /Showing 1 \/ 12 entries/);
   assert.match(html, /File-version size total: 3\.00 GiB/);
+  assert.match(html, /Types on this page:/);
   assert.match(html, /shared Vault content may be physically stored once/);
 });
 
@@ -74,5 +75,6 @@ test("Project Files usage summary is localized in Arabic", async () => {
   const html = await renderProjectFiles("ar-IQ");
   assert.match(html, /المعروض 1 \/ 12 عنصر/);
   assert.match(html, /إجمالي أحجام نسخ الملفات: 3\.00 GiB/);
+  assert.match(html, /الأنواع بهذه الصفحة:/);
   assert.match(html, /قد يُخزّن محتوى Vault المشترك فعلياً مرة واحدة/);
 });

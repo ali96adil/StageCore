@@ -43,6 +43,8 @@ func TestProjectFilesProgressiveScopedUIContract(t *testing.T) {
 		`"Logical bytes across file versions; shared Vault content may be physically stored once."`,
 		`"Showing"`,
 		`"المعروض"`,
+		`"Types on this page:"`,
+		`"الأنواع بهذه الصفحة:"`,
 		`encodeURIComponent(item.content_version_id)`,
 		`workspace?.project_id !== projectID`,
 		`state.project?.project_id !== projectID`,

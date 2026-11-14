@@ -23,6 +23,7 @@ const scFileCopy = {
   },
   showing: { en: "Showing", "ar-IQ": "المعروض" },
   entries: { en: "entries", "ar-IQ": "عنصر" },
+  pageCategories: { en: "Types on this page:", "ar-IQ": "الأنواع بهذه الصفحة:" },
   empty: { en: "No media is registered for this Project yet.", "ar-IQ": "ماكو ملفات وسائط مسجّلة لهذا المشروع لحد الآن." },
   unavailable: { en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.", "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى." },
   pagination: { en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.", "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان." },
@@ -117,6 +118,7 @@ async function renderScopedProjectFiles(cursor = "") {
         </div>
         <div class="toolbar" style="margin-top:12px">
           ${pill(`${scFileT("usage")}: ${humanSize(workspace.total_bytes)}`, "neutral")}
+          <span class="muted">${esc(scFileT("pageCategories"))}</span>
           ${["AUDIO","VIDEO","IMAGE","OTHER"].map((kind) => pill(`${kind}: ${counts[kind]}`)).join("")}
         </div>
         <small class="muted">${esc(scFileT("usageHint"))}</small>
