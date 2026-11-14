@@ -32,7 +32,7 @@ func TestSelfContainedMaterializePreservesExecutionEnvironmentAndExtensionAssets
 		t.Fatal(err)
 	}
 	if _, err := source.store.CreateAlias(ctx, domain.ProjectDeviceAlias{
-		ProjectID: project.ID, LogicalName: "OSC-PLUGIN", LogicalType: "PLUGIN", TargetRef: "OSC-PLUGIN",
+		ProjectID: project.ID, LogicalName: "OSC-PLUGIN", LogicalType: "PLUGIN", TargetRef: "device-source-local-id",
 		ProjectConfig: []byte(`{"host":"127.0.0.1","port":9000}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -157,6 +157,15 @@ func TestSelfContainedMaterializePreservesExecutionEnvironmentAndExtensionAssets
 	}
 	if len(result.ImportedExtensions) != 1 || result.ImportedExtensions[0] != "example.osc-plugin" {
 		t.Fatalf("materialized extension identities=%v", result.ImportedExtensions)
+	}
+	importedAliases, err := destination.store.ListAliases(ctx, project.ID)
+	if err != nil || len(importedAliases) != 1 {
+		t.Fatalf("imported Project-specific target aliases=%+v err=%v", importedAliases, err)
+	}
+	if alias := importedAliases[0]; alias.ProjectID != project.ID || alias.LogicalName != "OSC-PLUGIN" ||
+		alias.LogicalType != "PLUGIN" || alias.TargetRef != "" ||
+		!jsonEqual(alias.ProjectConfig, []byte(`{"host":"127.0.0.1","port":9000}`)) {
+		t.Fatalf("import did not retain Project config while stripping device-local assignment: %+v", alias)
 	}
 
 	importedEnvironments, err := destination.store.ListExecutionEnvironmentManifests(ctx, revision.ID)
