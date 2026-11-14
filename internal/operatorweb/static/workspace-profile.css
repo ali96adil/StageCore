@@ -2,6 +2,17 @@
   display: none !important;
 }
 
+/* While a SHOW session is active, keep the operator on its live safety
+   controls and remove project/workspace navigation from the tab order. */
+#appView[data-show-session="active"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#appView[data-show-session="active"] .sidebar,
+.topbar[data-show-session="active"] .f017-profile-control {
+  display: none !important;
+}
+
 /* Phase 4 workspaces are injected after the original F-017 page registry.
    Keep those feature-owned navigation entries visible when F-017 reapplies a
    legacy profile; Phase 4 owns their availability until they are explicitly

@@ -12,6 +12,7 @@ const state = {
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
+  showSessionActive: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -241,6 +242,13 @@ function setPage(page) {
   if (page !== "runtime") stopRuntimePolling();
 }
 
+function setShowSessionPresentation(active) {
+  state.showSessionActive = !!active;
+  appView.dataset.showSession = active ? "active" : "inactive";
+  const topbar = document.querySelector(".topbar");
+  if (topbar) topbar.dataset.showSession = active ? "active" : "inactive";
+}
+
 async function navigate(page) {
   if (!state.project) return;
   setPage(page);
@@ -417,6 +425,15 @@ async function renderDashboard() {
   ]);
   state.project = dashboard.project;
   updateWorkspaceProject();
+  const showSessionActive = runtime?.session?.type === "SHOW" || runtime?.mode === "SHOW" ||
+    dashboard.active_session?.type === "SHOW" || dashboard.mode === "SHOW";
+  setShowSessionPresentation(showSessionActive);
+  if (showSessionActive) {
+    // A reload or remembered workspace must return operators to the live
+    // controls before exposing any authoring or project navigation.
+    await navigate("runtime");
+    return;
+  }
   const published = dashboard.published_snapshot;
   const draft = dashboard.draft_revision;
   const publicationKind = dashboard.unpublished_changes ? "warn" : (published ? "good" : "bad");
@@ -1335,6 +1352,7 @@ async function renderRuntime(startPolling = false) {
   ]);
   if (state.page !== "runtime" || state.user !== user || encodeURIComponent(state.project?.project_id || "") !== projectID) return;
   const active = runtime.session;
+  setShowSessionPresentation(active?.type === "SHOW" || runtime.mode === "SHOW");
   const ended = state.runtimeEndedRehearsal;
   const endedRehearsal = ended?.user === user && ended.projectID === projectID ? ended : null;
   const mayReviewTiming = ["OWNER", "TECHNICIAN"].includes(user?.role) &&
