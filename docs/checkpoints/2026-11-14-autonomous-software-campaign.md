@@ -2187,5 +2187,34 @@ This entry supersedes the preceding push instruction.
   This includes the 123-Cue Mixed/Linked browser flow and the Owner Project
   access browser gate alongside the package's existing API tests.
 - Exact remote Core run `43608326253` still has Go 1.26 Race in progress;
-  Linux ARM64 product builds have not started. The local `integration/stagecore-rc`
-  branch is clean and four commits ahead of remote. Do not push yet.
+  Linux ARM64 product builds have not started. The local branch was clean and
+  five commits ahead of remote as of the preceding status check. Do not push.
+
+## Resume update — 2026-11-14 15:27 UTC · include SC-024 browser gate in CI
+
+- Core CI's Browser Cue Delivery step uses an explicit test-name allowlist.
+  Added `TestBrowserOwnerProjectAccessEditorStoresPreparedLevel` to that
+  allowlist so the real-Chrome prepared-grant workflow and 123-Cue browser
+  acceptance run in the next exact-head CI, not only locally. The active CI on
+  `759bcbd` predates this change and does not include the new grant browser
+  test.
+- Workflow diff is one test-name addition; `git diff --check` passes. The
+  focused grant browser test and the full HTTP API package already pass
+  locally with Chrome, including Race for the focused grant test. No
+  `actionlint` binary is installed on this Mac.
+- Current exact remote run `43608326253` remains active in Go 1.26 Race;
+  Linux ARM64 builds are pending. Do not push any accumulated local commits
+  until this run completes, then recheck PR #534 and the branch SHA.
+
+## Resume update — 2026-11-14 15:33 UTC · exact local checkpoint
+
+- Immediately before this checkpoint, the clean local branch tip was
+  `4d1c0ebf5992c556a9d5ee64d4e7aaabd66d761f`, six commits ahead of remote
+  `759bcbd21ae331759443c2c37fe451d0e96bc78a`. This handoff update is included
+  in the latest local checkpoint commit; run `git rev-parse HEAD` for its tip.
+- The same remote Core run `43608326253` is still in progress in Go 1.26 Race;
+  its Linux ARM64 build is pending. Go 1.27, Core Test, Browser Cue Delivery,
+  and Vet passed; Companion `43608326350` and Camera Relay `43608326224` passed.
+- PR #534 remains OPEN/DRAFT at the remote SHA. Its body now reflects that
+  exact SHA and links those workflow runs. The next push is the accumulated
+  local batch to the existing branch only after run `43608326253` completes.
