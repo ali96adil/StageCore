@@ -103,6 +103,11 @@ func TestScopedProjectMediaUploadRequiresExplicitLiveGrantAndStoresManagedConten
 	if got := upload(badType); got.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("malformed media type status=%d body=%s", got.Code, got.Body.String())
 	}
+	mismatchedType := makeUpload(projectA.ID, "invalid.wav", "Invalid", []byte("body"))
+	mismatchedType.Header.Set("Content-Type", "text/plain")
+	if got := upload(mismatchedType); got.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("filename/MIME category mismatch status=%d body=%s", got.Code, got.Body.String())
+	}
 	badName := makeUpload(projectA.ID, "%ZZ", "Invalid", []byte("body"))
 	if got := upload(badName); got.Code != http.StatusBadRequest {
 		t.Fatalf("malformed encoded filename status=%d body=%s", got.Code, got.Body.String())

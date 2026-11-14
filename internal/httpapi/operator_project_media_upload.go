@@ -73,7 +73,7 @@ func uploadProjectMedia(w http.ResponseWriter, r *http.Request, auth *userauth.S
 			assetName = filename
 		}
 	}
-	if !validProjectUploadMediaType(r.Header.Get("Content-Type")) {
+	if !validProjectUploadMediaType(filename, r.Header.Get("Content-Type")) {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]any{"error_code": "PROJECT_FILE_TYPE_INVALID"})
 		return
 	}
@@ -153,7 +153,7 @@ func decodeProjectUploadName(raw string, maxBytes int) (string, error) {
 	return decoded, nil
 }
 
-func validProjectUploadMediaType(raw string) bool {
+func validProjectUploadMediaType(filename, raw string) bool {
 	if len(raw) == 0 || len(raw) > 256 {
 		return false
 	}
@@ -162,7 +162,16 @@ func validProjectUploadMediaType(raw string) bool {
 		return false
 	}
 	parts := strings.Split(mediaType, "/")
-	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	if mediaType == "application/octet-stream" {
+		return true
+	}
+	expectedTopLevel := map[string]string{
+		"AUDIO": "audio", "VIDEO": "video", "IMAGE": "image",
+	}[projectaccess.ProjectFileCategory(filename)]
+	return expectedTopLevel == "" || parts[0] == expectedTopLevel
 }
 
 func writeProjectMediaUploadError(w http.ResponseWriter, authorityErr, importErr error) {

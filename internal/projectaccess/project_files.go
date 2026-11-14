@@ -147,7 +147,7 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 		if filename == "" {
 			filename = item.MediaAssetName
 		}
-		item.Category = projectFileCategory(filename)
+		item.Category = ProjectFileCategory(filename)
 		files = append(files, item)
 		last = fileCursor{Project: projectID, Asset: item.MediaAssetID, Version: item.ContentVersionID}
 	}
@@ -167,9 +167,9 @@ func (s *Service) listScopedProjectFiles(ctx context.Context, userID, projectID 
 	}, nil
 }
 
-// Categorization is presentation only: an extension is NOT proof of MIME type,
-// safe decodability, or authorization to serve the bytes to a browser.
-func projectFileCategory(filename string) string {
+// ProjectFileCategory classifies a workspace item from its filename extension.
+// This label is not proof that the bytes are safely decodable or renderable.
+func ProjectFileCategory(filename string) string {
 	switch strings.ToLower(path.Ext(filename)) {
 	case ".wav", ".mp3", ".flac", ".aiff", ".aif", ".m4a", ".aac", ".ogg", ".opus":
 		return "AUDIO"
