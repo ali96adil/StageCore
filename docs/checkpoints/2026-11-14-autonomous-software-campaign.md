@@ -17,16 +17,23 @@
 - Local SC-015 implementation commit: `af3e1ba` — explicit delivery-evidence
   classification in the real Session trace, Hub dispatch-attempt count,
   operator correlation/duration/evidence labels, translation and regressions.
-  It is not pushed yet; remote remains at `814cf84`.
+  It is pushed in the current PR head.
+- Latest pushed head: `c67423461a8e32a76fff849b5dfdedd0b99c5543`.
+- Follow-on commits pending push: `0ef6f84` fixes the SC-015 Node delivery
+  harness to include `cueTraceCard`; `4352f67` adds SC-012 client-side Cue
+  search and filters with localized UI, per-Project saved view and tests.
+- Local HEAD at this checkpoint: `4352f67`; remote remains `c674234`.
 - PR #534 remains open/draft. No branch or PR was created; no force push or
   merge was performed.
 
 ## CI and linked repositories
 
-At remote HEAD `814cf84`, Core CI run `43529309969` passed all five checks:
-Go 1.26/1.27, isolated tests/ARM64, Companion replacement/media and
-Swift CompanionCore. This run is complete; after the next push, wait for CI on
-its exact HEAD before pushing again.
+At remote HEAD `c674234`, Core run `43533953848` passed Go 1.27, isolated
+tests/ARM64, Companion replacement/media and Swift CompanionCore. Go 1.26
+failed in `Check Operator JS syntax` when the Node delivery test loaded
+`renderSessionDetail` without `cueTraceCard`; test harness fix `0ef6f84` passes
+locally. The run is complete. Push the pending commits normally to #534, then
+wait for exact-head CI before another push.
 
 Related StageCore issue PRs already cover SC-003 (#503, run `39030208327`),
 SC-002A (#504/#505, runs `39030641841` / `39033942474`) and the stacked
@@ -94,17 +101,18 @@ Passed on the local macOS arm64 host:
 
 ## Open work and boundaries
 
-1. Local commit `af3e1ba` is ahead of remote `814cf84`; docs/matrix/handoff
-   corrections remain in the worktree. Core CI on remote `814cf84` passed all
-   five checks, so review and commit those docs, then push normally to the same
-   PR #534 and wait for CI on its exact new head.
+1. Local commits `0ef6f84` and `4352f67` are ahead of remote `c674234`; this
+   handoff/matrix correction is also local. Core run on `c674234` is complete
+   with one Go 1.26 Node harness failure now fixed locally. Review and commit
+   these docs, then push normally to the same PR #534 and wait for CI on its
+   exact new head.
 2. SC-015's session/Cue/Action evidence now makes
    `COMPLETED + TRANSPORT_ONLY` report external execution as unknown. Delay,
    timeout, duplicate-after-reconnect, offline-reconnect and signed application
    ACK simulations already exist in Cue/Companion channel tests; don't copy
-   them. Remaining report work: connection/warning/snapshot/safety timeline,
-   filtering, comparison and safe export. SC-001 still lacks a first-party
-   Ableton execution provider/observation contract.
+   them. Remaining report work: connection/warning/snapshot/safety timeline
+   and safe export/compare. SC-001 still lacks a first-party Ableton execution
+   provider/observation contract.
 3. Continue SC-002 beyond the existing #504/#505 status/preview stack. Do not
    duplicate their work or add a host clock write without isolated qualification.
 4. Raspberry Pi 4 performance qualification remains open. The explicit
@@ -115,7 +123,7 @@ Passed on the local macOS arm64 host:
    devices, flash firmware, merge to `main`, force-push, or enable production
    Project ACL/SC-024. Simulation and temporary databases only.
 
-## Local SC-015 follow-on
+## SC-015 and SC-012 follow-on
 
 The follow-on worktree changes (not covered by the completed CI run on `814cf84`)
 add delivery evidence derived only from the explicit ACK level. A Hub Action
@@ -123,9 +131,17 @@ with `COMPLETED` plus `TRANSPORT_ONLY` reports `EXTERNAL_EXECUTION_UNKNOWN`;
 no downstream execution is inferred. Session Memory carries recorded dispatch
 attempts and shows Cue duration, correlation and a localized evidence label. A
 regression test covers completed CoreMIDI transport with unknown external
-execution, and the embedded UI contract requires that distinction.
+execution, and the embedded UI contract requires that distinction. Local
+SC-012 commit `4352f67` adds per-Project search state, nested chain/action/target
+search and client-only multi-filters for Mixed/action type, enabled state and
+linked/group membership. The filter helper Node tests prove chained Mixed
+selection, combined filters, project isolation, malformed storage fallback
+and preserved sequence order. Full 100+ Cue browser acceptance remains open.
 
-Focused checks passed before local commit `af3e1ba`:
+Focused checks passed before local commits `0ef6f84` and `4352f67`:
+`node --test tests/cue_delivery.test.js tests/cue_list_filters.test.js`,
+`node --check internal/operatorweb/static/app.js`,
+`go test ./internal/operatorweb -run '^(TestCueListSearchAndFiltersStayViewOnlyAndProjectScoped|TestCueStudioTypeFirstAuthoringAndLegacyRoundTrip)$' -count=1`,
 `go test ./internal/sessionmemory -count=1`, the two
 Session Memory/embedded Operator HTTP tests, their Race runs,
 `go test -race ./internal/operatorweb -count=1`, `go vet` for all three
@@ -133,8 +149,9 @@ packages, `node --check internal/operatorweb/static/memory.js` and
 `git diff --check`. The full `go test -race ./internal/httpapi -count=1`
 exceeded the package's 10-minute timeout in the unrelated
 `TestStageDeviceSetupAPSuppressesACKAfterOwnerRevocation` Argon2 login test;
-the focused Session Memory/Operator HTTP tests pass under Race. Run the
-follow-on branch through exact-head Core CI after its push.
+the focused Session Memory/Operator HTTP tests pass under Race. SC-012 focused
+Operator/web and HTTP tests, Race contract test, `go vet`, JS syntax and
+`git diff --check` also pass. Both follow-ons still need exact-head Core CI.
 
 ## Software/hardware/release state
 

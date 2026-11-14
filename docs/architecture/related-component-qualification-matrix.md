@@ -4,13 +4,15 @@ Status checked 2026-11-14 against the current open pull requests and exact
 head commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
 and StageLaser #56/#57 remain open at the heads listed below; all their
 latest PR checks pass. The latest pushed StageCore checkpoint is
-`814cf84b38a6b33379cfcd79270a5ba414e3d9d2` on `integration/stagecore-rc`
-(Draft PR #534). Core CI run `43529309969` passed all five checks: Go 1.26,
-Go 1.27, isolated tests/ARM64, macOS Companion replacement/media and Swift
-CompanionCore. The checks cover the pushed performance batch but not
-subsequent local report/UI changes. Passing CI proves the listed build and
-automated checks only; it does not prove an installed application or physical
-output path.
+`c67423461a8e32a76fff849b5dfdedd0b99c5543` on `integration/stagecore-rc`
+(Draft PR #534). Core CI run `43533953848` passed Go 1.27, isolated
+tests/ARM64, macOS Companion replacement/media and Swift CompanionCore. Go
+1.26 stopped in the Node step because `tests/cue_delivery.test.js` evaluated
+`renderSessionDetail` without the new `cueTraceCard` helper. Local commit
+`0ef6f84` updates the harness; local regression tests pass. Local SC-012
+search/filter work is in `4352f67` and has not been pushed. Passing CI proves
+only the listed build and automated checks; it does not prove an installed
+application or physical output path.
 
 | Component and reviewed head | Implemented behavior and protocol | Automated evidence and current CI | ACK, retry, idempotency, safety, and reconnect | Software evidence vs. remaining qualification |
 | --- | --- | --- | --- | --- |
