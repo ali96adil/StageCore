@@ -244,7 +244,7 @@ function setPage(page) {
 
 function setShowSessionPresentation(active) {
   state.showSessionActive = !!active;
-  appView.dataset.showSession = active ? "active" : "inactive";
+  if (appView) appView.dataset.showSession = active ? "active" : "inactive";
   const topbar = document.querySelector(".topbar");
   if (topbar) topbar.dataset.showSession = active ? "active" : "inactive";
 }
