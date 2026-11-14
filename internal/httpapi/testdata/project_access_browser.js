@@ -134,15 +134,37 @@
     );
     if (!readbackResponse.ok) throw new Error(`grant readback returned HTTP ${readbackResponse.status}`);
     const readback = await readbackResponse.json();
-    const unsafeCall = requestTrace.some((request) =>
-      /\/publish(?:\?|\s|$)|\/runtime\/(?:go|jump|stop)(?:\?|\s|$)|emergency-blackout/i.test(request));
+    const requiredOperatePermissions = ["project.view", "rehearsal.control", "show.go", "show.stop", "show.blackout.engage"];
+    const grantedPermissions = readback.permissions || [];
     if (readback.access_level !== "OPERATE" || readback.enforced !== false ||
-      readback.phase !== "PREPARED_NOT_ENFORCED" || unsafeCall) {
+      readback.phase !== "PREPARED_NOT_ENFORCED" ||
+      !requiredOperatePermissions.every((permission) => grantedPermissions.includes(permission))) {
       throw new Error(`grant readback or non-actuation boundary failed: ${JSON.stringify(readback)}`);
     }
+    level.value = "NONE";
+    level.dispatchEvent(new Event("change", { bubbles: true }));
+    if (save.disabled || document.activeElement !== save) {
+      throw new Error("saved keyboard focus was not available to remove Project access");
+    }
+    await pressKey("Enter");
+    await waitFor(() => document.getElementById("projectAccessCurrent").textContent.includes(
+      "Saved NONE. PREPARED_NOT_ENFORCED."), "saving the prepared Project access revocation");
+    const revokeResponse = await fetch(
+      `/api/v1/projects/${encodeURIComponent(config.project)}/access/users/${encodeURIComponent(config.operator)}`,
+      { cache: "no-store" },
+    );
+    if (!revokeResponse.ok) throw new Error(`revoked grant readback returned HTTP ${revokeResponse.status}`);
+    const revoked = await revokeResponse.json();
+    const unsafeCall = requestTrace.some((request) =>
+      /\/publish(?:\?|\s|$)|\/runtime\/(?:go|jump|stop)(?:\?|\s|$)|emergency-blackout/i.test(request));
+    if (revoked.access_level !== "NONE" || (revoked.permissions || []).length !== 0 ||
+      revoked.enforced !== false || revoked.phase !== "PREPARED_NOT_ENFORCED" || unsafeCall) {
+      throw new Error(`revoked grant or non-actuation boundary failed: ${JSON.stringify(revoked)}`);
+    }
     await report({
-      status: "PASS", access_level: readback.access_level, phase: readback.phase,
-      enforced: readback.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
+      status: "PASS", access_level: revoked.access_level, granted_access_level: readback.access_level,
+      granted_permissions: grantedPermissions, phase: revoked.phase,
+      enforced: revoked.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
       unsafe_call: unsafeCall, rtl: getComputedStyle(form).direction === "rtl", fields_stack: fieldsStack,
       page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable, tab_traversal: tabTraversal,
       focus_visible: focusVisible, touch_activated: touchActivated,

@@ -257,25 +257,27 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		}
 	}
 	var report struct {
-		Status            string `json:"status"`
-		AccessLevel       string `json:"access_level"`
-		Phase             string `json:"phase"`
-		Enforced          bool   `json:"enforced"`
-		WarningShown      bool   `json:"warning_shown"`
-		UnsafeCall        bool   `json:"unsafe_call"`
-		RTL               bool   `json:"rtl"`
-		FieldsStack       bool   `json:"fields_stack"`
-		PageOverflow      bool   `json:"page_overflow"`
-		KeyboardFocusable bool   `json:"keyboard_focusable"`
-		TabTraversal      bool   `json:"tab_traversal"`
-		FocusVisible      bool   `json:"focus_visible"`
-		TouchActivated    bool   `json:"touch_activated"`
-		ViewportWidth     int    `json:"viewport_width"`
+		Status             string                     `json:"status"`
+		AccessLevel        string                     `json:"access_level"`
+		GrantedAccessLevel string                     `json:"granted_access_level"`
+		GrantedPermissions []projectaccess.Permission `json:"granted_permissions"`
+		Phase              string                     `json:"phase"`
+		Enforced           bool                       `json:"enforced"`
+		WarningShown       bool                       `json:"warning_shown"`
+		UnsafeCall         bool                       `json:"unsafe_call"`
+		RTL                bool                       `json:"rtl"`
+		FieldsStack        bool                       `json:"fields_stack"`
+		PageOverflow       bool                       `json:"page_overflow"`
+		KeyboardFocusable  bool                       `json:"keyboard_focusable"`
+		TabTraversal       bool                       `json:"tab_traversal"`
+		FocusVisible       bool                       `json:"focus_visible"`
+		TouchActivated     bool                       `json:"touch_activated"`
+		ViewportWidth      int                        `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
-	if report.AccessLevel != "OPERATE" || report.Phase != "PREPARED_NOT_ENFORCED" || report.Enforced ||
+	if report.AccessLevel != "NONE" || report.GrantedAccessLevel != "OPERATE" || report.Phase != "PREPARED_NOT_ENFORCED" || report.Enforced ||
 		!report.WarningShown || report.UnsafeCall || !report.RTL || !report.FieldsStack || !report.TouchActivated ||
 		report.PageOverflow || !report.KeyboardFocusable || !report.TabTraversal || !report.FocusVisible || report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser report crossed its prepared-only boundary: %+v", report)
@@ -284,11 +286,21 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		projectaccess.ProjectView, projectaccess.RehearsalControl, projectaccess.ShowGO,
 		projectaccess.ShowStop, projectaccess.ShowBlackoutEngage,
 	} {
-		if err := access.Check(ctx, operator.ID, project.ID, permission); err != nil {
-			t.Errorf("stored OPERATE level is missing %s: %v", permission, err)
+		granted := false
+		for _, recorded := range report.GrantedPermissions {
+			if recorded == permission {
+				granted = true
+				break
+			}
+		}
+		if !granted {
+			t.Errorf("browser OPERATE readback is missing %s", permission)
+		}
+		if err := access.Check(ctx, operator.ID, project.ID, permission); err == nil {
+			t.Errorf("NONE level did not revoke %s", permission)
 		}
 	}
 	if err := access.Check(ctx, operator.ID, project.ID, projectaccess.CueEdit); err == nil {
-		t.Fatal("OPERATE unexpectedly granted Cue editing")
+		t.Fatal("NONE unexpectedly granted Cue editing")
 	}
 }

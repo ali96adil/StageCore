@@ -305,7 +305,7 @@ async function renderSecurity() {
         currentStatus.textContent = "Choose both a Project and account first.";
         return;
       }
-      const returnFocusToLevel = document.activeElement === loadButton;
+      const returnFocusToLevel = loadButton.ownerDocument?.activeElement === loadButton;
       loadButton.disabled = true;
       saveButton.disabled = true;
       try {
@@ -342,6 +342,7 @@ async function renderSecurity() {
       const userID = userSelect.value;
       const level = levelSelect.value;
       if (!confirm(`Store ${level} access for this account? These grants remain PREPARED_NOT_ENFORCED and do not restrict this Hub.`)) return;
+      const returnFocusToSave = saveButton.ownerDocument?.activeElement === saveButton;
       saveButton.disabled = true;
       try {
         const result = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/access/users/${encodeURIComponent(userID)}`, {
@@ -362,6 +363,7 @@ async function renderSecurity() {
         securityError(error);
       } finally {
         saveButton.disabled = !canSaveLoadedLevel();
+        if (returnFocusToSave && !saveButton.disabled) saveButton.focus();
       }
     });
   }

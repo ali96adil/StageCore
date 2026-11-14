@@ -3323,3 +3323,60 @@ This entry supersedes the preceding push instruction.
   No Mac measurement substitutes for the missing ARM64 Pi run. Production
   services/data/Vault and production ACL stay untouched; no real device,
   firmware, force push, or merge was used.
+
+## Resume update — 2026-11-14 21:25 UTC · SC-024 prepared grant/revoke browser path
+
+- Remote `integration/stagecore-rc` and OPEN/Draft PR #534 are at
+  `385be99ea8e1dea66fdb86a5d62d00c52e5b0eb7`. Exact-head Core run
+  `43642337411` is still in progress; Companion `43642337424` and Camera Relay
+  `43642337445` completed successfully. Do not push while Core is active.
+- The local SC-024 browser test now uses a temporary SQLite Project to save
+  `OPERATE`, verify its ProjectView/RehearsalControl/GO/STOP/Blackout grants,
+  then save `NONE` and confirm `access.Check` denies those five permissions.
+  Load/Save use actual CDP Tab/Enter input; the browser form restores focus to
+  Access level after loading and to Save after the async write. The test confirms
+  no runtime, safety, or publish request. Project/account/level values remain
+  fixture-selected in JavaScript, so native keyboard choice of select options
+  is not yet qualified.
+- Focused `TestBrowserOwnerProjectAccessEditorStoresPreparedLevel` passes
+  normally and under `-race`; `go vet ./internal/httpapi`, JS syntax checks,
+  and `tests/operator_accessibility.test.js` (2/2) pass. Matrix and handoff
+  edits describe this bounded follow-on; it remains local while the exact-head
+  CI run completes.
+- Next: wait for Core `43642337411`, verify the remote and PR heads, run
+  `git diff --check`, commit the tested SC-024 follow-on, and push normally
+  once that current CI is complete. Then follow exact-head Core CI. Keep
+  production ACL disabled; Pi 4 runtime qualification still requires the
+  previously unavailable isolated environment. Do not touch production
+  services/data/Vault, real devices, or firmware.
+
+## Resume update — 2026-11-14 21:31 UTC · ACL mock compatibility and revocation
+
+- Local and remote branch HEAD are both
+  `385be99ea8e1dea66fdb86a5d62d00c52e5b0eb7`; Draft PR #534 remains OPEN at
+  that SHA. Core run `43642337411` is complete, so no CI is being canceled.
+  Go 1.26 failed before Test at `Check Operator JS syntax`: the ACL Node mock
+  raised `ReferenceError: document is not defined` from asynchronous activity
+  after a test ended. Go 1.27 Test/Vet and Go 1.26 Vet passed; Core browser,
+  Race and ARM64 steps were skipped. Companion `43642337424` and Camera Relay
+  `43642337445` passed.
+- The focus logic now uses the actual control's optional `ownerDocument`, so
+  browser focus restoration works without a global DOM in the Node mock.
+  Locally: `node --test tests/security_project_access.test.js` passes 8/8;
+  `TestBrowserOwnerProjectAccessEditorStoresPreparedLevel` passes normal and
+  `-race`; `go vet ./internal/httpapi`, JS syntax checks and `git diff --check`
+  pass. The browser flow stores `OPERATE`, checks the required grants, revokes
+  to `NONE`, and verifies permission denial in temporary SQLite. It sends no
+  publish, runtime, STOP, or Blackout request. Form focus is returned after
+  asynchronous Load/Save; native keyboard selection of a select option is an
+  identified remaining UI qualification gap.
+- The related-component matrix now records the exact failing SHA/run and local
+  correction. Mixed Cue dual-theme browser normal/Race evidence remains in the
+  prior entry; it was not repeated. No performance benchmark was repeated.
+- Next: commit this tested local browser/focus/docs batch, recheck that Core
+  `43642337411` remains complete and remote/PR still point at `385be99`, then
+  push normally to the existing PR and follow every check on the new exact
+  head before another push. Pi 4 ARM64 Engine qualification remains pending
+  because the isolated `stagecore-qualification` SSH route previously failed
+  before reaching the device. Production ACL remains off; production services,
+  data, Vault, real devices and firmware remain untouched.

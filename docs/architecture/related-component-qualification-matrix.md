@@ -1,24 +1,28 @@
 # Related component qualification matrix
 
-Status refreshed 2026-11-14 21:18 UTC from the open PRs and exact head commits.
+Status refreshed 2026-11-14 21:31 UTC from the open PRs and exact head commits.
 TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
 #20 (`455b066`), and StageLaser #56 (`b14a578`) remain open drafts with passing
 checks. StageLaser #57 (`c4ff10b`) remains open and not marked draft, with
 passing checks. StageCore #503–#508 and #514–#516 remain open at the heads
 listed below; their listed Go 1.26/1.27 checks pass. StageCore Draft PR #534
-is at remote head `7df82f198bdf1d3832539155211060bfd836c51f` on
-`integration/stagecore-rc`. Core run `43640865645` completed with Linux
-Browser Cue Delivery failing on the lighter palette against the system-light
-background: blue 1.695:1, green 1.498:1, amber 1.251:1 and purple 1.810:1.
-Go 1.26 regular tests and Go 1.27 passed; Go 1.26 Vet/Race/ARM64 skipped
-after the browser failure. Companion `43640865619` and Camera Relay
-`43640865680` passed. The local palette now uses balanced shades and the Mixed
-Cue browser test explicitly measures dark RTL and light LTR themes: dark
-3.24/3.57/3.62/3.58:1 and light 4.68/4.46/4.41/4.84:1 (blue/green/amber/purple).
-Focused Mixed Cue browser normal/Race pass. The local SC-024 browser path now
-uses actual Tab/Enter input for Load/Save and focus return, and passes normal/
-Race against temporary SQLite with no runtime/safety/publish requests. Both
-changes await a new exact-head CI run.
+is at remote head `385be99ea8e1dea66fdb86a5d62d00c52e5b0eb7` on
+`integration/stagecore-rc`. Core run `43642337411` completed: Go 1.26 failed
+in `Check Operator JS syntax` because the Node ACL mock observed asynchronous
+activity after test completion and `document` was undefined; all later Go 1.26
+steps were skipped. Go 1.27 Test/Vet and Go 1.26 Vet passed, while browser,
+Race and Linux ARM64 jobs did not run. Companion `43642337424` and Camera Relay
+`43642337445` passed. The local fix reads focus from
+`element.ownerDocument?.activeElement`, which supports real DOM elements and
+the document-free Node mock. Node ACL tests (8/8), focused SC-024 Chrome test
+normal/Race, `go vet ./internal/httpapi`, JS syntax and `git diff --check` pass
+locally. Mixed Cue browser normal/Race also pass locally with dark RTL contrast
+3.24/3.57/3.62/3.58:1 and light LTR 4.68/4.46/4.41/4.84:1
+(blue/green/amber/purple). The focused SC-024 test saves `OPERATE`, verifies
+its grants, revokes to `NONE`, and confirms denial in temporary SQLite using
+actual Tab/Enter input; it makes no runtime, safety, or publish request. Native
+keyboard option selection remains open. These changes are local and await
+exact-head CI after a normal push.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. No linked repository checkout is available in
 this workspace, so no other repository was modified.
