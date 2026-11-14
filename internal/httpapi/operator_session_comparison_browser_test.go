@@ -42,7 +42,7 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			io.WriteString(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body>
-			<div id="comparison"></div><script>function navigate(){} function esc(value){const node=document.createElement("span");node.textContent=String(value??"");return node.innerHTML}</script>
+			<div id="comparison"></div><div id="timeline"></div><script>function navigate(){} function esc(value){const node=document.createElement("span");node.textContent=String(value??"");return node.innerHTML}</script>
 			<script src="/memory.js"></script><script src="/comparison-test.js"></script></body></html>`)
 		case "/app.css":
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -114,6 +114,9 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		HorizontalScroll bool   `json:"horizontal_scroll"`
 		PrivateExcluded  bool   `json:"private_excluded"`
 		ExternalUnknown  bool   `json:"external_unknown"`
+		TransportLabel   bool   `json:"transport_label"`
+		TransportWarning bool   `json:"transport_warning"`
+		ExportSanitized  bool   `json:"export_sanitized"`
 		ViewportWidth    int    `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
@@ -121,6 +124,7 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 	}
 	if report.Status != "PASS" || report.ActionRows != 4 || report.ActionColumns != 12 ||
 		!report.HorizontalScroll || !report.PrivateExcluded || !report.ExternalUnknown ||
+		!report.TransportLabel || !report.TransportWarning || !report.ExportSanitized ||
 		report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser comparison report=%+v", report)
 	}

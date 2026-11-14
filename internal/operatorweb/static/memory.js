@@ -106,6 +106,8 @@ const sessionEventLabels = {
   "stage_device.command.cancelled": "Device command cancelled",
   "stage_device.command.rejected": "Device command rejected",
   "stage_device.command.failed": "Device command failed",
+  "stage_device.transport.connected": "Hub transport connected",
+  "stage_device.transport.disconnected": "Hub transport disconnected",
   "simulation.stopped": "Simulation stopped",
   "simulation.execution.completed": "Simulation action completed",
   "simulation.execution.failed": "Simulation action failed",
@@ -129,6 +131,7 @@ function sessionEventTimelineMarkup(events, category = "all") {
         ${event.warning_count ? `<div class="toolbar">${pill(`${event.warning_count} warning${event.warning_count === 1 ? "" : "s"}`, "warn")}${(event.warning_kinds || []).map((kind) => pill(sessionWarningLabels[kind] || "Warning", "warn")).join("")}</div>` : ""}
       </div>
       <div class="meta" style="margin-top:8px"><span>${esc(fmtDate(event.occurred_at))}</span>${event.correlation_id ? `<span>Correlation ${esc(event.correlation_id)}</span>` : ""}</div>
+      ${event.category === "device_health" ? `<div class="meta" style="margin-top:8px"><span>Device ${esc(event.device_id || "—")}</span><span>Hub transport ${esc(event.transport_state || "unknown")}</span>${event.connection_generation ? `<span>Connection ${esc(event.connection_generation)}</span>` : ""}${event.transition_reason ? `<span>Reason ${esc(event.transition_reason)}</span>` : ""}</div><p class="muted">Hub transport evidence only; it does not confirm device output.</p>` : ""}
       <p class="mono muted" style="margin-top:6px">${esc(event.event_id)}</p>
     </article>`).join("");
 }
@@ -173,7 +176,24 @@ function sessionTraceExportProjection(session, cues, events) {
         interrupted: Boolean(action.interrupted),
       })),
     })),
-    events,
+    events: (events || []).map((event) => ({
+      event_id: String(event?.event_id || ""),
+      event_type: String(event?.event_type || ""),
+      category: String(event?.category || ""),
+      occurred_at: event?.occurred_at || null,
+      ...(event?.priority ? {priority: String(event.priority)} : {}),
+      ...(event?.correlation_id ? {correlation_id: String(event.correlation_id)} : {}),
+      ...(event?.device_id ? {device_id: String(event.device_id)} : {}),
+      ...(event?.transport_state ? {transport_state: String(event.transport_state)} : {}),
+      ...(Number.isInteger(event?.connection_generation) && event.connection_generation > 0
+        ? {connection_generation: event.connection_generation} : {}),
+      ...(event?.transition_reason ? {transition_reason: String(event.transition_reason)} : {}),
+      ...(Number.isInteger(event?.warning_count) && event.warning_count > 0
+        ? {warning_count: event.warning_count} : {}),
+      ...(Array.isArray(event?.warning_kinds)
+        ? {warning_kinds: event.warning_kinds.filter((kind) => ["degraded_start", "device_scope", "preflight"].includes(kind))}
+        : {}),
+    })),
   };
 }
 
@@ -218,6 +238,7 @@ function sessionComparisonMetrics(session, cues, events) {
     interrupted_cues: cues.filter((cue) => cue.interrupted).length,
     safety_events: events.filter((event) => event.category === "safety").length,
     device_events: events.filter((event) => event.category === "device").length,
+    device_health_events: events.filter((event) => event.category === "device_health").length,
     snapshot_id: session.runtime_snapshot_id || "",
   };
 }
@@ -234,6 +255,7 @@ function sessionComparisonMarkup(primarySession, primaryCues, primaryEvents, oth
     ["Interrupted Cues", current.interrupted_cues, compared.interrupted_cues],
     ["Safety events", current.safety_events, compared.safety_events],
     ["Device events", current.device_events, compared.device_events],
+    ["Device transport events", current.device_health_events, compared.device_health_events],
   ];
   const value = (metric, duration = false) => metric === null ? "—" : duration ? `${(metric / 1000).toFixed(1)} s` : String(metric);
   const delta = (left, right, duration = false) => {
@@ -371,7 +393,8 @@ async function renderSessionDetail(sessionID, executionID = "", eventCategory = 
       <p class="mono muted" style="margin-top:8px">Session ${esc(session.session_id)}</p>
     </article>
     <section class="card" style="margin-bottom:16px">
-      <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device and simulation events. Connection state is shown only when an explicit event exists.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
+      <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device and simulation events. Hub transport changes are shown only when explicitly observed and do not confirm output.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="device_health" ${eventCategory === "device_health" ? "selected" : ""}>Connection</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
+      ${detail.events_truncated ? `<p class="muted" role="status">Transport history is limited to the first 500 recorded transitions; this connection timeline is incomplete.</p>` : ""}
       <div class="actions-editor" style="margin-top:14px">${sessionEventTimelineMarkup(events, eventCategory)}</div>
     </section>
     ${!executionID ? `<section class="card" style="margin-bottom:16px"><div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Session comparison</h2><p class="muted">Compare recorded rehearsal metrics from this Project. No execution or device state is changed.</p></div><button id="prepareSessionCompare" class="button ghost" type="button">Compare another session</button></div><div id="sessionComparisonPanel" style="margin-top:12px"></div></section>` : ""}

@@ -143,6 +143,92 @@ func TestSessionDetailReturnsOperatorExecutionTrace(t *testing.T) {
 	}
 }
 
+func TestSessionDetailIncludesExplicitProjectTransportTransitionsInSessionWindow(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	now := time.Date(2026, 11, 14, 22, 0, 0, 0, time.UTC)
+	s := store.New(h.DB, clock.Fixed{Time: now})
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Connection trace", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Other connection trace", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSnapshot, _, err := snapshot.NewBuilder(s).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionRehearsal, "Transport report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {
+		t.Fatal(err)
+	}
+	appendTransport := func(projectID, eventType string, at time.Time, deviceID, state, reason string) {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{
+			"device_id": deviceID, "transport_state": state,
+			"connection_generation": 7, "reason": reason,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
+			EventType: eventType, SchemaVersion: contracts.SchemaVersion1,
+			OccurredAt: at, Source: "hub.stage_device_runtime", ProjectID: projectID, Priority: "P2",
+			Payload: payload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now.Add(-time.Second), "outside-before", "CONNECTED", "")
+	appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now, "tablet-01", "CONNECTED", "")
+	appendTransport(project.ID, contracts.StageDeviceTransportDisconnectedEventType, now, "tablet-01", "DISCONNECTED", "SOCKET_CLOSED")
+	appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now.Add(time.Second), "outside-after", "CONNECTED", "")
+	appendTransport(otherProject.ID, contracts.StageDeviceTransportConnectedEventType, now, "other-project", "CONNECTED", "")
+	if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
+		EventType: "stage_device.command.failed", SchemaVersion: contracts.SchemaVersion1,
+		OccurredAt: now, Source: "hub.stage_device_runtime", ProjectID: project.ID, Priority: "P1",
+		Payload: json.RawMessage(`{"device_id":"command-attempt-is-not-health"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := New(s).Detail(ctx, project.ID, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.EventsTruncated || len(detail.Events) != 2 {
+		t.Fatalf("session events=%+v truncated=%v", detail.Events, detail.EventsTruncated)
+	}
+	connected, disconnected := detail.Events[0], detail.Events[1]
+	if connected.EventType != contracts.StageDeviceTransportConnectedEventType ||
+		disconnected.EventType != contracts.StageDeviceTransportDisconnectedEventType ||
+		connected.Category != "device_health" || disconnected.Category != "device_health" ||
+		connected.DeviceID != "tablet-01" || disconnected.DeviceID != "tablet-01" ||
+		connected.TransportState != "CONNECTED" || disconnected.TransportState != "DISCONNECTED" ||
+		connected.ConnectionGeneration != 7 || disconnected.ConnectionGeneration != 7 ||
+		disconnected.TransitionReason != "SOCKET_CLOSED" {
+		t.Fatalf("project-scoped transport evidence=%+v", detail.Events)
+	}
+	for i := 0; i < 501; i++ {
+		appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now, "bounded", "CONNECTED", "")
+	}
+	detail, err = New(s).Detail(ctx, project.ID, session.ID)
+	if err != nil || !detail.EventsTruncated || len(detail.Events) != 500 {
+		t.Fatalf("bounded session event projection count=%d truncated=%v err=%v", len(detail.Events), detail.EventsTruncated, err)
+	}
+}
+
 func TestDeliveryEvidenceDoesNotPromoteTransportReceiptToExecution(t *testing.T) {
 	cases := []struct {
 		ack  contracts.AckLevel

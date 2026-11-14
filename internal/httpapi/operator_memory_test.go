@@ -52,6 +52,14 @@ func TestOperatorNotesAndSessionMemoryAPI(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := projectStore.AppendEvent(ctx, nil, contracts.EventEnvelope{
+		EventType: contracts.StageDeviceTransportConnectedEventType, SchemaVersion: contracts.SchemaVersion1,
+		OccurredAt: session.StartedAt, Source: "hub.stage_device_runtime",
+		ProjectID: project.ID, Priority: "P2",
+		Payload: json.RawMessage(`{"device_id":"tablet-http","transport_state":"CONNECTED","connection_generation":4}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	memory := sessionmemory.New(projectStore)
 	handler := New(WithOperatorMemory(h.auth, projectStore, memory)).Handler()
 
@@ -125,7 +133,7 @@ func TestOperatorNotesAndSessionMemoryAPI(t *testing.T) {
 	detailReq := memoryReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/sessions/"+session.ID, owner.Token)
 	detailRes := httptest.NewRecorder()
 	handler.ServeHTTP(detailRes, detailReq)
-	if detailRes.Code != http.StatusOK || !strings.Contains(detailRes.Body.String(), session.ID) || !strings.Contains(detailRes.Body.String(), `"cue_executions":[]`) || !strings.Contains(detailRes.Body.String(), `"category":"session"`) || !strings.Contains(detailRes.Body.String(), `"warning_count":1`) || strings.Contains(detailRes.Body.String(), "private test detail") {
+	if detailRes.Code != http.StatusOK || !strings.Contains(detailRes.Body.String(), session.ID) || !strings.Contains(detailRes.Body.String(), `"cue_executions":[]`) || !strings.Contains(detailRes.Body.String(), `"category":"session"`) || !strings.Contains(detailRes.Body.String(), `"warning_count":1`) || !strings.Contains(detailRes.Body.String(), `"category":"device_health"`) || !strings.Contains(detailRes.Body.String(), `"device_id":"tablet-http"`) || !strings.Contains(detailRes.Body.String(), `"transport_state":"CONNECTED"`) || strings.Contains(detailRes.Body.String(), "private test detail") {
 		t.Fatalf("session detail status=%d body=%s", detailRes.Code, detailRes.Body.String())
 	}
 

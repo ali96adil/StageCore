@@ -217,7 +217,6 @@ func (r *Repository) ObserveDevice(ctx context.Context, observation RuntimeObser
 	return r.getRuntimeState(ctx, observation.DeviceID)
 }
 
-
 func (r *Repository) MarkDeviceOffline(ctx context.Context, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
@@ -238,6 +237,40 @@ func (r *Repository) MarkDeviceOffline(ctx context.Context, deviceID string) err
 }
 
 func (r *Repository) MarkAllDevicesOffline(ctx context.Context) error {
+	type previouslyOnline struct {
+		deviceID  string
+		projectID string
+	}
+	var online []previouslyOnline
+	if r.events != nil {
+		rows, err := r.db.QueryContext(ctx, `
+			SELECT d.device_id, COALESCE(NULLIF(d.project_id, ''), NULLIF(a.project_id, ''), '')
+			FROM stage_device_runtime_state rs
+			JOIN stage_devices d ON d.device_id = rs.device_id
+			LEFT JOIN stage_device_assignments a ON a.device_id = d.device_id
+			WHERE rs.connection_state = ?
+		`, ConnectionOnline)
+		if err != nil {
+			return fmt.Errorf("list online Stage Devices before Hub restart: %w", err)
+		}
+		for rows.Next() {
+			var item previouslyOnline
+			if err := rows.Scan(&item.deviceID, &item.projectID); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("read online Stage Device before Hub restart: %w", err)
+			}
+			if item.projectID != "" {
+				online = append(online, item)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE stage_device_runtime_state
 		SET connection_state = ?, readiness = ?
@@ -245,6 +278,15 @@ func (r *Repository) MarkAllDevicesOffline(ctx context.Context) error {
 	`, ConnectionOffline, ReadinessWarning, ConnectionOffline, ReadinessWarning)
 	if err != nil {
 		return fmt.Errorf("reset Stage Device runtime presence: %w", err)
+	}
+	if len(online) > 0 {
+		now := r.now().UTC()
+		for _, item := range online {
+			// Connection telemetry is supplemental. A failed event append must not
+			// prevent the authoritative startup reset from taking devices offline.
+			_ = r.RecordTransportTransition(ctx, item.projectID, item.deviceID, false, 0,
+				TransportDisconnectHubRestart, now)
+		}
 	}
 	return nil
 }

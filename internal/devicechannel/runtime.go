@@ -75,6 +75,7 @@ type connection struct {
 	activeProjectID         string
 	activeRuntimeSnapshotID string
 	activeAssignmentEpoch   int64
+	telemetryProjectID      string
 	commandsEnabled         bool
 	writeMu                 sync.Mutex
 	once                    sync.Once
@@ -442,6 +443,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 	// prevents an exhausted/unavailable counter from creating a ghost
 	// ONLINE device record that could mislead Operator commissioning.
 	current := &connection{owner: r, ws: ws, deviceID: device.ID, protocolVersion: device.ProtocolVersion, sessionToken: token, sessionID: session.ID, advertisedCapabilities: append([]string(nil), hello.Capabilities...), closed: make(chan struct{})}
+	if !isV2 {
+		current.telemetryProjectID = device.ProjectID
+	}
 	current.markActivity()
 	previous, err := r.register(ctx, current)
 	if err != nil {
@@ -477,6 +481,9 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 		Details:        json.RawMessage(`{"authenticated":true}`),
 	}); err != nil || !same {
 		return
+	}
+	if !isV2 {
+		r.recordTransportConnected(ctx, current, device.ProjectID)
 	}
 	if isV2 {
 		if err := r.reconcileFirmwarePostReboot(ctx, current, device); err != nil {
@@ -880,8 +887,8 @@ func (r *Runtime) serveConnection(ctx context.Context, ws *websocket.Conn, sessi
 
 func (r *Runtime) register(ctx context.Context, current *connection) (*connection, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
+		r.mu.Unlock()
 		return nil, fmt.Errorf("stage device runtime closed")
 	}
 	if current.protocolVersion == deviceexperience.ProtocolVersion2 {
@@ -890,6 +897,7 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		// process. Allocation is atomic across overlapping Hub instances.
 		generation, err := r.repository.AllocateV2ConnectionGeneration(ctx)
 		if err != nil {
+			r.mu.Unlock()
 			return nil, err // fail closed; never issue an in-memory fallback
 		}
 		current.generation = generation
@@ -897,15 +905,48 @@ func (r *Runtime) register(ctx context.Context, current *connection) (*connectio
 		// v1 command socket bindings are process-local; do not alter its
 		// legacy transport/command behavior or require a v2 SQL write.
 		if r.nextGeneration == math.MaxInt64 {
+			r.mu.Unlock()
 			return nil, fmt.Errorf("legacy Stage Device generation exhausted")
 		}
 		r.nextGeneration++
 		current.generation = r.nextGeneration
 	}
 	previous := r.connections[current.deviceID]
+	previousProjectID := ""
+	transitionAt := time.Now().UTC()
+	if previous != nil {
+		previousProjectID = previous.telemetryProjectID
+	}
 	delete(r.latestV2SoftwareLevels, current.deviceID)
 	r.connections[current.deviceID] = current
+	r.mu.Unlock()
+	if previous != nil && previousProjectID != "" {
+		telemetryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = r.repository.RecordTransportTransition(telemetryCtx, previousProjectID, previous.deviceID, false,
+			previous.generation, deviceexperience.TransportDisconnectConnectionReplaced, transitionAt)
+		cancel()
+	}
 	return previous, nil
+}
+
+func (r *Runtime) recordTransportConnected(ctx context.Context, current *connection, projectID string) {
+	if current == nil {
+		return
+	}
+	r.mu.Lock()
+	same := !r.closed && r.connections[current.deviceID] == current
+	occurredAt := time.Now().UTC()
+	if same {
+		current.telemetryProjectID = strings.TrimSpace(projectID)
+	}
+	r.mu.Unlock()
+	if !same || strings.TrimSpace(projectID) == "" {
+		return
+	}
+	// A missing telemetry write must not revoke an authenticated socket or
+	// change command authority. The report will simply have no connection event.
+	_ = r.repository.RecordTransportTransition(ctx, projectID, current.deviceID, true,
+		current.generation, "", occurredAt)
 }
 
 func (r *Runtime) unregister(current *connection) {
@@ -914,6 +955,8 @@ func (r *Runtime) unregister(current *connection) {
 	}
 	pending := make([]string, 0)
 	wasCurrent := false
+	disconnectProjectID := ""
+	disconnectedAt := time.Time{}
 	r.mu.Lock()
 	if r.connections[current.deviceID] == current {
 		wasCurrent = true
@@ -933,6 +976,8 @@ func (r *Runtime) unregister(current *connection) {
 			})
 			cancel()
 		}
+		disconnectProjectID = current.telemetryProjectID
+		disconnectedAt = time.Now().UTC()
 	}
 	for commandID, bound := range r.inflight {
 		if bound == current {
@@ -943,6 +988,12 @@ func (r *Runtime) unregister(current *connection) {
 	r.mu.Unlock()
 	if wasCurrent {
 		r.interruptFirmwareConnection(current)
+		if disconnectProjectID != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = r.repository.RecordTransportTransition(ctx, disconnectProjectID, current.deviceID, false,
+				current.generation, deviceexperience.TransportDisconnectSocketClosed, disconnectedAt)
+			cancel()
+		}
 	}
 	current.close()
 

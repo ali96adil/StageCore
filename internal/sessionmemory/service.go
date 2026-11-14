@@ -90,14 +90,19 @@ type ActionTrace struct {
 // stream. Raw event payloads can contain device or operator supplied data, so
 // Session Memory exposes only the event identity and a small set of safe fields.
 type SessionEventTrace struct {
-	EventID       string    `json:"event_id"`
-	EventType     string    `json:"event_type"`
-	Category      string    `json:"category"`
-	OccurredAt    time.Time `json:"occurred_at"`
-	Priority      string    `json:"priority,omitempty"`
-	CorrelationID string    `json:"correlation_id,omitempty"`
-	WarningCount  int       `json:"warning_count,omitempty"`
-	WarningKinds  []string  `json:"warning_kinds,omitempty"`
+	EventID              string    `json:"event_id"`
+	EventType            string    `json:"event_type"`
+	Category             string    `json:"category"`
+	OccurredAt           time.Time `json:"occurred_at"`
+	Priority             string    `json:"priority,omitempty"`
+	CorrelationID        string    `json:"correlation_id,omitempty"`
+	DeviceID             string    `json:"device_id,omitempty"`
+	TransportState       string    `json:"transport_state,omitempty"`
+	ConnectionGeneration int64     `json:"connection_generation,omitempty"`
+	TransitionReason     string    `json:"transition_reason,omitempty"`
+	WarningCount         int       `json:"warning_count,omitempty"`
+	WarningKinds         []string  `json:"warning_kinds,omitempty"`
+	sequence             int64
 }
 
 type actionEvidence struct {
@@ -106,9 +111,10 @@ type actionEvidence struct {
 }
 
 type SessionDetail struct {
-	Session SessionSummary      `json:"session"`
-	Cues    []CueTrace          `json:"cue_executions"`
-	Events  []SessionEventTrace `json:"events"`
+	Session         SessionSummary      `json:"session"`
+	Cues            []CueTrace          `json:"cue_executions"`
+	Events          []SessionEventTrace `json:"events"`
+	EventsTruncated bool                `json:"events_truncated,omitempty"`
 }
 
 func (s *Service) List(ctx context.Context, projectID string, limit int) ([]SessionSummary, error) {
@@ -156,7 +162,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 			actionMeta[action.ID] = action
 		}
 	}
-	evidenceByExecution, events, err := s.sessionEventData(ctx, session.ID)
+	evidenceByExecution, events, eventsTruncated, err := s.sessionEventData(ctx, session)
 	if err != nil {
 		return SessionDetail{}, err
 	}
@@ -200,7 +206,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 		}
 		traces = append(traces, trace)
 	}
-	return SessionDetail{Session: summary(session), Cues: traces, Events: events}, nil
+	return SessionDetail{Session: summary(session), Cues: traces, Events: events, EventsTruncated: eventsTruncated}, nil
 }
 
 func deliveryEvidence(ackLevel string) string {
@@ -222,13 +228,23 @@ func deliveryEvidence(ackLevel string) string {
 	}
 }
 
-func (s *Service) sessionEventData(ctx context.Context, sessionID string) (map[string]actionEvidence, []SessionEventTrace, error) {
-	events, err := s.store.ListEvents(ctx, sessionID)
+func (s *Service) sessionEventData(ctx context.Context, session domain.Session) (map[string]actionEvidence, []SessionEventTrace, bool, error) {
+	events, err := s.store.ListEvents(ctx, session.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
+	}
+	through := time.Now().UTC()
+	if session.EndedAt != nil {
+		through = session.EndedAt.UTC()
+	} else if through.Before(session.StartedAt) {
+		through = session.StartedAt
+	}
+	transportEvents, truncated, err := s.store.ListProjectDeviceTransportEvents(ctx, session.ProjectID, session.StartedAt, through)
+	if err != nil {
+		return nil, nil, false, err
 	}
 	evidenceByExecution := make(map[string]actionEvidence)
-	traces := make([]SessionEventTrace, 0, len(events))
+	traces := make([]SessionEventTrace, 0, len(events)+len(transportEvents))
 	for _, event := range events {
 		if trace, ok := projectSessionEvent(event); ok {
 			traces = append(traces, trace)
@@ -250,10 +266,18 @@ func (s *Service) sessionEventData(ctx context.Context, sessionID string) (map[s
 			}
 		}
 	}
+	for _, event := range transportEvents {
+		if trace, ok := projectSessionEvent(event); ok {
+			traces = append(traces, trace)
+		}
+	}
 	sort.SliceStable(traces, func(i, j int) bool {
+		if traces[i].OccurredAt.Equal(traces[j].OccurredAt) {
+			return traces[i].sequence < traces[j].sequence
+		}
 		return traces[i].OccurredAt.Before(traces[j].OccurredAt)
 	})
-	return evidenceByExecution, traces, nil
+	return evidenceByExecution, traces, truncated, nil
 }
 
 func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool) {
@@ -268,6 +292,8 @@ func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool
 	case "stage_device.command.accepted", "stage_device.command.completed", "stage_device.command.timed_out",
 		"stage_device.command.cancelled", "stage_device.command.rejected", "stage_device.command.failed":
 		category = "device"
+	case contracts.StageDeviceTransportConnectedEventType, contracts.StageDeviceTransportDisconnectedEventType:
+		category = "device_health"
 	case "simulation.stopped", "simulation.execution.completed", "simulation.execution.failed",
 		"simulation.execution.timed_out", "simulation.execution.cancelled":
 		category = "simulation"
@@ -276,7 +302,32 @@ func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool
 	}
 	trace := SessionEventTrace{
 		EventID: event.EventID, EventType: event.EventType, Category: category,
-		OccurredAt: event.OccurredAt, CorrelationID: event.CorrelationID,
+		OccurredAt: event.OccurredAt, CorrelationID: event.CorrelationID, sequence: event.Sequence,
+	}
+	if category == "device_health" {
+		if event.Source != "hub.stage_device_runtime" {
+			return SessionEventTrace{}, false
+		}
+		var transport struct {
+			DeviceID             string `json:"device_id"`
+			TransportState       string `json:"transport_state"`
+			ConnectionGeneration int64  `json:"connection_generation"`
+			Reason               string `json:"reason"`
+		}
+		if json.Unmarshal(event.Payload, &transport) != nil || strings.TrimSpace(transport.DeviceID) == "" ||
+			(event.EventType == contracts.StageDeviceTransportConnectedEventType && transport.TransportState != "CONNECTED") ||
+			(event.EventType == contracts.StageDeviceTransportDisconnectedEventType && transport.TransportState != "DISCONNECTED") {
+			return SessionEventTrace{}, false
+		}
+		trace.DeviceID = strings.TrimSpace(transport.DeviceID)
+		trace.TransportState = transport.TransportState
+		if transport.ConnectionGeneration > 0 {
+			trace.ConnectionGeneration = transport.ConnectionGeneration
+		}
+		switch transport.Reason {
+		case "SOCKET_CLOSED", "HUB_RESTART", "CONNECTION_REPLACED", "PROJECT_SCOPE_CHANGED":
+			trace.TransitionReason = transport.Reason
+		}
 	}
 	switch event.Priority {
 	case "P0", "P1", "P2", "P3":

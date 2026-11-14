@@ -31,6 +31,36 @@ test("Session timeline filters by event category and renders only projected fiel
   assert.match(h.sessionEventTimelineMarkup([], "all"), /No runtime events match/);
 });
 
+test("Session timeline labels explicit Hub transport evidence without claiming output", () => {
+  const h = harness();
+  const event = {
+    event_id: "transport-1",
+    event_type: "stage_device.transport.connected",
+    category: "device_health",
+    occurred_at: "now",
+    device_id: "tablet-01",
+    transport_state: "CONNECTED",
+    connection_generation: 9,
+    response_summary: "untrusted output response",
+  };
+  const markup = h.sessionEventTimelineMarkup([event], "device_health");
+  assert.match(markup, /Hub transport connected/);
+  assert.match(markup, /Device tablet-01/);
+  assert.match(markup, /Hub transport CONNECTED/);
+  assert.match(markup, /Connection 9/);
+  assert.match(markup, /does not confirm device output/);
+  assert.doesNotMatch(markup, /untrusted output response/);
+  assert.doesNotMatch(h.sessionEventTimelineMarkup([event], "device"), /Hub transport connected/);
+
+  const projection = h.sessionTraceExportProjection(
+    {session_id: "s1", project_id: "p1"}, [], [event],
+  );
+  const encoded = JSON.stringify(projection);
+  assert.match(encoded, /device_health/);
+  assert.match(encoded, /tablet-01/);
+  assert.doesNotMatch(encoded, /untrusted output response/);
+});
+
 test("Session JSON export keeps execution evidence but excludes free-form adapter response text", () => {
   const h = harness();
   const projection = h.sessionTraceExportProjection(
@@ -57,6 +87,7 @@ test("Session comparison computes bounded metrics from recorded traces and repor
   assert.equal(metrics.action_count, 2);
   assert.equal(metrics.failed_actions, 1);
   assert.equal(metrics.safety_events, 1);
+  assert.equal(metrics.device_health_events, 0);
   const markup = h.sessionComparisonMarkup(current, currentCues, currentEvents, compared, previousCues, previousEvents);
   assert.match(markup, /Current · Previous/);
   assert.match(markup, /Snapshot differs/);

@@ -82,9 +82,9 @@ func (r *Runtime) ExecuteTabletAssignmentAuthorized(
 	}
 	r.assignmentTransitions[input.DeviceID] = true
 	pending := &pendingTabletAssignment{
-		connection: current,
+		connection:   current,
 		assignmentID: assignmentID,
-		ack: make(chan inboundMessage, 1),
+		ack:          make(chan inboundMessage, 1),
 	}
 	r.pendingTabletAssignments[input.DeviceID] = pending
 	r.mu.Unlock()
@@ -172,21 +172,21 @@ func (r *Runtime) ExecuteTabletAssignmentAuthorized(
 		return deviceexperience.TabletAssignmentCommit{}, ErrTabletAssignmentNotVerified
 	}
 	record, err := r.repository.CommitTabletSafeAssignment(ctx, deviceexperience.VerifiedTabletAssignmentInput{
-		AssignmentID: assignmentID,
-		DeviceID: input.DeviceID,
-		ExpectedProjectID: input.ExpectedProjectID,
+		AssignmentID:              assignmentID,
+		DeviceID:                  input.DeviceID,
+		ExpectedProjectID:         input.ExpectedProjectID,
 		ExpectedRuntimeSnapshotID: input.ExpectedRuntimeSnapshotID,
-		TargetProjectID: input.TargetProjectID,
-		TargetRuntimeSnapshotID: input.TargetRuntimeSnapshotID,
-		ExpectedEpoch: input.ExpectedEpoch,
-		ConnectionGeneration: generation,
-		Challenge: challenge,
-		AckDeviceID: ack.DeviceID,
-		AckEpoch: ack.AssignmentEpoch,
-		AckGeneration: ack.ConnectionGeneration,
-		AckChallenge: ack.Challenge,
-		AckSafeState: ack.SafeMedia,
-		ActorID: actorID,
+		TargetProjectID:           input.TargetProjectID,
+		TargetRuntimeSnapshotID:   input.TargetRuntimeSnapshotID,
+		ExpectedEpoch:             input.ExpectedEpoch,
+		ConnectionGeneration:      generation,
+		Challenge:                 challenge,
+		AckDeviceID:               ack.DeviceID,
+		AckEpoch:                  ack.AssignmentEpoch,
+		AckGeneration:             ack.ConnectionGeneration,
+		AckChallenge:              ack.Challenge,
+		AckSafeState:              ack.SafeMedia,
+		ActorID:                   actorID,
 	})
 	if err == nil {
 		// Force a fresh authenticated hello so the client cannot retain old
@@ -253,11 +253,11 @@ func (r *Runtime) activateTabletScope(
 		return false
 	}
 	if _, err := r.repository.ObserveAuthorizedV2Tablet(ctx, deviceexperience.RuntimeObservation{
-		DeviceID: current.deviceID,
-		Connection: deviceexperience.ConnectionOnline,
-		Readiness: readiness,
+		DeviceID:      current.deviceID,
+		Connection:    deviceexperience.ConnectionOnline,
+		Readiness:     readiness,
 		ObservedState: message.ObservedState,
-		NetworkState: message.NetworkState,
+		NetworkState:  message.NetworkState,
 	}, message.ProjectID, message.RuntimeSnapshotID, message.AssignmentEpoch); err != nil {
 		return false
 	}
@@ -266,6 +266,8 @@ func (r *Runtime) activateTabletScope(
 	same := !r.closed &&
 		r.connections[current.deviceID] == current &&
 		!r.assignmentTransitions[current.deviceID]
+	connectedAt := time.Now().UTC()
+	previousTelemetryProjectID := ""
 	if same {
 		select {
 		case <-current.closed:
@@ -274,26 +276,36 @@ func (r *Runtime) activateTabletScope(
 		}
 	}
 	if same {
+		previousTelemetryProjectID = current.telemetryProjectID
 		current.activeProjectID = message.ProjectID
 		current.activeRuntimeSnapshotID = message.RuntimeSnapshotID
 		current.activeAssignmentEpoch = message.AssignmentEpoch
+		current.telemetryProjectID = message.ProjectID
 		current.commandsEnabled = true
 	}
 	r.mu.Unlock()
 	if !same {
 		return false
 	}
+	if previousTelemetryProjectID != message.ProjectID {
+		if previousTelemetryProjectID != "" {
+			_ = r.repository.RecordTransportTransition(ctx, previousTelemetryProjectID, current.deviceID, false,
+				current.generation, deviceexperience.TransportDisconnectProjectScopeChanged, connectedAt)
+		}
+		_ = r.repository.RecordTransportTransition(ctx, message.ProjectID, current.deviceID, true,
+			current.generation, "", connectedAt)
+	}
 
 	if err := current.send(map[string]any{
-		"type": "runtime.ready",
-		"schema_version": 2,
-		"device_id": current.deviceID,
-		"protocol_version": deviceexperience.ProtocolVersion2,
-		"project_id": message.ProjectID,
-		"runtime_snapshot_id": message.RuntimeSnapshotID,
-		"assignment_epoch": message.AssignmentEpoch,
+		"type":                  "runtime.ready",
+		"schema_version":        2,
+		"device_id":             current.deviceID,
+		"protocol_version":      deviceexperience.ProtocolVersion2,
+		"project_id":            message.ProjectID,
+		"runtime_snapshot_id":   message.RuntimeSnapshotID,
+		"assignment_epoch":      message.AssignmentEpoch,
 		"connection_generation": current.generation,
-		"commands_enabled": true,
+		"commands_enabled":      true,
 	}); err != nil {
 		current.close()
 		return false

@@ -21,6 +21,21 @@
   ];
   const markup = sessionComparisonMarkup(current, currentCues, [], compared, comparedCues, []);
   document.querySelector("#comparison").innerHTML = markup;
+  const transportEvent = {
+    event_id: "transport-1",
+    event_type: "stage_device.transport.connected",
+    category: "device_health",
+    occurred_at: "2026-11-14T22:00:00Z",
+    device_id: "tablet-01",
+    transport_state: "CONNECTED",
+    connection_generation: 9,
+    response_summary: "private transport payload",
+  };
+  const timeline = sessionEventTimelineMarkup([transportEvent], "device_health");
+  document.querySelector("#timeline").innerHTML = timeline;
+  const timelineText = document.querySelector("#timeline").textContent;
+  const traceExport = sessionTraceExportProjection(current, [], [transportEvent]);
+  const traceExportJSON = JSON.stringify(traceExport);
   const tables = document.querySelectorAll("#comparison .table-wrap table");
   const actionTable = tables[tables.length - 1];
   const wrapper = actionTable?.closest(".table-wrap");
@@ -33,6 +48,9 @@
     horizontal_scroll: Boolean(wrapper && wrapper.scrollWidth > wrapper.clientWidth && wrapper.scrollWidth >= actionTable.scrollWidth),
     private_excluded: !bodyText.includes("private adapter response"),
     external_unknown: bodyText.includes("Transport sent; external execution unknown") && bodyText.includes("Output state verified"),
+    transport_label: timelineText.includes("Hub transport connected") && timelineText.includes("Device tablet-01") && timelineText.includes("Hub transport CONNECTED"),
+    transport_warning: timelineText.includes("does not confirm device output"),
+    export_sanitized: traceExportJSON.includes("tablet-01") && !traceExportJSON.includes("private transport payload"),
     viewport_width: document.documentElement.clientWidth,
     cell_count: cells.length,
   };

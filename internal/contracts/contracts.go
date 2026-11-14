@@ -79,3 +79,8 @@ type EventEnvelope struct {
 	TraceContext      json.RawMessage `json:"trace_context,omitempty"`
 	Payload           json.RawMessage `json:"payload"`
 }
+
+const (
+	StageDeviceTransportConnectedEventType    = "stage_device.transport.connected"
+	StageDeviceTransportDisconnectedEventType = "stage_device.transport.disconnected"
+)
