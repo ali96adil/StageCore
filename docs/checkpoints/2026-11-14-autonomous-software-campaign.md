@@ -2619,9 +2619,51 @@ This entry supersedes the preceding push instruction.
   was supplied, so do not turn these numbers into an SLO or production
   acceptance claim. SC-024 stays production-off; no production service, data,
   Vault, ACL, serial device, firmware, or physical output was touched.
-- Next action: finish the docs diff check and commit this tested batch locally;
-  keep the commit unpushed until run `43622805955` finishes, then recheck PR #534
-  and every exact-head check before a normal push. Continue afterward with a
-  reproducible software gap such as SC-009 Route Undo/Redo coverage or SC-015
-  explicit per-output health-event semantics; never infer connectivity from
-  missing health events.
+- Correction to the next-task note in this historical checkpoint: SC-009 #488
+  concerns Cue/Action Draft recovery; Route history is explicitly outside its
+  scope and is not a justified SC-009 implementation candidate. The performance
+  and USB-DMX batch was committed locally as `ecedb3e`; retain it for the next
+  normal push after exact-head Core CI completes.
+
+## Resume update — 2026-11-14 18:17 UTC · scoped Project media upload
+
+- Branch `integration/stagecore-rc`; Draft PR #534 remains OPEN. Remote/PR HEAD
+  is `b1b3cb4198e109fe4807f1250f4e54a58cd0b084`; local HEAD is
+  `acd46db34414f04337f54305ecd611d270c01395`. Local commits ahead are
+  `ecedb3e` (test-only USB-DMX refresh jitter benchmark and evidence) and
+  `acd46db` (SC-023 Project file upload). The worktree was clean after both
+  commits. No force-push, merge, production service/data/Vault, production ACL,
+  real device or firmware action was used.
+- Exact remote-head Core run `43622805955`: Go 1.27 passes; Go 1.26 remains
+  pending. Companion run `43622805947` and Camera Relay run `43622805957` pass.
+  Do not push the two local commits until all exact-head checks pass. Before
+  push, verify branch/PR still point to `b1b3cb4` and query all required checks;
+  push normally to the same PR, then wait on the new exact-head workflows.
+- SC-023 now has a separate opt-in `POST /api/v1/projects/{project_id}/files`
+  endpoint and Files UI upload form. It requires CSRF and live Project
+  `media.upload`, rechecks exact browser Session and grant around each streamed
+  body chunk, caps uploads at 1 GiB, validates MIME syntax and encoded names,
+  streams through the existing Vault's capacity check/SHA-256 staging, and
+  registers only managed Project media. Failed registration/revocation removes
+  an unreferenced object. File bytes are not semantically decoded; the UI
+  category remains a filename-extension label. The option is not assembled in
+  production; read/upload/download stay separate opt-ins and SC-024 remains
+  production-off.
+- Regression tests verify opt-in/default-off behavior, CSRF, missing upload
+  grants, malformed MIME/name rejection, basename normalization, exact Vault
+  bytes/hash, list/download, cross-Project denial, grant revocation mid-stream,
+  request-size rejection, browser asset embedding, route inventory and the
+  production ACL activation guard. The route inventory digest is
+  `7733f1e0c01f0affed9cffdbb0b6ebf52c725108a11560e2fb7aba6b891c8907`.
+- Local checks passed: focused HTTP API tests including route/inventory guards,
+  focused `go test -race` for both upload cases, `go vet ./internal/httpapi`,
+  `node --check internal/operatorweb/static/project-files.js`, and
+  `git diff --check`. Earlier Pi 4 USB-DMX ticker and Linux ARM64 simulations
+  remain recorded above; they were not rerun for this API/UI batch.
+- SC-023 remains **Partial**: content-level media-format validation, per-Project
+  quotas, delete/retention/ref-count UX, explicit Capsule portability for
+  draft/unreferenced files, and broader Capsule/ACL/copy qualification remain.
+  First next task after CI: inspect Capsule media inclusion policy and the
+  supported file-type contract, then close a reproducible software gap with
+  isolated tests. Do not reopen SC-009 Route history as a candidate; do not
+  repeat completed Mac/Pi performance cases without a specific reason.
