@@ -64,7 +64,7 @@ test("a lost GO reply keeps execution history usable and late history replies ca
   assert.equal(h.state.runtimeCueReceipt.status, "UNCONFIRMED");
 
   const memory = fs.readFileSync("internal/operatorweb/static/memory.js", "utf8");
-  const trace = memory.slice(memory.indexOf("function beginSessionMemoryRead("), memory.indexOf("async function loadNoteChoices("));
+  const trace = memory.slice(memory.indexOf("function actionTraceCard("), memory.indexOf("async function loadNoteChoices("));
   const replies = [];
   const content = {};
   const ctx = { state: h.state, content, esc: String, fmtDate: String, pill: String,
