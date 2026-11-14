@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/store"
+	"golang.org/x/net/websocket"
 )
 
 func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
@@ -86,6 +88,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
+	focusRequests := make(chan chan struct{}, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -109,6 +112,18 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/mixed-cue-focus-ready":
+			resume := make(chan struct{})
+			select {
+			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/mixed-cue-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			w.Write(testScript)
@@ -131,6 +146,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		"--remote-debugging-port=0", "--remote-allow-origins=*",
 		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "mixed-cue-browser.log"))
 	if err != nil {
@@ -141,6 +157,12 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("connect to isolated Chrome DevTools: %v", err)
+	}
+	defer cdp.Close()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	exited := false
@@ -151,43 +173,75 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}()
 	var outcome string
-	select {
-	case outcome = <-browserResult:
-		if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
-			t.Fatal(outcome)
+	for outcome == "" {
+		select {
+		case outcome = <-browserResult:
+			if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
+				t.Fatal(outcome)
+			}
+		case resume := <-focusRequests:
+			if err := dispatchChromeTab(cdp); err != nil {
+				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
+			}
+			close(resume)
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser did not finish: %s", output)
 		}
-	case err := <-done:
-		exited = true
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser exited before reporting: %v\n%s", err, output)
-	case <-ctx.Done():
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
-		Status           string   `json:"status"`
-		IDs              []string `json:"ids"`
-		ActionIDs        []string `json:"action_ids"`
-		EditedName       string   `json:"edited_name"`
-		QuickEditedLabel string   `json:"quick_edited_label"`
-		QuickEditedNotes string   `json:"quick_edited_notes"`
-		CueColor         string   `json:"cue_color"`
-		CueLabelText     string   `json:"cue_label_text"`
-		ColorMarker      bool     `json:"color_marker_visible"`
-		PaletteVisible   bool     `json:"palette_visible"`
-		LabelReadable    bool     `json:"label_color_readable"`
-		PageOverflow     bool     `json:"page_overflow"`
-		LTRLabel         string   `json:"ltr_label"`
-		LTRPalette       bool     `json:"ltr_palette_visible"`
-		LTRReadable      bool     `json:"ltr_label_readable"`
-		LTROverflow      bool     `json:"ltr_page_overflow"`
+		Status            string             `json:"status"`
+		IDs               []string           `json:"ids"`
+		ActionIDs         []string           `json:"action_ids"`
+		EditedName        string             `json:"edited_name"`
+		QuickEditedLabel  string             `json:"quick_edited_label"`
+		QuickEditedNotes  string             `json:"quick_edited_notes"`
+		CueColor          string             `json:"cue_color"`
+		CueLabelText      string             `json:"cue_label_text"`
+		ColorMarker       bool               `json:"color_marker_visible"`
+		PaletteVisible    bool               `json:"palette_visible"`
+		LabelReadable     bool               `json:"label_color_readable"`
+		MarkerContrast    map[string]float64 `json:"marker_contrast"`
+		TextContrast      float64            `json:"text_contrast"`
+		FocusRingVisible  bool               `json:"focus_ring_visible"`
+		FocusContrast     float64            `json:"focus_contrast"`
+		PageOverflow      bool               `json:"page_overflow"`
+		LTRLabel          string             `json:"ltr_label"`
+		LTRPalette        bool               `json:"ltr_palette_visible"`
+		LTRReadable       bool               `json:"ltr_label_readable"`
+		LTRMarkerContrast map[string]float64 `json:"ltr_marker_contrast"`
+		LTRTextContrast   float64            `json:"ltr_text_contrast"`
+		LTRFocusVisible   bool               `json:"ltr_focus_visible"`
+		LTRFocusContrast  float64            `json:"ltr_focus_contrast"`
+		LTROverflow       bool               `json:"ltr_page_overflow"`
 	}
-	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 ||
+	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
+		t.Fatalf("decode browser result %q: %v", outcome, err)
+	}
+	validMarkerContrast := func(contrast map[string]float64) bool {
+		if len(contrast) != 4 {
+			return false
+		}
+		for _, color := range []string{"blue", "green", "amber", "purple"} {
+			if contrast[color] < 3 {
+				return false
+			}
+		}
+		return true
+	}
+	if report.Status != "PASS" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
-		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || report.PageOverflow ||
-		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || report.LTROverflow {
-		t.Fatalf("invalid browser result %q: %v", outcome, err)
+		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
+		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {
+		t.Fatalf("invalid browser result %q", outcome)
 	}
+	t.Logf("rendered WCAG ratios: RTL markers=%v text=%.2f focus=%.2f; LTR markers=%v text=%.2f focus=%.2f",
+		report.MarkerContrast, report.TextContrast, report.FocusContrast,
+		report.LTRMarkerContrast, report.LTRTextContrast, report.LTRFocusContrast)
 	project, err = st.GetProject(ctx, project.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -284,4 +338,82 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err != nil || active != nil {
 		t.Fatalf("browser authoring must not start a runtime session: session=%+v err=%v", active, err)
 	}
+}
+
+func connectChromePage(ctx context.Context, profileDir, pageURL string) (*websocket.Conn, error) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if data, err := os.ReadFile(filepath.Join(profileDir, "DevToolsActivePort")); err == nil {
+			portLine := strings.SplitN(string(data), "\n", 2)[0]
+			port, parseErr := strconv.Atoi(strings.TrimSpace(portLine))
+			if parseErr == nil && port > 0 {
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+					fmt.Sprintf("http://127.0.0.1:%d/json/list", port), nil)
+				if err != nil {
+					return nil, err
+				}
+				response, err := http.DefaultClient.Do(request)
+				if err == nil {
+					var targets []struct {
+						Type                 string `json:"type"`
+						URL                  string `json:"url"`
+						WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+					}
+					decodeErr := json.NewDecoder(response.Body).Decode(&targets)
+					response.Body.Close()
+					if decodeErr == nil {
+						for _, target := range targets {
+							if target.Type != "page" || !strings.HasPrefix(target.URL, pageURL) || target.WebSocketDebuggerURL == "" {
+								continue
+							}
+							conn, dialErr := websocket.Dial(target.WebSocketDebuggerURL, "", pageURL)
+							if dialErr == nil {
+								_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+								return conn, nil
+							}
+						}
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func dispatchChromeTab(conn *websocket.Conn) error {
+	for id, eventType := range []string{"keyDown", "keyUp"} {
+		commandID := id + 1
+		command := map[string]any{
+			"id":     commandID,
+			"method": "Input.dispatchKeyEvent",
+			"params": map[string]any{
+				"type": eventType, "key": "Tab", "code": "Tab",
+				"windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
+			},
+		}
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if err := websocket.JSON.Send(conn, command); err != nil {
+			return err
+		}
+		var response struct {
+			ID    int `json:"id"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		for response.ID != commandID {
+			if err := websocket.JSON.Receive(conn, &response); err != nil {
+				return err
+			}
+		}
+		if response.Error != nil {
+			return fmt.Errorf("Chrome DevTools command failed: %s", response.Error.Message)
+		}
+	}
+	return nil
 }

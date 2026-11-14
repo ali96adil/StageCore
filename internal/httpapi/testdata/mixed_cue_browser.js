@@ -40,6 +40,50 @@
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   };
+  const rgb = (value) => {
+    const match = String(value).match(/rgba?\(([^)]+)\)/i);
+    if (!match) return null;
+    const parts = match[1].replace(/\s*\/\s*/, " ").split(/[\s,]+/).filter(Boolean);
+    if (parts.length < 3) return null;
+    const channel = (part) => part.endsWith("%") ? parseFloat(part) * 2.55 : parseFloat(part);
+    return { channels: parts.slice(0, 3).map(channel), alpha: parts[3] ? parseFloat(parts[3]) : 1 };
+  };
+  const compositedBackground = (element) => {
+    const ancestors = [];
+    for (let current = element; current; current = current.parentElement) ancestors.push(current);
+    let background = [0, 0, 0];
+    for (const current of ancestors.reverse()) {
+      const foreground = rgb(getComputedStyle(current).backgroundColor);
+      if (!foreground) continue;
+      background = foreground.channels.map((value, index) => value * foreground.alpha + background[index] * (1 - foreground.alpha));
+    }
+    return background;
+  };
+  const luminance = (channels) => channels.map((value) => {
+    const normalized = value / 255;
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const contrastRatio = (first, second) => {
+    const values = [luminance(first), luminance(second)].sort((a, b) => b - a);
+    return (values[0] + 0.05) / (values[1] + 0.05);
+  };
+  const markerContrasts = () => Object.fromEntries(["blue", "green", "amber", "purple"].map((color) => {
+    const marker = document.querySelector(`#content .cue-label-cell[data-cue-color="${color}"]`);
+    const shadow = marker && rgb(getComputedStyle(marker).boxShadow);
+    return [color, marker && shadow ? contrastRatio(shadow.channels, compositedBackground(marker)) : 0];
+  }));
+  const tabToCueLabel = async () => {
+    const closeButton = document.getElementById("closeCueDialog");
+    const labelInput = document.getElementById("cueLabel");
+    if (!closeButton || !labelInput || !document.getElementById("cueDialog")?.open) {
+      throw new Error("Cue editor is not ready for keyboard focus acceptance");
+    }
+    closeButton.focus();
+    if (document.activeElement !== closeButton) throw new Error("Could not focus the Cue editor's first control");
+    const response = await fetch("/mixed-cue-focus-ready", { method: "POST" });
+    if (!response.ok) throw new Error(`native Tab key request returned HTTP ${response.status}`);
+    return labelInput;
+  };
 
   try {
     if (document.readyState === "loading") {
@@ -64,7 +108,12 @@
       "reloading the Draft Cue list in English LTR");
       const labelCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`);
       const plainCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] td:not(.cue-label-cell)`);
+      const editButton = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`);
+      editButton?.click();
+      await waitFor(() => document.getElementById("cueDialog")?.open, "opening Cue editor for LTR focus acceptance");
+      const focusTarget = await tabToCueLabel();
       const style = labelCell ? getComputedStyle(labelCell) : null;
+      const focusStyle = focusTarget ? getComputedStyle(focusTarget) : null;
       const labelText = labelCell?.innerText.trim() || "";
       const markerVisible = !!style && style.boxShadow !== "none";
       const paletteVisible = ["blue", "green", "amber", "purple"].every((color) => {
@@ -72,13 +121,21 @@
         return !!marker && getComputedStyle(marker).boxShadow !== "none";
       });
       const readable = !!style && !!plainCell && style.color === getComputedStyle(plainCell).color;
+      const colorContrast = markerContrasts();
+      const textContrast = style && rgb(style.color) ? contrastRatio(rgb(style.color).channels, compositedBackground(labelCell)) : 0;
+      const focusVisible = !!focusTarget && document.activeElement === focusTarget && focusTarget.matches(":focus-visible") &&
+        !!focusStyle && focusStyle.outlineStyle !== "none" && focusStyle.outlineWidth === "3px";
+      const focusOutline = focusStyle && rgb(focusStyle.outlineColor);
+      const focusContrast = focusOutline ? contrastRatio(focusOutline.channels, compositedBackground(focusTarget.parentElement)) : 0;
       const overflow = document.documentElement.scrollWidth > window.innerWidth;
-      if (labelText !== previous.quick_edited_label || !markerVisible || !paletteVisible || !readable || overflow) {
-        throw new Error(`Cue label/color LTR acceptance failed: label=${labelText}, marker=${markerVisible}, palette=${paletteVisible}, readable=${readable}, overflow=${overflow}`);
+      if (labelText !== previous.quick_edited_label || !markerVisible || !paletteVisible || !readable ||
+        Object.values(colorContrast).some((value) => value < 3) || textContrast < 4.5 || !focusVisible || focusContrast < 3 || overflow) {
+        throw new Error(`Cue label/color LTR acceptance failed: label=${labelText}, marker=${markerVisible}, palette=${paletteVisible}, readable=${readable}, contrast=${JSON.stringify(colorContrast)}, text=${textContrast}, focus=${focusVisible}, focusContrast=${focusContrast}, overflow=${overflow}`);
       }
       sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
       await report(JSON.stringify({ ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
-        ltr_label_readable: readable, ltr_page_overflow: overflow }));
+        ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
+        ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow }));
       return;
     }
 
@@ -341,7 +398,12 @@
       "showing saved quick-edit notes in the Cue Inspector");
     const labelCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`);
     const plainCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] td:not(.cue-label-cell)`);
+    const editButton = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`);
+    editButton?.click();
+    await waitFor(() => document.getElementById("cueDialog")?.open, "opening Cue editor for keyboard focus acceptance");
+    const focusTarget = await tabToCueLabel();
     const labelStyle = labelCell ? getComputedStyle(labelCell) : null;
+    const focusStyle = focusTarget ? getComputedStyle(focusTarget) : null;
     const cueColor = labelCell?.dataset.cueColor || "";
     const cueLabelText = labelCell?.innerText.trim() || "";
     const colorMarkerVisible = !!labelStyle && labelStyle.boxShadow !== "none";
@@ -350,9 +412,16 @@
       return !!marker && getComputedStyle(marker).boxShadow !== "none";
     });
     const labelColorReadable = !!labelStyle && !!plainCell && labelStyle.color === getComputedStyle(plainCell).color;
+    const colorContrast = markerContrasts();
+    const textContrast = labelStyle && rgb(labelStyle.color) ? contrastRatio(rgb(labelStyle.color).channels, compositedBackground(labelCell)) : 0;
+    const focusRingVisible = !!focusTarget && document.activeElement === focusTarget && focusTarget.matches(":focus-visible") &&
+      !!focusStyle && focusStyle.outlineStyle !== "none" && focusStyle.outlineWidth === "3px";
+    const focusOutline = focusStyle && rgb(focusStyle.outlineColor);
+    const focusContrast = focusOutline ? contrastRatio(focusOutline.channels, compositedBackground(focusTarget.parentElement)) : 0;
     const pageOverflow = document.documentElement.scrollWidth > window.innerWidth;
-    if (cueColor !== "blue" || cueLabelText !== quickEditedLabel || !colorMarkerVisible || !paletteVisible || !labelColorReadable || pageOverflow) {
-      throw new Error(`Cue label/color mobile accessibility failed: color=${cueColor}, label=${cueLabelText}, marker=${colorMarkerVisible}, palette=${paletteVisible}, readable=${labelColorReadable}, overflow=${pageOverflow}`);
+    if (cueColor !== "blue" || cueLabelText !== quickEditedLabel || !colorMarkerVisible || !paletteVisible || !labelColorReadable ||
+      Object.values(colorContrast).some((value) => value < 3) || textContrast < 4.5 || !focusRingVisible || focusContrast < 3 || pageOverflow) {
+      throw new Error(`Cue label/color mobile accessibility failed: color=${cueColor}, label=${cueLabelText}, marker=${colorMarkerVisible}, palette=${paletteVisible}, readable=${labelColorReadable}, contrast=${JSON.stringify(colorContrast)}, text=${textContrast}, focus=${focusRingVisible}, focusContrast=${focusContrast}, overflow=${pageOverflow}`);
     }
     const runtimeRequestsAfterEdit = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {
@@ -361,7 +430,9 @@
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,
-      palette_visible: paletteVisible, label_color_readable: labelColorReadable, page_overflow: pageOverflow };
+      palette_visible: paletteVisible, label_color_readable: labelColorReadable,
+      marker_contrast: colorContrast, text_contrast: textContrast,
+      focus_ring_visible: focusRingVisible, focus_contrast: focusContrast, page_overflow: pageOverflow };
     sessionStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(firstPass));
     localStorage.setItem("stagecore_locale", "en");
     window.location.reload();
