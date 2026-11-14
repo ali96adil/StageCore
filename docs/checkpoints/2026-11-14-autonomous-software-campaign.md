@@ -973,3 +973,31 @@ This entry supersedes the preceding push instruction.
 - The five-commit range is `ba495b8` preset search, `b6242b4` per-target Draft remapping, `46b76f9` lazy remap controls, `184b719` label/color duplicate and Capsule regressions, and `45070db` completion matrix/handoff documentation.
 - Local verification remains: Node 56/56, focused preset tests 6/6, Operator web Go tests/Vet, full Store and Show Capsule tests/Vet, JavaScript syntax and diff checks all pass. Exact remote pointer was read with `git ls-remote`; PR #534 remains open/draft at the same SHA.
 - Next action is unchanged: wait for Core Race and ARM64, diagnose any failure before pushing, then re-read remote SHA and fast-forward push to existing PR #534 only if it is still `9d5b775`. Follow new exact-head CI after push. Pi performance, production ACL cutoff, hardware, and deployment boundaries are unchanged.
+
+## Resume update — 2026-11-14 03:47 UTC
+
+- Local source/test HEAD is `714ade572bfc77556b049fb455bf5837d649d6c4`; the
+  branch is eight commits ahead of remote `9d5b775aa94875591d9ff7964e3eb8057f775c9b`.
+  Completion matrices are being updated with this coverage checkpoint.
+- SC-010 round-trip tests now use a single four-action Mixed Cue containing
+  Lighting fade, MIDI send, OSC send and Tablet media play. Cue Studio inserts
+  all four in order with independent blank Action IDs and independent payload
+  copies; the authenticated API persists and reads the ordered group while
+  retaining the legacy single-action JSON shape. The capability coverage is
+  software serialization only and never dispatches an output.
+- Verification: full Node suite 56/56, preset tests 6/6, JavaScript syntax;
+  targeted `TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs` passed
+  normally and under Race; `go vet ./internal/httpapi` and `git diff --check`
+  passed. No implementation code changed in this follow-on; this closes a
+  capability-coverage test gap.
+- Exact remote Core run `43551276214` is still in Go 1.26 Race, which started
+  at 03:25:18 UTC; the workflow has a 45-minute timeout for its full `go test
+  -race -timeout 45m ./...`. Earlier Go 1.26 Test, browser delivery and Vet,
+  and Go 1.27 passed. Linux ARM64 build is still pending. Companion and Camera
+  Relay runs on pushed `9d5b775` pass. Do not push until full Core completes.
+- After updating the matrix, push the tested local range to the same PR only
+  after re-reading `git ls-remote` and confirming the remote remains
+  `9d5b775`. Monitor the resulting exact-head Core CI before the next remote
+  batch; continue with the next evidenced gap afterward. Pi execution remains
+  unavailable, and no production service/data, Vault, device or production ACL
+  was touched.

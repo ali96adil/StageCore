@@ -10,7 +10,7 @@ Core run `43551276214` has Go 1.27 passed; Go 1.26 Test, Browser Cue Delivery
 and Vet passed, Race is in progress and Linux ARM64 builds are pending.
 Companion run `43551276183` (Swift Core and full macOS replacement/media
 acceptance) and Camera Relay run `43551276104` passed. The local follow-on
-`184b719` remains unpushed until that Core run completes. Passing CI proves
+`714ade5` remains unpushed until that Core run completes. Passing CI proves
 only the listed software checks, not installed-app or physical output
 qualification.
 
