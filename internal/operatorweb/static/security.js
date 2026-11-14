@@ -346,6 +346,12 @@ async function renderSecurity() {
         if (result.enforced !== false || result.phase !== "PREPARED_NOT_ENFORCED") {
           throw new Error("The Project grant API did not confirm its not-enforced qualification state.");
         }
+        if (targetKey() !== `${projectID}/${userID}`) {
+          const projectName = model.projectAccess.projects.find((project) => project.project_id === projectID)?.name || projectID;
+          const username = projectAccessUsers.find((user) => user.user_id === userID)?.username || userID;
+          currentStatus.textContent = `Saved ${result.access_level} for ${projectName} / ${username}. Selection changed; load access for the current account before editing.`;
+          return;
+        }
         currentStatus.textContent = `Saved ${result.access_level}. PREPARED_NOT_ENFORCED. Fine-grained permissions: ${(result.permissions || []).join(", ") || "none"}.`;
       } catch (error) {
         currentStatus.textContent = errorMessage(error);

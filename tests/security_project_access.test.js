@@ -226,6 +226,48 @@ test("a Project selection change while access is loading cannot enable a stale g
   assert.equal(writes, 0);
 });
 
+test("a completed save for a prior selection is not shown as current selection state", async () => {
+  let resolveSave;
+  const calls = [];
+  const api = async (path, options = {}) => {
+    calls.push({path, options});
+    if (path === "/api/v1/project-access/cutover-preview") return {enforced: false};
+    if (path === "/api/v1/projects") return {projects: [{project_id: "show-a", name: "Show A"}]};
+    if (path === "/api/v1/security/users") return {users: [
+      {user_id: "operator-a", username: "Operator A", role: "OPERATOR", enabled: true},
+      {user_id: "operator-b", username: "Operator B", role: "OPERATOR", enabled: true},
+    ]};
+    if (options.method === "PUT") {
+      return new Promise((resolve) => { resolveSave = resolve; });
+    }
+    if (path.includes("/access/users/")) {
+      return {access_level: "VIEW", permissions: ["project.view"], enforced: false, phase: "PREPARED_NOT_ENFORCED"};
+    }
+    return basePayload(path);
+  };
+  const ui = await renderSecurityHarness(api);
+  const project = ui.elements.get("projectAccessProject");
+  const user = ui.elements.get("projectAccessUser");
+  const level = ui.elements.get("projectAccessLevel");
+  project.value = "show-a";
+  user.value = "operator-a";
+  await ui.listeners.get("loadProjectAccess:click")();
+  level.value = "EDIT";
+  ui.listeners.get("projectAccessLevel:change")();
+  const saving = ui.listeners.get("projectAccessGrantForm:submit")({preventDefault() {}});
+
+  user.value = "operator-b";
+  ui.listeners.get("projectAccessUser:change")();
+  resolveSave({access_level: "EDIT", permissions: ["cue.edit"], enforced: false, phase: "PREPARED_NOT_ENFORCED"});
+  await saving;
+
+  const write = calls.find((call) => call.options.method === "PUT");
+  assert.equal(write.path, "/api/v1/projects/show-a/access/users/operator-a");
+  assert.match(ui.elements.get("projectAccessCurrent").textContent, /selection changed/i);
+  assert.doesNotMatch(ui.elements.get("projectAccessCurrent").textContent, /^Saved EDIT\./);
+  assert.equal(ui.elements.get("saveProjectAccess").disabled, true);
+});
+
 test("Viewer and disabled users only receive safe levels in the selector", () => {
   const viewer = vm.runInNewContext(`${levelsFunction}; securityProjectAccessLevelOptions("VIEWER", true, "VIEW")`);
   assert.match(viewer, /value="VIEW"/);
