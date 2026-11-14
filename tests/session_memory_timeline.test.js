@@ -63,3 +63,52 @@ test("Session comparison computes bounded metrics from recorded traces and repor
   assert.match(markup, /\+2\.0 s/);
   assert.match(markup, /Interrupted Cues/);
 });
+
+test("Session comparison aligns repeated Cue runs by occurrence and Action ID", () => {
+  const h = harness();
+  const current = {session_id: "current", name: "Current", runtime_snapshot_id: "snap-a"};
+  const compared = {session_id: "previous", name: "Previous", runtime_snapshot_id: "snap-a"};
+  const currentCues = [
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 21, ack_level: "TRANSPORT_ONLY", delivery_evidence: "EXTERNAL_EXECUTION_UNKNOWN", response_summary: "private response text"},
+      {action_id: "action-light", capability_key: "lighting.channels.fade", target_ref: "SIM DMX", result: "FAILED", error_code: "OUTPUT_TIMEOUT", latency_ms: null},
+    ]},
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 16, ack_level: "APPLICATION", delivery_evidence: "APPLICATION_ACKNOWLEDGED"},
+    ]},
+  ];
+  const comparedCues = [
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "FAILED", latency_ms: 32, ack_level: "NONE", delivery_evidence: "UNKNOWN"},
+      {action_id: "action-visual", capability_key: "visual.scene.activate", target_ref: "SIM VDMX", result: "COMPLETED", latency_ms: 9},
+    ]},
+    {cue_id: "cue-open", display_label: "1", name: "Opening", actions: [
+      {action_id: "action-midi", capability_key: "midi.send", target_ref: "SIM MIDI", result: "COMPLETED", latency_ms: 18, ack_level: "VERIFIED_STATE", delivery_evidence: "STATE_VERIFIED"},
+    ]},
+  ];
+
+  const markup = h.sessionComparisonMarkup(current, currentCues, [], compared, comparedCues, []);
+  assert.match(markup, /Action-by-action comparison/);
+  assert.match(markup, /Opening/);
+  assert.match(markup, /TRANSPORT_ONLY/);
+  assert.match(markup, /VERIFIED_STATE/);
+  assert.match(markup, /Transport sent; external execution unknown/);
+  assert.match(markup, /Output state verified/);
+  assert.match(markup, /21 ms/);
+  assert.match(markup, /32 ms/);
+  assert.match(markup, /OUTPUT_TIMEOUT/);
+  assert.match(markup, /SIM VDMX/);
+  assert.doesNotMatch(markup, /private response text/);
+  assert.match(markup, /Actions match by Cue ID, occurrence order, and Action ID/);
+});
+
+test("Session comparison does not pair actions without stable IDs across sessions", () => {
+  const h = harness();
+  const currentRows = h.sessionComparisonActions([
+    {cue_id: "cue", actions: [{capability_key: "osc.send", target_ref: "A", result: "COMPLETED"}]},
+  ], "current");
+  const comparedRows = h.sessionComparisonActions([
+    {cue_id: "cue", actions: [{capability_key: "osc.send", target_ref: "A", result: "FAILED"}]},
+  ], "compared");
+  assert.equal([...currentRows.keys()].some((key) => comparedRows.has(key)), false);
+});

@@ -51,14 +51,7 @@ async function renderSessions() {
 
 function actionTraceCard(action) {
   const interrupted = action.interrupted ? pill("INTERRUPTED", "bad") : "";
-  const deliveryEvidence = {
-    UNKNOWN: "External execution not observed",
-    EXTERNAL_EXECUTION_UNKNOWN: "Transport sent; external execution unknown",
-    OUTPUT_ACCEPTED: "Output reported acceptance",
-    DEVICE_ACKNOWLEDGED: "Device acknowledged execution",
-    APPLICATION_ACKNOWLEDGED: "Application acknowledged execution",
-    STATE_VERIFIED: "Output state verified",
-  }[action.delivery_evidence] || "External execution not observed";
+  const deliveryEvidence = sessionDeliveryEvidenceLabel(action);
   const error = action.error_code ? `<p class="muted" style="margin-top:8px"><strong>${esc(action.error_code)}</strong> · ${esc(action.response_summary || "No response summary")}</p>` : (action.response_summary ? `<p class="muted" style="margin-top:8px">${esc(action.response_summary)}</p>` : "");
   return `
     <article class="action-editor">
@@ -184,6 +177,34 @@ function sessionTraceExportProjection(session, cues, events) {
   };
 }
 
+function sessionDeliveryEvidenceLabel(action) {
+  return {
+    UNKNOWN: "External execution not observed",
+    EXTERNAL_EXECUTION_UNKNOWN: "Transport sent; external execution unknown",
+    OUTPUT_ACCEPTED: "Output reported acceptance",
+    DEVICE_ACKNOWLEDGED: "Device acknowledged execution",
+    APPLICATION_ACKNOWLEDGED: "Application acknowledged execution",
+    STATE_VERIFIED: "Output state verified",
+  }[action?.delivery_evidence] || "External execution not observed";
+}
+
+function sessionComparisonActions(cues, unmatchedPrefix = "unmatched") {
+  const cueOccurrences = new Map();
+  const rows = new Map();
+  for (const [cueIndex, cue] of (cues || []).entries()) {
+    const cueID = String(cue?.cue_id || "").trim();
+    const occurrence = (cueOccurrences.get(cueID) || 0) + 1;
+    cueOccurrences.set(cueID, occurrence);
+    const cueKey = `${cueID || `${unmatchedPrefix}-cue-${cueIndex}`}\u0000${occurrence}`;
+    (cue?.actions || []).forEach((action, index) => {
+      const actionID = String(action?.action_id || "").trim();
+      const actionKey = actionID ? `id:${actionID}` : `${unmatchedPrefix}-action-${index}`;
+      rows.set(`${cueKey}\u0000${actionKey}`, { cue, action });
+    });
+  }
+  return rows;
+}
+
 function sessionComparisonMetrics(session, cues, events) {
   const started = Date.parse(session.started_at || "");
   const ended = Date.parse(session.ended_at || "");
@@ -221,11 +242,40 @@ function sessionComparisonMarkup(primarySession, primaryCues, primaryEvents, oth
     const label = difference > 0 ? `+${difference}` : String(difference);
     return duration ? `${difference > 0 ? "+" : ""}${(difference / 1000).toFixed(1)} s` : label;
   };
+  const currentActions = sessionComparisonActions(primaryCues, "current");
+  const comparedActions = sessionComparisonActions(otherCues, "compared");
+  const actionKeys = [...currentActions.keys(), ...[...comparedActions.keys()].filter((key) => !currentActions.has(key))];
+  const actionValue = (row, pick, format = (value) => String(value ?? "—")) => row ? format(pick(row.action, row.cue)) : "—";
+  const actionMarkup = actionKeys.length ? `
+    <h3 style="margin-top:16px">Action-by-action comparison</h3>
+    <p class="muted">Actions match by Cue ID, occurrence order, and Action ID. Unmatched definitions or executions remain visible as one-sided rows. External evidence reflects the recorded acknowledgement only; transport completion does not prove external execution.</p>
+    <div class="table-wrap"><table><thead><tr><th>Cue (current → compared)</th><th>Action (current → compared)</th><th>Current result</th><th>Compared result</th><th>Current ACK</th><th>Compared ACK</th><th>Current delivery evidence</th><th>Compared delivery evidence</th><th>Current latency</th><th>Compared latency</th><th>Current error</th><th>Compared error</th></tr></thead><tbody>
+      ${actionKeys.map((key) => {
+        const left = currentActions.get(key);
+        const right = comparedActions.get(key);
+        const cueCaption = (cue) => cue ? [cue.display_label, cue.name || cue.cue_id].filter(Boolean).join(" · ") || "Unknown Cue" : "—";
+        const actionCaption = (action) => action ? [action.capability_key || "UNKNOWN", action.target_ref || "No target"].join(" · ") : "—";
+        return `<tr>
+          <th scope="row">${esc(cueCaption(left?.cue))} → ${esc(cueCaption(right?.cue))}</th>
+          <td>${esc(actionCaption(left?.action))} → ${esc(actionCaption(right?.action))}</td>
+          <td>${esc(actionValue(left, (action) => action.result))}</td>
+          <td>${esc(actionValue(right, (action) => action.result))}</td>
+          <td>${esc(actionValue(left, (action) => action.ack_level || "NONE"))}</td>
+          <td>${esc(actionValue(right, (action) => action.ack_level || "NONE"))}</td>
+          <td>${esc(actionValue(left, (action) => action, sessionDeliveryEvidenceLabel))}</td>
+          <td>${esc(actionValue(right, (action) => action, sessionDeliveryEvidenceLabel))}</td>
+          <td>${esc(actionValue(left, (action) => action.latency_ms, (value) => value === null || value === undefined ? "—" : `${value} ms`))}</td>
+          <td>${esc(actionValue(right, (action) => action.latency_ms, (value) => value === null || value === undefined ? "—" : `${value} ms`))}</td>
+          <td>${esc(actionValue(left, (action) => action.error_code || "—"))}</td>
+          <td>${esc(actionValue(right, (action) => action.error_code || "—"))}</td>
+        </tr>`;
+      }).join("")}
+    </tbody></table></div>` : `<div class="empty" style="margin-top:16px">Neither Session recorded Action executions.</div>`;
   return `
     <div class="section-title-row"><div><h3>${esc(primarySession.name || "Current Session")} · ${esc(otherSession.name || "Compared Session")}</h3><p class="muted">Snapshot ${current.snapshot_id === compared.snapshot_id ? "matches" : "differs"}</p></div></div>
     <div class="table-wrap"><table><thead><tr><th>Measure</th><th>Current</th><th>Compared</th><th>Difference</th></tr></thead><tbody>
       ${rows.map(([label, left, right, duration]) => `<tr><th scope="row">${esc(label)}</th><td>${esc(value(left, duration))}</td><td>${esc(value(right, duration))}</td><td>${esc(delta(left, right, duration))}</td></tr>`).join("")}
-    </tbody></table></div>`;
+    </tbody></table></div>${actionMarkup}`;
 }
 
 function downloadSessionTrace(session, cues, events) {
