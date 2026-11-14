@@ -44,6 +44,10 @@ func (s *Store) CreateCueWithActions(ctx context.Context, cue domain.Cue, action
 	if err := s.ensureDraft(ctx, tx, cue.RevisionID); err != nil {
 		return domain.Cue{}, err
 	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, cue.ID)
+	if err != nil {
+		return domain.Cue{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO cues (cue_id, revision_id, display_label, name, order_index, cue_type, criticality, enabled, execution_policy_json, notes_summary)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -88,6 +92,13 @@ func (s *Store) CreateCueWithActions(ctx context.Context, cue domain.Cue, action
 		action.TimeoutPolicy = json.RawMessage(timeoutPolicy)
 		action.ErrorPolicy = json.RawMessage(errorPolicy)
 		cue.Actions = append(cue.Actions, action)
+	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, cue.ID)
+	if err != nil {
+		return domain.Cue{}, err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, cue.RevisionID, "CREATE", cue.ID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.Cue{}, err
 	}
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Cue{}, err

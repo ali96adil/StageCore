@@ -77,6 +77,10 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 	if !belongs {
 		return domain.Cue{}, domain.ErrNotFound
 	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, "")
+	if err != nil {
+		return domain.Cue{}, err
+	}
 
 	existingActionIDs := make(map[string]struct{})
 	rows, err := tx.QueryContext(ctx, `SELECT action_id FROM actions WHERE cue_id = ?`, cue.ID)
@@ -165,6 +169,13 @@ func (s *Store) ReplaceDraftCue(ctx context.Context, cue domain.Cue, actions []d
 		action.ErrorPolicy = json.RawMessage(errorPolicy)
 		cue.Actions = append(cue.Actions, action)
 	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, cue.RevisionID, "")
+	if err != nil {
+		return domain.Cue{}, err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, cue.RevisionID, "EDIT", cue.ID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.Cue{}, err
+	}
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Cue{}, err
 	}
@@ -225,8 +236,19 @@ func (s *Store) DeleteDraftCue(ctx context.Context, revisionID, cueID string) er
 	if linked {
 		return ErrDraftCueLinked
 	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM cues WHERE cue_id = ? AND revision_id = ?`, cueID, revisionID); err != nil {
 		return fmt.Errorf("delete cue: %w", err)
+	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, revisionID, cueID)
+	if err != nil {
+		return err
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, revisionID, "DELETE", cueID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return err
 	}
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return err

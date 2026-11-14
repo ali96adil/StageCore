@@ -72,8 +72,8 @@ func TestStageLaser58AdoptsLegacyGenerations(t *testing.T) {
 		t.Fatal(err)
 	}
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 59 {
-		t.Fatalf("version=%d err=%v; want 59 after applying all migrations", version, err)
+	if err != nil || version != 60 {
+		t.Fatalf("version=%d err=%v; want 60 after applying all migrations", version, err)
 	}
 	var sequence int64
 	if err := database.QueryRow(`SELECT generation FROM stagelaser_control_sequence WHERE id=1`).Scan(&sequence); err != nil {
