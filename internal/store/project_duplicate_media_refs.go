@@ -103,8 +103,6 @@ func remapMediaJSONReferences(raw string, mediaIDs map[string]string) (string,bo
 func remapMediaJSONValue(value any,mediaIDs map[string]string)(any,bool){
     switch v:=value.(type){
     case string:
-        mapped,ok:=mediaIDs[v]
-        if ok {return mapped,true}
         return v,false
     case []any:
         changed:=false
@@ -117,6 +115,16 @@ func remapMediaJSONValue(value any,mediaIDs map[string]string)(any,bool){
     case map[string]any:
         changed:=false
         for key,element:=range v {
+            if key == "media_asset_id" || key == "content_version_id" ||
+                key == "machine_role_id" || key == "live_source_id" {
+                if reference,ok:=element.(string);ok {
+                    if mapped,found:=mediaIDs[reference];found {
+                        v[key]=mapped
+                        changed=true
+                        continue
+                    }
+                }
+            }
             next,replaced:=remapMediaJSONValue(element,mediaIDs)
             v[key]=next
             changed=changed||replaced
