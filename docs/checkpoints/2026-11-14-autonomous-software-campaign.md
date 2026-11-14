@@ -791,3 +791,43 @@ This entry supersedes the preceding push instruction.
   finish. If green and remote still equals `70a7061`, verify fast-forward then
   push the local code and checkpoint commits normally to the existing branch
   and PR #534; follow the resulting exact-head CI before another push.
+
+## Resume update — 2026-11-14 03:04 UTC
+
+- Local code/test HEAD is `73c08859ff5f5b1bb2f2a0ae7c43d28670d5aaf8`; remote
+  remains `70a7061d2597e14273fb51468b269c7dff73ea71`; PR #534 remains the same
+  open Draft. The local branch is six commits ahead before this documentation
+  checkpoint. Do not push until Core run `43548179642` completes.
+- Re-audited SC-024 issue #511 and route/runtime boundary evidence. The static
+  route inventory digest and dynamic registration allowlist fail on unseen
+  route changes; qualification mode requires a policy for every project-ID
+  route. `/api/v1/events` currently publishes only `session.ready` plus
+  keepalives and rechecks the exact browser session; it has no Project data.
+  Companion capture ticket authority is checked against the issuing browser
+  session and optional Project grants around bounded transfer/receipt paths.
+  Runtime intent checks bind the Project, active Session and Snapshot; GO/JUMP
+  delayed dispatch, independent STOP/Blackout grants and Owner-only blackout
+  clear are covered in code/tests.
+- Focused SC-024 verification passed: `go test ./internal/httpapi -run
+  'SC024|Qualified|ShowAdmissionRechecksGrant|DelayedCueStopsDispatchAfterShowGrantRevocation|DelayedJumpStopsDispatchAfterShowGrantRevocation|ShowExitRechecksGrant|EmergencyBlackout' -count=1`,
+  `go test ./internal/store -run
+  'CompanionUploadTicket|Project.*Grant|SimulationCheckpoint.*ACL|CueExecutionInsertRejectsRevokedSimulationGrant' -count=1`,
+  and `go test -race ./internal/projectaccess -count=1` (55.3s). This review
+  found no new reproducible gap in these already-covered boundaries; it does
+  not close the whole-server cutover or authorize production ACL.
+- SC-016's bulk-copy regression now also pastes the mixed Lighting+OSC
+  selection twice, mutates the later copy, and proves the earlier payload is
+  unchanged; Project switching still blocks stale clipboard use. Latest full
+  Node suite: 52/52. `73c0885` records this test refinement. The matrix records
+  this along with the SC-024 session/ticket findings.
+- Core run `43548179642` on pushed `70a7061` is still in Go 1.26 Race; ARM64
+  build remains pending. Go 1.27, Go 1.26 regular tests/Browser Cue Delivery/
+  Vet passed. Companion/Swift `43548179629` and isolated/ARM64
+  `43548179637` passed. No push has cancelled the current run.
+- Next action: finish the remote CI gate; if successful, verify exact remote
+  `70a7061` and fast-forward-push the accumulated local batch to existing PR
+  #534. After its CI, continue the next software-only gap: SC-010 multi-action
+  Cue template/preset support, then other open SC rows. Pi performance remains
+  pending the isolated ARM64 host; do not substitute Mac results or real
+  devices. Production services/data/Vault remain untouched and Project ACL
+  remains disabled.
