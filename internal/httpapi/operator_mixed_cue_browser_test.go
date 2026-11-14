@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,12 +37,27 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := store.New(h.db.DB, clock.Real{})
-	project, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Browser Mixed Cue chain", CreatedBy: owner.Session.User.ID})
+	project, revision, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Browser Mixed Cue chain", CreatedBy: owner.Session.User.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
 		t.Fatal(err)
+	}
+	for index := 0; index < 60; index++ {
+		_, err := st.CreateCueWithActions(ctx, domain.Cue{
+			RevisionID: revision.ID, DisplayLabel: fmt.Sprintf("N%02d", index+1),
+			Name: fmt.Sprintf("Navigation Cue %02d", index+1), OrderIndex: index, Enabled: true,
+			ExecutionPolicy: json.RawMessage(`{}`),
+		}, []domain.Action{{
+			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+			Parameters: json.RawMessage(fmt.Sprintf(`{"sequence":%d}`, index+1)),
+			TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+			PriorityClass: domain.PriorityP1, Enabled: true,
+		}})
+		if err != nil {
+			t.Fatalf("seed long-list Navigation Cue %d: %v", index+1, err)
+		}
 	}
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
@@ -163,8 +179,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cues) != 3 {
-		t.Fatalf("persisted cues=%d, want 3", len(cues))
+	if len(cues) != 63 {
+		t.Fatalf("persisted cues=%d, want 63 (60 navigation fixtures + 3 linked Mixed Cues)", len(cues))
 	}
 	byID := make(map[string]domain.Cue, len(cues))
 	for _, cue := range cues {

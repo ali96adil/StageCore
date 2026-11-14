@@ -1977,6 +1977,39 @@
     details.append(title);
     details.addEventListener("toggle", () => {
       if (!details.open || details.childElementCount > 1) return;
+      const navigation = document.createElement("nav");
+      navigation.className = "cue-inspection-navigation";
+      navigation.setAttribute("aria-label", tr("التنقل بين الكيوهات", "Cue navigation"));
+      const previous = document.createElement("button");
+      previous.type = "button";
+      previous.className = "button ghost";
+      previous.textContent = tr("الكيو السابق", "Previous Cue");
+      previous.setAttribute("aria-label", tr("افحص الكيو السابق", "Inspect previous Cue"));
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "button ghost";
+      next.textContent = tr("الكيو التالي", "Next Cue");
+      next.setAttribute("aria-label", tr("افحص الكيو التالي", "Inspect next Cue"));
+      const moveSelection = (offset) => {
+        const rows = Array.from(content.querySelectorAll("tr[data-cue-id]")).filter((row) => !row.hidden);
+        const index = rows.findIndex((row) => row.dataset.cueId === cue.cue_id);
+        const target = rows[index + offset];
+        const targetDetails = target?.querySelector("details");
+        const targetSummary = targetDetails?.querySelector("summary");
+        if (!target || !targetDetails || !targetSummary) return;
+        details.open = false;
+        targetDetails.open = true;
+        target.scrollIntoView({ block: "nearest" });
+        targetSummary.focus({ preventScroll: true });
+      };
+      const rows = Array.from(content.querySelectorAll("tr[data-cue-id]")).filter((row) => !row.hidden);
+      const index = rows.findIndex((row) => row.dataset.cueId === cue.cue_id);
+      previous.disabled = index <= 0;
+      next.disabled = index < 0 || index >= rows.length - 1;
+      previous.addEventListener("click", () => moveSelection(-1));
+      next.addEventListener("click", () => moveSelection(1));
+      navigation.append(previous, next);
+      details.append(navigation);
       const plan = planCueInspection(cue, cues);
       const line = (parent, tag, value) => {
         const item = document.createElement(tag);
@@ -2250,6 +2283,16 @@
     redo.disabled = !status?.can_redo;
   }
 
+  function refreshCueInspectorNavigation() {
+    const rows = Array.from(content.querySelectorAll("tr[data-cue-id]")).filter((row) => !row.hidden);
+    rows.forEach((row, index) => {
+      const buttons = row.querySelectorAll(".cue-inspection-navigation button");
+      if (buttons.length !== 2) return;
+      buttons[0].disabled = index === 0;
+      buttons[1].disabled = index === rows.length - 1;
+    });
+  }
+
   function enhanceCueList() {
     const tableWrap = content.querySelector(".table-wrap");
     const tbody = tableWrap?.querySelector("tbody");
@@ -2385,8 +2428,14 @@
       });
       counter.textContent = tr("ظاهر ", "Showing ") + visible + " / " + cues.length;
     };
-    input.addEventListener("input", apply);
-    select.addEventListener("change", apply);
+    input.addEventListener("input", () => {
+      apply();
+      refreshCueInspectorNavigation();
+    });
+    select.addEventListener("change", () => {
+      apply();
+      refreshCueInspectorNavigation();
+    });
     apply();
 
     rows.forEach((row, index) => {

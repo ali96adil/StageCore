@@ -141,13 +141,48 @@
     if (createdIDs.length !== 3 || createdIDs[2] !== parentID) throw new Error("nested Mixed Cue IDs were not retained");
     await waitFor(() => document.querySelectorAll("#content .sc008-type-badge").length >= 6,
       "Cue Studio rendering the saved Mixed Cue action types");
-    await waitFor(() => document.querySelectorAll("#content .cue-link-cell").length === 3,
+    const linkedChainRows = () => [...document.querySelectorAll("#content tr[data-cue-id]")]
+      .filter((row) => createdIDs.includes(row.dataset.cueId));
+    await waitFor(() => linkedChainRows().length === 3 &&
+      linkedChainRows().every((row) => row.querySelector(".cue-link-cell")),
       "Cue Studio rendering the linked Cue chain");
     if (document.querySelectorAll("#content .sc008-type-badge").length < 6) {
       throw new Error("Cue Studio did not render the saved Mixed Cue action type badges");
     }
-    if (document.querySelectorAll("#content .cue-link-cell").length !== 3) {
+    if (linkedChainRows().length !== 3 || linkedChainRows().some((row) => !row.querySelector(".cue-link-cell"))) {
       throw new Error("Cue Studio did not render all linked-chain rows");
+    }
+
+    const navigationRows = [...document.querySelectorAll("#content tr[data-cue-id]")].filter((row) => !row.hidden);
+    if (navigationRows.length !== 63) throw new Error(`Cue navigation list=${navigationRows.length}, want 63`);
+    const firstNavigationDetails = navigationRows[0].querySelector("details");
+    firstNavigationDetails?.querySelector("summary")?.click();
+    await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),
+      "opening the first Cue in the long-list Inspector");
+    for (let index = 1; index < navigationRows.length; index++) {
+      const current = navigationRows[index - 1];
+      const currentNavigation = current.querySelector(".cue-inspection-navigation");
+      const nextButton = currentNavigation?.querySelectorAll("button")[1];
+      if (!nextButton || nextButton.disabled) throw new Error(`Next Cue control disabled at list position ${index}`);
+      nextButton.click();
+      const targetRow = navigationRows[index];
+      const targetDetails = targetRow.querySelector("details");
+      const targetCue = state.cues[index];
+      const targetCapability = targetCue?.actions?.[0]?.capability_key || "";
+      await waitFor(() => targetDetails?.open && targetDetails.querySelector(".cue-inspection-navigation") &&
+        targetDetails.innerText.includes(targetCue?.name || "") && targetCapability &&
+        targetDetails.innerText.includes(targetCapability),
+      `navigating to Cue ${index + 1} of ${navigationRows.length} with its Action context`);
+      const targetSummary = targetDetails.querySelector("summary");
+      if (document.activeElement !== targetSummary) throw new Error(`Cue ${index + 1} navigation did not move keyboard focus`);
+      const bounds = targetRow.getBoundingClientRect();
+      if (bounds.bottom <= 0 || bounds.top >= window.innerHeight) {
+        throw new Error(`Cue ${index + 1} was selected outside the viewport after navigation`);
+      }
+    }
+    const lastNavigationButtons = navigationRows.at(-1).querySelectorAll(".cue-inspection-navigation button");
+    if (lastNavigationButtons.length !== 2 || !lastNavigationButtons[1].disabled) {
+      throw new Error("Next Cue control is not disabled at the end of the long list");
     }
 
     const parent = state.cues.find((cue) => cue.cue_id === parentID);
@@ -181,6 +216,8 @@
       throw new Error("Draft edit confirmation was not rendered");
     }
 
+    await waitFor(() => document.querySelector(`#content tr[data-cue-id="${parentID}"] details`),
+      "rerendering the parent Cue Inspector after editing");
     const parentRow = document.querySelector(`#content tr[data-cue-id="${parentID}"]`);
     const inspector = parentRow?.querySelector("details");
     if (!inspector) throw new Error("Parent Cue Inspector disclosure is missing");
@@ -240,8 +277,7 @@
     if (JSON.stringify(quickEditedParent.actions) !== JSON.stringify(parent.actions)) {
       throw new Error("Cue Inspector quick edit changed one or more Mixed Cue Actions");
     }
-    const refreshedInspector = document.querySelector(`#content tr[data-cue-id="${parentID}"] details`);
-    await waitFor(() => refreshedInspector?.innerText.includes(quickEditedNotes),
+    await waitFor(() => document.querySelector(`#content tr[data-cue-id="${parentID}"] details`)?.innerText.includes(quickEditedNotes),
       "showing saved quick-edit notes in the Cue Inspector");
     const runtimeRequestsAfterEdit = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {

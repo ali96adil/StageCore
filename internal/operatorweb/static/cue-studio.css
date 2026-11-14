@@ -318,6 +318,12 @@
   margin-block: 6px;
   line-height: 1.5;
 }
+.cue-inspection-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-end: 8px;
+}
 .cue-inspection-quick-edit {
   display: grid;
   gap: 8px;
