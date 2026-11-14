@@ -3643,6 +3643,41 @@ This entry supersedes the preceding push instruction.
   data, real device commands, firmware, production ACL activation, force push,
   merge, paid action, or backup deletion.
 
+## Resume update — 2026-11-15 · passive expiry and renewal boundary coverage
+
+- This checkpoint builds on local code/test HEAD
+  `55f339dc54a849d164e6f2febac995445ffcf2ea`; all changes remain local on
+  `integration/stagecore-rc`. Since remote `460db92`, the local commits include
+  checkpoint `5aa7183`, SC-002 fix `fcb5fbf`, handoff commits `0f9aac9` and
+  `3a43c9d`, and test expansion `55f339d`. There has been no push. The
+  checkpoint commit itself follows the recorded code/test HEAD.
+- Core run `43654085363` still targets exact remote/PR head
+  `460db92eb9a8457b840aa0ddd7aef1b5ebb91c43`. Go 1.27 passed; Go 1.26 Test,
+  Browser Cue Delivery and Vet passed; Go 1.26 Race remains in progress and
+  ARM64 remains pending. Companion Core `43654085383` and Camera Relay
+  `43654085434` passed. Do not push until the complete Core run finishes and
+  the exact branch, PR, and workflow heads are verified again.
+- Expanded the regression to cover both `Validate` and `ValidatePassive`
+  (used for passive streams) when expiry is first observed after a forward
+  fake-clock jump, followed by rollback and local Owner reauthentication. A
+  second deterministic reader advances the fake clock during renewal token
+  generation; renewal now has a regression proving it retires the credential
+  and rejects the rotation if the session expires in that gap. The old cookie
+  also remains invalid after the simulated rollback. This is isolated SQLite
+  and fake-clock coverage only.
+- After the expansion, `go test ./internal/userauth -count=1`,
+  `go test -race ./internal/userauth -count=1`, `go vet ./internal/userauth`,
+  gofmt verification and `git diff --check` passed. The previously recorded
+  HTTP auth renewal regression and full local Chrome HTTP API suite remain as
+  documented above; no HTTP production code changed in this test expansion.
+  The SC-002 matrix now names the exact request, passive stream and renewal
+  boundary evidence.
+- Next: wait for Core `43654085363` to finish, diagnose any failure against
+  exact-head logs, then push the complete tested local batch normally to PR
+  #534 if it passes. Continue with the next software-only issue; Pi clock and
+  cold-boot qualification and all production ACL activation remain out of
+  scope.
+
 ## Resume update — 2026-11-14 23:35 UTC · Race failure and SC-024 keyboard gate
 
 - Branch: `integration/stagecore-rc`; PR #534 remains OPEN/Draft. Before this
