@@ -1212,3 +1212,22 @@ This entry supersedes the preceding push instruction.
 - Local UI evidence remains Node 62/62 with focused recovery 11/11 and history
   14/14. Next SC-009 feature is project-wide Draft history; implementation has
   not started. Production and hardware boundaries remain unchanged.
+
+## Resume update — 2026-11-14 05:10 UTC · follow-on pushed
+
+- Local code and remote PR #534 HEAD are `76f9a9f9b57d89a40b8f1938d098ae25f9ad2d08`.
+  Six commits since `a3b6f5d` were pushed normally after all three exact-head
+  parent runs passed. The PR remains open/draft; its description is current.
+- Core `43560053370` and Companion Core `43560053384` are in progress on
+  `76f9a9f`; Camera Relay `43560053362` passed. Do not push another batch
+  until Core and Companion complete. Read the exact run results and confirm the
+  remote SHA before any subsequent push.
+- The pushed follow-on adds physical-key Cmd/Ctrl+Z/Redo in the Cue editor,
+  preserves native text-field history, and tests User/Project recovery for an
+  unsaved new Cue without an ID. Node 62/62; prior feature full Store, DB and
+  HTTP API, focused Race, Vet and syntax checks passed. SC-009's remaining
+  software gap is project-wide Draft Undo/Redo across Cue create/edit/delete/
+ duplicate/reorder; no implementation has started.
+- Related PRs remain at their verified heads with green software checks. Pi 4
+  runtime performance remains pending host access; production Hub/Relay/data/
+  Vault, devices/firmware and production Project ACL remain untouched/disabled.

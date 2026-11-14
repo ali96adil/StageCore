@@ -1,20 +1,16 @@
 # StageCore software completion matrix
 
-Reviewed on `integration/stagecore-rc`: local HEAD `54f26edf3bf9632827eb171e93f918f58de1a43b`, remote HEAD `a3b6f5d7ec009b15fb878e8da995356cee18c939`, Issue #486 and child Issues
+Reviewed on `integration/stagecore-rc`: code HEAD `76f9a9f9b57d89a40b8f1938d098ae25f9ad2d08`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 04:31 UTC, exact-head Core run `43553686731` on `ce927d6`
-completed successfully on Go 1.26 and 1.27, including Race and ARM64 product
-builds. Companion/Swift run `43553686720` and isolated/ARM64 Camera Relay run
-`43553686712` also passed. Local Node passes 60/60; full Store, DB and HTTP API
-package tests, focused Race, Vet, JavaScript syntax and diff checks pass. The
-eight-commit batch is pushed to the existing PR #534. New exact-head Core
-`43557284478`, Companion `43557284414` and Camera Relay `43557284429` runs are
-running; Camera Relay and Companion have passed, while Core Go 1.26 Race is
-still in progress. Local follow-ons add Cmd/Ctrl+Z and Redo shortcuts while
-preserving native undo inside text controls, and prove new unsaved Cues recover
-by User/Project scope before they have a Cue ID. Node passes 62/62. Hold the
-push with these local follow-ons until Core completes.
+At 2026-11-14 05:08 UTC, exact-head Core run `43557284478` on `a3b6f5d`
+completed successfully on Go 1.26/1.27, including Race and ARM64 builds;
+Companion `43557284414` and Camera Relay `43557284429` also passed. Six
+follow-on commits are now pushed to PR #534 at `76f9a9f`. Local Node passes
+62/62; full Store, DB and HTTP API tests, focused Race/Vet, JavaScript syntax
+and diff checks pass. New exact-head Core `43560053370` and Companion
+`43560053384` are running; Camera Relay `43560053362` passed. Wait for Core and
+Companion before the next push.
 This matrix keeps software evidence separate from installed application and
 physical qualification.
 Issue status and software status are separate: an open issue can have
