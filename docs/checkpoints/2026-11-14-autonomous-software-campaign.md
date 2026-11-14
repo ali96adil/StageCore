@@ -2578,3 +2578,50 @@ This entry supersedes the preceding push instruction.
   confirming no serial-device path can be opened. Then continue a reproducible
   gap from the completion matrix; SC-009 Route history and SC-015's lack of
   explicit per-output health events remain software-review candidates.
+
+## Resume update — 2026-11-14 17:56 UTC · simulated USB-DMX refresh load
+
+- Remote/PR/local committed HEAD remains `b1b3cb4198e109fe4807f1250f4e54a58cd0b084`.
+  PR #534 is OPEN/DRAFT. Exact-head Core run `43622805955` is active: Go 1.27
+  passed; Go 1.26 remains pending. Companion Core `43622805947` and Camera
+  Relay `43622805957` passed. **Do not push while Go 1.26 is running.** The
+  local working batch contains an uncommitted test-only benchmark and updates
+  to the performance report, matrix and this handoff; `git status` is the
+  authoritative list of those edits.
+- SC-025's Linux tests were rebuilt as a static ARM64 test binary from current
+  source. Final binary SHA-256:
+  `a85673eb0c191d5e9a8192d8fa642ddae231303892860aca532d154151643fb4`.
+  The entire `internal/usbdmx` suite passed in the Pi user/network/mount/PID
+  namespace at nice +19, with `/dev`, production paths and Hub socket hidden;
+  elapsed 1.120 s, user/system CPU 0.021/0.019 s, max RSS 10,784 KiB. Linux
+  pipe/poll/write behavior, cancellation, and disconnect handling ran through
+  the default Linux syscalls without a USB device.
+- Added `internal/usbdmx/refresh_performance_benchmark_test.go`. It exercises
+  the real continuous `ManualOutput` ticker with 100 intervals per case and
+  CPU-worker contention, writing only to an in-memory `PacketPort`. Final
+  ARM64 Pi run used Go 1.27.1, `-test.benchtime=1x -test.cpu=1,4`: CPU 1
+  refresh P50/P95/P99 `250.3/253.7/253.7 ms`, jitter P50/P95/P99
+  `0.454/4.015/4.017 ms`, 12,720 B and 34 allocs; CPU 4 refresh
+  `250.3/253.7/253.8 ms`, jitter `0.581/4.015/4.207 ms`, 1,552 B and
+  19 allocs. Both had zero GC. Command resource totals: 50.029 s elapsed,
+  148.686 user CPU seconds, 0.181 system CPU seconds, 10,792 KiB peak RSS.
+  The parallel synthetic workload explains CPU time exceeding wall time.
+  No USB serial port, DMX line, fixture, or physical output was used.
+- Local verification passed after the final source edit: `gofmt`,
+  `git diff --check`, `go test ./internal/usbdmx -count=1`,
+  `go test -race ./internal/usbdmx -count=1`, `go vet ./internal/usbdmx`,
+  Race-instrumented benchmark (`-benchtime=1x -cpu=1`, 26.196 s), Linux ARM64
+  cross-build, complete Pi ARM64 test binary, and the final Pi refresh
+  benchmark. This is software cadence evidence; actual USB transport and
+  fixture-level refresh/blackout remain Hardware Qualification Pending.
+- The P95/P99 sample count is 100 intervals per Go CPU setting. Jitter is
+  absolute deviation from that setting's median interval. No timing threshold
+  was supplied, so do not turn these numbers into an SLO or production
+  acceptance claim. SC-024 stays production-off; no production service, data,
+  Vault, ACL, serial device, firmware, or physical output was touched.
+- Next action: finish the docs diff check and commit this tested batch locally;
+  keep the commit unpushed until run `43622805955` finishes, then recheck PR #534
+  and every exact-head check before a normal push. Continue afterward with a
+  reproducible software gap such as SC-009 Route Undo/Redo coverage or SC-015
+  explicit per-output health-event semantics; never infer connectivity from
+  missing health events.

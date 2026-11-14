@@ -41,7 +41,7 @@ gap or missing implementation remains. Hardware is called out separately.
 | SC-022 · #509, #512 | Rename Project without changing stable runtime identities. | `internal/httpapi/operator_projects.go`, `app.js::renameProject`, `operator_project_rename_test.go`; Unicode and duplicated-project rename preserve IDs. Migration 61 narrows the active-SHOW project-row lock to allow only a name plus timestamp update. `operator_project_rename_show_test.go` verifies the active session, published Snapshot and Cue identities remain intact and that unrelated Project-row writes stay locked. | **Implemented in code.** Concurrent rename conflict/last-writer semantics remain to be specified and accepted. | Project API, Store, SQLite migration, Operator UI. No hardware required. |
 | SC-023 · #510 | Project-named workspace for media/files, backed by Vault metadata and immutable content. | `internal/projectaccess/project_files.go`, project-file routes/UI, Vault media/assets, duplicate and file contract tests. `TestSelfContainedMaterializePreservesExecutionEnvironmentAndExtensionAssets` round-trips a content-bound execution-environment project file, a captured environment snapshot object, a capability-selected installed extension software package, and an OSC target Alias with its ProjectConfig through a self-contained Show Capsule; import intentionally clears the device-local `TargetRef` so the restored Project requires host-specific remapping. It verifies exact restored Vault bytes and that import does not install/run the extension. `TestSelfContainedMaterializePreservesRuntimeIdentity` covers required media content and stable Project/Cue/Action/Snapshot identity. `TestDuplicateProjectAuthoringProjectWideSettingsAndMedia` verifies duplicate Projects remap typed media, Machine Role and live-source identifiers while preserving literal filename/configuration values that happen to equal source UUIDs. `TestManagedVaultObjectAndSQLiteMetadataSurviveReopen` closes and reopens SQLite and Vault over temporary roots, runs `PRAGMA integrity_check`, then reads the exact managed bytes and confirms Project/Asset/version metadata survived. | **Partial.** Verify the remaining supported artifact classes, duplicate/copy semantics, and end-to-end ACL coverage; retain one Vault content authority and reject loose project-independent files. | Project API, Vault, Media, export/import, Tablet/StageAudio. SQLite/content-hash tests; actual media output requires devices. |
 | SC-024 · #511 | Simple Owner-managed Project permissions, enforced at every Project/Vault/runtime/realtime boundary; production stays disabled. | `internal/projectaccess/access_level.go` maps View/Edit/Operate/Manage and NONE to scoped capabilities; custom grants remain supported. The opt-in Owner API reads/reports `access_level` alongside explicit fine-grained `permissions`. Service/HTTP tests cover mapping, active and disabled-user revocation, Viewer denial, independent STOP/Blackout grants, audit, and `PREPARED_NOT_ENFORCED`; `TestQualifiedShowGOStopAndBlackoutUseIndependentGrants` exercises those distinct SHOW permissions through simulated HTTP and runtime dispatch. Real-Chrome `TestBrowserOwnerProjectAccessEditorStoresPreparedLevel` uses temporary SQLite and the optional API to load and save an Operator's `OPERATE` grant, checks its response/readback and UI warning, and confirms there is no publish/runtime/safety request. It also checks the grant form at the ≤560 px mobile breakpoint in RTL, stacked fields, no page overflow, and naturally keyboard-focusable controls. Route-inventory hash and dynamic-registration tests guard reviewed paths. `/api/v1/events` currently emits only `session.ready` and keepalive with exact-session fencing and no Project payload; `TestAuthenticatedSSEClosesAfterSessionRevocation` now asserts the exact safe event field set and verifies the stream closes after logout. Companion upload checks the issuing browser session and optional Project grants before/after bounded reads. Runtime intent binds active Session to Project/Snapshot; delayed GO/JUMP revocation tests and owner-only blackout-clear rules are covered. ACL-only performance is separate in `sc024-authorization-qualification.md`. | **Partial; production cutover not authorized.** The grant editor is not assembled on the production Hub. Actual keyboard operation/focus-modality and touch acceptance, the whole-server endpoint-to-policy and asynchronous delivery review, Companion compatibility, and isolated installed-copy backup/rollback/full-suite qualification remain open. Keep production ACL opt-in/off. | Hub auth/API/store, Vault, snapshots/capsules, Companion/StageAudio/realtime. Software verification uses the optional isolated API; production deployment/cutover is expressly out of scope. |
-| SC-025 · #513 | Support DMXking ultraDMX Micro 0084 USB-DMX on Pi 4 alongside V2 nodes. | `internal/usbdmx` contains ENTTEC DMX USB Pro framing, Linux FTDI discovery/port and transmitter/manual API; protocol tests assert the exact 518-byte/512-channel frame and channel bounds. Manual-output tests prove invalid channel count, timed duration, and Hub lease bounds are rejected before opening a port; inclusive 1 ms/10 s timed and 1 ms/60 s continuous endpoints execute through a fake port and stop with a zero request. The continuous-refresh fault test records the first refresh attempt and requires at least 200 ms after the initial frame (ticker target 250 ms). Linux `WritePacket` has deterministic writer/poller seams and Linux-tagged tests for lossless short writes, EAGAIN/EINTR, zero progress, poll failure, disconnect flags and cancellation after a partial frame. A Linux pipe test exercises default `unix.Write`/`unix.Poll`, complete frame bytes, poll faults, idempotent close and closed-write quarantine without USB hardware; Core Go 1.26/1.27 CI passed this Linux-tagged runtime test on exact head `32abf83` (run `43580593795`). | **Partial.** Qualify refresh tail jitter under sustained load, disconnect/reopen and port identity/no-ambiguity on an isolated Linux ARM64 target; STOP/Blackout tests do not prove fixture delivery. Local macOS tests do not execute Linux-tagged port tests. | Hub `internal/usbdmx`, Pi 4 USB/FTDI. Linux CI/simulation first; Pi 4 USB loopback and the 0084 interface, DMX line and safe fixture are needed for physical output timing and blackout acceptance. |
+| SC-025 · #513 | Support DMXking ultraDMX Micro 0084 USB-DMX on Pi 4 alongside V2 nodes. | `internal/usbdmx` contains ENTTEC DMX USB Pro framing, Linux FTDI discovery/port and transmitter/manual API; protocol tests assert the exact 518-byte/512-channel frame and channel bounds. Manual-output tests prove invalid channel count, timed duration, and Hub lease bounds are rejected before opening a port; inclusive 1 ms/10 s timed and 1 ms/60 s continuous endpoints execute through a fake port and stop with a zero request. Linux `WritePacket` has deterministic writer/poller seams and Linux-tagged tests for lossless short writes, EAGAIN/EINTR, zero progress, poll failure, disconnect flags and cancellation after a partial frame. A Linux pipe test exercises default `unix.Write`/`unix.Poll`, complete frame bytes, poll faults, idempotent close and closed-write quarantine without USB hardware; these tests passed in Core Go 1.26/1.27 CI and in the full Linux ARM64 `internal/usbdmx` test binary on Pi 4 (Go 1.27.1, SHA-256 `c50d7d63…`). New `BenchmarkManualContinuousRefreshJitter` drives the real 250 ms ManualOutput ticker into an in-memory port with synthetic CPU contention. At Go CPU 1/4, 100 intervals had refresh P95/P99 `253.7/253.7 ms` and `253.7/253.8 ms`, respectively; P95 jitter was 4.015 ms for both. `/dev` was hidden during all Pi tests. | **Partial.** Software refresh scheduling and Linux pipe/write/poll paths now have ARM64 evidence. Physical DMXking identity/port selection, adapter disconnect/reconnect and tail timing over USB, bus/fixture output, STOP and Blackout still require the isolated Pi 4/0084/DMX fixture bench. A fake port cannot qualify USB transport or physical output. | Hub `internal/usbdmx`, Pi 4 USB/FTDI. Software qualification runs in a device-hidden namespace; physical USB loopback, the 0084 interface, DMX line and safe fixture remain Hardware Qualification Pending. |
 
 ## Integration and resilience coverage
 
@@ -70,37 +70,38 @@ matrix:
 | [#483](https://github.com/ali96adil/StageCore/issues/483), [#459](https://github.com/ali96adil/StageCore/issues/459) | Cue-authoring freeze and peripheral-before-Hub rollout tracker; both describe deployed-source, verified-backup, compatibility and attended acceptance gates. | **Release / operational gates.** Green CI and this experimental branch do not authorize production authoring, rollout, or device updates. Preserve source pins, independent backups, current Snapshots, and all physical outputs until explicit acceptance. |
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 
-## Current campaign checkpoint — 2026-11-14 17:40 UTC
+## Current campaign checkpoint — 2026-11-14 17:56 UTC
 
-Draft PR #534 remains OPEN on `integration/stagecore-rc`. The last pushed
-remote/PR head is `a90403b863009081447d1cb2ebbce88947ad1cf6`. Its exact-head
-workflows have completed successfully: Core `43618591866` (Go 1.26 including
-Race and Linux ARM64 builds, Go 1.27, Browser and Vet), Companion Core
-`43618591864`, and Camera Relay `43618591875`. The local branch also contains
-docs-only checkpoint `2675428` and the Pi performance evidence now recorded in
-`cue-execution-performance-qualification.md`; use `git rev-parse HEAD` for the
-current local documentation tip. Before the next Push, recheck the remote and
-PR SHA and confirm no newer exact-head workflow is running.
+Draft PR #534 remains OPEN on `integration/stagecore-rc`. Remote/PR/local
+committed HEAD is `b1b3cb4198e109fe4807f1250f4e54a58cd0b084`. Its exact-head
+Core run `43622805955` is still active in Go 1.26; Go 1.27 passes. Companion
+Core `43622805947` and Camera Relay `43622805957` pass. Do not push while the
+Go 1.26 job remains active. The current local `internal/usbdmx` refresh
+benchmark and its performance/matrix/handoff updates are an uncommitted batch;
+use `git status` and `git rev-parse HEAD` before resuming.
 
-The remote source includes StageAudio fake-process and absent-binary coverage,
-Show Capsule alias target-remapping coverage, SQLite/Vault reopen integrity,
-and the Project duplication ID-remapping fix. Full `internal/store` normal and
-Race suites passed, as did `go vet ./internal/store` and focused Store,
-Show Capsule, and Vault checks. No source code changed in the Pi-report batch.
+The latest Pi 4 Rev 1.4 ARM64 simulations cover flat Mixed Cues, nested linked
+compound chains through 100 Cues/200 Actions, scheduling, 4/8-GO bursts,
+sustained Rehearsal, STOP/Blackout, Linux `usbdmx` poll/write tests, and
+continuous USB-DMX refresh jitter. The full `internal/usbdmx` test binary
+passed with `/dev` hidden (Go 1.27.1, binary SHA-256
+`a85673eb0c191d5e9a8192d8fa642ddae231303892860aca532d154151643fb4`). The
+refresh benchmark uses an in-memory `PacketPort`; with 100 intervals per
+setting, P95/P99 refresh intervals were `253.7/253.7 ms` at Go CPU 1 and
+`253.7/253.8 ms` at Go CPU 4, with P95 jitter `4.015 ms` in both cases.
+Actual USB adapter, DMX line, fixture, and physical blackout acceptance remain
+hardware work.
 
-Pi 4 Rev 1.4 ARM64 simulation qualification is now recorded for flat Mixed
-Cues, nested linked compound chains through 100 Cues/200 Actions, scheduled
-actions, 4/8-GO bursts, sustained 100-Cue Rehearsal, STOP and Emergency
-Blackout. Test outputs stayed inside a private namespace and the physical
-executor stayed at zero. ACL/HTTP and real output latency are excluded. The
-low-priority sample results identify SQLite event persistence as the largest
-observed CPU cost; 32 delayed GO requests raised STOP/Blackout P95 to about one
-second. The measured profile does not justify a durability or caching change.
-No supplied numeric timing threshold means this is evidence for qualification,
-not a Software Complete or Hardware Qualification pass.
+The local benchmark batch passed `go test ./internal/usbdmx -count=1`, its
+Race suite, `go vet ./internal/usbdmx`, a Race-instrumented refresh benchmark,
+Linux ARM64 cross-build, the complete Pi ARM64 test binary, and the Pi refresh
+benchmark. All outputs were simulated. No performance runtime code changed;
+the only code addition is a test-only refresh measurement. Production
+Hub/Relay/data/Vault, physical outputs, firmware, and production ACL remain
+untouched; keep SC-024 production-off and PR #534 in Draft.
 
-SC-024 remains opt-in/off in production. No production Hub/Relay/data/Vault,
-real stage output, firmware or production ACL enforcement was touched. Keep
-PR #534 in Draft; do not merge or force-push. Next independent qualification
-candidate: run the Linux-tagged `internal/usbdmx` software tests on the same
-device-hidden Pi namespace, then continue the highest reproducible matrix gap.
+After the current exact-head Core run completes, recheck remote/PR and the
+workflow set, then commit and push this validated batch normally. Continue
+software work while its CI runs. The next matrix candidates are SC-009 Route
+history and SC-015's lack of explicit per-output health events; preserve the
+distinction between an absent health event and inferred device connectivity.

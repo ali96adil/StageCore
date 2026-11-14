@@ -287,6 +287,30 @@ ms`, and a mean complete-session time of `2.998 s`. Each 100-GO session used
 `38,967,218 B` and `291,074` allocations, with 14.30 GC cycles and 1.426 ms
 GC pause. Process maximum RSS was 32,524 KiB.
 
+#### USB-DMX refresh under synthetic CPU contention
+
+`BenchmarkManualContinuousRefreshJitter` runs the real `ManualOutput` 250 ms
+refresh ticker against an in-memory `PacketPort`, records 100 intervals per
+case, then cancels and verifies the port closes. It launches
+`max(1, GOMAXPROCS-1)` CPU workers, so `-test.cpu=1,4` tests one and three
+competing goroutines respectively. The test writes no serial device and never
+discovers USB hardware.
+
+Jitter is the absolute deviation of each refresh interval from its case
+median. Each row has 100 samples; P99 is the highest or next-to-highest
+nearest-rank sample and is a stress observation, not a stable tail guarantee.
+
+| Go CPUs / competing workers | Refresh P50 / P95 / P99 | Jitter P50 / P95 / P99 | GC/op | Allocations / 100 intervals |
+| --- | ---: | ---: | ---: | ---: |
+| 1 / 1 | 250.3 / 253.7 / 253.7 ms | 0.454 / 4.015 / 4.017 ms | 0 | 12,720 B; 34 allocs |
+| 4 / 3 | 250.3 / 253.7 / 253.8 ms | 0.581 / 4.015 / 4.207 ms | 0 | 1,552 B; 19 allocs |
+
+The two-case process took 50.029 seconds wall, 148.686 user CPU seconds,
+0.181 system CPU seconds, and peaked at 10,792 KiB RSS. CPU seconds exceed
+wall time because the benchmark intentionally runs workers on multiple cores.
+These timings characterize the ticker and Go scheduler with a fake port; they
+do not include USB adapter writes, DMX bus refresh, or fixture response.
+
 #### CPU/RAM envelope and profile
 
 The sandbox helper recorded whole test-process user/system CPU time and peak
@@ -300,6 +324,7 @@ The shell's `/proc` view was not used to infer service CPU.
 | GO burst, 100 bursts per case, `-cpu=1,4` | 188.988 s | 178.551 s | 20.970 s | 47,320 KiB |
 | STOP/Blackout, 100 operations per case | 251.106 s | 238.317 s | 13.050 s | 38,840 KiB |
 | Sustained Rehearsal, 20 sessions | 66.163 s | 60.697 s | 5.553 s | 32,524 KiB |
+| USB-DMX refresh, 100 intervals at `-cpu=1,4` | 50.029 s | 148.686 s | 0.181 s | 10,792 KiB |
 | 20-sample 100-Cue/200-Action CPU profile | 14.949 s | 13.718 s | 1.254 s | 38,404 KiB |
 
 The sampled CPU profile shows SQLite execution and durable event persistence
