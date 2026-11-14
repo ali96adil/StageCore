@@ -249,7 +249,7 @@ test("editing a guided OSC action preserves unsupported parameter metadata", () 
   assert.deepEqual(JSON.parse(JSON.stringify(savedMIDI.bytes)), [0x91, 60, 100]);
 });
 
-test("Cue Studio action clipboard stays in the current project and user session", () => {
+test("Cue Studio action clipboard crosses Projects only for the same editor session and warns about targets", () => {
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
   const first = source.indexOf("function serializeActionCopy");
   const last = source.indexOf("function duplicateCard", first);
@@ -304,12 +304,17 @@ test("Cue Studio action clipboard stays in the current project and user session"
   assert.equal(targetWarning, undefined, "configured targets should not raise an availability warning");
   pasted = undefined;
   state.project = { project_id: "project-b" };
+  state.f002Targets = [];
+  targetWarning = undefined;
   clipboard.pasteClipboardAction();
-  assert.equal(pasted, undefined);
+  assert.equal(pasted.target_ref, "VDMX", "copy keeps the authored logical target without importing device configuration");
+  assert.equal(targetWarning.kind, "warn");
+  assert.match(targetWarning.message, /not configured here.*remap/i);
+  const copiedForDestination = pasted;
   clipboard.copyActionToClipboard(card);
   state.user = {};
   clipboard.pasteClipboardAction();
-  assert.equal(pasted, undefined);
+  assert.equal(pasted, copiedForDestination, "a different user session cannot read the previous clipboard");
 });
 
 test("Cue Studio copies selected Mixed-Cue actions in order as independent copies", () => {
@@ -346,12 +351,13 @@ test("Cue Studio copies selected Mixed-Cue actions in order as independent copie
   ];
   for (const card of cards) card.querySelector = (selector) => selector === ".sc008-action-select" ? { checked: card.selected } : null;
   const inserted = [];
+  let projectWarning;
   const context = {
     state, structuredClone, f002SyncActionCard() {},
     cardField: (card, field) => card[field],
     actionCards: () => cards,
     pick: () => null,
-    globalMessage: {}, setMessage() {}, tr: (_arabic, english) => english,
+    globalMessage: {}, setMessage: (_target, message, kind) => { projectWarning = {message, kind}; }, tr: (_arabic, english) => english,
     addActionEditor: (action) => inserted.push(action), expandCard() {}, refreshActions() {},
   };
   const clipboard = vm.runInNewContext(
@@ -378,7 +384,10 @@ test("Cue Studio copies selected Mixed-Cue actions in order as independent copie
   assert.equal(inserted[0].parameters.levels.warm, 60);
   state.project = { project_id: "project-b" };
   clipboard.pasteClipboardAction();
-  assert.equal(inserted.length, 4, "a copied Mixed Cue must not cross Project boundaries");
+  assert.equal(inserted.length, 6, "selected Mixed-Cue actions can be pasted as independent Draft copies in another Project");
+  assert.equal(projectWarning.kind, "warn");
+  assert.match(projectWarning.message, /without copying device configuration.*verify each target/i);
+  assert.deepEqual(inserted.slice(4).map((action) => action.action_id), ["", ""]);
 });
 
 test("raw preview values copy only through unique representable logical channels", () => {

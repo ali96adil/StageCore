@@ -148,7 +148,7 @@
   }
 
   function clipboardActions() {
-    if (actionClipboard && actionClipboard.user === state.user && actionClipboard.projectID === state.project?.project_id) {
+    if (actionClipboard && actionClipboard.user === state.user) {
       return actionClipboard.actions || (actionClipboard.action ? [actionClipboard.action] : []);
     }
     actionClipboard = null;
@@ -212,9 +212,29 @@
 
   function pasteClipboardAction() {
     const actions = clipboardActions();
-    if (!actions.length) return;
+    if (!actions.length || !state.project?.project_id) return;
+    const sourceProjectID = actionClipboard?.projectID || "";
+    const crossProject = sourceProjectID !== state.project?.project_id;
+    if (crossProject) {
+      const targets = state.f002Targets || [];
+      const copiedTargets = actions.map((action) => String(action?.target_ref || "").trim()).filter(Boolean);
+      const hasUnavailableTarget = copiedTargets.some((targetRef) =>
+        !targets.some((target) => String(target?.logical_name || "").trim() === targetRef));
+      if (copiedTargets.length) {
+        setMessage(globalMessage, hasUnavailableTarget
+          ? tr(
+            "أُضيفت الإجراءات إلى المسودة. بعض أهداف المشروع المصدر غير معرفة هنا؛ أعد تعيينها في كل إجراء قبل النشر.",
+            "Actions were added to this Draft. Some source Project targets are not configured here; remap each affected action before publishing.",
+          )
+          : tr(
+            "أُضيفت الإجراءات إلى المسودة، ولم تُنسخ إعدادات الأجهزة. راجع توافق كل هدف مع إعدادات هذا المشروع قبل النشر.",
+            "Actions were added to this Draft without copying device configuration. Verify each target against this Project before publishing.",
+          ), "warn");
+      }
+    } else {
+      for (const action of actions) warnIfActionTargetUnavailable(action);
+    }
     for (const action of actions) {
-      warnIfActionTargetUnavailable(action);
       addActionEditor(structuredClone(action));
     }
     const inserted = actionCards().slice(-actions.length);
