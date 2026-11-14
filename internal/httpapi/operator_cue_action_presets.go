@@ -49,8 +49,9 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 			writeJSON(w, http.StatusOK, map[string]any{"presets": presets})
 		case http.MethodPost:
 			var request struct {
-				Name   string             `json:"name"`
-				Action actionWriteRequest `json:"action"`
+				Name    string               `json:"name"`
+				Action  json.RawMessage      `json:"action"`
+				Actions []actionWriteRequest `json:"actions"`
 			}
 			if !decodeBoundedJSON(w, r, &request) {
 				return
@@ -58,13 +59,36 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 			request.Name = strings.TrimSpace(request.Name)
 			if request.Name == "" || utf8.RuneCountInString(request.Name) > 64 ||
 				strings.ContainsFunc(request.Name, unicode.IsControl) ||
-				strings.TrimSpace(request.Action.CapabilityKey) == "" {
+				(len(request.Action) == 0) == (len(request.Actions) == 0) || len(request.Actions) > 200 {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
 				return
 			}
-			request.Action.ActionID = ""
-			request.Action.OrderIndex = 0
-			document, err := json.Marshal(request.Action)
+			multi := len(request.Actions) > 0
+			actions := request.Actions
+			if !multi {
+				var single actionWriteRequest
+				if err := json.Unmarshal(request.Action, &single); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+					return
+				}
+				actions = []actionWriteRequest{single}
+			}
+			for i := range actions {
+				actions[i].CapabilityKey = strings.TrimSpace(actions[i].CapabilityKey)
+				if actions[i].CapabilityKey == "" {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+					return
+				}
+				actions[i].ActionID = ""
+				actions[i].OrderIndex = i
+			}
+			var document []byte
+			var err error
+			if multi {
+				document, err = json.Marshal(actions)
+			} else {
+				document, err = json.Marshal(actions[0])
+			}
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
 				return

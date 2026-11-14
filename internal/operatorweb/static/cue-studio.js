@@ -1078,8 +1078,11 @@
       list.replaceChildren();
       for (const preset of presets) {
         const row = document.createElement("li");
-        const targetRef = String(preset.action?.target_ref || "").trim();
-        const targetPresent = Boolean(targetRef && (state.f002Targets || []).some((target) => target.logical_name === targetRef));
+        const actions = Array.isArray(preset.actions) ? preset.actions : [preset.action].filter(Boolean);
+        const targetPresent = actions.length > 0 && actions.every((action) => {
+          const targetRef = String(action?.target_ref || "").trim();
+          return targetRef && (state.f002Targets || []).some((target) => target.logical_name === targetRef);
+        });
         const targetStatus = document.createElement("p");
         targetStatus.className = targetPresent ? "muted" : "message warn";
         targetStatus.setAttribute("role", targetPresent ? "status" : "alert");
@@ -1088,15 +1091,19 @@
           : tr("الهدف غير موجود في إعدادات هذا المشروع. أضف هدفاً أو أعد تعيينه قبل الاعتماد على هذا الكيو.", "Target is not present in this Project configuration. Add or remap a target before relying on this Cue.");
         const preview = document.createElement("details");
         const previewHeading = document.createElement("summary");
-        previewHeading.textContent = tr("معاينة تفاصيل الإجراء", "Preview action details");
+        previewHeading.textContent = actions.length > 1
+          ? tr(`معاينة ${actions.length} إجراءات`, `Preview ${actions.length} actions`)
+          : tr("معاينة تفاصيل الإجراء", "Preview action details");
         const previewContent = document.createElement("pre");
         previewContent.className = "mono muted";
-        previewContent.textContent = JSON.stringify(preset.action || {}, null, 2);
+        previewContent.textContent = JSON.stringify(actions.length > 1 ? actions : actions[0] || {}, null, 2);
         preview.append(previewHeading, previewContent);
-        const insert = button(tr("أضف إلى الكيو", "Add to Cue"));
+        const insert = button(actions.length > 1
+          ? tr(`أضف ${actions.length} إجراءات إلى الكيو`, `Add ${actions.length} actions to Cue`)
+          : tr("أضف إلى الكيو", "Add to Cue"));
         insert.onclick = () => {
           if (!active()) return;
-          addActionEditor({ ...preset.action, action_id: "" });
+          for (const action of actions) addActionEditor({ ...structuredClone(action), action_id: "" });
           refreshActions();
         };
         const remove = button(tr("احذف القالب", "Delete preset"));
@@ -1123,15 +1130,16 @@
     });
     save.onclick = async () => {
       if (!active()) return;
-      const action = clipboardAction();
+      const actions = clipboardActions();
       const label = name.value.trim();
-      if (!action || !label) {
-        status.textContent = tr("انسخ إجراءً واكتب اسم القالب.", "Copy an action and enter a preset name.");
+      if (!actions.length || !label) {
+        status.textContent = tr("انسخ إجراءً أو مجموعة إجراءات واكتب اسم القالب.", "Copy one or more actions and enter a preset name.");
         return;
       }
       save.disabled = true;
       try {
-        await api(path, { method: "POST", json: { name: label, action } });
+        const preset = actions.length > 1 ? { name: label, actions } : { name: label, action: actions[0] };
+        await api(path, { method: "POST", json: preset });
         if (!active()) return;
         name.value = "";
         status.textContent = tr("حُفظ القالب.", "Preset saved.");

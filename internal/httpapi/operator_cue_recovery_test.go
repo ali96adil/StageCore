@@ -112,6 +112,38 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	if preset.ID == "" || authored.ActionID != "" || authored.OrderIndex != 0 || authored.CapabilityKey != "osc.send" {
 		t.Fatalf("preset persisted cue identity or lost capability: %+v", authored)
 	}
+	mixedRequest := []byte(`{"name":"Warm scene","actions":[{"action_id":"source-light","order_index":8,"target_ref":"LIGHTING","capability_key":"lighting.channels.fade","parameters":{"levels":{"warm":55},"fade_ms":900}},{"action_id":"source-osc","order_index":9,"target_ref":"VDMX","capability_key":"osc.send","parameters":{"address":"/scene/4","arguments":[4]}}]}`)
+	mixedCreated := presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, mixedRequest, http.StatusCreated)
+	var mixedPreset store.CueActionPreset
+	if err := json.Unmarshal(mixedCreated.Body.Bytes(), &mixedPreset); err != nil {
+		t.Fatal(err)
+	}
+	if mixedPreset.Action != nil || len(mixedPreset.Actions) != 2 {
+		t.Fatalf("mixed preset response did not preserve its actions field: %+v", mixedPreset)
+	}
+	var mixedActions []actionWriteRequest
+	for _, raw := range mixedPreset.Actions {
+		var action actionWriteRequest
+		if err := json.Unmarshal(raw, &action); err != nil {
+			t.Fatal(err)
+		}
+		mixedActions = append(mixedActions, action)
+	}
+	if mixedActions[0].ActionID != "" || mixedActions[0].OrderIndex != 0 || mixedActions[0].CapabilityKey != "lighting.channels.fade" ||
+		mixedActions[1].ActionID != "" || mixedActions[1].OrderIndex != 1 || mixedActions[1].CapabilityKey != "osc.send" {
+		t.Fatalf("mixed preset retained Cue identities or changed order: %+v", mixedActions)
+	}
+	var listed struct {
+		Presets []store.CueActionPreset `json:"presets"`
+	}
+	listedResponse := presetRequest(http.MethodGet, project, "", owner.Token, "", nil, http.StatusOK)
+	if err := json.Unmarshal(listedResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Presets) != 2 || listed.Presets[0].Action == nil || len(listed.Presets[0].Actions) != 0 ||
+		len(listed.Presets[1].Actions) != 2 || listed.Presets[1].Action != nil {
+		t.Fatalf("listing did not preserve the old single-action shape and new multi-action shape: %+v", listed.Presets)
+	}
 	presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusConflict)
 	presetRequest(http.MethodDelete, project, "/"+preset.ID, second.Token, second.CSRFToken, nil, http.StatusNotFound)
 	presetRequest(http.MethodDelete, otherProject, "/"+preset.ID, owner.Token, owner.CSRFToken, nil, http.StatusNotFound)

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,9 +12,24 @@ import (
 )
 
 type CueActionPreset struct {
-	ID     string          `json:"preset_id"`
-	Name   string          `json:"name"`
-	Action json.RawMessage `json:"action"`
+	ID      string            `json:"preset_id"`
+	Name    string            `json:"name"`
+	Action  json.RawMessage   `json:"action,omitempty"`
+	Actions []json.RawMessage `json:"actions,omitempty"`
+}
+
+func cueActionPresetView(id, name string, raw json.RawMessage) CueActionPreset {
+	preset := CueActionPreset{ID: id, Name: name}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var actions []json.RawMessage
+		if json.Unmarshal(trimmed, &actions) == nil && actions != nil {
+			preset.Actions = actions
+			return preset
+		}
+	}
+	preset.Action = append(json.RawMessage(nil), raw...)
+	return preset
 }
 
 func (s *Store) ListCueActionPresets(ctx context.Context, projectID, userID string) ([]CueActionPreset, error) {
@@ -27,13 +43,12 @@ func (s *Store) ListCueActionPresets(ctx context.Context, projectID, userID stri
 	defer rows.Close()
 	presets := []CueActionPreset{}
 	for rows.Next() {
-		var preset CueActionPreset
+		var id, name string
 		var action string
-		if err := rows.Scan(&preset.ID, &preset.Name, &action); err != nil {
+		if err := rows.Scan(&id, &name, &action); err != nil {
 			return nil, err
 		}
-		preset.Action = json.RawMessage(action)
-		presets = append(presets, preset)
+		presets = append(presets, cueActionPresetView(id, name, json.RawMessage(action)))
 	}
 	return presets, rows.Err()
 }
@@ -59,7 +74,7 @@ func (s *Store) CreateCueActionPreset(ctx context.Context, projectID, userID, na
 	if count == 0 {
 		return CueActionPreset{}, fmt.Errorf("%w: preset name exists or limit reached", domain.ErrConflict)
 	}
-	return CueActionPreset{ID: id, Name: name, Action: action}, nil
+	return cueActionPresetView(id, name, action), nil
 }
 
 func (s *Store) DeleteCueActionPreset(ctx context.Context, projectID, userID, id string) error {

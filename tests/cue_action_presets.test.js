@@ -19,11 +19,12 @@ function node(tagName = "div") {
   };
 }
 
-async function openPresets({ presets, targets = [] }) {
+async function openPresets({ presets, targets = [], clipboard = [] }) {
   const user = { user_id: "operator" };
   const dialog = node("dialog");
   dialog.open = true;
   const inserted = [];
+  const requests = [];
   const workspace = node("section");
   workspace.append = (...items) => {
     workspace.children.push(...items);
@@ -33,10 +34,15 @@ async function openPresets({ presets, targets = [] }) {
     state: { user, project: { project_id: "project" }, f002Targets: targets },
     workspace,
     document: { createElement: node },
+    structuredClone,
     window: { confirm: () => true },
     pick: (id) => id === "cueDialog" ? dialog : null,
     tr: (_arabic, english) => english,
-    api: async () => ({ presets }),
+    api: async (_path, request) => {
+      if (request) requests.push(request);
+      return { presets };
+    },
+    clipboardActions: () => clipboard,
     errorMessage: String,
     addActionEditor(action) { inserted.push(action); },
     refreshActions() {},
@@ -46,7 +52,7 @@ async function openPresets({ presets, targets = [] }) {
   panel.open = true;
   await panel.listeners.toggle();
   await new Promise(setImmediate);
-  return { panel, inserted };
+  return { panel, inserted, requests };
 }
 
 function find(root, tagName) {
@@ -91,4 +97,43 @@ test("Action preset preview confirms a target present in the current Project", a
   const row = find(panel, "ul").children[0];
   assert.match(contentText(row), /Target is available in this Project configuration/);
   assert.doesNotMatch(contentText(row), /Target is not present/);
+});
+
+test("Multi-action Mixed-Cue preset inserts ordered independent copies", async () => {
+  const actions = [
+    { action_id: "saved-light", target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { levels: { warm: 55 }, fade_ms: 900 } },
+    { action_id: "saved-osc", target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4", arguments: [4] } },
+  ];
+  const { panel, inserted } = await openPresets({
+    presets: [{ preset_id: "mixed-preset", name: "Warm scene", actions }],
+    targets: [{ logical_name: "LIGHTING" }, { logical_name: "VDMX" }],
+  });
+  const row = find(panel, "ul").children[0];
+  assert.match(contentText(row), /2 actions/);
+  assert.match(find(row, "pre").textContent, /\/scene\/4/);
+  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 2 actions to Cue").onclick();
+  assert.equal(inserted.length, 2);
+  assert.deepEqual(inserted.map((action) => action.target_ref), ["LIGHTING", "VDMX"]);
+  assert.deepEqual(inserted.map((action) => action.action_id), ["", ""]);
+  assert.equal(inserted[0].parameters.levels.warm, 55);
+  assert.equal(inserted[1].parameters.address, "/scene/4");
+  assert.equal(actions[0].action_id, "saved-light");
+  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 2 actions to Cue").onclick();
+  assert.equal(inserted.length, 4);
+  assert.notStrictEqual(inserted[0].parameters, inserted[2].parameters);
+});
+
+test("saving selected Mixed-Cue actions persists one ordered multi-action preset", async () => {
+  const clipboard = [
+    { action_id: "", target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { fade_ms: 900 } },
+    { action_id: "", target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4" } },
+  ];
+  const { panel, requests } = await openPresets({ presets: [], clipboard });
+  const name = find(panel, "input");
+  name.value = "Warm scene";
+  const save = panel.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Save copied action");
+  await save.onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
+    { method: "POST", json: { name: "Warm scene", actions: clipboard } },
+  ]);
 });
