@@ -1461,3 +1461,25 @@ This entry supersedes the preceding push instruction.
   verify Remote HEAD, push the local checkpoint commit normally, then watch the
   exact-head CI for that new HEAD before another push. Continue the next
   software gap while respecting these CI gates.
+
+## Resume update — 2026-11-14 07:05 UTC · Draft history backup restore
+
+- While CI runs on pushed HEAD `abe7ad8017744283acab76bfa4f3b76ad4797f52`,
+  added a regression to `internal/backup`: create a Cue Draft Undo entry,
+  perform the isolated State Backup/Restore flow, reopen the restored SQLite
+  database, verify Undo is still available, then Undo the Cue and verify its
+  identity is absent and Redo is available. This uses only temporary test
+  DataRoots; no production database or Vault was opened.
+- The focused restore test, full `internal/backup` package, focused backup Race,
+  and `go vet ./internal/backup` passed. The SC-009 matrix now distinguishes
+  tested State Backup/Restore of Draft history from remaining update rollback
+  and real-browser qualification.
+- At this checkpoint Core CI `43568904863` remains in its Go 1.26 Race step;
+  Go 1.27 has passed. Companion `43568904858` and Camera Relay `43568904853`
+  have passed on `abe7ad8`. Keep local backup test/matrix/log changes unpushed
+  until Core finishes. Current Remote SHA remains `abe7ad8`.
+- Next: finish exact-head CI for `abe7ad8`; then verify Remote SHA and push the
+  local handoff plus SC-009 regression in a normal push to the same PR. Watch
+  all new exact-head CI before another push. Continue software work; Pi ARM64
+  measurements remain blocked by the qualification SSH handshake, production
+  services/data/outputs and ACL remain untouched.

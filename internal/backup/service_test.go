@@ -32,6 +32,21 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	defer h.Close()
 	s := store.New(h.DB, clock.Real{})
 	project, revision, runtimeSnapshot, session := createKnownRuntimeHistory(t, ctx, s)
+	draft, err := s.EnsureProjectDraft(ctx, project.ID, "backup-editor", "qualify Cue history restore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyCtx := store.WithCueDraftHistoryActor(ctx, "backup-editor")
+	draftCue, err := s.CreateCueWithActions(historyCtx, domain.Cue{
+		RevisionID: draft.ID, DisplayLabel: "2", Name: "Undo after restore", OrderIndex: 1, Enabled: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBeforeBackup, err := s.CueDraftHistory(historyCtx, project.ID)
+	if err != nil || !historyBeforeBackup.CanUndo || historyBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Draft Undo history before backup=%+v err=%v", historyBeforeBackup, err)
+	}
 	manager := managerForStore(s)
 	service, err := backup.New(h, s, root, manager)
 	if err != nil {
@@ -69,7 +84,7 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	defer restoredHandle.Close()
 	restoredStore := store.New(restoredHandle.DB, clock.Real{})
 	loadedProject, err := restoredStore.GetProject(ctx, project.ID)
-	if err != nil || loadedProject.CurrentRevisionID != revision.ID {
+	if err != nil || loadedProject.CurrentRevisionID != draft.ID {
 		t.Fatalf("restored project=%#v err=%v", loadedProject, err)
 	}
 	loadedSnapshot, err := restoredStore.GetRuntimeSnapshot(ctx, runtimeSnapshot.ID)
@@ -87,6 +102,17 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	executions, err := restoredStore.ListCueExecutions(ctx, session.ID)
 	if err != nil || len(executions) != 1 || executions[0].Result != domain.ExecutionCompleted {
 		t.Fatalf("restored cue history=%#v err=%v", executions, err)
+	}
+	restoredDraftHistory, err := restoredStore.CueDraftHistory(historyCtx, project.ID)
+	if err != nil || !restoredDraftHistory.CanUndo || restoredDraftHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Draft Undo history=%+v err=%v", restoredDraftHistory, err)
+	}
+	undone, err := restoredStore.UndoCueDraft(historyCtx, project.ID)
+	if err != nil || undone.CanUndo || !undone.CanRedo {
+		t.Fatalf("Undo after backup restore=%+v err=%v", undone, err)
+	}
+	if _, err := restoredStore.GetCue(ctx, draftCue.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Undo after restore left Draft Cue %s: %v", draftCue.ID, err)
 	}
 }
 
