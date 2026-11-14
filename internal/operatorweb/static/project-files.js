@@ -8,7 +8,7 @@ const scFileCopy = {
   nav: { en: "Files", "ar-IQ": "الملفات" },
   title: { en: "Project Files", "ar-IQ": "ملفات المشروع" },
   eyebrow: { en: "PROJECT MEDIA", "ar-IQ": "وسائط المشروع" },
-  description: { en: "Files referenced by this Project. Read-only access to registered media.", "ar-IQ": "الملفات المرتبطة بهذا المشروع. الوصول للوسائط المسجّلة للقراءة فقط." },
+  description: { en: "Files stay inside this Project's Vault-backed workspace.", "ar-IQ": "الملفات تبقى ضمن مساحة هذا المشروع المرتبطة بالـVault." },
   refresh: { en: "Refresh", "ar-IQ": "تحديث" },
   next: { en: "Next page", "ar-IQ": "الصفحة التالية" },
   download: { en: "Download", "ar-IQ": "تنزيل" },
@@ -20,6 +20,11 @@ const scFileCopy = {
   unavailable: { en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.", "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى." },
   pagination: { en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.", "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان." },
   other: { en: "Other", "ar-IQ": "أخرى" },
+  upload: { en: "Upload file", "ar-IQ": "رفع ملف" },
+  chooseFile: { en: "Choose a file", "ar-IQ": "اختار ملف" },
+  assetName: { en: "Workspace name (optional)", "ar-IQ": "اسم الملف داخل المشروع (اختياري)" },
+  uploadLimit: { en: "Up to 1 GiB per file. Uploads stream into managed Vault storage.", "ar-IQ": "لحد 1 غيغابايت للملف. الرفع ينحفظ تدريجياً بخزن Vault المُدار." },
+  uploadFailed: { en: "The file could not be uploaded. Check access and available storage, then retry.", "ar-IQ": "تعذر رفع الملف. تحقق من الصلاحية ومساحة الخزن وجرب مرة ثانية." },
 };
 function scFileT(key) {
   const locale = el("languageSelect")?.value === "en" ? "en" : "ar-IQ";
@@ -62,7 +67,7 @@ async function renderScopedProjectFiles(cursor = "") {
     const payload = await api(`${base}?${query}`);
     if (generation !== scFilesRenderGeneration || !state.project || state.project.project_id !== projectID || state.page !== "files") return;
     const workspace = payload?.workspace;
-    if (!payload?.read_only || !payload?.scoped || workspace?.project_id !== projectID ||
+    if (!payload?.scoped || workspace?.project_id !== projectID ||
         !Array.isArray(workspace.files)) throw new Error("Invalid scoped Project Files response");
 
     const rows = workspace.files;
@@ -106,9 +111,38 @@ async function renderScopedProjectFiles(cursor = "") {
           ${["AUDIO","VIDEO","IMAGE","OTHER"].map((kind) => pill(`${kind}: ${counts[kind]}`)).join("")}
         </div>
       </section>
-      <section class="card">${table}
+      <section class="card">
+        ${payload.upload_available === true ? `<form id="projectFileUploadForm" class="project-file-upload-form">
+          <label>${esc(scFileT("chooseFile"))}<input id="projectFileUploadInput" type="file" required></label>
+          <label>${esc(scFileT("assetName"))}<input id="projectFileAssetName" type="text" maxlength="160"></label>
+          <p class="muted">${esc(scFileT("uploadLimit"))}</p>
+          <button id="projectFileUploadButton" class="button primary" type="submit">${esc(scFileT("upload"))}</button>
+        </form>` : ""}
+        ${table}
         ${workspace.next_cursor ? `<button id="nextScopedFiles" class="button" type="button">${esc(scFileT("next"))}</button>` : ""}
       </section>`;
+    el("projectFileUploadForm")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = el("projectFileUploadInput")?.files?.[0];
+      const button = el("projectFileUploadButton");
+      if (!file || !button) return;
+      button.disabled = true;
+      try {
+        await api(base, {
+          method: "POST",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Project-File-Name": encodeURIComponent(file.name),
+            "X-Project-Asset-Name": encodeURIComponent(el("projectFileAssetName")?.value || ""),
+          },
+          body: file,
+        });
+        await renderScopedProjectFiles();
+      } catch (error) {
+        setMessage(globalMessage, errorMessage(error) || scFileT("uploadFailed"), "error");
+        button.disabled = false;
+      }
+    });
     el("nextScopedFiles")?.addEventListener("click", (event) => {
       event.currentTarget.disabled = true;
       renderScopedProjectFiles(workspace.next_cursor);

@@ -26,6 +26,7 @@ type Server struct {
 	vault                     *stagevault.Vault
 	companionVaultScope       *store.Store
 	projectMediaDownload      bool
+	projectMediaUpload        bool
 	projectRouteQualification *projectaccess.Service
 	projectQualificationSet   bool
 	pluginAdminGuard          func(http.ResponseWriter, *http.Request)

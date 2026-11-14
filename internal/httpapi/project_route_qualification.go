@@ -119,6 +119,7 @@ var projectRoutePermissions = map[string][]projectaccess.Permission{
 	"GET " + projectRoute + "/files":                                                 {projectaccess.MediaRead},
 	"GET " + projectRoute + "/files/availability":                                    {projectaccess.MediaRead},
 	"GET " + projectRoute + "/files/{version_id}/download":                           {projectaccess.MediaRead},
+	"POST " + projectRoute + "/files":                                                {projectaccess.MediaUpload},
 	"GET " + projectRoute + "/lighting-controller":                                   {projectaccess.ProjectView},
 	"GET " + projectRoute + "/lighting-controller/cues":                              {projectaccess.ProjectView},
 	"GET " + projectRoute + "/lighting-controller/nodes/{device_id}/live-diagnostic": {projectaccess.ProjectView},

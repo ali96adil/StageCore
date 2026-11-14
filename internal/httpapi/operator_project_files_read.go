@@ -97,11 +97,16 @@ func withScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 					return
 				}
 				w.Header().Set("Cache-Control", "no-store")
+				uploadAvailable := false
+				if s.projectMediaUpload && access.Check(r.Context(), session.User.ID, projectID, projectaccess.MediaUpload) == nil {
+					uploadAvailable = true
+				}
 				writeJSON(w, http.StatusOK, map[string]any{
 					"workspace":          workspace,
-					"read_only":          true,
+					"read_only":          !uploadAvailable,
 					"scoped":             true,
 					"download_available": s.projectMediaDownload,
+					"upload_available":   uploadAvailable,
 				})
 			}))
 	}

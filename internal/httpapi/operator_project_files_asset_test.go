@@ -33,7 +33,9 @@ func TestProjectFilesAssetIsActuallyServedByOfflineOperatorHub(t *testing.T) {
     }
     if !strings.Contains(scriptResponse.Body.String(), "scFilesUpdateForProject") ||
         !strings.Contains(scriptResponse.Body.String(), "/files/availability") ||
-        !strings.Contains(scriptResponse.Body.String(), "renderScopedProjectFiles") {
+        !strings.Contains(scriptResponse.Body.String(), "renderScopedProjectFiles") ||
+        !strings.Contains(scriptResponse.Body.String(), "projectFileUploadForm") ||
+        !strings.Contains(scriptResponse.Body.String(), "X-Project-File-Name") {
         t.Fatal("served asset missing scoped Files UI/probe")
     }
     insecure := httptest.NewRequest(http.MethodGet, "/project-files.js", nil)

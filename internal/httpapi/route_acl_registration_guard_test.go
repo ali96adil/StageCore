@@ -25,7 +25,7 @@ import (
 //
 // REVIEWED SNAPSHOT: edit this digest only together with an explicit
 // endpoint security review and its documentation. No production cutover.
-const reviewedHTTPRouteInventorySHA256 = "869bc6b4000803044a5bb6788774d8fed6cdf592fd45b408f87995cdbb8ed86d"
+const reviewedHTTPRouteInventorySHA256 = "7733f1e0c01f0affed9cffdbb0b6ebf52c725108a11560e2fb7aba6b891c8907"
 
 // routeRegistration describes a registration expression, not an assumption
 // about whether the handler actually enforces the desired Project scope.
@@ -163,6 +163,7 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 		"WithScopedOperatorStageDeviceReads",
 		"WithOwnerPluginAdministration",
 		"WithScopedProjectFilesRead",
+		"WithScopedProjectMediaUpload",
 		"WithScopedLocalCapsuleExports",
 		"WithOwnerCapsuleImportReview",
 		"WithOwnerProjectCutoverPreview",
