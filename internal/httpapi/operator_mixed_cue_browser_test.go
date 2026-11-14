@@ -51,7 +51,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			ExecutionPolicy: json.RawMessage(`{}`),
 		}, []domain.Action{{
 			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
-			Parameters: json.RawMessage(fmt.Sprintf(`{"sequence":%d}`, index+1)),
+			Parameters:    json.RawMessage(fmt.Sprintf(`{"sequence":%d}`, index+1)),
 			TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		}})
@@ -127,7 +127,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
+		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "mixed-cue-browser.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -167,8 +167,15 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		EditedName       string   `json:"edited_name"`
 		QuickEditedLabel string   `json:"quick_edited_label"`
 		QuickEditedNotes string   `json:"quick_edited_notes"`
+		CueColor         string   `json:"cue_color"`
+		CueLabelText     string   `json:"cue_label_text"`
+		ColorMarker      bool     `json:"color_marker_visible"`
+		LabelReadable    bool     `json:"label_color_readable"`
+		PageOverflow     bool     `json:"page_overflow"`
 	}
-	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 {
+	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 ||
+		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
+		!report.ColorMarker || !report.LabelReadable || report.PageOverflow {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	project, err = st.GetProject(ctx, project.ID)
@@ -214,7 +221,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}
 	var midPolicy, parentPolicy struct {
-		LinkedCueIDs []string `json:"linked_cue_ids"`
+		LinkedCueIDs     []string `json:"linked_cue_ids"`
+		OperatorCueColor string   `json:"operator_cue_color"`
 	}
 	if err := json.Unmarshal(byID[report.IDs[1]].ExecutionPolicy, &midPolicy); err != nil {
 		t.Fatal(err)
@@ -223,8 +231,9 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(midPolicy.LinkedCueIDs) != 1 || midPolicy.LinkedCueIDs[0] != report.IDs[0] ||
-		len(parentPolicy.LinkedCueIDs) != 1 || parentPolicy.LinkedCueIDs[0] != report.IDs[1] {
-		t.Fatalf("nested Draft links were not persisted: mid=%v parent=%v", midPolicy.LinkedCueIDs, parentPolicy.LinkedCueIDs)
+		len(parentPolicy.LinkedCueIDs) != 1 || parentPolicy.LinkedCueIDs[0] != report.IDs[1] ||
+		parentPolicy.OperatorCueColor != "blue" {
+		t.Fatalf("nested Draft links or Cue color were not persisted: mid=%v parent=%v color=%q", midPolicy.LinkedCueIDs, parentPolicy.LinkedCueIDs, parentPolicy.OperatorCueColor)
 	}
 	for _, id := range report.IDs {
 		if len(byID[id].Actions) != 2 {
