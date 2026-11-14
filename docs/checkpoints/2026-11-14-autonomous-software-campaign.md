@@ -2272,3 +2272,31 @@ This entry supersedes the preceding push instruction.
   exact-head workflows. Production ACL stays disabled; all external outputs
   remain simulated; Pi 4 performance remains blocked on verified isolated
   access.
+
+## Resume update — 2026-11-14 15:58 UTC · Session Memory browser comparison
+
+- Added `TestBrowserSessionMemoryActionComparison` and its Chrome fixture to
+  exercise the actual `memory.js` action comparison in a 390 px browser
+  viewport. It checks repeated Cue occurrence/Action matching, one-sided rows,
+  all 12 evidence columns, safe ACK wording, exclusion of free-form adapter
+  response text, and horizontal scrolling. The fixture contains only static
+  simulated records and exposes no execution API.
+- Added this browser gate to Core CI's explicit Browser Cue Delivery allowlist
+  and recorded its scope in the SC-015 matrix row. Commit:
+  `206823c4a8b5e58c9f1acb1c9fde2bb4df0705c5`.
+- Local Chrome test passed normally and under `go test -race`; `go vet
+  ./internal/httpapi`, browser script syntax, Ruby YAML parsing and
+  `git diff --check` also passed. The earlier full Operator Node suite remains
+  74/74; no production data, runtime state, hardware, or output was touched.
+- Local HEAD is `206823c4`; the accumulated local branch is four commits ahead
+  of remote/PR `5b6e1e356f0a02395a2630962a1695df0ba70707`. Exact-head Core run
+  `43611749231` is still reported `in_progress` in Race with no conclusion;
+  Companion `43611749229` and Camera Relay `43611749232` passed. Remote branch
+  remains at `5b6e1e3`, and PR #534 remains OPEN/DRAFT. Do not push until Core
+  run `43611749231` completes; then re-read PR/remote SHA and all exact-head
+  checks before deciding on a normal push.
+- Production ACL remains disabled. Pi 4 ARM64 performance and hardware
+  qualification remain pending verified isolated access. Immediate resume:
+  inspect the Core Race job state, preserve the exact-head push gate, then
+  continue on the highest testable software gap and update the PR/handoff after
+  the batch is pushed and verified.
