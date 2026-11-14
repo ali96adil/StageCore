@@ -1315,3 +1315,21 @@ This entry supersedes the preceding push instruction.
   open software gaps in the matrix; revisit #455 concurrent GO only with a
   complete tracked-execution/STOP/Blackout/output-conflict design and simulated
   race/fault coverage. Hardware and release gates do not block software work.
+
+## Resume update — 2026-11-14 06:24 UTC · history batch pushed
+
+- The three commits `dffe840`, `2715a38` and `05c8c96` are now pushed normally
+  to `integration/stagecore-rc`; local and remote HEAD are
+  `05c8c961325d38b8b39e069d807eee10d351f43c`. Draft PR #534 remains open.
+- The prior exact-head runs on `14887b6` were all green before the push. New
+  exact-head runs on `05c8c96` are Core `43566116341` (queued), Companion Core
+  `43566116367` (queued), and Camera Relay `43566116321` (in progress). Do not
+  push again until all three finish and confirm remote SHA first.
+- The feature tests on the pushed code all passed locally: DB/Store, full HTTP
+  API, Store Cue-history Race, Store/HTTP Vet, Operator Web, Node 64/64, JS
+  syntax and diff check. The new Core CI remains the first complete workflow
+  validation of this feature.
+- PR description still needs its top checkpoint refreshed to the current HEAD
+  and run IDs while preserving its older qualification history. The existing
+  linked firmware/tablet PRs remain unchanged. Pi runtime qualification,
+  production protections, and next software gaps are as recorded above.
