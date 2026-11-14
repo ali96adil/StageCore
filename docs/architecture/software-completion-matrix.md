@@ -72,11 +72,12 @@ matrix:
 
 ## Current highest next software task
 
-SC-008 has an offline editor round trip through the actual Cue Studio create/
-edit submit handlers: nested compound Cue links, five Actions across OSC,
-MIDI, Lighting, Tablet and Laser, ordering, per-Action policies, metadata,
-reopen and local Inspector preview. Real-browser touch/keyboard/layout and
-installed adapter acceptance remain separate.
+SC-008 already has offline editor round trips through the actual Cue Studio
+create/edit submit handlers: nested compound Cue links, five Actions across
+OSC, MIDI, Lighting, Tablet and Laser, ordering, per-Action policies, metadata,
+reopen and local Inspector preview. Continue with isolated browser keyboard,
+touch, and layout acceptance around those flows without duplicating the
+existing Node-level round trips. Installed adapter acceptance remains separate.
 
 SC-009 now has bounded timestamped named Draft checkpoints and a persistent
 Project Draft Undo/Redo stream for Cue create/edit/delete/duplicate/reorder.
@@ -87,13 +88,13 @@ other Project authoring is not part of this stack. Finish the remaining browser
 interaction and backup/rollback qualification without changing publish/runtime
 semantics.
 
-The latest exact-head Core run `43560053370` on pushed `76f9a9f` completed
+The latest exact-head Core run `43599903021` on `fd740b8` completed
 successfully in Go 1.26 and 1.27, including Race and Linux ARM64 product builds.
-Companion `43560053384` and Camera Relay `43560053362` also passed on that exact
-head. Pi 4 runtime qualification remains pending: a strict, read-only SSH retry to
-`stagecore-qualification` failed before host identity with `websocket: bad
-handshake`; no remote command ran. Do not infer Pi P95/P99/Jitter from Mac or
-ARM64 cross-build results.
+Companion `43599903035` and Camera Relay `43599903018` also passed on that exact
+head. Pi 4 runtime qualification remains pending: the safe qualification SSH
+alias previously failed before host identity, while the reachable host is
+production-like. No remote load command ran. Do not infer Pi P95/P99/Jitter from
+Mac or ARM64 cross-build results.
 
 SC-003 remains implemented in open Draft PR #503; the Ableton Lab receiver
 already has software coverage; SC-013/011/015/012/016 evidence is recorded in
