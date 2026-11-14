@@ -1614,3 +1614,37 @@ This entry supersedes the preceding push instruction.
   Mixed/linked Cue behavior, then continue the remaining software matrix. Do
   not report Software Complete until Pi runtime performance and the other
   explicitly open qualifications have evidence or precise blocker status.
+
+## Resume update — 2026-11-14 07:29 UTC · nine-commit PR update
+
+- The nine-commit batch was pushed normally to the existing branch. Local and
+  remote `integration/stagecore-rc` and Draft PR #534 now point to
+  `bc31914bc944ce6735a6c10224a57d42b2bc00cb`; the working tree is clean.
+  PR #534 remains OPEN/DRAFT against `main`; its opening summary now records
+  the new commit scope, local evidence, Pi/browser status and run IDs, while
+  preserving the earlier qualification archive.
+- New exact-head runs: Core CI `43571216920` is in progress; Companion Core
+  `43571216881` and Camera Relay `43571216851` have passed. No push may
+  interrupt Core on this SHA. Wait for it to complete, diagnose any failure,
+  and record the exact result before another push.
+- The pushed local changes include the SC-009 Draft Undo-after-Backup/Restore
+  regression; SC-005/SC-018 visible focus outline and label/color structural
+  test; and SC-007 UI validation plus server-side rejection coverage. On the
+  prior head, the full Go suite and `go vet ./...` passed. This batch passed
+  Node 70/70, focused Operator Web tests/Vet, Preflight Snapshot mismatch,
+  lighting HTTP normal/Race tests, HTTP API Vet, JavaScript syntax and diff
+  checks. Do not describe the prior full-suite run as a full-suite run on
+  `bc31914`.
+- The isolated local browser run reached a temporary Owner and Project in
+  `/tmp/stagecore-ui.ixe3LJ` but timed out before a Cue was saved while the Mac
+  was locked. The loopback Hub was stopped; no physical/device or production
+  state was contacted. The test-only DataRoot remains preserved. SC-008
+  browser acceptance is still open.
+- Pi 4 runtime benchmarks remain blocked by strict SSH failure before host
+  identity. ARM64 product-build CI does not qualify Pi latency, jitter, CPU or
+  RAM. Production services, original data/Vault, real outputs and firmware
+  remain untouched; production Project ACL remains disabled.
+- Resume by watching Core `43571216920` on `bc31914`. After it is green,
+  continue SC-008 and Mixed/linked Cue software acceptance locally without
+  pushing until any later exact-head CI gate has completed; then proceed to
+  the next matrix software gap.
