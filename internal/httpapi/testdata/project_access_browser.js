@@ -96,6 +96,10 @@
       document.getElementById("projectAccessCurrent").textContent.includes("Current: NONE"),
     "loading the Operator's current Project access");
     if (document.activeElement !== level) throw new Error("loading access did not move keyboard focus to Access level");
+    const observedLevelKeys = [];
+    level.addEventListener("keydown", (event) => observedLevelKeys.push({ key: event.key, code: event.code, keyCode: event.keyCode }));
+    level.addEventListener("input", () => observedLevelKeys.push({ input: level.value }));
+    level.addEventListener("change", () => observedLevelKeys.push({ change: level.value }));
 
     const form = document.getElementById("projectAccessGrantForm");
     const fieldRects = [project, user, level].map((field) => field.getBoundingClientRect());
@@ -115,10 +119,15 @@
     if (!["VIEW", "EDIT", "OPERATE", "MANAGE", "NONE"].every((value) => offeredLevels.includes(value))) {
       throw new Error(`Operator access levels are incomplete: ${offeredLevels.join(",")}`);
     }
-    level.value = "OPERATE";
-    level.dispatchEvent(new Event("change", { bubbles: true }));
-    if (save.disabled || !document.getElementById("projectAccessLevelDescription").textContent.includes("Emergency Blackout")) {
-      throw new Error("Operate level did not enable the guarded save with its permission summary");
+    await pressKey("o");
+    const nativeKeyboardSelection = level.value === "OPERATE" && !save.disabled &&
+      document.getElementById("projectAccessLevelDescription").textContent.includes("Emergency Blackout");
+    if (!nativeKeyboardSelection) {
+      throw new Error(`native type-to-select did not choose OPERATE and enable its guarded save: ${JSON.stringify({
+        value: level.value, saveDisabled: save.disabled,
+        description: document.getElementById("projectAccessLevelDescription").textContent,
+        active: document.activeElement?.id, keys: observedLevelKeys,
+      })}`);
     }
     await pressKey("Tab");
     if (document.activeElement !== load) throw new Error("Tab did not move from Access level to Load current access");
@@ -141,8 +150,17 @@
       !requiredOperatePermissions.every((permission) => grantedPermissions.includes(permission))) {
       throw new Error(`grant readback or non-actuation boundary failed: ${JSON.stringify(readback)}`);
     }
-    level.value = "NONE";
-    level.dispatchEvent(new Event("change", { bubbles: true }));
+    await pressKey("Tab", true);
+    await pressKey("Tab", true);
+    if (document.activeElement !== level) throw new Error("Shift+Tab did not return keyboard focus to Access level");
+    await pressKey("n");
+    if (level.value !== "NONE" || save.disabled || document.activeElement !== level) {
+      throw new Error(`native type-to-select did not choose NONE: ${JSON.stringify({
+        value: level.value, saveDisabled: save.disabled, active: document.activeElement?.id,
+      })}`);
+    }
+    await pressKey("Tab");
+    await pressKey("Tab");
     if (save.disabled || document.activeElement !== save) {
       throw new Error("saved keyboard focus was not available to remove Project access");
     }
@@ -167,7 +185,7 @@
       enforced: revoked.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
       unsafe_call: unsafeCall, rtl: getComputedStyle(form).direction === "rtl", fields_stack: fieldsStack,
       page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable, tab_traversal: tabTraversal,
-      focus_visible: focusVisible, touch_activated: touchActivated,
+      focus_visible: focusVisible, native_keyboard_selection: nativeKeyboardSelection, touch_activated: touchActivated,
       viewport_width: document.documentElement.clientWidth, requests: requestTrace,
     });
   } catch (error) {

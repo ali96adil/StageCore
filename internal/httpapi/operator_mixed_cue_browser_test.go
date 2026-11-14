@@ -396,17 +396,30 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		virtualKeyCode = 9
 	case "Enter":
 		virtualKeyCode = 13
+	case "o":
+		virtualKeyCode = 79
+	case "n":
+		virtualKeyCode = 78
 	default:
 		return fmt.Errorf("unsupported browser key %q", key)
 	}
-	for id, eventType := range []string{"keyDown", "keyUp"} {
+	eventTypes := []string{"keyDown", "keyUp"}
+	for id, eventType := range eventTypes {
+		eventKey, eventCode := key, key
+		if key == "o" || key == "n" {
+			eventCode = "Key" + strings.ToUpper(key)
+		}
 		params := map[string]any{
-			"type": eventType, "key": key, "code": key,
+			"type": eventType, "key": eventKey, "code": eventCode,
 			"windowsVirtualKeyCode": virtualKeyCode, "nativeVirtualKeyCode": virtualKeyCode,
 		}
 		if key == "Enter" && eventType == "keyDown" {
 			params["text"] = "\r"
 			params["unmodifiedText"] = "\r"
+		}
+		if (key == "o" || key == "n") && eventType == "keyDown" {
+			params["text"] = key
+			params["unmodifiedText"] = key
 		}
 		if shift {
 			params["modifiers"] = 8
