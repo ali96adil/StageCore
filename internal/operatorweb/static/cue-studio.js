@@ -2127,6 +2127,120 @@
           if (button.isConnected) button.disabled = false;
         }
       });
+
+      if (state.currentRevision?.status === "DRAFT" && canEdit()) {
+        const quickEdit = document.createElement("section");
+        quickEdit.className = "cue-inspection-quick-edit";
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "button ghost sc014-quick-edit-open";
+        editButton.textContent = tr("تعديل الملصق والملاحظات", "Edit label and notes");
+        const form = document.createElement("form");
+        form.className = "sc014-quick-edit-form";
+        form.hidden = true;
+        const label = document.createElement("label");
+        label.textContent = tr("ملصق الكيو", "Cue label");
+        const labelInput = document.createElement("input");
+        labelInput.type = "text";
+        labelInput.setAttribute("aria-label", tr("ملصق الكيو", "Cue label"));
+        labelInput.value = cue.display_label || "";
+        label.append(labelInput);
+        const notes = document.createElement("label");
+        notes.textContent = tr("ملاحظات المشغل", "Operator notes");
+        const notesInput = document.createElement("textarea");
+        notesInput.rows = 2;
+        notesInput.setAttribute("aria-label", tr("ملاحظات المشغل", "Operator notes"));
+        notesInput.value = cue.notes_summary || "";
+        notes.append(notesInput);
+        const actions = document.createElement("div");
+        actions.className = "sc014-quick-edit-actions";
+        const saveButton = document.createElement("button");
+        saveButton.type = "submit";
+        saveButton.className = "button primary";
+        saveButton.textContent = tr("احفظ في المسودة", "Save to Draft");
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.className = "button ghost";
+        cancelButton.textContent = tr("إلغاء", "Cancel");
+        actions.append(saveButton, cancelButton);
+        const status = document.createElement("p");
+        status.className = "muted";
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        form.append(label, notes, actions, status);
+        quickEdit.append(editButton, form);
+        details.append(quickEdit);
+        const revisionID = state.currentRevision?.revision_id;
+
+        editButton.addEventListener("click", () => {
+          if (state.project?.project_id !== projectID || state.currentRevision?.status !== "DRAFT" || !canEdit()) return;
+          editButton.hidden = true;
+          form.hidden = false;
+          labelInput.focus();
+        });
+        cancelButton.addEventListener("click", () => {
+          form.reset();
+          labelInput.value = cue.display_label || "";
+          notesInput.value = cue.notes_summary || "";
+          status.textContent = "";
+          form.hidden = true;
+          editButton.hidden = false;
+          editButton.focus();
+        });
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (state.project?.project_id !== projectID || state.currentRevision?.revision_id !== revisionID ||
+              state.currentRevision?.status !== "DRAFT" || !canEdit()) {
+            status.textContent = tr("تغيّرت المسودة أو الصلاحية؛ أعد فتح فاحص الكيو قبل الحفظ.",
+              "The Draft or your access changed. Reopen the Cue Inspector before saving.");
+            return;
+          }
+          saveButton.disabled = true;
+          status.textContent = tr("جاري حفظ الملصق والملاحظات في المسودة…", "Saving label and notes to Draft…");
+          const writeActions = (cue.actions || []).map((action, index) => ({
+            action_id: action.action_id || undefined,
+            order_index: Number.isInteger(action.order_index) ? action.order_index : index,
+            execution_mode: action.execution_mode || "SEQUENTIAL",
+            target_ref: action.target_ref || "",
+            capability_key: action.capability_key || "",
+            parameters: action.parameters ?? {},
+            timeout_policy: action.timeout_policy ?? {},
+            error_policy: action.error_policy ?? {},
+            priority_class: action.priority_class || "P1",
+            enabled: action.enabled !== false,
+          }));
+          const body = {
+            display_label: labelInput.value.trim(),
+            name: cue.name,
+            order_index: cue.order_index,
+            cue_type: cue.cue_type || "STANDARD",
+            criticality: cue.criticality || "NORMAL",
+            enabled: cue.enabled !== false,
+            execution_policy: cuePolicyObject(cue),
+            notes_summary: notesInput.value.trim(),
+            actions: writeActions,
+          };
+          try {
+            await api(`/api/v1/projects/${encodeURIComponent(projectID)}/cues/${encodeURIComponent(cue.cue_id)}`,
+              { method: "PUT", json: body });
+            if (!form.isConnected || state.project?.project_id !== projectID) return;
+            const scrollY = window.scrollY;
+            await renderCues(tr("تم تحديث الملصق والملاحظات في المسودة.", "Cue label and notes updated in Draft."));
+            window.scrollTo(0, scrollY);
+            const row = Array.from(content.querySelectorAll("tr[data-cue-id]"))
+              .find((item) => item.dataset.cueId === cue.cue_id && !item.hidden);
+            const summary = row?.querySelector("details > summary");
+            if (summary) {
+              row.querySelector("details").open = true;
+              summary.focus({ preventScroll: true });
+            }
+          } catch (error) {
+            if (form.isConnected && state.project?.project_id === projectID) status.textContent = errorMessage(error);
+          } finally {
+            if (saveButton.isConnected) saveButton.disabled = false;
+          }
+        });
+      }
     });
     return details;
   }

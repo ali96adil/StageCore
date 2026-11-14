@@ -318,6 +318,43 @@
   margin-block: 6px;
   line-height: 1.5;
 }
+.cue-inspection-quick-edit {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-block: 10px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--line);
+}
+.sc014-quick-edit-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.sc014-quick-edit-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.sc014-quick-edit-form input,
+.sc014-quick-edit-form textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.sc014-quick-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sc014-quick-edit-form [role="status"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 .sc008-row-more { position: relative; }
 .sc008-row-more > summary {

@@ -145,10 +145,12 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
-		Status     string   `json:"status"`
-		IDs        []string `json:"ids"`
-		ActionIDs  []string `json:"action_ids"`
-		EditedName string   `json:"edited_name"`
+		Status           string   `json:"status"`
+		IDs              []string `json:"ids"`
+		ActionIDs        []string `json:"action_ids"`
+		EditedName       string   `json:"edited_name"`
+		QuickEditedLabel string   `json:"quick_edited_label"`
+		QuickEditedNotes string   `json:"quick_edited_notes"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
@@ -176,6 +178,16 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	parent := byID[report.IDs[2]]
 	if report.EditedName == "" || parent.Name != report.EditedName {
 		t.Fatalf("edited parent Cue name=%q, browser reported %q", parent.Name, report.EditedName)
+	}
+	if report.QuickEditedLabel == "" || parent.DisplayLabel != report.QuickEditedLabel ||
+		parent.NotesSummary != report.QuickEditedNotes || report.QuickEditedNotes == "" {
+		t.Fatalf("Cue Inspector quick edit label/notes=%q/%q, browser reported %q/%q",
+			parent.DisplayLabel, parent.NotesSummary, report.QuickEditedLabel, report.QuickEditedNotes)
+	}
+	if byID[report.IDs[0]].NotesSummary != "Check tablet media clip on SIM." ||
+		byID[report.IDs[1]].NotesSummary != "Simulate OSC barrier before MIDI." {
+		t.Fatalf("linked Cue Inspector notes were not stored: leaf=%q middle=%q",
+			byID[report.IDs[0]].NotesSummary, byID[report.IDs[1]].NotesSummary)
 	}
 	if len(report.ActionIDs) != len(parent.Actions) {
 		t.Fatalf("edited parent Action IDs=%v, persisted Actions=%+v", report.ActionIDs, parent.Actions)

@@ -53,7 +53,7 @@
     }
 
     const createdIDs = [];
-    const createCue = async ({ label, name, linkedCueID = "", actions }) => {
+    const createCue = async ({ label, name, linkedCueID = "", notes = "", actions }) => {
       const createButton = document.getElementById("createCueButton");
       if (!createButton) throw new Error(`Create Cue button is missing (page=${state.page}, revision=${state.currentRevision?.status || "unknown"}, role=${state.user?.role || "unknown"}, message=${document.getElementById("globalMessage")?.innerText || ""}, content=${document.getElementById("content")?.innerText || ""})`);
       createButton.click();
@@ -62,6 +62,7 @@
       setValue(document.getElementById("cueLabel"), label);
       setValue(document.getElementById("cueName"), name);
       setValue(document.getElementById("cueStartDelaySeconds"), "0.125");
+      setValue(document.getElementById("cueNotes"), notes);
 
       if (linkedCueID) {
         const link = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${linkedCueID}"]`);
@@ -117,19 +118,21 @@
     };
 
     const leafID = await createCue({
-      label: "1", name: "Lighting and Tablet Leaf", actions: [
+      label: "1", name: "Lighting and Tablet Leaf", notes: "Check tablet media clip on SIM.", actions: [
         { capability: "lighting.channels.fade", mode: "PARALLEL", parameters: { levels: { warm: 50 }, fade_ms: 300 }, timeout: { start_delay_ms: 20 } },
         { capability: "tablet.media.play", mode: "SEQUENTIAL", parameters: { media_id: "clip-sim-1" }, timeout: {} },
       ],
     });
     const middleID = await createCue({
-      label: "2", name: "OSC and MIDI Middle", linkedCueID: leafID, actions: [
+      label: "2", name: "OSC and MIDI Middle", linkedCueID: leafID,
+      notes: "Simulate OSC barrier before MIDI.", actions: [
         { capability: "osc.send", mode: "PARALLEL_BARRIER", parameters: { address: "/sim/open", arguments: [{ type: "int32", value: 7 }] }, timeout: { start_delay_ms: 40 } },
         { capability: "midi.send", mode: "SEQUENTIAL", priority: "P2", parameters: { destination_name: "SIM MIDI", bytes: [144, 60, 100] }, timeout: {} },
       ],
     });
     const parentID = await createCue({
-      label: "3", name: "Native Visual and MIDI Parent", linkedCueID: middleID, actions: [
+      label: "3", name: "Native Visual and MIDI Parent", linkedCueID: middleID,
+      notes: "Initial parent note before quick edit.", actions: [
         { capability: "visual.scene.activate", mode: "PARALLEL", parameters: { scene_id: "opening-sim" }, timeout: {} },
         { capability: "midi.send", mode: "SEQUENTIAL", parameters: { destination_name: "SIM MIDI", bytes: [145, 64, 95] }, timeout: { start_delay_ms: 15 } },
       ],
@@ -186,6 +189,7 @@
       "opening the parent Cue Inspector");
     const inspectorText = inspector.innerText;
     for (const expected of ["Lighting and Tablet Leaf", "OSC and MIDI Middle", editedName,
+      "Check tablet media clip on SIM.", "Simulate OSC barrier before MIDI.",
       "lighting.channels.fade", "tablet.media.play", "osc.send", "midi.send", "visual.scene.activate"]) {
       if (!inspectorText.includes(expected)) throw new Error(`Cue Inspector omitted linked-chain detail: ${expected}`);
     }
@@ -212,7 +216,39 @@
     }
     const forbiddenRequests = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (forbiddenRequests.length) throw new Error(`browser authoring/inspection attempted runtime commands: ${forbiddenRequests.join("; ")}`);
-    await report(JSON.stringify({ status: "PASS", ids: createdIDs, action_ids: editedActionIDs, edited_name: editedName }));
+
+    const quickEditButton = inspector.querySelector(".sc014-quick-edit-open");
+    if (!quickEditButton) throw new Error("Draft Cue Inspector quick-edit control is missing");
+    quickEditButton.click();
+    const quickEditForm = inspector.querySelector(".sc014-quick-edit-form");
+    if (!quickEditForm || quickEditForm.hidden) throw new Error("Cue Inspector quick-edit form did not open");
+    const quickEditedLabel = "3E";
+    const quickEditedNotes = "Simulate visual readiness before rehearsal.";
+    const quickLabelInput = quickEditForm.querySelector("input");
+    const quickNotesInput = quickEditForm.querySelector("textarea");
+    if (!quickLabelInput?.getAttribute("aria-label") || !quickLabelInput.closest("label") ||
+        !quickNotesInput?.getAttribute("aria-label") || !quickNotesInput.closest("label")) {
+      throw new Error("Cue Inspector quick-edit fields lack accessible labels");
+    }
+    setValue(quickLabelInput, quickEditedLabel);
+    setValue(quickNotesInput, quickEditedNotes);
+    quickEditForm.requestSubmit();
+    await waitFor(() => state.cues.find((cue) => cue.cue_id === parentID)?.display_label === quickEditedLabel &&
+      state.cues.find((cue) => cue.cue_id === parentID)?.notes_summary === quickEditedNotes,
+    "saving quick label and notes edits to the Draft");
+    const quickEditedParent = state.cues.find((cue) => cue.cue_id === parentID);
+    if (JSON.stringify(quickEditedParent.actions) !== JSON.stringify(parent.actions)) {
+      throw new Error("Cue Inspector quick edit changed one or more Mixed Cue Actions");
+    }
+    const refreshedInspector = document.querySelector(`#content tr[data-cue-id="${parentID}"] details`);
+    await waitFor(() => refreshedInspector?.innerText.includes(quickEditedNotes),
+      "showing saved quick-edit notes in the Cue Inspector");
+    const runtimeRequestsAfterEdit = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
+    if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {
+      throw new Error(`quick metadata edit did not use the Draft update path safely: ${requestTrace.slice(-10).join("; ")}`);
+    }
+    await report(JSON.stringify({ status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
+      edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes }));
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
   }
