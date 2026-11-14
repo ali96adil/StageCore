@@ -76,6 +76,7 @@ function openEditor({ storage, legacy = new Map(), base = "original", user = "ow
     panel,
     local: panel.children.find((child) => child.id === "sc009LocalRestore"),
     discard: panel.children.find((child) => child.id === "sc009LocalDiscard"),
+    restore: panel.children[1],
     review: panel.children.find((child) => child.id === "sc009LocalReview"),
     choices: panel.children[4],
     close() { dialog.open = false; dialog.close(); },
@@ -296,4 +297,30 @@ test("late checkpoint list cannot populate a different Project editor", async ()
   await settle();
   const section = editor.panel.children.find((child) => child.id === "sc009NamedCheckpoints");
   assert.equal(section.children[4].children.length, 0);
+});
+
+test("an unsaved new Cue recovers by Project/User scope before it has a Cue ID", async () => {
+  const storage = new Map();
+  const local = openEditor({ storage, cue: "" });
+  local.edit("new Cue saved in browser");
+  local.close();
+  const reopenedLocal = openEditor({ storage, cue: "" });
+  assert.equal(reopenedLocal.local.hidden, false);
+  reopenedLocal.local.onclick();
+  assert.equal(reopenedLocal.value(), "new Cue saved in browser");
+  assert.equal(openEditor({ storage, cue: "persisted-cue" }).local.hidden, true);
+
+  const serverDraft = draft("new Cue saved on Hub");
+  const reopenedServer = openEditor({ cue: "", async api(path) {
+    assert.match(path, /cue-editor-recovery$/);
+    return { generation: "new-cue-generation", document: {
+      version: 1, cue_id: "", base: JSON.stringify(draft("original")), draft: serverDraft,
+    } };
+  } });
+  await settle();
+  assert.equal(reopenedServer.restore.hidden, false);
+  reopenedServer.restore.onclick();
+  assert.equal(reopenedServer.value(), "new Cue saved on Hub");
+  assert.equal(reopenedServer.panel.children.find((child) => child.id === "sc009NamedCheckpoints").hidden, true,
+    "named per-Cue checkpoints remain unavailable until the new Cue is persisted");
 });
