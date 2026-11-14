@@ -470,6 +470,93 @@ async function loadCues() {
   return payload;
 }
 
+const cueListFilterStoragePrefix = "stagecore.cue-list.filters.v1:";
+const cueListActionTypes = ["lighting", "midi", "osc", "tablet", "laser", "visual", "other"];
+
+function readCueListFilters(projectID) {
+  const defaults = { query: "", type: "all", enabled: "all", linked: "all" };
+  try {
+    const saved = JSON.parse(localStorage.getItem(cueListFilterStoragePrefix + projectID) || "{}");
+    return {
+      query: typeof saved.query === "string" ? saved.query.slice(0, 200) : defaults.query,
+      type: ["all", "mixed", ...cueListActionTypes].includes(saved.type) ? saved.type : defaults.type,
+      enabled: ["all", "enabled", "disabled"].includes(saved.enabled) ? saved.enabled : defaults.enabled,
+      linked: ["all", "linked", "standalone"].includes(saved.linked) ? saved.linked : defaults.linked,
+    };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function saveCueListFilters(projectID, filters) {
+  try { localStorage.setItem(cueListFilterStoragePrefix + projectID, JSON.stringify(filters)); }
+  catch (_) { /* Filtering remains usable if local storage is unavailable. */ }
+}
+
+function normalizeCueSearch(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase();
+}
+
+function cueCapabilityType(capability) {
+  const value = String(capability || "").toLowerCase();
+  for (const type of ["lighting", "midi", "osc", "tablet", "laser", "visual"]) {
+    if (value.startsWith(`${type}.`)) return type;
+  }
+  return "other";
+}
+
+function cueSearchRecord(cue, cuesByID, parents) {
+  const visited = new Set();
+  const actionTypes = new Set();
+  const terms = [];
+  const visit = (item) => {
+    if (!item || visited.has(item.cue_id)) return;
+    visited.add(item.cue_id);
+    terms.push(item.order_index, item.cue_id, item.display_label, item.name, item.notes_summary,
+      JSON.stringify(item.execution_policy || {}));
+    (item.actions || []).forEach((action) => {
+      actionTypes.add(cueCapabilityType(action.capability_key));
+      terms.push(action.action_id, action.target_ref, action.capability_key,
+        JSON.stringify(action.parameters || {}), action.execution_mode);
+    });
+    cueLinkedIDs(item).forEach((childID) => visit(cuesByID.get(childID)));
+  };
+  visit(cue);
+  const sortedTypes = [...actionTypes].sort();
+  return {
+    search: normalizeCueSearch(terms.filter((value) => value !== null && value !== undefined).join(" ")),
+    actionTypes: sortedTypes.join(","),
+    mixed: sortedTypes.length > 1 || String(cue.cue_type || "").toUpperCase() === "MIXED",
+    linked: cueLinkedIDs(cue).length > 0 || parents.has(cue.cue_id),
+  };
+}
+
+function applyCueListFilters() {
+  const query = normalizeCueSearch(el("cueListSearch")?.value || "");
+  const type = el("cueListTypeFilter")?.value || "all";
+  const enabled = el("cueListEnabledFilter")?.value || "all";
+  const linked = el("cueListLinkedFilter")?.value || "all";
+  const filters = { query: el("cueListSearch")?.value || "", type, enabled, linked };
+  let visible = 0;
+  const rows = [...content.querySelectorAll("tr[data-cue-id]")];
+  rows.forEach((row) => {
+    const actionTypes = row.dataset.actionTypes ? row.dataset.actionTypes.split(",") : [];
+    const typeMatches = type === "all" || (type === "mixed"
+      ? row.dataset.mixed === "true"
+      : actionTypes.includes(type) || (type === "other" && actionTypes.length === 0));
+    const enabledMatches = enabled === "all" || row.dataset.enabled === String(enabled === "enabled");
+    const linkedMatches = linked === "all" || row.dataset.linked === String(linked === "linked");
+    const matches = (!query || row.dataset.search.includes(query)) && typeMatches && enabledMatches && linkedMatches;
+    row.hidden = !matches;
+    if (matches) visible++;
+  });
+  const empty = el("cueListEmptyResult");
+  if (empty) empty.hidden = rows.length === 0 || visible > 0;
+  const count = el("cueListCount");
+  if (count) count.innerHTML = `<strong>${visible}</strong> / <strong>${rows.length}</strong> Cues shown`;
+  saveCueListFilters(state.project.project_id, filters);
+}
+
 async function renderCues(message = "", messageKind = "success") {
   const payload = await loadCues();
   const hasDraft = payload.revision?.status === "DRAFT";
@@ -491,6 +578,8 @@ async function renderCues(message = "", messageKind = "success") {
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
   const cueParents = cueParentMap();
+  const cuesByID = new Map(state.cues.map((cue) => [cue.cue_id, cue]));
+  const cueFilters = readCueListFilters(state.project.project_id);
 
   content.innerHTML = `
     <div class="page-head">
@@ -522,12 +611,33 @@ async function renderCues(message = "", messageKind = "success") {
         Test Cue starts a REHEARSAL automatically from EDIT and is blocked in SHOW. It always executes the matching Cue from the latest Published Runtime Snapshot. Draft-only or unpublished changes must be published before they can be tested here.
       </p>
     </section>
+    <section class="card cue-list-filter-panel" style="margin-top:14px">
+      <div class="cue-list-filters">
+        <label>Search Cues<input id="cueListSearch" type="search" value="${esc(cueFilters.query)}" placeholder="Number, label, name, notes, action or target" maxlength="200" autocomplete="off"></label>
+        <label>Action type<select id="cueListTypeFilter">
+          <option value="all">All action types</option><option value="mixed">Mixed / compound</option>
+          <option value="lighting">Lighting</option><option value="midi">MIDI</option><option value="osc">OSC</option>
+          <option value="tablet">Tablet</option><option value="laser">Laser</option><option value="visual">Visual</option><option value="other">Other / no Actions</option>
+        </select></label>
+        <label>Cue state<select id="cueListEnabledFilter">
+          <option value="all">All states</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+        </select></label>
+        <label>Linked Cues<select id="cueListLinkedFilter">
+          <option value="all">All Cues</option><option value="linked">Groups and linked children</option><option value="standalone">Standalone</option>
+        </select></label>
+        <button id="clearCueListFilters" class="button" type="button">Clear filters</button>
+      </div>
+      <p id="cueListCount" class="muted" aria-live="polite" style="margin:10px 0 0">${state.cues.length} / ${state.cues.length} Cues shown</p>
+      <p class="muted" style="margin:4px 0 0">Filtering changes this view only; sequence order and the published Snapshot are unchanged.</p>
+    </section>
     <div class="table-wrap" style="margin-top:14px">
       <table>
         <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>Group</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
         <tbody>
-          ${state.cues.length ? state.cues.map((cue, index) => `
-            <tr class="${cueRelationshipClass(cue, cueParents)}">
+          ${state.cues.length ? state.cues.map((cue, index) => {
+            const record = cueSearchRecord(cue, cuesByID, cueParents);
+            return `
+            <tr class="${cueRelationshipClass(cue, cueParents)}" data-cue-id="${esc(cue.cue_id)}" data-search="${esc(record.search)}" data-action-types="${esc(record.actionTypes)}" data-mixed="${record.mixed}" data-enabled="${cue.enabled}" data-linked="${record.linked}">
               <td>${esc(cue.order_index)}</td>
               <td class="cue-label-cell" data-cue-color="${cueColor(cue)}">${esc(cue.display_label || "—")}</td>
               <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
@@ -544,7 +654,9 @@ async function renderCues(message = "", messageKind = "success") {
                   <button class="button cue-duplicate" data-id="${esc(cue.cue_id)}" type="button">Duplicate</button>
                   <button class="button danger cue-delete" data-id="${esc(cue.cue_id)}" type="button">Delete</button>` : canModify ? `<span class="muted">Create Draft to edit</span>` : `<span class="muted">Read only</span>`}
               </div></td>
-            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
+            </tr>`;
+          }).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
+          <tr id="cueListEmptyResult" hidden><td colspan="7"><div class="empty">No Cues match these filters.</div></td></tr>
         </tbody>
       </table>
     </div>`;
@@ -558,6 +670,22 @@ async function renderCues(message = "", messageKind = "success") {
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
   el("cueCheckOpenRuntime")?.addEventListener("click", () => navigate("runtime"));
+  el("cueListTypeFilter").value = cueFilters.type;
+  el("cueListEnabledFilter").value = cueFilters.enabled;
+  el("cueListLinkedFilter").value = cueFilters.linked;
+  el("cueListSearch").addEventListener("input", applyCueListFilters);
+  el("cueListTypeFilter").addEventListener("change", applyCueListFilters);
+  el("cueListEnabledFilter").addEventListener("change", applyCueListFilters);
+  el("cueListLinkedFilter").addEventListener("change", applyCueListFilters);
+  el("clearCueListFilters").addEventListener("click", () => {
+    el("cueListSearch").value = "";
+    el("cueListTypeFilter").value = "all";
+    el("cueListEnabledFilter").value = "all";
+    el("cueListLinkedFilter").value = "all";
+    applyCueListFilters();
+    el("cueListSearch").focus();
+  });
+  applyCueListFilters();
   content.querySelectorAll(".cue-test").forEach((button) => button.addEventListener("click", () => testCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
