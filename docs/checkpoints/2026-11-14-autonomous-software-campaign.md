@@ -3225,3 +3225,22 @@ This entry supersedes the preceding push instruction.
   and follow its exact-head CI. Keep production ACL off. Pi 4 performance
   requalification and isolated installed-copy rollback remain open; no real
   stage device, production data/service/Vault or firmware was touched.
+
+## Resume update — 2026-11-14 20:53 UTC · exact-head CI passed
+
+- Exact-head Core run `43636803011` on remote `5fb3a688` completed success at
+  20:52 UTC. Go 1.26 tests, Browser Cue Delivery, Vet, full Race, and Linux
+  ARM64 CGo-free builds all passed. Go 1.27 passed in the same run.
+  Companion `43636803043` passed its macOS replacement/media and Swift
+  CompanionCore jobs; Camera Relay `43636803216` passed isolated tests and
+  ARM64. `gh pr checks 534` reports all checks green.
+- Before this CI result entry, local HEAD was
+  `7c59bceb8d19dbeac053b893de30155b8409f6c6`, eleven commits ahead of clean
+  `origin/integration/stagecore-rc` / open Draft PR #534 at
+  `5fb3a6889e823aecb067b519c5a8b206f84cae21`. Worktree is clean. All local
+  commits are part of this authorized campaign and are ready for an ordinary
+  fast-forward push to the existing branch.
+- Rechecked PR #534 is still OPEN/Draft and its head still equals the remote
+  branch. No force push, merge, or production action. After pushing, wait for
+  the new exact-head CI before another upload; meanwhile continue the open
+  SC-024 route/async review and other software-only gaps.
