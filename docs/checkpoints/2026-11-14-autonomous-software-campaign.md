@@ -3171,3 +3171,25 @@ This entry supersedes the preceding push instruction.
   commits normally and follow the new exact-head checks. Continue the
   remaining SC-024 route-to-policy/asynchronous review and independent
   software-only work while Project ACL stays off.
+
+## Resume update — 2026-11-14 20:45 UTC · keyboard test boundary correction
+
+- Current local HEAD before this note is Handoff commit
+  `ac0bdd4cd3a299e120e53e25172fd19d123a9f66`, eight commits ahead of remote
+  and OPEN/Draft PR #534 at `5fb3a6889e823aecb067b519c5a8b206f84cae21`;
+  the worktree is clean. Code/test HEAD `447691b` remains seven commits ahead.
+- The passing Project Access Chrome regression proves native Tab from Project
+  to Account and a visible focus outline. An exploratory attempt to activate
+  the Load/Save buttons with CDP Enter/Space did not trigger their click
+  handlers and was reverted; it does not change the accepted code. Keep
+  end-to-end keyboard operation and touch in the open SC-024 list.
+- Exact-head Core `43636803011` remains in Go 1.26 Race after 26 minutes;
+  Go 1.26 regular tests, Browser Cue Delivery and Vet passed, as did Go 1.27.
+  Companion `43636803043` and Camera Relay `43636803216` are green. Do not
+  push while Core is active.
+- First next action remains waiting for that run. On success, recheck remote
+  and Draft PR head, then normally push every commit in the local ahead range
+  to the existing branch; follow the resulting CI. SC-024 production ACL,
+  production services/data/Vault, real stage devices and firmware remain
+  untouched. Pi ARM64 performance requalification remains pending the
+  unchanged isolated SSH handshake failure.
