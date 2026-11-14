@@ -1740,3 +1740,21 @@ This entry supersedes the preceding push instruction.
   update PR evidence, and wait for all new Core/Companion/Camera runs before
   another push. The Pi performance blocker and production safety boundaries
   are unchanged.
+
+## Resume update — 2026-11-14 08:23 UTC · refresh interval regression
+
+- Remote PR head is `ead0b48e817e9039594328718a87a4438f27e13e`; local commits
+  `a7f8598` and `995249b` add a refresh-interval regression and matrix detail.
+  Keep the clean local worktree unpushed until Core `43575317269` completes.
+- The injected-device-loss test now records the first refresh write attempt
+  and rejects an interval below 200 ms from the authored frame; the production
+  ticker target is 250 ms. Focused normal test passed 5 repetitions, focused
+  Race passed 3 repetitions, and package Vet passed. This tests the lower
+  scheduling bound only; tail jitter/CPU under sustained load remains open.
+- On `ead0b48`, Go 1.27 Core passed in 2m23s; Core Go 1.26 was still running
+  Test/Race. Companion `43575317263` and Camera Relay `43575317254` passed.
+  These CI runs do not contain the new unpushed refresh test.
+- Next: wait for exact-head Core success/failure, then push the current local
+  refresh interval batch to PR #534 only on success, update PR evidence and
+  wait for all workflows on the new head. Do not contact the production-like
+  Pi host or run Pi benchmarks until a verified isolated ARM64 target exists.
