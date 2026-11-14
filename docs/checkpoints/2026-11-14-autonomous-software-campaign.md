@@ -1009,3 +1009,36 @@ This entry supersedes the preceding push instruction.
 - Local verification: Node suite 56/56 and preset tests 6/6; Operator web tests/Vet; full Store and Show Capsule tests/Vet; the HTTP multi-action preset test passed normally and under Race; JS syntax and range `git diff --check` passed. The nine-commit range is a fast-forward descendant of remote.
 - Before the push, read `git ls-remote origin refs/heads/integration/stagecore-rc` again. Push only if it still equals `9d5b775`; use a normal fast-forward to the existing branch/PR #534. Do not force push or merge. The new head will start fresh Core/Companion/Camera checks; wait for those before the next push.
 - Hardware/software boundary is unchanged: Pi 4 runtime performance remains unqualified because the authorized host handshake did not establish identity; no substitute ARM64 CI build for P95/P99/Jitter. Production Hub/Relay, show/Vault data, real devices, firmware, production ACL and main branch remain untouched.
+
+## Resume update — 2026-11-14 04:00 UTC · SC-008 metadata preservation
+
+- Local code/test HEAD is `4e89372b2c88b08df298d96d9acc5701419985ef` on
+  `integration/stagecore-rc`; pushed remote HEAD and PR #534 remain
+  `ce927d63e5f37f6a02d6a745b98567f9eb9928d5`. The worktree contains only this
+  campaign's matrix/checkpoint edits. No reset, clean, force push or rebase was
+  used.
+- SC-008 red-first coverage reproduced loss of unknown OSC parameter metadata
+  after a guided-field edit. `f002SyncActionCard` now retains unsupported
+  top-level OSC/MIDI parameter fields and per-argument OSC metadata while
+  updating typed fields. Advanced JSON and existing cue payload shapes remain
+  unchanged; no execution, API, database or device path changed.
+- Verification: full Node suite 57/57; `go test ./internal/operatorweb
+  -count=1`; `go test -race ./internal/operatorweb -count=1` (25.6 s); `go vet
+  ./internal/operatorweb`; JavaScript syntax and `git diff --check` all pass.
+  The physical executor is not reachable from these UI tests.
+- Exact-head Core run `43553686731` for pushed `ce927d6` was still in progress
+  at 04:00 UTC in Go 1.26; Go 1.27 passed. Companion `43553686720` and Camera
+  Relay `43553686712` completed successfully on the same exact SHA. Do not
+  push the local code or documentation until Core is green; then re-read the
+  remote pointer and fast-forward push to the same PR only if it still equals
+  `ce927d6`.
+- Pi 4 performance is still not qualified. A strict, read-only retry of
+  `stagecore-qualification` again failed with `websocket: bad handshake`
+  before host identity; no remote command ran. Mac figures and ARM64 builds
+  remain separate evidence, not Pi runtime P95/P99/Jitter or CPU/RAM evidence.
+- Next software task after the CI gate: complete browser-model create/edit/save/
+  reopen/preview regression coverage for nested compound Mixed Cues, including
+  action ordering, policies and unsupported fields. Continue with SC-009
+  durable history and SC-010 preset portability after that. Keep production
+  Hub/Relay/show/Vault data untouched, all physical outputs simulated, and
+  production Project ACL disabled.
