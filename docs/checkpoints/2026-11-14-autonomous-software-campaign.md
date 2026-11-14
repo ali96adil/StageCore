@@ -1721,3 +1721,22 @@ This entry supersedes the preceding push instruction.
   the exact result and push the local USB-DMX bounds test + matrix/handoff
   commits normally to PR #534. Then follow all new exact-head workflows. On
   failure, diagnose the failed job before pushing.
+
+## CI gate update — 2026-11-14 08:19 UTC · USB-DMX fault batch passed
+
+- Core CI `43573536661` passed on exact remote head
+  `7b82afe6026dcadbe8e11fd64cb7656950cbae2b`: Go 1.27 completed in 3m26s;
+  Go 1.26 completed Test, Browser Cue Delivery, Vet, Race and Linux ARM64
+  product builds in 21m02s. Companion `43573536683` and Camera Relay
+  `43573536650` also passed at that same head.
+- Linux Go 1.27 CI executed the Linux-tagged `LinuxPort.WritePacket` tests,
+  covering short writes/retries/disconnect/cancellation without opening a
+  physical device. The local follow-up commits `877ac29` and `03b37b7` add
+  rejection-before-open and inclusive endpoint/zero-cleanup tests; local
+  package, Race, Vet and ARM64/AMD64 test compilation all pass. These newer
+  tests still need exact-head CI after push.
+- Push the current local USB-DMX bounds batch normally to the existing PR #534
+  branch now that the preceding exact-head CI is green. Verify remote/PR SHA,
+  update PR evidence, and wait for all new Core/Companion/Camera runs before
+  another push. The Pi performance blocker and production safety boundaries
+  are unchanged.
