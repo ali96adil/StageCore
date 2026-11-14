@@ -3244,3 +3244,41 @@ This entry supersedes the preceding push instruction.
   branch. No force push, merge, or production action. After pushing, wait for
   the new exact-head CI before another upload; meanwhile continue the open
   SC-024 route/async review and other software-only gaps.
+
+## Resume update — 2026-11-14 21:03 UTC · Linux cue-marker contrast correction
+
+- Local and remote branch/OPEN Draft PR #534 were at
+  `9db95df9b82ffbd6ac23949d8545db0b3d09aad4`; the worktree held two preserved
+  local edits before this entry. The remote Core/Companion/Relay workflows for
+  `9db95df` had all completed before this follow-on began, so no CI was
+  canceled by a push.
+- Core run `43639869579` completed failure only in Linux Browser Cue Delivery:
+  the cross-platform browser measured blue 3.19:1, green 2.95:1, amber 2.38:1,
+  and purple 3.47:1 against the Cue surface, below the test's 3:1 non-text
+  threshold for green/amber. Its Go 1.26 regular tests and Go 1.27 passed;
+  Vet/Race/ARM64 were skipped after the browser failure. Companion
+  `43639869574` and Camera Relay `43639869578` passed. This was a real rendered
+  contrast issue, despite the prior Mac browser palette measurement passing.
+- `internal/operatorweb/static/cue-studio.css` now uses lighter marker colors.
+  Chrome computed/composited measurements for the nested Mixed Cue browser
+  scenario are identical in RTL and LTR: blue 8.95:1, green 10.65:1, amber
+  12.76:1, purple 9.57:1; text 14.73:1 and visible focus 8.05:1. The test
+  verifies the nested chain and six ordered actions using simulation/temp
+  SQLite; no real device output is used.
+- Passed locally after this fix: focused `TestBrowserCreatesNestedMixedCueChainInDraft`
+  in normal mode and `-race`; `go vet ./internal/httpapi`;
+  `node --test tests/operator_accessibility.test.js` (2/2); browser fixture
+  JavaScript syntax check; and `git diff --check`. Exact focused Chrome normal
+  and Race tests both report the ratios above. The same code-level and
+  qualification-matrix edits are still uncommitted at this checkpoint.
+- Current related-component matrix records remote heads/CI for linked PRs and
+  refreshes PR #534's failed exact-head run plus the local contrast correction.
+  Before commit/push, recheck `git status`, `git diff`, remote SHA and PR #534;
+  commit this bounded CSS/matrix/Handoff batch and push normally to the same
+  branch. Then wait for exact-head Core CI before another push.
+- Continue the Mixed/Linked Cue performance qualification only with isolated
+  simulation. Pi 4 ARM64 requalification remains pending because the
+  previously used isolated SSH endpoint failed before shell access with
+  `websocket: bad handshake`; Mac figures do not substitute. Keep Project ACL
+  disabled in production. Do not touch production services/data/Vault, send
+  physical-stage commands, flash hardware, force-push, or merge.
