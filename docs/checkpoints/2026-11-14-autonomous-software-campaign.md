@@ -2928,3 +2928,15 @@ This entry supersedes the preceding push instruction.
   `c6d4407` graph-validation optimization is still pending because the recorded
   isolated SSH endpoint failed before shell access; do not substitute Mac or
   cross-build results. Keep production ACL disabled and do not activate SC-024.
+
+## Resume update — 2026-11-14 19:16 UTC · new Core browser gate passed
+
+- On pushed exact head `61fd27e`, Go 1.27 Core passed in 3m31s. Go 1.26's full
+  test suite, the Browser Cue Delivery gate (including the new Project Files
+  Chrome test), and Vet have passed; its full Race suite is running now. The
+  isolated/ARM64 Relay and both Companion checks also pass. No new code push
+  occurred while Race runs.
+- Local HEAD is `967901afa14652192382dcc7cbaacced9f3a27ed`, a single local
+  handoff commit ahead of the clean remote `61fd27e`. The next action remains to
+  wait for Go 1.26 Race and ARM64 build, verify the exact branch/PR head, then
+  continue the campaign with the remaining policy-defined gaps.
