@@ -6,11 +6,12 @@ StageLaser #56/#57, and StageCore #503–#508/#514–#516 remain open at the
 listed heads; the exact-head CI runs listed below pass. StageLaser #57 is open
 but not marked draft. StageCore Draft PR #534 is at pushed head
 `9d5b775aa94875591d9ff7964e3eb8057f775c9b` on `integration/stagecore-rc`.
-Core run `43551276214` has Go 1.27 passed; Go 1.26 Test, Browser Cue Delivery
-and Vet passed, Race is in progress and Linux ARM64 builds are pending.
+Core run `43551276214` passed Go 1.26/1.27 Test, Browser Cue Delivery, Vet,
+Race and Linux ARM64 product builds.
 Companion run `43551276183` (Swift Core and full macOS replacement/media
 acceptance) and Camera Relay run `43551276104` passed. The local follow-on
-`714ade5` remains unpushed until that Core run completes. Passing CI proves
+`d457504` has passed focused local checks and is ready for a normal
+fast-forward push to PR #534. Passing CI proves
 only the listed software checks, not installed-app or physical output
 qualification.
 

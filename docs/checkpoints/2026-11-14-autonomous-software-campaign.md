@@ -1001,3 +1001,11 @@ This entry supersedes the preceding push instruction.
   batch; continue with the next evidenced gap afterward. Pi execution remains
   unavailable, and no production service/data, Vault, device or production ACL
   was touched.
+
+## Resume update — 2026-11-14 03:49 UTC · pre-push gate passed
+
+- Exact pushed-head Core run `43551276214` on `9d5b775aa94875591d9ff7964e3eb8057f775c9b` is complete and successful. Go 1.26 and 1.27 Tests, Browser Cue Delivery, Vet, full Race (`go test -race -timeout 45m ./...`), and Linux ARM64 product builds passed. Companion `43551276183` and Camera Relay `43551276104` also passed on that exact head.
+- Local HEAD before this checkpoint is `d457504ba322189a3f62766965b82e6fad894295`, nine commits ahead of remote `9d5b775`. The range is `ba495b8`, `b6242b4`, `46b76f9`, `184b719`, `45070db`, `da56f8d`, `2078a2f`, `714ade5`, `d457504`. It adds SC-010 preset search and per-target Draft remapping; lazy mapping UI; SC-005 duplicate and Show Capsule label/color regressions; four-action Lighting/MIDI/OSC/Tablet preset round-trip tests; and evidence/matrix checkpoints.
+- Local verification: Node suite 56/56 and preset tests 6/6; Operator web tests/Vet; full Store and Show Capsule tests/Vet; the HTTP multi-action preset test passed normally and under Race; JS syntax and range `git diff --check` passed. The nine-commit range is a fast-forward descendant of remote.
+- Before the push, read `git ls-remote origin refs/heads/integration/stagecore-rc` again. Push only if it still equals `9d5b775`; use a normal fast-forward to the existing branch/PR #534. Do not force push or merge. The new head will start fresh Core/Companion/Camera checks; wait for those before the next push.
+- Hardware/software boundary is unchanged: Pi 4 runtime performance remains unqualified because the authorized host handshake did not establish identity; no substitute ARM64 CI build for P95/P99/Jitter. Production Hub/Relay, show/Vault data, real devices, firmware, production ACL and main branch remain untouched.

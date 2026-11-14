@@ -5,15 +5,15 @@ on `integration/stagecore-rc`, pushed HEAD
 `9d5b775aa94875591d9ff7964e3eb8057f775c9b`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-Exact pushed-head CI run `43551276214` for `9d5b775` has Go 1.27 complete;
-Go 1.26 Test, Browser Cue Delivery and Vet passed, while its Race step is
-running and Linux ARM64 builds are pending (checked 2026-11-14 03:46 UTC).
+Exact pushed-head CI run `43551276214` for `9d5b775` completed successfully
+at 2026-11-14 03:49 UTC: Go 1.26/1.27 Test, Browser Cue Delivery, Vet, Race,
+and Linux ARM64 product builds all passed.
 Companion/Swift run `43551276183` and isolated/ARM64 Camera Relay run
 `43551276104` passed. The preceding exact-head Core run `43548179642` on
 `70a7061` completed successfully before the latest batch was pushed. Local
-follow-on commits through `714ade5` wait for the active exact-head CI before any
-further push. This matrix keeps software evidence separate from installed
-application and physical qualification.
+follow-on through `d457504` has focused tests and diff checks passing and is
+ready for a normal fast-forward push to the existing branch. This matrix keeps
+software evidence separate from installed application and physical qualification.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
 qualification.
