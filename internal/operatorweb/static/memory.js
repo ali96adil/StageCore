@@ -120,6 +120,12 @@ const sessionEventLabels = {
   "simulation.execution.cancelled": "Simulation action cancelled",
 };
 
+const sessionWarningLabels = {
+  degraded_start: "Degraded start",
+  device_scope: "Device scope warning",
+  preflight: "Preflight warning",
+};
+
 function sessionEventTimelineMarkup(events, category = "all") {
   const filtered = category === "all" ? events : events.filter((event) => event.category === category);
   if (!filtered.length) return `<div class="empty">No runtime events match this filter.</div>`;
@@ -127,7 +133,7 @@ function sessionEventTimelineMarkup(events, category = "all") {
     <article class="action-editor">
       <div class="section-title-row">
         <div><p class="eyebrow">${esc(event.category || "event")} · ${esc(event.priority || "")}</p><h3>${esc(sessionEventLabels[event.event_type] || event.event_type)}</h3></div>
-        ${event.warning_count ? pill(`${event.warning_count} warning${event.warning_count === 1 ? "" : "s"}`, "warn") : ""}
+        ${event.warning_count ? `<div class="toolbar">${pill(`${event.warning_count} warning${event.warning_count === 1 ? "" : "s"}`, "warn")}${(event.warning_kinds || []).map((kind) => pill(sessionWarningLabels[kind] || "Warning", "warn")).join("")}</div>` : ""}
       </div>
       <div class="meta" style="margin-top:8px"><span>${esc(fmtDate(event.occurred_at))}</span>${event.correlation_id ? `<span>Correlation ${esc(event.correlation_id)}</span>` : ""}</div>
       <p class="mono muted" style="margin-top:6px">${esc(event.event_id)}</p>

@@ -97,6 +97,7 @@ type SessionEventTrace struct {
 	Priority      string    `json:"priority,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	WarningCount  int       `json:"warning_count,omitempty"`
+	WarningKinds  []string  `json:"warning_kinds,omitempty"`
 }
 
 type actionEvidence struct {
@@ -290,15 +291,18 @@ func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool
 		}
 		if json.Unmarshal(event.Payload, &warning) == nil {
 			if warning.DegradedStart {
+				trace.WarningKinds = append(trace.WarningKinds, "degraded_start")
 				trace.WarningCount += len(warning.DegradedReasons)
 				if len(warning.DegradedReasons) == 0 {
 					trace.WarningCount++
 				}
 			}
 			if strings.TrimSpace(warning.DeviceScope) != "" {
+				trace.WarningKinds = append(trace.WarningKinds, "device_scope")
 				trace.WarningCount++
 			}
 			if strings.TrimSpace(warning.Preflight) != "" {
+				trace.WarningKinds = append(trace.WarningKinds, "preflight")
 				trace.WarningCount++
 			}
 		}

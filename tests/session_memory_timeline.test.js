@@ -22,11 +22,12 @@ test("Session timeline filters by event category and renders only projected fiel
   const h = harness();
   const events = [
     {event_id: "safety-1", event_type: "runtime.emergency_blackout.applied", category: "safety", priority: "P0", occurred_at: "now", correlation_id: "corr-safe"},
-    {event_id: "device-1", event_type: "stage_device.command.failed", category: "device", priority: "P1", occurred_at: "later"},
+    {event_id: "device-1", event_type: "stage_device.command.failed", category: "device", priority: "P1", occurred_at: "later", warning_count: 1, warning_kinds: ["preflight"]},
   ];
   const safety = h.sessionEventTimelineMarkup(events, "safety");
   assert.match(safety, /Emergency Blackout applied/);
   assert.doesNotMatch(safety, /Device command failed/);
+  assert.match(h.sessionEventTimelineMarkup(events, "device"), /Preflight warning/);
   assert.match(h.sessionEventTimelineMarkup([], "all"), /No runtime events match/);
 });
 

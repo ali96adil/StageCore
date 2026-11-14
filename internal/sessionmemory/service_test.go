@@ -182,7 +182,7 @@ func TestSessionTimelineProjectsOnlyWhitelistedEventsAndSafeWarningCounts(t *tes
 	if len(got) != 3 || got[0].EventID != "start" || got[1].EventID != "later" || got[2].EventID != "device" {
 		t.Fatalf("projected timeline=%+v", got)
 	}
-	if got[0].Category != "session" || got[0].WarningCount != 4 || got[1].Category != "safety" || got[2].Category != "device" {
+	if got[0].Category != "session" || got[0].WarningCount != 4 || strings.Join(got[0].WarningKinds, ",") != "degraded_start,device_scope,preflight" || got[1].Category != "safety" || got[2].Category != "device" {
 		t.Fatalf("timeline categories or warning count=%+v", got)
 	}
 	encoded, err := json.Marshal(got)
