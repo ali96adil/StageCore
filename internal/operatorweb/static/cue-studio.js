@@ -1014,6 +1014,21 @@
       list.replaceChildren();
       for (const preset of presets) {
         const row = document.createElement("li");
+        const targetRef = String(preset.action?.target_ref || "").trim();
+        const targetPresent = Boolean(targetRef && (state.f002Targets || []).some((target) => target.logical_name === targetRef));
+        const targetStatus = document.createElement("p");
+        targetStatus.className = targetPresent ? "muted" : "message warn";
+        targetStatus.setAttribute("role", targetPresent ? "status" : "alert");
+        targetStatus.textContent = targetPresent
+          ? tr("الهدف موجود في إعدادات هذا المشروع.", "Target is available in this Project configuration.")
+          : tr("الهدف غير موجود في إعدادات هذا المشروع. أضف هدفاً أو أعد تعيينه قبل الاعتماد على هذا الكيو.", "Target is not present in this Project configuration. Add or remap a target before relying on this Cue.");
+        const preview = document.createElement("details");
+        const previewHeading = document.createElement("summary");
+        previewHeading.textContent = tr("معاينة تفاصيل الإجراء", "Preview action details");
+        const previewContent = document.createElement("pre");
+        previewContent.className = "mono muted";
+        previewContent.textContent = JSON.stringify(preset.action || {}, null, 2);
+        preview.append(previewHeading, previewContent);
         const insert = button(tr("أضف إلى الكيو", "Add to Cue"));
         insert.onclick = () => {
           if (!active()) return;
@@ -1033,7 +1048,7 @@
             remove.disabled = false;
           }
         };
-        row.append(preset.name, " ", insert, " ", remove);
+        row.append(preset.name, targetStatus, preview, insert, " ", remove);
         list.append(row);
       }
     };
