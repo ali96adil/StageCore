@@ -112,13 +112,13 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	if preset.ID == "" || authored.ActionID != "" || authored.OrderIndex != 0 || authored.CapabilityKey != "osc.send" {
 		t.Fatalf("preset persisted cue identity or lost capability: %+v", authored)
 	}
-	mixedRequest := []byte(`{"name":"Warm scene","actions":[{"action_id":"source-light","order_index":8,"target_ref":"LIGHTING","capability_key":"lighting.channels.fade","parameters":{"levels":{"warm":55},"fade_ms":900}},{"action_id":"source-osc","order_index":9,"target_ref":"VDMX","capability_key":"osc.send","parameters":{"address":"/scene/4","arguments":[4]}}]}`)
+	mixedRequest := []byte(`{"name":"Warm scene","actions":[{"action_id":"source-light","order_index":8,"target_ref":"LIGHTING","capability_key":"lighting.channels.fade","parameters":{"levels":{"warm":55},"fade_ms":900}},{"action_id":"source-midi","order_index":9,"target_ref":"ABLETON","capability_key":"midi.send","parameters":{"status":144,"data1":60,"data2":100}},{"action_id":"source-osc","order_index":10,"target_ref":"VDMX","capability_key":"osc.send","parameters":{"address":"/scene/4","arguments":[4]}},{"action_id":"source-tablet","order_index":11,"target_ref":"TABLET-MAIN","capability_key":"tablet.media.play","parameters":{"media_id":"clip-7"}}]}`)
 	mixedCreated := presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, mixedRequest, http.StatusCreated)
 	var mixedPreset store.CueActionPreset
 	if err := json.Unmarshal(mixedCreated.Body.Bytes(), &mixedPreset); err != nil {
 		t.Fatal(err)
 	}
-	if mixedPreset.Action != nil || len(mixedPreset.Actions) != 2 {
+	if mixedPreset.Action != nil || len(mixedPreset.Actions) != 4 {
 		t.Fatalf("mixed preset response did not preserve its actions field: %+v", mixedPreset)
 	}
 	var mixedActions []actionWriteRequest
@@ -130,7 +130,9 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 		mixedActions = append(mixedActions, action)
 	}
 	if mixedActions[0].ActionID != "" || mixedActions[0].OrderIndex != 0 || mixedActions[0].CapabilityKey != "lighting.channels.fade" ||
-		mixedActions[1].ActionID != "" || mixedActions[1].OrderIndex != 1 || mixedActions[1].CapabilityKey != "osc.send" {
+		mixedActions[1].ActionID != "" || mixedActions[1].OrderIndex != 1 || mixedActions[1].CapabilityKey != "midi.send" ||
+		mixedActions[2].ActionID != "" || mixedActions[2].OrderIndex != 2 || mixedActions[2].CapabilityKey != "osc.send" ||
+		mixedActions[3].ActionID != "" || mixedActions[3].OrderIndex != 3 || mixedActions[3].CapabilityKey != "tablet.media.play" {
 		t.Fatalf("mixed preset retained Cue identities or changed order: %+v", mixedActions)
 	}
 	var listed struct {
@@ -141,7 +143,7 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(listed.Presets) != 2 || listed.Presets[0].Action == nil || len(listed.Presets[0].Actions) != 0 ||
-		len(listed.Presets[1].Actions) != 2 || listed.Presets[1].Action != nil {
+		len(listed.Presets[1].Actions) != 4 || listed.Presets[1].Action != nil {
 		t.Fatalf("listing did not preserve the old single-action shape and new multi-action shape: %+v", listed.Presets)
 	}
 	presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusConflict)
