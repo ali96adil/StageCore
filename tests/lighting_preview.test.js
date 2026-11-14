@@ -164,6 +164,70 @@ test("Cue Studio action clipboard stays in the current project and user session"
   assert.equal(pasted, undefined);
 });
 
+test("Cue Studio copies selected Mixed-Cue actions in order as independent copies", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const first = source.indexOf("function serializeActionCopy");
+  const last = source.indexOf("function duplicateCard", first);
+  const state = {
+    user: {}, project: { project_id: "project-a" },
+    f002Targets: [{ logical_name: "LIGHTING" }, { logical_name: "VDMX" }],
+  };
+  const cards = [
+    {
+      selected: true,
+      ".action-id": { value: "lighting-original" }, ".action-target": { value: "LIGHTING" },
+      ".action-capability": { value: "lighting.channels.fade" },
+      ".action-parameters": { value: '{"fade_ms":1200,"levels":{"warm":60}}' },
+      ".action-timeout": { value: '{"timeout_ms":2000,"start_delay_ms":100}' },
+      ".action-error": { value: '{"on_error":"FAIL_CUE"}' },
+      ".action-mode": { value: "PARALLEL_BARRIER" }, ".action-priority": { value: "P0" },
+      ".action-enabled": { checked: true },
+      ".sc008-action-select": { checked: true },
+    },
+    {
+      selected: true,
+      ".action-id": { value: "osc-original" }, ".action-target": { value: "VDMX" },
+      ".action-capability": { value: "osc.send" },
+      ".action-parameters": { value: '{"address":"/scene/3","arguments":[3]}' },
+      ".action-timeout": { value: '{"start_delay_ms":250}' },
+      ".action-error": { value: '{"retry_before_dispatch":true}' },
+      ".action-mode": { value: "SEQUENTIAL" }, ".action-priority": { value: "P1" },
+      ".action-enabled": { checked: false },
+      ".sc008-action-select": { checked: true },
+    },
+  ];
+  for (const card of cards) card.querySelector = (selector) => selector === ".sc008-action-select" ? { checked: card.selected } : null;
+  const inserted = [];
+  const context = {
+    state, structuredClone, f002SyncActionCard() {},
+    cardField: (card, field) => card[field],
+    actionCards: () => cards,
+    pick: () => null,
+    globalMessage: {}, setMessage() {}, tr: (_arabic, english) => english,
+    addActionEditor: (action) => inserted.push(action), expandCard() {}, refreshActions() {},
+  };
+  const clipboard = vm.runInNewContext(
+    "let actionClipboard = null; " + source.slice(first, last) +
+    "({copySelectedActionsToClipboard, pasteClipboardAction})", context
+  );
+  clipboard.copySelectedActionsToClipboard();
+  clipboard.pasteClipboardAction();
+  assert.equal(inserted.length, 2);
+  assert.deepEqual(inserted.map((action) => action.target_ref), ["LIGHTING", "VDMX"]);
+  assert.deepEqual(inserted.map((action) => action.action_id), ["", ""]);
+  assert.equal(inserted[0].parameters.levels.warm, 60);
+  assert.equal(inserted[0].timeout_policy.start_delay_ms, 100);
+  assert.equal(inserted[0].execution_mode, "PARALLEL_BARRIER");
+  assert.equal(inserted[1].parameters.address, "/scene/3");
+  assert.equal(inserted[1].timeout_policy.start_delay_ms, 250);
+  assert.equal(inserted[1].error_policy.retry_before_dispatch, true);
+  assert.equal(inserted[1].enabled, false);
+  assert.equal(cards[0][".action-id"].value, "lighting-original");
+  state.project = { project_id: "project-b" };
+  clipboard.pasteClipboardAction();
+  assert.equal(inserted.length, 2, "a copied Mixed Cue must not cross Project boundaries");
+});
+
 test("raw preview values copy only through unique representable logical channels", () => {
   const source = fs.readFileSync("internal/operatorweb/static/lighting-authoring.js", "utf8");
   const first = source.indexOf("function previewDMXByte");

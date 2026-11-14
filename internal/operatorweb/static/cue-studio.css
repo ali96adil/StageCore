@@ -160,6 +160,17 @@
   flex-wrap: wrap;
   margin-inline-start: auto;
 }
+.sc008-select-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding-inline: 5px;
+  color: var(--muted);
+  font-size: .75rem;
+  white-space: nowrap;
+}
+.sc008-select-action input { margin: 0; }
 .sc008-action-tools .button {
   min-width: 36px;
   padding: 7px 9px;

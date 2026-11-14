@@ -81,6 +81,8 @@
     cards.forEach((card, index) => {
       const number = card.querySelector(".action-title");
       if (number) number.textContent = String(index + 1).padStart(2, "0");
+      card.querySelector(".sc008-action-select")?.setAttribute("aria-label",
+        tr(`تحديد الإجراء ${index + 1} للنسخ`, `Select action ${index + 1} to copy`));
       updateCard(card);
       const up = card.querySelector(".sc008-up");
       const down = card.querySelector(".sc008-down");
@@ -91,6 +93,7 @@
     if (total) total.textContent = String(cards.length);
     const empty = pick("sc008Empty");
     if (empty) empty.hidden = cards.length > 0;
+    refreshClipboardButtons();
   }
 
   function expandCard(card, shouldOpen) {
@@ -141,11 +144,29 @@
   }
 
   function clipboardAction() {
+    return clipboardActions()[0] || null;
+  }
+
+  function clipboardActions() {
     if (actionClipboard && actionClipboard.user === state.user && actionClipboard.projectID === state.project?.project_id) {
-      return actionClipboard.action;
+      return actionClipboard.actions || (actionClipboard.action ? [actionClipboard.action] : []);
     }
     actionClipboard = null;
-    return null;
+    return [];
+  }
+
+  function refreshClipboardButtons() {
+    const selectedCount = actionCards().filter((card) => cardField(card, ".sc008-action-select")?.checked).length;
+    const copy = pick("sc008CopySelectedActions");
+    if (copy) copy.disabled = !state.user || !state.project?.project_id || selectedCount === 0;
+    const actions = clipboardActions();
+    const paste = pick("sc008PasteAction");
+    if (paste) {
+      paste.disabled = actions.length === 0;
+      paste.textContent = actions.length > 1
+        ? tr(`لصق ${actions.length} إجراءات`, `Paste ${actions.length} actions`)
+        : tr("لصق إجراء", "Paste action");
+    }
   }
 
   function warnIfActionTargetUnavailable(action) {
@@ -161,24 +182,45 @@
   function copyActionToClipboard(card) {
     if (!state.user || !state.project?.project_id) return;
     try {
-      actionClipboard = { user: state.user, projectID: state.project.project_id, action: serializeActionCopy(card) };
-      const paste = pick("sc008PasteAction");
-      if (paste) paste.disabled = false;
+      const action = serializeActionCopy(card);
+      actionClipboard = { user: state.user, projectID: state.project.project_id, action, actions: [action] };
+      refreshClipboardButtons();
     } catch (_) {
       window.alert(tr("راجع قيم هذا الإجراء قبل نسخه.", "Review this action's fields before copying."));
       expandCard(card, true);
     }
   }
 
+  function copySelectedActionsToClipboard() {
+    if (!state.user || !state.project?.project_id) return;
+    const selected = actionCards().filter((card) => cardField(card, ".sc008-action-select")?.checked);
+    if (!selected.length) return;
+    const actions = [];
+    let invalid;
+    try {
+      for (const card of selected) {
+        try { actions.push(serializeActionCopy(card)); }
+        catch (error) { invalid = card; throw error; }
+      }
+      actionClipboard = { user: state.user, projectID: state.project.project_id, actions };
+      refreshClipboardButtons();
+    } catch (_) {
+      window.alert(tr("راجع قيم الإجراءات المحددة قبل نسخها.", "Review the selected actions before copying."));
+      if (invalid) expandCard(invalid, true);
+    }
+  }
+
   function pasteClipboardAction() {
-    const action = clipboardAction();
-    if (!action) return;
-    warnIfActionTargetUnavailable(action);
-    addActionEditor(structuredClone(action));
-    const inserted = actionCards().at(-1);
-    actionCards().forEach((item) => expandCard(item, item === inserted));
+    const actions = clipboardActions();
+    if (!actions.length) return;
+    for (const action of actions) {
+      warnIfActionTargetUnavailable(action);
+      addActionEditor(structuredClone(action));
+    }
+    const inserted = actionCards().slice(-actions.length);
+    actionCards().forEach((item) => expandCard(item, item === inserted.at(-1)));
     refreshActions();
-    inserted?.querySelector(".sc008-expand")?.focus();
+    inserted.at(-1)?.querySelector(".sc008-expand")?.focus();
   }
 
   function duplicateCard(card) {
@@ -282,6 +324,17 @@
 
     const tools = document.createElement("div");
     tools.className = "sc008-action-tools";
+    const selectionLabel = document.createElement("label");
+    selectionLabel.className = "sc008-select-action";
+    const selection = document.createElement("input");
+    selection.type = "checkbox";
+    selection.className = "sc008-action-select";
+    selection.setAttribute("aria-label", tr("تحديد الإجراء للنسخ", "Select action to copy"));
+    selection.addEventListener("change", refreshClipboardButtons);
+    const selectionText = document.createElement("span");
+    selectionText.textContent = tr("تحديد", "Select");
+    selectionLabel.append(selection, selectionText);
+    tools.append(selectionLabel);
     const make = (cls, label, fn) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -1166,6 +1219,14 @@
     paste.disabled = !clipboardAction();
     paste.onclick = pasteClipboardAction;
     if (!paste.isConnected) addButton?.after(paste);
+    const copySelected = pick("sc008CopySelectedActions") || document.createElement("button");
+    copySelected.id = "sc008CopySelectedActions";
+    copySelected.className = "button ghost";
+    copySelected.type = "button";
+    copySelected.textContent = tr("نسخ المحدد للكيوهات", "Copy selected to other Cues");
+    copySelected.disabled = true;
+    copySelected.onclick = copySelectedActionsToClipboard;
+    if (!copySelected.isConnected) paste.after(copySelected);
     const optional = createOptionalDetails(form);
     if (!optional.isConnected) workspace.after(optional);
     optional.open = !!(cue?.notes_summary || cue?.criticality === "CRITICAL" ||
