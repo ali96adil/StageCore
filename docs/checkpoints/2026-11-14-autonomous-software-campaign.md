@@ -1514,3 +1514,40 @@ This entry supersedes the preceding push instruction.
   checkpoint to PR #534, refresh its opening status, and follow exact-head CI.
   Then resume the next matrix gap, starting with SC-007 Draft-to-published
   lighting reconciliation, using isolated tests/simulation only.
+
+## Resume update — 2026-11-14 07:16 UTC · lighting authoring validation
+
+- The prior SC-007 checkpoint task was completed locally in
+  `2e1641c185ccfab26bc811f30894a32f4c0a7b9e`. Lighting Cue authoring now
+  rejects blank/non-finite and out-of-range levels, stale logical aliases,
+  and non-integer/out-of-range Fade/Blackout durations instead of silently
+  coercing them. Stale alias/device/capability/configuration API errors now
+  show English or Arabic operator remedies. No output is dispatched by these
+  validation paths.
+- Existing Preflight Draft-versus-Snapshot fingerprinting was verified with
+  `TestPreflightWarnsWhenDraftLightingDiffersFromPublishedSnapshot`: a Draft
+  mismatch is an advisory naming the immutable Snapshot; runtime remains
+  bound to that Snapshot. SC-007 matrix evidence now describes the remaining
+  real-browser and route-level regression gaps accurately.
+- `node --test tests/lighting_preview.test.js` passed 15/15; the full
+  `tests/*.test.js` suite passed 70/70. Operator Web package tests and Vet,
+  the focused Preflight mismatch test, HTTP lighting alias/grouping tests,
+  JavaScript syntax and diff checks passed.
+- Local HEAD is `2e1641c`; remote and Draft PR #534 remain at
+  `abe7ad8017744283acab76bfa4f3b76ad4797f52`. Five local commits are ahead:
+  `4c68f94`, `4c15d95`, `1cdae86`, `bc14580`, and `2e1641c`; the handoff update
+  in this entry is being committed separately. The worktree was clean after
+  the SC-007 feature commit.
+- Core `43568904863` is still running on exact remote `abe7ad8`: Go 1.27 and
+  Go 1.26 Test/Vet passed; Go 1.26 Race remains in progress and Linux ARM64
+  product builds are pending. Companion `43568904858` and Camera Relay
+  `43568904853` passed. Wait for Core to finish, verify that remote SHA is
+  unchanged, then push the local batch normally to this same PR and follow CI
+  on the new exact head. Do not cancel the current CI.
+- Pi 4 access still fails before host identity through the strict qualification
+  SSH alias; no Pi command ran. No physical output, production service,
+  production data/Vault, firmware, or production ACL was touched. SC-024 stays
+  disabled in production.
+- Next after the CI gate: update PR #534's opening status and follow exact-head
+  CI for the push; then continue SC-008's real-browser authoring/round-trip
+  acceptance with simulated targets and preserve the Mixed/linked Cue priority.
