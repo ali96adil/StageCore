@@ -2898,3 +2898,33 @@ This entry supersedes the preceding push instruction.
   full Race step (started 18:37 UTC); Go 1.27, Companion/Swift and Relay remain
   green. Do not push until this exact-head run completes, then verify all checks
   and branch/PR SHA before deciding to push.
+
+## Resume update — 2026-11-14 19:11 UTC · pushed scoped media usage batch
+
+- Core run `43627228963` completed green, including Go 1.26 full Race in
+  36m46s; Go 1.27, both Companion checks and Camera Relay were also green on
+  exact prior head `9df2915`.
+- Rechecked clean local state, remote branch, and OPEN/Draft PR #534 at
+  `9df291527dafd0ec8ab52d6b801d03566dcf4528`, then normally pushed the ten
+  accumulated local commits. No force-push or merge. The push advanced the
+  branch to `61fd27e05ddad6fc3189318de2a3fd2c77fa50e5`; fetch, `ls-remote`, PR
+  API and local `origin` now agree exactly and the worktree is clean.
+- New exact-head CI is active: Core `43630696006`, Companion `43630695925`, and
+  Camera Relay `43630695973`. Initial Go 1.26/1.27, macOS/Swift and ARM64-isolated
+  checks are pending. Do not push another SHA until all checks on `61fd27e`
+  complete.
+- Pushed code adds scoped Project Files logical entry/byte totals, bilingual
+  usage and current-page labels, and Node plus headless Chrome tests. It adds a
+  revoke-at-response regression proving the new aggregates do not leak after
+  session/grant revocation. All Project Files routes/options remain
+  qualification-only; production ACL and production assemblers were not changed.
+- Local validation passed before push: full Node `tests/*.test.js` (77 tests),
+  focused Project Files Store/Operator UI/API tests, focused HTTP Race tests,
+  `go vet`, Node syntax checks, and a real local headless Chrome run at 390×844
+  for Arabic RTL and English LTR. No output hardware or production data was used.
+- Next: wait for all new exact-head checks. If green, continue the SC-023 quota
+  and retention design only where acceptance policy is defined, then proceed
+  with the remaining SC-024 whole-server audit. Pi ARM64 performance after the
+  `c6d4407` graph-validation optimization is still pending because the recorded
+  isolated SSH endpoint failed before shell access; do not substitute Mac or
+  cross-build results. Keep production ACL disabled and do not activate SC-024.
