@@ -42,3 +42,23 @@ test("Session JSON export keeps execution evidence but excludes free-form adapte
   assert.match(encoded, /runtime\.emergency_blackout\.applied/);
   assert.doesNotMatch(encoded, /untrusted private endpoint response/);
 });
+
+test("Session comparison computes bounded metrics from recorded traces and reports differences", () => {
+  const h = harness();
+  const current = {session_id: "s1", name: "Current", runtime_snapshot_id: "snap-a", started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:00:10Z"};
+  const compared = {session_id: "s2", name: "Previous", runtime_snapshot_id: "snap-b", started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:00:08Z"};
+  const currentCues = [{result: "COMPLETED", actions: [{result: "COMPLETED"}, {result: "FAILED"}]}];
+  const previousCues = [{result: "FAILED", interrupted: true, actions: [{result: "FAILED"}]}];
+  const currentEvents = [{category: "safety"}, {category: "device"}];
+  const previousEvents = [{category: "device"}];
+  const metrics = h.sessionComparisonMetrics(current, currentCues, currentEvents);
+  assert.equal(metrics.duration_ms, 10000);
+  assert.equal(metrics.action_count, 2);
+  assert.equal(metrics.failed_actions, 1);
+  assert.equal(metrics.safety_events, 1);
+  const markup = h.sessionComparisonMarkup(current, currentCues, currentEvents, compared, previousCues, previousEvents);
+  assert.match(markup, /Current · Previous/);
+  assert.match(markup, /Snapshot differs/);
+  assert.match(markup, /\+2\.0 s/);
+  assert.match(markup, /Interrupted Cues/);
+});

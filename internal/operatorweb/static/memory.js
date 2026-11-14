@@ -178,6 +178,50 @@ function sessionTraceExportProjection(session, cues, events) {
   };
 }
 
+function sessionComparisonMetrics(session, cues, events) {
+  const started = Date.parse(session.started_at || "");
+  const ended = Date.parse(session.ended_at || "");
+  const actions = cues.flatMap((cue) => cue.actions || []);
+  return {
+    duration_ms: Number.isFinite(started) && Number.isFinite(ended) ? Math.max(0, ended - started) : null,
+    cue_count: cues.length,
+    action_count: actions.length,
+    failed_cues: cues.filter((cue) => cue.result !== "COMPLETED").length,
+    failed_actions: actions.filter((action) => action.result !== "COMPLETED").length,
+    interrupted_cues: cues.filter((cue) => cue.interrupted).length,
+    safety_events: events.filter((event) => event.category === "safety").length,
+    device_events: events.filter((event) => event.category === "device").length,
+    snapshot_id: session.runtime_snapshot_id || "",
+  };
+}
+
+function sessionComparisonMarkup(primarySession, primaryCues, primaryEvents, otherSession, otherCues, otherEvents) {
+  const current = sessionComparisonMetrics(primarySession, primaryCues, primaryEvents);
+  const compared = sessionComparisonMetrics(otherSession, otherCues, otherEvents);
+  const rows = [
+    ["Duration", current.duration_ms, compared.duration_ms, true],
+    ["Cue executions", current.cue_count, compared.cue_count],
+    ["Action executions", current.action_count, compared.action_count],
+    ["Non-completed Cues", current.failed_cues, compared.failed_cues],
+    ["Non-completed Actions", current.failed_actions, compared.failed_actions],
+    ["Interrupted Cues", current.interrupted_cues, compared.interrupted_cues],
+    ["Safety events", current.safety_events, compared.safety_events],
+    ["Device events", current.device_events, compared.device_events],
+  ];
+  const value = (metric, duration = false) => metric === null ? "—" : duration ? `${(metric / 1000).toFixed(1)} s` : String(metric);
+  const delta = (left, right, duration = false) => {
+    if (left === null || right === null) return "—";
+    const difference = left - right;
+    const label = difference > 0 ? `+${difference}` : String(difference);
+    return duration ? `${difference > 0 ? "+" : ""}${(difference / 1000).toFixed(1)} s` : label;
+  };
+  return `
+    <div class="section-title-row"><div><h3>${esc(primarySession.name || "Current Session")} · ${esc(otherSession.name || "Compared Session")}</h3><p class="muted">Snapshot ${current.snapshot_id === compared.snapshot_id ? "matches" : "differs"}</p></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Measure</th><th>Current</th><th>Compared</th><th>Difference</th></tr></thead><tbody>
+      ${rows.map(([label, left, right, duration]) => `<tr><th scope="row">${esc(label)}</th><td>${esc(value(left, duration))}</td><td>${esc(value(right, duration))}</td><td>${esc(delta(left, right, duration))}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
 function downloadSessionTrace(session, cues, events) {
   const json = JSON.stringify(sessionTraceExportProjection(session, cues, events), null, 2);
   const blobURL = URL.createObjectURL(new Blob([json], { type: "application/json" }));
@@ -274,6 +318,7 @@ async function renderSessionDetail(sessionID, executionID = "", eventCategory = 
       <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device and simulation events. Connection state is shown only when an explicit event exists.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
       <div class="actions-editor" style="margin-top:14px">${sessionEventTimelineMarkup(events, eventCategory)}</div>
     </section>
+    ${!executionID ? `<section class="card" style="margin-bottom:16px"><div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Session comparison</h2><p class="muted">Compare recorded rehearsal metrics from this Project. No execution or device state is changed.</p></div><button id="prepareSessionCompare" class="button ghost" type="button">Compare another session</button></div><div id="sessionComparisonPanel" style="margin-top:12px"></div></section>` : ""}
     ${rehearsalSummary ? `<article class="card" style="margin-bottom:16px">
       <h2>Rehearsal summary</h2>
       <p>${traces.length} recorded Cue executions · ${interrupted} interrupted</p>
@@ -289,7 +334,37 @@ async function renderSessionDetail(sessionID, executionID = "", eventCategory = 
   });
   el("sessionEventCategory")?.addEventListener("change", (event) => renderSessionDetail(sessionID, executionID, event.target.value).catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
   el("exportSessionTrace")?.addEventListener("click", () => downloadSessionTrace(session, traces, events));
+  el("prepareSessionCompare")?.addEventListener("click", () => prepareSessionComparison(session, traces, events, projectID, current).catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
   el("backSessions").addEventListener("click", () => renderSessions().catch((error) => setMessage(globalMessage, errorMessage(error), "error")));
+}
+
+async function prepareSessionComparison(primarySession, primaryCues, primaryEvents, projectID, current) {
+  const panel = el("sessionComparisonPanel");
+  if (!panel) return;
+  panel.textContent = "Loading completed Sessions…";
+  const sessions = await loadSessions();
+  if (!current()) return;
+  const candidates = sessions.filter((item) => item.session_id !== primarySession.session_id && item.session_type === primarySession.session_type && item.ended_at && ["COMPLETED", "ABORTED"].includes(item.status));
+  if (!candidates.length) {
+    panel.textContent = "No other completed Session of this type is available in this Project.";
+    return;
+  }
+  panel.innerHTML = `<label>Compare with<select id="sessionComparisonChoice"><option value="">Choose a Session</option>${candidates.map((item) => `<option value="${esc(item.session_id)}">${esc(item.name || item.session_id)} · ${esc(fmtDate(item.started_at))}</option>`).join("")}</select></label><div id="sessionComparisonResult" style="margin-top:12px"></div>`;
+  const choice = el("sessionComparisonChoice");
+  choice?.addEventListener("change", async () => {
+    const result = el("sessionComparisonResult");
+    if (!result || !choice.value) return;
+    const request = {};
+    panel.stagecoreComparisonRequest = request;
+    result.textContent = "Loading comparison…";
+    try {
+      const detail = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/sessions/${encodeURIComponent(choice.value)}`);
+      if (!current() || panel.stagecoreComparisonRequest !== request) return;
+      result.innerHTML = sessionComparisonMarkup(primarySession, primaryCues, primaryEvents, detail.session, detail.cue_executions || [], detail.events || []);
+    } catch (error) {
+      if (current() && panel.stagecoreComparisonRequest === request) result.textContent = errorMessage(error);
+    }
+  });
 }
 
 async function loadNoteChoices() {
