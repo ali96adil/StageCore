@@ -45,10 +45,14 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := 0; index < 120; index++ {
+		policy := json.RawMessage(`{}`)
+		if index == 0 {
+			policy = json.RawMessage(`{"operator_cue_color":"purple"}`)
+		}
 		_, err := st.CreateCueWithActions(ctx, domain.Cue{
 			RevisionID: revision.ID, DisplayLabel: fmt.Sprintf("N%02d", index+1),
 			Name: fmt.Sprintf("Navigation Cue %02d", index+1), OrderIndex: index, Enabled: true,
-			ExecutionPolicy: json.RawMessage(`{}`),
+			ExecutionPolicy: policy,
 		}, []domain.Action{{
 			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
 			Parameters:    json.RawMessage(fmt.Sprintf(`{"sequence":%d}`, index+1)),
@@ -170,12 +174,13 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		CueColor         string   `json:"cue_color"`
 		CueLabelText     string   `json:"cue_label_text"`
 		ColorMarker      bool     `json:"color_marker_visible"`
+		PaletteVisible   bool     `json:"palette_visible"`
 		LabelReadable    bool     `json:"label_color_readable"`
 		PageOverflow     bool     `json:"page_overflow"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
-		!report.ColorMarker || !report.LabelReadable || report.PageOverflow {
+		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || report.PageOverflow {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	project, err = st.GetProject(ctx, project.ID)

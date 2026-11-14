@@ -318,10 +318,14 @@
     const cueColor = labelCell?.dataset.cueColor || "";
     const cueLabelText = labelCell?.innerText.trim() || "";
     const colorMarkerVisible = !!labelStyle && labelStyle.boxShadow !== "none";
+    const paletteVisible = ["blue", "green", "amber", "purple"].every((color) => {
+      const marker = document.querySelector(`#content .cue-label-cell[data-cue-color="${color}"]`);
+      return !!marker && getComputedStyle(marker).boxShadow !== "none";
+    });
     const labelColorReadable = !!labelStyle && !!plainCell && labelStyle.color === getComputedStyle(plainCell).color;
     const pageOverflow = document.documentElement.scrollWidth > window.innerWidth;
-    if (cueColor !== "blue" || cueLabelText !== quickEditedLabel || !colorMarkerVisible || !labelColorReadable || pageOverflow) {
-      throw new Error(`Cue label/color mobile accessibility failed: color=${cueColor}, label=${cueLabelText}, marker=${colorMarkerVisible}, readable=${labelColorReadable}, overflow=${pageOverflow}`);
+    if (cueColor !== "blue" || cueLabelText !== quickEditedLabel || !colorMarkerVisible || !paletteVisible || !labelColorReadable || pageOverflow) {
+      throw new Error(`Cue label/color mobile accessibility failed: color=${cueColor}, label=${cueLabelText}, marker=${colorMarkerVisible}, palette=${paletteVisible}, readable=${labelColorReadable}, overflow=${pageOverflow}`);
     }
     const runtimeRequestsAfterEdit = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {
@@ -330,7 +334,7 @@
     await report(JSON.stringify({ status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,
-      label_color_readable: labelColorReadable, page_overflow: pageOverflow }));
+      palette_visible: paletteVisible, label_color_readable: labelColorReadable, page_overflow: pageOverflow }));
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
   }
