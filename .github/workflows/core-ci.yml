@@ -60,7 +60,7 @@ jobs:
         run: |
           export STAGECORE_TEST_CHROME="$(command -v google-chrome)"
           test -n "$STAGECORE_TEST_CHROME"
-          go test ./internal/httpapi -run '^(TestBrowserCueDeliveryThroughPersistedTrace|TestBrowserShowWorkspacePinsRuntime)$' -count=1
+          go test ./internal/httpapi -run '^(TestBrowserCueDeliveryThroughPersistedTrace|TestBrowserShowWorkspacePinsRuntime|TestBrowserCreatesNestedMixedCueChainInDraft)$' -count=1
       - name: Vet
         run: go vet ./...
       - name: Race tests
