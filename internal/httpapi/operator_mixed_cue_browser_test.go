@@ -145,8 +145,10 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
-		Status string   `json:"status"`
-		IDs    []string `json:"ids"`
+		Status     string   `json:"status"`
+		IDs        []string `json:"ids"`
+		ActionIDs  []string `json:"action_ids"`
+		EditedName string   `json:"edited_name"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
@@ -169,6 +171,18 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	for _, id := range report.IDs {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("browser-reported Cue %s is absent from Draft", id)
+		}
+	}
+	parent := byID[report.IDs[2]]
+	if report.EditedName == "" || parent.Name != report.EditedName {
+		t.Fatalf("edited parent Cue name=%q, browser reported %q", parent.Name, report.EditedName)
+	}
+	if len(report.ActionIDs) != len(parent.Actions) {
+		t.Fatalf("edited parent Action IDs=%v, persisted Actions=%+v", report.ActionIDs, parent.Actions)
+	}
+	for index, action := range parent.Actions {
+		if report.ActionIDs[index] == "" || action.ID != report.ActionIDs[index] {
+			t.Fatalf("editing Cue changed Action %d identity: browser=%q persisted=%q", index, report.ActionIDs[index], action.ID)
 		}
 	}
 	var midPolicy, parentPolicy struct {

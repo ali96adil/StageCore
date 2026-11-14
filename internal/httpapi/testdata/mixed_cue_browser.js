@@ -146,10 +146,38 @@
     if (document.querySelectorAll("#content .cue-link-cell").length !== 3) {
       throw new Error("Cue Studio did not render all linked-chain rows");
     }
-    if (document.body.innerText.includes("Cue created in Draft") === false) {
-      throw new Error("Draft save confirmation was not rendered");
+
+    const parent = state.cues.find((cue) => cue.cue_id === parentID);
+    const originalActionIDs = (parent?.actions || []).map((action) => action.action_id);
+    if (originalActionIDs.length !== 2 || originalActionIDs.some((id) => !id)) {
+      throw new Error("Saved parent Mixed Cue did not retain Action identities before editing");
     }
-    await report(JSON.stringify({ status: "PASS", ids: createdIDs }));
+    const parentEditButton = document.querySelector(`.cue-edit[data-id="${parentID}"]`);
+    if (!parentEditButton) throw new Error("Parent Mixed Cue Edit control is missing");
+    parentEditButton.click();
+    const editor = document.getElementById("cueDialog");
+    await waitFor(() => editor.open, "opening parent Mixed Cue for editing");
+    if (document.querySelectorAll("#actionsEditor .action-editor").length !== 2) {
+      throw new Error("Parent Mixed Cue editor did not reopen both saved Actions");
+    }
+    const selectedMiddle = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${middleID}"]`);
+    if (!selectedMiddle?.checked) throw new Error("Parent-to-middle Cue link was not restored in the editor");
+    const editedName = "Native Visual and MIDI Parent · Browser Edit";
+    setValue(document.getElementById("cueName"), editedName);
+    document.getElementById("cueForm").requestSubmit();
+    await waitFor(() => !editor.open && state.cues.find((cue) => cue.cue_id === parentID)?.name === editedName,
+      "saving parent Mixed Cue edit");
+    const editedParent = state.cues.find((cue) => cue.cue_id === parentID);
+    const editedActionIDs = (editedParent?.actions || []).map((action) => action.action_id);
+    if (JSON.stringify(editedActionIDs) !== JSON.stringify(originalActionIDs)) {
+      throw new Error("Editing Cue metadata changed existing Action identities");
+    }
+    await waitFor(() => document.querySelector(`#content [data-cue-id="${parentID}"]`)?.innerText.includes(editedName),
+      "rendering saved parent Cue name");
+    if (!document.body.innerText.includes("Cue updated in Draft")) {
+      throw new Error("Draft edit confirmation was not rendered");
+    }
+    await report(JSON.stringify({ status: "PASS", ids: createdIDs, action_ids: editedActionIDs, edited_name: editedName }));
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
   }
