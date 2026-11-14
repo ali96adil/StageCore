@@ -3606,9 +3606,8 @@ This entry supersedes the preceding push instruction.
   `460db92eb9a8457b840aa0ddd7aef1b5ebb91c43`. Local HEAD before this batch is
   `5aa718381f60d020c99cce2145daf9704fa99bda`, with its handoff checkpoint
   already committed locally. SC-002 source/test/matrix commit
-  `fcb5fbff4927e8f7b6733cc62ac48765348de17b` is now local; this Handoff update
-  remains uncommitted. Local HEAD is `fcb5fbf`, two commits ahead of remote.
-  No push has been made.
+  `fcb5fbff4927e8f7b6733cc62ac48765348de17b` and the handoff checkpoint are
+  local. Local HEAD is three commits ahead of remote; no push has been made.
 - Core run `43654085363` is still in progress on the exact remote head
   `460db92`; Go 1.27 Test and Go 1.26 Test/Browser/Vet have passed, while Go
   1.26 Race and ARM64 were still pending at last check. Companion Core
