@@ -1610,3 +1610,21 @@ lock. API tests cover two editor scopes, persisted Cue/action identity across
 Undo/Redo, Route-reference conflict and no Snapshot publication. The feature
 is in the staged candidate path only; production ACL assembly and activation
 remain unchanged.
+
+## SC-024 continuation · 2026-11-14 · independent SHOW runtime grants
+
+An HTTP-level qualification regression now composes the real Project route
+authorization with a simulated Runtime Control engine and simulated
+Emergency Blackout callback. On an active SHOW session, `project.view` plus
+`show.stop` and `show.blackout.engage` does not allow GO or dispatch an Action.
+`show.go` alone permits one GO, but does not permit STOP or Emergency Blackout.
+Replacing that grant with `show.blackout.engage` alone permits the simulated
+Blackout and latches the SHOW safety state. This exercises the endpoint,
+runtime-intent check and final dispatch authority path; it makes no physical
+output call.
+
+`TestQualifiedShowGOStopAndBlackoutUseIndependentGrants` passes normally and
+under Race. `go vet ./internal/httpapi` and `git diff --check` pass. The test
+uses only temporary SQLite, an in-process test executor and a local safety
+callback. It qualifies the staged route assembly only; Production ACL remains
+disabled and the production Hub assembler is unchanged.
