@@ -1775,3 +1775,24 @@ This entry supersedes the preceding push instruction.
   description, then wait for every exact-head workflow before more changes.
   Full refresh tail jitter/CPU measurement under sustained load and isolated
   Pi 4 qualification remain open. No production or real-device operations.
+
+## Resume update — 2026-11-14 08:55 UTC · Linux default syscall pipe test
+
+- Remote head is `11309b63ede84abcea2eca4b99f71fc0e57e79c6`; local commits
+  `834c051` and `f1287a0` add a Linux-only isolated-pipe regression and matrix
+  note. The worktree is clean; keep this follow-up local until Core
+  `43577820286` on `11309b6` completes.
+- The new Linux test exercises the public `LinuxPort.WritePacket` default
+  `unix.Write` path with an isolated nonblocking pipe, checks the exact 518
+  frame bytes, verifies `POLLOUT`, then closes the pipe reader and checks the
+  poll fault event. It never discovers or opens USB hardware. Local package
+  tests, Race, Vet, Linux ARM64/AMD64 test-binary builds and ARM64 Vet passed;
+  the macOS host cannot execute the Linux-tagged test itself.
+- On pushed head `11309b6`, Core Go 1.27 passed, Core Go 1.26 Test was still
+  running at this checkpoint, Companion `43577820339` passed both Companion
+  jobs, and Camera Relay `43577820216` passed. The pipe test is not in those
+  runs and requires next-head Linux CI execution.
+- Next: wait for exact-head Core on `11309b6`; if green, push the two local
+  pipe-test commits normally to PR #534 and wait for exact-head CI before
+  another push. Pi performance remains unqualified; do not run workloads on
+  the production-like Pi alias or touch production/real outputs.
