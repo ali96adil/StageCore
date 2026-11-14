@@ -3008,3 +3008,23 @@ This entry supersedes the preceding push instruction.
   finish. First action after resuming is inspect those results and exact PR
   head; if green, continue the SC-024 route-policy audit and do not re-run
   already qualified Mac performance measurements.
+
+## Resume update — 2026-11-14 19:46 UTC · match-count revoke regression
+
+- Tightened `TestScopedProjectFilesRechecksGrantAtResponseDelivery` to assert
+  that the new `match_count`, like filenames and whole-Project aggregates, is
+  absent after either grant or browser-session revocation. Updated the SC-023
+  evidence matrix. The focused HTTP test passed normally and under Race.
+- The `569247e` CI is still active on Core `43633596721`; Companion
+  `43633596728` and Camera Relay `43633596765` have completed green. Do not push
+  until Core also completes successfully.
+- Local HEAD before this checkpoint entry is
+  `d27fcf67a2b93df1f2570a4e2f2392ffe51f2fa4`, two commits ahead of the clean
+  origin/PR #534 head `569247ed8090f42a54b833d02608917b188a75ff`; the two commits
+  are `fdca32d` (push-state checkpoint) and `d27fcf6` (revocation regression).
+  The worktree is clean before committing this entry.
+- Next: inspect Core run `43633596721`, then recheck local/remote/PR state. If
+  green, normally push the local checkpoint/test commits, wait for new exact-
+  head CI, and continue the SC-024 route-policy review. Production ACL remains
+  disabled; Pi 4 qualification remains unavailable at the unchanged failed
+  isolated SSH handshake.
