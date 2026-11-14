@@ -3028,3 +3028,18 @@ This entry supersedes the preceding push instruction.
   head CI, and continue the SC-024 route-policy review. Production ACL remains
   disabled; Pi 4 qualification remains unavailable at the unchanged failed
   isolated SSH handshake.
+
+## Resume update — 2026-11-14 19:49 UTC · search-response revocation case
+
+- Extended the revocation-at-response regression to call the actual filtered
+  `/files?q=private` route for both live grant removal and browser-session
+  revocation. The response must suppress the matching filename, `match_count`,
+  project totals and byte totals. The test passes normally and under Race.
+- Committed as `f2f3f59` (`test(project-files): fence revocation during
+  search`). Local HEAD before this entry is
+  `f2f3f593052009b3427f077dad39ee128e6e0dd7`, four commits ahead of
+  clean origin/PR `569247e`; the earlier three local commits are `fdca32d`,
+  `d27fcf6`, and `42bb90c`. Worktree is clean before committing this update.
+- Core run `43633596721` on `569247e` remains in Go 1.26 full Race; Go 1.27,
+  Companion `43633596728`, and Relay `43633596765` are green. Do not push until
+  the exact-head Core run completes. Then recheck PR/remote and push normally.
