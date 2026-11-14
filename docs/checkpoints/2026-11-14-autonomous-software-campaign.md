@@ -3624,6 +3624,47 @@ This entry supersedes the preceding push instruction.
 - Safety remains unchanged: no production service/data/Vault, real-device
   commands, firmware, production ACL activation, force push, or merge.
 
+## Resume update — 2026-11-14 23:15 UTC · Companion transport qualification
+
+- Local HEAD is `6e170f5ac019e6f490a86618862f00938f9b3b37`; remote and OPEN/
+  Draft PR #534 remain at `c52a453c2d838935e1f7601fa748cec2e43ec725`. Three
+  local commits are ahead of remote: `0b57512` (browser-repair checkpoint),
+  `dca2ef6` (project-scoped Companion Hub transport events), and `6e170f5`
+  (SC-015 matrix update). Handoff refresh is being committed separately.
+- Do not push yet. Exact-head Core run `43650575318` is still in progress on
+  remote `c52a453`: Go 1.27 Test/Vet passed; Go 1.26 Test, Browser Cue
+  Delivery, and Vet passed; Go 1.26 Race is running and ARM64 is pending.
+  Companion Core `43650575320` and Camera Relay `43650575301` passed. Recheck
+  exact PR/branch/workflow heads after Core finishes before normal push.
+- Companion transport events are emitted only from authenticated Hub runtime
+  sockets and scoped from the current Machine Role assignment. They record
+  connection generation and fixed disconnect reasons for socket close, Hub
+  restart, session revocation, replacement, and Project-scope change. Session
+  Memory reads Stage Device and Companion transitions through separate partial
+  Project/time indexes (Migration 64 for Companion), allowlists the displayed
+  payload, and labels socket evidence without implying app readiness, adapter
+  health, ACK, or physical output. Tests cover reconnect, stale replacement,
+  Project reassignment, revocation, Hub close, wrong-source/project filtering,
+  query indexes, time scoping, the 500-event cap, UI filtering/comparison, and
+  export privacy.
+- Final local verification: normal tests passed for Companion Channel,
+  Session Memory, Store and DB; focused Race passed for all four Companion
+  lifecycle scenarios and the full Companion Channel/Session Memory Race run
+  passed before the final revocation assertion; Go vet passed across affected
+  packages and HTTP API; the seven-test Chrome Browser Cue Delivery gate passed
+  locally on Go 1.27.1/macOS ARM64; Session Memory Node tests passed 7/7;
+  JavaScript syntax and `git diff --check` passed. An initial local package run
+  found two schema-version assertions fixed from 63 to 64; the final package
+  run passed.
+- SC-015 remains Partial for Companion application state, adapter endpoint
+  health and physical output confirmation. Next after CI: push this completed
+  batch normally to PR #534, wait for new exact-head workflows, then continue
+  the matrix audit with Pi ARM64 performance access and the highest remaining
+  software-only integration gap. Earlier Mac/Pi measurements are not repeated
+  without a code or environment change that justifies it.
+- Safety remains unchanged: no production service/data/Vault, real-device
+  commands, firmware, production ACL activation, force push, or merge.
+
 ## Resume update — 2026-11-14 22:54 UTC · Core browser gate repair
 
 - PR #534 and `origin/integration/stagecore-rc` remain at
