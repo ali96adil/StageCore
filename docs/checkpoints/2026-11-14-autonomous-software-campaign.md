@@ -2425,3 +2425,23 @@ This entry supersedes the preceding push instruction.
   audio stays disabled, returns its explicit unavailable error, and creates
   no socket/runtime directory. Then continue to the next reproducible software
   gap while Pi access and physical audio acceptance remain separate.
+
+## Resume update — 2026-11-14 16:41 UTC · StageAudio missing-binary fallback
+
+- Added `TestMPVBackendMissingBinaryStaysDisabledWithoutRuntimeArtifacts`:
+  with a temporary empty PATH, `NewMPVBackend` returns the explicit
+  “audio stays disabled” error and creates no child runtime/socket directory.
+  Matrix row SC-021 now records the host process lifecycle and no-mpv contracts
+  while keeping actual mpv/Pi/audio qualification open.
+- Complete StageAudio and sidecar package tests passed normally and under Race;
+  `go vet ./internal/stageaudio ./cmd/stagecore-audio`, gofmt, and diff checks
+  passed. No host audio service, Bluetooth, or hardware was started.
+- Local commit `67f527626b0f61c906dcbc92caa164874c53aa6d`; local is four commits
+  ahead of remote `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3`, with a clean
+  worktree. Core run `43616028757` at remote `e9ece08` is still in Go 1.26 Race;
+  all other exact-head Core/Companion/Camera Relay checks are green. Wait for
+  that final Core job, then recheck the remote/PR SHA and push the accumulated
+  small batches normally.
+- Next independent software gap remains to be selected from the matrix after
+  the exact-head CI gate; do not infer Pi ARM64 performance or real audio
+  behavior from these host tests. Production ACL stays disabled.
