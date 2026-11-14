@@ -5,13 +5,13 @@ commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
 StageLaser #56/#57, and StageCore #503–#508/#514–#516 remain open at the
 listed heads; the exact-head CI runs listed below pass. StageLaser #57 is open
 but not marked draft. StageCore Draft PR #534 is at pushed head
-`9d5b775aa94875591d9ff7964e3eb8057f775c9b` on `integration/stagecore-rc`.
-Core run `43551276214` passed Go 1.26/1.27 Test, Browser Cue Delivery, Vet,
-Race and Linux ARM64 product builds.
-Companion run `43551276183` (Swift Core and full macOS replacement/media
-acceptance) and Camera Relay run `43551276104` passed. The local follow-on
-`d457504` has passed focused local checks and is ready for a normal
-fast-forward push to PR #534. Passing CI proves
+`11309b63ede84abcea2eca4b99f71fc0e57e79c6` on `integration/stagecore-rc`.
+Core run `43577820286` passed Go 1.26/1.27 Test, Browser Cue Delivery, Vet,
+Race and Linux ARM64 product builds (Go 1.26 completed in 32m40s).
+Companion run `43577820339` (Swift Core and full macOS replacement/media
+acceptance) and Camera Relay run `43577820216` passed. Local follow-on commits
+`834c051`, `f1287a0`, `f2fce09`, `677d18d`, and `cab57f9` are ready for a
+normal fast-forward push to PR #534 after this gate. Passing CI proves
 only the listed software checks, not installed-app or physical output
 qualification.
 

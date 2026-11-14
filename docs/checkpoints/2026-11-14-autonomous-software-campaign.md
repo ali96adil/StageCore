@@ -1830,3 +1830,38 @@ This entry supersedes the preceding push instruction.
   commits normally to the same branch/PR #534 and follow all exact-head CI.
   Diagnose any failure before pushing. Preserve the Pi and production safety
   boundary.
+
+## CI gate update — 2026-11-14 09:25 UTC · previous head passed
+
+- Core CI `43577820286` completed successfully on exact PR head
+  `11309b63ede84abcea2eca4b99f71fc0e57e79c6`. Go 1.27 passed in 2m08s; Go
+  1.26 passed Test, Browser Cue Delivery, Vet, Race, and Linux ARM64 product
+  builds, completing in 32m40s. `gh run view` reports overall `completed`,
+  `success`; the PR still points at this same SHA and remains OPEN/DRAFT.
+- Companion `43577820339` and Camera Relay `43577820216` also passed on
+  `11309b6`. Related current PR checks were re-read: TabletPlayer #36
+  `91613da` pass (`42719885664`); ESP32 DMX #39 `3ad7749` six checks pass
+  (`42759555665`); ESP32 Camera #20 `455b066` pass (`42761096513`); StageLaser
+  #56 `b14a578` pass (`42765890415`); and StageLaser #57 `c4ff10b` pass
+  (`38054411190`). Those PR heads were not changed.
+- Before this checkpoint update, local branch head was
+  `cab57f9aae74c41401b057ba83bb2908898fb142`, five commits ahead of remote:
+  `834c051`, `f1287a0`, `f2fce09`, `677d18d`, and checkpoint `cab57f9`. This
+  gate/matrix update is the sixth local commit. The pending pipe regression
+  also checks post-close quarantine and
+  idempotent Close. Local package/Race/Vet and ARM64/AMD64 test-binary build
+  checks passed; exact Linux CI is still needed to execute its Linux-tagged
+  tests.
+- The SC-025 matrix now records exact current component heads and the prior
+  Core/Companion/Relay run IDs. The next authorized operation is a normal
+  fast-forward push of these six local commits to the existing branch/PR
+  #534; do not force-push. Then verify remote SHA and await exact-head CI
+  before another source batch.
+- Pi 4 full-engine, burst, sustained-load, schedule-tail-jitter and service
+  CPU/RAM performance remain unqualified. The isolated RC unit shares a host
+  on which production Hub/Camera Relay services were confirmed active, while
+  the qualification SSH alias still fails before session establishment. No
+  Pi load, real output, firmware action, production/data/Vault operation, or
+  production ACL enablement occurred. Keep production ACL disabled and treat
+  Pi performance and any physical-output acceptance as separate pending
+  gates.
