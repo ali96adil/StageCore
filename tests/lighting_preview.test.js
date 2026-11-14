@@ -278,3 +278,141 @@ test("Cue Inspector dry-run plans saved actions and diagnoses invalid links with
   assert.match(preview.cueActionExecutionModeText("SEQUENTIAL"), /earlier parallel Actions may continue/);
   assert.match(preview.cueActionExecutionModeText("unknown"), /Unsupported execution mode: unknown/);
 });
+
+test("Cue Inspector models linked Mixed Cue timing, barriers and assumed latency locally", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = source.indexOf("  function cueActionExecutionModeText(");
+  const end = source.indexOf("  function cueInspector(", start);
+  const context = {
+    tr: (_ar, en) => en,
+    cuePolicyObject: (cue) => cue.execution_policy || {},
+    cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
+    api() { assert.fail("local timing simulation contacted an API"); },
+  };
+  const {planCueInspection, cueInspectionTimeline} = vm.runInNewContext(
+    source.slice(start, end) + "\n({planCueInspection, cueInspectionTimeline})", context
+  );
+  const root = {
+    cue_id: "root", execution_policy: {start_delay_ms: 100, linked_cue_ids: ["child"]},
+    actions: [
+      {action_id:"a", order_index:1, execution_mode:"SEQUENTIAL", timeout_policy:{start_delay_ms:50,timeout_ms:500}},
+      {action_id:"b", order_index:2, execution_mode:"PARALLEL", timeout_policy:{start_delay_ms:80,timeout_ms:500}},
+      {action_id:"c", order_index:3, execution_mode:"PARALLEL_BARRIER", timeout_policy:{start_delay_ms:20,timeout_ms:500}},
+      {action_id:"disabled", order_index:4, enabled:false, execution_mode:"SEQUENTIAL", timeout_policy:{start_delay_ms:999}},
+      {action_id:"e", order_index:5, execution_mode:"SEQUENTIAL", timeout_policy:{start_delay_ms:10,timeout_ms:500}},
+    ],
+  };
+  const child = {
+    cue_id:"child", execution_policy:{start_delay_ms:300},
+    actions:[{action_id:"child-a", order_index:1, execution_mode:"SEQUENTIAL", timeout_policy:{start_delay_ms:10}}],
+  };
+  const cues = [root, child];
+  const plan = planCueInspection(root, cues);
+  assert.equal(plan.linkedCuesConcurrent, true);
+  const rows = cueInspectionTimeline(plan, {latencyMS:200});
+  const byID = new Map(rows.map((row) => [row.action.action_id, row]));
+  assert.equal(byID.get("a").dispatchMS, 150);
+  assert.equal(byID.get("b").dispatchMS, 430, "PARALLEL starts after the prior SEQUENTIAL completion and its own delay");
+  assert.equal(byID.get("c").dispatchMS, 370, "barrier action launches alongside earlier pending work");
+  assert.deepEqual([...byID.get("e").waitFor], ["b", "c"]);
+  assert.equal(byID.get("e").dispatchMS, 640, "later actions wait for all work at the barrier");
+  assert.equal(byID.get("disabled").outcome, "SKIPPED_DISABLED");
+  assert.equal(byID.get("child-a").dispatchMS, 310, "linked Cue delay is measured independently from GO");
+  const lowerBound = cueInspectionTimeline(plan, {latencyMS:0});
+  assert.equal(lowerBound.find((row) => row.action.action_id === "e").dispatchMS, 240);
+  assert.match(source, /Local simulation only; no commands are sent/);
+});
+
+test("Cue Inspector fault scenarios identify affected outputs and timeout reason codes", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = source.indexOf("  function cueActionExecutionModeText(");
+  const end = source.indexOf("  function cueInspector(", start);
+  const context = {
+    tr: (_ar, en) => en,
+    cuePolicyObject: (cue) => cue.execution_policy || {},
+    cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
+    api() { assert.fail("fault scenario contacted an API"); },
+  };
+  const {planCueInspection, cueInspectionTimeline} = vm.runInNewContext(
+    source.slice(start, end) + "\n({planCueInspection, cueInspectionTimeline})", context
+  );
+  const cue = {
+    cue_id:"mixed", actions:[
+      {action_id:"midi", order_index:1, target_ref:"LIVE", capability_key:"midi.send", execution_mode:"SEQUENTIAL"},
+      {action_id:"light", order_index:2, target_ref:"FRONT", capability_key:"lighting.channels.fade", execution_mode:"SEQUENTIAL", parameters:{fade_ms:1200}, timeout_policy:{timeout_ms:100}},
+      {action_id:"unknown", order_index:3, target_ref:"UNMAPPED", capability_key:"osc.send", execution_mode:"SEQUENTIAL"},
+    ],
+  };
+  const plan = planCueInspection(cue, [cue]);
+  const targets = [
+    {logical_name:"LIVE", logical_type:"MACHINE_ROLE"},
+    {logical_name:"FRONT", logical_type:"LIGHTING"},
+  ];
+  const offline = cueInspectionTimeline(plan, {scenario:"offline-target",offlineTarget:"LIVE",targets});
+  assert.equal(offline[0].outcome, "SIMULATED_BLOCKED");
+  assert.equal(offline[0].reason, "VIRTUAL_TARGET_OFFLINE");
+  const companion = cueInspectionTimeline(plan, {scenario:"missing-companion",targets});
+  assert.equal(companion[0].reason, "COMPANION_MISSING_FOR_MACHINE_ROLE");
+  const missingMetadata = cueInspectionTimeline(plan, {scenario:"missing-companion",targets:[]});
+  assert.equal(missingMetadata[0].reason, "TARGET_METADATA_UNAVAILABLE_COMPANION_IMPACT_UNKNOWN");
+  const dmx = cueInspectionTimeline(plan, {scenario:"missing-dmx",targets});
+  assert.equal(dmx[1].outcome, "SIMULATED_BLOCKED");
+  assert.equal(dmx[1].reason, "DMX_NODE_MISSING");
+  assert.equal(dmx[1].fadeMS, 1200);
+  const timeout = cueInspectionTimeline(plan, {latencyMS:250,targets});
+  assert.equal(timeout[1].outcome, "SIMULATED_TIMEOUT");
+  assert.equal(timeout[1].reason, "ASSUMED_LATENCY_EXCEEDS_ACTION_TIMEOUT");
+  assert.equal(timeout[1].completionMS, 100, "timeout bounds the simulated wait");
+});
+
+test("Cue Inspector failure scenarios follow fail-soft, strict and barrier behavior", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = source.indexOf("  function cueActionExecutionModeText(");
+  const end = source.indexOf("  function cueInspector(", start);
+  const context = {
+    tr: (_ar, en) => en,
+    cuePolicyObject: (cue) => cue.execution_policy || {},
+    cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
+    api() { assert.fail("failure simulation contacted an API"); },
+  };
+  const {planCueInspection, cueInspectionTimeline} = vm.runInNewContext(
+    source.slice(start, end) + "\n({planCueInspection, cueInspectionTimeline})", context
+  );
+  const cue = {
+    cue_id:"failure-path", actions:[
+      {action_id:"offline-parallel", order_index:1, target_ref:"VIRTUAL-A", execution_mode:"PARALLEL"},
+      {action_id:"continues", order_index:2, execution_mode:"SEQUENTIAL"},
+      {action_id:"join", order_index:3, execution_mode:"PARALLEL_BARRIER"},
+      {action_id:"after-join", order_index:4, execution_mode:"SEQUENTIAL"},
+    ],
+  };
+  const plan = planCueInspection(cue, [cue]);
+  const rows = cueInspectionTimeline(plan, {scenario:"offline-target",offlineTarget:"VIRTUAL-A"});
+  assert.equal(rows[0].outcome, "SIMULATED_BLOCKED");
+  assert.equal(rows[1].outcome, "PLANNED_ONLY", "async failures are not known before a barrier observes them");
+  assert.equal(rows[3].outcome, "PLANNED_ONLY", "fail-soft errors continue after the barrier");
+  const strictParallel = {
+    cue_id:"strict-parallel", actions:[
+      {action_id:"strict-async", order_index:1, target_ref:"VIRTUAL-A", execution_mode:"PARALLEL", error_policy:{on_error:"FAIL_CUE"}},
+      {action_id:"strict-join", order_index:2, execution_mode:"PARALLEL_BARRIER"},
+      {action_id:"after-strict-join", order_index:3, execution_mode:"SEQUENTIAL"},
+    ],
+  };
+  const strictParallelRows = cueInspectionTimeline(planCueInspection(strictParallel, [strictParallel]), {
+    scenario:"offline-target", offlineTarget:"VIRTUAL-A",
+  });
+  assert.equal(strictParallelRows[2].outcome, "SIMULATED_NOT_REACHED");
+  assert.equal(strictParallelRows[2].dispatchMS, null);
+  const strict = {
+    cue_id:"strict", actions:[
+      {action_id:"strict-failure", order_index:1, target_ref:"VIRTUAL-A", execution_mode:"SEQUENTIAL", error_policy:{on_error:"FAIL_CUE"}},
+      {action_id:"strict-next", order_index:2, execution_mode:"SEQUENTIAL"},
+    ],
+  };
+  const strictRows = cueInspectionTimeline(planCueInspection(strict, [strict]), {
+    scenario:"offline-target", offlineTarget:"VIRTUAL-A",
+  });
+  assert.equal(strictRows[0].outcome, "SIMULATED_BLOCKED");
+  assert.equal(strictRows[1].outcome, "SIMULATED_NOT_REACHED");
+  assert.match(strictRows[1].reason, /ACTION_POLICY_FAIL_CUE:strict-failure/);
+});

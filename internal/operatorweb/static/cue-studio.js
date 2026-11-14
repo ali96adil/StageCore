@@ -1280,6 +1280,182 @@
     return { group, issues, parent, linkedCuesConcurrent: group.length > 1 };
   }
 
+  function cueInspectionTarget(targets, targetRef) {
+    return (Array.isArray(targets) ? targets : []).find((target) =>
+      target.logical_name === targetRef || target.target_ref === targetRef || target.alias_id === targetRef) || null;
+  }
+
+  function cueInspectionParameters(action) {
+    const value = action?.parameters;
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    if (typeof value !== "string") return {};
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // This is a local, hypothetical dispatch timeline. With no latency
+  // assumption, offsets are lower bounds because capability completion time
+  // is unknown. It deliberately never calls an execution API.
+  function cueInspectionTimeline(plan, options = {}) {
+    const targets = Array.isArray(options.targets) ? options.targets : [];
+    const scenario = options.scenario || "baseline";
+    const offlineTarget = String(options.offlineTarget || "");
+    const latencyMS = Math.max(0, Number(options.latencyMS) || 0);
+    const rows = [];
+
+    for (const member of plan.group || []) {
+      let cursorMS = 0;
+      let gate = [];
+      let pending = [];
+      let blockedReason = "";
+      const actions = [...(member.actions || [])].sort((a, b) => a.order_index - b.order_index);
+      for (const action of actions) {
+        const mode = String(action.execution_mode || "SEQUENTIAL").toUpperCase();
+        const actionDelayMS = Math.max(0, Number(action.timeout_policy?.start_delay_ms) || 0);
+        const waitFor = [...gate];
+        const dispatchMS = cursorMS + actionDelayMS;
+        const timeoutMS = Number(action.timeout_policy?.timeout_ms) || 0;
+        const target = cueInspectionTarget(targets, action.target_ref);
+        const logicalType = String(target?.logical_type || "").toUpperCase();
+        const capability = String(action.capability_key || "").toLowerCase();
+        const onError = String(action.error_policy?.on_error || "CONTINUE").toUpperCase();
+        let outcome = action.enabled === false ? "SKIPPED_DISABLED"
+          : blockedReason ? "SIMULATED_NOT_REACHED" : "PLANNED_ONLY";
+        let reason = action.enabled === false ? "ACTION_DISABLED" : blockedReason;
+
+        if (action.enabled !== false && !blockedReason) {
+          if (scenario === "offline-target" && action.target_ref && action.target_ref === offlineTarget) {
+            outcome = "SIMULATED_BLOCKED";
+            reason = "VIRTUAL_TARGET_OFFLINE";
+          } else if (scenario === "missing-companion" && logicalType === "MACHINE_ROLE") {
+            outcome = "SIMULATED_BLOCKED";
+            reason = "COMPANION_MISSING_FOR_MACHINE_ROLE";
+          } else if (scenario === "missing-companion" && !target) {
+            outcome = "UNVERIFIED_TARGET";
+            reason = "TARGET_METADATA_UNAVAILABLE_COMPANION_IMPACT_UNKNOWN";
+          } else if (scenario === "missing-dmx" &&
+              (capability.startsWith("lighting.") || logicalType.includes("LIGHTING") || logicalType.includes("DMX"))) {
+            outcome = "SIMULATED_BLOCKED";
+            reason = "DMX_NODE_MISSING";
+          } else if (action.target_ref && !target) {
+            outcome = "UNVERIFIED_TARGET";
+            reason = "TARGET_MAPPING_NOT_CONFIRMED_IN_LOADED_CONFIGURATION";
+          }
+          if (outcome === "PLANNED_ONLY" && latencyMS > 0 && timeoutMS > 0 && latencyMS > timeoutMS) {
+            outcome = "SIMULATED_TIMEOUT";
+            reason = "ASSUMED_LATENCY_EXCEEDS_ACTION_TIMEOUT";
+          }
+        }
+
+        const parameters = cueInspectionParameters(action);
+        const rawFade = Number(parameters.fade_ms);
+        const fadeMS = Number.isFinite(rawFade) && rawFade >= 0 ? rawFade : null;
+        const row = {
+          cueID: member.cue.cue_id,
+          cueDelayMS: Number(member.delay) || 0,
+          action,
+          mode,
+          actionDelayMS,
+          timeoutMS,
+          fadeMS,
+          dispatchMS: outcome === "SIMULATED_NOT_REACHED" ? null : (Number(member.delay) || 0) + dispatchMS,
+          waitFor,
+          outcome,
+          reason,
+          latencyMS: action.enabled === false ? 0 : latencyMS,
+          completionMS: outcome === "SIMULATED_TIMEOUT" ? timeoutMS
+            : outcome === "SIMULATED_BLOCKED" || action.enabled === false ? 0 : latencyMS,
+        };
+        rows.push(row);
+        if (action.enabled === false || blockedReason) continue;
+
+        // Match Cue Engine scheduling: PARALLEL dispatches in the background;
+        // SEQUENTIAL waits for its own completion; PARALLEL_BARRIER joins all
+        // pending Actions, including itself, before later Actions are started.
+        if (mode === "PARALLEL") {
+          pending.push({
+            id: action.action_id,
+            completionMS: dispatchMS + row.completionMS,
+            fatal: (row.outcome === "SIMULATED_BLOCKED" || row.outcome === "SIMULATED_TIMEOUT") && onError !== "CONTINUE",
+          });
+        } else if (mode === "SEQUENTIAL") {
+          cursorMS = dispatchMS + row.completionMS;
+          gate = action.action_id ? [action.action_id] : [];
+          if ((row.outcome === "SIMULATED_BLOCKED" || row.outcome === "SIMULATED_TIMEOUT") && onError !== "CONTINUE") {
+            blockedReason = "ACTION_POLICY_FAIL_CUE:" + (action.action_id || "UNKNOWN_ACTION");
+          }
+        } else if (mode === "PARALLEL_BARRIER") {
+          pending.push({
+            id: action.action_id,
+            completionMS: dispatchMS + row.completionMS,
+            fatal: (row.outcome === "SIMULATED_BLOCKED" || row.outcome === "SIMULATED_TIMEOUT") && onError !== "CONTINUE",
+          });
+          cursorMS = Math.max(cursorMS, ...pending.map((item) => item.completionMS));
+          gate = pending.map((item) => item.id).filter(Boolean);
+          if (pending.some((item) => item.fatal)) blockedReason = "PARALLEL_BARRIER_FATAL_ACTION_FAILURE";
+          pending = [];
+        } else {
+          row.outcome = "PLAN_UNSUPPORTED";
+          row.reason = "UNSUPPORTED_EXECUTION_MODE";
+          blockedReason = "PREVIOUS_UNSUPPORTED_EXECUTION_MODE:" + (action.action_id || "UNKNOWN_ACTION");
+        }
+      }
+    }
+    return rows;
+  }
+
+  function renderCueInspectionTimeline(parent, rows, options) {
+    const line = (tag, value, className = "") => {
+      const node = document.createElement(tag);
+      node.textContent = value;
+      if (className) node.className = className;
+      parent.append(node);
+      return node;
+    };
+    line("p", tr(
+      "محاكاة محلية فقط؛ لا تُرسل أوامر. الزمن حد أدنى مبني على التأخيرات المحفوظة، واكتمال الجهاز غير معلوم.",
+      "Local simulation only; no commands are sent. Timing is a lower bound from authored delays; device completion is unknown."
+    ), "muted");
+    line("p", tr(
+      "المعاينة لا تثبت إرسال الأمر أو إقرار التطبيق أو ملاحظة خرج فعلي.",
+      "This preview does not establish command dispatch, application acknowledgment, or physically observed output."
+    ), "muted");
+    if (options.latencyMS > 0) line("p", tr(
+      "زمن افتراضي مفترض لكل إجراء: ", "Assumed virtual latency per Action: "
+    ) + options.latencyMS + " ms · " + tr("ليس قياساً للجهاز.", "not measured from a device."), "muted");
+    const list = document.createElement("ol");
+    list.className = "cue-inspection-timeline";
+    for (const row of rows) {
+      const time = row.dispatchMS === null
+        ? tr("لن يصل إليه المسار: ", "Not reached in this scenario: ") + row.reason
+        : row.waitFor.length
+        ? tr("بعد اكتمال ", "after completion of ") + row.waitFor.join(", ") + " · ≥ GO + " + row.dispatchMS + " ms"
+        : "≥ GO + " + row.dispatchMS + " ms";
+      const values = [
+        row.cueID,
+        row.action.action_id || tr("إجراء بلا معرّف", "Action without ID"),
+        row.action.capability_key || tr("قدرة غير معروفة", "Unknown capability"),
+        row.action.target_ref || tr("هدف غير محدد", "No target selected"),
+        time,
+        cueActionExecutionModeText(row.mode),
+        row.fadeMS === null ? "" : tr("Fade ", "Fade ") + row.fadeMS + " ms",
+        row.timeoutMS ? tr("مهلة ", "Timeout ") + row.timeoutMS + " ms" : "",
+        row.latencyMS ? tr("زمن افتراضي ", "Assumed latency ") + row.latencyMS + " ms" : "",
+        row.outcome,
+        row.reason,
+      ].filter(Boolean).join(" · ");
+      const item = document.createElement("li");
+      item.textContent = values;
+      list.append(item);
+    }
+    parent.append(list);
+    if (!rows.length) line("p", tr("لا توجد إجراءات في هذه السلسلة.", "This Cue group contains no Actions."));
+  }
+
   function cueInspector(cue, cues, projectID, findings) {
     const details = document.createElement("details");
     const title = document.createElement("summary");
@@ -1316,7 +1492,7 @@
           const errorPolicy = action.error_policy || {};
           line(list, "li", [action.capability_key, action.target_ref,
             cueActionExecutionModeText(action.execution_mode),
-            delay ? tr("تأخير الإجراء من بدء الكيو ", "Action delay from Cue start ") + delay + " ms" : "",
+            delay ? tr("انتظار الإجراء قبل الإرسال ", "Action delay before dispatch ") + delay + " ms" : "",
             timeout ? tr("مهلة ", "Timeout ") + timeout + " ms" : "",
             errorPolicy.require_application_ack ? tr("يتطلب إقرار التطبيق", "Requires application ACK") : "",
             errorPolicy.retry_before_dispatch ? tr("إعادة واحدة قبل الإرسال فقط", "One retry before dispatch only") : "",
@@ -1338,6 +1514,76 @@
           line(details, "p", [finding.severity, finding.code, finding.message].filter(Boolean).join(" · "));
         }
       }
+      const scenarioPanel = document.createElement("section");
+      scenarioPanel.className = "cue-inspection-scenario";
+      const scenarioTitle = document.createElement("strong");
+      scenarioTitle.textContent = tr("محاكاة مسار المسودة", "Draft path simulation");
+      scenarioPanel.append(scenarioTitle);
+      const scenarioControls = document.createElement("div");
+      scenarioControls.className = "cue-inspection-controls";
+      const scenarioSelect = document.createElement("select");
+      scenarioSelect.setAttribute("aria-label", tr("سيناريو افتراضي", "Virtual scenario"));
+      [
+        ["baseline", tr("المسار الأساسي", "Baseline path")],
+        ["offline-target", tr("هدف افتراضي غير متصل", "Virtual target offline")],
+        ["missing-companion", tr("Companion مفقود", "Companion missing")],
+        ["missing-dmx", tr("عقدة DMX مفقودة", "DMX node missing")],
+      ].forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        scenarioSelect.append(option);
+      });
+      scenarioControls.append(scenarioSelect);
+      const targetRefs = [...new Set(plan.group.flatMap((member) => member.actions || [])
+        .map((action) => String(action.target_ref || "").trim()).filter(Boolean))];
+      const targetSelect = document.createElement("select");
+      targetSelect.setAttribute("aria-label", tr("الهدف الافتراضي غير المتصل", "Virtual offline target"));
+      const targetPlaceholder = document.createElement("option");
+      targetPlaceholder.value = "";
+      targetPlaceholder.textContent = tr("اختر هدفاً", "Choose a target");
+      targetSelect.append(targetPlaceholder);
+      targetRefs.forEach((ref) => {
+        const option = document.createElement("option");
+        option.value = ref;
+        option.textContent = ref;
+        targetSelect.append(option);
+      });
+      targetSelect.hidden = true;
+      scenarioControls.append(targetSelect);
+      const latencySelect = document.createElement("select");
+      latencySelect.setAttribute("aria-label", tr("زمن المحاكاة الافتراضي", "Assumed virtual latency"));
+      [[0, "0 ms"], [100, "100 ms"], [250, "250 ms"], [1000, "1000 ms"]].forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = String(value);
+        option.textContent = label;
+        latencySelect.append(option);
+      });
+      scenarioControls.append(latencySelect);
+      scenarioSelect.addEventListener("change", () => {
+        targetSelect.hidden = scenarioSelect.value !== "offline-target";
+      });
+      const previewButton = document.createElement("button");
+      previewButton.type = "button";
+      previewButton.className = "button ghost";
+      previewButton.textContent = tr("اعرض المحاكاة", "Preview simulation");
+      scenarioControls.append(previewButton);
+      const simulationResult = document.createElement("div");
+      simulationResult.className = "cue-inspection-result";
+      simulationResult.setAttribute("role", "status");
+      previewButton.addEventListener("click", () => {
+        simulationResult.replaceChildren();
+        const options = {
+          scenario: scenarioSelect.value,
+          offlineTarget: targetSelect.value,
+          latencyMS: Number(latencySelect.value),
+          targets: state.f002Targets || [],
+        };
+        const rows = cueInspectionTimeline(plan, options);
+        renderCueInspectionTimeline(simulationResult, rows, options);
+      });
+      scenarioPanel.append(scenarioControls, simulationResult);
+      details.append(scenarioPanel);
       const button = line(details, "button", tr("افحص جاهزية النسخة المنشورة", "Check published snapshot readiness"));
       button.type = "button";
       button.className = "button ghost";
