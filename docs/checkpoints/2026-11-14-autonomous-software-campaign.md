@@ -624,3 +624,80 @@ This entry supersedes the preceding push instruction.
   and in-flight revocation audit; keep ACL production-disabled. Preserve the
   no-production/no-real-device boundaries, and continue keeping Pi ARM64
   performance and real-browser visual/touch acceptance open.
+
+## Resume update — 2026-11-14 02:45 UTC
+
+- Current code HEAD is `6472e27be5ced0b4d81d61bf817b7bfd5aa1411c` on
+  `integration/stagecore-rc`; pushed remote is still
+  `447849f43eaf89cd501a6bd1b345195a61725312`. Seven local code commits and the
+  checkpoint commit are ahead. The worktree has only the matrix update in
+  progress. Recheck both refs before a normal push; no force push or branch/PR
+  change is allowed.
+- Core run `43545195433` on exact pushed HEAD `447849f` remains in progress at
+  Go 1.26 Race. Its normal Go 1.26 tests, Browser Cue Delivery, Vet and the
+  complete Go 1.27 job passed; ARM64 build has not run yet. Companion/Swift
+  `43545195409` and isolated/ARM64 `43545195451` remain green. Push must wait
+  until the Core run is complete.
+- SC-010 Issue #489 had a concrete missing acceptance item: preset rows only
+  exposed Add/Delete, with no content preview or target-availability notice.
+  The Cue Studio now has a native disclosure with the saved Action JSON and a
+  clear target-present/missing status. Missing targets remain visible and
+  editable in the Draft; the insertion path still clears `action_id` and does
+  not actuate output. A Node harness reproduced the missing preview before
+  the change and now covers both target states. The focused test is included
+  in Core CI.
+- Verification after that change: full Node UI suite 51/51; `go test
+  ./internal/operatorweb ./internal/httpapi -count=1`; focused Preflight and
+  Route/UI contract tests; JS syntax checks and `git diff --check`. The
+  combined OperatorWeb/API tests passed on this Mac. SC-011 lighting drift
+  already passed Preflight package normal/Race/Vet tests as recorded above.
+- SC-024 route review confirmed the opt-in implementation rechecks delayed
+  GO/JUMP Action authority at the dispatch boundary and has regressions for
+  grant revocation after the first simulated Action, post-operation authority
+  loss, session/project mismatch, and blackout latch preservation. This
+  narrows the remaining audit; it does not authorize the production assembly,
+  which intentionally omits the optional routes. A full route-to-policy,
+  realtime, ticket and Companion compatibility review remains required.
+- Pi qualification stays open. The only configured `stagecore-qualification`
+  alias resolves to `ai.ali96adil.com:22`, and the earlier SSH attempt failed
+  before host identity or remote execution; do not substitute an ambiguous
+  host. M3 scale data remains non-Pi evidence. No production service/data,
+  original Vault/show, device command, firmware or ACL cutover was touched.
+- First action on resume: poll `43545195433` again. When it completes, check
+  `origin/integration/stagecore-rc` is still exactly `447849f`; push the seven
+  code commits and documentation normally to existing PR #534, then follow
+  the new exact-head Core CI. Continue with SC-024 route-to-policy and realtime
+  evidence plus the next unclosed software acceptance; keep ACL disabled in
+  production and Pi/real-browser qualification boundaries explicit.
+
+## Resume update — 2026-11-14 02:46 UTC
+
+- Latest code HEAD is `dd77070aa05288939240919b51ba73aaac9434b4`. Remote remains
+  `447849f43eaf89cd501a6bd1b345195a61725312`; branch is ahead by nine total
+  commits: eight code commits plus checkpoint `030fbaf`. The matrix and this
+  note are the only uncommitted changes. Keep all history and push only a
+  normal fast-forward to existing PR #534.
+- Core run `43545195433` is still in Go 1.26 Race on exact remote HEAD
+  `447849f`; Go 1.26 normal tests, Browser Cue Delivery and Vet passed, and
+  Go 1.27, Companion/Swift and isolated/ARM64 are green. ARM64 product builds
+  remain pending. Wait for this run to finish before push.
+- SC-010 follow-on is committed in `6472e27` and `dd77070`. Preset rows now
+  show saved Action content in an accessible disclosure, identify missing vs
+  configured Project targets before insertion, and retain editable Draft
+  behavior. A red-first UI regression failed because the old list had no
+  preview. Tests confirm that adding a preset gives the Draft an empty Action
+  ID and does not mutate the stored preset object. The test is included in the
+  Core Node command; the newly expanded Node suite passed 51/51 and the focused
+  two-case suite passed again after the identity check was added.
+- Current focused evidence remains green: `go test
+  ./internal/operatorweb ./internal/httpapi -count=1`; Preflight normal/Race,
+  Vet and JavaScript syntax checks; `git diff --check`. No device output was
+  sent and no production route or data changed. The qualification alias still
+  cannot establish a remote host identity; Pi metrics remain open.
+- The matrix now reflects SC-010 preview/target/copy evidence and the narrower
+  remaining scope, SC-011 lighting drift and the eight local code commits.
+  First action on resume: poll exact-head Core run `43545195433`. If green and
+  the remote ref remains `447849f`, push eight code commits plus the two
+  documentation commits without force, then wait on CI for the pushed head.
+  Continue campaign work after CI; SC-024 remains opt-in and production ACL
+  must stay disabled.
