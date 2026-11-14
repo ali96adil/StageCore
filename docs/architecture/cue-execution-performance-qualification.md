@@ -402,10 +402,28 @@ isolated tests/ARM64 and both Swift Companion checks.
 The report, benchmarks and matrix do not imply a Pi performance pass.
 The run is complete; subsequent pushes must still wait for their exact-head CI.
 
-Remaining performance gates are Pi 4 ARM64 execution in a verified isolated
-qualification environment, plus burst/sustained Pi runs. An explicit
-read-only SSH attempt to `stagecore-qualification` failed before host identity
-was established, so do not substitute the ambiguous Pi alias or infer a Pi
-result from CI cross-builds. Continue software work while Pi access is blocked.
-Keep production services/data untouched, physical outputs simulated, and
-Production Project ACL disabled.
+The requested Pi 4 performance cases have already been measured in the tables
+above: Mixed Cues from 24 through 200 Actions, linked compound chains through
+100 Cues / 200 Actions, scheduled starts, 4/8-GO bursts, 100-Cue/200-Action
+sustained Rehearsal, and STOP/Blackout against 1/8/32 delayed Cues. The runs
+record P50/P95/P99, latency and schedule jitter, GC and allocation counts, and
+process CPU/RSS. They used the device-hidden simulator sandbox described above.
+Their source is `a90403b`; comparison with current branch HEAD `055e980`
+confirms no Cue Engine, Runtime Control, simulator, domain, or publish runtime
+source changes since that benchmark build. The separate Pi authorization
+baseline measures `ValidateCSRF` and `CheckRuntimeIntent`; those benchmark and
+check implementations are unchanged since their recorded source. Do not repeat
+these successful measurements solely to refresh the commit label.
+
+Performance evidence is extensive but does not establish a formal acceptance
+pass: no full Cue-completion latency/jitter limits were specified, the Pi host
+CPU and memory controllers were not isolated, and nearest-rank P99 from
+100-sample scale/burst/safety cases is only a top-sample stress observation.
+The recorded 32-delayed-Cue STOP/Blackout P95 reaches about one second and
+scheduled linked-Cue P99 jitter reached 75.443 ms; these need an explicit
+timing acceptance decision. A later read-only SSH attempt to
+`stagecore-qualification` failed before host identity was established, so a
+new Pi run cannot currently be started if Engine/Runtime code changes. Continue
+software work while access is unavailable. Physical outputs remained simulated;
+this report does not qualify hardware or production release. Keep production
+services/data untouched and Production Project ACL disabled.

@@ -3380,3 +3380,62 @@ This entry supersedes the preceding push instruction.
   because the isolated `stagecore-qualification` SSH route previously failed
   before reaching the device. Production ACL remains off; production services,
   data, Vault, real devices and firmware remain untouched.
+
+## Resume update — 2026-11-14 21:43 UTC · Exact-head CI and performance evidence reconciliation
+
+- The tested SC-024 focus/mock/revoke batch was committed as
+  `055e980ac668b0771e3ae799cfce6dbe78898a79` and pushed normally to
+  `integration/stagecore-rc`; local, remote and OPEN/Draft PR #534 match.
+  Previous Core run `43642337411` was complete before this push.
+- Exact-head Core run `43643450987`: Go 1.27 passed. Go 1.26 JS syntax,
+  Firmware Foundation contract, full Test, Browser Cue Delivery and Vet passed;
+  Race and Linux ARM64 CGo-free product builds were still running at this
+  checkpoint. Companion `43643451012` and Camera Relay `43643451028` passed.
+  Do not push another head until run `43643450987` completes.
+- Local verification for `055e980`: `node --test
+  tests/security_project_access.test.js` 8/8; focused Chrome SC-024 test passes
+  normally and under `-race`, including OPERATE grant/readback and NONE
+  revocation/denial; `go vet ./internal/httpapi`, JS syntax and diff checks
+  pass. Project, account and preset values are fixture-selected; native
+  keyboard selection of a select option remains unqualified. A local attempt
+  to test ArrowUp/ArrowDown using CDP delivered keydown events to the focused
+  select but left its value unchanged, so the experiment was fully reverted.
+  Do not describe this attempt as passing browser qualification.
+- Performance report review found the requested isolated Pi 4 ARM64 simulator
+  measurements already recorded from source `a90403b`: Mixed Cues and linked
+  chains across the requested scales, scheduled starts, bursts, sustained
+  100-Cue/200-Action Rehearsal and STOP/Blackout load. They include P50/P95/P99,
+  jitter, schedule skew, GC, allocations and test-process CPU/RSS. A direct
+  comparison shows Cue Engine, Runtime Control, simulator, domain and publish
+  execution source unchanged from `a90403b` through `055e980`; do not repeat
+  those measurements just to refresh the SHA. The old Pi ACL benchmark and
+  `CheckRuntimeIntent` measurement also remain applicable because their
+  benchmark and checked runtime authorization code are unchanged. The Pi
+  report still cannot claim formal acceptance: no end-to-end Cue timing SLO was
+  specified, CPU/memory controllers were not isolated, and 32-delayed-Cue
+  STOP/Blackout tails reached about one second. The `stagecore-qualification`
+  read-only SSH route failed only after those runs and remains unavailable for
+  a future rerun after relevant source changes. The performance report and
+  related-component matrix updates are local and await a clean, completed Core
+  run before push.
+- Follow-on M3 CPU-profile diagnosis exercised 100 simulated STOP and 100
+  Emergency Blackout operations, each against 32 delayed Cue runs. The
+  instrumented run reported STOP P50/P95/P99 `11.71/13.35/13.95 ms` and
+  Blackout `11.16/12.71/13.15 ms`, with P95 jitter `1.648/1.557 ms` and
+  `201,577/207,292 B` allocated per operation. Do not use these instrumented
+  latencies as an unprofiled baseline. The process-wide profile (including
+  repeated fixture migrations) sampled 95% in `syscall.rawsyscalln`; SQLite
+  VDBE execution was 83.14% cumulative and `database/sql` ExecContext 72.13%.
+  Because setup is included and persistence ordering is safety/audit relevant,
+  this profile does not isolate STOP's cancellative operation cost or justify
+  batching/durability changes. No optimization was made.
+- Linked PR heads/checks reverified without modifying other repositories:
+  TabletPlayer #36 `91613da` PASS; ESP32-DMX #39 `3ad7749` all checks PASS;
+  ESP32 Camera #20 `455b066` PASS; StageLaser #56 `b14a578` PASS and #57
+  `c4ff10b` PASS. All remain open; #36/#39/#20/#56 are drafts, #57 is not.
+  No linked checkout was present in this workspace.
+- Safety boundary remains unchanged: no production service/data/Vault access,
+  no real device commands or firmware, production ACL disabled, no force push
+  or merge. Next: wait for all exact-head Core jobs, record their final status,
+  run `git diff --check` on the pending docs, and then push the small doc
+  reconciliation batch normally to the same PR.
