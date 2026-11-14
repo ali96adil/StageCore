@@ -28,6 +28,7 @@ func TestRoutedInputDuplicateAfterRestartDoesNotReplayOSC(t *testing.T) {
 	f := newOSCOutputRouteFixture(t, conn.LocalAddr().(*net.UDPAddr).Port, nil, true, nil)
 	pluginPath := buildRoutingOSCPlugin(t)
 	host := pluginhost.New(pluginPath, nil, nil, nil, oscManifest([]string{oscplugin.PermissionUDPSend}))
+	warmRoutingOSCPluginForTest(t, host)
 	registry := capability.NewRegistry()
 	if err := registry.Register(oscplugin.CapabilityOSCSend, oscplugin.New(host)); err != nil {
 		t.Fatal(err)

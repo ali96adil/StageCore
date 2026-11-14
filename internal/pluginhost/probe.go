@@ -18,7 +18,7 @@ func (h *Host) Probe(ctx context.Context) (*pluginprotocol.Ready, error) {
 	if err := capability.CheckDispatch(ctx); err != nil {
 		return nil, err
 	}
-	if err := h.ensureStartedLocked(); err != nil {
+	if err := h.ensureStartedLocked(ctx); err != nil {
 		return nil, err
 	}
 	if err := capability.CheckDispatch(ctx); err != nil {

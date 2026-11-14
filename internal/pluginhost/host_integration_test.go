@@ -110,6 +110,53 @@ func TestPermissionDeniedBeforePluginStart(t *testing.T) {
 	}
 }
 
+func TestExecuteCancellationStopsPluginStartup(t *testing.T) {
+	pluginPath := buildFaultOSCPlugin(t)
+	for _, tc := range []struct {
+		name     string
+		deadline bool
+		wantErr  error
+		status   string
+	}{
+		{name: "cancel", wantErr: context.Canceled, status: "CANCELLED"},
+		{name: "deadline", deadline: true, wantErr: pluginhost.ErrPluginTimeout, status: "FAILED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := pluginhost.New(
+				pluginPath,
+				nil,
+				[]string{"STAGECORE_PLUGIN_TEST_STARTUP_DELAY=2s"},
+				nil,
+				oscManifest([]string{"network.udp.send"}),
+			)
+			defer host.Close()
+
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if tc.deadline {
+				ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+			} else {
+				ctx, cancel = context.WithCancel(context.Background())
+				time.AfterFunc(50*time.Millisecond, cancel)
+			}
+			defer cancel()
+			result, err := host.Execute(ctx, request("startup-"+tc.name, 53000, 500))
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v want %v", err, tc.wantErr)
+			}
+			if result.Status != tc.status {
+				t.Fatalf("result=%#v want status %s", result, tc.status)
+			}
+			if tc.deadline && result.ErrorCode != "TIMEOUT" {
+				t.Fatalf("result=%#v want timeout code", result)
+			}
+			if host.Ready() != nil {
+				t.Fatal("interrupted startup must not leave the plugin ready")
+			}
+		})
+	}
+}
+
 func oscManifest(grants []string) pluginhost.Manifest {
 	return pluginhost.Manifest{
 		PluginID: "stagecore.osc",

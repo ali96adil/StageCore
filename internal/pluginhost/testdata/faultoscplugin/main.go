@@ -18,6 +18,12 @@ type oscParams struct {
 }
 
 func main() {
+	if delay := os.Getenv("STAGECORE_PLUGIN_TEST_STARTUP_DELAY"); delay != "" {
+		if duration, err := time.ParseDuration(delay); err == nil {
+			time.Sleep(duration)
+		}
+	}
+
 	out := bufio.NewWriter(os.Stdout)
 	write(out, pluginprotocol.Ready{
 		Type:          "plugin.ready",

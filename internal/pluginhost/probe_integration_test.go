@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
@@ -32,6 +33,27 @@ func TestProbeStartsPluginAndReturnsReadyWithoutExecution(t *testing.T) {
 	}
 	if len(ready.Capabilities) != 1 || ready.Capabilities[0] != "osc.send" {
 		t.Fatalf("capabilities=%v", ready.Capabilities)
+	}
+}
+
+func TestProbeCancellationStopsPluginStartup(t *testing.T) {
+	host := pluginhost.New(
+		buildFaultOSCPlugin(t),
+		nil,
+		[]string{"STAGECORE_PLUGIN_TEST_STARTUP_DELAY=2s"},
+		nil,
+		oscManifest([]string{"network.udp.send"}),
+	)
+	defer host.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	_, err := host.Probe(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v want context.Canceled", err)
+	}
+	if host.Ready() != nil {
+		t.Fatal("cancelled probe must not leave the plugin ready")
 	}
 }
 
