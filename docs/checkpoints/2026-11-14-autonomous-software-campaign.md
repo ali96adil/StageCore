@@ -2956,3 +2956,37 @@ This entry supersedes the preceding push instruction.
 - The current pushed-head CI on `61fd27e` is still in the Go 1.26 Race suite;
   Go 1.27, all Companion checks and Relay are green. Keep all three local
   commits unpushed until this exact-head run and ARM64 build complete.
+
+## Resume update — 2026-11-14 19:38 UTC · bounded Project Files search
+
+- Implemented server-side search for Project asset names and original
+  filenames. Queries are UTF-8 validated, reject Unicode controls and more
+  than 128 characters, treat LIKE wildcard characters literally, and bind
+  pagination cursors to the normalized query. `match_count` reflects filtered
+  rows while `entry_count` and `logical_bytes` remain whole-Project totals.
+  The opt-in HTTP route and bilingual Project Files page pass the query;
+  refresh, pagination, upload refresh and clear preserve/reset it correctly.
+- Added Store tests for literal wildcard/backslash matching, name and filename
+  queries, project-wide totals, cursor continuation/query binding and invalid
+  bounds; HTTP test for search and overlength rejection; Node UI assertions;
+  and extended the actual 390×844 headless Chrome gate to search and clear in
+  Arabic RTL and English LTR. Updated the SC-023 matrix. Quotas and deletion/
+  retention policy remain open because #510 supplies no quota allocation or
+  retention policy; no arbitrary capacity limit was introduced.
+- Commit `725d3ff` (`feat(project-files): add bounded server search`) is local.
+  Local HEAD is `725d3ff`, five commits ahead of origin/PR #534 at
+  `61fd27e`; the current worktree should be clean after this checkpoint commit.
+- Validation passed: full `go test ./...`, full `go vet ./...`, focused Project
+  Files Race tests, full Node `tests/*.test.js` (78 tests), Node syntax and
+  `git diff --check`, plus the local headless Chrome Project Files browser
+  test. No device, production service or production data was used.
+- At 19:38 UTC, exact-head Core run `43630696006` on `61fd27e` still had its
+  Go 1.26 full Race suite in progress; the Go 1.26 tests/browser/Vet, Go 1.27,
+  Companion and Relay jobs were green, with ARM64 product builds pending. Do
+  not push until that full run and ARM64 build complete. Then recheck the
+  remote branch and Draft PR #534 head, push normally, and wait for CI on the
+  new exact head. Keep Project Files and SC-024 opt-in/off in production.
+- Pi 4 ARM64 performance requalification after linked-Cue graph validation
+  optimization remains blocked by the unchanged `websocket: bad handshake`
+  qualification SSH endpoint, which failed before a shell or command. Do not
+  claim qualification or retry unless the endpoint/credential changes.
