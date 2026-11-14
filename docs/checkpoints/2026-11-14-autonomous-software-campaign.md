@@ -3089,3 +3089,22 @@ This entry supersedes the preceding push instruction.
   requalification remains pending because the isolated qualification endpoint
   previously failed before shell access with `websocket: bad handshake`; do not
   retry without a changed endpoint/credential condition.
+
+## Resume update — 2026-11-14 20:21 UTC · all Cue colors in mobile browser
+
+- Expanded the SC-005 real-Chrome case to render and verify all four palette
+  markers at 390×844 in Arabic RTL, while retaining the edited blue Cue label,
+  same text color as ordinary table text and zero page overflow. The purple
+  sample survives SQLite creation too. Local browser test passed normally and
+  under Race; `tests/operator_accessibility.test.js`, syntax and diff checks
+  also pass. Keyboard/focus, measured contrast and English LTR remain open.
+- Commit `9ae3226` (`test(cue-studio): verify full cue color palette`). Local
+  HEAD before this entry is
+  `9ae3226bfe0c2d2ef72abeddc787d015a82cf875`, two commits ahead of clean
+  origin/PR #534 `5fb3a6889e823aecb067b519c5a8b206f84cae21`; worktree was clean
+  before committing this checkpoint.
+- Current exact-head checks on `5fb3a68`: Core `43636803011` is in progress;
+  Companion `43636803043` and Relay `43636803216` are green. Do not push until
+  the Core run completes, then recheck branch and PR. SC-024 production ACL
+  stays off; Pi 4 optimized-code qualification remains blocked by the
+  unchanged failed isolated SSH handshake.
