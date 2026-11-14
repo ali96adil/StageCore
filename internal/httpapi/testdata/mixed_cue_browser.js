@@ -96,6 +96,7 @@
     state.csrf = config.csrf;
     state.project = { project_id: config.project, name: config.name };
     sessionStorage.setItem("stagecore_csrf", state.csrf);
+    if (!sessionStorage.getItem("stagecore_mixed_cue_ltr_evidence")) f016SetMode("dark");
     showApp();
     await navigate("cues");
 
@@ -103,9 +104,9 @@
     if (ltrEvidence) {
       const previous = JSON.parse(ltrEvidence);
       const parentID = previous.ids[2];
-      await waitFor(() => document.documentElement.dir === "ltr" &&
+      await waitFor(() => document.documentElement.dir === "ltr" && document.documentElement.dataset.theme === "light" &&
         !!document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`),
-      "reloading the Draft Cue list in English LTR");
+      "reloading the Draft Cue list in English LTR and light appearance");
       const labelCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`);
       const plainCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] td:not(.cue-label-cell)`);
       const editButton = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`);
@@ -135,7 +136,8 @@
       sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
       await report(JSON.stringify({ ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
-        ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow }));
+        ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
+        theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } }));
       return;
     }
 
@@ -429,12 +431,14 @@
     }
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
+      theme: document.documentElement.dataset.theme,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,
       palette_visible: paletteVisible, label_color_readable: labelColorReadable,
       marker_contrast: colorContrast, text_contrast: textContrast,
       focus_ring_visible: focusRingVisible, focus_contrast: focusContrast, page_overflow: pageOverflow };
     sessionStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(firstPass));
     localStorage.setItem("stagecore_locale", "en");
+    f016SetMode("light");
     window.location.reload();
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
