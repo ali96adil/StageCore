@@ -109,25 +109,30 @@ test("Action preset preview confirms a target present in the current Project", a
 test("Multi-action Mixed-Cue preset inserts ordered independent copies", async () => {
   const actions = [
     { action_id: "saved-light", target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { levels: { warm: 55 }, fade_ms: 900 } },
+    { action_id: "saved-midi", target_ref: "ABLETON", capability_key: "midi.send", parameters: { status: 144, data1: 60, data2: 100 } },
     { action_id: "saved-osc", target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4", arguments: [4] } },
+    { action_id: "saved-tablet", target_ref: "TABLET-MAIN", capability_key: "tablet.media.play", parameters: { media_id: "clip-7" } },
   ];
   const { panel, inserted } = await openPresets({
     presets: [{ preset_id: "mixed-preset", name: "Warm scene", actions }],
-    targets: [{ logical_name: "LIGHTING" }, { logical_name: "VDMX" }],
+    targets: [{ logical_name: "LIGHTING" }, { logical_name: "ABLETON" }, { logical_name: "VDMX" }, { logical_name: "TABLET-MAIN" }],
   });
   const row = find(panel, "ul").children[0];
-  assert.match(contentText(row), /2 actions/);
+  assert.match(contentText(row), /4 actions/);
   assert.match(find(row, "pre").textContent, /\/scene\/4/);
-  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 2 actions to Cue").onclick();
-  assert.equal(inserted.length, 2);
-  assert.deepEqual(inserted.map((action) => action.target_ref), ["LIGHTING", "VDMX"]);
-  assert.deepEqual(inserted.map((action) => action.action_id), ["", ""]);
-  assert.equal(inserted[0].parameters.levels.warm, 55);
-  assert.equal(inserted[1].parameters.address, "/scene/4");
-  assert.equal(actions[0].action_id, "saved-light");
-  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 2 actions to Cue").onclick();
+  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 4 actions to Cue").onclick();
   assert.equal(inserted.length, 4);
-  assert.notStrictEqual(inserted[0].parameters, inserted[2].parameters);
+  assert.deepEqual(inserted.map((action) => action.capability_key), ["lighting.channels.fade", "midi.send", "osc.send", "tablet.media.play"]);
+  assert.deepEqual(inserted.map((action) => action.target_ref), ["LIGHTING", "ABLETON", "VDMX", "TABLET-MAIN"]);
+  assert.deepEqual(inserted.map((action) => action.action_id), ["", "", "", ""]);
+  assert.equal(inserted[0].parameters.levels.warm, 55);
+  assert.equal(inserted[1].parameters.data1, 60);
+  assert.equal(inserted[2].parameters.address, "/scene/4");
+  assert.equal(inserted[3].parameters.media_id, "clip-7");
+  assert.equal(actions[0].action_id, "saved-light");
+  row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add 4 actions to Cue").onclick();
+  assert.equal(inserted.length, 8);
+  assert.notStrictEqual(inserted[0].parameters, inserted[4].parameters);
 });
 
 test("saving selected Mixed-Cue actions persists one ordered multi-action preset", async () => {
