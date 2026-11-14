@@ -30,7 +30,9 @@ const (
 	CommandShowExit             = "show.exit"
 	CommandShowForceExit        = "show.force_exit"
 
-	defaultStopWait = 2 * time.Second
+	// Cancellation is issued before this wait. Keep enough headroom for the
+	// bounded persistence fan-out when many delayed Cues are active at once.
+	defaultStopWait = 5 * time.Second
 )
 
 type SessionStartGate func(context.Context, string, string) (bool, string, error)
