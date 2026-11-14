@@ -3519,3 +3519,47 @@ This entry supersedes the preceding push instruction.
 - Safety limits remain: no production service/data/Vault changes, no real
   device commands or firmware, no production ACL activation, no force push,
   and no PR merge.
+
+## Resume update — 2026-11-14 22:46 UTC · SC-015 transport event timeline
+
+- Remote and OPEN/Draft PR #534 are still at
+  `b3a4be153f4c6ee909f29196c14480cbfe26bfa3`. Core run `43645947408` has now
+  completed successfully on that exact head; Companion `43645947414` and
+  Camera Relay `43645947412` also passed on it. The CI wait gate is clear.
+- Local code HEAD is `669e6cc22b650d9c2663db1f58e89ea6982e5360`, three commits
+  ahead of remote: `9bc5988` (32-Cue STOP), `f6e1409` (32-Cue Emergency
+  Blackout), and `669e6cc` (SC-015 explicit transport evidence). The software
+  completion matrix and this Handoff update are the only remaining local
+  documentation edits for this batch.
+- Added Hub-originated `stage_device.transport.connected` and
+  `stage_device.transport.disconnected` events. V1 authenticated sockets emit
+  transitions; V2 emits only after Project-scoped runtime readiness; socket
+  replacement, socket close, Project-scope change and startup offline reset
+  are explicit disconnect reasons. Startup telemetry is best-effort and
+  cannot prevent the authoritative offline reset. These events carry only
+  device ID, transport state, Hub connection generation and a fixed reason;
+  they never claim command ACK or physical output. The timeline reads only
+  Hub-source events for the same Project and Session time window, caps
+  transport history at 500 with an incomplete-history flag, and uses Migration
+  63's partial index. UI, comparison metrics and export use allowlisted fields.
+- Verification: full normal tests passed for Device Channel, Device
+  Experience, Session Memory, Store and DB; focused HTTP Session Memory API
+  passed; `go vet` passed across those packages and HTTP API; timeline Node
+  tests passed 6/6; syntax checks and `git diff --check` passed. Full Race for
+  the affected Go packages passed before the final reconnect case; the final
+  socket replacement and disconnect tests also passed focused Race. The new
+  Chrome gate was added, but no local Chrome executable or
+  `STAGECORE_TEST_CHROME` was available, so that visual browser check remains
+  unrun.
+- SC-015 remains Partial for Companion and other adapter endpoint health and
+  all physical output confirmation; command attempts still do not imply
+  connectivity, ACK or execution. Pi performance results remain the earlier
+  source-equivalent qualification; no performance-sensitive code changed.
+- The final full focused tests, vet, Node checks, and diff checks passed for
+  this code; the latest reconnect and Hub-restart regressions also passed
+  focused Race. Next: commit the matrix/Handoff update, recheck remote/PR and
+  all workflow heads, push the four local commits normally to this same branch
+  if no conflicting Core run is active, then follow Core/Companion/Camera Relay
+  CI at the new exact head.
+- Safety limits remain unchanged: no production services/data/Vault, real
+  device commands, firmware, production ACL activation, force push or merge.
