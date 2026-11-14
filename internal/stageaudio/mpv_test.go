@@ -188,6 +188,29 @@ func TestMPVBackendRemovesFirstDeckWhenSecondDeckFailsToStart(t *testing.T) {
 	}
 }
 
+func TestMPVBackendMissingBinaryStaysDisabledWithoutRuntimeArtifacts(t *testing.T) {
+	root := shortMPVTestRoot(t)
+	runtimeRoot := filepath.Join(root, "runtime")
+	if err := os.Mkdir(runtimeRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	emptyPath := filepath.Join(root, "empty-path")
+	if err := os.Mkdir(emptyPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", emptyPath)
+	if _, err := NewMPVBackend(runtimeRoot); err == nil || !strings.Contains(err.Error(), "mpv is not installed (audio stays disabled)") {
+		t.Fatalf("missing mpv did not keep audio explicitly disabled: %v", err)
+	}
+	entries, err := os.ReadDir(runtimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("missing mpv created runtime socket/process artifacts: %v", entries)
+	}
+}
+
 func installFakeMPV(t *testing.T, root, commandLog, failDeck string) {
 	t.Helper()
 	bin := filepath.Join(root, "bin")
