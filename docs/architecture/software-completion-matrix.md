@@ -1,18 +1,19 @@
 # StageCore software completion matrix
 
-Reviewed against local source HEAD `dd77070aa05288939240919b51ba73aaac9434b4`
+Reviewed against local code HEAD `dd77070aa05288939240919b51ba73aaac9434b4`
 on `integration/stagecore-rc`, pushed HEAD
-`447849f43eaf89cd501a6bd1b345195a61725312`, Issue #486 and child Issues
+`70a7061d2597e14273fb51468b269c7dff73ea71`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 02:45 UTC, Core run `43545195433` for pushed HEAD `447849f` had
-passed Go 1.27 tests, Go 1.26 tests, Browser Cue Delivery and Vet; Go 1.26 Race
-was still running, with Linux ARM64 builds pending. Companion/Swift run
-`43545195409` and isolated/ARM64 run `43545195451` passed. Eight local code
-commits (`d67da3c` through `dd77070`) have focused checks recorded in the
-campaign handoff and await completion of that exact-head CI before push. This
-matrix keeps software evidence separate from installed application and
-physical qualification.
+The exact pushed-head CI set for `70a7061` started at 2026-11-14 02:47 UTC.
+Core run `43548179642` and Companion/Swift run `43548179629` are in progress;
+isolated/ARM64 run `43548179637` passed. The preceding exact-head Core run
+`43545195433` on `447849f` passed Go 1.26/1.27, Browser Cue Delivery, Vet,
+Race and ARM64 builds; Companion/Swift `43545195409` and isolated/ARM64
+`43545195451` also passed. Eight local code commits (`d67da3c` through
+`dd77070`) and the current documentation update await the new exact-head CI
+before any further push. This matrix keeps software evidence separate from
+installed application and physical qualification.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
 qualification.

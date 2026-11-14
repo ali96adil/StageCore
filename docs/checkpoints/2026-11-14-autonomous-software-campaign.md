@@ -701,3 +701,27 @@ This entry supersedes the preceding push instruction.
   documentation commits without force, then wait on CI for the pushed head.
   Continue campaign work after CI; SC-024 remains opt-in and production ACL
   must stay disabled.
+
+## Resume update — 2026-11-14 02:48 UTC
+
+- The preceding Core run `43545195433` completed successfully on pushed
+  `447849f`, including Go 1.26/1.27 tests, Browser Cue Delivery, Vet, Race and
+  ARM64 builds. Companion/Swift `43545195409` and isolated/ARM64 `43545195451`
+  also passed. The remote ref still matched `447849f` before push.
+- Pushed the accumulated batch normally to the existing
+  `integration/stagecore-rc` branch and Draft PR #534: `447849f..70a7061`.
+  This includes eight code commits and two checkpoint/matrix commits. No
+  force push, rebase, branch creation or PR replacement was used.
+- New exact-head CI is active for `70a7061d2597e14273fb51468b269c7dff73ea71`:
+  Core `43548179642` is in progress on Go 1.26 and Go 1.27; Companion/Swift
+  `43548179629` is in progress; isolated/ARM64 `43548179637` passed. Do not
+  push more work until the Core and Companion/Swift checks complete.
+- The only local modification is the matrix update to show the pushed HEAD and
+  new CI IDs; it is not a source change. Commit it locally after `git
+  diff --check`, but leave it unpushed until exact-head CI completes. Preserve
+  current remote HEAD and confirm fast-forward before any subsequent push.
+- Next independent software review while CI runs: SC-016 Action clipboard
+  behavior, specifically payload/timing fidelity, new Action IDs and selected
+  clipboard fallback. Existing tests cover current-user/current-Project
+  isolation; check before adding tests so completed behavior is not repeated.
+  Keep the hardware, production service/data and ACL restrictions unchanged.
