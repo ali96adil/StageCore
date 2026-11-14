@@ -757,3 +757,37 @@ This entry supersedes the preceding push instruction.
   code/doc batch to PR #534. Then follow exact-head CI before another push.
   Production ACL remains disabled; no devices, production services or show
   data were changed.
+
+## Resume update — 2026-11-14 02:57 UTC
+
+- Local HEAD is `0737c00197c38a528773424e459defa0b6c1c165`; remote HEAD and
+  Draft PR #534 remain `70a7061d2597e14273fb51468b269c7dff73ea71`. The local
+  branch is ahead by four commits: `5822020`, `b6284cb`, `ba295ab`, and
+  `0737c00`. The matrix and this new checkpoint update are uncommitted. Keep
+  this work and push only after the exact-head Core CI completes.
+- Core run `43548179642` on `70a7061` still passes Go 1.26/1.27 tests, Browser
+  Cue Delivery and Vet; Go 1.26 Race is in progress and Linux ARM64 builds are
+  pending. Companion/Swift `43548179629` and isolated/ARM64 `43548179637`
+  passed. No later push has occurred, so these runs have not been cancelled.
+- SC-016 follow-on commit `0737c00` adds selection controls and ordered
+  session-local copy/paste for multiple Mixed-Cue Actions. Copies preserve
+  payload, per-action delays, error/retry policy, execution mode, priority and
+  enabled state; pasted actions receive blank IDs and cloned objects. Current
+  User/Project fencing and target-availability warning remain active. A
+  red-first test failed before the function existed; it now proves ordered
+  Lighting + OSC copy, policy fidelity, source identity preservation, and
+  cross-Project refusal.
+- Verification on local `0737c00`: full Node suite 52/52; focused Cue Studio
+  tests 12/12; `go test ./internal/operatorweb -count=1`; `go vet
+  ./internal/operatorweb`; JavaScript syntax and `git diff --check` all pass.
+  No network dispatch or device output is part of this feature.
+- The matrix records multi-select as implemented in code; interactive
+  cross-Project target remapping remains partial. The next campaign task after
+  the CI gate is the opt-in SC-024 route-to-policy and in-flight session/ticket
+  fencing audit. Project ACL remains disabled in production. Pi ARM64
+  performance acceptance is still hardware-environment pending; do not use
+  real outputs.
+- First resume action: poll run `43548179642` until Race and ARM64 build jobs
+  finish. If green and remote still equals `70a7061`, verify fast-forward then
+  push the local code and checkpoint commits normally to the existing branch
+  and PR #534; follow the resulting exact-head CI before another push.
