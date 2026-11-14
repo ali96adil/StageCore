@@ -2763,3 +2763,23 @@ This entry supersedes the preceding push instruction.
   Wait for fresh Core/Companion/Camera Relay checks on the new SHA; do not infer
   green from the prior passing Companion/Relay runs. Continue remaining SC-023
   work while CI runs without changing the pushed SHA.
+
+## Resume update — 2026-11-14 18:34 UTC · pushed Capsule/contract repair
+
+- Normal push updated the same Draft PR #534 and branch to
+  `9df291527dafd0ec8ab52d6b801d03566dcf4528`; local HEAD, origin ref, remote
+  branch and PR head were verified equal. Worktree was clean immediately after
+  push. No force-push or merge.
+- New exact-head workflows on `9df2915` are queued/running: Core
+  `43627228963`, Companion Core `43627229094`, Camera Relay `43627228900`.
+  Their initial checks are pending. The preceding Core run on `1418cb7` remains
+  failed for the now-updated static UI contract; its Companion and Camera Relay
+  checks passed but do not replace the new exact-head runs. Do not push another
+  SHA until the three new runs finish.
+- The pushed fix updates the stale upload UI contract and adds Capsule warnings
+  for uploaded file versions not referenced by the published Runtime Snapshot.
+  Optional referenced media remains included. Focused package, Race, vet, and
+  `git diff --check` evidence is in the prior checkpoint section.
+- Continue with read-only SC-023 quota/retention audit or another independent
+  evidenced software gap while CI runs. Keep all production surfaces and ACL
+  disabled/off; no device activity was used.
