@@ -238,15 +238,17 @@ test("Cue Studio history restores original action IDs and unknown Snapshot field
 
 test("Cue Inspector dry-run plans saved actions and diagnoses invalid links without dispatch", () => {
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
-  const start = source.indexOf("  function planCueInspection(");
+  const start = source.indexOf("  function cueActionExecutionModeText(");
   const end = source.indexOf("  function cueInspector(", start);
   assert.ok(start >= 0 && end > start);
   const context = {
+    tr: (_ar, en) => en,
     cuePolicyObject: (cue) => cue.execution_policy || {},
     cueLinkedIDs: (cue) => [...(cue.execution_policy?.linked_cue_ids || [])],
     api() { assert.fail("dry-run contacted an API"); },
   };
-  const plan = vm.runInNewContext(source.slice(start, end) + "\nplanCueInspection", context);
+  const preview = vm.runInNewContext(source.slice(start, end) + "\n({planCueInspection, cueActionExecutionModeText})", context);
+  const plan = preview.planCueInspection;
   const root = {
     cue_id: "root", enabled: true,
     execution_policy: { start_delay_ms: 120, linked_cue_ids: ["child", "missing", "disabled"] },
@@ -260,6 +262,7 @@ test("Cue Inspector dry-run plans saved actions and diagnoses invalid links with
   assert.equal(result.group[0].delay, 120);
   assert.equal(result.group[0].actions.map((action) => action.order_index).join(","), "1,2");
   assert.equal(result.group[0].actions[1].enabled, false);
+  assert.equal(result.linkedCuesConcurrent, true);
   assert.equal(root.actions[0].order_index, 2, "planning did not mutate the saved Cue");
   assert.equal(result.issues.map((issue) => issue.kind).join(","), "cycle,missing,disabled");
   assert.equal(plan(child, cues).parent, "root");
@@ -269,4 +272,9 @@ test("Cue Inspector dry-run plans saved actions and diagnoses invalid links with
   assert.equal(childPlan.parent, undefined);
   assert.equal(childPlan.issues[0].kind, "multiple-parents");
   assert.equal(plan(root, conflicting).issues.find((issue) => issue.kind === "multiple-parents").id, "child");
+  assert.equal(plan(disabled, cues).linkedCuesConcurrent, false);
+  assert.match(preview.cueActionExecutionModeText("PARALLEL"), /joined at the next barrier or end of Cue/);
+  assert.match(preview.cueActionExecutionModeText("PARALLEL_BARRIER"), /waits for all pending Actions/);
+  assert.match(preview.cueActionExecutionModeText("SEQUENTIAL"), /earlier parallel Actions may continue/);
+  assert.match(preview.cueActionExecutionModeText("unknown"), /Unsupported execution mode: unknown/);
 });

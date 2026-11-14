@@ -1214,6 +1214,22 @@
     }
   }
 
+  function cueActionExecutionModeText(mode) {
+    switch (String(mode || "SEQUENTIAL").toUpperCase()) {
+      case "SEQUENTIAL":
+        return tr("تتابعي؛ ينتظر هذا الإجراء، وقد تستمر إجراءات متوازية سابقة بالتزامن.",
+          "Sequential; waits for this Action while earlier parallel Actions may continue.");
+      case "PARALLEL":
+        return tr("متوازٍ؛ يُنتظر عند الحاجز التالي أو نهاية الكيو، وقد ينتهي مبكراً عند الإيقاف أو الفشل.",
+          "Parallel; joined at the next barrier or end of Cue, and may end earlier on STOP or failure.");
+      case "PARALLEL_BARRIER":
+        return tr("حاجز متوازٍ؛ يبدأ بالتزامن ثم ينتظر كل الإجراءات المعلقة.",
+          "Parallel barrier; starts concurrently, then waits for all pending Actions.");
+      default:
+        return tr("نمط تنفيذ غير مدعوم: ", "Unsupported execution mode: ") + String(mode);
+    }
+  }
+
   // Read-only planning from the loaded revision. No runtime API is used.
   function planCueInspection(root, cues) {
     const byID = new Map(cues.map((cue) => [cue.cue_id, cue]));
@@ -1261,7 +1277,7 @@
       stack.push({ id, done: true });
       for (const child of cueLinkedIDs(cue).reverse()) stack.push({ id: child });
     }
-    return { group, issues, parent };
+    return { group, issues, parent, linkedCuesConcurrent: group.length > 1 };
   }
 
   function cueInspector(cue, cues, projectID, findings) {
@@ -1278,13 +1294,18 @@
         parent.append(item);
         return item;
       };
-      line(details, "p", tr("خطة للنسخة المعروضة، بدون إرسال أي أمر. أوقات التنفيذ الفعلية تعتمد على الأجهزة.", "Plan for the loaded revision. No commands are sent. Actual execution time depends on the devices."));
+      line(details, "p", tr("خطة لنسخة التأليف المحمّلة، بدون نشر أو إرسال أي أمر. أوقات التنفيذ الفعلية تعتمد على الأجهزة.", "Plan for the loaded authoring revision. Nothing is published or dispatched. Actual execution time depends on the devices."));
       if (cue.enabled === false) line(details, "p", tr("هذا الكيو معطّل.", "This Cue is disabled."));
       if (plan.parent) line(details, "p", tr("يُشغّل من الكيو الأب ", "Triggered by parent Cue ") + plan.parent);
+      if (plan.linkedCuesConcurrent) line(details, "p", tr(
+        "الكيوهات المرتبطة تبدأ بالتوازي؛ تأخير بدء كل كيو محسوب من GO وليس من انتهاء الكيو السابق.",
+        "Linked Cues start concurrently; each Cue start delay is measured from GO, not from the previous Cue completing."
+      ));
       const refs = new Set();
       for (const { cue: member, delay, actions } of plan.group) {
         refs.add(member.cue_id);
-        line(details, "strong", [member.display_label, member.name, `${delay} ms`].filter(Boolean).join(" · "));
+        line(details, "strong", [member.display_label, member.name,
+          tr("بدء من GO + ", "Start from GO + ") + delay + " ms"].filter(Boolean).join(" · "));
         if (member.notes_summary) line(details, "p", member.notes_summary);
         const list = document.createElement("ol");
         for (const action of actions) {
@@ -1292,9 +1313,13 @@
           refs.add(action.target_ref);
           const delay = action.timeout_policy?.start_delay_ms || 0;
           const timeout = action.timeout_policy?.timeout_ms;
-          line(list, "li", [action.capability_key, action.target_ref, action.execution_mode,
-            delay ? tr("تأخير ", "Delay ") + delay + " ms" : "",
+          const errorPolicy = action.error_policy || {};
+          line(list, "li", [action.capability_key, action.target_ref,
+            cueActionExecutionModeText(action.execution_mode),
+            delay ? tr("تأخير الإجراء من بدء الكيو ", "Action delay from Cue start ") + delay + " ms" : "",
             timeout ? tr("مهلة ", "Timeout ") + timeout + " ms" : "",
+            errorPolicy.require_application_ack ? tr("يتطلب إقرار التطبيق", "Requires application ACK") : "",
+            errorPolicy.retry_before_dispatch ? tr("إعادة واحدة قبل الإرسال فقط", "One retry before dispatch only") : "",
             action.enabled === false ? tr("معطّل", "Disabled") : ""].filter(Boolean).join(" · "));
         }
         if (list.childElementCount) details.append(list);
