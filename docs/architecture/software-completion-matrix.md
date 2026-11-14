@@ -7,10 +7,11 @@ At 2026-11-14 05:42 UTC, exact-head Core run `43560053370` on `76f9a9f`
 completed successfully on Go 1.26/1.27, including Race and Linux ARM64 product
 builds; Companion `43560053384` and Camera Relay `43560053362` also passed on
 that exact head. Six functional/documentation commits are pushed to Draft PR
-#534. Two follow-on commits locally update the handoff and review open
-non-SC issues; they are ready to push after this checkpoint update. Local Node
-passes 62/62; full Store, DB and HTTP API tests, focused Race/Vet, JavaScript
-syntax and diff checks pass. Production and device boundaries remain unchanged.
+#534. Three follow-on docs-only commits locally refresh the handoff and review
+open non-SC issues; they are ready for a normal push now that the exact-head
+CI is green. Local Node passes 62/62; full Store, DB and HTTP API tests,
+focused Race/Vet, JavaScript syntax and diff checks pass. Production and device
+boundaries remain unchanged.
 This matrix keeps software evidence separate from installed application and
 physical qualification.
 Issue status and software status are separate: an open issue can have
