@@ -1566,8 +1566,10 @@
   }
 
   function formSignature() {
-    return JSON.stringify(Array.from(pick("cueForm")?.querySelectorAll("input,select,textarea") || [])
-      .map((node) => [node.id || node.className, node.value, node.type === "checkbox" ? node.checked : null]));
+    // Compare the authored Draft representation, not every control nested
+    // under the form. Recovery, history, presets, and clipboard widgets are
+    // mounted asynchronously and are not Cue edits.
+    return readDraftHistory(true);
   }
 
   function bindFormGuards() {
@@ -1576,7 +1578,8 @@
     form.dataset.sc008Guarded = "true";
     form.addEventListener("click", (event) => {
       if (!event.target.closest("#closeCueDialog, #cancelCueButton")) return;
-      if (initialFormState === formSignature()) return;
+      const currentFormState = formSignature();
+      if (initialFormState !== null && initialFormState === currentFormState) return;
       if (!window.confirm(phrase("cue.studio.close_warning"))) {
         event.preventDefault();
         event.stopImmediatePropagation();

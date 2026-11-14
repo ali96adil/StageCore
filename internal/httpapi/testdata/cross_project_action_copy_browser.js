@@ -1,0 +1,149 @@
+"use strict";
+
+(async () => {
+  const requestTrace = [];
+  const confirmMessages = [];
+  window.confirm = (message) => { confirmMessages.push(String(message)); return true; };
+  const browserFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await browserFetch(...args);
+    requestTrace.push(`${args[0]} → ${response.status}`);
+    return response;
+  };
+  const report = async (value) => {
+    await fetch("/cross-project-copy-result", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(value),
+    });
+    window.close();
+  };
+  const waitFor = async (predicate, label) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  };
+
+  try {
+    if (document.readyState === "loading") {
+      await new Promise((resolve) => document.addEventListener("DOMContentLoaded", resolve, {once: true}));
+    }
+    const configResponse = await fetch("/cross-project-copy-config", {cache: "no-store"});
+    if (!configResponse.ok) throw new Error(`test configuration returned HTTP ${configResponse.status}`);
+    const config = await configResponse.json();
+    state.user = {username: "owner", role: "OWNER"};
+    state.csrf = config.csrf;
+    state.project = {project_id: config.source, name: "Cross Project Copy Source"};
+    sessionStorage.setItem("stagecore_csrf", state.csrf);
+    showApp();
+    await navigate("cues");
+
+    const sourceButton = document.querySelector(`.cue-edit[data-id="${config.source_cue}"]`);
+    if (!sourceButton) throw new Error("source Mixed Cue edit control is missing");
+    sourceButton.click();
+    const dialog = document.getElementById("cueDialog");
+    await waitFor(() => dialog.open && document.querySelectorAll("#actionsEditor .action-editor").length === 2,
+      "opening the two-Action source Mixed Cue");
+    const authoringFields = () => [...document.querySelectorAll("#cueForm input, #cueForm select, #cueForm textarea")]
+      .filter((field) => !field.matches(".sc008-action-select"))
+      .map((field) => [field.id || field.className, field.value, field.type === "checkbox" ? field.checked : null]);
+    const sourceBaseline = JSON.stringify(authoringFields());
+    const sourceCards = [...document.querySelectorAll("#actionsEditor .action-editor")];
+    const sourceActionIDs = sourceCards.map((card) => card.querySelector(".action-id").value);
+    const sourceTargets = sourceCards.map((card) => card.querySelector(".action-target").value);
+    const sourceModes = sourceCards.map((card) => card.querySelector(".action-mode").value);
+    const sourceCapabilities = sourceCards.map((card) => card.querySelector(".action-capability").value);
+    for (const card of sourceCards) {
+      const checkbox = card.querySelector(".sc008-action-select");
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event("change", {bubbles: true}));
+    }
+    const copySelected = document.getElementById("sc008CopySelectedActions");
+    if (!copySelected || copySelected.disabled) throw new Error("copy-selected command did not enable for both Actions");
+    copySelected.click();
+    if (JSON.stringify(authoringFields()) !== sourceBaseline) {
+      throw new Error(`clipboard selection mutated Cue editor fields: ${JSON.stringify({sourceBaseline, current: authoringFields()})}`);
+    }
+    document.getElementById("cancelCueButton").click();
+    await waitFor(() => !dialog.open, "closing the source editor without a Draft mutation");
+    if (confirmMessages.length !== 0) throw new Error(`clipboard selection incorrectly triggered a confirmation: ${confirmMessages.join(" | ")}`);
+
+    sourceButton.click();
+    await waitFor(() => dialog.open, "reopening the source Cue for an unsaved-edit guard check");
+    const cueName = document.getElementById("cueName");
+    cueName.value = `${cueName.value} unsaved`;
+    cueName.dispatchEvent(new Event("input", {bubbles: true}));
+    document.getElementById("cancelCueButton").click();
+    await waitFor(() => !dialog.open, "closing after accepting the unsaved-edit warning");
+    if (confirmMessages.length !== 1) throw new Error(`an actual Cue edit did not trigger exactly one confirmation: ${confirmMessages.join(" | ")}`);
+
+    document.getElementById("projectsNav").click();
+    await waitFor(() => state.page === "projects" &&
+      document.querySelector(`.open-project[data-project-id="${config.destination}"]`), "loading Projects");
+    document.querySelector(`.open-project[data-project-id="${config.destination}"]`).click();
+    await waitFor(() => state.project?.project_id === config.destination && state.page === "dashboard",
+      "opening the destination Project");
+    await navigate("cues");
+    const destinationButton = document.querySelector(`.cue-edit[data-id="${config.destination_cue}"]`);
+    if (!destinationButton) throw new Error("destination Draft Cue edit control is missing");
+    destinationButton.click();
+    await waitFor(() => dialog.open, "opening the destination Draft Cue");
+    const paste = document.getElementById("sc008PasteAction");
+    if (!paste || paste.disabled) throw new Error("same-session Action clipboard did not survive Project navigation");
+    paste.click();
+    await waitFor(() => document.querySelectorAll("#actionsEditor .action-editor").length === 2,
+      "pasting both Mixed Actions into the destination Draft");
+    const pastedCards = [...document.querySelectorAll("#actionsEditor .action-editor")];
+    const pastedTargets = pastedCards.map((card) => card.querySelector(".action-target").value);
+    const pastedActionIDs = pastedCards.map((card) => card.querySelector(".action-id").value);
+    if (JSON.stringify(pastedTargets) !== JSON.stringify(sourceTargets) || pastedActionIDs.some(Boolean)) {
+      throw new Error(`paste changed source fields or retained identities: ${JSON.stringify({pastedTargets, pastedActionIDs})}`);
+    }
+    const warning = document.getElementById("globalMessage").innerText;
+    if (!/(not configured here|غير معرفة هنا)/i.test(warning) || !/(remap|أعد تعيينها)/i.test(warning)) {
+      throw new Error(`missing-target warning was not shown: ${warning}`);
+    }
+
+    const mapButton = document.getElementById("sc008MapCopiedTargets");
+    if (!mapButton || mapButton.disabled) throw new Error("bulk target mapping did not enable for copied Actions");
+    mapButton.click();
+    const mapDialog = document.getElementById("sc008TargetMapDialog");
+    await waitFor(() => mapDialog?.open, "opening bulk target mapping dialog");
+    const targetSelects = [...mapDialog.querySelectorAll("select[aria-label]")];
+    if (targetSelects.length !== 2) throw new Error(`target map rows=${targetSelects.length}, want one per source target`);
+    const mapping = {"SOURCE-LIGHT": "DEST-LIGHT", "SOURCE-OSC": "DEST-OSC"};
+    for (const select of targetSelects) {
+      const sourceTarget = Object.keys(mapping).find((source) => select.getAttribute("aria-label").includes(source));
+      if (!sourceTarget || ![...select.options].some((option) => option.value === mapping[sourceTarget])) {
+        throw new Error(`target map lacks configured destination for ${select.getAttribute("aria-label")}`);
+      }
+      select.value = mapping[sourceTarget];
+      select.dispatchEvent(new Event("change", {bubbles: true}));
+    }
+    mapDialog.querySelector("form").requestSubmit();
+    await waitFor(() => !mapDialog.open &&
+      JSON.stringify([...document.querySelectorAll("#actionsEditor .action-target")].map((input) => input.value)) ===
+        JSON.stringify(["DEST-LIGHT", "DEST-OSC"]), "applying Draft-only target mapping");
+
+    document.getElementById("cueForm").requestSubmit();
+    await waitFor(() => !dialog.open && state.cues.find((cue) => cue.cue_id === config.destination_cue)?.actions?.length === 2,
+      "saving mapped Actions to the destination Draft");
+    const savedCue = state.cues.find((cue) => cue.cue_id === config.destination_cue);
+    const unsafeCall = requestTrace.some((request) =>
+      /\/publish(?:\?|\s|$)|\/runtime\/(?:go|jump|stop)(?:\?|\s|$)|emergency-blackout/i.test(request));
+    const configurationCopied = requestTrace.some((request) => /\/stage-devices\/(?:assignments|aliases|configuration)/i.test(request));
+    if (!savedCue || unsafeCall || configurationCopied || savedCue.actions.some((action, index) =>
+      action.target_ref !== mapping[sourceTargets[index]] || action.action_id === sourceActionIDs[index] ||
+      action.execution_mode !== sourceModes[index] || action.capability_key !== sourceCapabilities[index])) {
+      throw new Error(`saved destination Draft crossed a safety/identity boundary: ${JSON.stringify({savedCue, unsafeCall, configurationCopied})}`);
+    }
+    await report({
+      status: "PASS", targets: savedCue.actions.map((action) => action.target_ref),
+      action_ids: savedCue.actions.map((action) => action.action_id), unsafe_call: unsafeCall,
+      configuration_copied: configurationCopied, requests: requestTrace,
+    });
+  } catch (error) {
+    await report({status: "FAIL", error: String(error.stack || error), requests: requestTrace});
+  }
+})();

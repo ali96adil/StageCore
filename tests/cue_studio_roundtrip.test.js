@@ -224,3 +224,22 @@ test("Cue Studio saves, reopens and previews a nested mixed compound Cue without
   assert.equal(JSON.parse(cards[0].fields.get(".action-parameters").value).levels.warm, 55);
   assert.equal(cards[1].fields.get(".action-target").value, "TABLET");
 });
+
+test("Cue selection for clipboard copy does not count as an unsaved Draft edit", () => {
+  const studio = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
+  const start = studio.indexOf("  function formSignature() {");
+  const end = studio.indexOf("  function bindFormGuards()", start);
+  assert.ok(start >= 0 && end > start);
+  let selectionChecked = false;
+  let authoredDraft = {name: "Opening"};
+  const context = {readDraftHistory: (includeIncomplete) =>
+    includeIncomplete ? JSON.stringify(authoredDraft) : null};
+  const signature = vm.runInNewContext(studio.slice(start, end) + "formSignature()", context);
+  selectionChecked = true;
+  assert.equal(vm.runInNewContext(studio.slice(start, end) + "formSignature()", context), signature,
+    "clipboard selection is transient UI state, not a Draft edit");
+  assert.equal(selectionChecked, true);
+  authoredDraft = {name: "Changed Opening"};
+  assert.notEqual(vm.runInNewContext(studio.slice(start, end) + "formSignature()", context), signature,
+    "actual Cue field edits must still trigger the close guard");
+});
