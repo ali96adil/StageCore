@@ -3066,3 +3066,26 @@ This entry supersedes the preceding push instruction.
   commits unpushed until that exact-head Core run completes. Then verify the
   PR/remote head, push normally and wait for CI on the new SHA. Continue the
   whole-server SC-024 review after those checks, without production activation.
+
+## Resume update — 2026-11-14 20:18 UTC · Cue color batch pushed
+
+- Exact-head Core `43633596721` on `569247e` completed green, including Go 1.26
+  full Race and ARM64 product builds; Go 1.27 was green. Companion
+  `43633596728` and Relay `43633596765` also passed.
+- Rechecked clean local state, `git ls-remote`, `origin`, and OPEN/Draft PR #534
+  at `569247ed8090f42a54b833d02608917b188a75ff`, then normally pushed seven
+  accumulated commits. No force push or merge. Local, tracking ref, remote
+  branch and PR now agree on `5fb3a6889e823aecb067b519c5a8b206f84cae21`.
+- Search adds bounded server-side Project Files query and query-bound paging;
+  its full project totals remain distinct from filtered match counts. HTTP,
+  Store, Node and Chrome RTL/LTR tests cover search, cursor replay and revoke
+  boundaries. SC-005 browser evidence now covers Cue color persistence and
+  readable labels at 390×844 Arabic RTL with no horizontal overflow.
+- New exact-head runs are active: Core `43636803011`, Companion `43636803043`,
+  and Relay `43636803216`. They are pending at this checkpoint; do not push
+  another change until all finish. Current branch/worktree are clean.
+- Next: inspect all three new CI results and exact PR head. Continue the SC-024
+  route-policy review after checks, keeping production ACL disabled. Pi 4
+  requalification remains pending because the isolated qualification endpoint
+  previously failed before shell access with `websocket: bad handshake`; do not
+  retry without a changed endpoint/credential condition.
