@@ -162,7 +162,9 @@ func (s *Service) Validate(ctx context.Context, token string) (Session, error) {
 }
 
 // ValidatePassive checks the current session without writing activity on every
-// heartbeat or streamed chunk. The initial HTTP request uses Validate.
+// heartbeat or streamed chunk. An expired session is still retired once so a
+// wall-clock rollback cannot make the credential valid again. The initial HTTP
+// request uses Validate.
 func (s *Service) ValidatePassive(ctx context.Context, token string) (Session, error) {
 	return s.validate(ctx, token, false)
 }
@@ -173,7 +175,6 @@ func (s *Service) validate(ctx context.Context, token string, touch bool) (Sessi
 		return Session{}, ErrSessionInvalid
 	}
 	digest := sha256.Sum256([]byte(token))
-	now := s.now().UTC()
 	var session Session
 	var issuedAtUS, expiresAtUS int64
 	var enabled int
@@ -195,7 +196,17 @@ func (s *Service) validate(ctx context.Context, token string, touch bool) (Sessi
 	}
 	session.IssuedAt = time.UnixMicro(issuedAtUS).UTC()
 	session.ExpiresAt = time.UnixMicro(expiresAtUS).UTC()
-	if enabled != 1 || !session.ExpiresAt.After(now) {
+	now := s.now().UTC()
+	if enabled != 1 {
+		return Session{}, ErrSessionInvalid
+	}
+	if !session.ExpiresAt.After(now) {
+		// Retire an expired credential the first time the Hub observes its
+		// expiry. This prevents a later wall-clock correction from making a
+		// previously expired token valid again.
+		if err := s.retireExpiredSession(ctx, session.ID, now); err != nil {
+			return Session{}, fmt.Errorf("retire expired browser session: %w", err)
+		}
 		return Session{}, ErrSessionInvalid
 	}
 	if touch {
@@ -204,6 +215,14 @@ func (s *Service) validate(ctx context.Context, token string, touch bool) (Sessi
 		}
 	}
 	return session, nil
+}
+
+func (s *Service) retireExpiredSession(ctx context.Context, sessionID string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE browser_sessions SET revoked_at_us = ?
+		WHERE session_id = ? AND revoked_at_us IS NULL AND expires_at_us <= ?
+	`, now.UnixMicro(), sessionID, now.UnixMicro())
+	return err
 }
 
 func (s *Service) ValidateCSRF(ctx context.Context, token, csrfToken string) (Session, error) {

@@ -156,6 +156,12 @@ func (s *Service) Renew(ctx context.Context, token string) (Credential, error) {
 		return Credential{}, err
 	}
 	now := s.now().UTC()
+	if !session.ExpiresAt.After(now) {
+		if err := s.retireExpiredSession(ctx, session.ID, now); err != nil {
+			return Credential{}, fmt.Errorf("retire expired browser session during renewal: %w", err)
+		}
+		return Credential{}, ErrSessionInvalid
+	}
 	expires := now.Add(s.sessionTTL)
 	oldDigest := sha256.Sum256([]byte(strings.TrimSpace(token)))
 	newDigest := sha256.Sum256([]byte(newToken))

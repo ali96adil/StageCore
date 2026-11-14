@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
@@ -28,6 +29,40 @@ func TestSessionRenewalRotatesOldCredentialLocally(t *testing.T) {
 	}
 	if _, err := service.Validate(ctx, renewed.Token); err != nil {
 		t.Fatalf("renewed credential invalid: %v", err)
+	}
+}
+
+func TestSessionExpiredDuringForwardClockCorrectionCannotBeReusedAfterCorrection(t *testing.T) {
+	ctx := context.Background()
+	baseService, password := adminFixture(t)
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	service, err := New(baseService.db,
+		WithClock(func() time.Time { return now }),
+		WithSessionTTL(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential, err := service.Login(ctx, "owner", password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(2 * time.Hour)
+	if _, err := service.Validate(ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("forward-corrected expired session error=%v, want ErrSessionInvalid", err)
+	}
+	now = now.Add(-90 * time.Minute)
+	if _, err := service.Validate(ctx, credential.Token); !errors.Is(err, ErrSessionInvalid) {
+		t.Fatalf("expired session became valid after clock correction: %v", err)
+	}
+
+	corrected, err := service.Login(ctx, "owner", password, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Owner could not sign in locally after time correction: %v", err)
+	}
+	if _, err := service.Validate(ctx, corrected.Token); err != nil {
+		t.Fatalf("new post-correction session is invalid: %v", err)
 	}
 }
 
