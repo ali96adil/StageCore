@@ -82,6 +82,7 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
+	focusRequests := make(chan chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -104,6 +105,18 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/project-access-browser-focus-ready":
+			resume := make(chan struct{})
+			select {
+			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/project-access-browser-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = w.Write(testScript)
@@ -126,6 +139,7 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		"--remote-debugging-port=0", "--remote-allow-origins=*",
 		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "project-access-browser.log"))
 	if err != nil {
@@ -136,6 +150,12 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("connect to isolated Chrome DevTools: %v", err)
+	}
+	defer cdp.Close()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	exited := false
@@ -146,18 +166,25 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		}
 	}()
 	var outcome string
-	select {
-	case outcome = <-browserResult:
-		if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
-			t.Fatal(outcome)
+	for outcome == "" {
+		select {
+		case outcome = <-browserResult:
+			if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
+				t.Fatal(outcome)
+			}
+		case resume := <-focusRequests:
+			if err := dispatchChromeTab(cdp); err != nil {
+				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
+			}
+			close(resume)
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser did not finish: %s", output)
 		}
-	case err := <-done:
-		exited = true
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser exited before reporting: %v\n%s", err, output)
-	case <-ctx.Done():
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
 		Status            string `json:"status"`
@@ -170,6 +197,8 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		FieldsStack       bool   `json:"fields_stack"`
 		PageOverflow      bool   `json:"page_overflow"`
 		KeyboardFocusable bool   `json:"keyboard_focusable"`
+		TabTraversal      bool   `json:"tab_traversal"`
+		FocusVisible      bool   `json:"focus_visible"`
 		ViewportWidth     int    `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" {
@@ -177,7 +206,7 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	}
 	if report.AccessLevel != "OPERATE" || report.Phase != "PREPARED_NOT_ENFORCED" || report.Enforced ||
 		!report.WarningShown || report.UnsafeCall || !report.RTL || !report.FieldsStack ||
-		report.PageOverflow || !report.KeyboardFocusable || report.ViewportWidth > 560 || report.ViewportWidth < 1 {
+		report.PageOverflow || !report.KeyboardFocusable || !report.TabTraversal || !report.FocusVisible || report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser report crossed its prepared-only boundary: %+v", report)
 	}
 	for _, permission := range []projectaccess.Permission{

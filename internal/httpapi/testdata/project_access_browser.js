@@ -54,6 +54,19 @@
     const level = document.getElementById("projectAccessLevel");
     const load = document.getElementById("loadProjectAccess");
     const save = document.getElementById("saveProjectAccess");
+    project.focus();
+    if (document.activeElement !== project) throw new Error("Project selector did not accept keyboard focus");
+    const focusResponse = await fetch("/project-access-browser-focus-ready", { method: "POST" });
+    if (!focusResponse.ok) throw new Error(`native Tab key request returned HTTP ${focusResponse.status}`);
+    const tabTraversal = document.activeElement === user && user.matches(":focus-visible");
+    const userFocus = getComputedStyle(user);
+    const focusVisible = userFocus.outlineStyle !== "none" && userFocus.outlineWidth === "3px";
+    if (!tabTraversal || !focusVisible) {
+      throw new Error(`project grant keyboard traversal failed: ${JSON.stringify({
+        active: document.activeElement?.id, tabTraversal, focusVisible,
+        outlineStyle: userFocus.outlineStyle, outlineWidth: userFocus.outlineWidth,
+      })}`);
+    }
     project.value = config.project;
     project.dispatchEvent(new Event("change", { bubbles: true }));
     user.value = config.operator;
@@ -106,7 +119,8 @@
       status: "PASS", access_level: readback.access_level, phase: readback.phase,
       enforced: readback.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
       unsafe_call: unsafeCall, rtl: getComputedStyle(form).direction === "rtl", fields_stack: fieldsStack,
-      page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable,
+      page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable, tab_traversal: tabTraversal,
+      focus_visible: focusVisible,
       viewport_width: document.documentElement.clientWidth, requests: requestTrace,
     });
   } catch (error) {
