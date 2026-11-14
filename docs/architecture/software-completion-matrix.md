@@ -3,14 +3,14 @@
 Reviewed on `integration/stagecore-rc`: code HEAD `76f9a9f9b57d89a40b8f1938d098ae25f9ad2d08`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 05:08 UTC, exact-head Core run `43557284478` on `a3b6f5d`
-completed successfully on Go 1.26/1.27, including Race and ARM64 builds;
-Companion `43557284414` and Camera Relay `43557284429` also passed. Six
-follow-on commits are now pushed to PR #534 at `76f9a9f`. Local Node passes
-62/62; full Store, DB and HTTP API tests, focused Race/Vet, JavaScript syntax
-and diff checks pass. New exact-head Core `43560053370` and Companion
-`43560053384` are running; Camera Relay `43560053362` passed. Wait for Core and
-Companion before the next push.
+At 2026-11-14 05:42 UTC, exact-head Core run `43560053370` on `76f9a9f`
+completed successfully on Go 1.26/1.27, including Race and Linux ARM64 product
+builds; Companion `43560053384` and Camera Relay `43560053362` also passed on
+that exact head. Six functional/documentation commits are pushed to Draft PR
+#534. Two follow-on commits locally update the handoff and review open
+non-SC issues; they are ready to push after this checkpoint update. Local Node
+passes 62/62; full Store, DB and HTTP API tests, focused Race/Vet, JavaScript
+syntax and diff checks pass. Production and device boundaries remain unchanged.
 This matrix keeps software evidence separate from installed application and
 physical qualification.
 Issue status and software status are separate: an open issue can have
@@ -93,10 +93,10 @@ SC-009 gap is Project-wide Undo/Redo for Cue create/delete/duplicate/reorder
 and recovery before a new Cue's first save. Implement the Project-level history
 next without changing publish/runtime semantics.
 
-The exact-head Core run `43553686731` on pushed `ce927d6` completed successfully
-in Go 1.26 and 1.27, including Race and Linux ARM64 product builds. Companion
-`43553686720` and Camera Relay `43553686712` also passed on that exact head.
-Pi 4 runtime qualification remains pending: a strict, read-only SSH retry to
+The latest exact-head Core run `43560053370` on pushed `76f9a9f` completed
+successfully in Go 1.26 and 1.27, including Race and Linux ARM64 product builds.
+Companion `43560053384` and Camera Relay `43560053362` also passed on that exact
+head. Pi 4 runtime qualification remains pending: a strict, read-only SSH retry to
 `stagecore-qualification` failed before host identity with `websocket: bad
 handshake`; no remote command ran. Do not infer Pi P95/P99/Jitter from Mac or
 ARM64 cross-build results.

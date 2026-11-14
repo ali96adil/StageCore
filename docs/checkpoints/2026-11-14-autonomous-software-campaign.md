@@ -1231,3 +1231,48 @@ This entry supersedes the preceding push instruction.
 - Related PRs remain at their verified heads with green software checks. Pi 4
   runtime performance remains pending host access; production Hub/Relay/data/
   Vault, devices/firmware and production Project ACL remain untouched/disabled.
+
+## Resume update — 2026-11-14 05:43 UTC · exact-head CI green and issue review
+
+- Remote branch / Draft PR #534 remains at
+  `76f9a9f9b57d89a40b8f1938d098ae25f9ad2d08`. The exact-head runs are now all
+  complete and successful: Core `43560053370` (Go 1.26/1.27, Race, Linux
+  ARM64 CGo-free product builds), Companion Core `43560053384`, and Camera
+  Relay `43560053362`.
+- Local HEAD before this documentation update was `df52634`; local commits
+  `2170e37` and `df52634` are docs-only and have not been pushed. This update
+  refreshes the matrix and records the newly completed CI / open-issue review.
+  Re-read `git rev-parse HEAD` after committing; then verify `git ls-remote`
+  still reports `76f9a9f` before a normal push to the existing branch.
+- The matrix now classifies open non-SC backlog items. #455 remains a Core
+  software gap: concurrent GO requires selection/advance fencing, multiple
+  tracked executions, STOP/Blackout over all active work and output-conflict
+  rules; do not remove the active-run gate in isolation. #446's TLS bootstrap
+  software fix is already in Foundation commit
+  `12be83968efff876d8cb239b79368b3dafbf044b`, pinned by open Drafts StageLaser
+  #56, DMX #39 and Camera #20; their software/no-actuation checks pass, with
+  device trust and attended pairing still unqualified. #467 explicitly asks
+  for no additional preview UI. #483/#459/#429/#307 remain deployment or
+  physical-acceptance gates.
+- Linked PR heads were refreshed: TabletPlayer #36
+  `91613da1c8e0455a501c7be4b6df8ac1ce73a6bc`; DMX #39
+  `3ad774988b2f78eb385f1046f7668a7f29049ab1`; Camera #20
+  `455b066c6520e1c8a576d26dd2afd4b377652dde`; StageLaser #56
+  `b14a5789132549f2724f77b342bbe4c6b0fc880c`; StageLaser #57
+  `c4ff10b37dc2fbfd3ebe31e55f0f8d4869d3dc54`. Their recorded software
+  checks are green; no linked repository was changed.
+- Docs validation: `git diff --check` passed. No code changed in this checkpoint;
+  earlier current-head evidence remains Node 62/62, full Store/DB/HTTP API
+  tests, focused Race/Vet, JS syntax and diff checks. No reason to rerun them
+  for documentation-only changes.
+- Next software task remains SC-009 Project-wide Draft Undo/Redo. Before code,
+  define history/concurrency fences against the revision fork and publish path,
+  then add red-first Store/API regressions for mixed linked Cue create/edit/
+  delete/duplicate/reorder, identity/link preservation, cross-editor conflict,
+  restart recovery and immutable Published Snapshot. After pushing the docs,
+  wait for exact-head CI before any later push.
+- Pi 4 P95/P99/Jitter runtime qualification remains pending: strict read-only
+  SSH to `stagecore-qualification` failed before host identity with
+  `websocket: bad handshake`; no remote command ran. Mac/ARM64 CI is not Pi
+  runtime evidence. Production Hub/Relay/data/Vault, real devices and outputs,
+  and production SC-024 remain untouched/disabled. No force push or merge.
