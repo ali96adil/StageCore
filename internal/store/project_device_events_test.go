@@ -99,3 +99,78 @@ func TestListProjectDeviceTransportEventsIsScopedOrderedAndBounded(t *testing.T)
 		t.Fatal("reversed event interval accepted")
 	}
 }
+
+func TestListProjectTransportEventsIncludesAuthenticatedDeviceAndCompanionTransitions(t *testing.T) {
+	ctx := context.Background()
+	h, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	now := time.Date(2026, 11, 14, 22, 30, 0, 0, time.UTC)
+	s := store.New(h.DB, clock.Fixed{Time: now})
+	project, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Shared transport timeline", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProject, _, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Other transport timeline", CreatedBy: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planRows, err := h.DB.QueryContext(ctx, `EXPLAIN QUERY PLAN
+		SELECT event_id, occurred_at_us, sequence FROM event_records
+		WHERE session_id IS NULL AND source_ref = 'hub.stage_device_runtime'
+		  AND event_type IN ('stage_device.transport.connected', 'stage_device.transport.disconnected')
+		  AND project_id = ? AND occurred_at_us >= ? AND occurred_at_us <= ?
+		UNION ALL
+		SELECT event_id, occurred_at_us, sequence FROM event_records
+		WHERE session_id IS NULL AND source_ref = 'hub.companion_runtime'
+		  AND event_type IN ('companion.transport.connected', 'companion.transport.disconnected')
+		  AND project_id = ? AND occurred_at_us >= ? AND occurred_at_us <= ?
+		ORDER BY occurred_at_us, sequence LIMIT 501
+	`, project.ID, now.UnixMicro(), now.Add(time.Second).UnixMicro(), project.ID, now.UnixMicro(), now.Add(time.Second).UnixMicro())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan strings.Builder
+	for planRows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := planRows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+	}
+	if err := planRows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []string{"event_records_project_transport_timeline_idx", "event_records_project_companion_transport_timeline_idx"} {
+		if !strings.Contains(plan.String(), index) {
+			t.Fatalf("shared Project transport query does not use %s: %s", index, plan.String())
+		}
+	}
+	appendEvent := func(projectID, source, eventType, payload string) {
+		t.Helper()
+		if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
+			EventType: eventType, SchemaVersion: contracts.SchemaVersion1, OccurredAt: now,
+			Source: source, ProjectID: projectID, Priority: "P2", Payload: json.RawMessage(payload),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendEvent(project.ID, "hub.stage_device_runtime", contracts.StageDeviceTransportConnectedEventType, `{"device_id":"tablet-1"}`)
+	appendEvent(project.ID, "hub.companion_runtime", contracts.CompanionTransportConnectedEventType, `{"companion_id":"mac-1"}`)
+	appendEvent(project.ID, "hub.companion_runtime", contracts.CompanionTransportDisconnectedEventType, `{"companion_id":"mac-1"}`)
+	appendEvent(project.ID, "adapter.untrusted", contracts.CompanionTransportConnectedEventType, `{"companion_id":"forged"}`)
+	appendEvent(project.ID, "hub.stage_device_runtime", contracts.CompanionTransportConnectedEventType, `{"companion_id":"wrong-source"}`)
+	appendEvent(otherProject.ID, "hub.companion_runtime", contracts.CompanionTransportConnectedEventType, `{"companion_id":"other-project"}`)
+	events, truncated, err := s.ListProjectTransportEvents(ctx, project.ID, now, now.Add(time.Second))
+	if err != nil || truncated || len(events) != 3 {
+		t.Fatalf("transport events=%+v truncated=%v err=%v", events, truncated, err)
+	}
+	if events[0].EventType != contracts.StageDeviceTransportConnectedEventType ||
+		events[1].EventType != contracts.CompanionTransportConnectedEventType ||
+		events[2].EventType != contracts.CompanionTransportDisconnectedEventType {
+		t.Fatalf("combined transport event ordering/scope=%+v", events)
+	}
+}

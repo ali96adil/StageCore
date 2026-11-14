@@ -108,6 +108,8 @@ const sessionEventLabels = {
   "stage_device.command.failed": "Device command failed",
   "stage_device.transport.connected": "Hub transport connected",
   "stage_device.transport.disconnected": "Hub transport disconnected",
+  "companion.transport.connected": "Companion Hub transport connected",
+  "companion.transport.disconnected": "Companion Hub transport disconnected",
   "simulation.stopped": "Simulation stopped",
   "simulation.execution.completed": "Simulation action completed",
   "simulation.execution.failed": "Simulation action failed",
@@ -132,6 +134,7 @@ function sessionEventTimelineMarkup(events, category = "all") {
       </div>
       <div class="meta" style="margin-top:8px"><span>${esc(fmtDate(event.occurred_at))}</span>${event.correlation_id ? `<span>Correlation ${esc(event.correlation_id)}</span>` : ""}</div>
       ${event.category === "device_health" ? `<div class="meta" style="margin-top:8px"><span>Device ${esc(event.device_id || "—")}</span><span>Hub transport ${esc(event.transport_state || "unknown")}</span>${event.connection_generation ? `<span>Connection ${esc(event.connection_generation)}</span>` : ""}${event.transition_reason ? `<span>Reason ${esc(event.transition_reason)}</span>` : ""}</div><p class="muted">Hub transport evidence only; it does not confirm device output.</p>` : ""}
+      ${event.category === "companion_health" ? `<div class="meta" style="margin-top:8px"><span>Companion ${esc(event.companion_id || "—")}</span><span>Hub transport ${esc(event.transport_state || "unknown")}</span>${event.connection_generation ? `<span>Connection ${esc(event.connection_generation)}</span>` : ""}${event.transition_reason ? `<span>Reason ${esc(event.transition_reason)}</span>` : ""}</div><p class="muted">Hub socket evidence only; it does not confirm Companion app readiness, adapter health, or physical output.</p>` : ""}
       <p class="mono muted" style="margin-top:6px">${esc(event.event_id)}</p>
     </article>`).join("");
 }
@@ -184,6 +187,7 @@ function sessionTraceExportProjection(session, cues, events) {
       ...(event?.priority ? {priority: String(event.priority)} : {}),
       ...(event?.correlation_id ? {correlation_id: String(event.correlation_id)} : {}),
       ...(event?.device_id ? {device_id: String(event.device_id)} : {}),
+      ...(event?.companion_id ? {companion_id: String(event.companion_id)} : {}),
       ...(event?.transport_state ? {transport_state: String(event.transport_state)} : {}),
       ...(Number.isInteger(event?.connection_generation) && event.connection_generation > 0
         ? {connection_generation: event.connection_generation} : {}),
@@ -239,6 +243,7 @@ function sessionComparisonMetrics(session, cues, events) {
     safety_events: events.filter((event) => event.category === "safety").length,
     device_events: events.filter((event) => event.category === "device").length,
     device_health_events: events.filter((event) => event.category === "device_health").length,
+    companion_health_events: events.filter((event) => event.category === "companion_health").length,
     snapshot_id: session.runtime_snapshot_id || "",
   };
 }
@@ -256,6 +261,7 @@ function sessionComparisonMarkup(primarySession, primaryCues, primaryEvents, oth
     ["Safety events", current.safety_events, compared.safety_events],
     ["Device events", current.device_events, compared.device_events],
     ["Device transport events", current.device_health_events, compared.device_health_events],
+    ["Companion transport events", current.companion_health_events, compared.companion_health_events],
   ];
   const value = (metric, duration = false) => metric === null ? "—" : duration ? `${(metric / 1000).toFixed(1)} s` : String(metric);
   const delta = (left, right, duration = false) => {
@@ -393,7 +399,7 @@ async function renderSessionDetail(sessionID, executionID = "", eventCategory = 
       <p class="mono muted" style="margin-top:8px">Session ${esc(session.session_id)}</p>
     </article>
     <section class="card" style="margin-bottom:16px">
-      <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device and simulation events. Hub transport changes are shown only when explicitly observed and do not confirm output.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="device_health" ${eventCategory === "device_health" ? "selected" : ""}>Connection</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
+      <div class="section-title-row"><div><p class="eyebrow">SESSION MEMORY</p><h2>Runtime timeline</h2><p class="muted">Recorded session, safety, device, Companion transport and simulation events. Hub transport shows connectivity only and does not confirm output or app readiness.</p></div><div class="toolbar"><label>Filter<select id="sessionEventCategory"><option value="all">All events</option><option value="session" ${eventCategory === "session" ? "selected" : ""}>Session</option><option value="safety" ${eventCategory === "safety" ? "selected" : ""}>Safety</option><option value="device" ${eventCategory === "device" ? "selected" : ""}>Device</option><option value="device_health" ${eventCategory === "device_health" ? "selected" : ""}>Device connection</option><option value="companion_health" ${eventCategory === "companion_health" ? "selected" : ""}>Companion connection</option><option value="simulation" ${eventCategory === "simulation" ? "selected" : ""}>Simulation</option></select></label><button id="exportSessionTrace" class="button ghost" type="button">Export JSON</button></div></div>
       ${detail.events_truncated ? `<p class="muted" role="status">Transport history is limited to the first 500 recorded transitions; this connection timeline is incomplete.</p>` : ""}
       <div class="actions-editor" style="margin-top:14px">${sessionEventTimelineMarkup(events, eventCategory)}</div>
     </section>

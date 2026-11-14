@@ -31,6 +31,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/outputwatch"
+	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"golang.org/x/net/websocket"
@@ -161,6 +162,28 @@ func TestAuthenticatedRuntimeWebSocketExecutesEchoWithoutReplayAndLosesAuthority
 	}
 	if _, err := auth.BeginAuthentication(ctx, companionID); companionauth.ErrorCode(err) != companionauth.CodeRevoked {
 		t.Fatalf("revoked authentication error=%v", err)
+	}
+	var detail sessionmemory.SessionDetail
+	waitForRuntime(t, func() bool {
+		var detailErr error
+		detail, detailErr = sessionmemory.New(s).Detail(ctx, project.ID, session.ID)
+		if detailErr != nil {
+			return false
+		}
+		return countSessionEventCategory(detail.Events, "companion_health") == 3
+	})
+	companionTransitions := make([]sessionmemory.SessionEventTrace, 0, 3)
+	for _, event := range detail.Events {
+		if event.Category == "companion_health" {
+			companionTransitions = append(companionTransitions, event)
+		}
+	}
+	if companionTransitions[0].TransportState != "DISCONNECTED" ||
+		companionTransitions[0].TransitionReason != companionchannel.CompanionTransportDisconnectSocketClosed ||
+		companionTransitions[1].TransportState != "CONNECTED" ||
+		companionTransitions[2].TransportState != "DISCONNECTED" ||
+		companionTransitions[2].TransitionReason != companionchannel.CompanionTransportDisconnectSessionRevoked {
+		t.Fatalf("revocation Companion transport timeline=%+v", companionTransitions)
 	}
 	if cue.ID == "" || revision.ID == "" {
 		t.Fatal("runtime Cue fixture was not created")

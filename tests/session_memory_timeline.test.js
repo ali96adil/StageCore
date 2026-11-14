@@ -61,6 +61,39 @@ test("Session timeline labels explicit Hub transport evidence without claiming o
   assert.doesNotMatch(encoded, /untrusted output response/);
 });
 
+test("Session timeline scopes Companion Hub sockets without claiming app or output health", () => {
+  const h = harness();
+  const event = {
+    event_id: "companion-transport-1",
+    event_type: "companion.transport.disconnected",
+    category: "companion_health",
+    occurred_at: "now",
+    companion_id: "mac-video",
+    transport_state: "DISCONNECTED",
+    connection_generation: 12,
+    transition_reason: "SESSION_REVOKED",
+    response_summary: "private adapter response",
+  };
+  const markup = h.sessionEventTimelineMarkup([event], "companion_health");
+  assert.match(markup, /Companion Hub transport disconnected/);
+  assert.match(markup, /Companion mac-video/);
+  assert.match(markup, /Hub transport DISCONNECTED/);
+  assert.match(markup, /Reason SESSION_REVOKED/);
+  assert.match(markup, /does not confirm Companion app readiness, adapter health, or physical output/);
+  assert.doesNotMatch(markup, /private adapter response/);
+  assert.doesNotMatch(h.sessionEventTimelineMarkup([event], "device_health"), /Companion Hub transport/);
+
+  const projection = h.sessionTraceExportProjection({session_id: "s1", project_id: "p1"}, [], [event]);
+  const encoded = JSON.stringify(projection);
+  assert.match(encoded, /companion_health/);
+  assert.match(encoded, /mac-video/);
+  assert.doesNotMatch(encoded, /private adapter response/);
+
+  const metrics = h.sessionComparisonMetrics({session_id: "s1"}, [], [event]);
+  assert.equal(metrics.companion_health_events, 1);
+  assert.match(h.sessionComparisonMarkup({session_id: "s1"}, [], [event], {session_id: "s2"}, [], []), /Companion transport events/);
+});
+
 test("Session JSON export keeps execution evidence but excludes free-form adapter response text", () => {
   const h = harness();
   const projection = h.sessionTraceExportProjection(

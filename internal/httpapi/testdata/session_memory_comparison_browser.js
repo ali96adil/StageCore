@@ -31,10 +31,21 @@
     connection_generation: 9,
     response_summary: "private transport payload",
   };
-  const timeline = sessionEventTimelineMarkup([transportEvent], "device_health");
+  const companionEvent = {
+    event_id: "companion-transport-1",
+    event_type: "companion.transport.connected",
+    category: "companion_health",
+    occurred_at: "2026-11-14T22:00:01Z",
+    companion_id: "mac-video",
+    transport_state: "CONNECTED",
+    connection_generation: 4,
+    response_summary: "private adapter response",
+  };
+  const timeline = sessionEventTimelineMarkup([transportEvent, companionEvent], "all");
   document.querySelector("#timeline").innerHTML = timeline;
   const timelineText = document.querySelector("#timeline").textContent;
-  const traceExport = sessionTraceExportProjection(current, [], [transportEvent]);
+  const companionTimeline = sessionEventTimelineMarkup([companionEvent], "companion_health");
+  const traceExport = sessionTraceExportProjection(current, [], [transportEvent, companionEvent]);
   const traceExportJSON = JSON.stringify(traceExport);
   const tables = document.querySelectorAll("#comparison .table-wrap table");
   const actionTable = tables[tables.length - 1];
@@ -50,7 +61,9 @@
     external_unknown: bodyText.includes("Transport sent; external execution unknown") && bodyText.includes("Output state verified"),
     transport_label: timelineText.includes("Hub transport connected") && timelineText.includes("Device tablet-01") && timelineText.includes("Hub transport CONNECTED"),
     transport_warning: timelineText.includes("does not confirm device output"),
-    export_sanitized: traceExportJSON.includes("tablet-01") && !traceExportJSON.includes("private transport payload"),
+    companion_label: timelineText.includes("Companion Hub transport connected") && timelineText.includes("Companion mac-video") && companionTimeline.includes("Hub transport CONNECTED"),
+    companion_warning: timelineText.includes("does not confirm Companion app readiness, adapter health, or physical output"),
+    export_sanitized: traceExportJSON.includes("tablet-01") && traceExportJSON.includes("mac-video") && !traceExportJSON.includes("private transport payload") && !traceExportJSON.includes("private adapter response"),
     viewport_width: document.documentElement.clientWidth,
     cell_count: cells.length,
   };

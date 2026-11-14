@@ -196,6 +196,34 @@ func TestSessionDetailIncludesExplicitProjectTransportTransitionsInSessionWindow
 	appendTransport(project.ID, contracts.StageDeviceTransportDisconnectedEventType, now, "tablet-01", "DISCONNECTED", "SOCKET_CLOSED")
 	appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now.Add(time.Second), "outside-after", "CONNECTED", "")
 	appendTransport(otherProject.ID, contracts.StageDeviceTransportConnectedEventType, now, "other-project", "CONNECTED", "")
+	appendCompanionTransport := func(projectID, eventType, state, reason string) {
+		t.Helper()
+		payload, err := json.Marshal(map[string]any{
+			"companion_id": "mac-video", "transport_state": state,
+			"connection_generation": 8, "reason": reason,
+			"adapter_response": "private adapter data must not be projected",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
+			EventType: eventType, SchemaVersion: contracts.SchemaVersion1,
+			OccurredAt: now, Source: "hub.companion_runtime", ProjectID: projectID, Priority: "P2",
+			Payload: payload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendCompanionTransport(project.ID, contracts.CompanionTransportConnectedEventType, "CONNECTED", "")
+	appendCompanionTransport(project.ID, contracts.CompanionTransportDisconnectedEventType, "DISCONNECTED", "CONNECTION_REPLACED")
+	appendCompanionTransport(otherProject.ID, contracts.CompanionTransportConnectedEventType, "CONNECTED", "")
+	if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
+		EventType: contracts.CompanionTransportConnectedEventType, SchemaVersion: contracts.SchemaVersion1,
+		OccurredAt: now, Source: "companion.adapter", ProjectID: project.ID, Priority: "P2",
+		Payload: json.RawMessage(`{"companion_id":"forged","transport_state":"CONNECTED"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AppendEvent(ctx, nil, contracts.EventEnvelope{
 		EventType: "stage_device.command.failed", SchemaVersion: contracts.SchemaVersion1,
 		OccurredAt: now, Source: "hub.stage_device_runtime", ProjectID: project.ID, Priority: "P1",
@@ -207,7 +235,7 @@ func TestSessionDetailIncludesExplicitProjectTransportTransitionsInSessionWindow
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.EventsTruncated || len(detail.Events) != 2 {
+	if detail.EventsTruncated || len(detail.Events) != 4 {
 		t.Fatalf("session events=%+v truncated=%v", detail.Events, detail.EventsTruncated)
 	}
 	connected, disconnected := detail.Events[0], detail.Events[1]
@@ -219,6 +247,20 @@ func TestSessionDetailIncludesExplicitProjectTransportTransitionsInSessionWindow
 		connected.ConnectionGeneration != 7 || disconnected.ConnectionGeneration != 7 ||
 		disconnected.TransitionReason != "SOCKET_CLOSED" {
 		t.Fatalf("project-scoped transport evidence=%+v", detail.Events)
+	}
+	companionConnected, companionDisconnected := detail.Events[2], detail.Events[3]
+	if companionConnected.EventType != contracts.CompanionTransportConnectedEventType ||
+		companionDisconnected.EventType != contracts.CompanionTransportDisconnectedEventType ||
+		companionConnected.Category != "companion_health" || companionDisconnected.Category != "companion_health" ||
+		companionConnected.CompanionID != "mac-video" || companionDisconnected.CompanionID != "mac-video" ||
+		companionConnected.TransportState != "CONNECTED" || companionDisconnected.TransportState != "DISCONNECTED" ||
+		companionConnected.ConnectionGeneration != 8 || companionDisconnected.ConnectionGeneration != 8 ||
+		companionDisconnected.TransitionReason != "CONNECTION_REPLACED" {
+		t.Fatalf("project-scoped Companion transport evidence=%+v", detail.Events)
+	}
+	encoded, err := json.Marshal(detail.Events)
+	if err != nil || strings.Contains(string(encoded), "private adapter data") {
+		t.Fatalf("Companion transport timeline leaked private payload: %s err=%v", encoded, err)
 	}
 	for i := 0; i < 501; i++ {
 		appendTransport(project.ID, contracts.StageDeviceTransportConnectedEventType, now, "bounded", "CONNECTED", "")

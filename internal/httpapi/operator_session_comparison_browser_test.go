@@ -117,6 +117,8 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		ExternalUnknown  bool   `json:"external_unknown"`
 		TransportLabel   bool   `json:"transport_label"`
 		TransportWarning bool   `json:"transport_warning"`
+		CompanionLabel   bool   `json:"companion_label"`
+		CompanionWarning bool   `json:"companion_warning"`
 		ExportSanitized  bool   `json:"export_sanitized"`
 		ViewportWidth    int    `json:"viewport_width"`
 		Error            string `json:"error,omitempty"`
@@ -126,7 +128,8 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 	}
 	if report.Status != "PASS" || report.ActionRows != 4 || report.ActionColumns != 12 ||
 		!report.HorizontalScroll || !report.PrivateExcluded || !report.ExternalUnknown ||
-		!report.TransportLabel || !report.TransportWarning || !report.ExportSanitized ||
+		!report.TransportLabel || !report.TransportWarning || !report.CompanionLabel ||
+		!report.CompanionWarning || !report.ExportSanitized ||
 		report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser comparison report=%+v", report)
 	}

@@ -97,6 +97,7 @@ type SessionEventTrace struct {
 	Priority             string    `json:"priority,omitempty"`
 	CorrelationID        string    `json:"correlation_id,omitempty"`
 	DeviceID             string    `json:"device_id,omitempty"`
+	CompanionID          string    `json:"companion_id,omitempty"`
 	TransportState       string    `json:"transport_state,omitempty"`
 	ConnectionGeneration int64     `json:"connection_generation,omitempty"`
 	TransitionReason     string    `json:"transition_reason,omitempty"`
@@ -239,7 +240,7 @@ func (s *Service) sessionEventData(ctx context.Context, session domain.Session) 
 	} else if through.Before(session.StartedAt) {
 		through = session.StartedAt
 	}
-	transportEvents, truncated, err := s.store.ListProjectDeviceTransportEvents(ctx, session.ProjectID, session.StartedAt, through)
+	transportEvents, truncated, err := s.store.ListProjectTransportEvents(ctx, session.ProjectID, session.StartedAt, through)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -294,6 +295,8 @@ func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool
 		category = "device"
 	case contracts.StageDeviceTransportConnectedEventType, contracts.StageDeviceTransportDisconnectedEventType:
 		category = "device_health"
+	case contracts.CompanionTransportConnectedEventType, contracts.CompanionTransportDisconnectedEventType:
+		category = "companion_health"
 	case "simulation.stopped", "simulation.execution.completed", "simulation.execution.failed",
 		"simulation.execution.timed_out", "simulation.execution.cancelled":
 		category = "simulation"
@@ -304,29 +307,47 @@ func projectSessionEvent(event contracts.EventEnvelope) (SessionEventTrace, bool
 		EventID: event.EventID, EventType: event.EventType, Category: category,
 		OccurredAt: event.OccurredAt, CorrelationID: event.CorrelationID, sequence: event.Sequence,
 	}
-	if category == "device_health" {
-		if event.Source != "hub.stage_device_runtime" {
-			return SessionEventTrace{}, false
-		}
+	if category == "device_health" || category == "companion_health" {
 		var transport struct {
 			DeviceID             string `json:"device_id"`
+			CompanionID          string `json:"companion_id"`
 			TransportState       string `json:"transport_state"`
 			ConnectionGeneration int64  `json:"connection_generation"`
 			Reason               string `json:"reason"`
 		}
-		if json.Unmarshal(event.Payload, &transport) != nil || strings.TrimSpace(transport.DeviceID) == "" ||
-			(event.EventType == contracts.StageDeviceTransportConnectedEventType && transport.TransportState != "CONNECTED") ||
-			(event.EventType == contracts.StageDeviceTransportDisconnectedEventType && transport.TransportState != "DISCONNECTED") {
+		if json.Unmarshal(event.Payload, &transport) != nil {
 			return SessionEventTrace{}, false
 		}
-		trace.DeviceID = strings.TrimSpace(transport.DeviceID)
+		if category == "device_health" {
+			if event.Source != "hub.stage_device_runtime" || strings.TrimSpace(transport.DeviceID) == "" ||
+				(event.EventType == contracts.StageDeviceTransportConnectedEventType && transport.TransportState != "CONNECTED") ||
+				(event.EventType == contracts.StageDeviceTransportDisconnectedEventType && transport.TransportState != "DISCONNECTED") {
+				return SessionEventTrace{}, false
+			}
+			trace.DeviceID = strings.TrimSpace(transport.DeviceID)
+		} else {
+			if event.Source != "hub.companion_runtime" || strings.TrimSpace(transport.CompanionID) == "" ||
+				transport.ConnectionGeneration < 1 ||
+				(event.EventType == contracts.CompanionTransportConnectedEventType && transport.TransportState != "CONNECTED") ||
+				(event.EventType == contracts.CompanionTransportDisconnectedEventType && transport.TransportState != "DISCONNECTED") {
+				return SessionEventTrace{}, false
+			}
+			trace.CompanionID = strings.TrimSpace(transport.CompanionID)
+		}
 		trace.TransportState = transport.TransportState
 		if transport.ConnectionGeneration > 0 {
 			trace.ConnectionGeneration = transport.ConnectionGeneration
 		}
-		switch transport.Reason {
-		case "SOCKET_CLOSED", "HUB_RESTART", "CONNECTION_REPLACED", "PROJECT_SCOPE_CHANGED":
-			trace.TransitionReason = transport.Reason
+		if category == "device_health" {
+			switch transport.Reason {
+			case "SOCKET_CLOSED", "HUB_RESTART", "CONNECTION_REPLACED", "PROJECT_SCOPE_CHANGED":
+				trace.TransitionReason = transport.Reason
+			}
+		} else {
+			switch transport.Reason {
+			case "SOCKET_CLOSED", "HUB_RESTART", "CONNECTION_REPLACED", "PROJECT_SCOPE_CHANGED", "SESSION_REVOKED":
+				trace.TransitionReason = transport.Reason
+			}
 		}
 	}
 	switch event.Priority {

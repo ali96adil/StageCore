@@ -83,4 +83,6 @@ type EventEnvelope struct {
 const (
 	StageDeviceTransportConnectedEventType    = "stage_device.transport.connected"
 	StageDeviceTransportDisconnectedEventType = "stage_device.transport.disconnected"
+	CompanionTransportConnectedEventType      = "companion.transport.connected"
+	CompanionTransportDisconnectedEventType   = "companion.transport.disconnected"
 )

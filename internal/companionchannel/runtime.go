@@ -60,6 +60,7 @@ type RuntimeChannel struct {
 type runtimeConnection struct {
 	generation         int64
 	signedACKSupported bool
+	projectID          string
 	owner              *RuntimeChannel
 	websocket          *websocket.Conn
 	session            domain.CompanionRuntimeSession
@@ -249,7 +250,7 @@ func (c *RuntimeChannel) Execute(ctx context.Context, request ExecutionRequest) 
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_OFFLINE", "Companion is not connected", domain.ExecutionFailed))
 	}
 	if _, err := c.auth.ValidateEstablishedRuntimeSession(ctx, connection.session.ID); err != nil {
-		connection.close()
+		connection.closeWithReason(CompanionTransportDisconnectSessionRevoked)
 		return c.finish(key, failed(request.ExecutionID, "COMPANION_SESSION_INVALID", "authenticated Companion session is no longer valid", domain.ExecutionFailed))
 	}
 
@@ -310,7 +311,7 @@ func (c *RuntimeChannel) Close() {
 	}
 	c.mu.Unlock()
 	for _, connection := range connections {
-		connection.close()
+		connection.closeWithReason(CompanionTransportDisconnectHubRestart)
 	}
 }
 
@@ -351,7 +352,7 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 				return
 			case <-ticker.C:
 				if _, err := c.auth.ValidateEstablishedRuntimeSession(context.Background(), session.ID); err != nil {
-					connection.close()
+					connection.closeWithReason(CompanionTransportDisconnectSessionRevoked)
 					return
 				}
 			}
@@ -382,6 +383,7 @@ func (c *RuntimeChannel) serveConnection(ctx context.Context, ws *websocket.Conn
 			if err != nil {
 				return
 			}
+			_ = c.refreshProjectScope(ctx, connection)
 			if err := c.syncRequiredRuntimeIfNeeded(ctx, connection); err != nil {
 				return
 			}
@@ -409,13 +411,28 @@ func (c *RuntimeChannel) acceptHello(ctx context.Context, connection *runtimeCon
 		c.mu.Unlock()
 		return err
 	}
+	projectID, projectErr := c.projectScopeForCompanion(ctx, connection.companionID)
+	if projectErr == nil {
+		connection.projectID = projectID
+	}
 	c.connectionGeneration++
 	connection.generation = c.connectionGeneration
 	old := c.connections[connection.companionID]
+	oldProjectID := ""
+	if old != nil {
+		oldProjectID = old.projectID
+	}
 	c.connections[connection.companionID] = connection
 	c.mu.Unlock()
 	if old != nil && old != connection {
-		old.close()
+		reason := CompanionTransportDisconnectConnectionReplaced
+		if projectErr == nil && oldProjectID != projectID {
+			reason = CompanionTransportDisconnectProjectScopeChanged
+		}
+		old.closeWithReason(reason)
+	}
+	if projectErr == nil && projectID != "" {
+		_ = c.recordTransportTransition(ctx, connection.companionID, projectID, connection.generation, true, "", time.Now().UTC())
 	}
 
 	assignment, err := c.store.GetActiveRoleAssignmentForCompanion(ctx, connection.companionID)
@@ -649,14 +666,18 @@ func (connection *runtimeConnection) sendAuthorized(ctx context.Context, data []
 }
 
 func (connection *runtimeConnection) close() {
+	connection.closeWithReason(CompanionTransportDisconnectSocketClosed)
+}
+
+func (connection *runtimeConnection) closeWithReason(reason string) {
 	connection.once.Do(func() {
 		close(connection.closed)
 		_ = connection.websocket.Close()
-		connection.owner.removeConnection(connection)
+		connection.owner.removeConnection(connection, reason)
 	})
 }
 
-func (c *RuntimeChannel) removeConnection(connection *runtimeConnection) {
+func (c *RuntimeChannel) removeConnection(connection *runtimeConnection, reason string) {
 	c.mu.Lock()
 	if c.connections[connection.companionID] == connection {
 		delete(c.connections, connection.companionID)
@@ -669,7 +690,13 @@ func (c *RuntimeChannel) removeConnection(connection *runtimeConnection) {
 			pending[key] = execution.executionID
 		}
 	}
+	projectID, generation := connection.projectID, connection.generation
 	c.mu.Unlock()
+	if projectID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = c.recordTransportTransition(ctx, connection.companionID, projectID, generation, false, reason, time.Now().UTC())
+		cancel()
+	}
 	for key, executionID := range pending {
 		c.finish(key, failed(executionID, "COMPANION_EXECUTION_INTERRUPTED", "Companion disconnected before execution result", domain.ExecutionFailed))
 	}
