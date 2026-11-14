@@ -72,6 +72,103 @@ func TestRehearsalStartSuppressesResultAfterGrantRevocationAtCommit(t *testing.T
 	}
 }
 
+func TestQualifiedShowGOStopAndBlackoutUseIndependentGrants(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateAlias(ctx, domain.ProjectDeviceAlias{
+		ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: project.CurrentRevisionID, Name: "Independent Show Grant", OrderIndex: 1,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.show",
+		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.projects.SetRevisionStatus(ctx, project.CurrentRevisionID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionShow, "Grant boundary show", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowStop, projectaccess.ShowBlackoutEngage}); err != nil {
+		t.Fatal(err)
+	}
+	var cueDispatches atomic.Int32
+	var blackoutCalls atomic.Int32
+	registry := capability.NewRegistry()
+	if err := registry.Register("sim.show", capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
+		cueDispatches.Add(1)
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}
+	})); err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimecontrol.New(f.projects, registry, runtimecontrol.WithEmergencySafety(
+		func(context.Context, domain.Session, contracts.CommandEnvelope, bool) (json.RawMessage, error) {
+			blackoutCalls.Add(1)
+			return json.RawMessage(`{"simulated":true}`), nil
+		},
+	))
+	handler := New(WithOperatorRuntime(f.h.auth, f.projects, runtime), WithProjectRouteQualification(f.access)).Handler()
+	call := func(path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := authenticatedMutationRequest(t, http.MethodPost, path, []byte(body), f.operator.Token, f.operator.CSRFToken)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	base := "/api/v1/projects/" + project.ID + "/runtime/"
+
+	withoutGO := call(base+"go", `{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000201"}`)
+	if withoutGO.Code != http.StatusNotFound || cueDispatches.Load() != 0 {
+		t.Fatalf("Project view plus STOP/Blackout granted GO: HTTP %d dispatches=%d %s", withoutGO.Code, cueDispatches.Load(), withoutGO.Body.String())
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowGO}); err != nil {
+		t.Fatal(err)
+	}
+	goResponse := call(base+"go", `{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000202"}`)
+	if goResponse.Code != http.StatusOK || cueDispatches.Load() != 1 {
+		t.Fatalf("ShowGO grant failed to dispatch once: HTTP %d dispatches=%d %s", goResponse.Code, cueDispatches.Load(), goResponse.Body.String())
+	}
+	withoutSTOP := call(base+"stop", `{"request_id":"018f5b34-0f47-7cc0-9000-0a0000000203"}`)
+	if withoutSTOP.Code != http.StatusNotFound {
+		t.Fatalf("ShowGO implicitly granted ShowStop: HTTP %d %s", withoutSTOP.Code, withoutSTOP.Body.String())
+	}
+	withoutBlackout := call(base+"emergency-blackout", `{"enabled":true,"confirm":"BLACKOUT","request_id":"018f5b34-0f47-7cc0-9000-0a0000000204"}`)
+	if withoutBlackout.Code != http.StatusNotFound || blackoutCalls.Load() != 0 {
+		t.Fatalf("ShowGO implicitly granted Emergency Blackout: HTTP %d calls=%d %s", withoutBlackout.Code, blackoutCalls.Load(), withoutBlackout.Body.String())
+	}
+	latched, err := f.projects.SessionManagedOutputBlackout(ctx, active.ID)
+	if err != nil || latched {
+		t.Fatalf("denied Blackout changed the simulated latch: latched=%t err=%v", latched, err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}); err != nil {
+		t.Fatal(err)
+	}
+	blackoutResponse := call(base+"emergency-blackout", `{"enabled":true,"confirm":"BLACKOUT","request_id":"018f5b34-0f47-7cc0-9000-0a0000000205"}`)
+	latched, err = f.projects.SessionManagedOutputBlackout(ctx, active.ID)
+	if blackoutResponse.Code != http.StatusOK || blackoutCalls.Load() != 1 || err != nil || !latched {
+		t.Fatalf("independent ShowBlackoutEngage grant failed: HTTP %d calls=%d latched=%t err=%v %s", blackoutResponse.Code, blackoutCalls.Load(), latched, err, blackoutResponse.Body.String())
+	}
+}
+
 func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
