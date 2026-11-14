@@ -2162,3 +2162,20 @@ This entry supersedes the preceding push instruction.
   not enforced in Production. Pi 4 engine performance remains blocked on a
   verified isolated target; existing Mac measurements were not repeated.
   Production services/data/Vault and physical outputs were not accessed.
+
+## Resume update — 2026-11-14 15:20 UTC · PR and local batch state
+
+- The local source branch now contains four commits beyond remote: `4c84b6b`
+  (123-Cue browser search/filter/Inspector), `a8f93bc` (Owner grant browser
+  gate), `cd31925` (checkpoint), and this documentation checkpoint. Read
+  `git rev-parse HEAD` for the resulting exact tip. Remote and PR #534 remain
+  at `759bcbd21ae331759443c2c37fe451d0e96bc78a`.
+- Updated the existing PR #534 body in place to name the actual remote HEAD,
+  describe 63-Cue Inspector evidence, link current exact-head workflows, and
+  report Core's Go 1.26 Race as still running. The unpushed 123-Cue and grant
+  browser changes are not represented as merged or CI-verified in the PR.
+- Core `43608326253` has passed Go 1.27, Go 1.26 Test, Browser Cue Delivery,
+  and Vet. Go 1.26 Race is still in progress and Linux ARM64 builds are
+  pending. Companion `43608326350` and Camera Relay `43608326224` passed.
+  Wait for the full Core job, then verify the SHA and push these four commits
+  normally to the same PR if all checks succeed.
