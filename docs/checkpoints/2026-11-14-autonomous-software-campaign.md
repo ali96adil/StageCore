@@ -2853,3 +2853,30 @@ This entry supersedes the preceding push instruction.
   head again before normally pushing all local commits to the existing branch.
   New exact-head CI must finish before another push. Do not retry the known Pi
   SSH endpoint failure unless its endpoint/credential condition changes.
+
+## Resume update — 2026-11-14 18:59 UTC · Chrome Project Files acceptance
+
+- Local HEAD is `d5e1e944784942fee25c23efe5e0f214b6a3bcd2`, seven commits ahead
+  of remote/PR #534 `9df291527dafd0ec8ab52d6b801d03566dcf4528`. The remote PR
+  head is still OPEN/Draft at that exact SHA. Core's current exact-head Go 1.26
+  job remains inside its full Race suite; no Push has been made.
+- Added `TestBrowserScopedProjectFilesShowsUsageAndPageCounts` and included it
+  in Core CI's Chrome gate. It starts headless Chrome at 390×844 against the
+  opt-in authenticated scoped-read route and real `project-files.js`/`app.css`,
+  checks Arabic RTL plus English LTR labels and 2 GiB logical summary, page
+  category counts, keyboard focus, no page overflow, and absent upload/download
+  controls without their separate grant/options. It uses temporary SQLite and
+  synthetic Vault metadata only; it sends no media or device operation.
+- The first browser attempt exposed the test harness's inline-script/CSP
+  conflict. Setup was moved into a same-origin external test script allowed by
+  the production policy. The actual Chrome gate then passed locally. Focused
+  HTTP read/revocation tests passed, the same tests passed under Race,
+  `go vet ./internal/httpapi`, Node usage UI tests, and `git diff --check` all
+  passed after the fix.
+- Updated the SC-023 matrix with this browser evidence. No production assembly
+  or ACL activation changed. No other repository or hardware was touched.
+- Next: wait for the Core Go 1.26 Race job on `9df2915` to finish, recheck every
+  check and exact PR/remote head, then normally push the seven local commits to
+  the existing branch if all are green. Wait for fresh checks on the new SHA
+  before any further push. Pi qualification remains open at the previously
+  documented SSH endpoint failure.
