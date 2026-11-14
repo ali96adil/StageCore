@@ -99,7 +99,7 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 		}
 		return res
 	}
-	action := []byte(`{"name":"Scene","action":{"action_id":"original","order_index":10,"capability_key":"osc.send","parameters":{"address":"/scene"},"enabled":true}}`)
+	action := []byte(`{"name":"Scene","description":"Send the opening visual cue","action":{"action_id":"original","order_index":10,"capability_key":"osc.send","parameters":{"address":"/scene"},"enabled":true}}`)
 	created := presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusCreated)
 	var preset store.CueActionPreset
 	if err := json.Unmarshal(created.Body.Bytes(), &preset); err != nil {
@@ -109,8 +109,8 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	if err := json.Unmarshal(preset.Action, &authored); err != nil {
 		t.Fatal(err)
 	}
-	if preset.ID == "" || authored.ActionID != "" || authored.OrderIndex != 0 || authored.CapabilityKey != "osc.send" {
-		t.Fatalf("preset persisted cue identity or lost capability: %+v", authored)
+	if preset.ID == "" || preset.Description != "Send the opening visual cue" || authored.ActionID != "" || authored.OrderIndex != 0 || authored.CapabilityKey != "osc.send" {
+		t.Fatalf("preset description or action identity was not preserved: preset=%+v action=%+v", preset, authored)
 	}
 	mixedRequest := []byte(`{"name":"Warm scene","actions":[{"action_id":"source-light","order_index":8,"target_ref":"LIGHTING","capability_key":"lighting.channels.fade","parameters":{"levels":{"warm":55},"fade_ms":900}},{"action_id":"source-midi","order_index":9,"target_ref":"ABLETON","capability_key":"midi.send","parameters":{"status":144,"data1":60,"data2":100}},{"action_id":"source-osc","order_index":10,"target_ref":"VDMX","capability_key":"osc.send","parameters":{"address":"/scene/4","arguments":[4]}},{"action_id":"source-tablet","order_index":11,"target_ref":"TABLET-MAIN","capability_key":"tablet.media.play","parameters":{"media_id":"clip-7"}}]}`)
 	mixedCreated := presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, mixedRequest, http.StatusCreated)
@@ -142,10 +142,12 @@ func TestCueEditorRecoveryIsPrivatePersistentAndFencesStaleTabs(t *testing.T) {
 	if err := json.Unmarshal(listedResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Presets) != 2 || listed.Presets[0].Action == nil || len(listed.Presets[0].Actions) != 0 ||
+	if len(listed.Presets) != 2 || listed.Presets[0].Description != "Send the opening visual cue" || listed.Presets[0].Action == nil || len(listed.Presets[0].Actions) != 0 ||
 		len(listed.Presets[1].Actions) != 4 || listed.Presets[1].Action != nil {
 		t.Fatalf("listing did not preserve the old single-action shape and new multi-action shape: %+v", listed.Presets)
 	}
+	oversizedDescription := []byte(`{"name":"Too long","description":"` + strings.Repeat("x", 281) + `","action":{"capability_key":"osc.send"}}`)
+	presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, oversizedDescription, http.StatusBadRequest)
 	presetRequest(http.MethodPost, project, "", owner.Token, owner.CSRFToken, action, http.StatusConflict)
 	presetRequest(http.MethodDelete, project, "/"+preset.ID, second.Token, second.CSRFToken, nil, http.StatusNotFound)
 	presetRequest(http.MethodDelete, otherProject, "/"+preset.ID, owner.Token, owner.CSRFToken, nil, http.StatusNotFound)

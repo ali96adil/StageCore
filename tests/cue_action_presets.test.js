@@ -80,13 +80,14 @@ test("Action preset preview exposes saved content and warns about a missing targ
     action_id: "stored-action-id", target_ref: "VDMX-MAIN", capability_key: "osc.send", execution_mode: "PARALLEL",
     parameters: { address: "/scene/7", arguments: [7] }, timeout_policy: { timeout_ms: 1500 },
   };
-  const { panel, inserted } = await openPresets({ presets: [{ preset_id: "preset-a", name: "Scene 7", action }] });
+  const { panel, inserted } = await openPresets({ presets: [{ preset_id: "preset-a", name: "Scene 7", description: "Opening visual", action }] });
   const list = find(panel, "ul");
   const row = list.children[0];
   const preview = find(row, "pre");
   assert.ok(preview, "the preset needs an explicit content preview");
   assert.match(preview.textContent, /\/scene\/7/);
   assert.match(contentText(row), /VDMX-MAIN/);
+  assert.match(contentText(row), /Opening visual/);
   assert.match(contentText(row), /Target is not present in this Project configuration/);
   const add = row.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Add to Cue");
   add.onclick();
@@ -141,24 +142,29 @@ test("saving selected Mixed-Cue actions persists one ordered multi-action preset
     { action_id: "", target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4" } },
   ];
   const { panel, requests } = await openPresets({ presets: [], clipboard });
-  const name = find(panel, "input");
+  const [name, description] = findAll(panel, "input");
   name.value = "Warm scene";
+  description.value = "Opening wash and scene trigger";
   const save = panel.children.find((child) => child?.tagName === "BUTTON" && child.textContent === "Save copied action");
   await save.onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
-    { method: "POST", json: { name: "Warm scene", actions: clipboard } },
+    { method: "POST", json: { name: "Warm scene", actions: clipboard, description: "Opening wash and scene trigger" } },
   ]);
 });
 
 test("Action preset search matches nested Mixed-Cue targets and payloads", async () => {
   const { panel } = await openPresets({ presets: [
-    { preset_id: "warm", name: "Warm scene", actions: [{ target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4" } }] },
-    { preset_id: "fade", name: "Stage wash", action: { target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { levels: { blue: 40 } } } },
+    { preset_id: "warm", name: "Warm scene", description: "Entrance visual trigger", actions: [{ target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4" } }] },
+    { preset_id: "fade", name: "Stage wash", description: "Blue lighting fade", action: { target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { levels: { blue: 40 } } } },
   ] });
   const search = panel.children.find((child) => child?.className === "sc010-preset-search");
   assert.ok(search, "preset library needs a local search field");
   const rows = find(panel, "ul").children;
   search.value = "scene/4";
+  search.listeners.input();
+  assert.equal(rows[0].hidden, false);
+  assert.equal(rows[1].hidden, true);
+  search.value = "entrance visual";
   search.listeners.input();
   assert.equal(rows[0].hidden, false);
   assert.equal(rows[1].hidden, true);

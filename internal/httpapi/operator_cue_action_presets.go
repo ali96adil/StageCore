@@ -49,16 +49,20 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 			writeJSON(w, http.StatusOK, map[string]any{"presets": presets})
 		case http.MethodPost:
 			var request struct {
-				Name    string               `json:"name"`
-				Action  json.RawMessage      `json:"action"`
-				Actions []actionWriteRequest `json:"actions"`
+				Name        string               `json:"name"`
+				Description string               `json:"description"`
+				Action      json.RawMessage      `json:"action"`
+				Actions     []actionWriteRequest `json:"actions"`
 			}
 			if !decodeBoundedJSON(w, r, &request) {
 				return
 			}
 			request.Name = strings.TrimSpace(request.Name)
+			request.Description = strings.TrimSpace(request.Description)
 			if request.Name == "" || utf8.RuneCountInString(request.Name) > 64 ||
 				strings.ContainsFunc(request.Name, unicode.IsControl) ||
+				utf8.RuneCountInString(request.Description) > 280 ||
+				strings.ContainsFunc(request.Description, unicode.IsControl) ||
 				(len(request.Action) == 0) == (len(request.Actions) == 0) || len(request.Actions) > 200 {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
 				return
@@ -93,7 +97,7 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
 				return
 			}
-			preset, err := st.CreateCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, request.Name, document)
+			preset, err := st.CreateCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, request.Name, request.Description, document)
 			if err != nil {
 				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
 					return

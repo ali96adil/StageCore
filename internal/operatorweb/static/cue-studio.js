@@ -1368,6 +1368,10 @@
     name.placeholder = tr("اسم القالب", "Preset name");
     name.setAttribute("aria-label", name.placeholder);
     name.maxLength = 64;
+    const description = document.createElement("input");
+    description.placeholder = tr("وصف مختصر (اختياري)", "Short description (optional)");
+    description.setAttribute("aria-label", description.placeholder);
+    description.maxLength = 280;
     const search = document.createElement("input");
     search.type = "search";
     search.className = "sc010-preset-search";
@@ -1382,7 +1386,7 @@
     };
     const save = button(tr("احفظ الإجراء المنسوخ", "Save copied action"));
     const list = document.createElement("ul");
-    panel.append(heading, name, save, status, search, list);
+    panel.append(heading, name, description, save, status, search, list);
     pick(panel.id)?.remove();
     workspace.append(panel);
     const active = () => pick("cueDialog")?.open && panel.isConnected &&
@@ -1400,7 +1404,7 @@
       for (const preset of presets) {
         const row = document.createElement("li");
         const actions = Array.isArray(preset.actions) ? preset.actions : [preset.action].filter(Boolean);
-        row.dataset.searchText = `${preset.name || ""} ${JSON.stringify(actions)}`.toLocaleLowerCase();
+        row.dataset.searchText = `${preset.name || ""} ${preset.description || ""} ${JSON.stringify(actions)}`.toLocaleLowerCase();
         const targets = state.f002Targets || [];
         const targetPresent = actions.length > 0 && actions.every((action) => {
           const targetRef = String(action?.target_ref || "").trim();
@@ -1512,7 +1516,14 @@
             remove.disabled = false;
           }
         };
-        row.append(preset.name, targetStatus);
+        row.append(preset.name);
+        if (preset.description) {
+          const descriptionText = document.createElement("p");
+          descriptionText.className = "muted sc010-preset-description";
+          descriptionText.textContent = preset.description;
+          row.append(descriptionText);
+        }
+        row.append(targetStatus);
         if (missingTargets.size) row.append(remaps);
         row.append(preview, insert, " ", remove);
         list.append(row);
@@ -1536,9 +1547,12 @@
       save.disabled = true;
       try {
         const preset = actions.length > 1 ? { name: label, actions } : { name: label, action: actions[0] };
+        const summary = description.value.trim();
+        if (summary) preset.description = summary;
         await api(path, { method: "POST", json: preset });
         if (!active()) return;
         name.value = "";
+        description.value = "";
         status.textContent = tr("حُفظ القالب.", "Preset saved.");
         await refresh();
       } catch (error) {
