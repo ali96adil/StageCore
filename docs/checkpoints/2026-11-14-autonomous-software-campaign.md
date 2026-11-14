@@ -831,3 +831,37 @@ This entry supersedes the preceding push instruction.
   pending the isolated ARM64 host; do not substitute Mac results or real
   devices. Production services/data/Vault remain untouched and Project ACL
   remains disabled.
+
+## Resume update — 2026-11-14 03:16 UTC
+
+- Local code HEAD is `8690da0f120766699a00c4df6225dbb34b63e83f`; remote
+  `integration/stagecore-rc` and Draft PR #534 are still at
+  `70a7061d2597e14273fb51468b269c7dff73ea71`. Eight local commits precede
+  this checkpoint. Worktree changes are documentation only. Keep the local
+  batch and wait for the exact-head Core run before pushing.
+- SC-010 Issue #489 now supports saving selected mixed Actions as a named,
+  persistent Cue preset. It stores the ordered JSON array in the existing
+  preset column and returns it as `actions`; existing single presets still
+  use the original `action` property and need no schema migration. Cue Studio
+  previews the group, warns if any target is absent, and inserts ordered deep
+  copies with blank Action IDs. Repeated insertion is independent. The red
+  regression failed on the old UI (`actions` was treated as an empty
+  single-action preset) before the implementation.
+- SC-010 verification: Node preset tests 4/4; full Node suite 54/54; full
+  `go test ./internal/httpapi -count=1` passed (59.7s); full
+  `go test ./internal/store -count=1` passed (5.3s); targeted HTTP Race passed
+  (7.1s); `go vet ./internal/httpapi ./internal/store`, JS syntax and
+  `git diff --check` passed. No migration, Snapshot publish or output dispatch
+  was involved.
+- Core CI `43548179642` on remote `70a7061` still has Go 1.26 Race in progress;
+  Go 1.26 standard tests, Browser Cue Delivery, Vet and Go 1.27 passed. Linux
+  ARM64 product builds remain pending. Companion/Swift `43548179629` and
+  isolated/ARM64 `43548179637` passed. Do not push while this run is active.
+- The matrix now marks multi-action Cue presets implemented and keeps preset
+  search/descriptions and cross-Project target remapping partial. First resume
+  action: poll `43548179642`; when Core Race/ARM64 finish successfully and the
+  remote still equals `70a7061`, fast-forward-push local work to existing PR
+  #534, then follow exact-head CI. Continue software-only qualification; Pi
+  P95/P99/Jitter and real device acceptance remain pending the isolated Pi
+  host. Production Hub/Relay, show data/Vault and production ACL remain
+  untouched/disabled.
