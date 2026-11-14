@@ -2246,3 +2246,29 @@ This entry supersedes the preceding push instruction.
   firmware flash, or hardware performance run occurred. Pi 4 remains blocked
   on verified isolated access. Continue with an evidence-backed software gap
   while CI runs, but preserve this exact-head gate.
+
+## Resume update — 2026-11-14 15:51 UTC · action-by-action rehearsal comparison
+
+- Local commit `f89764b7eb9b016fbda35adb171153d7dd27e506` extends Session
+  Memory comparison from aggregate counts to per-Action rows. It aligns by
+  Cue ID, Cue occurrence order within the Session, and Action ID; includes
+  current/compared Cue and Action captions, result, ACK level, ACK-derived
+  delivery evidence, latency, safe error code, and one-sided rows for unmatched
+  executions. Actions without stable IDs are deliberately not paired. No raw
+  adapter response summary is included, and transport completion does not
+  imply external execution. `software-completion-matrix.md` now records this.
+- The full Core Operator Node suite passed 74/74. Focused session-memory
+  timeline tests passed 5/5, `node --check internal/operatorweb/static/memory.js`,
+  `go vet ./internal/operatorweb`, and `git diff --check` passed. No backend
+  session trace or hardware behavior changed.
+- Current local tip before this checkpoint is `f89764b7`; remote/PR remains
+  `5b6e1e356f0a02395a2630962a1695df0ba70707`. Core `43611749231` is still in
+  Go 1.26 Race; Go 1.27 passed. Companion `43611749229` and Camera Relay
+  `43611749232` passed. This SC-015 change and its checkpoint stay local until
+  the current Core run finishes.
+- Next push, after exact-head Core passes: push the accumulated local
+  checkpoint and SC-015 commits normally to `integration/stagecore-rc`, update
+  PR #534 with the action-level evidence and exact CI, then wait for all new
+  exact-head workflows. Production ACL stays disabled; all external outputs
+  remain simulated; Pi 4 performance remains blocked on verified isolated
+  access.
