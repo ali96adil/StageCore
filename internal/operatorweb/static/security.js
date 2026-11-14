@@ -305,6 +305,7 @@ async function renderSecurity() {
         currentStatus.textContent = "Choose both a Project and account first.";
         return;
       }
+      const returnFocusToLevel = document.activeElement === loadButton;
       loadButton.disabled = true;
       saveButton.disabled = true;
       try {
@@ -329,6 +330,9 @@ async function renderSecurity() {
         currentStatus.textContent = errorMessage(error);
       } finally {
         loadButton.disabled = false;
+        if (returnFocusToLevel && loadedTarget === requestedTarget && !levelSelect.disabled) {
+          levelSelect.focus();
+        }
       }
     });
     projectAccessForm.addEventListener("submit", async (event) => {

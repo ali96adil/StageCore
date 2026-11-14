@@ -24,6 +24,13 @@
     }
     throw new Error(`Timed out waiting for ${label}`);
   };
+  const pressKey = async (key, shift = false) => {
+    const response = await fetch("/project-access-browser-key-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, shift }),
+    });
+    if (!response.ok) throw new Error(`native ${key} key returned HTTP ${response.status}`);
+  };
 
   try {
     if (document.readyState === "loading") {
@@ -82,10 +89,13 @@
     project.dispatchEvent(new Event("change", { bubbles: true }));
     user.value = config.operator;
     user.dispatchEvent(new Event("change", { bubbles: true }));
-    load.click();
+    await pressKey("Tab");
+    if (document.activeElement !== load) throw new Error("Tab did not move from the account to Load current access");
+    await pressKey("Enter");
     await waitFor(() => !level.disabled && !save.disabled &&
       document.getElementById("projectAccessCurrent").textContent.includes("Current: NONE"),
     "loading the Operator's current Project access");
+    if (document.activeElement !== level) throw new Error("loading access did not move keyboard focus to Access level");
 
     const form = document.getElementById("projectAccessGrantForm");
     const fieldRects = [project, user, level].map((field) => field.getBoundingClientRect());
@@ -110,7 +120,11 @@
     if (save.disabled || !document.getElementById("projectAccessLevelDescription").textContent.includes("Emergency Blackout")) {
       throw new Error("Operate level did not enable the guarded save with its permission summary");
     }
-    save.click();
+    await pressKey("Tab");
+    if (document.activeElement !== load) throw new Error("Tab did not move from Access level to Load current access");
+    await pressKey("Tab");
+    if (document.activeElement !== save) throw new Error("Tab did not move to Save prepared access");
+    await pressKey("Enter");
     await waitFor(() => document.getElementById("projectAccessCurrent").textContent.includes(
       "Saved OPERATE. PREPARED_NOT_ENFORCED."), "saving the not-enforced Operate grant");
 

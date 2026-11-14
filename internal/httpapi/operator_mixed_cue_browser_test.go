@@ -386,12 +386,32 @@ func connectChromePage(ctx context.Context, profileDir, pageURL string) (*websoc
 }
 
 func dispatchChromeTab(conn *websocket.Conn) error {
+	return dispatchChromeKey(conn, 1, "Tab", false)
+}
+
+func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool) error {
+	virtualKeyCode := 0
+	switch key {
+	case "Tab":
+		virtualKeyCode = 9
+	case "Enter":
+		virtualKeyCode = 13
+	default:
+		return fmt.Errorf("unsupported browser key %q", key)
+	}
 	for id, eventType := range []string{"keyDown", "keyUp"} {
-		commandID := id + 1
-		if err := chromeDevToolsCommand(conn, commandID, "Input.dispatchKeyEvent", map[string]any{
-			"type": eventType, "key": "Tab", "code": "Tab",
-			"windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
-		}); err != nil {
+		params := map[string]any{
+			"type": eventType, "key": key, "code": key,
+			"windowsVirtualKeyCode": virtualKeyCode, "nativeVirtualKeyCode": virtualKeyCode,
+		}
+		if key == "Enter" && eventType == "keyDown" {
+			params["text"] = "\r"
+			params["unmodifiedText"] = "\r"
+		}
+		if shift {
+			params["modifiers"] = 8
+		}
+		if err := chromeDevToolsCommand(conn, firstID+id, "Input.dispatchKeyEvent", params); err != nil {
 			return err
 		}
 	}

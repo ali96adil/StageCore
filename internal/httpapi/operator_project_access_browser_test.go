@@ -83,6 +83,11 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	focusRequests := make(chan chan struct{}, 1)
+	keyRequests := make(chan struct {
+		key    string
+		shift  bool
+		resume chan struct{}
+	}, 1)
 	touchRequests := make(chan struct {
 		x, y   float64
 		resume chan struct{}
@@ -113,6 +118,31 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 			resume := make(chan struct{})
 			select {
 			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/project-access-browser-key-ready":
+			var request struct {
+				Key   string `json:"key"`
+				Shift bool   `json:"shift"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Key != "Tab" && request.Key != "Enter") {
+				http.Error(w, "invalid browser key", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case keyRequests <- struct {
+				key    string
+				shift  bool
+				resume chan struct{}
+			}{key: request.Key, shift: request.Shift, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -194,6 +224,7 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		}
 	}()
 	var outcome string
+	keyCommandID := 100
 	for outcome == "" {
 		select {
 		case outcome = <-browserResult:
@@ -205,6 +236,12 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
 			}
 			close(resume)
+		case request := <-keyRequests:
+			if err := dispatchChromeKey(cdp, keyCommandID, request.key, request.shift); err != nil {
+				t.Fatalf("send %s key to isolated Chrome: %v", request.key, err)
+			}
+			keyCommandID += 2
+			close(request.resume)
 		case request := <-touchRequests:
 			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
 				t.Fatalf("send emulated touch to isolated Chrome: %v", err)
