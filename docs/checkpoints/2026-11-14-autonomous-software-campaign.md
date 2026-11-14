@@ -1133,3 +1133,23 @@ This entry supersedes the preceding push instruction.
   outputs mocked. Pi 4 full-engine timing/CPU/RAM remains unqualified because
   the strict SSH handshake still failed before host identity. No real devices,
   production Hub/Relay/data/Vault or production ACL were touched.
+
+## Resume update — 2026-11-14 04:35 UTC · pushed checkpoint workflow
+
+- Local and remote `integration/stagecore-rc` HEAD now match at
+  `a3b6f5d7ec009b15fb878e8da995356cee18c939`; eight commits since `ce927d6`
+  were pushed normally to the existing Draft PR #534. The PR description and
+  completion matrix reflect the current head.
+- Exact-head CI is running: Core `43557284478`, Companion Core `43557284414`,
+  and Camera Relay `43557284429`. Do not push another batch until all finish.
+  Their parent runs on `ce927d6` passed; local full Store, DB, HTTP API, Node,
+  focused Race and Vet checks for this batch passed before the push.
+- Next SC-009 task is durable Project-level Undo/Redo across Cue create/edit/
+  delete/duplicate/reorder, including linked Mixed Cues, with atomic Draft-only
+  state restore and immutable published/runtime state. Existing per-dialog
+  Mixed Action Undo/Redo and named Cue checkpoints are already covered; do not
+  repeat them. Start regression-first and inspect revision/concurrency
+  semantics before choosing a history representation.
+- Pi performance remains pending after strict qualification-host SSH failed
+  before identity. Production Hub/Relay/data/Vault, real devices, firmware and
+  production Project ACL remain untouched/disabled.

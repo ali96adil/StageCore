@@ -1,8 +1,6 @@
 # StageCore software completion matrix
 
-Reviewed on `integration/stagecore-rc`: local code HEAD
-`c6a99decf37deb58a1b3bba72043c3640117b4ed`, pushed HEAD
-`ce927d63e5f37f6a02d6a745b98567f9eb9928d5`, Issue #486 and child Issues
+Reviewed on `integration/stagecore-rc`: HEAD `a3b6f5d7ec009b15fb878e8da995356cee18c939`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
 At 2026-11-14 04:31 UTC, exact-head Core run `43553686731` on `ce927d6`
@@ -10,8 +8,9 @@ completed successfully on Go 1.26 and 1.27, including Race and ARM64 product
 builds. Companion/Swift run `43553686720` and isolated/ARM64 Camera Relay run
 `43553686712` also passed. Local Node passes 60/60; full Store, DB and HTTP API
 package tests, focused Race, Vet, JavaScript syntax and diff checks pass. The
-seven local commits are ready for the normal fast-forward to PR #534 after a
-fresh exact remote-head check.
+eight-commit batch is pushed to the existing PR #534. New exact-head Core
+`43557284478`, Companion `43557284414` and Camera Relay `43557284429` runs are
+in progress; wait for all three before the next push.
 This matrix keeps software evidence separate from installed application and
 physical qualification.
 Issue status and software status are separate: an open issue can have
