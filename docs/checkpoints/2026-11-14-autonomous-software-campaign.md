@@ -3043,3 +3043,26 @@ This entry supersedes the preceding push instruction.
 - Core run `43633596721` on `569247e` remains in Go 1.26 full Race; Go 1.27,
   Companion `43633596728`, and Relay `43633596765` are green. Do not push until
   the exact-head Core run completes. Then recheck PR/remote and push normally.
+
+## Resume update — 2026-11-14 19:59 UTC · Cue label color browser evidence
+
+- Extended the real-CuStudio Chrome gate to use a 390×844 viewport, create
+  nested Cues with color metadata, change a label afterward, and check the
+  edited label stays visible, the blue underline marker remains, the label's
+  computed text color matches ordinary table text, and the mobile page has no
+  horizontal overflow. Persisted `operator_cue_color` is asserted in SQLite.
+  This runs under the browser acceptance gate and uses only a Draft/temporary
+  database with a simulated Cue; no runtime or hardware output is invoked.
+- Updated the SC-005 matrix with the evidence and remaining keyboard/focus and
+  all-palette/LTR coverage. Local normal Chrome, Chrome under Go Race,
+  `tests/operator_accessibility.test.js`, syntax and diff checks passed.
+- Commit `c932cdc` (`test(cue-studio): qualify cue color on mobile`). Local
+  HEAD before this entry is
+  `c932cdc19755d90101c1ada62eb55f43361d2a31`, six commits ahead of clean
+  origin/PR #534 `569247ed8090f42a54b833d02608917b188a75ff`; worktree is clean
+  before committing this entry.
+- Core run `43633596721` on `569247e` remains in Go 1.26 full Race; Go 1.27,
+  Companion `43633596728`, and Relay `43633596765` are green. Keep these local
+  commits unpushed until that exact-head Core run completes. Then verify the
+  PR/remote head, push normally and wait for CI on the new SHA. Continue the
+  whole-server SC-024 review after those checks, without production activation.
