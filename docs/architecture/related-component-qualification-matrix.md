@@ -1,19 +1,19 @@
 # Related component qualification matrix
 
-Status checked 2026-11-14 against current open pull requests and exact head
-commits. TabletPlayer #36, ESP32 DMX Lighting #39, ESP32 Camera #20,
-StageLaser #56/#57, and StageCore #503–#508/#514–#516 remain open at the
-listed heads; the exact-head CI runs listed below pass. StageLaser #57 is open
-but not marked draft. StageCore Draft PR #534 is at pushed head
-`11309b63ede84abcea2eca4b99f71fc0e57e79c6` on `integration/stagecore-rc`.
-Core run `43577820286` passed Go 1.26/1.27 Test, Browser Cue Delivery, Vet,
-Race and Linux ARM64 product builds (Go 1.26 completed in 32m40s).
-Companion run `43577820339` (Swift Core and full macOS replacement/media
-acceptance) and Camera Relay run `43577820216` passed. Local follow-on commits
-`834c051`, `f1287a0`, `f2fce09`, `677d18d`, and `cab57f9` are ready for a
-normal fast-forward push to PR #534 after this gate. Passing CI proves
-only the listed software checks, not installed-app or physical output
-qualification.
+Status refreshed 2026-11-14 14:43 UTC from the open PRs and exact head commits.
+TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
+#20 (`455b066`), and StageLaser #56 (`b14a578`) are open drafts; their listed
+exact-head CI runs pass. StageLaser #57 (`c4ff10b`) is open and not marked
+draft; its listed CI passes. StageCore #503–#508 and #514–#516 remain open at
+the heads listed below, with their listed Go 1.26/1.27 CI passing. StageCore
+Draft PR #534 remains at remote head `c1a4e492416d9cd894202fd660490493c92cb2ed`
+on `integration/stagecore-rc`; Core run `43603870346` is still running its
+Go 1.26 Race job, while Go 1.27, Companion `43603870310`, and Camera Relay
+`43603870345` have passed. Six local commits are ahead of remote and are not
+yet pushable until that exact-head Core run completes successfully.
+Passing CI proves only the listed software checks, not installed-app or
+physical output qualification. No linked repository checkout is available in
+this workspace, so no other repository was modified.
 
 | Component and reviewed head | Implemented behavior and protocol | Automated evidence and current CI | ACK, retry, idempotency, safety, and reconnect | Software evidence vs. remaining qualification |
 | --- | --- | --- | --- | --- |
