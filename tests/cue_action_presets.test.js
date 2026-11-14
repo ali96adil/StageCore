@@ -173,6 +173,11 @@ test("Missing Mixed-Cue preset targets can be explicitly remapped per action", a
     targets: [{ logical_name: "LIGHTING" }, { logical_name: "VDMX" }],
   });
   const row = find(panel, "ul").children[0];
+  const remapDetails = findAll(row, "details").find((item) => item.className === "sc010-preset-remaps");
+  assert.ok(remapDetails, "missing targets should have an expandable remapping section");
+  assert.equal(findAll(remapDetails, "select").length, 0, "large remapping controls should be lazy");
+  remapDetails.open = true;
+  remapDetails.listeners.toggle();
   const remaps = findAll(row, "select").filter((item) => item.className === "sc010-target-remap");
   assert.equal(remaps.length, 2);
   remaps[0].value = "LIGHTING";

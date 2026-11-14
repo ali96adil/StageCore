@@ -1106,56 +1106,67 @@
         targetStatus.textContent = targetPresent
           ? tr("الهدف موجود في إعدادات هذا المشروع.", "Target is available in this Project configuration.")
           : missingTargetNotice;
-        const remaps = document.createElement("div");
+        const remaps = document.createElement("details");
         remaps.className = "sc010-preset-remaps";
+        const remapHeading = document.createElement("summary");
+        remapHeading.textContent = tr("إعادة تعيين الأهداف المفقودة", "Remap missing targets for this Cue");
+        remaps.append(remapHeading);
         const mappedTargets = new Map();
-        const missingTargetIndexes = [];
+        const missingTargets = new Map();
         actions.forEach((action, index) => {
           const originalTarget = String(action?.target_ref || "").trim();
           if (originalTarget && targets.some((target) => target.logical_name === originalTarget)) return;
-          missingTargetIndexes.push(index);
-          const label = document.createElement("label");
-          label.className = "sc010-preset-remap";
-          const caption = document.createElement("span");
-          caption.textContent = tr(
-            `الإجراء ${index + 1} (${action?.capability_key || "بدون نوع"}) — الهدف البديل`,
-            `Action ${index + 1} (${action?.capability_key || "unknown capability"}) — replacement target`,
-          );
-          const select = document.createElement("select");
-          select.className = "sc010-target-remap";
-          select.setAttribute("aria-label", caption.textContent);
-          const empty = document.createElement("option");
-          empty.value = "";
-          empty.textContent = tr("أبقِ الهدف كما هو", "Keep current target");
-          select.append(empty);
-          const choices = new Set();
-          for (const target of targets) {
-            const logicalName = String(target?.logical_name || "").trim();
-            if (!logicalName || choices.has(logicalName)) continue;
-            choices.add(logicalName);
-            const option = document.createElement("option");
-            option.value = logicalName;
-            option.textContent = `${logicalName} · ${target.logical_type || ""}`;
-            select.append(option);
-          }
-          select.addEventListener("change", () => {
-            const replacement = String(select.value || "").trim();
-            if (replacement) mappedTargets.set(index, replacement);
-            else mappedTargets.delete(index);
-            if (missingTargetIndexes.every((missingIndex) => mappedTargets.has(missingIndex))) {
-              targetStatus.className = "message warn";
-              targetStatus.textContent = tr(
-                "ستُطبّق إعادة التعيين على نسخة المسودة فقط. تحقّق من توافق الهدف قبل النشر.",
-                "Targets will be remapped in this Draft Cue only. Verify target compatibility before publishing.",
-              );
-            } else {
-              targetStatus.className = "message warn";
-              targetStatus.textContent = missingTargetNotice;
-            }
-          });
-          label.append(caption, select);
-          remaps.append(label);
+          if (!missingTargets.has(originalTarget)) missingTargets.set(originalTarget, []);
+          missingTargets.get(originalTarget).push(index);
         });
+        const renderRemaps = () => {
+          if (remaps.dataset.ready || !remaps.open) return;
+          remaps.dataset.ready = "true";
+          for (const [originalTarget, indexes] of missingTargets) {
+            const label = document.createElement("label");
+            label.className = "sc010-preset-remap";
+            const caption = document.createElement("span");
+            const actionNumbers = indexes.map((index) => index + 1).join(", ");
+            caption.textContent = tr(
+              `الإجراءات ${actionNumbers} — الهدف الحالي: ${originalTarget || "غير محدد"}`,
+              `Actions ${actionNumbers} — current target: ${originalTarget || "unset"}`,
+            );
+            const select = document.createElement("select");
+            select.className = "sc010-target-remap";
+            select.setAttribute("aria-label", caption.textContent);
+            const empty = document.createElement("option");
+            empty.value = "";
+            empty.textContent = tr("أبقِ الهدف كما هو", "Keep current target");
+            select.append(empty);
+            const choices = new Set();
+            for (const target of targets) {
+              const logicalName = String(target?.logical_name || "").trim();
+              if (!logicalName || choices.has(logicalName)) continue;
+              choices.add(logicalName);
+              const option = document.createElement("option");
+              option.value = logicalName;
+              option.textContent = `${logicalName} · ${target.logical_type || ""}`;
+              select.append(option);
+            }
+            select.addEventListener("change", () => {
+              const replacement = String(select.value || "").trim();
+              if (replacement) mappedTargets.set(originalTarget, replacement);
+              else mappedTargets.delete(originalTarget);
+              targetStatus.className = "message warn";
+              if (Array.from(missingTargets.keys()).every((target) => mappedTargets.has(target))) {
+                targetStatus.textContent = tr(
+                  "ستُطبّق إعادة التعيين على نسخة المسودة فقط. تحقّق من توافق الهدف قبل النشر.",
+                  "Targets will be remapped in this Draft Cue only. Verify target compatibility before publishing.",
+                );
+              } else {
+                targetStatus.textContent = missingTargetNotice;
+              }
+            });
+            label.append(caption, select);
+            remaps.append(label);
+          }
+        };
+        remaps.addEventListener("toggle", renderRemaps);
         const preview = document.createElement("details");
         const previewHeading = document.createElement("summary");
         previewHeading.textContent = actions.length > 1
@@ -1172,7 +1183,8 @@
           if (!active()) return;
           actions.forEach((action, index) => {
             const copy = structuredClone(action);
-            if (mappedTargets.has(index)) copy.target_ref = mappedTargets.get(index);
+            const originalTarget = String(action?.target_ref || "").trim();
+            if (mappedTargets.has(originalTarget)) copy.target_ref = mappedTargets.get(originalTarget);
             addActionEditor({ ...copy, action_id: "" });
           });
           refreshActions();
@@ -1191,7 +1203,7 @@
           }
         };
         row.append(preset.name, targetStatus);
-        if (remaps.children.length) row.append(remaps);
+        if (missingTargets.size) row.append(remaps);
         row.append(preview, insert, " ", remove);
         list.append(row);
       }
