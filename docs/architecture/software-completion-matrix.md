@@ -63,6 +63,20 @@ failed-update rollback. Tests must use fake/simulated outputs. Pi ARM64
 integration and actual external-output observations remain separate
 qualification evidence.
 
+## Other open repository issues reviewed
+
+The following open issues do not map one-to-one to SC-001–SC-025. They remain
+visible here so their software and physical gates are not lost in the feature
+matrix:
+
+| Issue | Verified current scope | Software state and safe next action |
+| --- | --- | --- |
+| [#455](https://github.com/ali96adil/StageCore/issues/455) | Concurrent GO while a prior Cue still runs. Current Core still serializes a Session through one active run; `internal/runtimecontrol/service.go` rejects GO while active and `internal/cueengine/engine.go` rejects while an execution is RUNNING. | **Open software gap.** Requires atomic Cue selection/advance, per-execution cancellation and persistence, latest-vs-all STOP semantics, blackout over all active work, and same-output conflict policy. Do not remove the RUNNING gate without this redesign and simulated fault/race coverage. No device output is needed for software tests. |
+| [#446](https://github.com/ali96adil/StageCore/issues/446) | StageLaser self-signed Hub TLS bootstrap and certificate pinning. The shared Foundation fix is `12be83968efff876d8cb239b79368b3dafbf044b`; the open StageLaser #56, DMX #39 and Camera #20 Drafts pin it and update their trust-contract checks. Their no-actuation / software-probe CI is green at the reviewed heads. | **Software fix present in qualification candidates.** Do not duplicate the TLS change. These Drafts are not production firmware; certificate pinning, trust enrollment/rotation and pairing still need isolated bench/attended qualification. Keep physical flash, devices and outputs unchanged. |
+| [#467](https://github.com/ali96adil/StageCore/issues/467) | Distinguishes an automatically discovered Camera Relay stream from the identity/registration of its ESP32-CAM source. The issue explicitly records that the existing button opens Live Video and does not request a new preview UI. | **Observation / no UI change requested.** Keep source availability separate from camera identity; any future pairing diagnosis must use an isolated or read-only path and must not open the production stream or change Relay/Camera state. |
+| [#483](https://github.com/ali96adil/StageCore/issues/483), [#459](https://github.com/ali96adil/StageCore/issues/459) | Cue-authoring freeze and peripheral-before-Hub rollout tracker; both describe deployed-source, verified-backup, compatibility and attended acceptance gates. | **Release / operational gates.** Green CI and this experimental branch do not authorize production authoring, rollout, or device updates. Preserve source pins, independent backups, current Snapshots, and all physical outputs until explicit acceptance. |
+| [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
+
 ## Current highest next software task
 
 SC-008 has an offline editor round trip through the actual Cue Studio create/
