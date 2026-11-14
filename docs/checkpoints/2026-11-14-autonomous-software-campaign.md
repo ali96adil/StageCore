@@ -2324,7 +2324,25 @@ This entry supersedes the preceding push instruction.
 - Core run `43611749231` is still active in Go 1.26 Race at remote head
   `5b6e1e356f0a02395a2630962a1695df0ba70707`; Companion and Camera Relay runs
   at that SHA are green. No push has occurred. The source/test/docs edits in
-  this update remain local above `05dbf2e`; confirm exact local/remote state
+  this update are committed through `85b6024`; confirm exact local/remote state
   and wait for Core before any push. Actual keyboard/touch workflow, full ACL
   endpoint-policy/async review, legacy Companion compatibility, isolated
   installed-copy rollback, and verified Pi 4 performance remain pending.
+
+## Resume update — 2026-11-14 16:08 UTC · SSE Project-payload fence
+
+- Strengthened `TestAuthenticatedSSEClosesAfterSessionRevocation` to parse the
+  initial `/api/v1/events` `session.ready` payload, require the exact four
+  reviewed fields (`type`, `user`, `hub_id`, `fingerprint`), reject any
+  Project/Snapshot/device/session identifiers, and retain its stream-close
+  assertion after logout. This is a compatibility guard for the current
+  payload-free SSE contract; future Project events still need their own
+  delivery authorization review.
+- Commit `b30256bc0d11bceb5a2715856a49cf307e40e954`. Focused HTTP API test,
+  focused Race test, `go vet ./internal/httpapi`, and `git diff --check` passed.
+- Local HEAD at this checkpoint is `b30256b`, seven commits ahead of remote
+  `5b6e1e356f0a02395a2630962a1695df0ba70707`. Core run `43611749231` is still
+  the exact-head push gate; Companion `43611749229` and Camera Relay
+  `43611749232` passed. Do not push until Core completes, then verify the
+  branch/PR SHA and all checks before a normal push. Production ACL remains
+  disabled and no service, Vault data, or external output was touched.
