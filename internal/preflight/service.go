@@ -458,7 +458,7 @@ func (s *Service) evaluateMIDIDestinations(ctx context.Context, report *Report, 
 			}
 			switch matches {
 			case 1:
-				report.add(Pass, "midi.destination."+action.ID, "companion", "MIDI destination is available on the assigned Companion", name, action.ID)
+				report.add(Pass, "midi.destination."+action.ID, "companion", "MIDI destination is listed on the assigned Companion", "Companion inventory lists this exact name. This does not verify Ableton receipt or external execution; use an attended non-show test for end-to-end evidence.", action.ID)
 			case 0:
 				report.add(Block, "midi.destination."+action.ID, "companion", "MIDI destination is unavailable on the assigned Companion", name, action.ID)
 			default:

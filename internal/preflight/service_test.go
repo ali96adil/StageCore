@@ -333,6 +333,9 @@ func TestPreflightMIDIDestinationInventory(t *testing.T) {
 	if len(report.Checks) != 1 || report.Checks[0].Status != Pass {
 		t.Fatalf("named destination report=%+v", report.Checks)
 	}
+	if !strings.Contains(report.Checks[0].Detail, "does not verify Ableton receipt") {
+		t.Fatalf("MIDI destination PASS implies application execution: %+v", report.Checks[0])
+	}
 
 	legacy := baseManifest
 	legacy.Cues = append([]snapshot.Cue(nil), baseManifest.Cues...)

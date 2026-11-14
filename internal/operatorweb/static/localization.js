@@ -34,6 +34,8 @@ const f001Arabic = {
   "Sign out": "تسجيل الخروج",
   "Refresh": "تحديث",
   "Download report": "تنزيل التقرير",
+  "MIDI destination is listed on the assigned Companion": "وجهة MIDI مدرجة في الجهاز المرافق المعيّن",
+  "Companion inventory lists this exact name. This does not verify Ableton receipt or external execution; use an attended non-show test for end-to-end evidence.": "تسجل قائمة الجهاز المرافق هذا الاسم كما هو. هذا لا يتحقق من استلام Ableton أو التنفيذ الخارجي؛ استخدم اختباراً مراقباً خارج العرض للتحقق من المسار كاملاً.",
   "Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail.": "شغّل stagecore clock، ثم قارن ساعة Hub وRTC بمرجع وقت محلي موثوق (على الشبكة المحلية) قبل البروفة. إذا كانت ساعة Hub خارج صلاحية الرموز، فقد يفشل تسجيل الدخول المحلي والتحقق من الجلسات.",
   "Continue": "متابعة",
   "Cancel": "إلغاء",
