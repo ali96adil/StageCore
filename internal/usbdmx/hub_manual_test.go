@@ -81,6 +81,15 @@ func TestHubContinuousLeaseSafety(t *testing.T) {
 			if port.closed != 1 {
 				t.Fatalf("port closed %d times", port.closed)
 			}
+			if tc.name == "device lost during refresh" {
+				if len(port.attemptedAt) < 3 {
+					t.Fatalf("refresh write was not attempted: %d total writes", len(port.attemptedAt))
+				}
+				refreshInterval := port.attemptedAt[2].Sub(port.attemptedAt[1])
+				if refreshInterval < 200*time.Millisecond {
+					t.Fatalf("continuous DMX refreshed too early: %s after the prior frame", refreshInterval)
+				}
+			}
 			if errors.Is(tc.wantError, ErrPhysicalStateUnknown) {
 				if release, err := hub.AcquireRuntime(ctx); err == nil {
 					release()
@@ -98,10 +107,12 @@ func TestHubContinuousLeaseSafety(t *testing.T) {
 
 type leasePacketPort struct {
 	*fakePacketPort
-	live chan struct{}
+	live        chan struct{}
+	attemptedAt []time.Time
 }
 
 func (p *leasePacketPort) WritePacket(ctx context.Context, packet [FrameSize]byte) error {
+	p.attemptedAt = append(p.attemptedAt, time.Now())
 	err := p.fakePacketPort.WritePacket(ctx, packet)
 	if err == nil && len(p.packets) == 2 {
 		close(p.live)
