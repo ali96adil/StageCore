@@ -177,6 +177,41 @@
     if (!document.body.innerText.includes("Cue updated in Draft")) {
       throw new Error("Draft edit confirmation was not rendered");
     }
+
+    const parentRow = document.querySelector(`#content tr[data-cue-id="${parentID}"]`);
+    const inspector = parentRow?.querySelector("details");
+    if (!inspector) throw new Error("Parent Cue Inspector disclosure is missing");
+    inspector.querySelector("summary")?.click();
+    await waitFor(() => inspector.open && inspector.querySelector(".cue-inspection-scenario"),
+      "opening the parent Cue Inspector");
+    const inspectorText = inspector.innerText;
+    for (const expected of ["Lighting and Tablet Leaf", "OSC and MIDI Middle", editedName,
+      "lighting.channels.fade", "tablet.media.play", "osc.send", "midi.send", "visual.scene.activate"]) {
+      if (!inspectorText.includes(expected)) throw new Error(`Cue Inspector omitted linked-chain detail: ${expected}`);
+    }
+    const controls = inspector.querySelectorAll(".cue-inspection-controls select");
+    if (controls.length !== 3) throw new Error(`Cue Inspector simulation controls=${controls.length}, want 3`);
+    const [scenarioSelect, targetSelect] = controls;
+    setValue(scenarioSelect, "offline-target");
+    if (targetSelect.hidden) throw new Error("offline-target scenario did not reveal its target selector");
+    setValue(targetSelect, "SIM");
+    const previewButton = inspector.querySelector(".cue-inspection-controls button");
+    if (!previewButton) throw new Error("Cue Inspector simulation preview button is missing");
+    const requestsBeforePreview = requestTrace.length;
+    previewButton.click();
+    const timeline = inspector.querySelector(".cue-inspection-result .cue-inspection-timeline");
+    await waitFor(() => timeline?.querySelectorAll("li").length === 6,
+      "rendering all nested Mixed Cue Actions in local simulation");
+    const outcomes = [...timeline.querySelectorAll("li")].map((item) => item.innerText);
+    if (outcomes.some((item) => !item.includes("VIRTUAL_TARGET_OFFLINE")) ||
+        outcomes.some((item) => !item.includes("SIMULATED_BLOCKED"))) {
+      throw new Error(`offline-target simulation did not mark every Action blocked: ${JSON.stringify(outcomes)}`);
+    }
+    if (requestTrace.length !== requestsBeforePreview) {
+      throw new Error(`Cue Inspector simulation made network requests: ${requestTrace.slice(requestsBeforePreview).join("; ")}`);
+    }
+    const forbiddenRequests = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
+    if (forbiddenRequests.length) throw new Error(`browser authoring/inspection attempted runtime commands: ${forbiddenRequests.join("; ")}`);
     await report(JSON.stringify({ status: "PASS", ids: createdIDs, action_ids: editedActionIDs, edited_name: editedName }));
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
