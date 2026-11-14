@@ -103,3 +103,32 @@ func TestProjectStopAndBlackoutRemainIndependentlyGrantable(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerCanRevokeDisabledProjectUserButCannotExpandGrants(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	grant := callProjectAccess(t, f, &f.owner, http.MethodPut, f.projectID, f.operatorID,
+		`{"access_level":"OPERATE"}`, true)
+	if grant.Code != http.StatusOK {
+		t.Fatalf("initial grant=%d %s", grant.Code, grant.Body.String())
+	}
+	if _, err := f.h.auth.SetUserEnabled(ctx, f.operatorID, false); err != nil {
+		t.Fatal(err)
+	}
+	denied := callProjectAccess(t, f, &f.owner, http.MethodPut, f.projectID, f.operatorID,
+		`{"access_level":"MANAGE"}`, true)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("disabled account received expanded access: %d %s", denied.Code, denied.Body.String())
+	}
+	revoked := callProjectAccess(t, f, &f.owner, http.MethodPut, f.projectID, f.operatorID,
+		`{"access_level":"NONE"}`, true)
+	if revoked.Code != http.StatusOK || !strings.Contains(revoked.Body.String(), `"access_level":"NONE"`) {
+		t.Fatalf("Owner could not revoke disabled account: %d %s", revoked.Code, revoked.Body.String())
+	}
+	if _, err := f.h.auth.SetUserEnabled(ctx, f.operatorID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.Check(ctx, f.operatorID, f.projectID, projectaccess.ProjectView); err == nil {
+		t.Fatal("revoked membership became effective after the account was re-enabled")
+	}
+}

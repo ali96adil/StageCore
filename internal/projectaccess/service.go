@@ -128,7 +128,9 @@ func (s *Service) setPermissions(ctx context.Context, actingOwnerID, targetUserI
 	if errors.Is(err, sql.ErrNoRows) { return ErrNotFound }
 	if err != nil { return fmt.Errorf("read target user: %w", err) }
 	if targetRole == "OWNER" { return fmt.Errorf("%w: Owner always has global access; never use a scoped grant", ErrInvalid) }
-	if targetEnabled != 1 { return ErrDenied }
+	// A disabled account cannot receive additional access, but an Owner must
+	// still be able to reduce its stored scope to NONE and remove stale grants.
+	if targetEnabled != 1 && len(unique) > 0 { return ErrDenied }
 	// VIEWER is a strictly read-only account, even when an Owner specifies
 	// broader Project capabilities by mistake. Operators and Technicians may
 	// receive extra explicitly scoped rights, but not unknown role strings.

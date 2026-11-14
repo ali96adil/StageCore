@@ -1521,3 +1521,25 @@ and diff checks pass. The exact prior pushed HEAD
 `f64cde026a0fe890eb39e0b0fee89eda7af84d9d` completed Core CI run
 `43538108851` successfully, including Go 1.26 Race; this local change is not
 included in that run and is eligible for a normal push.
+
+## SC-024 continuation · 2026-11-14 · revoke stored grants after account disable
+
+A red-first service regression reproduced that `SetPermissions(..., nil)`
+returned `ErrDenied` for a disabled user. This prevented Owner cleanup of
+stored memberships after account disable; those grants were currently
+ineffective while disabled, but would become effective again if the account
+were later re-enabled.
+
+Grant replacement still rejects disabled target users. Empty replacement now
+removes their membership and scoped grants, and the same rule applies to the
+optional audited Owner API's `access_level: "NONE"`. A regression verifies
+that an account cannot be upgraded while disabled, Owner can remove its
+stored rights, and re-enabling it does not restore the removed Project access.
+The pre-fix test failed at the disabled-target guard; the full
+`go test ./internal/projectaccess ./internal/httpapi -count=1`, focused Race,
+Vet and `git diff --check` pass after the change. The existing test for
+temporary disable/re-enable without an explicit Owner revoke still passes and
+preserves its grants.
+
+This is least-privilege cleanup in the opt-in SC-024 service/API. Production
+assembly is unchanged; no grants were written to production data.

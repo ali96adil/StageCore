@@ -212,3 +212,35 @@ func TestViewerCannotReceiveOrExerciseActuatingProjectPermissions(t *testing.T) 
 	}
 	deny(t, f, f.viewerID, f.projectA, projectaccess.ShowGO)
 }
+
+func TestOwnerCanRemoveProjectGrantsFromDisabledUser(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	if err := f.a.SetPermissions(ctx, f.ownerID, f.operatorID, f.projectA,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowGO}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.users.SetUserEnabled(ctx, f.operatorID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.SetPermissions(ctx, f.ownerID, f.operatorID, f.projectA, nil); err != nil {
+		t.Fatalf("Owner could not clear a disabled user's Project grants: %v", err)
+	}
+	var memberships, grants int
+	if err := f.db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_memberships WHERE project_id=? AND user_id=?`,
+		f.projectA, f.operatorID).Scan(&memberships); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_permission_grants WHERE project_id=? AND user_id=?`,
+		f.projectA, f.operatorID).Scan(&grants); err != nil {
+		t.Fatal(err)
+	}
+	if memberships != 0 || grants != 0 {
+		t.Fatalf("disabled user's grants remain after Owner revoke: memberships=%d grants=%d", memberships, grants)
+	}
+	if _, err := f.users.SetUserEnabled(ctx, f.operatorID, true); err != nil {
+		t.Fatal(err)
+	}
+	deny(t, f, f.operatorID, f.projectA, projectaccess.ProjectView)
+	deny(t, f, f.operatorID, f.projectA, projectaccess.ShowGO)
+}

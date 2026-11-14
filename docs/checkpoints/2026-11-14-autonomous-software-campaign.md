@@ -447,3 +447,39 @@ This entry supersedes the preceding push instruction.
 - CUA inventory reported the Mac locked; no UI/browser actions occurred.
   Continue software work locally while CI runs, with real-browser and Pi 4
   checks still unqualified.
+
+## Resume update — 2026-11-14 01:47 UTC
+
+- Local base is `46d3b4ff4670dadab5c5e017b2fea380ea83821b`; pushed remote and
+  PR #534 remain `c9f2d47487bc90aaee80b6705a8fefab898c65a5`. The new local
+  SC-024 revoke cleanup is currently uncommitted with its matrix and
+  qualification notes.
+- Core exact-head run `43542130109` is still in Go 1.26 tests/Race workflow;
+  Go 1.27, macOS Companion, Swift CompanionCore and isolated/ARM64 are green.
+  Do not push this follow-up until the `c9f2d47` checks complete.
+- A red-first regression failed before the fix because `SetPermissions(nil)`
+  rejected a disabled target. The service now permits only grant removal for
+  that account; nonempty access replacements remain denied. An HTTP test
+  covers `NONE` revoke and verifies re-enabling the user does not restore
+  access. Focused normal and Race tests, Vet and `git diff --check` pass.
+- Next: review and commit this tested revocation batch locally. Continue the
+  SC-024 endpoint audit while exact-head CI runs; push only after that CI is
+  complete, then wait for CI on the new exact HEAD.
+
+## Resume update — 2026-11-14 01:49 UTC
+
+- Local starting commit is `46d3b4ff4670dadab5c5e017b2fea380ea83821b`; remote
+  remains `c9f2d47487bc90aaee80b6705a8fefab898c65a5`. The disabled-user revoke
+  fix, regressions and SC-024 qualification updates remain local and uncommitted.
+- Core CI at `c9f2d47` still has Go 1.26 Race running; Go 1.27, Browser Cue
+  Delivery, Vet, Companion, Swift and isolated/ARM64 jobs have passed. Do not
+  push the local follow-up yet.
+- Red-first test `TestOwnerCanRemoveProjectGrantsFromDisabledUser` failed
+  before code change on `ErrDenied`. The updated service allows an Owner's
+  empty grant replacement for a disabled account, while nonempty replacements
+  remain denied. Service and HTTP regressions prove stored grants are removed
+  and do not return if the account is re-enabled. The full touched-package
+  suite, focused Race, Vet and diff checks pass.
+- Next: commit this small fix and docs to the existing local chain, keep
+  auditing software gaps while `c9f2d47` CI runs, and push only after its exact
+  Core CI run completes. Production ACL stays disabled.
