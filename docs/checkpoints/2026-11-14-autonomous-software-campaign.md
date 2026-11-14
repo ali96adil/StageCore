@@ -2346,3 +2346,36 @@ This entry supersedes the preceding push instruction.
   `43611749232` passed. Do not push until Core completes, then verify the
   branch/PR SHA and all checks before a normal push. Production ACL remains
   disabled and no service, Vault data, or external output was touched.
+
+## Resume update — 2026-11-14 16:30 UTC · SC-016 browser acceptance and close-guard fix
+
+- The exact-head Core CI gate has now completed successfully at remote
+  `5b6e1e356f0a02395a2630962a1695df0ba70707`: run `43611749231`, Go 1.26 and
+  Go 1.27 both green, including the Go 1.26 Race suite and Linux ARM64 CGo-free
+  product builds. Companion `43611749229` and Camera Relay `43611749232` also
+  passed. PR #534 remains OPEN/DRAFT at the same remote SHA.
+- Added Chrome `TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets` for
+  two temporary SQLite Projects. It copies Lighting+OSC Actions from a Mixed
+  Cue, preserves ordering and payload while assigning fresh Action IDs, maps
+  each source target to the destination Project, confirms neither Project's
+  target configuration was copied, and observes no publish/runtime/safety call.
+  The browser also confirms clipboard selection alone does not warn about
+  unsaved work, while an actual Cue name edit still triggers the close guard.
+- Fixed the false close warning by comparing serialized Draft state
+  (`readDraftHistory(true)`) instead of every form control. Recovery/history/
+  preset/clipboard widgets and delayed builder normalization are not Cue edits;
+  an unreadable Draft still fails closed and warns.
+- Core's six Chrome browser gates passed locally; the new SC-016 browser test
+  passed both normally and under `go test -race`. Focused Node suite passed
+  19/19, `go vet ./internal/httpapi`, JS syntax checks, Ruby 2.6 YAML parsing,
+  and `git diff --check` passed.
+- Commit `bce7bc540cc29f04b0631a976e19aa7dd554e417`. Local branch is nine
+  commits ahead of remote. No Push has occurred yet. Immediately before the
+  next Push, recheck the remote/PR SHA and current checks; the old exact-head
+  Core run has completed, so a normal push to `integration/stagecore-rc` is now
+  safe. No production service/data, ACL enforcement, or real output was used.
+- Remaining SC-016 qualification: operator verification of target
+  compatibility before publishing and broader keyboard/touch/RTL acceptance.
+  Pi 4 performance still needs verified isolated access. Next independent
+  software batch: audit SC-024 grant/revoke behavior and route/session fences
+  with temporary stores only; keep production ACL disabled.
