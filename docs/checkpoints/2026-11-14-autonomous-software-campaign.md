@@ -2880,3 +2880,21 @@ This entry supersedes the preceding push instruction.
   the existing branch if all are green. Wait for fresh checks on the new SHA
   before any further push. Pi qualification remains open at the previously
   documented SSH endpoint failure.
+
+## Resume update — 2026-11-14 19:04 UTC · revoke fence for usage totals
+
+- Local HEAD is `6d9fda8cd6b1a741bc8e861461747d304cca2468`, nine commits ahead
+  of origin and PR #534 head `9df291527dafd0ec8ab52d6b801d03566dcf4528`.
+  PR state remains OPEN/Draft. No push or remote mutation occurred.
+- Added a private managed-media fixture to
+  `TestScopedProjectFilesRechecksGrantAtResponseDelivery`. For both grant and
+  session revocation, the route must return the denial status without leaking
+  the file name, `entry_count`, or `total_bytes`. This covers the new usage
+  aggregate at the exact response boundary.
+- The response-boundary test passed normally and under `go test -race`; focused
+  HTTP tests, `go vet ./internal/httpapi`, and `git diff --check` passed. The
+  headless Chrome gate and Node UI tests also passed in the previous checkpoint.
+- The currently running remote Core run `43627228963` is still in its Go 1.26
+  full Race step (started 18:37 UTC); Go 1.27, Companion/Swift and Relay remain
+  green. Do not push until this exact-head run completes, then verify all checks
+  and branch/PR SHA before deciding to push.
