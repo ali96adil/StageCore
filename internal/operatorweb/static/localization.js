@@ -302,6 +302,7 @@ const f001Arabic = {
   "Select published Cue…": "اختر إشارة منشورة…",
   "Confirmed Jump": "انتقال مؤكّد",
   "Latest Result": "آخر نتيجة",
+  "Active Cue executions": "تنفيذات الإشارات النشطة",
   "Session Started": "بدء الجلسة",
   "No Cue execution yet": "لم تُنفذ أي إشارة بعد",
   "No active Session": "لا توجد جلسة نشطة",

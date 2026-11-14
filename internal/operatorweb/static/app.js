@@ -1304,6 +1304,28 @@ function runtimeReadinessGroupTitle(group) {
   return summary;
 }
 
+function runtimeActiveExecutionMarkup(runtime, cues) {
+  const executions = runtime.active_executions || [];
+  if (!executions.length) return "";
+  const count = Number(runtime.active_execution_count) || executions.length;
+  return `
+    <section class="card runtime-active-executions" aria-live="polite">
+      <div class="section-title-row">
+        <h2>Active Cue executions</h2>
+        ${pill(`${count} RUNNING`, "warn")}
+      </div>
+      <div class="runtime-active-execution-list">
+        ${executions.map((execution) => {
+          const cue = cueInList(cues, execution.cue_id);
+          return `<div class="runtime-active-execution">
+            <div><strong>${esc(cue ? cueDisplayName(cue) : execution.cue_id)}</strong><span class="mono">${esc(execution.cue_execution_id)}</span></div>
+            <time class="muted" datetime="${esc(execution.started_at)}">${esc(fmtDate(execution.started_at))}</time>
+          </div>`;
+        }).join("")}
+      </div>
+    </section>`;
+}
+
 async function renderRuntime(startPolling = false) {
   const user = state.user;
   const projectID = encodeURIComponent(state.project.project_id);
@@ -1452,6 +1474,7 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    ${runtimeActiveExecutionMarkup(runtime, runtimeCues)}
     ${endedRehearsal && !active ? '<button id="runtimeRehearsalSummary" class="button" type="button">Review ended rehearsal</button>' : ""}
     ${mayReviewTiming ? '<button id="runtimeRehearsalApproval" class="button ghost" type="button">Review timing approval</button>' : ""}
     ${receiptMarkup}

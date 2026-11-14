@@ -63,15 +63,17 @@ type runtimeExecutionView struct {
 }
 
 type runtimeStatusView struct {
-	Project               projectView           `json:"project"`
-	Mode                  string                `json:"mode"`
-	Snapshot              *snapshotView         `json:"runtime_snapshot"`
-	Session               *sessionView          `json:"session"`
-	Cues                  []cueSummaryView      `json:"cues"`
-	CurrentCue            *cueSummaryView       `json:"current_cue"`
-	NextCue               *cueSummaryView       `json:"next_cue"`
-	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
-	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
+	Project               projectView            `json:"project"`
+	Mode                  string                 `json:"mode"`
+	Snapshot              *snapshotView          `json:"runtime_snapshot"`
+	Session               *sessionView           `json:"session"`
+	Cues                  []cueSummaryView       `json:"cues"`
+	CurrentCue            *cueSummaryView        `json:"current_cue"`
+	NextCue               *cueSummaryView        `json:"next_cue"`
+	ActiveExecutions      []runtimeExecutionView `json:"active_executions"`
+	ActiveExecutionCount  int                    `json:"active_execution_count"`
+	LatestExecution       *runtimeExecutionView  `json:"latest_execution"`
+	ManagedOutputBlackout bool                   `json:"managed_output_blackout"`
 }
 
 func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) Option {
@@ -430,7 +432,10 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	if err != nil {
 		return runtimeStatusView{}, err
 	}
-	view := runtimeStatusView{Project: makeProjectView(project), Mode: "EDIT", Cues: []cueSummaryView{}}
+	view := runtimeStatusView{
+		Project: makeProjectView(project), Mode: "EDIT", Cues: []cueSummaryView{},
+		ActiveExecutions: []runtimeExecutionView{},
+	}
 	if latest != nil {
 		value := makeSnapshotView(*latest)
 		view.Snapshot = &value
@@ -472,6 +477,16 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 		view.LatestExecution = &runtimeExecutionView{
 			ID: last.ID, CueID: last.CueID, Result: last.Result,
 			StartedAt: last.StartedAt, CompletedAt: last.CompletedAt,
+		}
+		for _, execution := range executions {
+			if execution.Result != domain.ExecutionRunning {
+				continue
+			}
+			view.ActiveExecutionCount++
+			view.ActiveExecutions = append(view.ActiveExecutions, runtimeExecutionView{
+				ID: execution.ID, CueID: execution.CueID, Result: execution.Result,
+				StartedAt: execution.StartedAt, CompletedAt: execution.CompletedAt,
+			})
 		}
 	}
 	return view, nil
