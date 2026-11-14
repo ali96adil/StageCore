@@ -226,6 +226,19 @@
   border: 1px solid var(--line);
   border-radius: 10px;
 }
+.sc009-project-history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block: 14px 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.sc009-project-history strong { margin-inline-end: 4px; }
+.sc009-project-history [role="status"] { flex: 1 1 220px; }
 .sc008-list-toolbar label {
   flex: 1 1 260px;
   min-width: 0;

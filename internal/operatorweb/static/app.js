@@ -8,6 +8,7 @@ const state = {
   project: null,
   page: "projects",
   cues: [],
+  currentRevision: null,
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
@@ -559,6 +560,7 @@ function applyCueListFilters() {
 
 async function renderCues(message = "", messageKind = "success") {
   const payload = await loadCues();
+  state.currentRevision = payload.revision || null;
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
   if (hasDraft) {

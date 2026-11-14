@@ -182,7 +182,7 @@ func applyAssistantProposalOperation(r *http.Request, stageStore *store.Store, p
 			beforeCueDraftWrite()
 		}
 		cue, actions := body.toDomain(revision.ID, "")
-		created, err := stageStore.CreateCueWithActions(r.Context(), cue, actions)
+		created, err := stageStore.CreateCueWithActions(store.WithCueDraftHistoryActor(r.Context(), session.User.ID), cue, actions)
 		if err != nil {
 			if draftForked {
 				return nil, assistantProposalPartialCommitError{cause: err}

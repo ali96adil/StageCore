@@ -93,6 +93,7 @@ func withOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 }
 
 func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, publisher *publish.Service, hooks cuePublishHooks) {
+	registerCueDraftHistoryRoutes(mux, auth, projectStore, hooks)
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/cues", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, err := projectStore.GetProject(r.Context(), r.PathValue("project_id"))
 		if err != nil {
@@ -120,7 +121,10 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/cues", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+		writeCtx := store.WithCueDraftHistoryActor(
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit),
+			session.User.ID,
+		)
 		var body cueWriteRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -150,7 +154,10 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/cues/{cue_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+		writeCtx := store.WithCueDraftHistoryActor(
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit),
+			session.User.ID,
+		)
 		var body cueWriteRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -175,7 +182,10 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/cues/{cue_id}/duplicate", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+		writeCtx := store.WithCueDraftHistoryActor(
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit),
+			session.User.ID,
+		)
 		var body duplicateCueRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -199,7 +209,10 @@ func registerOperatorCuePublishRoutes(mux *http.ServeMux, auth *userauth.Service
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/cues/{cue_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+		writeCtx := store.WithCueDraftHistoryActor(
+			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit),
+			session.User.ID,
+		)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return

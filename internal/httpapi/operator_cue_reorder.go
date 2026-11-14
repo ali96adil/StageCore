@@ -62,7 +62,10 @@ func withOperatorCueReorder(auth *userauth.Service, projectStore *store.Store, h
 				}
 			}
 
-			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			writeCtx := store.WithCueDraftHistoryActor(
+				projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit),
+				session.User.ID,
+			)
 			revision, draftForked, err := projectStore.EnsureProjectDraftWithStatus(writeCtx, project.ID, session.User.ID, "Operator Web Cue reorder after Publish")
 			if err != nil {
 				writeProjectStoreError(w, err)

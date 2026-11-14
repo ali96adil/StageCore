@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,18 @@ func TestAssistantProposalAtomicBatchCommitsGraphAndResolvesCueRef(t *testing.T)
 	}
 	if len(cues) != 1 || len(routes) != 1 || len(routes[0].Actions) != 1 || routes[0].Actions[0].CueID == nil || *routes[0].Actions[0].CueID != cues[0].ID {
 		t.Fatalf("cues=%+v routes=%+v", cues, routes)
+	}
+	historyContext := store.WithCueDraftHistoryActor(ctx, h.owner.Session.User.ID)
+	history, err := h.stageStore.CueDraftHistory(historyContext, h.project.ID)
+	if err != nil || !history.CanUndo {
+		t.Fatalf("atomic batch Cue history=%+v err=%v", history, err)
+	}
+	if _, err := h.stageStore.UndoCueDraft(historyContext, h.project.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Undo removed a Cue that the new Route references: %v", err)
+	}
+	cuesAfterConflict, err := h.stageStore.ListCues(ctx, h.revision.ID)
+	if err != nil || len(cuesAfterConflict) != 1 || cuesAfterConflict[0].ID != cues[0].ID {
+		t.Fatalf("conflicted Undo changed Cue state: cues=%+v err=%v", cuesAfterConflict, err)
 	}
 }
 

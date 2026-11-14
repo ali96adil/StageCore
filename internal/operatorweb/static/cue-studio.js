@@ -1948,10 +1948,81 @@
     return details;
   }
 
+  function setCueDraftHistoryButtonState(undo, redo, status) {
+    undo.disabled = !status?.can_undo;
+    redo.disabled = !status?.can_redo;
+  }
+
   function enhanceCueList() {
     const tableWrap = content.querySelector(".table-wrap");
     const tbody = tableWrap?.querySelector("tbody");
     if (!tbody || pick("sc008CueFilter")) return;
+    if (state.currentRevision?.status === "DRAFT" && canEdit()) {
+      const historyToolbar = document.createElement("section");
+      historyToolbar.id = "sc009ProjectDraftHistory";
+      historyToolbar.className = "sc009-project-history";
+      historyToolbar.setAttribute("aria-label", tr("سجل تغييرات مسودة الكيوهات", "Cue Draft change history"));
+      const historyTitle = document.createElement("strong");
+      historyTitle.textContent = tr("سجل المسودة", "Draft history");
+      const historyStatus = document.createElement("span");
+      historyStatus.className = "muted";
+      historyStatus.setAttribute("role", "status");
+      historyStatus.setAttribute("aria-live", "polite");
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "button ghost";
+      undo.textContent = tr("تراجع عن تغيير", "Undo change");
+      const redo = document.createElement("button");
+      redo.type = "button";
+      redo.className = "button ghost";
+      redo.textContent = tr("إعادة تغيير", "Redo change");
+      undo.disabled = redo.disabled = true;
+      historyToolbar.append(historyTitle, undo, redo, historyStatus);
+      tableWrap.before(historyToolbar);
+
+      const projectID = state.project?.project_id;
+      const historyPath = `/api/v1/projects/${encodeURIComponent(projectID || "")}/cue-draft-history`;
+      const loadHistory = async () => {
+        try {
+          const result = await api(historyPath);
+          if (!historyToolbar.isConnected || state.project?.project_id !== projectID) return;
+          setCueDraftHistoryButtonState(undo, redo, result);
+          historyStatus.textContent = result.can_undo || result.can_redo
+            ? tr("التغييرات محفوظة لهذا المستخدم في المسودة الحالية.", "Changes are persisted for this user in the current Draft.")
+            : tr("لا توجد تغييرات قابلة للتراجع.", "No changes are available to undo.");
+        } catch (error) {
+          if (!historyToolbar.isConnected || state.project?.project_id !== projectID) return;
+          undo.disabled = redo.disabled = true;
+          historyStatus.textContent = errorMessage(error);
+        }
+      };
+      const moveHistory = async (direction, button) => {
+        if (!historyToolbar.isConnected || button.disabled || state.project?.project_id !== projectID) return;
+        undo.disabled = redo.disabled = true;
+        historyStatus.textContent = direction === "UNDO"
+          ? tr("جاري التراجع عن تغيير المسودة…", "Undoing Draft change…")
+          : tr("جاري إعادة تغيير المسودة…", "Redoing Draft change…");
+        try {
+          await api(historyPath, {method: "POST", json: {direction}});
+          if (state.project?.project_id !== projectID) return;
+          await renderCues(direction === "UNDO"
+            ? tr("تم التراجع عن آخر تغيير للمسودة.", "Undid the latest Draft change.")
+            : tr("تمت إعادة تغيير المسودة.", "Redid the Draft change."));
+        } catch (error) {
+          if (!historyToolbar.isConnected || state.project?.project_id !== projectID) return;
+          if (error?.status === 409) {
+            await renderCues(tr("تغيّرت المسودة أو ارتباطات الكيو؛ حُدثت القائمة. راجعها قبل التراجع.",
+              "The Draft or Cue references changed. The list was refreshed; review it before undoing."), "warn");
+            return;
+          }
+          historyStatus.textContent = errorMessage(error);
+          loadHistory();
+        }
+      };
+      undo.addEventListener("click", () => moveHistory("UNDO", undo));
+      redo.addEventListener("click", () => moveHistory("REDO", redo));
+      loadHistory();
+    }
     const toolbar = document.createElement("section");
     toolbar.id = "sc008CueFilter";
     toolbar.className = "sc008-list-toolbar";
