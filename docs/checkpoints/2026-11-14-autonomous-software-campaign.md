@@ -1551,3 +1551,32 @@ This entry supersedes the preceding push instruction.
 - Next after the CI gate: update PR #534's opening status and follow exact-head
   CI for the push; then continue SC-008's real-browser authoring/round-trip
   acceptance with simulated targets and preserve the Mixed/linked Cue priority.
+
+## Resume update — 2026-11-14 07:21 UTC · lighting API fault coverage
+
+- Added `TestLightingCueActionRejectsInvalidValuesAliasesAndDeviceAssignments`
+  in local commit `4bb997d03b98f11ae4254b086667c241ff516389`. The HTTP
+  simulation now proves out-of-range levels, stale aliases, a node disabled
+  after binding, and missing capability are refused with the expected error
+  before target-alias creation. The disabled-node case creates a valid binding
+  first, then changes the isolated test database to simulate a mid-authoring
+  state change.
+- The focused lighting HTTP tests passed normally and under `-race`; `go vet
+  ./internal/httpapi` and `git diff --check` passed. The SC-007 matrix now
+  records the client and API evidence and keeps real-browser checks open.
+- Local feature HEAD is `4bb997d`; remote remains `abe7ad8017744283acab76bfa4f3b76ad4797f52`.
+  Seven commits are ahead locally: `4c68f94`, `4c15d95`, `1cdae86`, `bc14580`,
+  `2e1641c`, `32a823e`, and `4bb997d`. The worktree was clean after the feature
+  commit; this checkpoint is the following documentation commit.
+- At 07:21 UTC, Core run `43568904863` was still in Go 1.26 Race, with Linux
+  ARM64 product builds pending; the run is pinned to pushed HEAD `abe7ad8`.
+  Companion `43568904858` and Camera Relay `43568904853` passed on that exact
+  SHA. No push until Core completes successfully. Afterward, verify the remote
+  SHA and push all local work normally to existing PR #534, refresh the PR
+  checkpoint, and follow CI for the resulting exact head.
+- Pi 4 runtime performance remains unmeasured because strict SSH fails before
+  host identity. No production services/data, Vault originals, physical output,
+  firmware or production ACL were touched. ACL remains disabled in production.
+- Next software task after the CI/push gate: SC-008 real-browser Cue authoring
+  and Mixed/linked round-trip acceptance using a local isolated app and
+  simulated targets; continue the broader performance and integration gaps.
