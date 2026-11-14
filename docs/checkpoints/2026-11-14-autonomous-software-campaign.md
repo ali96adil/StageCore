@@ -1580,3 +1580,37 @@ This entry supersedes the preceding push instruction.
 - Next software task after the CI/push gate: SC-008 real-browser Cue authoring
   and Mixed/linked round-trip acceptance using a local isolated app and
   simulated targets; continue the broader performance and integration gaps.
+
+## Resume update — 2026-11-14 07:27 UTC · CI gate complete
+
+- Exact-head CI completed successfully on remote `abe7ad8017744283acab76bfa4f3b76ad4797f52`:
+  Core run `43568904863` passed, including Go 1.26 Race and Linux ARM64
+  CGo-free product builds; Companion run `43568904858` and Camera Relay run
+  `43568904853` also passed. ARM64 product build success is not a Pi runtime
+  performance measurement.
+- `git fetch origin integration/stagecore-rc` confirmed the remote SHA is
+  still `abe7ad8017744283acab76bfa4f3b76ad4797f52`. Draft PR #534 remains
+  OPEN, targets `main`, and points to the same SHA. Local feature HEAD before
+  this update is `a52a4f35537058ca3e6791de396ca4c4f8c30899`, eight commits
+  ahead of remote: `4c68f94`, `4c15d95`, `1cdae86`, `bc14580`, `2e1641c`,
+  `32a823e`, `4bb997d`, and `a52a4f3`. This CI/browser status update is the
+  ninth local commit in the pending normal push.
+- The isolated local browser review started Hub at `127.0.0.1:17840` with
+  temporary DataRoot `/tmp/stagecore-ui.ixe3LJ`, claimed only a temporary test
+  Owner, and created a temporary test Project. Playwright browser interaction
+  then timed out while the Mac was locked. No Cue was saved and no hardware or
+  external output was contacted. The local Hub process has been stopped; the
+  temporary root is preserved. SC-008 real-browser acceptance remains open.
+- Push the nine local commits normally to the existing
+  `integration/stagecore-rc` branch and PR #534 now that the exact remote CI is
+  green. Refresh the PR opening checkpoint with the new SHA, commit scope and
+  run IDs, then wait for Core/Companion/Camera CI on that exact new SHA before
+  any further push.
+- Pi 4 live performance qualification remains blocked by the strict SSH
+  handshake failure before host identity. Keep all production services,
+  original data/Vault, physical outputs, firmware and SC-024 production ACL
+  unchanged; production ACL stays disabled.
+- Resume after the push gate with SC-008 browser-model/interaction gaps and
+  Mixed/linked Cue behavior, then continue the remaining software matrix. Do
+  not report Software Complete until Pi runtime performance and the other
+  explicitly open qualifications have evidence or precise blocker status.
