@@ -2783,3 +2783,47 @@ This entry supersedes the preceding push instruction.
 - Continue with read-only SC-023 quota/retention audit or another independent
   evidenced software gap while CI runs. Keep all production surfaces and ACL
   disabled/off; no device activity was used.
+
+## Resume update — 2026-11-14 18:41 UTC · Project media usage summary
+
+- Local HEAD is `d1d5e3af9f8663aa0ba58f949dbea03ca34aa640`; remote branch and PR
+  #534 remain at `9df291527dafd0ec8ab52d6b801d03566dcf4528`. The local commits
+  `4eaade8` (prior handoff checkpoint) and `d1d5e3a` (this feature/matrix update)
+  are not pushed. The exact-head Core run must finish before any push.
+- On `9df2915`, Core run `43627228963` has Go 1.27 pass and Go 1.26 still
+  pending. Companion run `43627229094` passes both macOS replacement/media and
+  Swift CompanionCore; Camera Relay `43627228900` passes isolated tests/ARM64.
+  PR is OPEN/Draft and its head is verified as `9df2915`.
+- Added `entry_count` and `total_bytes` to the scoped Project Files workspace.
+  The aggregate counts logical entries and sums immutable file-version sizes;
+  content-addressed Vault blobs may be physically shared. The bilingual Files
+  page shows total entries versus the current page and labels the logical size
+  clearly. This remains behind the explicit scoped-read option and is not
+  assembled in the production Hub. No quota limit was invented.
+- Updated the SC-023 matrix. It now distinguishes global Preflight/disk-health
+  warnings from the still-open per-Project quotas and delete/retention/ref-count
+  UX. Tests verify empty/populated/duplicated/renamed workspace totals,
+  pagination, the HTTP JSON response, UI contract and Arabic/English labels.
+- Final local checks passed: `go test ./internal/projectaccess
+  ./internal/operatorweb -count=1`; focused HTTP files-route test; focused
+  Project Files Race tests; `go vet ./internal/projectaccess
+  ./internal/operatorweb`; `node --check` for `project-files.js`; and
+  `git diff --check`. An initial test assertion shadowed the outer pagination
+  result; it was corrected and the full focused set then passed.
+- Rechecked related open PRs: TabletPlayer #36 `91613da` pass; ESP32 DMX #39
+  `3ad7749` all six checks pass; ESP32 Camera #20 `455b066` check passes;
+  StageLaser #56 `b14a578` both checks pass; StageLaser #57 `c4ff10b` both
+  checks pass and remains non-Draft. No sibling checkouts are present and no
+  related repository was modified.
+- Pi performance caveat: the ARM64 measurements in the qualification report
+  used source `a90403b`; the later `c6d4407` changed linked-Cue graph
+  validation. Requalification of that code on isolated Pi 4 is justified, but
+  the recorded `stagecore-qualification` SSH endpoint failures returned
+  `websocket: bad handshake` before a shell opened. No command ran on the Pi;
+  do not describe the post-optimization code as Pi-qualified or repeat a failed
+  access attempt without a changed endpoint/credential condition.
+- Next: wait for Go 1.26 on `9df2915`. If it passes, verify branch/PR head again
+  and push the two local commits normally to the existing branch; then wait for
+  new exact-head Core/Companion/Relay runs. If it fails, repair that failure
+  first. Continue the SC-023/SC-024 software audit while keeping production ACL
+  disabled and all device/output tests simulated.
