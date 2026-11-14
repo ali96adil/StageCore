@@ -162,6 +162,9 @@ async function api(path, options={}) {
 		Status            string `json:"status"`
 		Locale            string `json:"locale"`
 		Rows              int    `json:"rows"`
+		SearchRows        int    `json:"search_rows"`
+		SearchMatch       bool   `json:"search_match"`
+		SearchCleared     bool   `json:"search_cleared"`
 		Text              string `json:"text"`
 		HTML              string `json:"html"`
 		RTL               bool   `json:"rtl"`
@@ -177,6 +180,9 @@ async function api(path, options={}) {
 				Status            string `json:"status"`
 				Locale            string `json:"locale"`
 				Rows              int    `json:"rows"`
+				SearchRows        int    `json:"search_rows"`
+				SearchMatch       bool   `json:"search_match"`
+				SearchCleared     bool   `json:"search_cleared"`
 				Text              string `json:"text"`
 				HTML              string `json:"html"`
 				RTL               bool   `json:"rtl"`
@@ -199,7 +205,7 @@ async function api(path, options={}) {
 		}
 	}
 	for _, report := range reports {
-		if report.Status != "PASS" || report.Rows != 2 || report.PageOverflow ||
+		if report.Status != "PASS" || report.Rows != 2 || report.SearchRows != 1 || !report.SearchMatch || !report.SearchCleared || report.PageOverflow ||
 			!report.KeyboardFocusable || report.UploadForm || report.DownloadLink {
 			t.Errorf("Project Files browser report crossed its read-only/mobile boundary: %+v", report)
 		}

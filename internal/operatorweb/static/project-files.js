@@ -10,6 +10,10 @@ const scFileCopy = {
   eyebrow: { en: "PROJECT MEDIA", "ar-IQ": "وسائط المشروع" },
   description: { en: "Files stay inside this Project's Vault-backed workspace.", "ar-IQ": "الملفات تبقى ضمن مساحة هذا المشروع المرتبطة بالـVault." },
   refresh: { en: "Refresh", "ar-IQ": "تحديث" },
+  search: { en: "Search files", "ar-IQ": "ابحث بالملفات" },
+  searchPlaceholder: { en: "Name or original filename", "ar-IQ": "اسم الملف أو الاسم الأصلي" },
+  searchButton: { en: "Search", "ar-IQ": "بحث" },
+  clearSearch: { en: "Clear", "ar-IQ": "مسح" },
   next: { en: "Next page", "ar-IQ": "الصفحة التالية" },
   download: { en: "Download", "ar-IQ": "تنزيل" },
   name: { en: "Name", "ar-IQ": "الاسم" },
@@ -25,6 +29,7 @@ const scFileCopy = {
   entries: { en: "entries", "ar-IQ": "عنصر" },
   pageCategories: { en: "Types on this page:", "ar-IQ": "الأنواع بهذه الصفحة:" },
   empty: { en: "No media is registered for this Project yet.", "ar-IQ": "ماكو ملفات وسائط مسجّلة لهذا المشروع لحد الآن." },
+  emptySearch: { en: "No files match this search.", "ar-IQ": "ماكو ملفات تطابق البحث." },
   unavailable: { en: "This Project Files preview is unavailable or access was revoked. No cross-Project fallback is allowed.", "ar-IQ": "عرض ملفات المشروع غير متاح أو تم سحب الصلاحية. ماكو وصول بديل إلى ملفات المشاريع الأخرى." },
   pagination: { en: "This Project has more than 500 files. Cursor pagination must be enabled before listing them.", "ar-IQ": "هذا المشروع بيه أكثر من 500 ملف. لازم تفعيل عرض الصفحات حتى تنعرض القائمة بأمان." },
   other: { en: "Other", "ar-IQ": "أخرى" },
@@ -49,6 +54,7 @@ document.querySelector('#workspaceNav [data-page="cues"]')?.insertAdjacentElemen
 
 let scFilesProbeGeneration = 0;
 let scFilesRenderGeneration = 0;
+let scFilesCurrentSearch = "";
 
 async function scFilesUpdateForProject(projectID) {
   const generation = ++scFilesProbeGeneration;
@@ -65,13 +71,16 @@ async function scFilesUpdateForProject(projectID) {
   }
 }
 
-async function renderScopedProjectFiles(cursor = "") {
+async function renderScopedProjectFiles(cursor = "", rawSearch = scFilesCurrentSearch) {
   const generation = ++scFilesRenderGeneration;
+  const search = String(rawSearch).trim();
+  scFilesCurrentSearch = search;
   const projectID = state.project?.project_id;
   if (!projectID) return;
   try {
     const base = `/api/v1/projects/${encodeURIComponent(projectID)}/files`;
     const query = new URLSearchParams({page_size: "100", cursor});
+    if (search) query.set("q", search);
     const payload = await api(`${base}?${query}`);
     if (generation !== scFilesRenderGeneration || !state.project || state.project.project_id !== projectID || state.page !== "files") return;
     const workspace = payload?.workspace;
@@ -103,7 +112,7 @@ async function renderScopedProjectFiles(cursor = "") {
             <td>${esc(item.asset_policy)}${payload.download_available === true && item.content_version_id && item.asset_policy !== "REFERENCE_ONLY"
               ? `<br><a download href="${esc(`${base}/${encodeURIComponent(item.content_version_id)}/download`)}">${esc(scFileT("download"))}</a>` : ""}</td>
           </tr>`).join("")}</tbody></table></div>`
-      : `<div class="empty">${esc(scFileT("empty"))}</div>`;
+      : `<div class="empty">${esc(scFileT(search ? "emptySearch" : "empty"))}</div>`;
 
     content.innerHTML = `
       <div class="page-head">
@@ -114,7 +123,7 @@ async function renderScopedProjectFiles(cursor = "") {
       <section class="card" style="margin-bottom:14px">
         <div class="section-title-row">
           <h2>${esc(workspace.project_name)}</h2>
-          ${pill(`${scFileT("showing")} ${rows.length} / ${esc(String(workspace.entry_count ?? rows.length))} ${scFileT("entries")}`, "neutral")}
+          ${pill(`${scFileT("showing")} ${rows.length} / ${esc(String(workspace.match_count ?? workspace.entry_count ?? rows.length))} ${scFileT("entries")}`, "neutral")}
         </div>
         <div class="toolbar" style="margin-top:12px">
           ${pill(`${scFileT("usage")}: ${humanSize(workspace.logical_bytes)}`, "neutral")}
@@ -124,6 +133,11 @@ async function renderScopedProjectFiles(cursor = "") {
         <small class="muted">${esc(scFileT("usageHint"))}</small>
       </section>
       <section class="card">
+        <form id="projectFileSearchForm" class="project-file-search-form">
+          <label>${esc(scFileT("search"))}<input id="projectFileSearchInput" type="search" maxlength="128" value="${esc(search)}" placeholder="${esc(scFileT("searchPlaceholder"))}"></label>
+          <button class="button" type="submit">${esc(scFileT("searchButton"))}</button>
+          ${search ? `<button id="clearProjectFileSearch" class="button" type="button">${esc(scFileT("clearSearch"))}</button>` : ""}
+        </form>
         ${payload.upload_available === true ? `<form id="projectFileUploadForm" class="project-file-upload-form">
           <label>${esc(scFileT("chooseFile"))}<input id="projectFileUploadInput" type="file" required></label>
           <label>${esc(scFileT("assetName"))}<input id="projectFileAssetName" type="text" maxlength="160"></label>
@@ -149,18 +163,23 @@ async function renderScopedProjectFiles(cursor = "") {
           },
           body: file,
         });
-        await renderScopedProjectFiles();
+        await renderScopedProjectFiles("", search);
       } catch (error) {
         setMessage(globalMessage, errorMessage(error) || scFileT("uploadFailed"), "error");
         button.disabled = false;
       }
     });
+    el("projectFileSearchForm")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      renderScopedProjectFiles("", el("projectFileSearchInput")?.value || "");
+    });
+    el("clearProjectFileSearch")?.addEventListener("click", () => renderScopedProjectFiles("", ""));
     el("nextScopedFiles")?.addEventListener("click", (event) => {
       event.currentTarget.disabled = true;
-      renderScopedProjectFiles(workspace.next_cursor);
+      renderScopedProjectFiles(workspace.next_cursor, search);
     });
     el("refreshScopedFiles")?.addEventListener("click", () => {
-      renderScopedProjectFiles().catch((err) => setMessage(globalMessage, errorMessage(err), "error"));
+      renderScopedProjectFiles("", search).catch((err) => setMessage(globalMessage, errorMessage(err), "error"));
     });
   } catch (error) {
     if (generation !== scFilesRenderGeneration || state.project?.project_id !== projectID || state.page !== "files") return;

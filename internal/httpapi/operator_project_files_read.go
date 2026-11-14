@@ -62,12 +62,16 @@ func withScopedProjectFilesRead(auth *userauth.Service, access *projectaccess.Se
 				var workspace projectaccess.ProjectFileWorkspace
 				var err error
 				query := r.URL.Query()
-				if query.Has("page_size") || query.Has("cursor") {
+				if query.Has("page_size") || query.Has("cursor") || query.Has("q") {
 					size, parseErr := strconv.Atoi(query.Get("page_size"))
 					if parseErr != nil {
-						size = 0
+						if query.Has("page_size") {
+							size = 0
+						} else {
+							size = 100
+						}
 					}
-					workspace, err = access.ListScopedProjectFilesPage(r.Context(), session.User.ID, projectID, size, query.Get("cursor"))
+					workspace, err = access.ListScopedProjectFilesPageWithSearch(r.Context(), session.User.ID, projectID, size, query.Get("cursor"), query.Get("q"))
 				} else {
 					workspace, err = access.ListScopedProjectFiles(r.Context(), session.User.ID, projectID)
 				}

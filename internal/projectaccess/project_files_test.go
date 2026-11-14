@@ -173,3 +173,55 @@ func TestProjectFileWorkspaceBoundsUnpagedListing(t *testing.T) {
 		t.Fatalf("unknown Project exposed: %v", err)
 	}
 }
+
+func TestScopedProjectFilesSearchMatchesNamesAndBindsCursor(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	projects := store.New(f.db.DB, clock.Real{})
+	media := []struct {
+		name, filename, hash, relative string
+		size                           int64
+	}{
+		{"Opening Mix 1", `main_100%\take.wav`, strings.Repeat("e", 64), "objects/search-a", 100},
+		{"Opening Mix 2", "opening-alt.wav", strings.Repeat("f", 64), "objects/search-b", 200},
+		{"Closing Cue", "closing.mov", strings.Repeat("1", 64), "objects/search-c", 300},
+	}
+	for _, item := range media {
+		if _, err := projects.RegisterManagedMedia(ctx, store.RegisterManagedMediaParams{
+			ProjectID: f.projectA, Name: item.name, AssetPolicy: store.MediaPolicyManaged,
+			ContentHash: item.hash, SizeBytes: item.size, RelativePath: item.relative,
+			OriginalFilename: item.filename,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Percent, underscore and backslash are literal search characters, not
+	// caller-controlled SQL LIKE wildcards.
+	workspace, err := f.a.ListScopedProjectFilesPageWithSearch(ctx, f.ownerID, f.projectA, 10, "", `  100%\take  `)
+	if err != nil || workspace.MatchCount != 1 || len(workspace.Files) != 1 ||
+		workspace.Files[0].OriginalFilename != media[0].filename {
+		t.Fatalf("literal filename search failed: %+v err=%v", workspace, err)
+	}
+	if workspace.EntryCount != 3 || workspace.LogicalBytes != 600 {
+		t.Fatalf("search changed whole-Project usage: entries=%d bytes=%d", workspace.EntryCount, workspace.LogicalBytes)
+	}
+
+	first, err := f.a.ListScopedProjectFilesPageWithSearch(ctx, f.ownerID, f.projectA, 1, "", "Opening")
+	if err != nil || first.MatchCount != 2 || first.EntryCount != 3 || len(first.Files) != 1 || first.NextCursor == "" {
+		t.Fatalf("first name-search page: %+v err=%v", first, err)
+	}
+	second, err := f.a.ListScopedProjectFilesPageWithSearch(ctx, f.ownerID, f.projectA, 1, first.NextCursor, "  Opening ")
+	if err != nil || second.MatchCount != 2 || len(second.Files) != 1 || second.NextCursor != "" ||
+		second.Files[0].MediaAssetID == first.Files[0].MediaAssetID {
+		t.Fatalf("second normalized search page: %+v err=%v", second, err)
+	}
+	if _, err := f.a.ListScopedProjectFilesPageWithSearch(ctx, f.ownerID, f.projectA, 1, first.NextCursor, "Closing"); !errors.Is(err, projectaccess.ErrInvalid) {
+		t.Fatalf("cursor was replayed against another search: %v", err)
+	}
+	for _, invalid := range []string{"line\nbreak", strings.Repeat("x", 129)} {
+		if _, err := f.a.ListScopedProjectFilesPageWithSearch(ctx, f.ownerID, f.projectA, 10, "", invalid); !errors.Is(err, projectaccess.ErrInvalid) {
+			t.Fatalf("invalid search %q accepted: %v", invalid, err)
+		}
+	}
+}

@@ -126,6 +126,14 @@ func TestScopedProjectFilesIsOptInAndNeverFallsBackToGlobalProjectRole(t *testin
 		!strings.Contains(got.Body.String(), `"category":"AUDIO"`) {
 		t.Fatalf("authorized file list missing media: %d %s", got.Code, got.Body.String())
 	}
+	if got := get(op.Token, listA+"?q=opening"); got.Code != http.StatusOK ||
+		!strings.Contains(got.Body.String(), `"match_count":1`) ||
+		!strings.Contains(got.Body.String(), media.Asset.ID) {
+		t.Fatalf("Project Files search route did not filter metadata: %d %s", got.Code, got.Body.String())
+	}
+	if got := get(op.Token, listA+"?q="+strings.Repeat("x", 129)); got.Code != http.StatusBadRequest {
+		t.Fatalf("overlength Project Files search status = %d", got.Code)
+	}
 	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, a.ID, nil); err != nil {
 		t.Fatal(err)
 	}
