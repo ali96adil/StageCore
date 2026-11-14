@@ -1865,3 +1865,39 @@ This entry supersedes the preceding push instruction.
   production ACL enablement occurred. Keep production ACL disabled and treat
   Pi performance and any physical-output acceptance as separate pending
   gates.
+
+## Resume update — 2026-11-14 10:11 UTC · active-SHOW rename lock regression
+
+- Exact pushed head `32abf83072e28e3f6b9932f2e62f693c9c93e242` passed all
+  checks: Core `43580593795` (Go 1.26 in 34m31s, Go 1.27 in 3m09s), Companion
+  `43580593763` (Swift Core and full replacement/media acceptance), and
+  Camera Relay `43580593768`. The Linux Go tests executed the isolated-pipe
+  `LinuxPort` default-syscall regression; PR #534 remains OPEN/DRAFT.
+- A new test reproduced SC-022's metadata-only Project rename failing with
+  HTTP 503 while a SHOW session was active. Root cause: F-012's generic
+  `BEFORE UPDATE ON projects` trigger also blocked updates to the display
+  name. Commit `845ba4f` adds migration 61 to permit only `name` plus
+  `updated_at_us` changes while a SHOW is active; all other Project-row
+  changes remain blocked. The regression confirms session, published
+  Snapshot, Cue, Project and revision identities stay fixed, and a direct
+  description update remains locked. Migration 61 has a Down path restoring
+  the original full-row lock.
+- Test migration history: the StageLaser-58 test fixture is deliberately
+  partial, so its focused migration helper now stops at version 58 instead of
+  applying unrelated later schema migrations; the full database-open test
+  now expects schema version 61.
+- Local checks passed: `go test ./internal/httpapi -run 'Rename' -count=1`,
+  focused `go test -race ./internal/httpapi` for the new regression,
+  `go test ./internal/httpapi -count=1` (65.2s), `go test ./internal/db
+  -count=1`, `go test -race ./internal/db -count=1`, and
+  `go vet ./internal/httpapi ./internal/db`.
+- Before this documentation update, local head was `845ba4f`, one commit
+  ahead of remote `32abf83`; the SC-022/SC-025 matrix update is this second
+  local commit. The prior exact-head CI gate is green, so the next operation
+  is a normal push of both commits to the same branch/PR #534, followed by
+  exact-head Core/Companion/Camera CI. No source change should be pushed if
+  the remote SHA changed; recheck immediately before push.
+- This was a SQLite migration and simulation-only HTTP test. No production
+  service/data/Vault, ACL setting, physical output, or firmware was touched.
+  Pi 4 full-engine performance and device-output acceptance remain pending;
+  Project ACL remains disabled.
