@@ -6,12 +6,22 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type operatorConfigurationDraftHooks struct {
+	BeforeResponse               func()
+	BeforeAssistantCueDraftWrite func()
+}
+
 func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.Store, audits ...*securityaudit.Service) Option {
+	return withOperatorConfigurationDraft(auth, stageStore, operatorConfigurationDraftHooks{}, audits...)
+}
+
+func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationDraftHooks, audits ...*securityaudit.Service) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
@@ -20,11 +30,14 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 		if len(audits) > 0 {
 			audit = audits[0]
 		}
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration/lock", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration/lock", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			lock, err := stageStore.ShowConfigurationLockState(r.Context(), projectID)
 			if err != nil {
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"show_configuration_lock": lock})
@@ -40,9 +53,15 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED", "show_configuration_lock": lock})
 				return
 			}
-			revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
+			revision, err := stageStore.EnsureProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), projectID, session.User.ID, "Operator routing edit")
 			if err != nil {
 				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"draft_revision": makeRevisionView(revision)})
@@ -73,7 +92,7 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					return
 				}
 			}
-			restored, discarded, err := stageStore.DiscardProjectDraft(r.Context(), projectID, session.User.ID, input.Reason)
+			restored, discarded, err := stageStore.DiscardProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit), projectID, session.User.ID, input.Reason)
 			if err != nil {
 				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), nil)
 				writeProjectStoreError(w, err)
@@ -86,16 +105,30 @@ func WithOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 					Result: securityaudit.ResultSuccess, Reason: strings.TrimSpace(input.Reason),
 					Metadata: map[string]any{"discarded": discarded, "restored_revision_id": restored.ID},
 				}); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error_code": "AUDIT_RECORD_FAILED"})
+					w.Header().Set("Cache-Control", "no-store")
+					writeJSON(w, http.StatusInternalServerError, map[string]any{
+						"error_code":                     "AUDIT_RECORD_FAILED",
+						"effect_may_be_committed":        true,
+						"effect_may_have_been_committed": true,
+						"retryable":                      false,
+					})
 					return
 				}
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"discarded":        discarded,
 				"current_revision": makeRevisionView(restored),
 			})
 		}))
-		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit)
+		registerOperatorAssistantProposalRoutes(s.mux, auth, stageStore, audit, operatorAssistantProposalHooks{
+			BeforeCueDraftWrite: hooks.BeforeAssistantCueDraftWrite,
+		})
 		registerOperatorAssistantProposalBatchRoutes(s.mux, auth, stageStore, audit)
 		registerOperatorAssistantWorkspaceRoutes(s.mux, auth, stageStore, s)
 	}

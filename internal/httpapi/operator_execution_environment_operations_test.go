@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,17 +16,21 @@ import (
 )
 
 type fakeExecutionEnvironmentOperationRuntime struct {
-	calls    int
-	request  companionchannel.EnvironmentOperationRequest
-	status   companionchannel.EnvironmentOperationStatus
-	errorCode string
-	summary  string
-	snapshot *executionenv.Snapshot
+	calls       int
+	request     companionchannel.EnvironmentOperationRequest
+	status      companionchannel.EnvironmentOperationStatus
+	errorCode   string
+	summary     string
+	snapshot    *executionenv.Snapshot
+	beforeReply func()
 }
 
 func (f *fakeExecutionEnvironmentOperationRuntime) OperateExecutionEnvironment(_ context.Context, request companionchannel.EnvironmentOperationRequest) companionchannel.EnvironmentOperationResult {
 	f.calls++
 	f.request = request
+	if f.beforeReply != nil {
+		f.beforeReply()
+	}
 	return companionchannel.EnvironmentOperationResult{
 		OperationID:     request.OperationID,
 		Kind:            request.Kind,
@@ -211,5 +216,69 @@ func TestOperatorExecutionEnvironmentOperationScopesEnvironmentAndReturnsSnapsho
 	}
 	if runtime.calls != 1 || payload.Snapshot == nil || payload.Snapshot.CaptureStatus != executionenv.SnapshotPartial || payload.Snapshot.EnvironmentKey != environment.Manifest.EnvironmentKey {
 		t.Fatalf("capture calls=%d payload=%+v", runtime.calls, payload)
+	}
+}
+
+type executionOperationBodyReader func([]byte) (int, error)
+
+func (f executionOperationBodyReader) Read(p []byte) (int, error) { return f(p) }
+
+func TestExecutionEnvironmentOperationRechecksRevokedSessionAtBothBoundaries(t *testing.T) {
+	for _, boundary := range []string{"before dispatch", "before delivery"} {
+		t.Run(boundary, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Operation revocation", CreatedBy: owner.Session.User.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			environment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, revision.ID, testVDMXExecutionEnvironmentManifest("video-main"), owner.Session.User.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revoke := func() {
+				t.Helper()
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runtime := &fakeExecutionEnvironmentOperationRuntime{
+				status:  companionchannel.EnvironmentOperationCompleted,
+				summary: "private companion response",
+			}
+			handler := New(WithOperatorExecutionEnvironmentOperations(h.auth, stageStore, runtime)).Handler()
+			path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID + "/execution-environments/" + environment.ID + "/operations"
+			req := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, path,
+				[]byte(`{"operation_id":"revocation-test","kind":"OPEN","timeout_ms":5000}`))
+			wantCalls := 1
+			if boundary == "before dispatch" {
+				wantCalls = 0
+				body := req.Body
+				req.Body = io.NopCloser(io.MultiReader(executionOperationBodyReader(func([]byte) (int, error) {
+					revoke()
+					return 0, io.EOF
+				}), body))
+			} else {
+				runtime.beforeReply = revoke
+			}
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if boundary == "before dispatch" {
+				if res.Code != http.StatusUnauthorized || runtime.calls != wantCalls || strings.Contains(res.Body.String(), runtime.summary) {
+					t.Fatalf("pre-dispatch revocation status=%d calls=%d body=%s", res.Code, runtime.calls, res.Body)
+				}
+				return
+			}
+			if res.Code != http.StatusForbidden || runtime.calls != wantCalls || strings.Contains(res.Body.String(), runtime.summary) ||
+				!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
+				!strings.Contains(res.Body.String(), `"retryable":false`) {
+				t.Fatalf("status=%d calls=%d body=%s", res.Code, runtime.calls, res.Body)
+			}
+		})
 	}
 }

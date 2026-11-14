@@ -1,0 +1,136 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
+)
+
+type cueActionPresetHooks struct {
+	BeforeResponse func()
+}
+
+func withCueActionPresets(auth *userauth.Service, st *store.Store, hooks cueActionPresetHooks) Option {
+	return func(s *Server) {
+		if auth == nil || st == nil {
+			return
+		}
+		registerCueActionPresets(s.mux, auth, st, hooks)
+	}
+}
+
+func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *store.Store, hooks cueActionPresetHooks) {
+	handle := func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
+			return
+		}
+		ctx, projectID, userID := r.Context(), r.PathValue("project_id"), session.User.ID
+		if _, err := st.GetProject(ctx, projectID); err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		switch r.Method {
+		case http.MethodGet:
+			presets, err := st.ListCueActionPresets(ctx, projectID, userID)
+			if err != nil {
+				writeProjectStoreError(w, err)
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"presets": presets})
+		case http.MethodPost:
+			var request struct {
+				Name        string               `json:"name"`
+				Description string               `json:"description"`
+				Action      json.RawMessage      `json:"action"`
+				Actions     []actionWriteRequest `json:"actions"`
+			}
+			if !decodeBoundedJSON(w, r, &request) {
+				return
+			}
+			request.Name = strings.TrimSpace(request.Name)
+			request.Description = strings.TrimSpace(request.Description)
+			if request.Name == "" || utf8.RuneCountInString(request.Name) > 64 ||
+				strings.ContainsFunc(request.Name, unicode.IsControl) ||
+				utf8.RuneCountInString(request.Description) > 280 ||
+				strings.ContainsFunc(request.Description, unicode.IsControl) ||
+				(len(request.Action) == 0) == (len(request.Actions) == 0) || len(request.Actions) > 200 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+				return
+			}
+			multi := len(request.Actions) > 0
+			actions := request.Actions
+			if !multi {
+				var single actionWriteRequest
+				if err := json.Unmarshal(request.Action, &single); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+					return
+				}
+				actions = []actionWriteRequest{single}
+			}
+			for i := range actions {
+				actions[i].CapabilityKey = strings.TrimSpace(actions[i].CapabilityKey)
+				if actions[i].CapabilityKey == "" {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+					return
+				}
+				actions[i].ActionID = ""
+				actions[i].OrderIndex = i
+			}
+			var document []byte
+			var err error
+			if multi {
+				document, err = json.Marshal(actions)
+			} else {
+				document, err = json.Marshal(actions[0])
+			}
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error_code": "INVALID_CUE_ACTION_PRESET"})
+				return
+			}
+			preset, err := st.CreateCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, request.Name, request.Description, document)
+			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
+				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
+			}
+			writeJSON(w, http.StatusCreated, preset)
+		case http.MethodDelete:
+			err := st.DeleteCueActionPreset(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit), projectID, userID, r.PathValue("preset_id"))
+			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
+				writeProjectStoreError(w, err)
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/cue-action-presets", withPermission(auth, userauth.PermissionProjectEdit, handle))
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/cue-action-presets", withPermission(auth, userauth.PermissionProjectEdit, handle))
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/cue-action-presets/{preset_id}", withPermission(auth, userauth.PermissionProjectEdit, handle))
+}

@@ -43,7 +43,11 @@ Use Ctrl+C to terminate the temporary relay. Do NOT modify the production stagec
 
 ## Security and limits
 
-The source and downstream streams use plaintext unauthenticated HTTP. The listener stays loopback-only unless explicitly overridden. There is NO access control for an exposed LAN listener: do not forward this port to the internet or expose it to untrusted Wi-Fi. Before production, define client authentication, firewall segmentation, IP binding, health monitoring, rollback and stage-level readiness policies. A successful Pi loopback test does not establish four-tablet readiness or frame-accurate sync.
+The legacy trial uses plaintext HTTP and defaults to loopback. Keep the camera source on the isolated show LAN.
+
+The protected listener is opt-in through `-viewer-token-file` and `-control-token-file`. Supply distinct random base64url tokens of at least 32 characters in owner-only regular files. For a non-loopback protected listener, supply `-tls-cert` and `-tls-key` for the relay hostname. Send the token in the `Authorization: Bearer` header. The viewer token grants health and plain MJPEG. The control token also grants flash control and `/stream?flash=on`. Protected flash-on is tied to a live stream. POST flash `auto` and `off` remain available to the control token.
+
+Replace token files atomically to revoke a credential. Active streams recheck at each frame and once per second while idle. Dropping a flash stream releases its flash request. The standalone credentials are relay-wide. Hub project grants and browser or tablet delivery of authenticated streams require separate integration and qualification.
 
 
 ## Physical checkpoint — 2026-09-22
@@ -136,3 +140,47 @@ The installer verifies the relay binary against the release `SHA256SUMS`, instal
 ### Restart expectations
 
 The systemd service uses `Restart=on-failure`; camera-source loss itself does **not** terminate the relay process because the relay retries upstream internally. A Pi reboot or unexpected relay process failure therefore restores the service without requiring an operator shell, while ordinary camera reconnects remain within the same relay process.
+
+## Project-scoped browser viewing through the Hub
+
+This optional browser path is configured independently of the general project ACL rollout.
+Bind the authenticated standalone Relay to a numeric loopback address on the Hub host.
+Give the Hub read access to the Relay's owner-only **viewer** token file, and configure:
+
+- `STAGECORE_CAMERA_VIEW_PROJECT_ID` with the exact project ID authorized to see this feed.
+- `STAGECORE_CAMERA_VIEW_RELAY` with the numeric loopback address and port, such as `127.0.0.1:9081`.
+- `STAGECORE_CAMERA_VIEW_TOKEN_FILE` with the viewer token file path.
+
+In Live Video, eligible users see **Open project camera**. The browser request
+uses the existing Hub session and requires live `project.view` and `media.read`
+grants. The Hub keeps the Relay credential server-side and checks browser
+authorization each second, including during idle streams. Revocation cancels the
+Relay request and disconnects the browser. The Hub route forwards JPEG viewing
+only, and uses a fixed upstream path with no redirects or client query forwarding.
+A LAN-accessible direct Relay listener would provide a separate path to the feed,
+so keep this Relay on loopback when using project-scoped viewing.
+
+### Opt-in Stage Device v2 tablet viewing
+
+Set `STAGECORE_CAMERA_VIEW_TABLETS=1` on the Hub in addition to the three
+project viewer settings above. On the existing device TLS gateway, a compatible
+tablet can request `GET /api/v1/stage-device-camera/projects/{project_id}/stream`
+with `Authorization: StageCoreSession <token>` and the paired Hub certificate pin.
+Use the same runtime session as the current v2 socket. The tablet must advertise
+`tablet.media.live.show` and hold an active Hub assignment for that project and
+published Snapshot. A `HEAD` request checks access without opening the Relay.
+
+During viewing, the Hub checks authorization each second. Revocation, assignment
+or Snapshot changes, and socket replacement close the old stream. Open a new
+request only after the replacement socket has an active assignment. No flash
+controls or Relay credentials are available through this endpoint. This opt-in
+contract preserves existing tablet stream URLs and requires a compatible Android
+client to use it.
+
+
+For Camera Relay v1, send `TABLET_LIVE_SHOW` with the reserved media key
+`stagecore.camera.relay.v1`. The compatible client derives the URL from its
+paired device TLS endpoint and current project, rather than taking a URL or
+credential from the cue. A new runtime session requires a fresh live cue.
+The [v1 wire fixture](contracts/tablet-camera-relay-v1.json) is used by
+the Hub and Android contract tests.

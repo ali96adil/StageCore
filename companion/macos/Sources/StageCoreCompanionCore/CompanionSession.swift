@@ -100,6 +100,8 @@ public actor CompanionSession {
     private let mediaSynchronizer: (any CompanionMediaSynchronizer)?
     private let midiDestinationInventory: @Sendable () -> [String]
     private var runtimeSessionToken: String?
+    private let signedApplicationBridge: (any SignedApplicationBridge)?
+    private var inFlightExecutionIDs: Set<String> = []
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -108,13 +110,17 @@ public actor CompanionSession {
         executors: [any CompanionCapabilityExecutor],
         mediaSynchronizer: (any CompanionMediaSynchronizer)? = nil,
         midiDestinationInventory: (@Sendable () -> [String])? = nil,
-        duplicateCapacity: Int = 512
+        duplicateCapacity: Int = 512,
+        signedApplicationBridge: (any SignedApplicationBridge)? = nil
     ) {
         self.configuration = configuration
+        self.signedApplicationBridge = signedApplicationBridge
+        var capabilities = Set(executors.map(\.capabilityKey))
+        if signedApplicationBridge != nil { capabilities.insert("receiver.signed_ack.v1") }
         self.state = CompanionRuntimeState(
             companionID: configuration.companionID,
             configHash: configuration.configHash,
-            capabilities: Set(executors.map(\.capabilityKey)),
+            capabilities: capabilities,
             readiness: configuration.readiness
         )
         self.guardState = ExecutionGuard(capacity: duplicateCapacity)
@@ -207,6 +213,9 @@ public actor CompanionSession {
             guardState.markTerminal(request.executionID)
             return rejection(request, code: "SESSION_UNAUTHENTICATED", summary: "authenticated runtime session is required")
         }
+        if inFlightExecutionIDs.contains(request.executionID) {
+            return rejection(request, code: "DUPLICATE_EXECUTION", summary: "execution_id is already in flight")
+        }
         let decision = guardState.decision(for: request, state: state)
         switch decision {
         case .rejectDuplicate:
@@ -232,6 +241,32 @@ public actor CompanionSession {
             guard let executor = executors[request.capability] else {
                 guardState.markTerminal(request.executionID)
                 return rejection(request, code: "UNSUPPORTED_CAPABILITY", summary: "capability executor is unavailable")
+            }
+            inFlightExecutionIDs.insert(request.executionID)
+            defer { inFlightExecutionIDs.remove(request.executionID) }
+            if let dispatch = request.applicationACK {
+                defer { guardState.markTerminal(request.executionID) }
+                guard state.hasEstablishedAuthenticatedSession(),
+                      dispatch.matches(request, companionID: configuration.companionID),
+                      let bridge = signedApplicationBridge else {
+                    return rejection(request, code: "APPLICATION_ACK_UNAVAILABLE", summary: "signed bridge or matching application scope required")
+                }
+                let token = runtimeSessionToken
+                do {
+                    let receipts = try await bridge.execute(request)
+                    guard state.hasEstablishedAuthenticatedSession(), token == runtimeSessionToken,
+                          !Task.isCancelled, receipts.count == 2,
+                          receipts.allSatisfy({ (1...4096).contains($0.count) }) else {
+                        throw SignedApplicationBridgeError.invalidResponse
+                    }
+                    return CompanionExecutionResult(
+                        executionID: request.executionID, status: .completed, ackLevel: .transportOnly,
+                        errorCode: nil, responseSummary: "receiver evidence returned for Hub verification",
+                        signedApplicationReceipts: receipts
+                    )
+                } catch {
+                    return rejection(request, code: "APPLICATION_ACK_UNCONFIRMED", summary: "application confirmation unavailable; dispatch will not be retried")
+                }
             }
             let outcome = await executeBounded(executor, request: request)
             // Mark before transport send. If the socket disappears after local

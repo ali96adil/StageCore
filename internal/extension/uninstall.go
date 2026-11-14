@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -125,6 +126,9 @@ func (i *Installer) uninstallDisabled(ctx context.Context, installationID string
 		return UninstallResult{}, fmt.Errorf("%w: installed payload has unsafe file type", ErrInstalledPayloadIntegrity)
 	}
 
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return UninstallResult{}, err
+	}
 	if err := i.library.store.DeleteExtensionInstallation(ctx, installationID); err != nil {
 		return UninstallResult{}, err
 	}

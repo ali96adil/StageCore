@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/cuegroup"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -18,7 +22,11 @@ type createProjectRequest struct {
 }
 
 type duplicateProjectRequest struct {
-    Name string `json:"name"`
+	Name string `json:"name"`
+}
+
+type renameProjectRequest struct {
+	Name string `json:"name"`
 }
 
 type projectView struct {
@@ -48,11 +56,12 @@ type snapshotView struct {
 }
 
 type sessionView struct {
-	ID                string               `json:"session_id"`
-	RuntimeSnapshotID string               `json:"runtime_snapshot_id"`
-	Type              domain.SessionType   `json:"type"`
-	Status            domain.SessionStatus `json:"status"`
-	StartedAt         time.Time            `json:"started_at"`
+	RehearsalPurpose  domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
+	ID                string                  `json:"session_id"`
+	RuntimeSnapshotID string                  `json:"runtime_snapshot_id"`
+	Type              domain.SessionType      `json:"type"`
+	Status            domain.SessionStatus    `json:"status"`
+	StartedAt         time.Time               `json:"started_at"`
 }
 
 type cueSummaryView struct {
@@ -84,38 +93,236 @@ type dashboardReadiness struct {
 }
 
 func WithOperatorProjects(auth *userauth.Service, projectStore *store.Store) Option {
+	return withOperatorProjects(auth, projectStore, nil)
+}
+
+// WithScopedOperatorProjects is available for cutover qualification only.
+func WithScopedOperatorProjects(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service) Option {
+	if access == nil {
+		return func(*Server) {}
+	}
+	return withOperatorProjects(auth, projectStore, access)
+}
+
+func withOperatorProjects(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service) Option {
+	return withOperatorProjectsHooks(auth, projectStore, access, operatorProjectHooks{})
+}
+
+type operatorProjectHooks struct {
+	BeforeResponse func()
+}
+
+func withOperatorProjectsHooks(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service, hooks operatorProjectHooks) Option {
 	return func(s *Server) {
 		if auth == nil || projectStore == nil {
 			return
 		}
-		registerOperatorProjectRoutes(s.mux, auth, projectStore)
+		registerOperatorProjectRoutes(s.mux, auth, projectStore, access, hooks)
 	}
 }
 
-func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store) {
-	mux.HandleFunc("GET /api/v1/projects", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func recheckProjectMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) bool {
+	access = qualificationAccess(r, access)
+	if access != nil {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	err := projectMutationAuthorityError(r, auth, session, permission, access, scoped...)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, userauth.ErrForbidden):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	case errors.Is(err, projectaccess.ErrDenied), errors.Is(err, projectaccess.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
+	default:
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
+	}
+	return false
+}
+
+func projectMutationAuthorityError(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) error {
+	token, _ := browserSessionToken(r)
+	current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	roleDenied := err == nil && userauth.Authorize(current.User.Role, permission) != nil
+	if roleDenied && access != nil && len(scoped) > 0 && scopedProjectRoleMayUseMutation(current.User.Role) {
+		roleDenied = !scopedProjectRoleMayUsePermission(r, current.User.Role, permission)
+	}
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID || roleDenied {
+		return userauth.ErrForbidden
+	}
+	if access == nil {
+		return nil
+	}
+	if len(scoped) == 0 {
+		if current.User.Role != userauth.RoleOwner {
+			return userauth.ErrForbidden
+		}
+		return nil
+	}
+	return access.CheckAll(r.Context(), current.User.ID, strings.TrimSpace(r.PathValue("project_id")), scoped...)
+}
+
+func recheckCommittedProjectMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	access = qualificationAccess(r, access)
+	err := projectMutationAuthorityError(r, auth, session, permission, access, scoped...)
+	if err == nil {
+		return true
+	}
+	writeCommittedProjectMutationDenied(w, err)
+	return false
+}
+
+func writeCommittedProjectMutationDenied(w http.ResponseWriter, err error) bool {
+	status := http.StatusForbidden
+	errorCode := "FORBIDDEN"
+	if !errors.Is(err, userauth.ErrForbidden) && !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
+		status = http.StatusServiceUnavailable
+		errorCode = "PROJECT_ACCESS_UNAVAILABLE"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, map[string]any{
+		"error_code":                     errorCode,
+		"effect_may_be_committed":        true,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return true
+}
+
+func projectMutationAccessDenied(err error) bool {
+	return errors.Is(err, userauth.ErrForbidden) || errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound)
+}
+
+func writeProjectDraftMutationDenied(w http.ResponseWriter, err error, draftForked bool) bool {
+	if draftForked && projectMutationAccessDenied(err) {
+		return writeCommittedProjectMutationDenied(w, err)
+	}
+	return writeProjectMutationDenied(w, err)
+}
+
+func projectMutationContext(r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
+	return projectMutationContextForPermissions(r, auth, session, []userauth.Permission{permission}, access, scoped...)
+}
+
+func projectMutationContextForPermissions(r *http.Request, auth *userauth.Service, session userauth.Session, permissions []userauth.Permission, access *projectaccess.Service, scoped ...projectaccess.Permission) context.Context {
+	qualified := qualificationAccess(r, access) != nil
+	projectID := r.PathValue("project_id")
+	return capability.WithWriteAuthorization(r.Context(), func(ctx context.Context, tx *sql.Tx) error {
+		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
+		if errors.Is(err, userauth.ErrSessionInvalid) {
+			return userauth.ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		for _, permission := range permissions {
+			if userauth.Authorize(role, permission) != nil &&
+				!(qualified && len(scoped) > 0 && scopedProjectRoleMayUseMutation(role) &&
+					scopedProjectPermissionBackedByACL(permission, scoped)) {
+				return userauth.ErrForbidden
+			}
+		}
+		if !qualified {
+			return nil
+		}
+		if len(scoped) != 0 {
+			return projectaccess.CheckAllInTransaction(ctx, tx, session.User.ID, projectID, scoped...)
+		}
+		if role != userauth.RoleOwner {
+			return userauth.ErrForbidden
+		}
+		return nil
+	})
+}
+
+func writeProjectMutationDenied(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, userauth.ErrForbidden):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	case errors.Is(err, projectaccess.ErrDenied):
+		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
+	default:
+		return false
+	}
+	return true
+}
+
+func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service, hooks operatorProjectHooks) {
+	mux.HandleFunc("GET /api/v1/projects", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projects, err := projectStore.ListProjects(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
 			return
 		}
+		var allowed map[string]bool
+		if access := qualificationAccess(r, access); access != nil {
+			ids, err := access.AccessibleProjectIDs(r.Context(), session.User.ID)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
+				return
+			}
+			allowed = make(map[string]bool, len(ids))
+			for _, id := range ids {
+				allowed[id] = true
+			}
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		items := make([]projectView, 0, len(projects))
 		for _, project := range projects {
-			items = append(items, makeProjectView(project))
+			if allowed == nil || allowed[project.ID] {
+				items = append(items, makeProjectView(project))
+			}
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
+		if qualifiedAccess := qualificationAccess(r, access); qualifiedAccess != nil {
+			ids, err := qualifiedAccess.AccessibleProjectIDs(r.Context(), session.User.ID)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
+				return
+			}
+			allowed = make(map[string]bool, len(ids))
+			for _, id := range ids {
+				allowed[id] = true
+			}
+			current := make([]projectView, 0, len(items))
+			for _, item := range items {
+				if allowed[item.ID] {
+					current = append(current, item)
+				}
+			}
+			items = current
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projects": items})
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if !allowScopedOwner(w, session, access) {
+			return
+		}
 		var body createProjectRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		project, revision, err := projectStore.CreateProject(r.Context(), store.CreateProjectParams{
+		if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
+			return
+		}
+		project, revision, err := projectStore.CreateProject(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, access), store.CreateProjectParams{
 			Name: strings.TrimSpace(body.Name), Description: body.Description,
 			CreatedBy: session.User.ID, ChangeNote: "Created from Operator Web",
 		})
 		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			status := http.StatusBadRequest
 			code := "PROJECT_INVALID"
 			if !errors.Is(err, domain.ErrInvalidInput) {
@@ -125,42 +332,119 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			writeJSON(w, status, map[string]any{"error_code": code})
 			return
 		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
+			return
+		}
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"project":        makeProjectView(project),
 			"draft_revision": makeRevisionView(revision),
 		})
 	}))
 
-    mux.HandleFunc("POST /api/v1/projects/{project_id}/duplicate", withPermission(auth, userauth.PermissionProjectEdit,
-        func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-            var body duplicateProjectRequest
-            if !decodeBoundedJSON(w, r, &body) { return }
-            project, revision, err := projectStore.DuplicateProjectAuthoring(
-                r.Context(), strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(body.Name), session.User.ID,
-            )
-            if err != nil {
-                code, status := "PROJECT_DUPLICATE_FAILED", http.StatusServiceUnavailable
-                switch {
-                case errors.Is(err, domain.ErrInvalidInput):
-                    code, status = "PROJECT_DUPLICATE_INVALID", http.StatusBadRequest
-                case errors.Is(err, domain.ErrNotFound):
-                    code, status = "PROJECT_NOT_FOUND", http.StatusNotFound
-                case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrRevisionFrozen):
-                    code, status = "PROJECT_DUPLICATE_CONFLICT", http.StatusConflict
-                }
-                writeJSON(w, status, map[string]any{"error_code": code})
-                return
-            }
-            writeJSON(w, http.StatusCreated, map[string]any{
-                "project": makeProjectView(project),
-                "draft_revision": makeRevisionView(revision),
-            })
-        },
-    ))
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/duplicate", withPermission(auth, userauth.PermissionProjectEdit,
+		func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
+			var body duplicateProjectRequest
+			if !decodeBoundedJSON(w, r, &body) {
+				return
+			}
+			if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
+				return
+			}
+			project, revision, err := projectStore.DuplicateProjectAuthoring(
+				projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, access), strings.TrimSpace(r.PathValue("project_id")), strings.TrimSpace(body.Name), session.User.ID,
+			)
+			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
+				code, status := "PROJECT_DUPLICATE_FAILED", http.StatusServiceUnavailable
+				switch {
+				case errors.Is(err, domain.ErrInvalidInput):
+					code, status = "PROJECT_DUPLICATE_INVALID", http.StatusBadRequest
+				case errors.Is(err, domain.ErrNotFound):
+					code, status = "PROJECT_NOT_FOUND", http.StatusNotFound
+				case errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrRevisionFrozen):
+					code, status = "PROJECT_DUPLICATE_CONFLICT", http.StatusConflict
+				}
+				writeJSON(w, status, map[string]any{"error_code": code})
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, access) {
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"project":        makeProjectView(project),
+				"draft_revision": makeRevisionView(revision),
+			})
+		},
+	))
 
-	mux.HandleFunc("GET /api/v1/projects/{project_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	renamePermission := userauth.PermissionProjectEdit
+	if access != nil {
+		renamePermission = userauth.PermissionProjectRead
+	}
+	// Metadata-only rename: never mutates a Revision, Runtime Snapshot,
+	// Cue, Vault object or a running Session. Role permission/CSRF is enforced
+	// by the existing Operator session middleware.
+	mux.HandleFunc("PATCH /api/v1/projects/{project_id}", withPermission(auth, renamePermission,
+		func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			if !allowScopedProject(w, r, session, access, projectaccess.ProjectRename) {
+				return
+			}
+			var body renameProjectRequest
+			if !decodeBoundedJSON(w, r, &body) {
+				return
+			}
+			if !recheckProjectMutation(w, r, auth, session, renamePermission, access, projectaccess.ProjectRename) {
+				return
+			}
+			project, err := projectStore.RenameProject(projectMutationContext(r, auth, session, renamePermission, access, projectaccess.ProjectRename), r.PathValue("project_id"), body.Name)
+			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
+				code, status := "PROJECT_RENAME_FAILED", http.StatusServiceUnavailable
+				switch {
+				case errors.Is(err, domain.ErrInvalidInput):
+					code, status = "PROJECT_NAME_INVALID", http.StatusBadRequest
+				case errors.Is(err, domain.ErrNotFound):
+					code, status = "PROJECT_NOT_FOUND", http.StatusNotFound
+				}
+				writeJSON(w, status, map[string]any{"error_code": code})
+				return
+			}
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, renamePermission, access, projectaccess.ProjectRename) {
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]any{"project": makeProjectView(project)})
+		},
+	))
+
+	mux.HandleFunc("GET /api/v1/projects/{project_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+			return
+		}
 		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
 		if !ok {
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -169,7 +453,10 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		})
 	}))
 
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/dashboard", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/dashboard", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+			return
+		}
 		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
 		if !ok {
 			return
@@ -177,6 +464,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		dashboard, err := buildDashboard(r, projectStore, project, revision)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "DASHBOARD_UNAVAILABLE"})
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, dashboard)
@@ -311,7 +604,7 @@ func makeSnapshotView(snapshot domain.RuntimeSnapshot) snapshotView {
 }
 
 func makeSessionView(session domain.Session) sessionView {
-	return sessionView{ID: session.ID, RuntimeSnapshotID: session.RuntimeSnapshotID, Type: session.Type, Status: session.Status, StartedAt: session.StartedAt}
+	return sessionView{ID: session.ID, RuntimeSnapshotID: session.RuntimeSnapshotID, Type: session.Type, Status: session.Status, StartedAt: session.StartedAt, RehearsalPurpose: session.RehearsalPurpose}
 }
 
 func makeCueSummary(cue domain.Cue) cueSummaryView {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,25 +11,42 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
+type simulationReportReader interface {
+	Generate(context.Context, string) (simulationreport.Report, error)
+}
+
 // WithOperatorSimulationReport exposes the read-only F-024 report for a
 // specific SIMULATION Session. Session identity is explicit so completed runs
 // remain inspectable instead of disappearing when another Session becomes
 // active.
 func WithOperatorSimulationReport(auth *userauth.Service, reports *simulationreport.Service) Option {
+	if reports == nil {
+		return func(*Server) {}
+	}
+	return withOperatorSimulationReportReader(auth, reports)
+}
+
+func withOperatorSimulationReportReader(auth *userauth.Service, reports simulationReportReader) Option {
 	return func(s *Server) {
 		if auth == nil || reports == nil {
 			return
 		}
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation/report/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/simulation/report/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			sessionID := strings.TrimSpace(r.PathValue("session_id"))
 			report, err := reports.Generate(r.Context(), sessionID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeSimulationReportError(w, err)
 				return
 			}
 			if report.ProjectID != projectID {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "SIMULATION_REPORT_NOT_FOUND"})
+				return
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"report": report})

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -44,17 +45,23 @@ func (h *operatorExtensionOfflineBundles) importBundle(w http.ResponseWriter, r 
 	if err != nil {
 		status, code := offlineBundleError(err)
 		h.record(r, session, "extension_bundle", securityaudit.ResultRejected, code, nil)
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
+		}
 		writeJSON(w, status, map[string]any{"error_code": code})
 		return
 	}
 	h.record(r, session, result.Package.PackageID, securityaudit.ResultSuccess, "", map[string]any{
-		"extension_id": result.Package.Manifest.ExtensionID,
-		"version": result.Package.Manifest.Version,
-		"source": result.Package.Manifest.Source,
+		"extension_id":       result.Package.Manifest.ExtensionID,
+		"version":            result.Package.Manifest.Version,
+		"source":             result.Package.Manifest.Source,
 		"already_registered": result.AlreadyRegistered,
-		"payload_sha256": result.PayloadSHA256,
+		"payload_sha256":     result.PayloadSHA256,
 		"payload_size_bytes": result.PayloadSizeBytes,
 	})
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, result)
 }
 
@@ -63,16 +70,24 @@ func (h *operatorExtensionOfflineBundles) syncCatalog(w http.ResponseWriter, r *
 	if err != nil {
 		status, code := offlineBundleError(err)
 		h.record(r, session, "trusted_catalog", securityaudit.ResultRejected, code, nil)
+		if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+			return
+		}
 		writeJSON(w, status, map[string]any{"error_code": code})
 		return
 	}
 	h.record(r, session, "trusted_catalog", securityaudit.ResultSuccess, "", map[string]any{"imported_count": len(result.Imported)})
+	if writeRevokedExtensionMutationResponse(w, r, h.users, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func offlineBundleError(err error) (int, string) {
 	var maxBytes *http.MaxBytesError
 	switch {
+	case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+		return http.StatusForbidden, "FORBIDDEN"
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		return http.StatusConflict, "SHOW_CONFIGURATION_LOCKED"
 	case errors.Is(err, extension.ErrOfflineBundleSource), errors.Is(err, extension.ErrOfficialSourceRequiresTrustedPath):
@@ -99,14 +114,14 @@ func (h *operatorExtensionOfflineBundles) record(r *http.Request, session userau
 		eventType = "extension.catalog.sync"
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: eventType,
-		ActorUserID: session.User.ID,
+		EventType:     eventType,
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_package",
-		ResourceID: strings.TrimSpace(resourceID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_package",
+		ResourceID:    strings.TrimSpace(resourceID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

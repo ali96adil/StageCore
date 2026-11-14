@@ -6,17 +6,283 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
+
+func TestStageDeviceBatchSuppressesAcceptedResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Stage Device batch revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"display-revoke-01", "display-revoke-02"} {
+		if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+			ID: id, ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay,
+			DisplayName: id, ProtocolVersion: deviceexperience.ProtocolVersion1,
+			Capabilities: []string{"display.message.show"}, Enabled: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatchCalls := 0
+	accepted := false
+	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		dispatchCalls++
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true // The device transport accepted this command before authorization ended.
+		return deviceexperience.DeviceCommand{
+			DeviceID: input.DeviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stage-device-command", CommandType: input.CommandType,
+				ProjectID: project.ID, Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{Dispatch: dispatch}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/stage-device-commands",
+		[]byte(`{"device_ids":["display-revoke-01","display-revoke-02"],"command_type":"DISPLAY_MESSAGE","payload":{"message":"Places"}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if dispatchCalls == 0 || !accepted {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received accepted command results: %+v", body)
+	}
+}
+
+func TestStageDeviceCommandSuppressesAcceptedResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Stage Device command revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "display-single-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, Kind: deviceexperience.DeviceStageDisplay,
+		DisplayName: deviceID, ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"display.message.show"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := false
+	dispatch := stageDeviceCommandDispatcher(func(ctx context.Context, _ *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-stage-device-single", CommandType: input.CommandType,
+				ProjectID: project.ID, Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{Dispatch: dispatch}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+deviceID+"/commands",
+		[]byte(`{"command_type":"DISPLAY_MESSAGE","payload":{"message":"Places"}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !accepted {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["command"]; leaked {
+		t.Fatalf("revoked Owner received accepted command result: %+v", body)
+	}
+}
+
+func TestStageLaserAssignmentSuppressesCommittedRecordAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "StageLaser commit response revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := false
+	assign := func(_ context.Context, input deviceexperience.StageLaserAssignmentInput, actor string, reauthorize func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error) {
+		if err := reauthorize(ctx); err != nil {
+			return deviceexperience.StageLaserAssignmentCommit{}, err
+		}
+		if actor == "" {
+			t.Fatal("assignment actor was empty")
+		}
+		committed = true // Simulate a completed assignment transaction.
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.StageLaserAssignmentCommit{}, err
+		}
+		return deviceexperience.StageLaserAssignmentCommit{
+			AssignmentID: "committed-assignment", DeviceID: input.DeviceID,
+			ToProjectID: input.TargetProjectID, ToRuntimeSnapshotID: input.TargetRuntimeSnapshotID,
+			ToEpoch: input.ExpectedEpoch + 1, NextState: "ACTIVE",
+			StateQuality: stagelaser.StateQualityTracked,
+		}, nil
+	}
+	handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil,
+		stageDeviceRouteHooks{StageLaserAssignment: assign})).Handler()
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/test-laser/stagelaser-assignment"
+	request := authenticatedMutationRequest(t, http.MethodPost, path,
+		[]byte(`{"runtime_snapshot_id":"snapshot-current","expected_assignment_epoch":4,"confirm":"VERIFY_SAFE_OFF_AND_ASSIGN_STAGELASER"}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !committed {
+		t.Fatal("test operation did not commit before revoking Owner session")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received success or retryable committed response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["assignment"]; leaked {
+		t.Fatalf("revoked Owner received committed assignment record: %+v", body)
+	}
+}
+
+func TestStageDeviceSnapshotSyncSuppressesResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Snapshot sync response revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedBeforeResponse := false
+	handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil,
+		stageDeviceRouteHooks{BeforeSnapshotSyncResponse: func() {
+			revokedBeforeResponse = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner before response: %v", err)
+			}
+		}})).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/stage-devices/sync-runtime-snapshot",
+		[]byte(`{"runtime_snapshot_id":"`+published.ID+`"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revokedBeforeResponse {
+		t.Fatal("test did not revoke the Owner session at the final response boundary")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_have_been_committed"] != false || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful Snapshot sync response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received Snapshot sync results: %+v", body)
+	}
+}
 
 func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing.T) {
 	h := newAuthHarness(t)
@@ -121,6 +387,408 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"comparison":"MISMATCH"`)) {
 		t.Fatalf("visual check GET=%d: %s", res.Code, res.Body.String())
 	}
+	other, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Other show"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep this fixture at the database boundary so the test never sends a device command.
+	if _, err := h.db.DB.ExecContext(ctx, "UPDATE stage_device_assignments SET project_id = ?, assignment_state = 'BLOCKED', assignment_epoch = assignment_epoch + 1 WHERE device_id = ?", other.ID, laserID); err != nil {
+		t.Fatal(err)
+	}
+	if res := post(payload, true); res.Code != http.StatusNotFound {
+		t.Fatalf("foreign StageLaser observation returned %d: %s", res.Code, res.Body)
+	}
+	revokeRequest := authenticatedMutationRequest(t, http.MethodPost, path, []byte(payload), owner.Token, owner.CSRFToken)
+	revokeRequest.Body = &firmwareUploadRevokeReader{ReadCloser: revokeRequest.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, revokeRequest)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("visual check after logout returned %d: %s", denied.Code, denied.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT count(*) FROM stage_device_stagelaser_visual_checks WHERE device_id = ?", laserID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("visual checks after rejected write=%d, err=%v", count, err)
+	}
+}
+
+func TestStageDeviceOwnerReadSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Revoked laser visual read", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const laserID = "stagelaser-visual-read-revoke"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: laserID, Kind: deviceexperience.DeviceGeneric, ProfileID: stagelaser.ProfileID,
+		DisplayName: "Laser visual revocation", Platform: "esp32", Architecture: "riscv32",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: stagelaser.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observed := json.RawMessage(`{"logical_state":"OFF","boot_id":"boot-visual-read","arm_state":"DISARMED","state_quality":"TRACKED"}`)
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: laserID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker, ObservedState: observed, NetworkState: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	actor, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.RecordStageLaserVisualCheck(ctx, laserID, project.ID, actor.Session.User.ID, "ON", "OFF", "boot-visual-read"); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var currentToken, expectedRoute string
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(h.auth, devices, runtime, stageStore, access,
+		stageDeviceRouteHooks{BeforeOwnerReadResponse: func(route string) {
+			if route != expectedRoute {
+				return
+			}
+			revoked = true
+			if err := h.auth.Logout(ctx, currentToken); err != nil {
+				t.Errorf("revoke Owner session before %s result delivery: %v", route, err)
+			}
+		}})).Handler()
+	routes := []struct {
+		name string
+		path string
+		leak string
+	}{
+		{name: "inventory", path: "/api/v1/stage-devices/inventory", leak: laserID},
+		{name: "unassigned", path: "/api/v1/stage-devices/unassigned", leak: laserID},
+		{name: "transfer-status", path: "/api/v1/stage-devices/" + laserID + "/assignment/transfer-status", leak: laserID},
+		{name: "stagelaser-visual-check", path: "/api/v1/projects/" + project.ID + "/stage-devices/" + laserID + "/stagelaser-visual-check", leak: `"visual_state":"ON"`},
+		{name: "network-cockpit", path: "/api/v1/network/cockpit", leak: `"targets"`},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentToken, expectedRoute, revoked = owner.Token, route.name, false
+			req := httptest.NewRequest(http.MethodGet, route.path, nil)
+			req.RemoteAddr = "127.0.0.1:20202"
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), route.leak) {
+				t.Fatalf("revoked Owner received %s result: HTTP %d %s (hook ran=%t)", route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
+func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "e4599675-5d92-4c8e-95ba-c2140209ad31"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: "stagecore.test-metadata",
+		DisplayName: "Private device metadata", Platform: "test", Architecture: "arm64",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var currentToken, expectedRoute string
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeDeviceMetadataResponse: func(route string) {
+				if route != expectedRoute {
+					return
+				}
+				revoked = true
+				if err := h.auth.Logout(ctx, currentToken); err != nil {
+					t.Errorf("revoke Owner session before %s response: %v", route, err)
+				}
+			},
+		},
+	)).Handler()
+	for _, route := range []struct {
+		name string
+		path string
+		leak string
+	}{
+		{name: "device", path: "/api/v1/stage-devices/" + deviceID, leak: "Private device metadata"},
+		{name: "assignment", path: "/api/v1/stage-devices/" + deviceID + "/assignment", leak: deviceID},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentToken, expectedRoute, revoked = owner.Token, route.name, false
+			request := authenticatedReadRequest(http.MethodGet, route.path, owner.Token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), route.leak) {
+				t.Fatalf("revoked Owner received %s data: status=%d body=%s hook=%t", route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
+func TestProjectStageDeviceListSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped device list revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "scoped-device-list-revoke"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: "stagecore.test-list",
+		DisplayName: "Private project device list", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ClientVersion: "0.1.0-test", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET project_id=?, assignment_state='ACTIVE', assignment_epoch=2
+		WHERE device_id=? AND assignment_state='UNASSIGNED'
+	`, project.ID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "device-list-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var token string
+	var revoked bool
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, projects, access, stageDeviceRouteHooks{
+			BeforeProjectDeviceListResponse: func() {
+				revoked = true
+				if err := h.auth.Logout(ctx, token); err != nil {
+					t.Errorf("revoke session before scoped device-list delivery: %v", err)
+				}
+			},
+		},
+	)).Handler()
+	for _, login := range []userauth.Credential{owner, operatorLogin} {
+		t.Run(login.Session.User.Role, func(t *testing.T) {
+			token, revoked = login.Token, false
+			request := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/stage-devices", login.Token)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), deviceID) || strings.Contains(response.Body.String(), "Private project device list") {
+				t.Fatalf("revoked %s received scoped device list: status=%d body=%s hook=%t", login.Session.User.Role, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
+func TestProjectLiveVideoSourcesSuppressesResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped live sources revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sourceID = "scoped-live-source-revoke"
+	if _, err := devices.UpsertLiveSource(ctx, deviceexperience.LiveSource{
+		ID: sourceID, ProjectID: project.ID, Name: "Private camera source",
+		Class: deviceexperience.SourceNetworkStream, EndpointRef: "rtsp://stage-camera.invalid/live",
+		Config: json.RawMessage(`{}`), DesiredEnabled: true, Readiness: deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "live-source-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	var token string
+	var revoked bool
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, projects, access, stageDeviceRouteHooks{
+			BeforeLiveVideoSourcesResponse: func() {
+				revoked = true
+				if err := h.auth.Logout(ctx, token); err != nil {
+					t.Errorf("revoke session before live-source delivery: %v", err)
+				}
+			},
+		},
+	)).Handler()
+	for _, login := range []userauth.Credential{owner, operatorLogin} {
+		t.Run(login.Session.User.Role, func(t *testing.T) {
+			token, revoked = login.Token, false
+			request := authenticatedReadRequest(http.MethodGet,
+				"/api/v1/projects/"+project.ID+"/live-video-sources", login.Token)
+			request.Host = "localhost"
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			body := response.Body.String()
+			if !revoked || response.Code != http.StatusUnauthorized || strings.Contains(body, sourceID) ||
+				strings.Contains(body, "Private camera source") || strings.Contains(body, "stage-camera.invalid") {
+				t.Fatalf("revoked %s received live-source data: status=%d body=%s hook=%t", login.Session.User.Role, response.Code, body, revoked)
+			}
+		})
+	}
+}
+
+func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
+	for _, operation := range []string{"software-transfer", "lighting-activation"} {
+		t.Run(operation, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Committed operation revoke", CreatedBy: "owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			devices, err := deviceexperience.NewRepository(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const deviceID = "v2-operation-response-revoke"
+			if operation == "software-transfer" {
+				if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+					ID: deviceID, Kind: deviceexperience.DeviceGeneric, DisplayName: "Transfer Node",
+					ProtocolVersion: deviceexperience.ProtocolVersion2, ProfileID: lightingnode.ProfileID, Enabled: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("STAGECORE_EXPERIMENTAL_V2_SOFTWARE_TRANSFER", "1")
+			} else {
+				t.Setenv("STAGECORE_EXPERIMENTAL_V2_LIGHTING_ACTIVATION", "1")
+			}
+			runtime := devicechannel.New(devices, nil)
+			defer runtime.Close()
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			committed := false
+			hooks := stageDeviceRouteHooks{}
+			if operation == "software-transfer" {
+				hooks.SoftwareTransfer = func(_ context.Context, input deviceexperience.TransferPreflightInput, _ string, reauthorize func(context.Context) error) (deviceexperience.TransferCommitRecord, error) {
+					if err := reauthorize(ctx); err != nil {
+						return deviceexperience.TransferCommitRecord{}, err
+					}
+					committed = true
+					if err := h.auth.Logout(ctx, owner.Token); err != nil {
+						return deviceexperience.TransferCommitRecord{}, err
+					}
+					return deviceexperience.TransferCommitRecord{TransferID: "committed-transfer", DeviceID: input.DeviceID, ToProjectID: input.TargetProjectID, ToEpoch: input.ExpectedEpoch + 1, NextState: "BLOCKED"}, nil
+				}
+			} else {
+				hooks.LightingActivation = func(_ context.Context, input deviceexperience.LightingActivationInput, _ string, reauthorize func(context.Context) error) (deviceexperience.LightingActivationCommit, error) {
+					if err := reauthorize(ctx); err != nil {
+						return deviceexperience.LightingActivationCommit{}, err
+					}
+					committed = true
+					if err := h.auth.Logout(ctx, owner.Token); err != nil {
+						return deviceexperience.LightingActivationCommit{}, err
+					}
+					return deviceexperience.LightingActivationCommit{ActivationID: "committed-activation", DeviceID: input.DeviceID, ProjectID: input.ProjectID, RuntimeSnapshotID: input.RuntimeSnapshotID, State: "ACTIVE"}, nil
+				}
+			}
+			handler := New(withOperatorStageDevices(h.auth, devices, runtime, stageStore, nil, hooks)).Handler()
+			path := "/api/v1/stage-devices/" + deviceID + "/assignment/software-transfer"
+			payload := `{"expected_project_id":"","target_project_id":"` + project.ID + `","expected_assignment_epoch":1,"confirm":"BLOCK_OUTPUTS_AND_CHANGE_PROJECT_SOFTWARE_ONLY"}`
+			if operation == "lighting-activation" {
+				path = "/api/v1/projects/" + project.ID + "/stage-devices/" + deviceID + "/lighting-activation"
+				payload = `{"runtime_snapshot_id":"snapshot-current","expected_assignment_epoch":4,"confirm":"APPLY_PUBLISHED_CONFIG_AND_ACTIVATE_LIGHTING_SOFTWARE_ONLY"}`
+			}
+			request := authenticatedMutationRequest(t, http.MethodPost, path, []byte(payload), owner.Token, owner.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !committed {
+				t.Fatal("test operation did not commit before revoking Owner session")
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusForbidden || body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+				body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+				t.Fatalf("revoked Owner received success or retryable committed response: HTTP %d %+v", response.Code, body)
+			}
+			for _, key := range []string{"transfer", "activation"} {
+				if _, leaked := body[key]; leaked {
+					t.Fatalf("revoked Owner received committed %s record: %+v", key, body)
+				}
+			}
+		})
+	}
 }
 
 func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
@@ -200,6 +868,25 @@ func TestOperatorStageDeviceListAndOfflineCommandAreAuditable(t *testing.T) {
 	}
 	if persisted.Status != contracts.CommandFailed || !bytes.Contains(persisted.Result, []byte("DEVICE_OFFLINE")) {
 		t.Fatalf("persisted status=%s result=%s", persisted.Status, persisted.Result)
+	}
+
+	revoked := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+device.ID+"/commands",
+		[]byte(`{"command_type":"TABLET_PLAY","idempotency_key":"revoked","payload":{"media":"01.mp4"}}`),
+		credential.Token, credential.CSRFToken)
+	revoked.Body = &firmwareUploadRevokeReader{ReadCloser: revoked.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, credential.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, revoked)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked device dispatch = %d, %s", res.Code, res.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_commands").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("revoked device dispatch changed command history: %d, %v", count, err)
 	}
 }
 
@@ -1198,5 +1885,57 @@ func TestOperatorGlobalInventoryIncludesStageLaserRuntimeObservation(t *testing.
 		got.StateQuality != stagelaser.StateQualityTracked ||
 		got.IPAddress != "192.168.3.77" {
 		t.Fatalf("StageLaser inventory observation=%+v", got)
+	}
+}
+
+func TestOperatorStageDeviceDispatchRollsBackWhenSessionExpiresBeforeInsertCommit(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Device command test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	auth, err := userauth.New(h.db.DB, userauth.WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expireOnCommand := false
+	devices, err := deviceexperience.NewRepository(h.db.DB, deviceexperience.WithClock(func() time.Time {
+		if expireOnCommand {
+			now = login.Session.ExpiresAt
+		}
+		return now
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "tablet-1", ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet 1", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{"tablet.media.play"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	handler := New(WithOperatorStageDevices(auth, devices, runtime, projects)).Handler()
+	expireOnCommand = true
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/stage-devices/"+device.ID+"/commands",
+		[]byte(`{"command_type":"TABLET_PLAY","payload":{"media":"01.mp4"}}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expired command returned %d: %s", rec.Code, rec.Body)
+	}
+	var count int
+	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_commands").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("expired command was persisted: %d, %v", count, err)
 	}
 }

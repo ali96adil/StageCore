@@ -36,3 +36,26 @@ func TestArabicRehearsalSurfaceCoverage(t *testing.T) {
 		t.Fatal("guided Cue policy does not describe the fail-soft default")
 	}
 }
+
+func TestRuntimeTimingApprovalReviewIsExplicitAndNeverAutomatic(t *testing.T) {
+	app := string(mustReadOperatorContractFile(t, "static/app.js"))
+	timing := string(mustReadOperatorContractFile(t, "static/timing-intelligence.js"))
+	for _, marker := range []string{
+		`endedRehearsal?.purpose === "TIMING_CAPTURE"`,
+		`active.rehearsal_purpose === "TIMING_CAPTURE"`,
+		`["OWNER", "TECHNICIAN"].includes(user?.role)`,
+		`id="runtimeRehearsalApproval"`,
+		`renderTimingIntelligenceWorkspace().catch(`,
+		`purpose: active.rehearsal_purpose`,
+	} {
+		if !strings.Contains(app, marker) {
+			t.Fatalf("Runtime missing explicitly reviewed timing approval navigation: %q", marker)
+		}
+	}
+	// The Runtime button navigates to the reviewed Timing workspace; it must
+	// not silently mutate training selections or resurrect a stopped Session.
+	if !strings.Contains(timing, `previous === "INCLUDE" && select.value !== previous`) ||
+		!strings.Contains(timing, `review: { runtime_snapshot_id: candidate.runtime_snapshot_id, mode: previous }`) {
+		t.Fatal("Timing approval no longer has an explicit reversible review path")
+	}
+}

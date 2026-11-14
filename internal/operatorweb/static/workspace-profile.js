@@ -636,7 +636,7 @@ openProject = async function f017OpenProject(projectID, ...args) {
   const preferred = f017PreferredPage(projectID);
   const result = await f017BaseOpenProject(projectID, ...args);
   f017ApplyProfile();
-  if (preferred !== "dashboard") await navigate(preferred);
+  if (preferred !== "dashboard" && !state?.showSessionActive) await navigate(preferred);
   return result;
 };
 

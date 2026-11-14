@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -106,7 +107,7 @@ func (s *Store) RegisterSoftwarePackage(ctx context.Context, p RegisterSoftwareP
 		return SoftwarePackage{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO software_packages (
 			package_id, product_id, version, platform, architecture,
 			min_api_version, max_api_version, content_hash, size_bytes, original_filename,

@@ -7,6 +7,7 @@
   <title>StageCore Operator — المشغّل</title>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/guided-ux.css">
+  <link rel="stylesheet" href="/cue-studio.css">
   <link rel="stylesheet" href="/localization.css">
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" href="/workspace-profile.css">
@@ -97,6 +98,7 @@
       <button id="projectsNav" class="nav-button active" type="button">Projects</button>
       <button id="extensionsNav" class="nav-button hidden" type="button">Extensions</button>
       <button id="securityNav" class="nav-button hidden" type="button">Security</button>
+      <button id="stageAudioNav" class="nav-button" type="button">Audio / الصوت</button>
       <div id="workspaceNav" class="workspace-nav hidden">
         <p id="workspaceProjectName" class="workspace-name"></p>
         <button data-page="dashboard" class="nav-button" type="button">Dashboard</button>
@@ -136,6 +138,15 @@
       <div class="form-grid two">
         <label>Label<input id="cueLabel" required></label>
         <label>Name<input id="cueName" required></label>
+        <label>Cue Color
+          <select id="cueColor">
+            <option value="">Default</option>
+            <option value="blue">Blue</option>
+            <option value="green">Green</option>
+            <option value="amber">Amber</option>
+            <option value="purple">Purple</option>
+          </select>
+        </label>
         <label>Criticality
           <select id="cueCriticality">
             <option value="NORMAL">NORMAL</option>
@@ -212,8 +223,8 @@
       </div>
       <label>Parameters (JSON)<textarea class="action-parameters mono" rows="4">{}</textarea></label>
       <div class="form-grid two">
-        <label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3">{}</textarea></label>
-        <label>Error policy (JSON)<textarea class="action-error mono" rows="3">{}</textarea></label>
+        <label>Timeout policy (JSON)<textarea class="action-timeout mono" rows="3" title="Optional start_delay_ms waits before dispatch; timeout_ms begins after the delay.">{}</textarea></label>
+        <label>Error policy (JSON)<textarea class="action-error mono" rows="3" title="Optional retry_before_dispatch allows one safe retry. require_application_ack requires evidence from the receiving application.">{}</textarea></label>
       </div>
     </article>
   </template>
@@ -230,6 +241,8 @@
   <script src="/preflight.js" defer></script>
   <script src="/memory.js" defer></script>
   <script src="/security.js" defer></script>
+  <script src="/stageaudio.js" defer></script>
+  <script src="/project-files.js" defer></script>
   <script src="/guided-ux.js" defer></script>
   <script src="/localization.js" defer></script>
   <script src="/workspace-profile.js" defer></script>
@@ -240,5 +253,6 @@
   <script src="/execution-environments.js" defer></script>
   <script src="/phase4.js" defer></script>
   <script src="/phase4-polish.js" defer></script>
+  <script src="/cue-studio.js" defer></script>
 </body>
 </html>

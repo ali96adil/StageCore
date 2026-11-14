@@ -12,8 +12,110 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
+
+func TestOperatorMachineRoleListDoesNotExposeForeignProjectCompanions(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+
+	register := func(id, displayName string) string {
+		t.Helper()
+		companion, err := f.projects.RegisterCompanion(ctx, store.RegisterCompanionParams{
+			CompanionID: id, DisplayName: displayName, Platform: "macos", Architecture: "arm64",
+			Version: "qualification", Capabilities: []string{"local.echo"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.projects.SetCompanionTrustState(ctx, companion.ID, domain.CompanionTrusted); err != nil {
+			t.Fatal(err)
+		}
+		return companion.ID
+	}
+
+	projectRole, err := f.projects.CreateMachineRole(ctx, f.projectID, store.CreateMachineRoleParams{RoleKey: "PROJECT-VIDEO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignRole, err := f.projects.CreateMachineRole(ctx, f.otherID, store.CreateMachineRoleParams{RoleKey: "FOREIGN-VIDEO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectCompanion := register("22222222-2222-4222-8222-222222222221", "Project Companion")
+	foreignCompanion := register("22222222-2222-4222-8222-222222222222", "Foreign Companion")
+	unassignedCompanion := register("22222222-2222-4222-8222-222222222223", "Unassigned Companion")
+	if _, err := f.projects.AssignMachineRole(ctx, projectRole.ID, projectCompanion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.AssignMachineRole(ctx, foreignRole.ID, foreignCompanion); err != nil {
+		t.Fatal(err)
+	}
+	technician, err := f.h.auth.CreateUser(ctx, "machine-role-scope-tech", f.h.password, userauth.RoleTechnician)
+	if err != nil {
+		t.Fatal(err)
+	}
+	technicianLogin, err := f.h.auth.Login(ctx, technician.Username, f.h.password, "127.0.0.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, technician.ID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.DeviceConfigure}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorMachineRoles(f.h.auth, f.projects), WithProjectRouteQualification(f.access)).Handler()
+	get := func(token string) []byte {
+		t.Helper()
+		req := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+f.projectID+"/machine-roles", token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("machine role list returned %d: %s", response.Code, response.Body.String())
+		}
+		return response.Body.Bytes()
+	}
+	decodeCompanionIDs := func(raw []byte) map[string]bool {
+		t.Helper()
+		var listing struct {
+			Companions []companionRoleOptionView `json:"companions"`
+		}
+		if err := json.Unmarshal(raw, &listing); err != nil {
+			t.Fatal(err)
+		}
+		ids := make(map[string]bool, len(listing.Companions))
+		for _, companion := range listing.Companions {
+			ids[companion.ID] = true
+		}
+		return ids
+	}
+
+	technicianIDs := decodeCompanionIDs(get(technicianLogin.Token))
+	if !technicianIDs[projectCompanion] || !technicianIDs[unassignedCompanion] || technicianIDs[foreignCompanion] {
+		t.Fatalf("Technician companion options crossed Project boundary: %+v", technicianIDs)
+	}
+	ownerIDs := decodeCompanionIDs(get(f.owner.Token))
+	if !ownerIDs[foreignCompanion] {
+		t.Fatalf("Owner global inventory unexpectedly hid a foreign companion: %+v", ownerIDs)
+	}
+
+	revokingHandler := New(
+		withOperatorMachineRoles(f.h.auth, f.projects, machineRoleHooks{BeforeListResponse: func() {
+			if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, technician.ID, f.projectID, nil); err != nil {
+				t.Errorf("revoke scoped machine-role read: %v", err)
+			}
+		}}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+f.projectID+"/machine-roles", technicianLogin.Token)
+	response := httptest.NewRecorder()
+	revokingHandler.ServeHTTP(response, req)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), projectCompanion) ||
+		strings.Contains(response.Body.String(), unassignedCompanion) {
+		t.Fatalf("revoked Technician received machine-role results: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
 
 func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testing.T) {
 	h := newAuthHarness(t)
@@ -399,5 +501,27 @@ func TestOperatorMachineRoleLifecyclePreservesIdentityAndHistory(t *testing.T) {
 	}
 	if _, err := stageStore.GetMachineRole(ctx, disposable.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted role lookup err=%v", err)
+	}
+}
+
+func TestMachineRoleCreationRejectsRevokedBrowserSession(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	handler := New(WithOperatorMachineRoles(f.h.auth, f.projects)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+f.projectID+"/machine-roles",
+		[]byte(`{"role_key":"REVOKED"}`), f.owner.Token, f.owner.CSRFToken)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: req.Body, revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("revoked machine role creation returned %d: %s", res.Code, res.Body)
+	}
+	roles, err := f.projects.ListMachineRoles(ctx, f.projectID)
+	if err != nil || len(roles) != 0 {
+		t.Fatalf("revoked request changed machine roles: %+v, %v", roles, err)
 	}
 }

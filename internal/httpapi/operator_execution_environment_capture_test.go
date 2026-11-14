@@ -10,12 +10,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/vault"
 )
 
@@ -71,6 +74,23 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 		t.Fatalf("bad asset status=%d body=%s", badAssetRes.Code, badAssetRes.Body.String())
 	}
 
+	changed := testVDMXExecutionEnvironmentManifest("video-main")
+	changed.Assets[0].Locator = "/Users/show/Replacement.vdmx5"
+	stale := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, base+"/capture", payload)
+	stale.Body = &firmwareUploadRevokeReader{ReadCloser: stale.Body, revoke: func() {
+		if _, err := stageStore.UpdateExecutionEnvironmentManifest(ctx, environment.ID, changed); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	staleResponse := httptest.NewRecorder()
+	handler.ServeHTTP(staleResponse, stale)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale capture status=%d body=%s", staleResponse.Code, staleResponse.Body.String())
+	}
+	if _, err := stageStore.UpdateExecutionEnvironmentManifest(ctx, environment.ID, environment.Manifest); err != nil {
+		t.Fatal(err)
+	}
+
 	captureReq := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, base+"/capture", payload)
 	captureRes := httptest.NewRecorder()
 	handler.ServeHTTP(captureRes, captureReq)
@@ -79,7 +99,7 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 	}
 	var response struct {
 		ExecutionEnvironment executionEnvironmentView `json:"execution_environment"`
-		VaultObject struct {
+		VaultObject          struct {
 			ContentHash string `json:"content_hash"`
 			SizeBytes   int64  `json:"size_bytes"`
 		} `json:"vault_object"`
@@ -146,6 +166,42 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 	if _, err := stageStore.GetVaultObject(ctx, blockedHash); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("frozen capture unexpectedly registered Vault object err=%v", err)
 	}
+
+	committedProject, committedRevision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Capture response revocation", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committedEnvironment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, committedRevision.ID, testVDMXExecutionEnvironmentManifest("response-revoked"), owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked := false
+	revokedHandler := New(withOperatorExecutionEnvironmentCapture(h.auth, stageStore, v, executionEnvironmentCaptureHooks{
+		BeforeResponse: func() {
+			revoked = true
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Errorf("revoke Owner after environment asset commit: %v", err)
+			}
+		},
+	})).Handler()
+	committedPayload := []byte("capture committed before response revocation")
+	committedDigest := sha256.Sum256(committedPayload)
+	committedHash := hex.EncodeToString(committedDigest[:])
+	committedPath := "/api/v1/projects/" + committedProject.ID + "/revisions/" + committedRevision.ID + "/execution-environments/" + committedEnvironment.ID + "/assets/workspace/capture"
+	committedRequest := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, committedPath, committedPayload)
+	committedResponse := httptest.NewRecorder()
+	revokedHandler.ServeHTTP(committedResponse, committedRequest)
+	if !revoked {
+		t.Fatal("test did not revoke Owner after execution environment capture commit")
+	}
+	if committedResponse.Code != http.StatusForbidden || !strings.Contains(committedResponse.Body.String(), `"effect_may_be_committed":true`) ||
+		!strings.Contains(committedResponse.Body.String(), `"retryable":false`) || strings.Contains(committedResponse.Body.String(), committedHash) {
+		t.Fatalf("revoked Owner received committed capture result: status=%d body=%s", committedResponse.Code, committedResponse.Body.String())
+	}
+	committedManifest, err := stageStore.GetExecutionEnvironmentManifest(ctx, committedEnvironment.ID)
+	if err != nil || committedManifest.Manifest.Assets[0].ContentHash != committedHash {
+		t.Fatalf("capture should remain committed after response revocation: manifest=%+v err=%v", committedManifest, err)
+	}
 }
 
 func TestOperatorExecutionEnvironmentCaptureSHOWLockRejectsBeforeVaultImport(t *testing.T) {
@@ -207,5 +263,140 @@ func TestOperatorExecutionEnvironmentCaptureSHOWLockRejectsBeforeVaultImport(t *
 	}
 	if _, err := stageStore.GetVaultObject(ctx, wantHash); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("SHOW capture unexpectedly registered Vault object err=%v", err)
+	}
+}
+
+func TestScopedOperatorCanUploadProjectMediaWithExplicitGrant(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "media-upload-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped media upload"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, revision.ID, testVDMXExecutionEnvironmentManifest("scoped-media"), owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, []projectaccess.Permission{
+		projectaccess.ProjectView, projectaccess.ProjectEdit, projectaccess.MediaUpload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), stageStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		WithOperatorExecutionEnvironmentCapture(h.auth, stageStore, objects),
+		WithProjectRouteQualification(access),
+	).Handler()
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID + "/execution-environments/" + environment.ID + "/assets/workspace/capture"
+	const payload = "project scoped operator media"
+	req := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodPost, path, []byte(payload))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("scoped Operator upload returned %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestScopedOperatorCaptureStopsWhenGrantIsRevokedDuringUpload(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := f.projects.CreateExecutionEnvironmentManifest(
+		ctx, project.CurrentRevisionID, testVDMXExecutionEnvironmentManifest("revoke-scoped-media"), f.owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID, []projectaccess.Permission{
+		projectaccess.ProjectView, projectaccess.ProjectEdit, projectaccess.MediaUpload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), f.projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		WithOperatorExecutionEnvironmentCapture(f.h.auth, f.projects, objects),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + project.CurrentRevisionID + "/execution-environments/" + environment.ID + "/assets/workspace/capture"
+	payload := strings.Repeat("scoped capture payload", 4096)
+	req := authenticatedExecutionEnvironmentRequest(t, f.operator.Token, f.operator.CSRFToken, http.MethodPost, path, []byte(payload))
+	source := strings.NewReader(payload)
+	req.Body = io.NopCloser(&revokeDuringRead{Reader: source, revoke: func() {
+		if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code == http.StatusOK || source.Len() == 0 {
+		t.Fatalf("grant revocation did not stop upload: status=%d unread=%d body=%s", response.Code, source.Len(), response.Body.String())
+	}
+	digest := sha256.Sum256([]byte(payload))
+	if _, err := f.projects.GetVaultObject(ctx, hex.EncodeToString(digest[:])); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked scoped upload registered a Vault object: %v", err)
+	}
+}
+
+func TestLegacyBrowserCaptureStopsReadingAfterSessionRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := f.projects.CreateExecutionEnvironmentManifest(
+		ctx, project.CurrentRevisionID, testVDMXExecutionEnvironmentManifest("revoked"), f.owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := vault.Open(t.TempDir(), f.projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithOperatorExecutionEnvironmentCapture(f.h.auth, f.projects, v)).Handler()
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + project.CurrentRevisionID + "/execution-environments/" + environment.ID + "/assets/workspace/capture"
+	payload := bytes.Repeat([]byte("capture"), 100000)
+	req := authenticatedMutationRequest(t, http.MethodPost, path, payload, f.owner.Token, f.owner.CSRFToken)
+	source := bytes.NewReader(payload)
+	req.Body = &firmwareUploadRevokeReader{ReadCloser: io.NopCloser(source), revoke: func() {
+		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden || source.Len() == 0 {
+		t.Fatalf("revoked capture returned %d with %d bytes unread: %s", res.Code, source.Len(), res.Body)
+	}
+	digest := sha256.Sum256(payload)
+	if _, err := f.projects.GetVaultObject(ctx, hex.EncodeToString(digest[:])); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked capture registered a Vault object: %v", err)
 	}
 }

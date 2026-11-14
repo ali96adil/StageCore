@@ -44,7 +44,7 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 ) {
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/snapshots"
 	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
@@ -84,6 +84,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 				CreatedAt:                 item.CreatedAt,
 			})
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"execution_environment_id": environment.ID,
 			"snapshots":                views,
@@ -92,7 +95,7 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 
 	detail := collection + "/{snapshot_id}"
 	mux.HandleFunc("GET "+detail, withPermission(auth, userauth.PermissionProjectRead, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
@@ -128,6 +131,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 			})
 			return
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, executionEnvironmentSnapshotDetailView{
 			ExecutionEnvironmentID: environment.ID,
 			SnapshotID:              item.ID,
@@ -140,7 +146,7 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 
 	path := collection + "/diff"
 	mux.HandleFunc("GET "+path, withPermission(auth, userauth.PermissionProjectRead, func(
-		w http.ResponseWriter, r *http.Request, _ userauth.Session,
+		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
@@ -195,6 +201,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 			})
 			return
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, executionEnvironmentSnapshotDiffView{
 			ExecutionEnvironmentID: environment.ID,
 			BeforeSnapshotID:       before.ID,
@@ -203,7 +212,6 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		})
 	}))
 }
-
 
 func writeExecutionEnvironmentSnapshotLookupError(w http.ResponseWriter, err error) {
 	if errors.Is(err, domain.ErrNotFound) {

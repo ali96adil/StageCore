@@ -9,6 +9,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/visualengine"
@@ -43,16 +44,25 @@ type visualEngineModeView struct {
 }
 
 func WithOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) Option {
+	return withOperatorVisualEngine(auth, stageStore, devices, visualEngineHooks{})
+}
+
+type visualEngineHooks struct {
+	BeforeModeWrite func()
+	BeforeResponse  func()
+}
+
+func withOperatorVisualEngine(auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository, hooks visualEngineHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil || devices == nil {
 			return
 		}
-		registerOperatorVisualEngineRoutes(s.mux, auth, stageStore, devices)
+		registerOperatorVisualEngineRoutes(s.mux, auth, stageStore, devices, hooks)
 	}
 }
 
-func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, devices *deviceexperience.Repository, hooks visualEngineHooks) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/visual-engine", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -106,7 +116,7 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 				if visualengine.IsCapability(action.CapabilityKey) {
 					visualActions = append(visualActions, visualEngineActionView{CueID: cue.ID, CueName: cue.Name, Action: action})
 				}
-		}
+			}
 		}
 		visualRoles := make([]machineRoleView, 0)
 		for _, role := range roles {
@@ -115,6 +125,9 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 			}
 		}
 
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, visualEngineWorkspaceView{
 			ProjectID:               projectID,
 			RevisionID:              revision.ID,
@@ -165,13 +178,32 @@ func registerOperatorVisualEngineRoutes(mux *http.ServeMux, auth *userauth.Servi
 			return
 		}
 
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Visual Engine mode edit")
+		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
 			writeVisualEngineStoreError(w, err)
 			return
 		}
-		if err := stageStore.SetVisualEngineMode(r.Context(), revision.ID, mode, session.User.ID); err != nil {
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		revision, err := stageStore.EnsureProjectDraft(ctx, projectID, session.User.ID, "Visual Engine mode edit")
+		if err != nil {
 			writeVisualEngineStoreError(w, err)
+			return
+		}
+		if hooks.BeforeModeWrite != nil {
+			hooks.BeforeModeWrite()
+		}
+		if err := stageStore.SetVisualEngineMode(ctx, revision.ID, mode, session.User.ID); err != nil {
+			if revision.ID != project.CurrentRevisionID && projectMutationAccessDenied(err) {
+				writeCommittedProjectMutationDenied(w, err)
+				return
+			}
+			writeVisualEngineStoreError(w, err)
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		writeJSON(w, http.StatusOK, visualEngineModeView{
@@ -190,6 +222,9 @@ func machineRoleSupportsVisualEngine(role domain.MachineRole) bool {
 }
 
 func writeVisualEngineStoreError(w http.ResponseWriter, err error) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "VISUAL_ENGINE_PROJECT_NOT_FOUND"})

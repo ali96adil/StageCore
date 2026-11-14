@@ -108,7 +108,6 @@ func TestWorkspaceProfileFoundationContract(t *testing.T) {
 	}
 }
 
-
 func TestWorkspaceProfileLeavesFeatureNavigationVisible(t *testing.T) {
 	// The legacy profile registry predates Lighting workspaces. They should
 	// retain feature-owned visibility even when a saved F-017 profile is applied.
@@ -139,5 +138,44 @@ func TestWorkspaceProfileLeavesFeatureNavigationVisible(t *testing.T) {
 	visibilityAt := strings.Index(profileJS, visibility)
 	if guardAt < 0 || visibilityAt < 0 || guardAt > visibilityAt {
 		t.Fatal("legacy profile must skip unknown feature pages before toggling navigation visibility")
+	}
+}
+
+func TestShowSessionPinsOperatorToRuntimeWorkspace(t *testing.T) {
+	app := string(mustReadOperatorContractFile(t, "static/app.js"))
+	profile := string(mustReadOperatorContractFile(t, "static/workspace-profile.js"))
+	css := string(mustReadOperatorContractFile(t, "static/workspace-profile.css"))
+
+	for _, marker := range []string{
+		"showSessionActive: false",
+		"function setShowSessionPresentation(active)",
+		"state.showSessionActive = !!active",
+		`appView.dataset.showSession = active ? "active" : "inactive"`,
+		`topbar.dataset.showSession = active ? "active" : "inactive"`,
+		`runtime?.session?.type === "SHOW"`,
+		`await navigate("runtime")`,
+		`setShowSessionPresentation(active?.type === "SHOW" || runtime.mode === "SHOW")`,
+	} {
+		if !strings.Contains(app, marker) {
+			t.Fatalf("Operator app is missing active-SHOW workspace contract %q", marker)
+		}
+	}
+
+	if !strings.Contains(profile, `preferred !== "dashboard" && !state?.showSessionActive`) {
+		t.Fatal("remembered workspace must not navigate away from an active SHOW session")
+	}
+
+	for _, marker := range []string{
+		`#appView[data-show-session="active"] {`,
+		`#appView[data-show-session="active"] .sidebar`,
+		`.topbar[data-show-session="active"] .f017-profile-control`,
+	} {
+		if !strings.Contains(css, marker) {
+			t.Fatalf("SHOW workspace presentation is missing safety-focused style %q", marker)
+		}
+	}
+
+	if !strings.Contains(app, `id="emergencyBlackoutButton"`) || !strings.Contains(app, `id="stopCueButton"`) {
+		t.Fatal("SHOW workspace must retain direct STOP and Emergency Blackout controls")
 	}
 }

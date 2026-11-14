@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -81,6 +82,9 @@ func (s *Store) CreateSimulationCheckpoint(ctx context.Context, sessionID string
 		"state_contract_version": checkpoint.StateContractVersion,
 		"content_hash":           checkpoint.ContentHash,
 	}); err != nil {
+		return domain.SimulationCheckpoint{}, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.SimulationCheckpoint{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -169,6 +173,9 @@ func (s *Store) MarkSimulationCheckpointRestored(ctx context.Context, sessionID,
 		"content_hash":  checkpoint.ContentHash,
 		"replay":        false,
 	}); err != nil {
+		return err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

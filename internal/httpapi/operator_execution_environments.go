@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -53,7 +54,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments"
 	item := collection + "/{execution_environment_id}"
 
-	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -76,6 +77,9 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		for _, role := range roles {
 			roleViews = append(roleViews, makeMachineRoleView(role))
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision":               makeRevisionView(revision),
 			"execution_environments": views,
@@ -92,7 +96,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		created, err := stageStore.CreateExecutionEnvironmentManifest(r.Context(), revision.ID, body.Manifest, session.User.ID)
+		created, err := stageStore.CreateExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), revision.ID, body.Manifest, session.User.ID)
 		if err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CREATE_FAILED")
 			return
@@ -100,7 +104,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		writeJSON(w, http.StatusCreated, makeExecutionEnvironmentView(created))
 	}))
 
-	mux.HandleFunc("PUT "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("PUT "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -119,7 +123,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		updated, err := stageStore.UpdateExecutionEnvironmentManifest(r.Context(), environmentID, body.Manifest)
+		updated, err := stageStore.UpdateExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environmentID, body.Manifest)
 		if err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_UPDATE_FAILED")
 			return
@@ -127,7 +131,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentView(updated))
 	}))
 
-	mux.HandleFunc("PUT "+item+"/machine-role", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("PUT "+item+"/machine-role", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -146,7 +150,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
-		updated, err := stageStore.SetExecutionEnvironmentMachineRole(r.Context(), environmentID, body.MachineRoleID)
+		updated, err := stageStore.SetExecutionEnvironmentMachineRole(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.DeviceConfigure), environmentID, body.MachineRoleID)
 		if err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_BIND_FAILED")
 			return
@@ -154,7 +158,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentView(updated))
 	}))
 
-	mux.HandleFunc("DELETE "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("DELETE "+item, withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -173,7 +177,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 			return
 		}
-		if err := stageStore.DeleteExecutionEnvironmentManifest(r.Context(), environmentID); err != nil {
+		if err := stageStore.DeleteExecutionEnvironmentManifest(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environmentID); err != nil {
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_DELETE_FAILED")
 			return
 		}
@@ -212,6 +216,9 @@ func makeExecutionEnvironmentView(environment store.ExecutionEnvironmentManifest
 }
 
 func writeExecutionEnvironmentStoreError(w http.ResponseWriter, err error, fallback string) {
+	if writeProjectMutationDenied(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrShowConfigurationLocked):
 		writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED"})

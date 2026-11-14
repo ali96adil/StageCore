@@ -15,8 +15,166 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func TestLightingCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "lighting-cue-acl"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Scoped lighting",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities:    []string{lightingnode.CapabilityChannelsFade}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := f.projects.GetProject(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+		RevisionID: project.CurrentRevisionID, DeviceID: deviceID, ProfileID: lightingnode.ProfileID,
+		Configuration: lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{
+			{ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Front Warm", Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 80, Enabled: true},
+		}},
+		Aliases: map[string]string{"front_warm": "warm_a"},
+	}, f.owner.Session.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorLightingController(f.h.auth, devices, f.projects, lightingControllerHooks{
+			BeforeCueAliasCreate: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke CueEdit before alias creation: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+f.projectID+"/lighting-controller/cue-actions",
+		[]byte(`{"command_type":"LIGHTING_CHANNELS_FADE","fade_ms":1200,"levels":{"front_warm":55}}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatalf("revoked Operator received cue action: %s", response.Body.String())
+	}
+	aliases, err := f.projects.ListAliases(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("lighting target alias committed after CueEdit revocation: %+v", aliases)
+	}
+}
+
+func TestLightingCueActionRejectsInvalidValuesAliasesAndDeviceAssignments(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string
+		disabled     bool
+		capabilities []string
+		wantStatus   int
+		wantError    string
+	}{
+		{
+			name:         "out of range level",
+			body:         `{"command_type":"LIGHTING_CHANNELS_SET","levels":{"front_warm":101}}`,
+			capabilities: []string{lightingnode.CapabilityChannelsSet},
+			wantStatus:   http.StatusBadRequest, wantError: "LIGHTING_CUE_INVALID",
+		},
+		{
+			name:         "stale logical alias",
+			body:         `{"command_type":"LIGHTING_CHANNELS_SET","levels":{"missing_alias":25}}`,
+			capabilities: []string{lightingnode.CapabilityChannelsSet},
+			wantStatus:   http.StatusBadRequest, wantError: "LIGHTING_CUE_INVALID",
+		},
+		{
+			name:     "disabled lighting node",
+			body:     `{"command_type":"LIGHTING_CHANNELS_SET","levels":{"front_warm":25}}`,
+			disabled: true, capabilities: []string{lightingnode.CapabilityChannelsSet},
+			wantStatus: http.StatusConflict, wantError: "LIGHTING_DEVICE_UNAVAILABLE",
+		},
+		{
+			name:         "unsupported device capability",
+			body:         `{"command_type":"LIGHTING_CHANNELS_SET","levels":{"front_warm":25}}`,
+			capabilities: []string{lightingnode.CapabilityChannelsFade},
+			wantStatus:   http.StatusConflict, wantError: "LIGHTING_CAPABILITY_UNAVAILABLE",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := setupProjectAccessAPI(t)
+			ctx := context.Background()
+			devices, err := deviceexperience.NewRepository(f.h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const deviceID = "lighting-cue-validation"
+			device := deviceexperience.Device{
+				ID: deviceID, ProjectID: f.projectID, ProfileID: lightingnode.ProfileID,
+				Kind: deviceexperience.DeviceGeneric, DisplayName: "Validation Node",
+				ProtocolVersion: deviceexperience.ProtocolVersion1,
+				Capabilities:    test.capabilities, Enabled: true,
+			}
+			if _, err := devices.UpsertDevice(ctx, device); err != nil {
+				t.Fatal(err)
+			}
+			project, err := f.projects.GetProject(ctx, f.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.projects.SetLightingNodeBinding(ctx, project.CurrentRevisionID, lightingnode.ProjectBinding{
+				RevisionID: project.CurrentRevisionID, DeviceID: deviceID, ProfileID: lightingnode.ProfileID,
+				Configuration: lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
+					ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Front Warm", Kind: lightingnode.ChannelWarmWhite,
+					MinimumLevel: 0, MaximumLevel: 80, Enabled: true,
+				}}},
+				Aliases: map[string]string{"front_warm": "warm_a"},
+			}, f.owner.Session.User.ID); err != nil {
+				t.Fatal(err)
+			}
+			if test.disabled {
+				if _, err := f.h.db.DB.ExecContext(ctx, "UPDATE stage_devices SET enabled = 0 WHERE device_id = ?", deviceID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			handler := New(WithOperatorLightingController(f.h.auth, devices, f.projects), WithProjectRouteQualification(f.access)).Handler()
+			request := authenticatedMutationRequest(t, http.MethodPost,
+				"/api/v1/projects/"+f.projectID+"/lighting-controller/cue-actions",
+				[]byte(test.body), f.owner.Token, f.owner.CSRFToken)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response %d %q: %v", response.Code, response.Body.String(), err)
+			}
+			if response.Code != test.wantStatus || payload["error"] != test.wantError {
+				t.Fatalf("response status=%d body=%s; want %d %s", response.Code, response.Body.String(), test.wantStatus, test.wantError)
+			}
+			aliases, err := f.projects.ListAliases(ctx, f.projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(aliases) != 0 {
+				t.Fatalf("invalid Cue request created target aliases: %+v", aliases)
+			}
+		})
+	}
+}
 
 func TestOperatorLightingCueActionsGroupAliasesPerNode(t *testing.T) {
 	h := newAuthHarness(t)
@@ -35,15 +193,15 @@ func TestOperatorLightingCueActionsGroupAliasesPerNode(t *testing.T) {
 			ID: "lighting-a", ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
 			Kind: deviceexperience.DeviceGeneric, DisplayName: "Front Node",
 			ProtocolVersion: deviceexperience.ProtocolVersion1,
-			Capabilities: []string{lightingnode.CapabilityChannelsFade, lightingnode.CapabilityChannelsSet, lightingnode.CapabilityBlackout},
-			Enabled: true,
+			Capabilities:    []string{lightingnode.CapabilityChannelsFade, lightingnode.CapabilityChannelsSet, lightingnode.CapabilityBlackout},
+			Enabled:         true,
 		},
 		{
 			ID: "lighting-b", ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
 			Kind: deviceexperience.DeviceGeneric, DisplayName: "Back Node",
 			ProtocolVersion: deviceexperience.ProtocolVersion1,
-			Capabilities: []string{lightingnode.CapabilityChannelsFade, lightingnode.CapabilityChannelsSet, lightingnode.CapabilityBlackout},
-			Enabled: true,
+			Capabilities:    []string{lightingnode.CapabilityChannelsFade, lightingnode.CapabilityChannelsSet, lightingnode.CapabilityBlackout},
+			Enabled:         true,
 		},
 	} {
 		if _, err := devices.UpsertDevice(ctx, device); err != nil {
@@ -78,6 +236,27 @@ func TestOperatorLightingCueActionsGroupAliasesPerNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(WithOperatorLightingController(h.auth, devices, stageStore)).Handler()
+
+	nodesReq := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/lighting-controller", credential.Token)
+	nodesRes := httptest.NewRecorder()
+	handler.ServeHTTP(nodesRes, nodesReq)
+	var listing struct {
+		Nodes []lightingNodeView `json:"nodes"`
+	}
+	if nodesRes.Code != http.StatusOK || json.Unmarshal(nodesRes.Body.Bytes(), &listing) != nil {
+		t.Fatalf("lighting node list: %d %s", nodesRes.Code, nodesRes.Body.String())
+	}
+	if len(listing.Nodes) != 2 {
+		t.Fatalf("unexpected lighting nodes: %+v", listing.Nodes)
+	}
+	for _, node := range listing.Nodes {
+		if node.DeviceID == "lighting-a" {
+			if len(node.Channels) != 2 || node.Channels[0].ChannelNumber != 1 || node.Channels[1].ChannelNumber != 2 {
+				t.Fatalf("lighting preview channel mapping: %+v", node.Channels)
+			}
+			break
+		}
+	}
 
 	body := bytes.NewBufferString(`{
 		"command_type":"LIGHTING_CHANNELS_FADE",
@@ -164,7 +343,7 @@ func TestOperatorLightingCueProjectionRecombinesCanonicalNodeActions(t *testing.
 			ID: id, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
 			Kind: deviceexperience.DeviceGeneric, DisplayName: id,
 			ProtocolVersion: deviceexperience.ProtocolVersion1,
-			Capabilities: []string{lightingnode.CapabilityChannelsFade}, Enabled: true,
+			Capabilities:    []string{lightingnode.CapabilityChannelsFade}, Enabled: true,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -173,12 +352,12 @@ func TestOperatorLightingCueProjectionRecombinesCanonicalNodeActions(t *testing.
 		{
 			DeviceID: "lighting-a", ProfileID: lightingnode.ProfileID,
 			Configuration: lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Warm A", Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true}}},
-			Aliases: map[string]string{"front_warm": "warm_a"},
+			Aliases:       map[string]string{"front_warm": "warm_a"},
 		},
 		{
 			DeviceID: "lighting-b", ProfileID: lightingnode.ProfileID,
 			Configuration: lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{ChannelKey: "warm_b", ChannelNumber: 1, DisplayName: "Warm B", Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true}}},
-			Aliases: map[string]string{"back_warm": "warm_b"},
+			Aliases:       map[string]string{"back_warm": "warm_b"},
 		},
 	} {
 		if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, binding, "owner"); err != nil {
@@ -206,13 +385,13 @@ func TestOperatorLightingCueProjectionRecombinesCanonicalNodeActions(t *testing.
 		{
 			OrderIndex: 0, ExecutionMode: "PARALLEL_BARRIER", TargetRef: "lighting.a.fade",
 			CapabilityKey: lightingnode.CapabilityChannelsFade,
-			Parameters: json.RawMessage(`{"fade_ms":1800,"aliases":{"front_warm":15}}`),
+			Parameters:    json.RawMessage(`{"fade_ms":1800,"aliases":{"front_warm":15}}`),
 			TimeoutPolicy: json.RawMessage(`{"timeout_ms":4800}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 		{
 			OrderIndex: 1, ExecutionMode: "PARALLEL_BARRIER", TargetRef: "lighting.b.fade",
 			CapabilityKey: lightingnode.CapabilityChannelsFade,
-			Parameters: json.RawMessage(`{"fade_ms":1800,"aliases":{"back_warm":65}}`),
+			Parameters:    json.RawMessage(`{"fade_ms":1800,"aliases":{"back_warm":65}}`),
 			TimeoutPolicy: json.RawMessage(`{"timeout_ms":4800}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 	})

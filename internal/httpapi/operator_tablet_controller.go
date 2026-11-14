@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -283,11 +285,46 @@ type tabletCueActionDescriptor struct {
 // WithOperatorTabletController provides the tablet-specific Operator facade.
 // It deliberately reuses the canonical Stage Device runtime and Cue Engine
 // targets; no second transport, command queue, or playback authority is added.
+type tabletControllerRuntime interface {
+	Dispatch(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+	ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error)
+}
+
+type tabletRelayFlashDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+type tabletControllerHooks struct {
+	BeforeListResponse        func()
+	BeforeCommandReadResponse func()
+	BeforeCueAliasCreate      func()
+}
+
+func writeTabletFlashAuthorityEnded(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":                     "TABLET_LIVE_FLASH_AUTHORITY_REVOKED",
+		"effect_may_have_been_sent": true,
+		"retryable":                 false,
+	})
+}
+
 func WithOperatorTabletController(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
-	runtime *devicechannel.Runtime,
+	runtime tabletControllerRuntime,
 	stageStore *store.Store,
+	flashDoers ...tabletRelayFlashDoer,
+) Option {
+	return withOperatorTabletController(auth, devices, runtime, stageStore, tabletControllerHooks{}, flashDoers...)
+}
+
+func withOperatorTabletController(
+	auth *userauth.Service,
+	devices *deviceexperience.Repository,
+	runtime tabletControllerRuntime,
+	stageStore *store.Store,
+	hooks tabletControllerHooks,
+	flashDoers ...tabletRelayFlashDoer,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || runtime == nil || stageStore == nil {
@@ -312,6 +349,12 @@ func WithOperatorTabletController(
 				}
 			}
 			sort.Strings(groups)
+			if hooks.BeforeListResponse != nil {
+				hooks.BeforeListResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"devices": tablets,
 				"groups":  groups,
@@ -371,11 +414,14 @@ func WithOperatorTabletController(
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -383,7 +429,9 @@ func WithOperatorTabletController(
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteTabletAssignmentAuthorized(r.Context(), intent, actor, reauthorize)
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+				userauth.PermissionProjectEdit, userauth.PermissionCompanionPair)
+			record, err := runtime.ExecuteTabletAssignmentAuthorized(writeCtx, intent, actor, reauthorize)
 			if err != nil {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "TABLET_ASSIGNMENT_NOT_COMMITTED",
@@ -428,35 +476,81 @@ func WithOperatorTabletController(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_LIVE_FLASH_REQUEST_INVALID"})
 				return
 			}
-			client := &http.Client{
-				Timeout: 3 * time.Second,
-				Transport: &http.Transport{Proxy: nil},
-				CheckRedirect: func(*http.Request, []*http.Request) error {
-					return fmt.Errorf("relay redirects are not allowed")
-				},
+			if err := capability.CheckDispatch(request.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "TABLET_LIVE_FLASH_AUTHORITY_REVOKED"})
+				return
 			}
-			response, err := client.Do(request)
+			var doer tabletRelayFlashDoer
+			if len(flashDoers) > 0 {
+				doer = flashDoers[0]
+			}
+			if doer == nil {
+				doer = &http.Client{
+					Timeout: 3 * time.Second,
+					Transport: &http.Transport{Proxy: nil},
+					CheckRedirect: func(*http.Request, []*http.Request) error {
+						return fmt.Errorf("relay redirects are not allowed")
+					},
+				}
+			}
+			response, err := doer.Do(request)
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_UNAVAILABLE", "detail": err.Error()})
+				if capability.CheckDispatch(request.Context()) != nil {
+					writeTabletFlashAuthorityEnded(w)
+					return
+				}
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_UNAVAILABLE",
+					"detail":                    err.Error(),
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				response.Body.Close()
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			defer response.Body.Close()
 			body, err := io.ReadAll(io.LimitReader(response.Body, 8<<10))
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				if capability.CheckDispatch(request.Context()) != nil {
+					writeTabletFlashAuthorityEnded(w)
+					return
+				}
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			if response.StatusCode < 200 || response.StatusCode >= 300 {
 				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"error": "TABLET_LIVE_FLASH_RELAY_REJECTED",
-					"relay_status": response.StatusCode,
-					"detail": strings.TrimSpace(string(body)),
+					"error":                     "TABLET_LIVE_FLASH_RELAY_REJECTED",
+					"relay_status":              response.StatusCode,
+					"detail":                    strings.TrimSpace(string(body)),
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
 				})
 				return
 			}
 			var relayState map[string]any
 			if len(body) != 0 && json.Unmarshal(body, &relayState) != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{"error": "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID"})
+				writeJSON(w, http.StatusBadGateway, map[string]any{
+					"error":                     "TABLET_LIVE_FLASH_RELAY_RESPONSE_INVALID",
+					"effect_may_have_been_sent": true,
+					"retryable":                 false,
+				})
+				return
+			}
+			if capability.CheckDispatch(request.Context()) != nil {
+				writeTabletFlashAuthorityEnded(w)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"state": state, "relay": relayState})
@@ -469,8 +563,8 @@ func WithOperatorTabletController(
 				return
 			}
 			input.CommandType = strings.TrimSpace(input.CommandType)
-			capability := deviceexperience.RequiredCapability(input.CommandType)
-			if capability == "" || !tabletRuntimeCapability(capability) {
+			requiredCapability := deviceexperience.RequiredCapability(input.CommandType)
+			if requiredCapability == "" || !tabletRuntimeCapability(requiredCapability) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_COMMAND_UNSUPPORTED"})
 				return
 			}
@@ -533,8 +627,9 @@ func WithOperatorTabletController(
 				Error       string                          `json:"error,omitempty"`
 			}
 			results := make([]result, 0, len(targets))
+			effectMayHaveBeenSent := false
 			for _, tablet := range targets {
-				if !containsString(tablet.Capabilities, capability) {
+				if !containsString(tablet.Capabilities, requiredCapability) {
 					results = append(results, result{DeviceID: tablet.ID, DisplayName: tablet.DisplayName, Error: "CAPABILITY_UNAVAILABLE"})
 					continue
 				}
@@ -544,6 +639,9 @@ func WithOperatorTabletController(
 					continue
 				}
 				payload := mergeTabletManifestScope(normalizedPayload, scope.TabletManifestID)
+				// A dispatch error can leave transport acceptance ambiguous, so once
+				// dispatch is attempted the response must not invite automatic replay.
+				effectMayHaveBeenSent = true
 				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         strings.TrimSpace(input.SessionID),
@@ -562,6 +660,14 @@ func WithOperatorTabletController(
 				}
 				copy := command
 				results = append(results, result{DeviceID: tablet.ID, DisplayName: tablet.DisplayName, Command: &copy})
+			}
+			if err := capability.CheckDispatch(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "TABLET_COMMAND_AUTHORITY_REVOKED",
+					"effect_may_have_been_sent": effectMayHaveBeenSent,
+					"retryable": false,
+				})
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
@@ -588,6 +694,12 @@ func WithOperatorTabletController(
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "TABLET_COMMAND_NOT_FOUND"})
 				return
 			}
+			if hooks.BeforeCommandReadResponse != nil {
+				hooks.BeforeCommandReadResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+				return
+			}
 			writeJSON(w, http.StatusOK, command)
 		}))
 
@@ -596,6 +708,8 @@ func WithOperatorTabletController(
 		// needs to expose target_ref, capability strings, or JSON configuration.
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/tablet-controller/cue-actions", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit)
+			writeRequest := r.WithContext(writeCtx)
 			if err := stageStore.RequireProjectConfigurationMutable(r.Context(), projectID); err != nil {
 				writeJSON(w, http.StatusLocked, map[string]any{"error": "SHOW_CONFIGURATION_LOCKED", "detail": err.Error()})
 				return
@@ -640,8 +754,11 @@ func WithOperatorTabletController(
 					writeJSON(w, http.StatusConflict, map[string]any{"error": "TABLET_CAPABILITY_UNAVAILABLE", "device_id": tablet.ID, "capability": capability})
 					return
 				}
-				targetRef, ensureErr := ensureTabletAlias(r, stageStore, aliases, projectID, tablet, capability)
+				targetRef, ensureErr := ensureTabletAlias(writeRequest, stageStore, aliases, projectID, tablet, capability, hooks.BeforeCueAliasCreate)
 				if ensureErr != nil {
+					if writeProjectMutationDenied(w, ensureErr) {
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_ALIAS_FAILED", "detail": ensureErr.Error()})
 					return
 				}
@@ -654,6 +771,9 @@ func WithOperatorTabletController(
 					Priority:      defaultTabletPriority(input.Priority),
 					Parameters:    normalizedPayload,
 				})
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
 		}))
@@ -755,7 +875,7 @@ func mergeTabletManifestScope(payload json.RawMessage, manifestID string) json.R
 	return encoded
 }
 
-func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, tablet deviceexperience.Device, capability string) (string, error) {
+func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domain.ProjectDeviceAlias, projectID string, tablet deviceexperience.Device, capability string, beforeCreate func()) (string, error) {
 	for _, alias := range aliases {
 		if alias.LogicalType != devicechannel.StageDeviceLogicalType { continue }
 		var cfg struct {
@@ -769,6 +889,7 @@ func ensureTabletAlias(r *http.Request, stageStore *store.Store, aliases []domai
 	config, err := json.Marshal(map[string]string{"device_id": tablet.ID, "capability_key": capability})
 	if err != nil { return "", err }
 	logicalName := "tablet." + tabletAliasSlug(tablet.ID) + "." + tabletAliasSlug(strings.TrimPrefix(capability, "tablet.media."))
+	if beforeCreate != nil { beforeCreate() }
 	created, err := stageStore.CreateAlias(r.Context(), domain.ProjectDeviceAlias{
 		ProjectID:     projectID,
 		LogicalName:   logicalName,

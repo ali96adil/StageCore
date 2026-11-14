@@ -2,12 +2,17 @@ package deviceexperience_test
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
+	"time"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -76,7 +81,7 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		Architecture: "riscv32",
 		ClientVersion: "0.1.0-test",
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
-		Capabilities: stagelaser.CapabilityKeys(),
+		Capabilities: append(stagelaser.CapabilityKeys(), stagelaser.ControlGenerationCapability),
 		Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -133,7 +138,7 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		t.Fatalf("unsafe ON assignment ACK was accepted: %v", err)
 	}
 
-	commit, err := repo.CommitStageLaserSafeAssignment(ctx, deviceexperience.VerifiedStageLaserAssignmentInput{
+	input := deviceexperience.VerifiedStageLaserAssignmentInput{
 		AssignmentID: "31111111-1111-4111-8111-111111111111",
 		DeviceID: deviceID,
 		TargetProjectID: projectID,
@@ -147,7 +152,18 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		AckChallenge: challenge,
 		AckObservation: safe,
 		ActorID: "owner",
+	}
+	denied := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return capability.ErrDispatchAuthorityRevoked
 	})
+	if _, err := repo.CommitStageLaserSafeAssignment(denied, input); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked StageLaser assignment returned %v", err)
+	}
+	before, err := repo.GetAssignmentRecord(ctx, deviceID)
+	if err != nil || before.Epoch != 1 || before.ProjectID != "" {
+		t.Fatalf("revoked StageLaser assignment changed binding: %+v, %v", before, err)
+	}
+	commit, err := repo.CommitStageLaserSafeAssignment(ctx, input)
 	if err != nil || commit.NextState != "ACTIVE" || commit.ToEpoch != 2 {
 		t.Fatalf("StageLaser assignment commit=%+v err=%v", commit, err)
 	}
@@ -169,7 +185,7 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		Architecture: "riscv32",
 		ClientVersion: "0.1.1-test",
 		ProtocolVersion: deviceexperience.ProtocolVersion2,
-		Capabilities: stagelaser.CapabilityKeys(),
+		Capabilities: append(stagelaser.CapabilityKeys(), stagelaser.ControlGenerationCapability),
 		Enabled: true,
 	})
 	if err != nil || reconnected.Assignment == nil ||
@@ -204,6 +220,48 @@ func TestStageLaserV2AssignmentRequiresSafeKnownOffAndExactSnapshot(t *testing.T
 		command.Envelope.RuntimeSnapshotID != snapshotID {
 		t.Fatalf("StageLaser command envelope=%+v", command.Envelope)
 	}
+	if command.Envelope.ControlGeneration <= 0 || command.Envelope.DeadlineAt == nil {
+		t.Fatalf("generated ON lacks sequence or deadline: %+v", command.Envelope)
+	}
+	offInput := deviceexperience.CreateCommandInput{
+		ProjectID: projectID, RuntimeSnapshotID: snapshotID, DeviceID: deviceID,
+		CommandType: stagelaser.CommandSafeOff, Issuer: "operator:test",
+		IdempotencyKey: "generation-off", Payload: json.RawMessage(`{}`),
+	}
+	deniedCtx := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	if _, _, err := repo.CreateCommand(deniedCtx, offInput); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked command err=%v", err)
+	}
+	off, duplicate, err := repo.CreateCommand(ctx, offInput)
+	if err != nil || duplicate || off.Envelope.ControlGeneration != command.Envelope.ControlGeneration+1 || off.Envelope.DeadlineAt != nil {
+		t.Fatalf("OFF=%+v duplicate=%v err=%v", off.Envelope, duplicate, err)
+	}
+
+	if err := handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := db.Open(ctx, db.Config{DataRoot: filepath.Dir(filepath.Dir(handle.Path))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restarted, err := deviceexperience.NewRepository(reopened.DB, deviceexperience.WithClock(func() time.Time { return phase4Time }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, duplicate, err := restarted.CreateCommand(ctx, offInput)
+	if err != nil || !duplicate || retry.Envelope.CommandID != off.Envelope.CommandID || retry.Envelope.ControlGeneration != off.Envelope.ControlGeneration {
+		t.Fatalf("OFF retry=%+v duplicate=%v err=%v", retry.Envelope, duplicate, err)
+	}
+	nextInput := offInput
+	nextInput.IdempotencyKey = "generation-off-next"
+	next, duplicate, err := restarted.CreateCommand(ctx, nextInput)
+	if err != nil || duplicate || next.Envelope.ControlGeneration != off.Envelope.ControlGeneration+1 {
+		t.Fatalf("new repository rewound generation: %+v duplicate=%v err=%v", next.Envelope, duplicate, err)
+	}
+
 }
 
 func TestStageLaserCommandMappingNeverChoosesToggleOrAmbiguousStateSet(t *testing.T) {

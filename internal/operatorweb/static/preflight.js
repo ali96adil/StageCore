@@ -36,6 +36,7 @@ function preflightDestination(category) {
     case "companion": return { page: "configuration", anchor: "machineRolesCard", label: "Open Machine Roles" };
     case "media": return { page: "environments", label: "Open Environments" };
     case "snapshot": return { page: "cues", label: "Open Cues / Publish" };
+    case "lighting": return { page: "lighting-setup", label: "Open Lighting Configuration" };
     case "adapter":
     case "capability": return { page: "configuration", label: "Open Configuration" };
     default: return null;
@@ -131,6 +132,35 @@ function storageCard(report) {
     </article>`;
 }
 
+function preflightReportFilename(report) {
+  const projectName = String(state.project?.name || "project");
+  const projectSlug = projectName.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "project";
+  const evaluatedAt = new Date(report?.evaluated_at || "");
+  const timestamp = (Number.isFinite(evaluatedAt.getTime()) ? evaluatedAt : new Date())
+    .toISOString()
+    .replace(/\.000Z$/u, "Z")
+    .replace(/:/gu, "-");
+  return `StageCore-Preflight-${projectSlug}-${timestamp}.json`;
+}
+
+function downloadPreflightReport(report) {
+  const payload = `${JSON.stringify(report, null, 2)}\n`;
+  const blob = new Blob([payload], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = preflightReportFilename(report);
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function renderPreflight() {
   const report = await loadPreflight();
   const blockers = (report.checks || []).filter((check) => check.status === "BLOCK").length;
@@ -142,7 +172,7 @@ async function renderPreflight() {
         <h1>${esc(state.project.name)} readiness</h1>
         <p>Authoritative Snapshot, Companion, media and storage checks used by SHOW entry.</p>
       </div>
-      <div class="toolbar">${pill(report.status, preflightKind(report.status))}<button id="refreshPreflight" class="button" type="button">Refresh</button></div>
+      <div class="toolbar">${pill(report.status, preflightKind(report.status))}<button id="exportPreflight" class="button ghost" type="button">Download report</button><button id="refreshPreflight" class="button" type="button">Refresh</button></div>
     </div>
     <div class="stat-grid">
       <article class="stat"><span class="label">Runtime Snapshot</span><span class="value">${report.runtime_snapshot_id ? `v${esc(report.snapshot_version)}` : "Not Published"}</span><span class="sub mono">${esc(report.runtime_snapshot_id || "—")}</span></article>
@@ -159,6 +189,7 @@ async function renderPreflight() {
     <div class="section-title-row" style="margin-top:20px"><div><p class="eyebrow">STORAGE</p><h2>Runtime reserve</h2></div></div>
     ${storageCard(report)}`;
   bindPreflightFixButtons();
+  el("exportPreflight").addEventListener("click", () => downloadPreflightReport(report));
   el("refreshPreflight").addEventListener("click", async () => {
     try { await renderPreflight(); }
     catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }

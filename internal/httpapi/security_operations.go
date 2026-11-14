@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/oscplugin"
@@ -27,6 +29,11 @@ type securityOperations struct {
 	audit         *securityaudit.Service
 	companions    *companionauth.Service
 	refreshPlugin PluginPermissionRefresher
+	hooks         securityOperationsHooks
+}
+
+type securityOperationsHooks struct {
+	BeforeResponse func()
 }
 
 func WithSecurityOperations(
@@ -38,39 +45,158 @@ func WithSecurityOperations(
 	companions *companionauth.Service,
 	refresh PluginPermissionRefresher,
 ) Option {
+	return withSecurityOperations(users, stageStore, secrets, plugins, audit, companions, refresh, securityOperationsHooks{})
+}
+
+func withSecurityOperations(
+	users *userauth.Service,
+	stageStore *store.Store,
+	secrets *secretstore.Service,
+	plugins *pluginpermissions.Service,
+	audit *securityaudit.Service,
+	companions *companionauth.Service,
+	refresh PluginPermissionRefresher,
+	hooks securityOperationsHooks,
+) Option {
 	return func(s *Server) {
 		if users == nil || stageStore == nil || secrets == nil || plugins == nil || audit == nil || companions == nil {
 			return
 		}
 		ops := &securityOperations{
 			users: users, store: stageStore, secrets: secrets, plugins: plugins,
-			audit: audit, companions: companions, refreshPlugin: refresh,
+			audit: audit, companions: companions, refreshPlugin: refresh, hooks: hooks,
 		}
 		ops.register(s.mux)
 	}
 }
 
 func (s *securityOperations) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/security/audit", withPermission(s.users, userauth.PermissionAuditRead, s.handleAudit))
+	mux.HandleFunc("GET /api/v1/security/audit", s.route(userauth.PermissionAuditRead, s.handleAudit))
 
-	mux.HandleFunc("GET /api/v1/security/secrets", withPermission(s.users, userauth.PermissionSecretManage, s.handleSecretsList))
-	mux.HandleFunc("POST /api/v1/security/secrets", withPermission(s.users, userauth.PermissionSecretManage, s.handleSecretCreate))
-	mux.HandleFunc("PUT /api/v1/security/secrets/{logical_name}", withPermission(s.users, userauth.PermissionSecretManage, s.handleSecretUpdate))
-	mux.HandleFunc("DELETE /api/v1/security/secrets/{logical_name}", withPermission(s.users, userauth.PermissionSecretManage, s.handleSecretDelete))
+	mux.HandleFunc("GET /api/v1/security/secrets", s.route(userauth.PermissionSecretManage, s.handleSecretsList))
+	mux.HandleFunc("POST /api/v1/security/secrets", s.route(userauth.PermissionSecretManage, s.handleSecretCreate))
+	mux.HandleFunc("PUT /api/v1/security/secrets/{logical_name}", s.route(userauth.PermissionSecretManage, s.handleSecretUpdate))
+	mux.HandleFunc("DELETE /api/v1/security/secrets/{logical_name}", s.route(userauth.PermissionSecretManage, s.handleSecretDelete))
 
-	mux.HandleFunc("GET /api/v1/security/plugins/permissions", withPermission(s.users, userauth.PermissionPluginManage, s.handlePluginPermissions))
-	mux.HandleFunc("PUT /api/v1/security/plugins/{plugin_id}/permissions/{permission}", withPermission(s.users, userauth.PermissionPluginManage, s.handlePluginPermissionSet))
+	mux.HandleFunc("GET /api/v1/security/plugins/permissions", s.route(userauth.PermissionPluginManage, s.handlePluginPermissions))
+	mux.HandleFunc("PUT /api/v1/security/plugins/{plugin_id}/permissions/{permission}", s.route(userauth.PermissionPluginManage, s.handlePluginPermissionSet))
 
-	mux.HandleFunc("GET /api/v1/security/users", withPermission(s.users, userauth.PermissionUserManage, s.handleUsersList))
-	mux.HandleFunc("POST /api/v1/security/users", withPermission(s.users, userauth.PermissionUserManage, s.handleUserCreate))
-	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/role", withPermission(s.users, userauth.PermissionUserManage, s.handleUserRole))
-	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/enabled", withPermission(s.users, userauth.PermissionUserManage, s.handleUserEnabled))
-	mux.HandleFunc("POST /api/v1/security/users/{user_id}/revoke-sessions", withPermission(s.users, userauth.PermissionUserManage, s.handleUserSessionRevoke))
+	mux.HandleFunc("GET /api/v1/security/users", s.route(userauth.PermissionUserManage, s.handleUsersList))
+	mux.HandleFunc("POST /api/v1/security/users", s.route(userauth.PermissionUserManage, s.handleUserCreate))
+	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/role", s.route(userauth.PermissionUserManage, s.handleUserRole))
+	mux.HandleFunc("PUT /api/v1/security/users/{user_id}/enabled", s.route(userauth.PermissionUserManage, s.handleUserEnabled))
+	mux.HandleFunc("POST /api/v1/security/users/{user_id}/revoke-sessions", s.route(userauth.PermissionUserManage, s.handleUserSessionRevoke))
 
-	mux.HandleFunc("GET /api/v1/security/companions", withPermission(s.users, userauth.PermissionCompanionRevoke, s.handleCompanionInventory))
-	mux.HandleFunc("GET /api/v1/security/companions/pairing/pending", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingPending))
-	mux.HandleFunc("POST /api/v1/security/companions/pairing/approve", withPermission(s.users, userauth.PermissionCompanionPair, s.handleCompanionPairingApprove))
-	mux.HandleFunc("POST /api/v1/security/companions/{companion_id}/revoke", withPermission(s.users, userauth.PermissionCompanionRevoke, s.handleCompanionRevoke))
+	mux.HandleFunc("GET /api/v1/security/companions", s.route(userauth.PermissionCompanionRevoke, s.handleCompanionInventory))
+	mux.HandleFunc("GET /api/v1/security/companions/pairing/pending", s.route(userauth.PermissionCompanionPair, s.handleCompanionPairingPending))
+	mux.HandleFunc("POST /api/v1/security/companions/pairing/approve", s.route(userauth.PermissionCompanionPair, s.handleCompanionPairingApprove))
+	mux.HandleFunc("POST /api/v1/security/companions/{companion_id}/revoke", s.route(userauth.PermissionCompanionRevoke, s.handleCompanionRevoke))
+}
+
+func (s *securityOperations) route(permission userauth.Permission, next sessionHandler) http.HandlerFunc {
+	return withPermission(s.users, permission, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		buffered := &securityOperationsResponseBuffer{header: make(http.Header)}
+		next(buffered, r, session)
+		if s.hooks.BeforeResponse != nil {
+			s.hooks.BeforeResponse()
+		}
+		if !securityOperationResponseAuthorized(s.users, r, session, permission) {
+			if buffered.preDispatchDenied {
+				buffered.flush(w)
+				return
+			}
+			writeSecurityOperationAuthorityEnded(w, isUnsafeMethod(r.Method))
+			return
+		}
+		buffered.flush(w)
+	})
+}
+
+type securityOperationsResponseBuffer struct {
+	header            http.Header
+	status            int
+	preDispatchDenied bool
+	body              bytes.Buffer
+}
+
+func (b *securityOperationsResponseBuffer) Header() http.Header { return b.header }
+
+func (b *securityOperationsResponseBuffer) WriteHeader(status int) {
+	if b.status == 0 {
+		b.status = status
+	}
+}
+
+func (b *securityOperationsResponseBuffer) Write(payload []byte) (int, error) {
+	if b.status == 0 {
+		b.status = http.StatusOK
+	}
+	return b.body.Write(payload)
+}
+
+func (b *securityOperationsResponseBuffer) flush(w http.ResponseWriter) {
+	for key, values := range b.header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	status := b.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	if b.body.Len() > 0 {
+		_, _ = w.Write(b.body.Bytes())
+	}
+}
+
+func securityOperationResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session, permission userauth.Permission) bool {
+	return users != nil && capability.CheckDispatch(r.Context()) == nil &&
+		extensionPermissionResponseAuthorized(users, r, session, permission)
+}
+
+func writeSecurityOperationAuthorityEnded(w http.ResponseWriter, mutation bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	response := map[string]any{"error_code": "FORBIDDEN"}
+	if mutation {
+		response = map[string]any{
+			"error_code":                     "SECURITY_OPERATION_AUTHORITY_REVOKED",
+			"detail":                         "Authorization ended during security administration; verify current state before taking further action.",
+			"effect_may_have_been_committed": true,
+			"retryable":                      false,
+		}
+	}
+	writeJSON(w, http.StatusForbidden, response)
+}
+
+func securityOperationMutationAuthorized(users *userauth.Service, r *http.Request, original userauth.Session, permission userauth.Permission) bool {
+	token, ok := browserSessionToken(r)
+	if !ok || users == nil {
+		return false
+	}
+	current, err := users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	return err == nil && current.ID == original.ID && current.User.ID == original.User.ID &&
+		userauth.Authorize(current.User.Role, permission) == nil && capability.CheckDispatch(r.Context()) == nil
+}
+
+func writeSecurityOperationDispatchDenied(w http.ResponseWriter) {
+	if buffered, ok := w.(*securityOperationsResponseBuffer); ok {
+		buffered.preDispatchDenied = true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     "FORBIDDEN",
+		"effect_may_have_been_committed": false,
+		"retryable":                      false,
+	})
+}
+
+func (s *securityOperations) recheckMutation(w http.ResponseWriter, r *http.Request, session userauth.Session, permission userauth.Permission) bool {
+	if securityOperationMutationAuthorized(s.users, r, session, permission) {
+		return true
+	}
+	writeSecurityOperationDispatchDenied(w)
+	return false
 }
 
 func (s *securityOperations) handleAudit(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
@@ -114,6 +240,10 @@ func (s *securityOperations) handleSecretCreate(w http.ResponseWriter, r *http.R
 	if !decodeBoundedJSON(w, r, &body) {
 		return
 	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionSecretManage) ||
+		s.rejectShowAdmin(w, r, session, "secret.create", "secret", "") {
+		return
+	}
 	metadata, err := s.secrets.Create(r.Context(), body.LogicalName, body.Value)
 	if err != nil {
 		s.record(r, session, "secret.create", "secret", strings.TrimSpace(body.LogicalName), securityaudit.ResultFailed, "SECRET_CREATE_FAILED", nil)
@@ -134,6 +264,10 @@ func (s *securityOperations) handleSecretUpdate(w http.ResponseWriter, r *http.R
 	if !decodeBoundedJSON(w, r, &body) {
 		return
 	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionSecretManage) ||
+		s.rejectShowAdmin(w, r, session, "secret.update", "secret", reference) {
+		return
+	}
 	metadata, err := s.secrets.Update(r.Context(), reference, body.Value)
 	if err != nil {
 		s.record(r, session, "secret.update", "secret", reference, securityaudit.ResultFailed, "SECRET_UPDATE_FAILED", nil)
@@ -147,6 +281,10 @@ func (s *securityOperations) handleSecretUpdate(w http.ResponseWriter, r *http.R
 func (s *securityOperations) handleSecretDelete(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	reference := secretstore.Reference(strings.TrimSpace(r.PathValue("logical_name")))
 	if s.rejectShowAdmin(w, r, session, "secret.delete", "secret", reference) {
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionSecretManage) ||
+		s.rejectShowAdmin(w, r, session, "secret.delete", "secret", reference) {
 		return
 	}
 	if err := s.secrets.Delete(r.Context(), reference); err != nil {
@@ -191,6 +329,10 @@ func (s *securityOperations) handlePluginPermissionSet(w http.ResponseWriter, r 
 	if !decodeBoundedJSON(w, r, &body) {
 		return
 	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionPluginManage) ||
+		s.rejectShowAdmin(w, r, session, "plugin.permission.change", "plugin_permission", resourceID) {
+		return
+	}
 	grant, err := s.plugins.Set(r.Context(), pluginID, permission, body.Granted, session.User.Username)
 	if err != nil {
 		s.record(r, session, "plugin.permission.change", "plugin_permission", resourceID, securityaudit.ResultFailed, "PLUGIN_PERMISSION_WRITE_FAILED", nil)
@@ -200,7 +342,11 @@ func (s *securityOperations) handlePluginPermissionSet(w http.ResponseWriter, r 
 	if s.refreshPlugin != nil {
 		if err := s.refreshPlugin(r.Context()); err != nil {
 			s.record(r, session, "plugin.permission.change", "plugin_permission", resourceID, securityaudit.ResultFailed, "PLUGIN_PERMISSION_APPLY_FAILED", nil)
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PLUGIN_PERMISSION_APPLY_FAILED"})
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error_code":                     "PLUGIN_PERMISSION_APPLY_FAILED",
+				"effect_may_have_been_committed": true,
+				"retryable":                      false,
+			})
 			return
 		}
 	}
@@ -223,8 +369,12 @@ type userCreateRequest struct {
 	Role     string `json:"role"`
 }
 
-type userRoleRequest struct { Role string `json:"role"` }
-type userEnabledRequest struct { Enabled bool `json:"enabled"` }
+type userRoleRequest struct {
+	Role string `json:"role"`
+}
+type userEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
 type revokeRequest struct {
 	Reason  string `json:"reason"`
 	Confirm string `json:"confirm"`
@@ -236,6 +386,10 @@ func (s *securityOperations) handleUserCreate(w http.ResponseWriter, r *http.Req
 	}
 	var body userCreateRequest
 	if !decodeBoundedJSON(w, r, &body) {
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionUserManage) ||
+		s.rejectShowAdmin(w, r, session, "user.create", "user", "") {
 		return
 	}
 	user, err := s.users.CreateUser(r.Context(), body.Username, body.Password, body.Role)
@@ -255,6 +409,10 @@ func (s *securityOperations) handleUserRole(w http.ResponseWriter, r *http.Reque
 	}
 	var body userRoleRequest
 	if !decodeBoundedJSON(w, r, &body) {
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionUserManage) ||
+		s.rejectShowAdmin(w, r, session, "user.role.change", "user", userID) {
 		return
 	}
 	user, err := s.users.SetUserRole(r.Context(), userID, body.Role)
@@ -278,6 +436,10 @@ func (s *securityOperations) handleUserEnabled(w http.ResponseWriter, r *http.Re
 	}
 	var body userEnabledRequest
 	if !decodeBoundedJSON(w, r, &body) {
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionUserManage) ||
+		s.rejectShowAdmin(w, r, session, "user.enabled.change", "user", userID) {
 		return
 	}
 	user, err := s.users.SetUserEnabled(r.Context(), userID, body.Enabled)
@@ -305,6 +467,9 @@ func (s *securityOperations) handleUserSessionRevoke(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "STRONG_CONFIRMATION_REQUIRED"})
 		return
 	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionUserManage) {
+		return
+	}
 	if err := s.users.RevokeUserSessions(r.Context(), userID); err != nil {
 		s.record(r, session, "user.sessions.revoke", "user", userID, securityaudit.ResultFailed, "SESSION_REVOCATION_FAILED", nil)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "SESSION_REVOCATION_FAILED"})
@@ -330,27 +495,27 @@ func (s *securityOperations) handleCompanionInventory(w http.ResponseWriter, r *
 		item := map[string]any{
 			"companion_id": companion.ID,
 			"display_name": companion.DisplayName,
-			"hostname": companion.Hostname,
-			"platform": companion.Platform,
+			"hostname":     companion.Hostname,
+			"platform":     companion.Platform,
 			"architecture": companion.Architecture,
-			"version": companion.Version,
+			"version":      companion.Version,
 			"capabilities": append([]string(nil), companion.Capabilities...),
-			"trust_state": companion.TrustState,
-			"readiness": companion.Readiness,
+			"trust_state":  companion.TrustState,
+			"readiness":    companion.Readiness,
 			"last_seen_at": companion.LastSeenAt,
 		}
 		if assignment, err := s.store.GetActiveRoleAssignmentForCompanion(r.Context(), companion.ID); err == nil {
 			item["assignment"] = map[string]any{
 				"role_assignment_id": assignment.ID,
-				"machine_role_id": assignment.MachineRoleID,
-				"state": assignment.State,
+				"machine_role_id":    assignment.MachineRoleID,
+				"state":              assignment.State,
 			}
 			if role, roleErr := s.store.GetMachineRole(r.Context(), assignment.MachineRoleID); roleErr == nil {
 				item["machine_role"] = map[string]any{
 					"machine_role_id": role.ID,
-					"project_id": role.ProjectID,
-					"role_key": role.RoleKey,
-					"display_name": role.DisplayName,
+					"project_id":      role.ProjectID,
+					"role_key":        role.RoleKey,
+					"display_name":    role.DisplayName,
 				}
 			}
 		} else if !errors.Is(err, domain.ErrNotFound) {
@@ -376,15 +541,15 @@ func (s *securityOperations) handleCompanionPairingPending(w http.ResponseWriter
 			return
 		}
 		items = append(items, map[string]any{
-			"request_id": request.ID,
+			"request_id":   request.ID,
 			"companion_id": request.CompanionID,
 			"display_name": companion.DisplayName,
-			"hostname": companion.Hostname,
-			"platform": companion.Platform,
+			"hostname":     companion.Hostname,
+			"platform":     companion.Platform,
 			"architecture": companion.Architecture,
-			"version": companion.Version,
+			"version":      companion.Version,
 			"requested_at": request.RequestedAt,
-			"expires_at": request.ExpiresAt,
+			"expires_at":   request.ExpiresAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requests": items})
@@ -396,6 +561,10 @@ func (s *securityOperations) handleCompanionPairingApprove(w http.ResponseWriter
 	}
 	var body companionPairingApproveRequest
 	if !decodeBoundedJSON(w, r, &body) {
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionCompanionPair) ||
+		s.rejectShowAdmin(w, r, session, "companion.pairing.approve", "companion", "") {
 		return
 	}
 	key, err := s.companions.ApprovePairing(r.Context(), body.RequestID, body.PairingCode, companionauth.Approval{Actor: session.User.Username, Authorized: true})
@@ -417,6 +586,9 @@ func (s *securityOperations) handleCompanionRevoke(w http.ResponseWriter, r *htt
 	if strings.TrimSpace(body.Confirm) != "REVOKE" || strings.TrimSpace(body.Reason) == "" {
 		s.record(r, session, "companion.revoke", "companion", companionID, securityaudit.ResultRejected, "STRONG_CONFIRMATION_REQUIRED", nil)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "STRONG_CONFIRMATION_REQUIRED"})
+		return
+	}
+	if !s.recheckMutation(w, r, session, userauth.PermissionCompanionRevoke) {
 		return
 	}
 	if err := s.companions.Revoke(r.Context(), companionID, session.User.Username, body.Reason, true); err != nil {

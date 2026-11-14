@@ -2,6 +2,7 @@ package showcapsule
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -84,7 +85,14 @@ func TestSelfContainedMaterializePreservesRuntimeIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cues) != 1 || cues[0].Name != "Opening" || cues[0].NotesSummary != "Stand by projection" || len(cues[0].Actions) != 1 {
+	var cuePolicy map[string]any
+	if len(cues) == 1 {
+		if err := json.Unmarshal(cues[0].ExecutionPolicy, &cuePolicy); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(cues) != 1 || cues[0].Name != "Opening" || cues[0].DisplayLabel != "1" ||
+		cues[0].NotesSummary != "Stand by projection" || cuePolicy["operator_cue_color"] != "purple" || len(cues[0].Actions) != 1 {
 		t.Fatalf("restored cues=%+v", cues)
 	}
 	roles, err := destination.store.ListMachineRoles(ctx, source.projectID)

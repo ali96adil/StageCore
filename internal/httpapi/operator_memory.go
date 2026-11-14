@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/sessionmemory"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -44,7 +45,7 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			return
 		}
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			limit := 100
 			if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 				value, err := strconv.Atoi(raw)
@@ -59,24 +60,30 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			detail, err := memory.Detail(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"))
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, detail)
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/notes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/notes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			filter := store.NoteFilter{
-				Status: domain.NoteStatus(strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))),
-				Category: strings.TrimSpace(r.URL.Query().Get("category")),
+				Status:    domain.NoteStatus(strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))),
+				Category:  strings.TrimSpace(r.URL.Query().Get("category")),
 				SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
-				CueID: strings.TrimSpace(r.URL.Query().Get("cue_id")),
+				CueID:     strings.TrimSpace(r.URL.Query().Get("cue_id")),
 			}
 			notes, err := projectStore.ListNotes(r.Context(), r.PathValue("project_id"), filter)
 			if err != nil {
@@ -87,6 +94,9 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			for _, note := range notes {
 				views = append(views, viewNote(note))
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"notes": views})
 		}))
 
@@ -95,7 +105,7 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			if !decodeBoundedJSON(w, r, &body) {
 				return
 			}
-			note, err := projectStore.CreateNote(r.Context(), r.PathValue("project_id"), store.CreateNoteParams{
+			note, err := projectStore.CreateNote(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), store.CreateNoteParams{
 				SessionID: body.SessionID, CueID: body.CueID, Category: body.Category,
 				Body: body.Body, CreatedBy: session.User.Username,
 			})
@@ -106,12 +116,12 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			writeJSON(w, http.StatusCreated, map[string]any{"note": viewNote(note)})
 		}))
 
-		s.mux.HandleFunc("PATCH /api/v1/projects/{project_id}/notes/{note_id}", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("PATCH /api/v1/projects/{project_id}/notes/{note_id}", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			var body updateNoteRequest
 			if !decodeBoundedJSON(w, r, &body) {
 				return
 			}
-			note, err := projectStore.UpdateNote(r.Context(), r.PathValue("project_id"), r.PathValue("note_id"), body.Body, body.Category)
+			note, err := projectStore.UpdateNote(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), body.Body, body.Category)
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
@@ -119,8 +129,8 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			writeJSON(w, http.StatusOK, map[string]any{"note": viewNote(note)})
 		}))
 
-		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/resolve", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-			note, err := projectStore.SetNoteStatus(r.Context(), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteResolved)
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/resolve", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			note, err := projectStore.SetNoteStatus(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteResolved)
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return
@@ -128,8 +138,8 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			writeJSON(w, http.StatusOK, map[string]any{"note": viewNote(note)})
 		}))
 
-		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/reopen", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
-			note, err := projectStore.SetNoteStatus(r.Context(), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteOpen)
+		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/reopen", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			note, err := projectStore.SetNoteStatus(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteOpen)
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return

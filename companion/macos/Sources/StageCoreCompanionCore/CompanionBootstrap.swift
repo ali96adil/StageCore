@@ -217,6 +217,17 @@ public actor CompanionBootstrap {
             )
         }
 
+        var signedBridge: (any SignedApplicationBridge)? = nil
+        #if os(macOS)
+        let environment = ProcessInfo.processInfo.environment
+        if let endpoint = environment["STAGECORE_SIGNED_ACK_BRIDGE_URL"] {
+            guard let url = URL(string: endpoint), let token = environment["STAGECORE_SIGNED_ACK_BRIDGE_TOKEN"] else {
+                throw SignedApplicationBridgeError.invalidConfiguration
+            }
+            signedBridge = try LoopbackSignedApplicationBridge(endpoint: url, token: token)
+        }
+        #endif
+
         let companionSession = CompanionSession(
             configuration: CompanionSessionConfiguration(
                 companionID: identity.companionID,
@@ -230,7 +241,8 @@ public actor CompanionBootstrap {
                 requiresAuthenticatedSession: true
             ),
             executors: executors,
-            mediaSynchronizer: mediaSynchronizer
+            mediaSynchronizer: mediaSynchronizer,
+            signedApplicationBridge: signedBridge
         )
         self.companionSession = companionSession
 

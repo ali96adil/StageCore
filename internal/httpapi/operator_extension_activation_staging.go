@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -13,16 +15,29 @@ import (
 
 type operatorExtensionActivationStaging struct {
 	users  *userauth.Service
-	stager *extension.ActivationStager
+	stager extensionActivationStager
 	audit  *securityaudit.Service
+	hooks  extensionActivationStagingHooks
+}
+
+type extensionActivationStager interface {
+	Check(context.Context, string) (extension.ActivationStagingResult, error)
+}
+
+type extensionActivationStagingHooks struct {
+	BeforeResponse func()
 }
 
 func WithOperatorExtensionActivationStaging(users *userauth.Service, stager *extension.ActivationStager, audit *securityaudit.Service) Option {
+	return withOperatorExtensionActivationStaging(users, stager, audit, extensionActivationStagingHooks{})
+}
+
+func withOperatorExtensionActivationStaging(users *userauth.Service, stager extensionActivationStager, audit *securityaudit.Service, hooks extensionActivationStagingHooks) Option {
 	return func(s *Server) {
 		if users == nil || stager == nil {
 			return
 		}
-		h := &operatorExtensionActivationStaging{users: users, stager: stager, audit: audit}
+		h := &operatorExtensionActivationStaging{users: users, stager: stager, audit: audit, hooks: hooks}
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/activation-staging-check", withPermission(users, userauth.PermissionPluginManage, h.check))
 	}
 }
@@ -54,18 +69,40 @@ func (h *operatorExtensionActivationStaging) check(w http.ResponseWriter, r *htt
 		}
 		response["error_code"] = code
 		h.record(r, session, installationID, securityaudit.ResultRejected, code, nil)
+		if h.beforeResponseRevoked(w, r, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, installationID, securityaudit.ResultSuccess, "", map[string]any{
-		"extension_id": result.ExtensionID,
-		"version": result.Version,
-		"status": result.Status,
-		"runtime_permissions": result.RuntimePermissions,
+		"extension_id":         result.ExtensionID,
+		"version":              result.Version,
+		"status":               result.Status,
+		"runtime_permissions":  result.RuntimePermissions,
 		"execution_authorized": result.ExecutionAuthorized,
-		"execution_blocker": result.ExecutionBlocker,
+		"execution_blocker":    result.ExecutionBlocker,
 	})
+	if h.beforeResponseRevoked(w, r, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *operatorExtensionActivationStaging) beforeResponseRevoked(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
+	if h.hooks.BeforeResponse != nil {
+		h.hooks.BeforeResponse()
+	}
+	if extensionManageResponseAuthorized(h.users, r, session) {
+		return false
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     capability.DispatchAuthorityRevokedCode,
+		"detail":                         "Authorization ended during extension activation staging; refresh installation status before taking further action.",
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return true
 }
 
 func (h *operatorExtensionActivationStaging) record(r *http.Request, session userauth.Session, installationID, result, reason string, metadata any) {
@@ -73,14 +110,14 @@ func (h *operatorExtensionActivationStaging) record(r *http.Request, session use
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: "extension.activation.staging_check",
-		ActorUserID: session.User.ID,
+		EventType:     "extension.activation.staging_check",
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_installation",
-		ResourceID: strings.TrimSpace(installationID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_installation",
+		ResourceID:    strings.TrimSpace(installationID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

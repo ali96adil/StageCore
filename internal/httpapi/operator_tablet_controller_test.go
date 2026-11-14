@@ -4,17 +4,269 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+type tabletControllerDispatchFunc func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+
+func (f tabletControllerDispatchFunc) Dispatch(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+	return f(ctx, input)
+}
+
+func (tabletControllerDispatchFunc) ExecuteTabletAssignmentAuthorized(context.Context, deviceexperience.TabletAssignmentInput, string, func(context.Context) error) (deviceexperience.TabletAssignmentCommit, error) {
+	return deviceexperience.TabletAssignmentCommit{}, nil
+}
+
+func TestTabletCommandReadSuppressesDataAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-command-read-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet command read", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	command, _, err := devices.CreateCommand(ctx, deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, DeviceID: deviceID, CommandType: "TABLET_PLAY", Issuer: f.operator.Session.User.ID,
+		RuntimeSnapshotID: "snapshot-command-read", CorrelationID: "tablet-command-read-correlation",
+		IdempotencyKey: "tablet-command-read-key", Payload: json.RawMessage(`{"media_key":"01"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeCommandReadResponse: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke project view before response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	req := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller/commands/"+command.Envelope.CommandID,
+		f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), command.Envelope.CommandID) ||
+		strings.Contains(response.Body.String(), `"status"`) {
+		t.Fatalf("revoked Operator received Tablet command data: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTabletControllerListSuppressesDevicesAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-list-read-revoke"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Private tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeListResponse: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke project view before response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller", f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), deviceID) ||
+		strings.Contains(response.Body.String(), "Private tablet") {
+		t.Fatalf("revoked Operator received Tablet device data: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
+type tabletRelayFlashDoerFunc func(*http.Request) (*http.Response, error)
+
+func (f tabletRelayFlashDoerFunc) Do(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestTabletLiveFlashSuppressesRelayResultAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Tablet flash revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestSent := false
+	doer := tabletRelayFlashDoerFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.String() != "http://127.0.0.1:9081/api/v0/flash?state=on" {
+			t.Fatalf("unexpected relay request: %s %s", request.Method, request.URL)
+		}
+		requestSent = true // The relay may already have applied the requested state.
+		if err := h.auth.Logout(request.Context(), owner.Token); err != nil {
+			return nil, err
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"state":"on"}`)),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
+	})
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		WithOperatorTabletController(h.auth, devices, runtime, stageStore, doer),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/tablet-controller/live-flash",
+		[]byte(`{"url":"http://127.0.0.1:9081/api/v0/stream","state":"on"}`), owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !requestSent {
+		t.Fatal("mock relay was not called before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["error"] != "TABLET_LIVE_FLASH_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable relay response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["relay"]; leaked {
+		t.Fatalf("revoked Owner received relay success data: %+v", body)
+	}
+}
+
+func TestTabletControllerSuppressesAcceptedResultsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Tablet dispatch revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-revoke-01"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Tablet revoke", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: deviceID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessReady,
+		ObservedState: json.RawMessage(`{"project_id":"`+project.ID+`","runtime_snapshot_id":"snapshot-7"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := false
+	runtime := tabletControllerDispatchFunc(func(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		accepted = true // Transport acceptance is an external effect and cannot be recalled.
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			return deviceexperience.DeviceCommand{}, err
+		}
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID, Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{CommandID: "accepted-tablet-command", CommandType: input.CommandType,
+				ProjectID: project.ID, RuntimeSnapshotID: "snapshot-7", Issuer: input.Issuer, Payload: input.Payload},
+		}, nil
+	})
+	handler := New(
+		WithOperatorTabletController(h.auth, devices, runtime, stageStore),
+		WithProjectRouteQualification(access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/tablet-controller/commands",
+		[]byte(`{"device_ids":["`+deviceID+`"],"command_type":"TABLET_PLAY","payload":{"media_number":7}}`),
+		owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !accepted {
+		t.Fatal("mock transport did not accept command before Owner revocation")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil { t.Fatal(err) }
+	if response.Code != http.StatusForbidden || body["error"] != "TABLET_COMMAND_AUTHORITY_REVOKED" ||
+		body["effect_may_have_been_sent"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner received successful or retryable command response: HTTP %d %+v", response.Code, body)
+	}
+	if _, leaked := body["results"]; leaked {
+		t.Fatalf("revoked Owner received accepted command results: %+v", body)
+	}
+}
 
 func TestOperatorTabletControllerListsOnlyTabletPlayersAndGroups(t *testing.T) {
 	h := newAuthHarness(t)
@@ -215,6 +467,56 @@ func TestTabletAutoRelaySourceRejectsPublicOrUntrustedHost(t *testing.T) {
 	if source, ok := tabletAutoRelaySource("project-1", "stagecore-pi.local:7840", time.Now()); !ok ||
 		source.EndpointRef != "http://stagecore-pi.local:9081/api/v0/stream" {
 		t.Fatalf("mDNS Hub host should produce local relay candidate: %+v ok=%v", source, ok)
+	}
+}
+
+func TestTabletCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "tablet-cue-acl"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: f.projectID, Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Scoped tablet", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: []string{deviceexperience.CapabilityTabletPlay}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CueEdit}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeCueAliasCreate: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke CueEdit before alias creation: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller/cue-actions",
+		[]byte(`{"device_ids":["`+deviceID+`"],"command_type":"TABLET_PLAY","payload":{"media_number":7}}`),
+		f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatalf("revoked Operator received Tablet cue action: %s", response.Body.String())
+	}
+	aliases, err := f.projects.ListAliases(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 0 {
+		t.Fatalf("Tablet target alias committed after CueEdit revocation: %+v", aliases)
 	}
 }
 

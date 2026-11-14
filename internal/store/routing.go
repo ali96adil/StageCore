@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -26,7 +27,7 @@ func (s *Store) CreateInput(ctx context.Context, input domain.InputDefinition) (
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("input value schema: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO input_definitions (input_id, revision_id, name, source_ref, event_type, value_schema_json, enabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, input.ID, input.RevisionID, strings.TrimSpace(input.Name), input.SourceRef, input.EventType, schema, boolInt(input.Enabled))
 	if err != nil {
@@ -44,7 +45,7 @@ func (s *Store) UpdateInput(ctx context.Context, input domain.InputDefinition) (
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("input value schema: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE input_definitions
 		SET name = ?, source_ref = ?, event_type = ?, value_schema_json = ?, enabled = ?
 		WHERE input_id = ? AND revision_id = ?`,
@@ -85,7 +86,7 @@ func (s *Store) DeleteInput(ctx context.Context, revisionID, inputID string) err
 	if references > 0 {
 		return fmt.Errorf("%w: input is referenced by %d route(s)", domain.ErrConflict, references)
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM input_definitions WHERE input_id = ? AND revision_id = ?`, inputID, revisionID)
+	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM input_definitions WHERE input_id = ? AND revision_id = ?`, inputID, revisionID)
 	if err != nil {
 		return fmt.Errorf("delete input: %w", err)
 	}
@@ -117,7 +118,7 @@ func (s *Store) CreateOutput(ctx context.Context, output domain.OutputDefinition
 	if err != nil {
 		return domain.OutputDefinition{}, fmt.Errorf("output value schema: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO output_definitions (output_id, revision_id, name, target_ref, capability_key, value_schema_json, criticality)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, output.ID, output.RevisionID, strings.TrimSpace(output.Name), output.TargetRef, output.CapabilityKey, schema, output.Criticality)
 	if err != nil {
@@ -126,7 +127,6 @@ func (s *Store) CreateOutput(ctx context.Context, output domain.OutputDefinition
 	output.ValueSchema = json.RawMessage(schema)
 	return output, nil
 }
-
 
 func (s *Store) UpdateOutput(ctx context.Context, output domain.OutputDefinition) (domain.OutputDefinition, error) {
 	if err := s.ensureDraft(ctx, s.db, output.RevisionID); err != nil {
@@ -139,7 +139,7 @@ func (s *Store) UpdateOutput(ctx context.Context, output domain.OutputDefinition
 	if err != nil {
 		return domain.OutputDefinition{}, fmt.Errorf("output value schema: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE output_definitions
 		SET name = ?, target_ref = ?, capability_key = ?, value_schema_json = ?, criticality = ?
 		WHERE output_id = ? AND revision_id = ?`,
@@ -287,6 +287,9 @@ func (s *Store) CreateRouteWithActions(ctx context.Context, route domain.Route, 
 		action.Parameters = json.RawMessage(params)
 		route.Actions = append(route.Actions, action)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Route{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Route{}, fmt.Errorf("commit create route: %w", err)
 	}
@@ -399,6 +402,9 @@ func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, 
 		action.Parameters = json.RawMessage(params)
 		route.Actions = append(route.Actions, action)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Route{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Route{}, fmt.Errorf("commit update route: %w", err)
 	}
@@ -416,7 +422,7 @@ func (s *Store) DeleteRoute(ctx context.Context, revisionID, routeID string) err
 	if err := s.ensureDraft(ctx, s.db, revisionID); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM routes WHERE route_id = ? AND revision_id = ?`, routeID, revisionID)
+	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM routes WHERE route_id = ? AND revision_id = ?`, routeID, revisionID)
 	if err != nil {
 		return fmt.Errorf("delete route: %w", err)
 	}

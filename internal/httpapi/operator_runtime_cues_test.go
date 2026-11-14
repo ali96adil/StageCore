@@ -35,7 +35,8 @@ func TestRuntimeJumpListUsesPublishedSnapshotNotNewDraft(t *testing.T) {
 	if err := projectStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := snapshot.NewBuilder(projectStore).Create(ctx, revision.ID, "owner"); err != nil {
+	publishedSnapshot, _, err := snapshot.NewBuilder(projectStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,5 +66,32 @@ func TestRuntimeJumpListUsesPublishedSnapshotNotNewDraft(t *testing.T) {
 	}
 	if len(viewAfterDraft.Cues) != 1 || viewAfterDraft.Cues[0].ID != publishedCue.ID {
 		t.Fatalf("runtime Jump list leaked Draft Cues: %+v", viewAfterDraft.Cues)
+	}
+
+	session, err := projectStore.CreateSessionWithPurpose(ctx, publishedSnapshot.ID, domain.SessionRehearsal, "Overlapping Cue executions", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := projectStore.CreateCueExecution(ctx, session.ID, publishedCue.ID, "finished-correlation", "GO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projectStore.FinishCueExecution(ctx, finished.ID, domain.ExecutionCompleted); err != nil {
+		t.Fatal(err)
+	}
+	active, err := projectStore.CreateCueExecution(ctx, session.ID, publishedCue.ID, "active-correlation", "GO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewWithActive, err := buildRuntimeStatus(req, projectStore, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if viewWithActive.ActiveExecutionCount != 1 || len(viewWithActive.ActiveExecutions) != 1 ||
+		viewWithActive.ActiveExecutions[0].ID != active.ID || viewWithActive.ActiveExecutions[0].Result != domain.ExecutionRunning {
+		t.Fatalf("runtime did not expose only active Cue executions: %+v", viewWithActive)
+	}
+	if viewWithActive.LatestExecution == nil || viewWithActive.LatestExecution.ID != active.ID {
+		t.Fatalf("runtime lost latest Cue result while exposing active executions: %+v", viewWithActive.LatestExecution)
 	}
 }

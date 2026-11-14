@@ -8,11 +8,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -237,4 +240,87 @@ func TestLightingCommissioningV2RoutesRequireAuthenticatedActiveSocket(t *testin
 	var count int
 	if err := h.db.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stage_device_commands WHERE device_id=?", deviceID).Scan(&count); err != nil { t.Fatal(err) }
 	if count != 0 { t.Fatalf("unauthorized commissioning emitted %d commands", count) }
+}
+
+type lightingCommissioningDispatchFunc func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+
+func (f lightingCommissioningDispatchFunc) Dispatch(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+	return f(ctx, input)
+}
+
+func (lightingCommissioningDispatchFunc) CurrentV2Scope(string) (devicechannel.V2RuntimeScope, bool) {
+	return devicechannel.V2RuntimeScope{}, false
+}
+
+func TestLightingCommissioningSuppressesSuccessAfterOwnerRevocationPostDispatch(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Lighting revoke boundary", CreatedBy: "owner"})
+	if err != nil { t.Fatal(err) }
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	const deviceID = "lighting-01"
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: deviceID, ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Lighting revoke boundary",
+		ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil { t.Fatal(err) }
+	configuration := lightingnode.Configuration{SchemaVersion: 1, Channels: []lightingnode.ChannelConfig{{
+		ChannelKey: "warm_a", ChannelNumber: 1, DisplayName: "Warm",
+		Kind: lightingnode.ChannelWarmWhite, MinimumLevel: 0, MaximumLevel: 100, Enabled: true,
+	}}}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, lightingnode.ProjectBinding{
+		DeviceID: deviceID, ProfileID: lightingnode.ProfileID,
+		Configuration: configuration, Aliases: map[string]string{"front_warm": "warm_a"},
+	}, "owner"); err != nil { t.Fatal(err) }
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil { t.Fatal(err) }
+	if _, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner"); err != nil { t.Fatal(err) }
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil { t.Fatal(err) }
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	tokenToRevoke := owner.Token
+	dispatched := false
+	runtime := lightingCommissioningDispatchFunc(func(ctx context.Context, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		if err := capability.CheckDispatch(ctx); err != nil { return deviceexperience.DeviceCommand{}, err }
+		// Model the already-accepted transport effect. It cannot be recalled.
+		dispatched = true
+		if err := h.auth.Logout(ctx, tokenToRevoke); err != nil { return deviceexperience.DeviceCommand{}, err }
+		return deviceexperience.DeviceCommand{
+			DeviceID: deviceID,
+			Status: contracts.CommandAccepted,
+			Envelope: contracts.CommandEnvelope{
+				CommandID: "accepted-lighting-command", CommandType: input.CommandType,
+				ProjectID: project.ID, Issuer: input.Issuer, Payload: input.Payload,
+			},
+		}, nil
+	})
+	handler := New(
+		WithOperatorLightingCommissioning(h.auth, devices, runtime, stageStore),
+		WithProjectRouteQualification(access),
+	).Handler()
+	sendAndAssertRevocation := func(credentialToken, csrf, path, body string) {
+		t.Helper()
+		dispatched = false
+		request := authenticatedMutationRequest(t, http.MethodPost, path, []byte(body), credentialToken, csrf)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if !dispatched { t.Fatal("mock transport did not accept command before revocation") }
+		var responseBody map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &responseBody); err != nil { t.Fatal(err) }
+		if response.Code != http.StatusForbidden || responseBody["error_code"] != capability.DispatchAuthorityRevokedCode ||
+			responseBody["effect_may_have_been_sent"] != true || responseBody["retryable"] != false {
+			t.Fatalf("revoked Owner received success or retryable response after command dispatch: HTTP %d %+v", response.Code, responseBody)
+		}
+		if _, leaked := responseBody["command"]; leaked { t.Fatalf("revoked Owner received command details: %+v", responseBody) }
+	}
+	projectPath := "/api/v1/projects/"+project.ID+"/lighting-controller/nodes/"+deviceID
+	sendAndAssertRevocation(owner.Token, owner.CSRFToken, projectPath+"/identify", `{"alias":"front_warm","level":30,"duration_ms":500}`)
+
+	owner, err = h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil { t.Fatal(err) }
+	tokenToRevoke = owner.Token
+	sendAndAssertRevocation(owner.Token, owner.CSRFToken, projectPath+"/apply-published-config", `{}`)
 }

@@ -76,7 +76,7 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 	if memoryRes.Code != http.StatusOK || !strings.HasPrefix(memoryRes.Header().Get("Content-Type"), "application/javascript") {
 		t.Fatalf("memory.js status=%d content-type=%q", memoryRes.Code, memoryRes.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(memoryRes.Body.String(), "/sessions") || !strings.Contains(memoryRes.Body.String(), "/notes") || !strings.Contains(memoryRes.Body.String(), "execution trace") {
+	if !strings.Contains(memoryRes.Body.String(), "/sessions") || !strings.Contains(memoryRes.Body.String(), "/notes") || !strings.Contains(memoryRes.Body.String(), "execution trace") || !strings.Contains(memoryRes.Body.String(), "Transport sent; external execution unknown") || !strings.Contains(memoryRes.Body.String(), "Hub dispatch attempts") {
 		t.Fatal("embedded Session Memory client is missing structured session and note flows")
 	}
 
@@ -128,7 +128,6 @@ func TestEmbeddedOperatorWebIsOfflineAndSecurityBound(t *testing.T) {
 		t.Fatalf("unknown operator path status=%d, want 404", missingRes.Code)
 	}
 }
-
 
 func TestOperatorSidebarKeepsInjectedNavigationScrollable(t *testing.T) {
 	handler := New(WithOperatorWeb()).Handler()

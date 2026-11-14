@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/netip"
@@ -11,20 +12,27 @@ import (
 	"github.com/ali96adil/StageCore/internal/bulk"
 	"github.com/ali96adil/StageCore/internal/companionauth"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
+	"github.com/ali96adil/StageCore/internal/store"
 	stagevault "github.com/ali96adil/StageCore/internal/vault"
 )
 
 type Server struct {
-	mux                *http.ServeMux
-	companionAuth      *companionauth.Service
-	companionRuntime   *companionchannel.RuntimeChannel
-	vault              *stagevault.Vault
-	software           *software.Repository
-	bulk               *bulk.Manager
-	storageHealth      *storagehealth.Monitor
-	assistantWorkspace *assistant.WorkspaceService
+	mux                       *http.ServeMux
+	companionAuth             *companionauth.Service
+	companionRuntime          *companionchannel.RuntimeChannel
+	vault                     *stagevault.Vault
+	companionVaultScope       *store.Store
+	projectMediaDownload      bool
+	projectRouteQualification *projectaccess.Service
+	projectQualificationSet   bool
+	pluginAdminGuard          func(http.ResponseWriter, *http.Request)
+	software                  *software.Repository
+	bulk                      *bulk.Manager
+	storageHealth             *storagehealth.Monitor
+	assistantWorkspace        *assistant.WorkspaceService
 }
 
 type Option func(*Server)
@@ -38,7 +46,22 @@ func WithCompanionRuntime(channel *companionchannel.RuntimeChannel) Option {
 }
 
 func WithVault(v *stagevault.Vault) Option {
-	return func(s *Server) { s.vault = v }
+	return func(s *Server) {
+		s.vault = v
+		if v != nil {
+			s.companionVaultScope = v.CompanionScopeStore()
+		}
+	}
+}
+
+// WithCompanionVaultScope overrides the Vault catalog used for Companion read authorization.
+// Nil leaves the scope inferred from WithVault in place.
+func WithCompanionVaultScope(projects *store.Store) Option {
+	return func(s *Server) {
+		if projects != nil {
+			s.companionVaultScope = projects
+		}
+	}
 }
 
 func WithSoftwareRepository(repository *software.Repository) Option {
@@ -106,7 +129,33 @@ func (s *Server) handleCompanionRuntime(w http.ResponseWriter, r *http.Request) 
 	s.companionRuntime.ServeWebSocket(w, r, session, token)
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler {
+	if s.pluginAdminGuard == nil && !s.projectQualificationSet {
+		return s.mux
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := s.mux.Handler(r)
+		if s.pluginAdminGuard != nil && isHubPluginAdminPattern(pattern) {
+			s.pluginAdminGuard(w, r)
+			return
+		}
+		if s.projectRouteQualification != nil {
+			if projectURLPattern(pattern) && !projectRouteIsQualified(pattern) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error_code": "PROJECT_ROUTE_UNQUALIFIED"})
+				return
+			}
+			if projectRouteIsQualified(pattern) {
+				r = r.WithContext(context.WithValue(r.Context(), projectQualificationKey{}, s.projectRouteQualification))
+			}
+		} else if s.projectQualificationSet && (projectURLPattern(pattern) || projectRouteIsQualified(pattern)) {
+			// An explicit qualification option with a missing service is a
+			// configuration error. Do not silently fall back to global roles.
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

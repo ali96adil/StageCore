@@ -15,6 +15,7 @@
       callboardTitle: "Stage Display / Callboard",
       callboardSub: "Send messages, countdowns and alerts to one display, a group, or every display.",
       videoTitle: "Live Video Sources",
+      openProtectedCamera: "Open project camera",
       videoSub: "Define camera/capture/stream sources and assign execution to a capable Render Node or StageCore Native Visual Machine Role.",
       networkTitle: "Stage Network Cockpit",
       networkSub: "Latest bounded observations for Hub, Companion, Stage Devices, live sources and endpoints.",
@@ -236,6 +237,7 @@
       callboardTitle: "شاشة المسرح / Callboard",
       callboardSub: "أرسل رسالة أو عدّاً تنازلياً أو تنبيهاً لشاشة واحدة أو مجموعة أو لكل الشاشات.",
       videoTitle: "مصادر الفيديو الحي",
+      openProtectedCamera: "افتح كاميرا المشروع",
       videoSub: "عرّف الكاميرا أو كرت الالتقاط أو البث الشبكي وحدد Render Node للتنفيذ عند الحاجة.",
       networkTitle: "مراقبة شبكة المسرح",
       networkSub: "آخر حالة مسجلة للـHub والـCompanion وأجهزة المسرح ومصادر الفيديو ونقاط الاتصال.",
@@ -1669,6 +1671,20 @@
         </div>
       </form>` : ""}
       ${sources.length ? `<div class="phase4-grid">${sources.map((source) => sourceCard(source, editable, roles, devices)).join("")}</div>` : `<div class="phase4-empty">${esc(t("noSources"))}</div>`}`;
+
+    const viewer = document.createElement("section");
+    const viewURL = `/api/v1/projects/${encodeURIComponent(projectID)}/camera-relay/stream`;
+    body.prepend(viewer);
+    fetch(viewURL, { method: "HEAD", cache: "no-store" }).then((response) => {
+      if (response.status !== 204 || !viewer.isConnected || currentProjectID() !== projectID) return;
+      const link = document.createElement("a");
+      link.className = "button ghost";
+      link.href = viewURL;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = t("openProtectedCamera");
+      viewer.append(link);
+    }).catch(() => {});
 
     const form = document.getElementById("liveSourceForm");
     const resetEditor = () => {

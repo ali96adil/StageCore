@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
@@ -28,8 +29,8 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.ProjectID == "" || input.DeviceID == "" || input.CommandType == "" || input.Issuer == "" {
 		return DeviceCommand{}, false, fmt.Errorf("%w: project, device, command type and issuer are required", ErrInvalidState)
 	}
-	capability := RequiredCapability(input.CommandType)
-	if capability == "" {
+	requiredCapability := RequiredCapability(input.CommandType)
+	if requiredCapability == "" {
 		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported command type %q", ErrInvalidState, input.CommandType)
 	}
 	device, err := r.GetDevice(ctx, input.DeviceID)
@@ -70,8 +71,19 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	default:
 		return DeviceCommand{}, false, fmt.Errorf("%w: unsupported Stage Device protocol", ErrInvalidState)
 	}
-	if !contains(device.Capabilities, capability) {
-		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, capability)
+	if !contains(device.Capabilities, requiredCapability) {
+		return DeviceCommand{}, false, fmt.Errorf("%w: %s", ErrCapabilityMissing, requiredCapability)
+	}
+	laserCommand := device.ProtocolVersion == ProtocolVersion2 && device.ProfileID == stagelaser.ProfileID &&
+		stagelaser.CommandCapability(input.CommandType) != ""
+	useGeneration := laserCommand && contains(device.Capabilities, stagelaser.ControlGenerationCapability)
+	reuse := func(command DeviceCommand) (DeviceCommand, bool, error) {
+		if laserCommand && (useGeneration != (command.Envelope.ControlGeneration > 0) ||
+			command.Envelope.ProjectID != input.ProjectID || command.Envelope.RuntimeSnapshotID != input.RuntimeSnapshotID ||
+			command.Envelope.CommandType != input.CommandType || command.SessionID != input.SessionID) {
+			return DeviceCommand{}, false, fmt.Errorf("%w: StageLaser idempotency key is bound to another command scope or protocol", ErrInvalidState)
+		}
+		return command, true, nil
 	}
 	now := r.now().UTC()
 	if input.DeadlineAt != nil {
@@ -84,7 +96,7 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.IdempotencyKey != "" {
 		existing, err := r.getCommandByIdempotency(ctx, input.DeviceID, input.IdempotencyKey)
 		if err == nil {
-			return existing, true, nil
+			return reuse(existing)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return DeviceCommand{}, false, err
@@ -93,6 +105,10 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	payload, err := canonicalCommandPayload(input.CommandType, input.Payload, now)
 	if err != nil {
 		return DeviceCommand{}, false, err
+	}
+	if useGeneration && input.DeadlineAt == nil && stagelaser.RequiresFreshDeadline(input.CommandType, payload) {
+		deadline := now.Add(5 * time.Second)
+		input.DeadlineAt = &deadline
 	}
 	if err := r.validateLightingCommandAuthority(ctx, input, device, payload); err != nil {
 		return DeviceCommand{}, false, err
@@ -130,19 +146,28 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 	if input.SessionID != "" {
 		session = input.SessionID
 	}
-	_, err = r.db.ExecContext(ctx, `
+	const insert = `
 		INSERT INTO stage_device_commands
 		(command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
-		 issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED')
-	`, commandID, input.ProjectID, session, input.DeviceID, input.CommandType,
-		input.RuntimeSnapshotID, now.UnixMicro(), deadline,
-		input.Issuer, input.CorrelationID, input.CausationID, input.Priority, input.IdempotencyKey, string(payload))
+		 issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status, control_generation)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', ?)
+	`
+	args := []any{commandID, input.ProjectID, session, input.DeviceID, input.CommandType,
+		input.RuntimeSnapshotID, now.UnixMicro(), deadline, input.Issuer, input.CorrelationID,
+		input.CausationID, input.Priority, input.IdempotencyKey, string(payload)}
+	if useGeneration {
+		envelope.ControlGeneration, err = r.insertGeneratedCommand(ctx, insert, args)
+	} else {
+		_, err = capability.ExecAuthorized(ctx, r.db, insert, append(args, 0)...)
+	}
+	if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		return DeviceCommand{}, false, err
+	}
 	if err != nil {
 		if input.IdempotencyKey != "" {
 			existing, getErr := r.getCommandByIdempotency(ctx, input.DeviceID, input.IdempotencyKey)
 			if getErr == nil {
-				return existing, true, nil
+				return reuse(existing)
 			}
 		}
 		return DeviceCommand{}, false, fmt.Errorf("create stage device command: %w", err)
@@ -153,6 +178,33 @@ func (r *Repository) CreateCommand(ctx context.Context, input CreateCommandInput
 		return DeviceCommand{}, false, fmt.Errorf("record stage device command accepted event: %w", err)
 	}
 	return created, false, nil
+}
+
+func (r *Repository) insertGeneratedCommand(ctx context.Context, insert string, args []any) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var generation int64
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE stagelaser_control_sequence SET generation = generation + 1
+		WHERE id = 1 AND generation < ? RETURNING generation
+	`, stagelaser.MaxControlGeneration).Scan(&generation); err != nil {
+		// Do not return sql.ErrNoRows as a command lookup failure.
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("%w: StageLaser control generation unavailable or exhausted", ErrInvalidState)
+		}
+		return 0, fmt.Errorf("allocate StageLaser control generation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, insert, append(args, generation)...); err != nil {
+		return 0, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return 0, err
+	}
+	return generation, tx.Commit()
 }
 
 func (r *Repository) CompleteCommand(ctx context.Context, commandID string, status contracts.CommandStatus, result json.RawMessage) (DeviceCommand, error) {
@@ -224,7 +276,7 @@ func (r *Repository) getCommandUnlocked(ctx context.Context, commandID string) (
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
-		       result_json, completed_at_us
+		       result_json, completed_at_us, control_generation
 		FROM stage_device_commands WHERE command_id = ?
 	`, strings.TrimSpace(commandID)))
 }
@@ -235,7 +287,7 @@ func (r *Repository) getCommandByIdempotency(ctx context.Context, deviceID, key 
 	return r.scanCommand(r.db.QueryRowContext(ctx, `
 		SELECT command_id, project_id, session_id, device_id, command_type, runtime_snapshot_id, issued_at_us, deadline_at_us,
 		       issuer, correlation_id, causation_id, priority, idempotency_key, payload_json, status,
-		       result_json, completed_at_us
+		       result_json, completed_at_us, control_generation
 		FROM stage_device_commands WHERE device_id = ? AND idempotency_key = ?
 	`, deviceID, key))
 }
@@ -307,7 +359,7 @@ func (r *Repository) scanCommand(row scanner) (DeviceCommand, error) {
 	err := row.Scan(&command.Envelope.CommandID, &command.Envelope.ProjectID, &session, &command.DeviceID,
 		&command.Envelope.CommandType, &command.Envelope.RuntimeSnapshotID, &issuedUS, &deadline, &command.Envelope.Issuer,
 		&command.Envelope.CorrelationID, &command.Envelope.CausationID, &command.Envelope.Priority,
-		&command.Envelope.IdempotencyKey, &payload, &command.Status, &result, &completed)
+		&command.Envelope.IdempotencyKey, &payload, &command.Status, &result, &completed, &command.Envelope.ControlGeneration)
 	if err != nil {
 		return DeviceCommand{}, err
 	}

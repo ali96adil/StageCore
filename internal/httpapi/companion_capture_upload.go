@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -75,7 +77,7 @@ func handleCompanionCaptureUpload(
 	}
 	if r.ContentLength != ticket.ExpectedSizeBytes {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error_code": "CAPTURE_UPLOAD_LENGTH_MISMATCH",
+			"error_code":          "CAPTURE_UPLOAD_LENGTH_MISMATCH",
 			"expected_size_bytes": ticket.ExpectedSizeBytes,
 		})
 		return
@@ -91,7 +93,17 @@ func handleCompanionCaptureUpload(
 		return
 	}
 
-	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, r.Body)
+	scoped := &authorizedCaptureReader{source: r.Body, authorize: func() error {
+		current, err := stageStore.AuthorizeCompanionUploadTicket(r.Context(), uploadCredential)
+		if err != nil {
+			return err
+		}
+		if current.ID != ticket.ID || current.RuntimeSessionID != session.ID || current.CompanionID != session.CompanionID {
+			return domain.ErrConflict
+		}
+		return nil
+	}}
+	reader := bulk.NewGuardedReader(r.Context(), manager, jobID, scoped)
 	object, err := v.ImportVerifiedObject(
 		r.Context(),
 		ticket.ExpectedContentHash,
@@ -99,6 +111,11 @@ func handleCompanionCaptureUpload(
 		reader,
 	)
 	if err != nil {
+		if scoped.denied != nil {
+			manager.Fail(jobID, "capture upload authority changed during transfer")
+			writeCompanionCaptureUploadTicketError(w, scoped.denied)
+			return
+		}
 		if r.Context().Err() != nil {
 			manager.Cancel(jobID, r.Context().Err().Error())
 		} else {
@@ -113,7 +130,11 @@ func handleCompanionCaptureUpload(
 	)
 	if err != nil {
 		manager.Fail(jobID, "capture upload authority changed before completion")
-		_, _ = v.RemoveObjectIfUnreferenced(r.Context(), object.ContentHash)
+		if errors.Is(err, domain.ErrShowConfigurationLocked) {
+			writeJSON(w, http.StatusLocked, map[string]any{"error_code": "BULK_TRANSFER_BLOCKED_SHOW"})
+			return
+		}
+		_, _ = v.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
 		if errors.Is(err, domain.ErrConflict) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CAPTURE_UPLOAD_COMPLETION_REJECTED"})
 			return
@@ -124,12 +145,52 @@ func handleCompanionCaptureUpload(
 
 	manager.Complete(jobID)
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"ticket_id": completed.ID,
-		"status": completed.Status,
-		"content_hash": object.ContentHash,
-		"size_bytes": object.SizeBytes,
+	currentSession, sessionErr := auth.ValidateRuntimeSession(r.Context(), strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "StageCoreSession ")))
+	issuerErr := stageStore.CheckCompanionUploadIssuer(r.Context(), store.CreateCompanionUploadTicketParams{
+		IssuerBrowserSessionID:      completed.IssuerBrowserSessionID,
+		IssuerRequiresProjectGrants: completed.IssuerRequiresProjectGrants,
+		CompanionID:                 completed.CompanionID,
+		RuntimeSessionID:            completed.RuntimeSessionID,
+		EnvironmentManifestID:       completed.EnvironmentManifestID,
+		MachineRoleID:               completed.MachineRoleID,
+		RuntimeSnapshotID:           completed.RuntimeSnapshotID,
+		Purpose:                     completed.Purpose,
 	})
+	if sessionErr != nil || currentSession.ID != session.ID || currentSession.CompanionID != session.CompanionID || issuerErr != nil {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error_code":                     "CAPTURE_UPLOAD_AUTHORITY_REVOKED",
+			"effect_may_have_been_committed": true,
+			"retryable":                      false,
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ticket_id":    completed.ID,
+		"status":       completed.Status,
+		"content_hash": object.ContentHash,
+		"size_bytes":   object.SizeBytes,
+	})
+}
+
+type authorizedCaptureReader struct {
+	source    io.Reader
+	authorize func() error
+	denied    error
+}
+
+func (reader *authorizedCaptureReader) Read(data []byte) (int, error) {
+	if reader.denied == nil {
+		reader.denied = reader.authorize()
+	}
+	if reader.denied != nil {
+		return 0, reader.denied
+	}
+	n, err := reader.source.Read(data[:min(len(data), 64<<10)])
+	// Revocation may happen while the request body is waiting for bytes.
+	if reader.denied = reader.authorize(); reader.denied != nil {
+		return 0, reader.denied
+	}
+	return n, err
 }
 
 func companionCaptureUploadRuntimeSession(

@@ -169,6 +169,15 @@ public actor WebSocketCompanionAgent {
                     try await send(response, socket: socket)
                     continue
                 }
+                #if os(macOS)
+                if let response = try await OSCQueryDiscoveryRouter().handle(
+                    data,
+                    authenticated: runtimeState.hasEstablishedAuthenticatedSession()
+                ) {
+                    try await send(response, socket: socket)
+                    continue
+                }
+                #endif
                 if let response = try await session.handle(data) {
                     try await send(response, socket: socket)
                 }

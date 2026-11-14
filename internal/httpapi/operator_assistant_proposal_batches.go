@@ -8,6 +8,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/assistant"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -35,8 +36,12 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 			writeAssistantProposalError(w, err)
 			return
 		}
+		permissions := make([]userauth.Permission, 0, len(input.Proposal.Operations))
 		for _, op := range input.Proposal.Operations {
-			if err := userauth.Authorize(session.User.Role, assistantProposalPermission(op.Kind)); err != nil {
+			permission := assistantProposalPermission(op.Kind)
+			permissions = append(permissions, permission)
+			if err := userauth.Authorize(session.User.Role, permission); err != nil &&
+				!scopedProjectRoleMayUsePermission(r, session.User.Role, permission) {
 				appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultRejected, "permission denied")
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
@@ -72,7 +77,11 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 			writeAssistantProposalError(w, err)
 			return
 		}
-		results, err := stageStore.ApplyAssistantProposalBatch(r.Context(), projectID, input.Proposal.BaseRevisionID, session.User.Username, mutations)
+		ctx := store.WithCueDraftHistoryActor(
+			projectMutationContextForPermissions(r, auth, session, permissions, nil, projectaccess.ProjectEdit),
+			session.User.ID,
+		)
+		results, err := stageStore.ApplyAssistantProposalBatch(ctx, projectID, input.Proposal.BaseRevisionID, session.User.Username, mutations)
 		if errors.Is(err, store.ErrProjectRevisionChanged) {
 			err = errAssistantProposalStale
 		}
@@ -82,6 +91,11 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 			return
 		}
 		appendAssistantProposalAudit(r, audit, session, projectID, input.Proposal, securityaudit.ResultSuccess, "")
+		for _, permission := range permissions {
+			if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil, projectaccess.ProjectEdit) {
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"applied":         true,
 			"atomic_batch":    true,

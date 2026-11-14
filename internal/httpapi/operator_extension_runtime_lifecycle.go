@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/securityaudit"
@@ -15,14 +16,24 @@ type operatorExtensionRuntimeLifecycle struct {
 	users      *userauth.Service
 	supervisor *extension.RuntimeSupervisor
 	audit      *securityaudit.Service
+	hooks      extensionRuntimeLifecycleHooks
+}
+
+type extensionRuntimeLifecycleHooks struct {
+	BeforeMutationResponse func()
+	BeforeReadResponse     func()
 }
 
 func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service) Option {
+	return withOperatorExtensionRuntimeLifecycle(users, supervisor, audit, extensionRuntimeLifecycleHooks{})
+}
+
+func withOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *extension.RuntimeSupervisor, audit *securityaudit.Service, hooks extensionRuntimeLifecycleHooks) Option {
 	return func(s *Server) {
 		if users == nil || supervisor == nil {
 			return
 		}
-		h := &operatorExtensionRuntimeLifecycle{users: users, supervisor: supervisor, audit: audit}
+		h := &operatorExtensionRuntimeLifecycle{users: users, supervisor: supervisor, audit: audit, hooks: hooks}
 		s.mux.HandleFunc("GET /api/v1/extensions/installations/{installation_id}/runtime", withPermission(users, userauth.PermissionProjectRead, h.status))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/enable", withPermission(users, userauth.PermissionPluginManage, h.enable))
 		s.mux.HandleFunc("POST /api/v1/extensions/installations/{installation_id}/disable", withPermission(users, userauth.PermissionPluginManage, h.disable))
@@ -31,8 +42,14 @@ func WithOperatorExtensionRuntimeLifecycle(users *userauth.Service, supervisor *
 	}
 }
 
-func (h *operatorExtensionRuntimeLifecycle) status(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func (h *operatorExtensionRuntimeLifecycle) status(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 	item, err := h.supervisor.Status(r.Context(), strings.TrimSpace(r.PathValue("installation_id")))
+	if h.hooks.BeforeReadResponse != nil {
+		h.hooks.BeforeReadResponse()
+	}
+	if !recheckExtensionReadResponse(w, r, h.users, session, userauth.PermissionProjectRead) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXTENSION_INSTALLATION_NOT_FOUND"})
@@ -83,18 +100,27 @@ func (h *operatorExtensionRuntimeLifecycle) uninstall(w http.ResponseWriter, r *
 		}
 		response["error_code"] = code
 		h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultRejected, code, response["blockers"])
+		if h.beforeMutationResponseRevoked(w, r, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 
 	h.record(r, session, "extension.package.uninstall", installationID, securityaudit.ResultSuccess, "", map[string]any{
-		"package_id": item.PackageID,
-		"extension_id": item.ExtensionID,
-		"version": item.Version,
-		"payload_removed": item.PayloadRemoved,
+		"package_id":             item.PackageID,
+		"extension_id":           item.ExtensionID,
+		"version":                item.Version,
+		"payload_removed":        item.PayloadRemoved,
 		"payload_already_absent": item.PayloadAlreadyAbsent,
-		"cleanup_warning": item.CleanupWarning,
+		"cleanup_warning":        item.CleanupWarning,
 	})
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	if h.writeRevokedMutationResponse(w, r, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -143,21 +169,102 @@ func (h *operatorExtensionRuntimeLifecycle) transition(w http.ResponseWriter, r 
 		}
 		response["error_code"] = code
 		h.record(r, session, eventType, installationID, securityaudit.ResultRejected, code, map[string]any{
-			"desired_state": item.DesiredState,
+			"desired_state":  item.DesiredState,
 			"observed_state": item.ObservedState,
-			"generation": item.Generation,
+			"generation":     item.Generation,
 		})
+		if h.beforeMutationResponseRevoked(w, r, session) {
+			return
+		}
 		writeJSON(w, status, response)
 		return
 	}
 	h.record(r, session, eventType, installationID, securityaudit.ResultSuccess, "", map[string]any{
-		"extension_id": item.ExtensionID,
-		"version": item.Version,
-		"desired_state": item.DesiredState,
+		"extension_id":   item.ExtensionID,
+		"version":        item.Version,
+		"desired_state":  item.DesiredState,
 		"observed_state": item.ObservedState,
-		"generation": item.Generation,
+		"generation":     item.Generation,
 	})
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	if h.writeRevokedMutationResponse(w, r, session) {
+		return
+	}
 	writeJSON(w, http.StatusOK, item)
+}
+
+func (h *operatorExtensionRuntimeLifecycle) beforeMutationResponseRevoked(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
+	if h.hooks.BeforeMutationResponse != nil {
+		h.hooks.BeforeMutationResponse()
+	}
+	return h.writeRevokedMutationResponse(w, r, session)
+}
+
+func (h *operatorExtensionRuntimeLifecycle) writeRevokedMutationResponse(w http.ResponseWriter, r *http.Request, session userauth.Session) bool {
+	return writeRevokedExtensionMutationResponse(w, r, h.users, session)
+}
+
+func extensionManageResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session) bool {
+	if users == nil || capability.CheckDispatch(r.Context()) != nil {
+		return false
+	}
+	return extensionPermissionResponseAuthorized(users, r, session, userauth.PermissionPluginManage)
+}
+
+func extensionPermissionResponseAuthorized(users *userauth.Service, r *http.Request, session userauth.Session, permission userauth.Permission) bool {
+	if users == nil {
+		return false
+	}
+	token, ok := browserSessionToken(r)
+	if !ok {
+		return false
+	}
+	var next userauth.Session
+	var err error
+	if isUnsafeMethod(r.Method) {
+		next, err = users.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	} else {
+		next, err = users.ValidatePassive(r.Context(), token)
+	}
+	if err != nil || next.ID != session.ID || next.User.ID != session.User.ID ||
+		userauth.Authorize(next.User.Role, permission) != nil {
+		return false
+	}
+	return qualificationAccess(r, nil) == nil || next.User.Role == userauth.RoleOwner
+}
+
+func recheckExtensionReadResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session, permission userauth.Permission) bool {
+	if extensionPermissionResponseAuthorized(users, r, session, permission) {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	return false
+}
+
+func recheckExtensionManageReadResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session) bool {
+	if extensionManageResponseAuthorized(users, r, session) {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+	return false
+}
+
+func writeRevokedExtensionMutationResponse(w http.ResponseWriter, r *http.Request, users *userauth.Service, session userauth.Session) bool {
+	if extensionManageResponseAuthorized(users, r, session) {
+		return false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error_code":                     capability.DispatchAuthorityRevokedCode,
+		"detail":                         "Authorization ended during extension administration; refresh installation status before taking further action.",
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return true
 }
 
 func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session userauth.Session, eventType, installationID, result, reason string, metadata any) {
@@ -165,14 +272,14 @@ func (h *operatorExtensionRuntimeLifecycle) record(r *http.Request, session user
 		return
 	}
 	_, _ = h.audit.Append(r.Context(), securityaudit.Event{
-		EventType: eventType,
-		ActorUserID: session.User.ID,
+		EventType:     eventType,
+		ActorUserID:   session.User.ID,
 		ActorUsername: session.User.Username,
-		Source: "operator-web",
-		ResourceType: "extension_installation",
-		ResourceID: strings.TrimSpace(installationID),
-		Result: result,
-		Reason: reason,
-		Metadata: metadata,
+		Source:        "operator-web",
+		ResourceType:  "extension_installation",
+		ResourceID:    strings.TrimSpace(installationID),
+		Result:        result,
+		Reason:        reason,
+		Metadata:      metadata,
 	})
 }

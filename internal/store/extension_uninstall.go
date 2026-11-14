@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -39,6 +40,9 @@ func (s *Store) DeleteExtensionInstallation(ctx context.Context, installationID 
 	}
 	if rows != 1 {
 		return domain.ErrNotFound
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit extension uninstall transaction: %w", err)

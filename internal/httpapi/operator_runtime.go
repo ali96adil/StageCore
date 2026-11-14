@@ -1,29 +1,41 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 type runtimeStartRequest struct {
-	Mode      string `json:"mode"`
-	Name      string `json:"name"`
-	RequestID string `json:"request_id"`
+	RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose,omitempty"`
+	Mode             string                  `json:"mode"`
+	Name             string                  `json:"name"`
+	RequestID        string                  `json:"request_id"`
 }
 
 type runtimeCommandRequest struct {
+	ExpectedSessionID    *string `json:"expected_session_id,omitempty"`
 	RequestID            string  `json:"request_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
 	Force                bool    `json:"force"`
 	Confirm              string  `json:"confirm"`
+}
+
+type runtimeStopSessionRequest struct {
+	runtimeCommandRequest
+	RehearsalTabletStopSessionID   string `json:"rehearsal_tablet_stop_session_id,omitempty"`
+	RehearsalExternalStopSessionID string `json:"rehearsal_external_stop_session_id,omitempty"`
 }
 
 type runtimeEmergencyBlackoutRequest struct {
@@ -33,10 +45,12 @@ type runtimeEmergencyBlackoutRequest struct {
 }
 
 type runtimeJumpRequest struct {
+	ExpectedSessionID    *string `json:"expected_session_id,omitempty"`
 	RequestID            string  `json:"request_id"`
 	CueID                string  `json:"cue_id"`
 	ExpectedCurrentCueID *string `json:"expected_current_cue_id"`
 	OperatorNote         *string `json:"operator_note"`
+	RehearsalSessionID   *string `json:"rehearsal_session_id,omitempty"`
 	Confirm              bool    `json:"confirm"`
 }
 
@@ -49,15 +63,17 @@ type runtimeExecutionView struct {
 }
 
 type runtimeStatusView struct {
-	Project         projectView           `json:"project"`
-	Mode            string                `json:"mode"`
-	Snapshot        *snapshotView         `json:"runtime_snapshot"`
-	Session         *sessionView          `json:"session"`
-	Cues            []cueSummaryView      `json:"cues"`
-	CurrentCue      *cueSummaryView       `json:"current_cue"`
-	NextCue         *cueSummaryView       `json:"next_cue"`
-	LatestExecution       *runtimeExecutionView `json:"latest_execution"`
-	ManagedOutputBlackout bool                  `json:"managed_output_blackout"`
+	Project               projectView            `json:"project"`
+	Mode                  string                 `json:"mode"`
+	Snapshot              *snapshotView          `json:"runtime_snapshot"`
+	Session               *sessionView           `json:"session"`
+	Cues                  []cueSummaryView       `json:"cues"`
+	CurrentCue            *cueSummaryView        `json:"current_cue"`
+	NextCue               *cueSummaryView        `json:"next_cue"`
+	ActiveExecutions      []runtimeExecutionView `json:"active_executions"`
+	ActiveExecutionCount  int                    `json:"active_execution_count"`
+	LatestExecution       *runtimeExecutionView  `json:"latest_execution"`
+	ManagedOutputBlackout bool                   `json:"managed_output_blackout"`
 }
 
 func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) Option {
@@ -70,10 +86,13 @@ func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runt
 }
 
 func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		view, err := buildRuntimeStatus(r, projectStore, r.PathValue("project_id"))
 		if err != nil {
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, view)
@@ -85,21 +104,37 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			return
 		}
 		mode := domain.SessionType(strings.ToUpper(strings.TrimSpace(body.Mode)))
+		permission := userauth.PermissionRuntimeControl
+		needed := projectaccess.RehearsalControl
 		if mode == domain.SessionShow {
-			if err := userauth.Authorize(session.User.Role, userauth.PermissionShowEnterExit); err != nil {
+			permission = userauth.PermissionShowEnterExit
+			needed = projectaccess.ShowEnterExit
+			if err := userauth.Authorize(session.User.Role, permission); err != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
 			}
 		}
-		created, result := runtime.StartSession(r.Context(), runtimecontrol.StartRequest{
+		grant, scopeErr := currentProjectRouteGrant(r)
+		if scopeErr == nil && grant.access != nil {
+			scopeErr = grant.access.Check(r.Context(), session.User.ID, r.PathValue("project_id"), needed)
+		}
+		if !writeProjectQualificationError(w, scopeErr) {
+			return
+		}
+		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectView, needed)
+		created, result := runtime.StartSession(ctx, runtimecontrol.StartRequest{
 			ProjectID: r.PathValue("project_id"), Mode: mode, Name: body.Name,
-			Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
+			RehearsalPurpose: body.RehearsalPurpose,
+			Issuer:           session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
+		if created.ID != "" && !recheckCommittedRuntimeStart(w, r, auth, session, permission, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": makeSessionView(created)})
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/stop-session", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		var body runtimeCommandRequest
+		var body runtimeStopSessionRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
@@ -107,29 +142,53 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
+		permission := userauth.PermissionRuntimeControl
+		needed := projectaccess.RehearsalControl
 		if active.Type == domain.SessionShow {
-			if err := userauth.Authorize(session.User.Role, userauth.PermissionShowEnterExit); err != nil {
+			permission = userauth.PermissionShowEnterExit
+			needed = projectaccess.ShowEnterExit
+			if err := userauth.Authorize(session.User.Role, permission); err != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
 				return
 			}
 		}
 		if body.Force {
+			if body.RehearsalTabletStopSessionID != "" || body.RehearsalExternalStopSessionID != "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "FORCE_EXIT_WITH_STOP_ACTION"})
+				return
+			}
 			if strings.TrimSpace(body.Confirm) != "FORCE_EXIT_WITHOUT_BLACKOUT" {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 				return
 			}
-			result := runtime.ForceStopSession(r.Context(), runtimecontrol.StopRequest{
+			if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeForceExit) {
+				return
+			}
+			ctx := projectMutationContext(r, auth, session, permission, nil)
+			result := runtime.ForceStopSession(ctx, runtimecontrol.StopRequest{
 				SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			})
+			if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil) {
+				return
+			}
 			writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
-				"forced": true,
+				"forced":          true,
 				"safety_bypassed": true,
 			})
 			return
 		}
-		result := runtime.StopSession(r.Context(), runtimecontrol.StopRequest{
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopSession) {
+			return
+		}
+		ctx := projectMutationContext(r, auth, session, permission, nil, projectaccess.ProjectView, needed)
+		result := runtime.StopSession(ctx, runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
+			RehearsalTabletStopSessionID:   body.RehearsalTabletStopSessionID,
+			RehearsalExternalStopSessionID: body.RehearsalExternalStopSessionID,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, permission, nil, projectaccess.ProjectView, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -142,10 +201,23 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		if body.ExpectedSessionID != nil && active.ID != *body.ExpectedSessionID {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "RUNTIME_SESSION_CHANGED"})
+			return
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
+			return
+		}
+		result := runtime.Go(browserCueDispatchContext(r, auth, session, active.ID, projectaccess.RuntimeGO), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, OperatorNote: body.OperatorNote,
 		})
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
+		if !recheckCommittedRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
 
@@ -167,10 +239,28 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.Go(r.Context(), runtimecontrol.CueRequest{
+		if body.RehearsalSessionID != nil &&
+			(active.Type != domain.SessionRehearsal || active.ID != *body.RehearsalSessionID) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "CUE_CHECK_SESSION_CHANGED"})
+			return
+		}
+		if body.ExpectedSessionID != nil && active.ID != *body.ExpectedSessionID {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "RUNTIME_SESSION_CHANGED"})
+			return
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
+			return
+		}
+		result := runtime.Go(browserCueDispatchContext(r, auth, session, active.ID, projectaccess.RuntimeJump), runtimecontrol.CueRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 			ExpectedCurrentCueID: body.ExpectedCurrentCueID, RequestedCueID: &cueID, OperatorNote: body.OperatorNote,
 		})
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
+		if !recheckCommittedRuntimeIntent(w, r, active.ID, projectaccess.RuntimeJump) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"operation": "JUMP"})
 	}))
 
@@ -187,14 +277,32 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		result := runtime.ProjectBlackout(r.Context(), runtimecontrol.ProjectEmergencyRequest{
+		intent := projectaccess.RuntimeBlackoutClear
+		if body.Enabled {
+			intent = projectaccess.RuntimeBlackoutEngage
+		}
+		if !qualifyRuntimeIntent(w, r, "", intent) {
+			return
+		}
+		var scoped []projectaccess.Permission
+		if body.Enabled {
+			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		if !body.Enabled {
+			ctx = runtimeBlackoutClearContext(ctx, r, auth, session, "")
+		}
+		result := runtime.ProjectBlackout(ctx, runtimecontrol.ProjectEmergencyRequest{
 			ProjectID: r.PathValue("project_id"),
-			Issuer: session.User.ID,
+			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
-			Enabled: body.Enabled,
+			Enabled:   body.Enabled,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
-			"sessionless": true,
+			"sessionless":             true,
 			"managed_output_blackout": body.Enabled,
 		})
 	}))
@@ -216,12 +324,30 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.EmergencyBlackout(r.Context(), runtimecontrol.EmergencyRequest{
+		intent := projectaccess.RuntimeBlackoutClear
+		if body.Enabled {
+			intent = projectaccess.RuntimeBlackoutEngage
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, intent) {
+			return
+		}
+		var scoped []projectaccess.Permission
+		if body.Enabled {
+			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
+		if !body.Enabled {
+			ctx = runtimeBlackoutClearContext(ctx, r, auth, session, active.ID)
+		}
+		result := runtime.EmergencyBlackout(ctx, runtimecontrol.EmergencyRequest{
 			SessionID: active.ID,
-			Issuer: session.User.ID,
+			Issuer:    session.User.ID,
 			RequestID: strings.TrimSpace(body.RequestID),
-			Enabled: body.Enabled,
+			Enabled:   body.Enabled,
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{"managed_output_blackout": body.Enabled})
 	}))
 
@@ -234,11 +360,54 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !ok {
 			return
 		}
-		result := runtime.StopCue(r.Context(), runtimecontrol.StopRequest{
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeStopCue) {
+			return
+		}
+		needed := projectaccess.RehearsalControl
+		if active.Type == domain.SessionShow {
+			needed = projectaccess.ShowStop
+		}
+		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.ProjectView, needed)
+		result := runtime.StopCue(ctx, runtimecontrol.StopRequest{
 			SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID),
 		})
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionRuntimeControl, nil, projectaccess.ProjectView, needed) {
+			return
+		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
+}
+
+func recheckCommittedRuntimeStart(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, permission userauth.Permission, needed projectaccess.Permission) bool {
+	token, _ := browserSessionToken(r)
+	current, err := auth.ValidateCSRF(r.Context(), token, r.Header.Get(csrfHeader))
+	if err == nil && (current.ID != session.ID || current.User.ID != session.User.ID || userauth.Authorize(current.User.Role, permission) != nil) {
+		err = userauth.ErrForbidden
+	}
+	if err == nil {
+		if access := qualificationAccess(r, nil); access != nil {
+			if _, routeErr := currentProjectRouteGrant(r); routeErr != nil {
+				err = routeErr
+			} else {
+				err = access.CheckAll(r.Context(), current.User.ID, strings.TrimSpace(r.PathValue("project_id")), projectaccess.ProjectView, needed)
+			}
+		}
+	}
+	if err == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	status, code := http.StatusForbidden, "FORBIDDEN"
+	if !errors.Is(err, userauth.ErrForbidden) && !errors.Is(err, projectaccess.ErrDenied) && !errors.Is(err, projectaccess.ErrNotFound) {
+		status, code = http.StatusServiceUnavailable, "PROJECT_ACCESS_UNAVAILABLE"
+	}
+	writeJSON(w, status, map[string]any{
+		"error_code":                     code,
+		"effect_may_be_committed":        true,
+		"effect_may_have_been_committed": true,
+		"retryable":                      false,
+	})
+	return false
 }
 
 func activeRuntimeSession(w http.ResponseWriter, r *http.Request, projectStore *store.Store) (domain.Session, bool) {
@@ -263,7 +432,10 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 	if err != nil {
 		return runtimeStatusView{}, err
 	}
-	view := runtimeStatusView{Project: makeProjectView(project), Mode: "EDIT", Cues: []cueSummaryView{}}
+	view := runtimeStatusView{
+		Project: makeProjectView(project), Mode: "EDIT", Cues: []cueSummaryView{},
+		ActiveExecutions: []runtimeExecutionView{},
+	}
 	if latest != nil {
 		value := makeSnapshotView(*latest)
 		view.Snapshot = &value
@@ -306,6 +478,16 @@ func buildRuntimeStatus(r *http.Request, projectStore *store.Store, projectID st
 			ID: last.ID, CueID: last.CueID, Result: last.Result,
 			StartedAt: last.StartedAt, CompletedAt: last.CompletedAt,
 		}
+		for _, execution := range executions {
+			if execution.Result != domain.ExecutionRunning {
+				continue
+			}
+			view.ActiveExecutionCount++
+			view.ActiveExecutions = append(view.ActiveExecutions, runtimeExecutionView{
+				ID: execution.ID, CueID: execution.CueID, Result: execution.Result,
+				StartedAt: execution.StartedAt, CompletedAt: execution.CompletedAt,
+			})
+		}
 	}
 	return view, nil
 }
@@ -320,6 +502,25 @@ func makeRuntimeCueSummaries(cues []domain.Cue) []cueSummaryView {
 	return items
 }
 
+// A clear releases output restrictions. Recheck the browser and, in
+// qualification mode, its exact project/session intent at dispatch time.
+func runtimeBlackoutClearContext(ctx context.Context, r *http.Request, auth *userauth.Service, session userauth.Session, sessionID string) context.Context {
+	token, _ := browserSessionToken(r)
+	access := qualificationAccess(r, nil)
+	projectID := r.PathValue("project_id")
+	return capability.WithDispatchCheck(ctx, func(ctx context.Context) error {
+		current, err := auth.ValidatePassive(ctx, token)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, userauth.PermissionRuntimeControl) != nil {
+			return userauth.ErrForbidden
+		}
+		if access != nil {
+			return access.CheckRuntimeIntent(ctx, current.User.ID, projectID, sessionID, projectaccess.RuntimeBlackoutClear)
+		}
+		return nil
+	})
+}
+
 func writeRuntimeCommandResponse(w http.ResponseWriter, successStatus int, result contracts.CommandResult, extra map[string]any) {
 	payload := map[string]any{"result": result}
 	for key, value := range extra {
@@ -330,6 +531,8 @@ func writeRuntimeCommandResponse(w http.ResponseWriter, successStatus int, resul
 		status = http.StatusConflict
 		if result.Error != nil && result.Error.ErrorCode == "NOT_FOUND" {
 			status = http.StatusNotFound
+		} else if result.Error != nil && result.Error.ErrorCode == "FORBIDDEN" {
+			status = http.StatusForbidden
 		}
 	} else if result.Status == contracts.CommandFailed {
 		status = http.StatusServiceUnavailable

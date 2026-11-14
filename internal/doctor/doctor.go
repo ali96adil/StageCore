@@ -71,10 +71,13 @@ type Report struct {
 }
 
 type Options struct {
-	InstallRoot string
-	ConfigRoot  string
-	SystemdUnit string
-	HTTPTimeout time.Duration
+	BundleDir         string
+	InstallRoot       string
+	ConfigRoot        string
+	SystemdUnit       string
+	ServiceName       string
+	HealthProbeBinary string
+	HTTPTimeout       time.Duration
 }
 
 type Filesystem struct {
@@ -93,10 +96,12 @@ type Runner struct {
 }
 
 type deploymentConfig struct {
-	DataRoot   string
-	VaultRoot  string
-	Listen     string
-	PluginPath string
+	DataRoot          string
+	VaultRoot         string
+	Listen            string
+	OperatorTLSListen string
+	DeviceListen      string
+	PluginPath        string
 }
 
 func DefaultOptions() Options {
@@ -122,7 +127,7 @@ func (r *Runner) Run(ctx context.Context, opts Options) Report {
 		r = NewRunner()
 	}
 	r.normalize()
-	opts = normalizeOptions(opts)
+	opts, targetErr := normalizeOptions(opts)
 
 	report := Report{SchemaVersion: ReportSchemaVersion, GeneratedAt: r.Now().UTC()}
 
@@ -130,10 +135,13 @@ func (r *Runner) Run(ctx context.Context, opts Options) Report {
 	report.Checks = append(report.Checks, configCheck)
 	report.Checks = append(report.Checks, checkBinaries(opts.InstallRoot))
 
-	unitOK, unitCheck := checkSystemdUnit(opts)
+	unitOK, unitCheck := checkSystemdUnit(opts, cfg, targetErr)
 	report.Checks = append(report.Checks, unitCheck)
 	if unitOK {
-		report.Checks = append(report.Checks, r.checkSystemdEnabled(ctx), r.checkSystemdActive(ctx))
+		report.Checks = append(report.Checks,
+			r.checkSystemdEnabled(ctx, opts.ServiceName, deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName})),
+			r.checkSystemdActive(ctx, opts.ServiceName),
+		)
 	} else {
 		report.Checks = append(report.Checks,
 			skippedCheck("systemd.enabled", "check.skipped.unit", "remedy.systemd.unit"),
@@ -156,10 +164,10 @@ func (r *Runner) Run(ctx context.Context, opts Options) Report {
 			report.Checks = append(report.Checks, skippedCheck("pairing.summary", "check.skipped.database", "remedy.database"))
 		}
 
-		liveOK, liveCheck := r.checkHubLive(ctx, cfg.Listen, opts.HTTPTimeout)
+		liveOK, liveCheck := r.checkHubLive(ctx, opts, cfg.Listen, opts.HTTPTimeout)
 		report.Checks = append(report.Checks, liveCheck)
 		if liveOK {
-			report.Checks = append(report.Checks, r.checkHubReady(ctx, cfg.Listen, opts.HTTPTimeout))
+			report.Checks = append(report.Checks, r.checkHubReady(ctx, opts, cfg.Listen, opts.HTTPTimeout))
 		} else {
 			report.Checks = append(report.Checks, skippedCheck("hub.ready", "check.skipped.hub_live", "remedy.hub.active"))
 		}
@@ -188,7 +196,7 @@ func (r *Runner) normalize() {
 	}
 }
 
-func normalizeOptions(opts Options) Options {
+func normalizeOptions(opts Options) (Options, error) {
 	defaults := DefaultOptions()
 	if strings.TrimSpace(opts.InstallRoot) == "" {
 		opts.InstallRoot = defaults.InstallRoot
@@ -199,13 +207,32 @@ func normalizeOptions(opts Options) Options {
 	if strings.TrimSpace(opts.SystemdUnit) == "" {
 		opts.SystemdUnit = defaults.SystemdUnit
 	}
+	if strings.TrimSpace(opts.BundleDir) != "" {
+		opts.BundleDir = filepath.Clean(opts.BundleDir)
+	}
 	if opts.HTTPTimeout <= 0 {
 		opts.HTTPTimeout = defaults.HTTPTimeout
+	}
+	name, err := deployment.SystemdServiceName(opts.SystemdUnit)
+	if err != nil {
+		return opts, err
+	}
+	if strings.TrimSpace(opts.ServiceName) == "" {
+		opts.ServiceName = name
+	} else if opts.ServiceName != name {
+		return opts, fmt.Errorf("systemd service name %q must match unit filename %q", opts.ServiceName, name)
 	}
 	opts.InstallRoot = filepath.Clean(opts.InstallRoot)
 	opts.ConfigRoot = filepath.Clean(opts.ConfigRoot)
 	opts.SystemdUnit = filepath.Clean(opts.SystemdUnit)
-	return opts
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) && strings.TrimSpace(opts.HealthProbeBinary) == "" {
+		if opts.BundleDir != "" {
+			opts.HealthProbeBinary = filepath.Join(opts.BundleDir, "stagecore-setup")
+		} else {
+			opts.HealthProbeBinary = filepath.Join(opts.InstallRoot, "bin", "stagecore-setup")
+		}
+	}
+	return opts, nil
 }
 
 func checkDeploymentConfig(opts Options) (*deploymentConfig, Check) {
@@ -219,10 +246,12 @@ func checkDeploymentConfig(opts Options) (*deploymentConfig, Check) {
 		return nil, Check{ID: "deployment.config", Status: Blocker, MessageKey: "config.invalid", Detail: err.Error(), RemedyKey: "remedy.config"}
 	}
 	cfg := &deploymentConfig{
-		DataRoot:   strings.TrimSpace(values["STAGECORE_DATA_ROOT"]),
-		VaultRoot:  strings.TrimSpace(values["STAGECORE_VAULT_ROOT"]),
-		Listen:     strings.TrimSpace(values["STAGECORE_LISTEN"]),
-		PluginPath: strings.TrimSpace(values["STAGECORE_OSC_PLUGIN_PATH"]),
+		DataRoot:          strings.TrimSpace(values["STAGECORE_DATA_ROOT"]),
+		VaultRoot:         strings.TrimSpace(values["STAGECORE_VAULT_ROOT"]),
+		Listen:            strings.TrimSpace(values["STAGECORE_LISTEN"]),
+		OperatorTLSListen: strings.TrimSpace(values["STAGECORE_OPERATOR_TLS_LISTEN"]),
+		DeviceListen:      strings.TrimSpace(values["STAGECORE_DEVICE_LISTEN"]),
+		PluginPath:        strings.TrimSpace(values["STAGECORE_OSC_PLUGIN_PATH"]),
 	}
 	missing := make([]string, 0, 4)
 	for key, value := range map[string]string{
@@ -258,6 +287,20 @@ func checkDeploymentConfig(opts Options) (*deploymentConfig, Check) {
 		message = "config.plugin_path"
 		remedy = "remedy.config.plugin_path"
 		detail = fmt.Sprintf("configured=%s expected=%s", cfg.PluginPath, expectedPlugin)
+	}
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) {
+		isolated := deployment.Options{
+			ServiceName: opts.ServiceName, SystemdUnit: opts.SystemdUnit,
+			InstallRoot: opts.InstallRoot, ConfigRoot: opts.ConfigRoot,
+			DataRoot: cfg.DataRoot, VaultRoot: cfg.VaultRoot, Listen: cfg.Listen,
+			OperatorTLSListen: cfg.OperatorTLSListen, DeviceListen: cfg.DeviceListen,
+		}
+		if err := deployment.ValidateIsolatedEnvironment(content, isolated); err != nil {
+			return nil, Check{ID: "deployment.config", Status: Blocker, MessageKey: "config.isolated", Detail: err.Error(), RemedyKey: "remedy.config"}
+		}
+		if err := deployment.ValidateIsolatedRuntimePaths(isolated); err != nil {
+			return nil, Check{ID: "deployment.config", Status: Blocker, MessageKey: "config.isolated", Detail: err.Error(), RemedyKey: "remedy.config"}
+		}
 	}
 	return cfg, Check{ID: "deployment.config", Status: status, MessageKey: message, Detail: detail, RemedyKey: remedy}
 }
@@ -310,7 +353,17 @@ func checkBinaries(installRoot string) Check {
 	return Check{ID: "deployment.binaries", Status: Ready, MessageKey: "binaries.ok", Detail: binRoot}
 }
 
-func checkSystemdUnit(opts Options) (bool, Check) {
+func checkSystemdUnit(opts Options, cfg *deploymentConfig, targetErr error) (bool, Check) {
+	if targetErr != nil {
+		return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.target", Detail: targetErr.Error(), RemedyKey: "remedy.systemd.unit"}
+	}
+	info, err := os.Lstat(opts.SystemdUnit)
+	if err != nil {
+		return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.unreadable", Detail: opts.SystemdUnit + ": " + err.Error(), RemedyKey: "remedy.systemd.unit"}
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.mismatch", Detail: "systemd unit must be a regular non-symlink file", RemedyKey: "remedy.systemd.unit"}
+	}
 	content, err := os.ReadFile(opts.SystemdUnit)
 	if err != nil {
 		return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.unreadable", Detail: opts.SystemdUnit + ": " + err.Error(), RemedyKey: "remedy.systemd.unit"}
@@ -327,34 +380,150 @@ func checkSystemdUnit(opts Options) (bool, Check) {
 	if len(missing) > 0 {
 		return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.mismatch", Detail: strings.Join(missing, "; "), RemedyKey: "remedy.systemd.unit"}
 	}
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) {
+		if cfg == nil {
+			return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.mismatch", Detail: "isolated deployment configuration is unavailable", RemedyKey: "remedy.systemd.unit"}
+		}
+		if err := validateIsolatedSystemdUnit(text, opts, cfg); err != nil {
+			return false, Check{ID: "systemd.unit", Status: Blocker, MessageKey: "unit.isolation", Detail: err.Error(), RemedyKey: "remedy.systemd.unit"}
+		}
+	}
 	return true, Check{ID: "systemd.unit", Status: Ready, MessageKey: "unit.ok", Detail: opts.SystemdUnit}
 }
 
-func (r *Runner) checkSystemdEnabled(ctx context.Context) Check {
-	output, err := r.Command(ctx, "systemctl", "is-enabled", "stagecore-hub.service")
-	state := strings.TrimSpace(string(output))
-	if err == nil && state == "enabled" {
-		return Check{ID: "systemd.enabled", Status: Ready, MessageKey: "service.enabled"}
+func validateIsolatedSystemdUnit(content string, opts Options, cfg *deploymentConfig) error {
+	allowed := map[string]map[string]bool{
+		"Unit": {
+			"Description": true, "After": true, "Wants": true, "RequiresMountsFor": true,
+		},
+		"Service": {
+			"Type": true, "User": true, "Group": true, "EnvironmentFile": true,
+			"WorkingDirectory": true, "ExecStart": true, "Restart": true,
+			"TimeoutStopSec": true, "KillSignal": true, "NoNewPrivileges": true,
+			"PrivateDevices": true, "DevicePolicy": true, "PrivateNetwork": true, "PrivateTmp": true,
+			"ProtectSystem": true, "ProtectHome": true, "InaccessiblePaths": true,
+			"ReadWritePaths": true, "IPAddressDeny": true, "IPAddressAllow": true,
+			"RestrictAddressFamilies": true, "ProtectClock": true,
+			"ProtectKernelTunables": true, "ProtectKernelModules": true,
+			"ProtectKernelLogs": true, "ProtectControlGroups": true,
+			"LockPersonality": true, "RestrictSUIDSGID": true,
+			"RestrictRealtime": true, "CapabilityBoundingSet": true,
+			"AmbientCapabilities": true, "IPAccounting": true,
+			"CPUAccounting": true, "MemoryAccounting": true,
+			"UMask": true, "LimitNOFILE": true,
+		},
 	}
-	if state == "disabled" {
-		return Check{ID: "systemd.enabled", Status: Warning, MessageKey: "service.disabled", RemedyKey: "remedy.service.enable"}
+	values := map[string]map[string]string{"Unit": {}, "Service": {}}
+	section := ""
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")
+			if _, ok := allowed[section]; !ok {
+				return fmt.Errorf("isolated unit contains unsupported [%s] section", section)
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || section == "" {
+			return fmt.Errorf("isolated unit contains an invalid directive")
+		}
+		if !allowed[section][key] {
+			return fmt.Errorf("isolated unit contains unsupported %s directive", key)
+		}
+		if _, duplicate := values[section][key]; duplicate {
+			return fmt.Errorf("isolated unit repeats %s directive", key)
+		}
+		values[section][key] = strings.TrimSpace(value)
 	}
-	if state == "" {
-		state = errString(err)
+	if err := scanner.Err(); err != nil {
+		return err
 	}
-	return Check{ID: "systemd.enabled", Status: Warning, MessageKey: "service.enabled_unknown", Detail: state, RemedyKey: "remedy.service.enable"}
+	unit, service := values["Unit"], values["Service"]
+	for _, key := range []string{"Description", "After", "Wants", "RequiresMountsFor"} {
+		if _, ok := unit[key]; !ok {
+			return fmt.Errorf("isolated unit is missing %s", key)
+		}
+	}
+	for key := range allowed["Service"] {
+		if _, ok := service[key]; !ok {
+			return fmt.Errorf("isolated unit is missing %s", key)
+		}
+	}
+	expected := map[string]string{
+		"Description":       "StageCore isolated qualification Hub (" + opts.ServiceName + ")",
+		"After":             "local-fs.target network.target",
+		"Wants":             "network.target",
+		"RequiresMountsFor": cfg.DataRoot + " " + cfg.VaultRoot,
+	}
+	for key, want := range expected {
+		if unit[key] != want {
+			return fmt.Errorf("isolated unit %s does not match the selected deployment", key)
+		}
+	}
+	if service["User"] == "" || service["User"] == "root" || service["Group"] == "" || service["Group"] == "root" {
+		return fmt.Errorf("isolated service must run as a non-root account")
+	}
+	serviceExpected := map[string]string{
+		"Type": "simple", "EnvironmentFile": filepath.Join(opts.ConfigRoot, "stagecore.env"),
+		"WorkingDirectory": cfg.DataRoot, "ExecStart": filepath.Join(opts.InstallRoot, "bin", "stagecore-hub"),
+		"Restart": "no", "TimeoutStopSec": "30s", "KillSignal": "SIGTERM",
+		"NoNewPrivileges": "yes", "PrivateDevices": "yes", "DevicePolicy": "closed", "PrivateNetwork": "yes",
+		"PrivateTmp": "yes", "ProtectSystem": "strict", "ProtectHome": "yes",
+		"InaccessiblePaths": "-/var/lib/stagecore -/var/backups/stagecore -/var/lib/stagecore-control -/var/lib/stagecore-camera-relay -/etc/stagecore -/etc/stagecore-qualification-control -/etc/stagecore-camera-relay -/opt/stagecore -/opt/stagecore-qualification-control -/opt/stagecore-camera-relay -/var/lib/dbus",
+		"ReadWritePaths":    cfg.DataRoot + " " + cfg.VaultRoot,
+		"IPAddressDeny":     "any", "IPAddressAllow": "localhost",
+		"RestrictAddressFamilies": "AF_INET AF_INET6", "ProtectClock": "yes",
+		"ProtectKernelTunables": "yes", "ProtectKernelModules": "yes",
+		"ProtectKernelLogs": "yes", "ProtectControlGroups": "yes",
+		"LockPersonality": "yes", "RestrictSUIDSGID": "yes",
+		"RestrictRealtime": "yes", "CapabilityBoundingSet": "",
+		"AmbientCapabilities": "", "IPAccounting": "yes", "CPUAccounting": "yes",
+		"MemoryAccounting": "yes", "UMask": "0077", "LimitNOFILE": "65536",
+	}
+	for key, want := range serviceExpected {
+		if service[key] != want {
+			return fmt.Errorf("isolated unit %s does not match the required sandbox", key)
+		}
+	}
+	return nil
 }
 
-func (r *Runner) checkSystemdActive(ctx context.Context) Check {
-	output, err := r.Command(ctx, "systemctl", "is-active", "stagecore-hub.service")
+func (r *Runner) checkSystemdEnabled(ctx context.Context, serviceName string, isolated bool) Check {
+	output, err := r.Command(ctx, "systemctl", "is-enabled", serviceName)
 	state := strings.TrimSpace(string(output))
-	if err == nil && state == "active" {
-		return Check{ID: "systemd.active", Status: Ready, MessageKey: "service.active"}
+	if err == nil && state == "enabled" {
+		if isolated {
+			return Check{ID: "systemd.enabled", Status: Blocker, MessageKey: "service.isolated_enabled", MessageArgs: []string{serviceName}, RemedyKey: "remedy.service.isolated.disable", RemedyArgs: []string{serviceName}}
+		}
+		return Check{ID: "systemd.enabled", Status: Ready, MessageKey: "service.enabled"}
+	}
+	if isolated && (state == "static" || state == "disabled") {
+		return Check{ID: "systemd.enabled", Status: Ready, MessageKey: "service.static", MessageArgs: []string{serviceName}}
+	}
+	if state == "disabled" {
+		return Check{ID: "systemd.enabled", Status: Warning, MessageKey: "service.disabled", RemedyKey: "remedy.service.enable", RemedyArgs: []string{serviceName}}
 	}
 	if state == "" {
 		state = errString(err)
 	}
-	return Check{ID: "systemd.active", Status: Blocker, MessageKey: "service.inactive", MessageArgs: []string{state}, RemedyKey: "remedy.hub.active"}
+	return Check{ID: "systemd.enabled", Status: Warning, MessageKey: "service.enabled_unknown", MessageArgs: []string{state}, Detail: state, RemedyKey: "remedy.service.enable", RemedyArgs: []string{serviceName}}
+}
+
+func (r *Runner) checkSystemdActive(ctx context.Context, serviceName string) Check {
+	output, err := r.Command(ctx, "systemctl", "is-active", serviceName)
+	state := strings.TrimSpace(string(output))
+	if err == nil && state == "active" {
+		return Check{ID: "systemd.active", Status: Ready, MessageKey: "service.active", MessageArgs: []string{serviceName}}
+	}
+	if state == "" {
+		state = errString(err)
+	}
+	return Check{ID: "systemd.active", Status: Blocker, MessageKey: "service.inactive", MessageArgs: []string{serviceName, state}, RemedyKey: "remedy.hub.active", RemedyArgs: []string{serviceName}}
 }
 
 func (r *Runner) checkStorage(id, path string) Check {
@@ -494,13 +663,13 @@ func inspectPairing(ctx context.Context, database *sql.DB) Check {
 	return Check{ID: "pairing.summary", Status: Ready, MessageKey: "pairing.ok", Detail: detail}
 }
 
-func (r *Runner) checkHubLive(ctx context.Context, listen string, timeout time.Duration) (bool, Check) {
+func (r *Runner) checkHubLive(ctx context.Context, opts Options, listen string, timeout time.Duration) (bool, Check) {
 	readyURL, err := deployment.ReadinessURL(listen)
 	if err != nil {
 		return false, Check{ID: "hub.live", Status: Blocker, MessageKey: "hub.live_error", Detail: err.Error(), RemedyKey: "remedy.hub.active"}
 	}
 	liveURL := strings.TrimSuffix(readyURL, "/ready") + "/live"
-	statusCode, payload, err := r.getHealth(ctx, liveURL, timeout)
+	statusCode, payload, err := r.getHealth(ctx, opts, liveURL, timeout)
 	if err != nil {
 		return false, Check{ID: "hub.live", Status: Blocker, MessageKey: "hub.live_error", Detail: err.Error(), RemedyKey: "remedy.hub.active"}
 	}
@@ -510,12 +679,12 @@ func (r *Runner) checkHubLive(ctx context.Context, listen string, timeout time.D
 	return true, Check{ID: "hub.live", Status: Ready, MessageKey: "hub.live_ok", Detail: liveURL}
 }
 
-func (r *Runner) checkHubReady(ctx context.Context, listen string, timeout time.Duration) Check {
+func (r *Runner) checkHubReady(ctx context.Context, opts Options, listen string, timeout time.Duration) Check {
 	readyURL, err := deployment.ReadinessURL(listen)
 	if err != nil {
 		return Check{ID: "hub.ready", Status: Blocker, MessageKey: "hub.ready_error", Detail: err.Error(), RemedyKey: "remedy.hub.ready"}
 	}
-	statusCode, payload, err := r.getHealth(ctx, readyURL, timeout)
+	statusCode, payload, err := r.getHealth(ctx, opts, readyURL, timeout)
 	if err != nil {
 		return Check{ID: "hub.ready", Status: Blocker, MessageKey: "hub.ready_error", Detail: err.Error(), RemedyKey: "remedy.hub.ready"}
 	}
@@ -531,7 +700,21 @@ type healthPayload struct {
 	StorageState string `json:"storage_state"`
 }
 
-func (r *Runner) getHealth(ctx context.Context, endpoint string, timeout time.Duration) (int, healthPayload, error) {
+func (r *Runner) getHealth(ctx context.Context, opts Options, endpoint string, timeout time.Duration) (int, healthPayload, error) {
+	if deployment.IsolatedService(deployment.Options{ServiceName: opts.ServiceName}) {
+		output, err := deployment.SystemdNamespaceHealthProbe(ctx, deployment.Options{
+			BundleDir: opts.BundleDir, InstallRoot: opts.InstallRoot,
+			ServiceName: opts.ServiceName, SystemdUnit: opts.SystemdUnit,
+		}, opts.HealthProbeBinary, endpoint, timeout, deployment.SystemdCommandFunc(r.Command))
+		if err != nil {
+			return 0, healthPayload{}, err
+		}
+		var result deployment.SystemdHealthProbeResult
+		if err := json.Unmarshal(output, &result); err != nil {
+			return 0, healthPayload{}, fmt.Errorf("decode isolated health probe response: %w", err)
+		}
+		return result.HTTPStatus, healthPayload{Status: result.Status, StorageState: result.StorageState}, nil
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)

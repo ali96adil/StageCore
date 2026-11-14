@@ -53,7 +53,19 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 	}
 
 	session, err := e.resolveSession(ctx, req)
-	if err != nil {
+	// The action budget includes resolving its authority. Expired work must
+	// retain the correct terminal result and never reach an executor.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return capability.Result{Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone,
+			ErrorCode: "TIMEOUT", ResponseSummary: "action timed out while resolving session authority"}
+	case errors.Is(err, context.Canceled):
+		return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+			ErrorCode: "CANCELLED", ResponseSummary: "action cancelled while resolving session authority"}
+	case err != nil:
 		return gateFailure("SESSION_MODE_UNAVAILABLE", "authoritative session mode could not be resolved")
 	}
 	if session.Status != domain.SessionActive {

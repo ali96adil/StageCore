@@ -2,10 +2,12 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -57,8 +59,8 @@ func TestExtensionLibraryPersistsVerifiedPackageAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 52 {
-		t.Fatalf("schema version=%d want=52", version)
+	if version != 62 {
+		t.Fatalf("schema version=%d want=62", version)
 	}
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
@@ -145,4 +147,34 @@ func validLocalExtensionManifest() []byte {
 		"permissions":["network.udp.send"],
 		"capabilities":["osc.send"]
 	}`)
+}
+
+func TestSoftwarePackageImportRechecksAuthorityAtPublication(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	v, err := vault.Open(t.TempDir(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := software.New(v, s, software.CurrentHubAPIVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := software.ImportParams{
+		ProductID: "revoked.plugin", Version: "1.0.0", Platform: "linux", Architecture: "arm64",
+		MinAPIVersion: 1, MaxAPIVersion: 1,
+	}
+	guarded := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	if _, err := repository.ImportPackage(guarded, params, strings.NewReader("staged bytes")); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked package import err=%v", err)
+	}
+	packages, err := s.ListSoftwarePackages(ctx, params.ProductID)
+	if err != nil || len(packages) != 0 {
+		t.Fatalf("revoked import published packages=%v err=%v", packages, err)
+	}
+	if _, err := repository.ImportPackage(ctx, params, strings.NewReader("staged bytes")); err != nil {
+		t.Fatalf("authorized retry err=%v", err)
+	}
 }

@@ -74,23 +74,56 @@ func resolveCueGroup(manifest snapshot.Manifest, root snapshot.Cue) ([]snapshot.
 }
 
 func nestedCueIDs(manifest snapshot.Manifest) (map[string]bool, error) {
+	byID := make(map[string]snapshot.Cue, len(manifest.Cues))
+	for _, cue := range manifest.Cues {
+		byID[cue.ID] = cue
+	}
+
 	nested := map[string]bool{}
 	parent := map[string]string{}
+	edges := make(map[string][]string, len(manifest.Cues))
 	for _, cue := range manifest.Cues {
 		policy, err := cuegroup.Parse(cue.ExecutionPolicy)
 		if err != nil {
 			return nil, fmt.Errorf("Cue %s: %w", cue.Name, err)
 		}
 		for _, childID := range policy.LinkedCueIDs {
+			child, ok := byID[childID]
+			if !ok {
+				return nil, fmt.Errorf("Cue %s links to missing Cue %s", cue.Name, childID)
+			}
+			if !child.Enabled {
+				return nil, fmt.Errorf("Cue %s links to disabled Cue %s", cue.Name, child.Name)
+			}
 			if existing, ok := parent[childID]; ok && existing != cue.ID {
-				return nil, fmt.Errorf("Cue %s is linked by more than one parent Cue", childID)
+				return nil, fmt.Errorf("Cue %s is linked by more than one parent Cue", child.Name)
 			}
 			parent[childID] = cue.ID
 			nested[childID] = true
+			edges[cue.ID] = append(edges[cue.ID], childID)
 		}
 	}
+
+	state := make(map[string]uint8, len(manifest.Cues))
+	var visit func(snapshot.Cue) error
+	visit = func(cue snapshot.Cue) error {
+		switch state[cue.ID] {
+		case 1:
+			return fmt.Errorf("linked Cue cycle detected at %s", cue.ID)
+		case 2:
+			return nil
+		}
+		state[cue.ID] = 1
+		for _, childID := range edges[cue.ID] {
+			if err := visit(byID[childID]); err != nil {
+				return err
+			}
+		}
+		state[cue.ID] = 2
+		return nil
+	}
 	for _, cue := range manifest.Cues {
-		if _, err := resolveCueGroup(manifest, cue); err != nil {
+		if err := visit(cue); err != nil {
 			return nil, err
 		}
 	}

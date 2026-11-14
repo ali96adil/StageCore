@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -38,7 +39,7 @@ func (s *Store) SetExtensionPermissionDecision(ctx context.Context, installation
 		return ExtensionPermissionDecision{}, err
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO extension_permission_reviews (
 			installation_id, permission, decision, reviewed_by, reviewed_at_us
 		) VALUES (?, ?, ?, ?, ?)

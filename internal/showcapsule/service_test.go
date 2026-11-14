@@ -2,6 +2,8 @@ package showcapsule
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,15 +21,43 @@ import (
 var capsuleTestTime = time.Date(2026, 9, 3, 9, 15, 0, 0, time.UTC)
 
 type capsuleFixture struct {
-	service       *Service
-	db            *db.Handle
-	store         *store.Store
-	projectID     string
-	revisionID    string
-	snapshotID    string
-	mediaAssetID  string
-	contentHash   string
-	contentBytes  []byte
+	service      *Service
+	db           *db.Handle
+	store        *store.Store
+	projectID    string
+	revisionID   string
+	snapshotID   string
+	mediaAssetID string
+	contentHash  string
+	contentBytes []byte
+}
+
+func TestCapsuleExportDoesNotPublishAfterAuthorityEnds(t *testing.T) {
+	fixture := newCapsuleFixture(t)
+	defer fixture.db.Close()
+	root := t.TempDir()
+	denied := errors.New("export authority ended")
+	_, err := fixture.service.Export(context.Background(), fixture.projectID, root, BuildOptions{
+		RuntimeSnapshotID: fixture.snapshotID,
+		Mode:              ExportSelfContained,
+		AuthorizePublish: func(context.Context) error {
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 1 || !strings.Contains(entries[0].Name(), ".staging-") {
+				t.Fatalf("expected one unpublished staging directory, got %v, err=%v", entries, err)
+			}
+			staged, err := Verify(filepath.Join(root, entries[0].Name()))
+			if err != nil || staged.RuntimeSnapshot.RuntimeSnapshotID != fixture.snapshotID {
+				t.Fatalf("expected verified staging content, err=%v", err)
+			}
+			return denied
+		},
+	})
+	if !errors.Is(err, denied) {
+		t.Fatalf("export authorization error = %v", err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("revoked export left %v, err=%v", entries, err)
+	}
 }
 
 func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
@@ -37,7 +67,7 @@ func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
 
 	manifestOnly, err := fixture.service.Export(ctx, fixture.projectID, t.TempDir(), BuildOptions{
 		RuntimeSnapshotID: fixture.snapshotID,
-		Mode: ExportManifestOnly,
+		Mode:              ExportManifestOnly,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +84,7 @@ func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
 
 	selfContained, err := fixture.service.Export(ctx, fixture.projectID, t.TempDir(), BuildOptions{
 		RuntimeSnapshotID: fixture.snapshotID,
-		Mode: ExportSelfContained,
+		Mode:              ExportSelfContained,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +120,36 @@ func TestManifestOnlyAndSelfContainedExportVerify(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsExternalCapsuleFiles(t *testing.T) {
+	fixture := newCapsuleFixture(t)
+	defer fixture.db.Close()
+	for _, target := range []string{"manifest", "checksum", "object", "object-directory", "capsule-directory"} {
+		t.Run(target, func(t *testing.T) {
+			result, err := fixture.service.Export(context.Background(), fixture.projectID, t.TempDir(), BuildOptions{Mode: ExportSelfContained})
+			if err != nil {
+				t.Fatal(err)
+			}
+			object := filepath.Join(result.Path, filepath.FromSlash(result.Manifest.Objects[0].ArchivePath))
+			path := map[string]string{
+				"manifest": filepath.Join(result.Path, ManifestFileName),
+				"checksum": filepath.Join(result.Path, ManifestChecksumFile),
+				"object":   object, "object-directory": filepath.Dir(object),
+				"capsule-directory": result.Path,
+			}[target]
+			external := filepath.Join(t.TempDir(), "external")
+			if err := os.Rename(path, external); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, path); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(result.Path); err == nil {
+				t.Fatal("verification accepted an external symlink with otherwise valid data")
+			}
+		})
+	}
+}
+
 func TestSelfContainedRejectsRequiredReferenceOnlyMedia(t *testing.T) {
 	fixture := newCapsuleFixture(t)
 	defer fixture.db.Close()
@@ -100,14 +160,14 @@ func TestSelfContainedRejectsRequiredReferenceOnlyMedia(t *testing.T) {
 	}
 	if _, err := fixture.service.BuildManifest(ctx, fixture.projectID, BuildOptions{
 		RuntimeSnapshotID: fixture.snapshotID,
-		Mode: ExportSelfContained,
+		Mode:              ExportSelfContained,
 	}); err == nil || !strings.Contains(err.Error(), "REFERENCE_ONLY") {
 		t.Fatalf("self-contained REFERENCE_ONLY error=%v", err)
 	}
 
 	manifest, err := fixture.service.BuildManifest(ctx, fixture.projectID, BuildOptions{
 		RuntimeSnapshotID: fixture.snapshotID,
-		Mode: ExportManifestOnly,
+		Mode:              ExportManifestOnly,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +236,7 @@ func newCapsuleFixture(t *testing.T) capsuleFixture {
 	if _, err := stageStore.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "1", Name: "Opening", OrderIndex: 1,
 		Enabled: true, NotesSummary: "Stand by projection",
+		ExecutionPolicy: json.RawMessage(`{"operator_cue_color":"purple"}`),
 	}, []domain.Action{{
 		OrderIndex: 1, TargetRef: "VIDEO-MAIN", CapabilityKey: "osc.send", Enabled: true,
 	}}); err != nil {

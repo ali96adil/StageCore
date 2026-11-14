@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/pluginhost"
 	"github.com/ali96adil/StageCore/internal/pluginprotocol"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -245,5 +246,34 @@ func TestRuntimeSupervisorNetworkBlockerDoesNotPersistEnabledIntent(t *testing.T
 	}
 	if status.DesiredState != store.ExtensionRuntimeDesiredDisabled || status.ObservedState != store.ExtensionRuntimeObservedStopped || status.Generation != 0 {
 		t.Fatalf("network blocker left misleading intent=%+v", status)
+	}
+}
+
+func TestRuntimeSupervisorRevokedAfterProbeDoesNotPersistEnabledIntent(t *testing.T) {
+	h := newDependencyTestHarness(t)
+	pkg := registerActivationStagingPackage(t, h, nil)
+	installed, err := h.installer.InstallPlanned(h.ctx, pkg.PackageID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisor, _, _, hosts := newRuntimeSupervisorForHarness(t, h, pkg)
+	defer supervisor.Close()
+	checks := 0
+	ctx := capability.WithDispatchCheck(h.ctx, func(context.Context) error {
+		checks++
+		if checks > 1 {
+			return errors.New("Owner session revoked")
+		}
+		return nil
+	})
+	if _, err := supervisor.Enable(ctx, installed.InstallationID, "owner"); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("enable returned %v", err)
+	}
+	status, err := supervisor.Status(h.ctx, installed.InstallationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.DesiredState != store.ExtensionRuntimeDesiredDisabled || len(*hosts) != 0 {
+		t.Fatalf("revoked enable changed lifecycle: %+v", status)
 	}
 }

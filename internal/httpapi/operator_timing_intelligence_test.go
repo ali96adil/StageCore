@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,19 +15,31 @@ import (
 )
 
 type fakeTimingIntelligenceService struct {
+	lastSegment       store.TimingSegment
 	reportCalls       int
 	lastProjectID     string
 	lastOptions       timingintelligence.ReportOptions
+	reportErr         error
 	selectionCalls    int
 	lastSessionID     string
 	lastSelectionMode store.TimingSelectionMode
 	lastUpdatedBy     string
+	pauseCalls        int
+	lastPaused        bool
+	beforeReport      func()
+	beforeSelection   func()
 }
 
 func (f *fakeTimingIntelligenceService) Report(_ context.Context, projectID string, options timingintelligence.ReportOptions) (timingintelligence.Report, error) {
 	f.reportCalls++
 	f.lastProjectID = projectID
 	f.lastOptions = options
+	if f.beforeReport != nil {
+		f.beforeReport()
+	}
+	if f.reportErr != nil {
+		return timingintelligence.Report{}, f.reportErr
+	}
 	return timingintelligence.Report{ProjectID: projectID, AdvisoryOnly: true}, nil
 }
 
@@ -35,7 +49,24 @@ func (f *fakeTimingIntelligenceService) SetSessionSelection(_ context.Context, p
 	f.lastSessionID = sessionID
 	f.lastSelectionMode = mode
 	f.lastUpdatedBy = updatedBy
+	if f.beforeSelection != nil {
+		f.beforeSelection()
+	}
 	return store.TimingSessionSelection{SessionID: sessionID, Mode: mode, UpdatedBy: updatedBy}, nil
+}
+
+func (f *fakeTimingIntelligenceService) SetTimingCapturePaused(_ context.Context, projectID, sessionID, updatedBy string, paused bool) error {
+	f.pauseCalls++
+	f.lastProjectID = projectID
+	f.lastSessionID = sessionID
+	f.lastUpdatedBy = updatedBy
+	f.lastPaused = paused
+	return nil
+}
+
+func (f *fakeTimingIntelligenceService) SetTimingSegment(_ context.Context, _, _, _ string, segment store.TimingSegment) error {
+	f.lastSegment = segment
+	return nil
 }
 
 func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
@@ -81,7 +112,7 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 		t.Fatalf("invalid query reached timing service: calls=%d", service.reportCalls)
 	}
 
-	validPath := "/api/v1/projects/" + projectID + "/timing-intelligence?session_id=" + sessionID + "&lead_time_seconds=45&section_from_cue_id=cue-1&section_to_cue_id=cue-3"
+	validPath := "/api/v1/projects/" + projectID + "/timing-intelligence?session_id=" + sessionID + "&review_session_id=" + sessionID + "&lead_time_seconds=45&section_from_cue_id=cue-1&section_to_cue_id=cue-3"
 	validReq := httptest.NewRequest(http.MethodGet, validPath, nil)
 	validReq.RemoteAddr = "127.0.0.1:19003"
 	validReq.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
@@ -93,7 +124,7 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	if service.reportCalls != 1 || service.lastProjectID != projectID {
 		t.Fatalf("report calls=%d project=%q", service.reportCalls, service.lastProjectID)
 	}
-	if service.lastOptions.SessionID != sessionID || service.lastOptions.LeadTime != 45*time.Second || service.lastOptions.SectionFromCueID != "cue-1" || service.lastOptions.SectionToCueID != "cue-3" {
+	if service.lastOptions.ReviewSessionID != sessionID || service.lastOptions.SessionID != sessionID || service.lastOptions.LeadTime != 45*time.Second || service.lastOptions.SectionFromCueID != "cue-1" || service.lastOptions.SectionToCueID != "cue-3" {
 		t.Fatalf("unexpected report options: %+v", service.lastOptions)
 	}
 	if !strings.Contains(validRes.Body.String(), `"advisory_only":true`) {
@@ -137,6 +168,16 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	if service.selectionCalls != 0 {
 		t.Fatalf("forbidden VIEWER mutation reached timing service: calls=%d", service.selectionCalls)
 	}
+	viewerPause := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"paused":true}`))
+	viewerPause.RemoteAddr = "127.0.0.1:19005"
+	viewerPause.Header.Set("Content-Type", "application/json")
+	viewerPause.Header.Set(csrfHeader, viewer.CSRFToken)
+	viewerPause.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: viewer.Token})
+	viewerPauseRes := httptest.NewRecorder()
+	handler.ServeHTTP(viewerPauseRes, viewerPause)
+	if viewerPauseRes.Code != http.StatusForbidden || service.pauseCalls != 0 {
+		t.Fatalf("VIEWER pause status=%d pause calls=%d, want 403 and zero calls", viewerPauseRes.Code, service.pauseCalls)
+	}
 
 	missingCSRF := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"mode":"EXCLUDE"}`))
 	missingCSRF.RemoteAddr = "127.0.0.1:19006"
@@ -149,6 +190,15 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 0 {
 		t.Fatalf("CSRF-denied mutation reached timing service: calls=%d", service.selectionCalls)
+	}
+	missingPauseCSRF := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"paused":true}`))
+	missingPauseCSRF.RemoteAddr = "127.0.0.1:19006"
+	missingPauseCSRF.Header.Set("Content-Type", "application/json")
+	missingPauseCSRF.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	missingPauseCSRFRes := httptest.NewRecorder()
+	handler.ServeHTTP(missingPauseCSRFRes, missingPauseCSRF)
+	if missingPauseCSRFRes.Code != http.StatusForbidden || service.pauseCalls != 0 {
+		t.Fatalf("missing CSRF pause status=%d pause calls=%d, want 403 and zero calls", missingPauseCSRFRes.Code, service.pauseCalls)
 	}
 
 	ownerWrite := httptest.NewRequest(http.MethodPut, "/api/v1/projects/"+projectID+"/timing-intelligence/sessions/"+sessionID, strings.NewReader(`{"mode":"EXCLUDE"}`))
@@ -164,6 +214,40 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	if service.selectionCalls != 1 || service.lastSessionID != sessionID || service.lastSelectionMode != store.TimingSelectionExclude || service.lastUpdatedBy != "owner" {
 		t.Fatalf("unexpected selection call: calls=%d session=%q mode=%q updated_by=%q", service.selectionCalls, service.lastSessionID, service.lastSelectionMode, service.lastUpdatedBy)
 	}
+	ownerPause := httptest.NewRequest(http.MethodPut, ownerWrite.URL.Path, strings.NewReader(`{"paused":true}`))
+	ownerPause.RemoteAddr = "127.0.0.1:19007"
+	ownerPause.Header.Set("Content-Type", "application/json")
+	ownerPause.Header.Set(csrfHeader, owner.CSRFToken)
+	ownerPause.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	ownerPauseRes := httptest.NewRecorder()
+	handler.ServeHTTP(ownerPauseRes, ownerPause)
+	if ownerPauseRes.Code != http.StatusOK || service.pauseCalls != 1 || !service.lastPaused ||
+		service.lastProjectID != projectID || service.lastSessionID != sessionID || service.lastUpdatedBy != "owner" {
+		t.Fatalf("OWNER pause status=%d body=%s service=%+v", ownerPauseRes.Code, ownerPauseRes.Body.String(), service)
+	}
+
+	for _, tc := range []struct {
+		body   string
+		status int
+	}{
+		{`{"segment":{"first":3,"last":5}}`, http.StatusBadRequest},
+		{`{"mode":"AUTO","segment":{"first":3,"last":5,"excluded":false}}`, http.StatusBadRequest},
+		{`{"segment":{"first":3,"last":5,"excluded":true}}`, http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodPut, ownerWrite.URL.Path, strings.NewReader(tc.body))
+		req.RemoteAddr = "127.0.0.1:19007"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(csrfHeader, owner.CSRFToken)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != tc.status {
+			t.Fatalf("segment %s returned %d want %d: %s", tc.body, res.Code, tc.status, res.Body.String())
+		}
+	}
+	if service.lastSegment != (store.TimingSegment{First: 3, Last: 5, Excluded: true}) {
+		t.Fatalf("timing segment=%+v", service.lastSegment)
+	}
 
 	goReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/timing-intelligence/go", nil)
 	goReq.RemoteAddr = "127.0.0.1:19008"
@@ -176,5 +260,85 @@ func TestTimingIntelligenceAPIAuthenticationRBACAndBounds(t *testing.T) {
 	}
 	if service.selectionCalls != 1 {
 		t.Fatalf("nonexistent GO route reached timing service: selection calls=%d", service.selectionCalls)
+	}
+}
+
+func TestTimingIntelligenceRejectsRevocationDuringReport(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{beforeReport: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodGet, "/api/v1/projects/project/timing-intelligence", nil, owner.Token, "")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if service.reportCalls != 1 || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "advisory_only") {
+		t.Fatalf("report calls=%d status=%d body=%s", service.reportCalls, res.Code, res.Body.String())
+	}
+}
+
+func TestTimingIntelligenceDoesNotDeliverReportErrorAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{
+		reportErr: errors.New("private timing report failure"),
+		beforeReport: func() {
+			if err := h.auth.Logout(ctx, owner.Token); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	request := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/project/timing-intelligence", owner.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if service.reportCalls != 1 || response.Code != http.StatusUnauthorized || strings.Contains(response.Body.String(), "private timing report failure") {
+		t.Fatalf("revoked Owner received report error: calls=%d status=%d body=%s", service.reportCalls, response.Code, response.Body.String())
+	}
+}
+
+func TestTimingIntelligenceSuppressesMutationResultAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeTimingIntelligenceService{beforeSelection: func() {
+		if err := h.auth.Logout(ctx, owner.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorTimingIntelligence(h.auth, service)).Handler()
+	request := authenticatedMutationRequest(
+		t,
+		http.MethodPut,
+		"/api/v1/projects/project/timing-intelligence/sessions/session",
+		[]byte(`{"mode":"EXCLUDE"}`),
+		owner.Token,
+		owner.CSRFToken,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if service.selectionCalls != 1 || response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), `"selection"`) {
+		t.Fatalf("revoked timing mutation exposed result: calls=%d status=%d body=%s", service.selectionCalls, response.Code, response.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["effect_may_be_committed"] != true || payload["retryable"] != false {
+		t.Fatalf("revoked timing mutation lost commit uncertainty: %v", payload)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -164,7 +165,10 @@ func (s *Store) CreateSessionAtPosition(ctx context.Context, p CreateSessionFoun
 		return domain.Session{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	// Preserve the transaction-scoped browser grant check at session creation.
+	// A grant revoked after selecting the published Snapshot must not
+	// create an active Simulation (or other foundation) Session.
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO sessions (
 			session_id, project_id, runtime_snapshot_id, session_type, name,
 			started_at_us, status, current_cue_id, session_contract_version, lifecycle_state,
@@ -227,7 +231,7 @@ func (s *Store) GetSessionFoundation(ctx context.Context, sessionID string) (dom
 		       start_position_version, start_position_kind, start_cue_id,
 		       start_position_metadata_json, last_completed_cue_id, next_cue_id,
 		       state_truth_version, restoration_status, desired_state_ref,
-		       verified_state_ref, manual_confirmation_required
+		       verified_state_ref, manual_confirmation_required, rehearsal_purpose
 		FROM sessions WHERE session_id = ?`, strings.TrimSpace(sessionID))
 	return scanSessionFoundation(row)
 }
@@ -243,7 +247,7 @@ func (s *Store) ListSessionFoundationsForProject(ctx context.Context, projectID 
 		       start_position_version, start_position_kind, start_cue_id,
 		       start_position_metadata_json, last_completed_cue_id, next_cue_id,
 		       state_truth_version, restoration_status, desired_state_ref,
-		       verified_state_ref, manual_confirmation_required
+		       verified_state_ref, manual_confirmation_required, rehearsal_purpose
 		FROM sessions WHERE project_id = ?
 		ORDER BY started_at_us DESC, session_id DESC LIMIT ?`, strings.TrimSpace(projectID), limit)
 	if err != nil {
@@ -260,6 +264,11 @@ func (s *Store) ListSessionFoundationsForProject(ctx context.Context, projectID 
 	}
 	return out, rows.Err()
 }
+
+const endSessionLifecycleSQL = `
+		UPDATE sessions
+		SET status = ?, lifecycle_state = ?, end_reason = ?, ended_at_us = ?
+		WHERE session_id = ? AND status = 'ACTIVE' AND lifecycle_state = 'ACTIVE'`
 
 func (s *Store) EndSessionLifecycle(ctx context.Context, sessionID string, lifecycle domain.SessionLifecycleState, reason string) error {
 	var coarse domain.SessionStatus
@@ -284,10 +293,7 @@ func (s *Store) EndSessionLifecycle(ctx context.Context, sessionID string, lifec
 		return fmt.Errorf("%w: terminal session lifecycle required", domain.ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE sessions
-		SET status = ?, lifecycle_state = ?, end_reason = ?, ended_at_us = ?
-		WHERE session_id = ? AND status = 'ACTIVE' AND lifecycle_state = 'ACTIVE'`,
+	result, err := capability.ExecAuthorized(ctx, s.db, endSessionLifecycleSQL,
 		coarse, lifecycle, strings.TrimSpace(reason), clock.UnixMicros(s.clock.Now()), sessionID)
 	if err != nil {
 		return fmt.Errorf("end session lifecycle: %w", err)
@@ -313,7 +319,7 @@ func scanSessionFoundation(row sessionFoundationRowScanner) (domain.Session, err
 		&session.ContractVersion, &lifecycle, &session.EndReason,
 		&session.StartPosition.Version, &startKind, &startCue, &metadata,
 		&lastCompleted, &nextCue, &session.StateTruth.Version, &restoration,
-		&desiredState, &verifiedState, &manualConfirmation,
+		&desiredState, &verifiedState, &manualConfirmation, &session.RehearsalPurpose,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Session{}, domain.ErrNotFound

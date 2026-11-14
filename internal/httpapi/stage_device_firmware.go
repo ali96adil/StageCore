@@ -91,6 +91,18 @@ func handleStageDeviceFirmwareArtifact(
 	}
 	defer file.Close()
 
+	reader := &authorizedMediaReader{
+		ReadSeeker: file,
+		authorize: func() bool {
+			current, err := auth.ValidateRuntimeSession(r.Context(), token)
+			return err == nil && current.ID == session.ID && current.CompanionID == session.CompanionID
+		},
+	}
+	if !reader.authorize() {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": companionauth.CodeSessionInvalid})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "firmware.bin"))
 	w.Header().Set("Cache-Control", "no-store")
@@ -100,5 +112,5 @@ func handleStageDeviceFirmwareArtifact(
 	w.Header().Set("X-Content-Length", int64String(metadata.SizeBytes))
 	w.Header().Set("X-StageCore-Artifact-ID", metadata.ArtifactID)
 	w.Header().Set("X-StageCore-Source-Revision", metadata.SourceRevision)
-	http.ServeContent(w, r, "firmware.bin", metadata.CreatedAt, file)
+	http.ServeContent(w, r, "firmware.bin", metadata.CreatedAt, reader)
 }

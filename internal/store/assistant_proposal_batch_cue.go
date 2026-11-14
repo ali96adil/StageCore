@@ -15,6 +15,14 @@ func (s *Store) applyAssistantCueMutationTx(ctx context.Context, tx *sql.Tx, rev
 	cue := mutation.Cue
 	cue.ID = mutation.entityID
 	cue.RevisionID = revisionID
+	checkpointCueID := ""
+	if mutation.TargetID == "" {
+		checkpointCueID = cue.ID
+	}
+	beforeHistory, err := readCueDraftStateTx(ctx, tx, revisionID, checkpointCueID)
+	if err != nil {
+		return err
+	}
 	cue.Name = strings.TrimSpace(cue.Name)
 	if cue.Name == "" {
 		return fmt.Errorf("%w: cue name is required", domain.ErrInvalidInput)
@@ -120,6 +128,17 @@ func (s *Store) applyAssistantCueMutationTx(ctx context.Context, tx *sql.Tx, rev
 			params, timeoutPolicy, errorPolicy, action.PriorityClass, boolInt(action.Enabled)); err != nil {
 			return fmt.Errorf("insert assistant proposal action: %w", err)
 		}
+	}
+	afterHistory, err := readCueDraftStateTx(ctx, tx, revisionID, checkpointCueID)
+	if err != nil {
+		return err
+	}
+	operation := "CREATE"
+	if mutation.TargetID != "" {
+		operation = "EDIT"
+	}
+	if err := recordCueDraftHistoryTx(ctx, tx, revisionID, operation, cue.ID, beforeHistory, afterHistory, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return err
 	}
 	return nil
 }

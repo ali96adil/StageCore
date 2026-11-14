@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ali96adil/StageCore/internal/capability"
 	"strings"
 	"time"
 )
@@ -62,7 +63,7 @@ func (r *Repository) SetRequiredForShow(ctx context.Context, deviceID, projectID
 	if deviceID == "" || projectID == "" {
 		return AssignmentRecord{}, ErrInvalidDevice
 	}
-	result, err := r.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, r.db, `
 		UPDATE stage_device_assignments
 		SET required_for_show = ?, updated_at_us = ?
 		WHERE device_id = ? AND project_id = ?

@@ -16,6 +16,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/extension"
+	"github.com/ali96adil/StageCore/internal/securityaudit"
 	"github.com/ali96adil/StageCore/internal/software"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -115,11 +116,89 @@ func TestOperatorOfflineBundleAPIUsesPluginManageCSRFAndTrustedCatalog(t *testin
 	}
 }
 
+func TestOfflineBundleAndCatalogResponsesSuppressDataAfterSessionRevocation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		eventType string
+	}{
+		{name: "bundle import", eventType: "extension.bundle.import"},
+		{name: "catalog sync", eventType: "extension.catalog.sync"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			objects, err := vault.Open(t.TempDir(), stageStore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := software.New(objects, stageStore, software.CurrentHubAPIVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			library, err := extension.NewLibrary(stageStore, repository)
+			if err != nil {
+				t.Fatal(err)
+			}
+			importer, err := extension.NewOfflineBundleImporter(library)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalogRoot := t.TempDir()
+			catalog, err := extension.NewTrustedCatalog(importer, catalogRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			audit, err := securityaudit.New(h.db.DB, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundle := buildHTTPAPIOfflineBundle(t, "LOCAL", []byte("revoked response payload"))
+			path := "/api/v1/extensions/import-bundle"
+			if test.name == "catalog sync" {
+				bundle = buildHTTPAPIOfflineBundle(t, "OFFICIAL", []byte("revoked catalog response payload"))
+				if err := os.WriteFile(filepath.Join(catalogRoot, "revoked.scext"), bundle, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				path = "/api/v1/extensions/catalog/sync"
+			}
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = h.db.DB.ExecContext(ctx, `CREATE TRIGGER revoke_extension_session_after_offline_operation
+				AFTER INSERT ON security_audit_records
+				WHEN NEW.event_type = '`+test.eventType+`' AND NEW.result = 'SUCCESS'
+				BEGIN
+					UPDATE browser_sessions SET revoked_at_us = NEW.occurred_at_us
+					WHERE user_id = NEW.actor_user_id AND revoked_at_us IS NULL;
+				END`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handler := New(WithOperatorExtensionOfflineBundles(h.auth, importer, catalog, audit)).Handler()
+			request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(bundle))
+			request.RemoteAddr = "127.0.0.1:19304"
+			request.Header.Set(csrfHeader, owner.CSRFToken)
+			request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(response.Body.String(), `"retryable":false`) || strings.Contains(response.Body.String(), `"package_id"`) {
+				t.Fatalf("revoked Owner received offline operation result: status=%d body=%s", response.Code, response.Body.String())
+			}
+			packages, err := repository.List(ctx, "example.osc-plugin", "linux", "arm64")
+			if err != nil || len(packages) != 1 {
+				t.Fatalf("offline operation should remain committed after response revocation: packages=%+v err=%v", packages, err)
+			}
+		})
+	}
+}
+
 func buildHTTPAPIOfflineBundle(t *testing.T, source string, payload []byte) []byte {
 	t.Helper()
 	sum := sha256.Sum256(payload)
 	metadata := extension.OfflineBundleMetadata{
-		Format: extension.OfflineBundleFormatV1,
+		Format:    extension.OfflineBundleFormatV1,
 		ProductID: "example.osc-plugin", Version: "1.2.3", Platform: "linux", Architecture: "arm64",
 		MinAPIVersion: 1, MaxAPIVersion: 1, OriginalFilename: "example-plugin",
 		SigningStatus: store.SoftwareSigningSigned, NotarizationStatus: store.SoftwareNotarizationNotApplicable,

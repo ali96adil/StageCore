@@ -35,6 +35,7 @@ type subscriber struct {
 }
 
 type Config struct {
+ Authorize func(*http.Request, AccessScope) bool
  SourceURL string
  FlashControlURL string
  MaxClients int
@@ -358,7 +359,8 @@ func(r *Relay) Handler()http.Handler{
  return mux
 }
 
-func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
+func(r *Relay) health(w http.ResponseWriter,req *http.Request){
+ if !r.requireAccess(w,req,ViewCamera){return}
  r.mu.Lock()
  up,last,received,viewers:=r.connected,r.lastFrame,r.received,len(r.subscribers)
  flashRequesting:=r.flashRequestingViewersLocked()
@@ -374,7 +376,7 @@ func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
  w.Header().Set("Cache-Control","no-store")
  // Health is intentionally read-only and may be observed directly by the
  // Operator browser on the show LAN. The Hub never proxies arbitrary URLs.
- w.Header().Set("Access-Control-Allow-Origin","*")
+ if r.cfg.Authorize==nil{w.Header().Set("Access-Control-Allow-Origin","*")}
  w.WriteHeader(code)
  _=json.NewEncoder(w).Encode(map[string]any{
   "service":"stagecore-camera-relay",
@@ -394,11 +396,18 @@ func(r *Relay) health(w http.ResponseWriter,_ *http.Request){
 }
 
 func(r *Relay) flashControl(w http.ResponseWriter,req *http.Request){
+ if !r.requireAccess(w,req,ControlFlash){return}
  if r.cfg.FlashControlURL==""{
   http.Error(w,"camera flash control disabled",http.StatusServiceUnavailable)
   return
  }
  state:=strings.ToLower(strings.TrimSpace(req.URL.Query().Get("state")))
+ // An authenticated flash-on request must be tied to a live viewer so
+ // token rotation can extinguish it automatically.
+ if r.cfg.Authorize!=nil && state==FlashModeOn{
+  http.Error(w,"flash on requires an authorized live stream",http.StatusConflict)
+  return
+ }
  if err:=r.setFlashMode(state);err!=nil{
   http.Error(w,err.Error(),http.StatusBadRequest)
   return
@@ -421,8 +430,14 @@ func(r *Relay) flashControl(w http.ResponseWriter,req *http.Request){
 }
 
 func(r *Relay) stream(w http.ResponseWriter,req *http.Request){
+ if !r.requireAccess(w,req,ViewCamera){return}
  flashRequested,err:=parseFlashRequest(req)
  if err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
+ scope:=ViewCamera
+ if flashRequested{
+  scope=ControlFlash
+  if !r.requireAccess(w,req,scope){return}
+ }
  if flashRequested && r.cfg.FlashControlURL==""{
   http.Error(w,"camera flash control unavailable",http.StatusServiceUnavailable)
   return
@@ -436,12 +451,20 @@ func(r *Relay) stream(w http.ResponseWriter,req *http.Request){
  ctl:=http.NewResponseController(w)
  idle:=time.NewTimer(2*r.cfg.FrameTimeout)
  defer idle.Stop()
+ var accessTick <-chan time.Time
+ if r.cfg.Authorize!=nil{
+  ticker:=time.NewTicker(time.Second)
+  defer ticker.Stop()
+  accessTick=ticker.C
+ }
  for {
   select {
   case <-req.Context().Done():return
   case <-idle.C:return // release viewer slot if source stopped producing frames
+  case <-accessTick:
+   if !r.cfg.Authorize(req,scope){return}
   case frame,open:=<-frames:
-   if !open{return}
+   if !open || (r.cfg.Authorize!=nil && !r.cfg.Authorize(req,scope)){return}
    if err:=ctl.SetWriteDeadline(time.Now().Add(r.cfg.WriteTimeout));err!=nil{return}
    if _,err:=fmt.Fprintf(w,"--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n",boundary,len(frame));err!=nil{return}
    if _,err:=w.Write(frame);err!=nil{return}

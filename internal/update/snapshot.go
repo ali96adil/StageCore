@@ -10,11 +10,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/deployment"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 )
 
@@ -30,18 +32,26 @@ type SnapshotOptions struct {
 	InstallRoot string
 	ConfigRoot  string
 	DataRoot    string
+	VaultRoot   string
 	SystemdUnit string
+	BundleDir   string
+	ServiceName string
+	Deployment  deployment.Options
 }
 
 type Snapshot struct {
-	ID       string
-	Path     string
-	Manifest SnapshotManifest
+	ID               string
+	Path             string
+	Manifest         SnapshotManifest
+	backupRoot       string
+	expectedManifest SnapshotManifest
+	expectedTargets  map[string]string
 }
 
 type SnapshotManifest struct {
 	SchemaVersion int            `json:"schema_version"`
 	SnapshotID    string         `json:"snapshot_id"`
+	TargetService string         `json:"target_service,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	Items         []SnapshotItem `json:"items"`
 }
@@ -78,21 +88,59 @@ func (s *Snapshotter) Create(_ context.Context, opts SnapshotOptions) (Snapshot,
 	if err != nil {
 		return Snapshot{}, err
 	}
-	installRoot, err := cleanAbsolute("install root", opts.InstallRoot)
+	deploymentOpts := opts.Deployment
+	if strings.TrimSpace(deploymentOpts.InstallRoot) == "" {
+		deploymentOpts = deployment.Options{
+			BundleDir: opts.BundleDir, InstallRoot: opts.InstallRoot,
+			ConfigRoot: opts.ConfigRoot, DataRoot: opts.DataRoot, VaultRoot: opts.VaultRoot,
+			SystemdUnit: opts.SystemdUnit, ServiceName: opts.ServiceName,
+		}
+	}
+	installRoot, err := cleanAbsolute("install root", deploymentOpts.InstallRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	configRoot, err := cleanAbsolute("config root", opts.ConfigRoot)
+	configRoot, err := cleanAbsolute("config root", deploymentOpts.ConfigRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	dataRoot, err := cleanAbsolute("data root", opts.DataRoot)
+	dataRoot, err := cleanAbsolute("data root", deploymentOpts.DataRoot)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	unit, err := cleanAbsolute("systemd unit", opts.SystemdUnit)
+	vaultRoot, err := cleanAbsolute("vault root", deploymentOpts.VaultRoot)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	unit, err := cleanAbsolute("systemd unit", deploymentOpts.SystemdUnit)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	deploymentOpts.InstallRoot, deploymentOpts.ConfigRoot = installRoot, configRoot
+	deploymentOpts.DataRoot, deploymentOpts.VaultRoot = dataRoot, vaultRoot
+	deploymentOpts.SystemdUnit = unit
+	if deploymentOpts.ServiceName == "" {
+		deploymentOpts.ServiceName, err = deployment.SystemdServiceName(unit)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
+	if deployment.IsolatedService(deploymentOpts) {
+		if err := deployment.ValidateIsolatedUpdatePaths(deploymentOpts, backupRoot); err != nil {
+			return Snapshot{}, fmt.Errorf("validate isolated snapshot paths: %w", err)
+		}
+	}
+	if info, statErr := os.Lstat(backupRoot); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return Snapshot{}, fmt.Errorf("update backup root must be a regular directory")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return Snapshot{}, fmt.Errorf("inspect update backup root: %w", statErr)
+	}
+	for _, target := range []string{installRoot, configRoot, dataRoot, vaultRoot, unit} {
+		if deployment.PathsOverlap(backupRoot, target) {
+			return Snapshot{}, fmt.Errorf("update backup root must not overlap a deployment path")
+		}
 	}
 	if err := os.MkdirAll(backupRoot, 0o700); err != nil {
 		return Snapshot{}, fmt.Errorf("create update backup root: %w", err)
@@ -128,7 +176,26 @@ func (s *Snapshotter) Create(_ context.Context, opts SnapshotOptions) (Snapshot,
 		{name: "data-root", source: dataRoot, payload: "data-root"},
 		{name: "systemd-unit", source: unit, payload: "systemd-unit"},
 	}
-	manifest := SnapshotManifest{SchemaVersion: snapshotManifestVersion, SnapshotID: id, CreatedAt: s.Now().UTC()}
+	if deployment.IsolatedService(deploymentOpts) {
+		specs = append(specs, struct {
+			name    string
+			source  string
+			payload string
+		}{name: "vault-root", source: vaultRoot, payload: "vault-root"})
+	}
+	manifest := SnapshotManifest{
+		SchemaVersion: snapshotManifestVersion, SnapshotID: id,
+		TargetService: deploymentOpts.ServiceName, CreatedAt: s.Now().UTC(),
+	}
+	expectedTargets := map[string]string{
+		"managed-binaries":  filepath.Join(installRoot, "bin"),
+		"deployment-config": configRoot,
+		"data-root":         dataRoot,
+		"systemd-unit":      unit,
+	}
+	if deployment.IsolatedService(deploymentOpts) {
+		expectedTargets["vault-root"] = vaultRoot
+	}
 	for _, spec := range specs {
 		if _, err := os.Lstat(spec.source); err != nil {
 			return Snapshot{}, fmt.Errorf("snapshot %s: %w", spec.name, err)
@@ -158,7 +225,10 @@ func (s *Snapshotter) Create(_ context.Context, opts SnapshotOptions) (Snapshot,
 		return Snapshot{}, fmt.Errorf("promote update snapshot: %w", err)
 	}
 	succeeded = true
-	return Snapshot{ID: id, Path: final, Manifest: manifest}, nil
+	return Snapshot{
+		ID: id, Path: final, Manifest: manifest, backupRoot: backupRoot,
+		expectedManifest: cloneManifest(manifest), expectedTargets: expectedTargets,
+	}, nil
 }
 
 func (s *Snapshotter) Restore(_ context.Context, snapshot Snapshot) error {
@@ -168,15 +238,34 @@ func (s *Snapshotter) Restore(_ context.Context, snapshot Snapshot) error {
 	if s.EUID == nil {
 		s.EUID = os.Geteuid
 	}
+	if hasParentPathComponent(snapshot.Path) {
+		return fmt.Errorf("snapshot path must not contain parent traversal")
+	}
 	path := filepath.Clean(strings.TrimSpace(snapshot.Path))
 	if path == "" || path == "." || !filepath.IsAbs(path) {
 		return fmt.Errorf("snapshot path must be absolute")
+	}
+	info, statErr := os.Lstat(path)
+	if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%w: snapshot root is unavailable or unsafe", ErrSnapshotIntegrity)
 	}
 	manifest, err := readSnapshotManifest(path)
 	if err != nil {
 		return err
 	}
+	if snapshot.ID == "" || snapshot.ID != manifest.SnapshotID || snapshot.backupRoot == "" ||
+		filepath.Clean(path) != filepath.Join(filepath.Clean(snapshot.backupRoot), snapshot.ID) ||
+		!reflect.DeepEqual(manifest, snapshot.expectedManifest) || !reflect.DeepEqual(manifest, snapshot.Manifest) {
+		return fmt.Errorf("%w: snapshot manifest or identity changed after creation", ErrSnapshotIntegrity)
+	}
+	if len(snapshot.expectedTargets) != len(manifest.Items) {
+		return fmt.Errorf("%w: snapshot restore targets are unavailable", ErrSnapshotIntegrity)
+	}
 	for _, item := range manifest.Items {
+		target, ok := snapshot.expectedTargets[item.Name]
+		if !ok || filepath.Clean(item.Source) != filepath.Clean(target) {
+			return fmt.Errorf("%w: %s restore target changed after snapshot creation", ErrSnapshotIntegrity, item.Name)
+		}
 		payload := filepath.Join(path, filepath.FromSlash(item.Payload))
 		if !pathWithin(path, payload) {
 			return fmt.Errorf("%w: payload escapes snapshot root", ErrSnapshotIntegrity)
@@ -198,6 +287,13 @@ func (s *Snapshotter) Restore(_ context.Context, snapshot Snapshot) error {
 		source, err := cleanAbsolute("snapshot restore target", item.Source)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrSnapshotIntegrity, err)
+		}
+		info, statErr := os.Lstat(source)
+		if statErr != nil {
+			return fmt.Errorf("inspect snapshot restore target %s: %w", source, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: restore target is a symlink", ErrSnapshotIntegrity)
 		}
 		payload := filepath.Join(path, filepath.FromSlash(item.Payload))
 		staging := source + ".stagecore-update-restore-" + restoreID
@@ -227,17 +323,49 @@ func readSnapshotManifest(root string) (SnapshotManifest, error) {
 	if err := json.Unmarshal(content, &manifest); err != nil {
 		return SnapshotManifest{}, fmt.Errorf("decode update snapshot manifest: %w", err)
 	}
-	if manifest.SchemaVersion != snapshotManifestVersion || strings.TrimSpace(manifest.SnapshotID) == "" || len(manifest.Items) != 4 {
+	if manifest.SchemaVersion != snapshotManifestVersion || strings.TrimSpace(manifest.SnapshotID) == "" || (len(manifest.Items) != 4 && len(manifest.Items) != 5) {
 		return SnapshotManifest{}, fmt.Errorf("%w: unsupported update snapshot manifest", ErrSnapshotIntegrity)
+	}
+	if manifest.TargetService != "" {
+		name, err := deployment.SystemdServiceName(filepath.Join(deployment.SystemdUnitDirectory, manifest.TargetService))
+		if err != nil || name != manifest.TargetService {
+			return SnapshotManifest{}, fmt.Errorf("%w: invalid target service identity", ErrSnapshotIntegrity)
+		}
+	}
+	allowed := map[string]string{
+		"managed-binaries":  "managed-binaries",
+		"deployment-config": "deployment-config",
+		"data-root":         "data-root",
+		"systemd-unit":      "systemd-unit",
+		"vault-root":        "vault-root",
 	}
 	seen := map[string]bool{}
 	for _, item := range manifest.Items {
 		if item.Name == "" || item.Source == "" || item.Payload == "" || item.TreeSHA256 == "" || seen[item.Name] {
 			return SnapshotManifest{}, fmt.Errorf("%w: invalid update snapshot item", ErrSnapshotIntegrity)
 		}
+		if payload, ok := allowed[item.Name]; !ok || item.Payload != payload {
+			return SnapshotManifest{}, fmt.Errorf("%w: unsupported update snapshot item", ErrSnapshotIntegrity)
+		}
 		seen[item.Name] = true
 	}
+	for _, required := range []string{"managed-binaries", "deployment-config", "data-root", "systemd-unit"} {
+		if !seen[required] {
+			return SnapshotManifest{}, fmt.Errorf("%w: snapshot is missing %s", ErrSnapshotIntegrity, required)
+		}
+	}
+	if len(manifest.Items) == 5 && !seen["vault-root"] {
+		return SnapshotManifest{}, fmt.Errorf("%w: isolated snapshot is missing its Vault", ErrSnapshotIntegrity)
+	}
+	if deployment.IsolatedService(deployment.Options{ServiceName: manifest.TargetService}) && len(manifest.Items) != 5 {
+		return SnapshotManifest{}, fmt.Errorf("%w: isolated snapshot is missing its Vault", ErrSnapshotIntegrity)
+	}
 	return manifest, nil
+}
+
+func cloneManifest(manifest SnapshotManifest) SnapshotManifest {
+	manifest.Items = append([]SnapshotItem(nil), manifest.Items...)
+	return manifest
 }
 
 func copyPath(source, destination string, preserveOwner bool) error {
@@ -367,11 +495,23 @@ func cleanAbsolute(label, value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("%s is required", label)
 	}
+	if hasParentPathComponent(value) {
+		return "", fmt.Errorf("%s must not contain parent traversal", label)
+	}
 	cleaned := filepath.Clean(value)
 	if !filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("%s must be absolute", label)
 	}
 	return cleaned, nil
+}
+
+func hasParentPathComponent(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func pathWithin(root, candidate string) bool {

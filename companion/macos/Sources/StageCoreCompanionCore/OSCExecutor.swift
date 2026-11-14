@@ -244,8 +244,16 @@ enum OSCPacketEncoder {
     }
 
     private static func validateAddress(_ address: String) throws {
+        // VDMX OSCQuery publishes addresses such as
+        // /OSCQUERY/Control Surface/Slider. Although OSC 1.0 recommends
+        // space-free method names, transmit the server-advertised literal path
+        // for interoperability. Other whitespace and control characters remain
+        // forbidden; never percent-encode or silently rewrite an OSC address.
         guard address.hasPrefix("/"),
-              !address.unicodeScalars.contains(where: { $0.value == 0 || CharacterSet.whitespacesAndNewlines.contains($0) }) else {
+              !address.unicodeScalars.contains(where: { scalar in
+                  CharacterSet.controlCharacters.contains(scalar) ||
+                      (CharacterSet.whitespacesAndNewlines.contains(scalar) && scalar.value != 0x20)
+              }) else {
             throw OSCExecutorError.invalidParameters
         }
     }

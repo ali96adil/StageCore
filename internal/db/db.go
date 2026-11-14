@@ -152,7 +152,84 @@ func migrate(database *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	// Migration 58 adopts existing StageLaser command generations from
+	// deployed databases. SQLite has no ADD COLUMN IF NOT EXISTS, so first
+	// migrate to 57, then add the column only on schemas that lack it.
+	if err := goose.UpTo(database, ".", 57); err != nil {
+		return err
+	}
+	version, err := goose.GetDBVersion(database)
+	if err != nil {
+		return fmt.Errorf("read migration version: %w", err)
+	}
+	if version == 57 {
+		if err := ensureStageLaserControlGenerationColumn(database); err != nil {
+			return fmt.Errorf("prepare StageLaser migration 58: %w", err)
+		}
+	}
 	if err := goose.Up(database, "."); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureStageLaserControlGenerationColumn preserves legacy command generations.
+// The SQL migration seeds its monotonic sequence from MAX(control_generation).
+func ensureStageLaserControlGenerationColumn(database *sql.DB) error {
+	rows, err := database.Query(`PRAGMA table_info("stage_device_commands")`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name != "control_generation" {
+			continue
+		}
+		found = true
+		if !strings.EqualFold(strings.TrimSpace(columnType), "INTEGER") || notNull != 1 ||
+			!defaultValue.Valid || strings.Trim(defaultValue.String, " ()") != "0" {
+			_ = rows.Close()
+			return fmt.Errorf("existing control_generation column has unsupported definition")
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !found {
+		if _, err := database.Exec(`ALTER TABLE stage_device_commands ADD COLUMN control_generation
+			INTEGER NOT NULL DEFAULT 0 CHECK (control_generation BETWEEN 0 AND 9007199254740991)`); err != nil {
+			return err
+		}
+	}
+
+	var invalid int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM stage_device_commands
+		WHERE control_generation IS NULL
+		   OR control_generation < 0 OR control_generation > 9007199254740991`).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return fmt.Errorf("found %d invalid existing control_generation values", invalid)
+	}
+	var duplicate int
+	err = database.QueryRow(`SELECT control_generation FROM stage_device_commands
+		WHERE control_generation > 0
+		GROUP BY control_generation HAVING COUNT(*) > 1 LIMIT 1`).Scan(&duplicate)
+	if err == nil {
+		return fmt.Errorf("duplicate existing control_generation value %d", duplicate)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	return nil

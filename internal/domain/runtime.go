@@ -91,7 +91,15 @@ type SessionStateTruth struct {
 	ManualConfirmationRequired bool
 }
 
+type RehearsalPurpose string
+
+const (
+	RehearsalPreview       RehearsalPurpose = "PREVIEW"
+	RehearsalTimingCapture RehearsalPurpose = "TIMING_CAPTURE"
+)
+
 type Session struct {
+	RehearsalPurpose  RehearsalPurpose
 	ID                string
 	ProjectID         string
 	RuntimeSnapshotID string

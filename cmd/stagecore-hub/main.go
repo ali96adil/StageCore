@@ -26,7 +26,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/extension"
 	"github.com/ali96adil/StageCore/internal/httpapi"
 	"github.com/ali96adil/StageCore/internal/livereconcile"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/preflight"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/securitypreflight"
@@ -37,6 +39,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/simulationinput"
 	"github.com/ali96adil/StageCore/internal/simulationreport"
+	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
 	"github.com/ali96adil/StageCore/internal/timingintelligence"
@@ -66,6 +69,12 @@ func main() {
 		logger.Error("hub startup failed", "error", err)
 		os.Exit(1)
 	}
+	if path := strings.TrimSpace(os.Getenv("STAGECORE_SIGNED_ACK_CONFIG")); path != "" {
+		if err := application.CompanionRuntime.LoadSignedACKConfig(path); err != nil {
+			logger.Error("invalid signed application ACK configuration", "error", err)
+			os.Exit(1)
+		}
+	}
 	defer application.Close()
 
 	userAuth, err := userauth.New(application.DB.DB)
@@ -74,13 +83,16 @@ func main() {
 		os.Exit(1)
 	}
 	publisher := publish.New(application.Store, application.Capabilities)
-	basePreflight := preflight.New(
-		application.Store,
-		application.Capabilities,
-		application.StorageHealth,
+	preflightOptions := []preflight.Option{
 		preflight.WithConnectionCheck(application.CompanionRuntime.IsConnected),
 		preflight.WithEnvironmentInspection(application.CompanionRuntime.Inspect),
-	)
+	}
+	if os.Getenv("STAGECORE_OFFLINE_RTC_READINESS") == "1" {
+		preflightOptions = append(preflightOptions, preflight.WithOfflineRTC(func() (offlineclock.RTC, error) {
+			return offlineclock.ReadRTC("/sys/class/rtc/rtc0")
+		}))
+	}
+	basePreflight := preflight.New(application.Store, application.Capabilities, application.StorageHealth, preflightOptions...)
 	securityPreflight := securitypreflight.New(
 		basePreflight,
 		application.Store,
@@ -95,6 +107,32 @@ func main() {
 	)
 	timecodeRuntime := timecode.NewRuntimeService(application.Store, application.CueEngine)
 	preflightService := timecode.NewPreflightService(devicePreflight, timecodeRuntime)
+	// Audio is disabled unless an administrator explicitly configures an
+	// already running trusted same-host StageAudio Unix socket. No spawn,
+	// package installation, or automatic playback occurs at Hub boot.
+	var audioClient httpapi.StageAudioLocal
+	if socket := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_SOCKET")); socket != "" {
+		local, clientErr := stageaudio.NewLocalClient(socket)
+		if clientErr != nil {
+			logger.Warn("StageAudio disabled: invalid local socket configuration", "error", clientErr)
+		} else {
+			audioClient = local
+		}
+	}
+
+	var audioFence *stageaudio.ShowFence
+	var acquireShowAudioFence func(context.Context) (func(), error)
+	if audioClient != nil {
+		audioFence = stageaudio.NewShowFence()
+		acquireShowAudioFence = func(ctx context.Context) (func(), error) {
+			return audioFence.AcquireShow(ctx, audioClient.Call)
+		}
+	}
+	usbManual, err := configuredUSBManual()
+	if err != nil {
+		logger.Error("manual USB-DMX configuration rejected", "error", err)
+		os.Exit(1)
+	}
 	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
@@ -104,8 +142,14 @@ func main() {
 			application.DeviceRuntime,
 		)),
 		runtimecontrol.WithShowGate(preflightService.ShowGate),
+		runtimecontrol.WithShowAdmissionFence(acquireShowAudioFence),
+		runtimecontrol.WithManualOutputFence(usbManual.AcquireRuntime, usbManual.SetBlackout),
 		runtimecontrol.WithSessionStopSafety(sessionsafety.NewLightingBlackout(
 			application.Store,
+			application.DeviceExperience,
+			application.DeviceRuntime,
+		)),
+		runtimecontrol.WithRehearsalTabletStop(sessionsafety.NewRehearsalTabletStop(
 			application.DeviceExperience,
 			application.DeviceRuntime,
 		)),
@@ -283,8 +327,32 @@ func main() {
 		logger.Warn("one or more enabled extensions failed runtime reconciliation", "error", err)
 	}
 
+	var audioScope *httpapi.StageAudioProjectScope
+	if id := strings.TrimSpace(os.Getenv("STAGECORE_AUDIO_PROJECT_ID")); id != "" {
+		access, err := projectaccess.New(application.DB.DB)
+		if err != nil {
+			logger.Error("StageAudio project scope unavailable", "error", err)
+			os.Exit(1)
+		}
+		audioScope = &httpapi.StageAudioProjectScope{ProjectID: id, Access: access, Vault: application.Vault}
+	}
+	var cameraViewer *httpapi.ProjectCameraViewer
+	var cameraAccess *projectaccess.Service
+	if id, address, tokenFile := os.Getenv("STAGECORE_CAMERA_VIEW_PROJECT_ID"), os.Getenv("STAGECORE_CAMERA_VIEW_RELAY"), os.Getenv("STAGECORE_CAMERA_VIEW_TOKEN_FILE"); id != "" || address != "" || tokenFile != "" {
+		cameraViewer, err = httpapi.NewProjectCameraViewer(id, address, tokenFile)
+		if err == nil {
+			cameraAccess, err = projectaccess.New(application.DB.DB)
+		}
+		if err != nil {
+			logger.Error("project camera viewer configuration rejected", "error", err)
+			os.Exit(1)
+		}
+	}
 	api := httpapi.New(
+		httpapi.WithOperatorCameraViewer(userAuth, cameraAccess, cameraViewer),
 		httpapi.WithOperatorWeb(),
+		httpapi.WithOperatorUSBManualDMX(userAuth, application.Store, usbManual),
+		httpapi.WithScopedOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence, audioScope),
 		httpapi.WithHubIdentity(application.HubSecurity),
 		httpapi.WithFirstOwnerBootstrap(application.HubSecurity, application.SecurityAudit),
 		httpapi.WithUserAuth(userAuth, application.HubSecurity, application.SecurityAudit),
@@ -367,7 +435,15 @@ func main() {
 	}
 	logger.Info("StageCore Operator HTTPS listening", "listen", cfg.OperatorTLSListen, "host", operatorHost, "tls_sha256", operatorPin)
 
-	gateway, err := startDeviceGateway(ctx, logger, application, cfg.DeviceListen, deviceErrCh)
+	var tabletCameraViewer *httpapi.ProjectCameraViewer
+	if os.Getenv("STAGECORE_CAMERA_VIEW_TABLETS") == "1" {
+		if cameraViewer == nil {
+			logger.Error("tablet camera viewing requires project camera viewer configuration")
+			os.Exit(1)
+		}
+		tabletCameraViewer = cameraViewer
+	}
+	gateway, err := startDeviceGateway(ctx, logger, application, cfg.DeviceListen, tabletCameraViewer, deviceErrCh)
 	if err != nil {
 		logger.Error("secure device gateway startup failed", "error", err)
 		os.Exit(1)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -126,8 +127,10 @@ func (r *Runtime) ExecuteLightingActivationAuthorized(
 		"expected_channels":       lightingnode.MaxChannels,
 		"commands_enabled":        false,
 	}
-	if err := current.send(request); err != nil {
-		current.close()
+	if err := current.sendAuthorized(ctx, request); err != nil {
+		if ctx.Err() == nil && !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			current.close()
+		}
 		return deviceexperience.LightingActivationCommit{}, fmt.Errorf("%w: activation request failed: %v", ErrLightingActivationNotVerified, err)
 	}
 

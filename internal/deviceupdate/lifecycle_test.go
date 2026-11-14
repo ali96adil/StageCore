@@ -2,11 +2,13 @@ package deviceupdate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/db"
 )
 
@@ -262,5 +264,32 @@ func TestLifecycleHubRestartPreservesRebootHandoff(t *testing.T) {
 	}
 	if current.State != UpdateRebooting {
 		t.Fatalf("state after Hub restart=%s", current.State)
+	}
+}
+
+func TestFirmwareLifecycleRejectsRevocationAtWriteBoundary(t *testing.T) {
+	ctx := context.Background()
+	s, _, deviceID := newLifecycleTestStore(t)
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	manifest := lifecycleManifest(deviceID, now)
+	denied := capability.WithWriteAuthorization(ctx, func(context.Context, *sql.Tx) error {
+		return capability.ErrDispatchAuthorityRevoked
+	})
+	if _, err := s.Issue(denied, manifest, "owner"); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked issuance returned %v", err)
+	}
+	if _, err := s.Get(ctx, manifest.UpdateID); !errors.Is(err, ErrUpdateNotFound) {
+		t.Fatalf("revoked manifest was written: %v", err)
+	}
+	if _, err := s.Issue(ctx, manifest, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkSent(denied, manifest.UpdateID, deviceID, 9); !errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		t.Fatalf("revoked delivery returned %v", err)
+	}
+	record, err := s.Get(ctx, manifest.UpdateID)
+	if err != nil || record.State != UpdateIssued || record.ConnectionGeneration != 0 {
+		t.Fatalf("revoked delivery changed firmware state: %+v, %v", record, err)
 	}
 }

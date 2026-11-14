@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -177,6 +178,9 @@ func (r *PermissionReviewer) Decide(ctx context.Context, installationID, permiss
 	storeDecision := store.ExtensionPermissionDenied
 	if decision == PermissionDecisionApproved {
 		storeDecision = store.ExtensionPermissionApproved
+	}
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return PermissionReview{}, err
 	}
 	if _, err := r.installer.library.store.SetExtensionPermissionDecision(ctx, installationID, permission, storeDecision, actor); err != nil {
 		return PermissionReview{}, err

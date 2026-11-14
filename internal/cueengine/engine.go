@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/actionpolicy"
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -373,7 +374,7 @@ func (e *Engine) startAction(
 	}
 	resultCh := make(chan actionOutcome, 1)
 	run := func() {
-		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, startedEvent.EventID, action)
+		outcome := e.runAction(ctx, sessionID, command, manifest, actionExecution, cueExecution.CueID, startedEvent.EventID, action)
 		resultCh <- outcome
 		close(resultCh)
 	}
@@ -391,34 +392,54 @@ func (e *Engine) runAction(
 	command contracts.CommandEnvelope,
 	manifest snapshot.Manifest,
 	actionExecution domain.ActionExecution,
+	cueID string,
 	startedEventID string,
 	action snapshot.Action,
 ) actionOutcome {
-	actionCtx, cancel, timeoutMS, policyErr := actionContext(parent, action.TimeoutPolicy)
-	if cancel != nil {
-		defer cancel()
-	}
-
+	settings, policyErr := actionpolicy.Parse(action.TimeoutPolicy, action.ErrorPolicy)
 	started := time.Now()
 	var executionResult capability.Result
+	attempts := 0
 	if policyErr != nil {
-		executionResult = capability.Result{
-			Result:          domain.ExecutionFailed,
-			AckLevel:        contracts.AckNone,
-			ErrorCode:       "INVALID_TIMEOUT_POLICY",
-			ResponseSummary: policyErr.Error(),
-		}
+		executionResult = capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+			ErrorCode: "INVALID_ACTION_POLICY", ResponseSummary: policyErr.Error()}
+	} else if !waitForActionDispatch(parent, time.Duration(settings.StartDelayMS)*time.Millisecond) {
+		executionResult = cancelledActionDispatch()
 	} else {
-		executionResult = e.executor.Execute(actionCtx, capability.Request{
-			ExecutionID:       actionExecution.ID,
-			RuntimeSnapshotID: command.RuntimeSnapshotID,
-			Capability:        action.CapabilityKey,
-			Target:            resolvedTarget(manifest, action.TargetRef),
-			Parameters:        action.Parameters,
-			Priority:          action.PriorityClass,
-			TimeoutMS:         timeoutMS,
-			CorrelationID:     command.CorrelationID,
-		})
+		actionCtx, cancel, timeoutMS, err := actionContext(parent, action.TimeoutPolicy)
+		if cancel != nil {
+			defer cancel()
+		}
+		if err != nil {
+			executionResult = capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode: "INVALID_TIMEOUT_POLICY", ResponseSummary: err.Error()}
+		} else {
+			req := capability.Request{
+				ExecutionID: actionExecution.ID, RuntimeSnapshotID: command.RuntimeSnapshotID,
+				ProjectID: command.ProjectID, SessionID: sessionID,
+				CueID: cueID, RequireApplicationACK: settings.RequireApplicationACK,
+				Capability: action.CapabilityKey, Target: resolvedTarget(manifest, action.TargetRef),
+				Parameters: action.Parameters, Priority: action.PriorityClass,
+				TimeoutMS: timeoutMS, CorrelationID: command.CorrelationID,
+			}
+			attempts = 1
+			executionResult = e.executor.Execute(actionCtx, req)
+			if settings.RetryBeforeDispatch && executionResult.Result == domain.ExecutionFailed &&
+				executionResult.AckLevel == contracts.AckNone && executionResult.DispatchNotAttempted {
+				if waitForActionDispatch(actionCtx, 150*time.Millisecond) {
+					attempts++
+					executionResult = e.executor.Execute(actionCtx, req)
+				} else if parent.Err() != nil || !waitForActionDispatch(parent, 0) {
+					executionResult = cancelledActionDispatch()
+				}
+			}
+			if settings.RequireApplicationACK && executionResult.Result == domain.ExecutionCompleted &&
+				executionResult.AckLevel != contracts.AckApplication {
+				executionResult.Result = domain.ExecutionFailed
+				executionResult.ErrorCode = "APPLICATION_ACK_MISSING"
+				executionResult.ResponseSummary = "Application acknowledgment was required. Output may already have been sent."
+			}
+		}
 	}
 
 	latencyMS := time.Since(started).Milliseconds()
@@ -445,6 +466,7 @@ func (e *Engine) runAction(
 		"action_id":           action.ID,
 		"result":              executionResult.Result,
 		"ack_level":           executionResult.AckLevel,
+		"dispatch_attempts":   attempts,
 		"latency_ms":          latencyMS,
 		"response_summary":    executionResult.ResponseSummary,
 		"error_code":          executionResult.ErrorCode,
@@ -458,6 +480,32 @@ func (e *Engine) runAction(
 		return actionOutcome{result: domain.ExecutionFailed, fatal: true, eventID: event.EventID, err: err}
 	}
 	return actionOutcome{result: executionResult.Result, fatal: fatal, eventID: event.EventID}
+}
+
+func waitForActionDispatch(ctx context.Context, delay time.Duration) bool {
+	stop := delayStopSignal(ctx)
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-stop:
+			return false
+		case <-timer.C:
+		}
+	}
+	select {
+	case <-stop:
+		return false
+	default:
+		return ctx.Err() == nil
+	}
+}
+
+func cancelledActionDispatch() capability.Result {
+	return capability.Result{Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+		ErrorCode: "ACTION_DISPATCH_CANCELLED", ResponseSummary: "Action stopped before dispatch"}
 }
 
 func resolvedTarget(manifest snapshot.Manifest, targetRef string) *capability.Target {

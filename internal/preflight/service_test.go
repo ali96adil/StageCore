@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/db"
+	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/store"
@@ -22,6 +26,103 @@ func TestPreflightDefaultHeartbeatTimeoutAllowsHeartbeatJitter(t *testing.T) {
 	service := New(nil, nil, nil)
 	if got, want := service.heartbeatTimeout, 15*time.Second; got != want {
 		t.Fatalf("heartbeat timeout=%s, want %s", got, want)
+	}
+}
+
+func TestPreflightRTCDriftExplainsLocalAuthenticationImpactAndRemedy(t *testing.T) {
+	now := time.Date(2026, time.November, 14, 2, 0, 0, 0, time.UTC)
+	rtc := offlineclock.RTC{Time: now.Add(-time.Minute), UsedAtBoot: true}
+	service := New(nil, nil, nil, WithClock(func() time.Time { return now }))
+	WithOfflineRTC(func() (offlineclock.RTC, error) { return rtc, nil })(service)
+	report := Report{Checks: []Check{}}
+	service.evaluateRTC(&report)
+	if len(report.Checks) != 1 || report.Checks[0].Status != Warn {
+		t.Fatalf("RTC drift report=%+v", report.Checks)
+	}
+	detail := report.Checks[0].Detail
+	if !strings.Contains(detail, "stagecore clock") ||
+		!strings.Contains(detail, "token validity window") ||
+		!strings.Contains(detail, "local sign-in") {
+		t.Fatalf("RTC warning omits operator remedy or authentication impact: %q", detail)
+	}
+}
+
+func TestPreflightWarnsWhenDraftLightingDiffersFromPublishedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	handle, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+
+	stageStore := store.New(handle.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Lighting Drift", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(handle.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "lighting-drift", ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Simulated Lighting", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binding := lightingnode.ProjectBinding{
+		DeviceID: "lighting-drift", ProfileID: lightingnode.ProfileID,
+		Configuration: lightingnode.Configuration{SchemaVersion: lightingnode.SchemaVersion1, Channels: []lightingnode.ChannelConfig{{
+			ChannelKey: "front", ChannelNumber: 1, DisplayName: "Front", Kind: lightingnode.ChannelWarmWhite,
+			MinimumLevel: 0, MaximumLevel: 80, Enabled: true,
+		}}},
+		Aliases: map[string]string{"front_warm": "front"},
+	}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, binding, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(stageStore, capability.NewRegistry(), healthyMonitor(root))
+	matching, err := service.Evaluate(ctx, project.ID, published.ID)
+	if err != nil || !hasCheck(matching, "lighting.draft_snapshot_sync", Pass) {
+		t.Fatalf("matching Draft/Snapshot lighting not reported as pass: checks=%+v err=%v", matching.Checks, err)
+	}
+
+	draft, err := stageStore.EnsureProjectDraft(ctx, project.ID, "owner", "adjust simulated lighting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := stageStore.ListLightingNodeBindings(ctx, draft.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("inherited draft bindings=%+v err=%v", bindings, err)
+	}
+	bindings[0].Configuration.Channels[0].MaximumLevel = 70
+	if _, err := stageStore.SetLightingNodeBinding(ctx, draft.ID, bindings[0], "owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := service.Evaluate(ctx, project.ID, published.ID)
+	if err != nil || changed.Status != Warn || !changed.AllowsShow() || !hasCheck(changed, "lighting.draft_snapshot_sync", Warn) {
+		t.Fatalf("Draft lighting drift should be advisory and visible: status=%s checks=%+v err=%v", changed.Status, changed.Checks, err)
+	}
+	var check Check
+	for _, candidate := range changed.Checks {
+		if candidate.Key == "lighting.draft_snapshot_sync" {
+			check = candidate
+			break
+		}
+	}
+	if !strings.Contains(check.Summary, "differs") || !strings.Contains(check.Detail, published.ID) {
+		t.Fatalf("lighting drift lacks actionable published Snapshot identity: %+v", check)
 	}
 }
 
@@ -63,8 +164,8 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 		}},
 		RequiredMedia: []snapshot.RequiredMedia{{
 			MachineRoleID: role.ID, RoleKey: role.RoleKey,
-			MediaAssetID: "00000000-0000-7000-8000-000000000603",
-			ContentVersionID: "00000000-0000-7000-8000-000000000604",
+			MediaAssetID:      "00000000-0000-7000-8000-000000000603",
+			ContentVersionID:  "00000000-0000-7000-8000-000000000604",
 			ChecksumAlgorithm: "SHA256", ContentHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 4096, Required: true,
 		}},
@@ -120,6 +221,20 @@ func TestPreflightReadyMismatchOfflineAndMediaTruth(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("ready SHOW gate allowed=%v err=%v", allowed, err)
 	}
+
+	now := time.Now()
+	rtc := offlineclock.RTC{Time: now, UsedAtBoot: true}
+	WithOfflineRTC(func() (offlineclock.RTC, error) { return rtc, nil })(service)
+	withRTC, err := service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)
+	if err != nil || !hasCheck(withRTC, "clock.offline_rtc", Pass) {
+		t.Fatalf("RTC boot readiness not reported: %+v, err=%v", withRTC.Checks, err)
+	}
+	rtc.Time = now.Add(-time.Minute)
+	withRTC, err = service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)
+	if err != nil || !hasCheck(withRTC, "clock.offline_rtc", Warn) || !withRTC.AllowsShow() {
+		t.Fatalf("RTC drift did not remain advisory: %+v, err=%v", withRTC.Checks, err)
+	}
+	WithOfflineRTC(nil)(service)
 
 	connected = false
 	offline, err := service.Evaluate(ctx, project.ID, runtimeSnapshot.ID)
@@ -292,12 +407,15 @@ func TestPreflightMIDIDestinationInventory(t *testing.T) {
 	report := Report{
 		Status: Pass,
 		Checks: []Check{},
-		Roles: []RoleStatus{{MachineRoleID: role.ID, CompanionID: companionState.ID}},
+		Roles:  []RoleStatus{{MachineRoleID: role.ID, CompanionID: companionState.ID}},
 	}
 	targets := map[string]snapshot.Target{role.RoleKey: baseManifest.Targets[0]}
 	service.evaluateMIDIDestinations(ctx, &report, baseManifest, targets)
 	if len(report.Checks) != 1 || report.Checks[0].Status != Pass {
 		t.Fatalf("named destination report=%+v", report.Checks)
+	}
+	if !strings.Contains(report.Checks[0].Detail, "does not verify Ableton receipt") {
+		t.Fatalf("MIDI destination PASS implies application execution: %+v", report.Checks[0])
 	}
 
 	legacy := baseManifest

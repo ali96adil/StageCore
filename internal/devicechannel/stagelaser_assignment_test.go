@@ -3,10 +3,12 @@ package devicechannel_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"golang.org/x/net/websocket"
@@ -96,7 +98,7 @@ func connectStageLaserV2(
 		"platform": "esp32", "architecture": "riscv32",
 		"client_version": "test-stagelaser-v2",
 		"protocol_version": deviceexperience.ProtocolVersion2,
-		"capabilities": stagelaser.CapabilityKeys(),
+		"capabilities": append(stagelaser.CapabilityKeys(), stagelaser.ControlGenerationCapability),
 		"readiness": deviceexperience.ReadinessReady,
 		"observed_state": safeStageLaserObservation(),
 		"network_state": json.RawMessage(`{"transport":"WSS"}`),
@@ -279,21 +281,22 @@ func TestStageLaserV2SafeAssignmentActivationAndCommandDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = second.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var wire json.RawMessage
 	var execute struct {
-		Type          string `json:"type"`
-		SchemaVersion int    `json:"schema_version"`
-		Command       struct {
-			CommandID         string `json:"command_id"`
-			CommandType       string `json:"command_type"`
-			ProjectID         string `json:"project_id"`
-			RuntimeSnapshotID string `json:"runtime_snapshot_id"`
-		} `json:"command"`
+		Type          string                    `json:"type"`
+		SchemaVersion int                       `json:"schema_version"`
+		Command       contracts.CommandEnvelope `json:"command"`
 	}
-	err = websocket.JSON.Receive(second, &execute)
+	err = websocket.JSON.Receive(second, &wire)
+	if err == nil {
+		err = json.Unmarshal(wire, &execute)
+	}
 	_ = second.SetReadDeadline(time.Time{})
 	if err != nil || execute.Type != "command.execute" || execute.SchemaVersion != 2 ||
 		execute.Command.CommandID != command.Envelope.CommandID ||
 		execute.Command.CommandType != stagelaser.CommandArm ||
+		execute.Command.ControlGeneration <= 0 ||
+		execute.Command.ControlGeneration != command.Envelope.ControlGeneration ||
 		execute.Command.ProjectID != f.projectID ||
 		execute.Command.RuntimeSnapshotID != stageLaserV2SnapshotID {
 		t.Fatalf("StageLaser command.execute=%+v err=%v", execute, err)
@@ -307,4 +310,54 @@ func TestStageLaserV2SafeAssignmentActivationAndCommandDispatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+
+	// Model a reconnect that updates inventory before replacing the socket.
+	// An old-format frame must never reach the still-generation-aware socket.
+	device, err = f.repo.GetDevice(context.Background(), testDeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device.Capabilities = stagelaser.CapabilityKeys()
+	if _, err := f.repo.RegisterUnassignedV2(context.Background(), device); err != nil {
+		t.Fatal(err)
+	}
+	offInput := deviceexperience.CreateCommandInput{
+		ProjectID: f.projectID, RuntimeSnapshotID: stageLaserV2SnapshotID,
+		DeviceID: testDeviceID, CommandType: stagelaser.CommandSafeOff,
+		Issuer: "operator:test", Payload: json.RawMessage(`{}`), Priority: "P0",
+	}
+	blocked, err := f.runtime.Dispatch(context.Background(), offInput)
+	if err != nil || blocked.Status != contracts.CommandFailed ||
+		!strings.Contains(string(blocked.Result), "DEVICE_CONTROL_GENERATION_MISMATCH") {
+		t.Fatalf("protocol mismatch escaped dispatch guard: %+v err=%v", blocked, err)
+	}
+	device.Capabilities = append(stagelaser.CapabilityKeys(), stagelaser.ControlGenerationCapability)
+	if _, err := f.repo.RegisterUnassignedV2(context.Background(), device); err != nil {
+		t.Fatal(err)
+	}
+	off, err := f.runtime.Dispatch(context.Background(), offInput)
+	if err != nil || off.Envelope.ControlGeneration <= command.Envelope.ControlGeneration {
+		t.Fatalf("SAFE_OFF did not advance generation: %+v err=%v", off, err)
+	}
+	_ = second.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var offWire json.RawMessage
+	if err := websocket.JSON.Receive(second, &offWire); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.SetReadDeadline(time.Time{})
+	if err := json.Unmarshal(offWire, &execute); err != nil ||
+		execute.Command.CommandID != off.Envelope.CommandID ||
+		execute.Command.ControlGeneration != off.Envelope.ControlGeneration {
+		t.Fatalf("expected SAFE_OFF frame, got %s err=%v", offWire, err)
+	}
+	if output := os.Getenv("STAGECORE_LASER_WIRE_TEST_OUTPUT"); output != "" {
+		frames, err := json.Marshal([]json.RawMessage{wire, offWire})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(output, frames, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 }

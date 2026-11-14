@@ -83,3 +83,21 @@ func TestStoppableExecutorCancelsAlreadyRunningAction(t *testing.T) {
 		t.Fatalf("late action dispatched despite stop: %+v calls=%d", late, probe.calls.Load())
 	}
 }
+
+func TestDispatchAuthorizationIsRecheckedForEveryAction(t *testing.T) {
+	probe := &dispatchProbe{}
+	executor := newStoppableExecutor(probe)
+	var revoked atomic.Bool
+	ctx := WithDispatchAuthorization(context.Background(), func(_ context.Context, req capability.Request) error {
+		if revoked.Load() || req.SessionID != "rehearsal" { return context.Canceled }
+		return nil
+	})
+	request := capability.Request{CorrelationID:"cue", ExecutionID:"first", SessionID:"rehearsal"}
+	if got := executor.Execute(ctx, request); got.Result != domain.ExecutionCompleted { t.Fatalf("first: %+v", got) }
+	revoked.Store(true)
+	request.ExecutionID = "delayed"
+	if got := executor.Execute(ctx, request); got.ErrorCode != "PROJECT_DISPATCH_AUTHORITY_REVOKED" || got.AckLevel != contracts.AckNone {
+		t.Fatalf("revoked: %+v", got)
+	}
+	if probe.calls.Load() != 1 { t.Fatalf("revoked action reached adapter: %d",probe.calls.Load()) }
+}

@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
+	"github.com/ali96adil/StageCore/internal/userauth"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
 
@@ -41,6 +44,17 @@ func WithSessionStartGate(gate SessionStartGate) Option {
 	return func(s *Service) { s.startGate = gate }
 }
 
+// WithShowAdmissionFence protects the final SHOW admission check and commit.
+func WithManualOutputFence(acquire func(context.Context) (func(), error), stop func(context.Context, string, bool) error) Option {
+	return func(s *Service) {
+		s.manualOutputFence, s.manualOutputStop = acquire, stop
+	}
+}
+
+func WithShowAdmissionFence(acquire func(context.Context) (func(), error)) Option {
+	return func(s *Service) { s.showAdmissionFence = acquire }
+}
+
 func WithShowGate(gate ShowGate) Option {
 	return func(s *Service) { s.showGate = gate }
 }
@@ -49,17 +63,25 @@ func WithSessionStopSafety(safety SessionStopSafety) Option {
 	return func(s *Service) { s.stopSafety = safety }
 }
 
+func WithRehearsalTabletStop(stop SessionStopSafety) Option {
+	return func(s *Service) { s.rehearsalTabletStop = stop }
+}
+
 func WithEmergencySafety(safety EmergencySafety) Option {
 	return func(s *Service) { s.emergencySafety = safety }
 }
 
 type Service struct {
+	manualOutputFence func(context.Context) (func(), error)
+	manualOutputStop func(context.Context, string, bool) error
 	store    *store.Store
 	engine   *cueengine.Engine
 	executor *stoppableExecutor
 	startGate       SessionStartGate
 	showGate        ShowGate
+	showAdmissionFence func(context.Context) (func(), error)
 	stopSafety      SessionStopSafety
+	rehearsalTabletStop SessionStopSafety
 	emergencySafety EmergencySafety
 
 	mu     sync.Mutex
@@ -67,6 +89,10 @@ type Service struct {
 	// Block GO while a STOP/Session exit is in flight so no new Cue is
 	// admitted after the STOP snapshot has been taken.
 	stopping map[string]bool
+	emergencyApplying map[string]bool
+	pendingCueAdmissions map[string]*cueAdmissionGroup
+	blackoutClears map[string]context.CancelFunc
+	projectOutputTransitions map[string]struct{}
 }
 
 type activeRun struct {
@@ -77,6 +103,7 @@ type activeRun struct {
 }
 
 type StartRequest struct {
+	RehearsalPurpose domain.RehearsalPurpose
 	ProjectID string
 	Mode      domain.SessionType
 	Name      string
@@ -97,6 +124,8 @@ type StopRequest struct {
 	SessionID string
 	Issuer    string
 	RequestID string
+	RehearsalTabletStopSessionID string
+	RehearsalExternalStopSessionID string
 }
 
 type EmergencyRequest struct {
@@ -120,11 +149,32 @@ func New(s *store.Store, executor capability.Executor, options ...Option) *Servi
 		engine: cueengine.NewWithExecutor(s, stoppable),
 		active: make(map[string]map[string]activeRun),
 		stopping: make(map[string]bool),
+		emergencyApplying: make(map[string]bool),
+		pendingCueAdmissions: make(map[string]*cueAdmissionGroup),
+		blackoutClears: make(map[string]context.CancelFunc),
+		projectOutputTransitions: make(map[string]struct{}),
 	}
 	for _, option := range options {
 		option(service)
 	}
 	return service
+}
+
+// The sessionless clear may release outputs, so it cannot overlap admission
+// of an operational session for the same project. Emergency apply stays on
+// its independent path.
+func (s *Service) beginProjectOutputTransition(projectID string) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, busy := s.projectOutputTransitions[projectID]; busy {
+		return nil, false
+	}
+	s.projectOutputTransitions[projectID] = struct{}{}
+	return func() {
+		s.mu.Lock()
+		delete(s.projectOutputTransitions, projectID)
+		s.mu.Unlock()
+	}, true
 }
 
 func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Session, contracts.CommandResult) {
@@ -136,6 +186,15 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		commandType = CommandShowEnter
 	} else if req.Mode != domain.SessionRehearsal {
 		return domain.Session{}, rejected(req.RequestID, "MODE_UNSUPPORTED", "only REHEARSAL and SHOW can be started", string(req.Mode))
+	}
+
+	purpose := req.RehearsalPurpose
+	if req.Mode == domain.SessionRehearsal && purpose == "" {
+		purpose = domain.RehearsalPreview
+	}
+	if purpose != "" && (req.Mode != domain.SessionRehearsal ||
+		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
+		return domain.Session{}, rejected(req.RequestID, "REHEARSAL_PURPOSE_INVALID", "choose PREVIEW or TIMING_CAPTURE for a rehearsal", "")
 	}
 
 	project, err := s.store.GetProject(ctx, req.ProjectID)
@@ -151,10 +210,10 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 		snapshotID = snapshot.ID
 	}
 	command := commandEnvelope(req.RequestID, commandType, project.ID, snapshotID, req.Issuer, json.RawMessage(`{}`))
-	if existing, terminal, ok := s.reserve(ctx, command); !ok {
-		return domain.Session{}, existing
-	} else if terminal {
+	if existing, terminal, ok := s.reserve(ctx, command); terminal {
 		return sessionFromStoredResult(existing), existing
+	} else if !ok {
+		return domain.Session{}, existing
 	}
 
 	finish := func(result contracts.CommandResult) (domain.Session, contracts.CommandResult) {
@@ -214,52 +273,79 @@ func (s *Service) StartSession(ctx context.Context, req StartRequest) (domain.Se
 	}
 	startWarning := strings.Join(startWarnings, " ")
 
-	session, err := s.store.CreateSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name))
+	releaseTransition, ok := s.beginProjectOutputTransition(project.ID)
+	if !ok {
+		return finish(rejected(command.CommandID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another output transition is in progress for this Project", project.ID))
+	}
+	defer releaseTransition()
+
+	if s.manualOutputFence != nil {
+		release, err := s.manualOutputFence(ctx)
+		if err != nil {
+			return finish(rejected(command.CommandID, "MANUAL_OUTPUT_ACTIVE", err.Error(), snapshot.ID))
+		}
+		defer release()
+	}
+	var releaseShowFence func()
+	if req.Mode == domain.SessionShow && s.showAdmissionFence != nil {
+		releaseShowFence, err = s.showAdmissionFence(ctx)
+		if err != nil {
+			return finish(rejected(command.CommandID, "SHOW_AUDIO_NOT_SAFE", "StageAudio must be reachable, stopped and confirmed before SHOW", snapshot.ID))
+		}
+	}
+	var result contracts.CommandResult
+	record := func(session domain.Session) (contracts.EventEnvelope, contracts.CommandResult) {
+		eventType := "rehearsal.started"
+		if req.Mode == domain.SessionShow {
+			eventType = "show.entered"
+		}
+		eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
+		if purpose != "" {
+			eventPayload["rehearsal_purpose"] = purpose
+		}
+		if startWarning != "" {
+			eventPayload["degraded_start"] = true
+			eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
+		}
+		if deviceScopeWarning != "" {
+			eventPayload["device_scope_warning"] = deviceScopeWarning
+		}
+		if preflightWarning != "" {
+			eventPayload["preflight_warning"] = preflightWarning
+		}
+		payload, _ := json.Marshal(eventPayload)
+		event := contracts.EventEnvelope{
+			EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
+			ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
+			CausationID: command.CommandID, Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
+		}
+		resultData := map[string]any{
+			"session_id": session.ID, "session_type": session.Type,
+			"runtime_snapshot_id": session.RuntimeSnapshotID,
+		}
+		if startWarning != "" {
+			resultData["degraded_start"] = true
+			resultData["degraded_reasons"] = append([]string(nil), startWarnings...)
+		}
+		if deviceScopeWarning != "" {
+			resultData["device_scope_warning"] = deviceScopeWarning
+		}
+		if preflightWarning != "" {
+			resultData["preflight_warning"] = preflightWarning
+		}
+		if purpose != "" {
+			resultData["rehearsal_purpose"] = purpose
+		}
+		resultPayload, _ := json.Marshal(resultData)
+		result = contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
+		return event, result
+	}
+	session, err := s.store.StartRecordedOperationalSession(ctx, snapshot.ID, req.Mode, strings.TrimSpace(req.Name), purpose, record)
+	if releaseShowFence != nil {
+		releaseShowFence()
+	}
 	if err != nil {
 		return finish(resultFromStoreError(command.CommandID, "SESSION_START_FAILED", err, snapshot.ID))
-	}
-	eventType := "rehearsal.started"
-	if req.Mode == domain.SessionShow {
-		eventType = "show.entered"
-	}
-	eventPayload := map[string]any{"session_id": session.ID, "session_type": session.Type}
-	if startWarning != "" {
-		eventPayload["degraded_start"] = true
-		eventPayload["degraded_reasons"] = append([]string(nil), startWarnings...)
-	}
-	if deviceScopeWarning != "" {
-		eventPayload["device_scope_warning"] = deviceScopeWarning
-	}
-	if preflightWarning != "" {
-		eventPayload["preflight_warning"] = preflightWarning
-	}
-	payload, _ := json.Marshal(eventPayload)
-	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
-		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
-		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID, CorrelationID: command.CorrelationID,
-		CausationID: command.CommandID, Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
-	}); err != nil {
-		_ = s.store.EndSession(context.WithoutCancel(ctx), session.ID, domain.SessionAborted)
-		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
-	}
-	resultData := map[string]any{
-		"session_id": session.ID, "session_type": session.Type,
-		"runtime_snapshot_id": session.RuntimeSnapshotID,
-	}
-	if startWarning != "" {
-		resultData["degraded_start"] = true
-		resultData["degraded_reasons"] = append([]string(nil), startWarnings...)
-	}
-	if deviceScopeWarning != "" {
-		resultData["device_scope_warning"] = deviceScopeWarning
-	}
-	if preflightWarning != "" {
-		resultData["preflight_warning"] = preflightWarning
-	}
-	resultPayload, _ := json.Marshal(resultData)
-	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
-	if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
-		return domain.Session{}, failed(command.CommandID, "COMMAND_FINISH_FAILED")
 	}
 	return session, result
 }
@@ -273,7 +359,20 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 	if session.Type == domain.SessionShow {
 		commandType = CommandShowExit
 	}
-	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, json.RawMessage(`{}`))
+	stopPayload := json.RawMessage(`{}`)
+	if req.RehearsalTabletStopSessionID != "" {
+		if session.Type != domain.SessionRehearsal || session.ID != req.RehearsalTabletStopSessionID {
+			return rejected(req.RequestID, "REHEARSAL_STOP_SESSION_CHANGED", "tablet STOP requires the confirmed Rehearsal Session", session.ID)
+		}
+		stopPayload = json.RawMessage(`{"stop_tablets":true}`)
+	}
+	if req.RehearsalExternalStopSessionID != "" {
+		if session.Type != domain.SessionRehearsal || req.RehearsalExternalStopSessionID != session.ID {
+			return rejected(req.RequestID, "REHEARSAL_STOP_SESSION_CHANGED", "external STOP requires the confirmed Rehearsal Session", session.ID)
+		}
+		stopPayload, _ = json.Marshal(map[string]bool{"stop_external": true, "stop_tablets": req.RehearsalTabletStopSessionID != ""})
+	}
+	command := commandEnvelope(req.RequestID, commandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, stopPayload)
 	if existing, terminal, ok := s.reserve(ctx, command); !ok {
 		return existing
 	} else if terminal {
@@ -292,6 +391,25 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 		return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
 	}
 	defer s.endStoppingCues(session.ID)
+	fresh, err := s.store.GetSession(ctx, session.ID)
+	if err != nil || fresh.Status != domain.SessionActive {
+		return finish(rejected(command.CommandID, "SESSION_NOT_ACTIVE", "runtime Session is no longer active", session.ID))
+	}
+	var outputs []rehearsalOutput
+	if req.RehearsalExternalStopSessionID != "" {
+		published, err := s.store.GetRuntimeSnapshot(ctx, session.RuntimeSnapshotID)
+		if err != nil {
+			return finish(failed(command.CommandID, "REHEARSAL_OUTPUT_SNAPSHOT_UNAVAILABLE"))
+		}
+		manifest, err := snapshot.Decode(published.Manifest)
+		if err != nil {
+			return finish(failed(command.CommandID, "REHEARSAL_OUTPUT_SNAPSHOT_INVALID"))
+		}
+		outputs, err = rehearsalOutputs(manifest)
+		if err != nil {
+			return finish(rejected(command.CommandID, "REHEARSAL_OUTPUT_POLICY_INVALID", err.Error(), session.ID))
+		}
+	}
 	if err := s.stopActiveCueForSession(ctx, session.ID); err != nil {
 		return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_CUE_UNCONFIRMED", err.Error(), session.ID))
 	}
@@ -300,24 +418,32 @@ func (s *Service) StopSession(ctx context.Context, req StopRequest) contracts.Co
 			return finish(sessionStopSafetyFailure(command.CommandID, "SESSION_STOP_SAFETY_FAILED", err.Error(), session.ID))
 		}
 	}
-	if err := s.store.EndSession(ctx, session.ID, domain.SessionCompleted); err != nil {
-		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
+	if req.RehearsalTabletStopSessionID != "" {
+		if s.rehearsalTabletStop == nil {
+			return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_TABLET_STOP_FAILED", "tablet STOP is unavailable", session.ID))
+		}
+		if err := s.rehearsalTabletStop(ctx, session, command); err != nil {
+			return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_TABLET_STOP_FAILED", err.Error(), session.ID))
+		}
+	}
+	if err := s.runRehearsalOutputs(ctx, session, command, outputs); err != nil {
+		return finish(sessionStopSafetyFailure(command.CommandID, "REHEARSAL_EXTERNAL_STOP_FAILED", err.Error(), session.ID))
 	}
 	eventType := "rehearsal.stopped"
 	if session.Type == domain.SessionShow {
 		eventType = "show.exited"
 	}
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
-	if _, err := s.store.AppendEvent(ctx, &session.ID, contracts.EventEnvelope{
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload}
+	if err := s.store.CompleteOperationalStop(ctx, session.ID, contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P1", TraceContext: json.RawMessage(`{}`), Payload: payload,
-	}); err != nil {
-		return finish(failed(command.CommandID, "SESSION_EVENT_FAILED"))
+	}, result); err != nil {
+		return finish(resultFromStoreError(command.CommandID, "SESSION_STOP_FAILED", err, session.ID))
 	}
-	resultPayload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": domain.SessionCompleted})
-	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload})
+	return result
 }
 
 func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contracts.CommandResult {
@@ -343,7 +469,7 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -356,10 +482,15 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 	}
 	defer s.endStoppingCues(session.ID)
 
-	cueStopErr := s.stopActiveCueForSession(ctx, session.ID)
-	reason := "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
-	if err := s.store.EndSessionLifecycle(context.WithoutCancel(ctx), session.ID, domain.SessionLifecycleAborted, reason); err != nil {
-		return finish(resultFromStoreError(command.CommandID, "SESSION_FORCE_STOP_FAILED", err, session.ID))
+	runs := s.activeRunsForSession(session.ID)
+	s.interruptCueRuns(runs)
+	confirmed := true
+	for _, run := range runs {
+		select {
+		case <-run.done:
+		default:
+			confirmed = false
+		}
 	}
 
 	resultPayloadMap := map[string]any{
@@ -367,23 +498,24 @@ func (s *Service) ForceStopSession(ctx context.Context, req StopRequest) contrac
 		"status": domain.SessionAborted,
 		"forced": true,
 		"safety_bypassed": true,
-		"cue_stop_confirmed": cueStopErr == nil,
+		"cue_stop_confirmed": confirmed,
 	}
-	if cueStopErr != nil {
-		resultPayloadMap["cue_stop_error"] = cueStopErr.Error()
+	if !confirmed {
+		resultPayloadMap["cue_stop_error"] = "forced exit did not wait for pending Cue termination"
 	}
 	resultPayload, _ := json.Marshal(resultPayloadMap)
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: resultPayload}
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: resultPayload,
-	})
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID,
-		Status: contracts.CommandCompleted,
-		Payload: resultPayload,
-	})
+	}
+	const reason = "FORCED_OPERATOR_EXIT_WITHOUT_CONFIRMED_SAFE_STATE"
+	if err := s.store.CompleteForcedOperationalExit(context.WithoutCancel(ctx), session.ID, reason, event, result); err != nil {
+		return finish(resultFromStoreError(command.CommandID, "SESSION_FORCE_STOP_FAILED", err, session.ID))
+	}
+	return result
 }
 
 func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyRequest) contracts.CommandResult {
@@ -393,6 +525,26 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 	project, err := s.store.GetProject(ctx, req.ProjectID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "PROJECT_LOOKUP_FAILED", err, req.ProjectID)
+	}
+	safetyCtx := ctx
+	fenceKey := "project-blackout:" + project.ID
+	if req.Enabled {
+		if !s.beginStoppingCues(fenceKey) {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "Emergency Blackout apply is already in progress", project.ID)
+		}
+		defer s.endStoppingCues(fenceKey)
+	} else {
+		releaseTransition, ok := s.beginProjectOutputTransition(project.ID)
+		if !ok {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another output transition is in progress for this Project", project.ID)
+		}
+		defer releaseTransition()
+		var releaseClear func()
+		safetyCtx, releaseClear = s.beginBlackoutClear(ctx, fenceKey)
+		if releaseClear == nil {
+			return rejected(req.RequestID, "PROJECT_OUTPUT_TRANSITION_BUSY", "another Project blackout transition is in progress", project.ID)
+		}
+		defer releaseClear()
 	}
 	if active, err := s.store.ActiveSessionForProject(ctx, project.ID); err != nil {
 		return failed(req.RequestID, "SESSION_LOOKUP_FAILED")
@@ -416,7 +568,7 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -439,23 +591,44 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 		Type: domain.SessionRehearsal,
 		Status: domain.SessionActive,
 	}
-	report, safetyErr := s.emergencySafety(ctx, synthetic, command, req.Enabled)
+	var manualErr error
+	if req.Enabled && s.manualOutputStop != nil {
+		manualErr = s.manualOutputStop(ctx, project.ID, true)
+	}
+	if !req.Enabled {
+		if err := capability.CheckDispatch(safetyCtx); err != nil {
+			return finish(resultFromStoreError(command.CommandID, "BLACKOUT_CLEAR_DISPATCH_DENIED", err, project.ID))
+		}
+	}
+	report, safetyErr := s.emergencySafety(safetyCtx, synthetic, command, req.Enabled)
+	if !req.Enabled && safetyErr == nil {
+		safetyErr = capability.CheckDispatch(safetyCtx)
+	}
+	if !req.Enabled && safetyErr == nil && s.manualOutputStop != nil {
+		manualErr = s.manualOutputStop(safetyCtx, project.ID, false)
+	}
+	if manualErr != nil {
+		safetyErr = fmt.Errorf("manual USB-DMX zero unconfirmed: %v; managed safety: %v", manualErr, safetyErr)
+	}
 	eventType := "runtime.edit_blackout.cleared"
 	if req.Enabled {
 		eventType = "runtime.edit_blackout.applied"
+	} else if safetyErr != nil {
+		eventType = "runtime.edit_blackout.clear_failed"
 	}
 	eventPayload := report
 	if len(eventPayload) == 0 {
 		eventPayload = json.RawMessage(`{}`)
 	}
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), nil, contracts.EventEnvelope{
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: project.ID, RuntimeSnapshotID: snapshot.ID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
-	})
+	}
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload}
 	if safetyErr != nil {
-		return finish(contracts.CommandResult{
+		result = contracts.CommandResult{
 			CommandID: command.CommandID,
 			Status: contracts.CommandFailed,
 			Payload: eventPayload,
@@ -464,29 +637,26 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 				Message: "sessionless managed-output blackout completed with a partial failure: " + safetyErr.Error(),
 				Retryable: true, AffectedEntityID: project.ID,
 			},
-		})
+		}
 	}
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID,
-		Status: contracts.CommandCompleted,
-		Payload: eventPayload,
-	})
+	if err := s.store.CompleteBlackout(context.WithoutCancel(ctx), nil, "", event, result); err != nil {
+		return finish(failed(command.CommandID, "PROJECT_BLACKOUT_COMMIT_FAILED"))
+	}
+	return result
 }
 
 func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResult {
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
 		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
 	}
+	admission, release := s.beginCueAdmission(req.SessionID)
+	if release == nil {
+		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", req.SessionID)
+	}
+	defer release()
 	session, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return resultFromStoreError(req.RequestID, "SESSION_LOOKUP_FAILED", err, req.SessionID)
-	}
-	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
-	if err != nil {
-		return failed(req.RequestID, "EMERGENCY_BLACKOUT_STATE_FAILED")
-	}
-	if blackout {
-		return rejected(req.RequestID, "EMERGENCY_BLACKOUT_ACTIVE", "managed-output Emergency Blackout is active; clear it explicitly before GO", session.ID)
 	}
 	payload, _ := json.Marshal(cueengine.CueGoPayload{
 		ExpectedCurrentCueID: req.ExpectedCurrentCueID,
@@ -502,10 +672,26 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	runCtx := cueengine.WithDelayStop(ctx, delayStop.Done())
 	run := activeRun{requestID: req.RequestID, correlationID: command.CorrelationID, done: done, cancel: cancel}
 	s.mu.Lock()
-	if s.stopping[session.ID] {
+	if s.stopping[session.ID] || s.emergencyApplying[session.ID] {
 		s.mu.Unlock()
 		cancel()
 		return rejected(req.RequestID, "CUE_STOP_IN_PROGRESS", "a Cue STOP or Session exit is in progress", session.ID)
+	}
+	if s.pendingCueAdmissions[session.ID] != admission {
+		s.mu.Unlock()
+		cancel()
+		return rejected(req.RequestID, "CUE_ADMISSION_SUPERSEDED", "a STOP or safety transition superseded this pending GO", session.ID)
+	}
+	// Read the persisted latch inside admission. A blackout that finished
+	// between loading the Session and taking the lock must still block GO.
+	blackout, err := s.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || blackout {
+		s.mu.Unlock()
+		cancel()
+		if err != nil {
+			return failed(req.RequestID, "EMERGENCY_BLACKOUT_STATE_FAILED")
+		}
+		return rejected(req.RequestID, "EMERGENCY_BLACKOUT_ACTIVE", "managed-output Emergency Blackout is active; clear it explicitly before GO", session.ID)
 	}
 	runs := s.active[session.ID]
 	// Validate orphan RUNNING rows while holding the admission lock. The
@@ -571,7 +757,7 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -591,6 +777,15 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		})
 	}
 
+	var clearCtx context.Context
+	if !req.Enabled {
+		var release func()
+		clearCtx, release = s.beginBlackoutClear(ctx, session.ID)
+		if release == nil {
+			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Session safety transition is in progress", session.ID))
+		}
+		defer release()
+	}
 	current, stateErr := s.store.SessionManagedOutputBlackout(ctx, session.ID)
 	if stateErr != nil {
 		return finish(failed(command.CommandID, "EMERGENCY_BLACKOUT_STATE_FAILED"))
@@ -602,10 +797,11 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 	// Block admission atomically before latching and snapshotting all active
 	// Cues. A GO which passed the earlier blackout read must still be fenced.
 	if req.Enabled {
-		if !s.beginStoppingCues(session.ID) {
-			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "another Cue STOP or Session exit is in progress", session.ID))
+		release := s.beginEmergencyApply(session.ID)
+		if release == nil {
+			return finish(rejected(command.CommandID, "CUE_STOP_IN_PROGRESS", "Emergency Blackout apply is already in progress", session.ID))
 		}
-		defer s.endStoppingCues(session.ID)
+		defer release()
 	}
 
 	// Activation is latched durably BEFORE cancelling all active Cues or
@@ -616,33 +812,45 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		}
 	}
 
-	var cueStopErr error
+	var runs []activeRun
 	if req.Enabled {
-		cueStopErr = s.stopActiveCueForSession(ctx, session.ID)
+		runs = s.activeRunsForSession(session.ID)
+		s.interruptCueRuns(runs)
 	}
 
-	report, safetyErr := s.emergencySafety(ctx, session, command, req.Enabled)
-	if !req.Enabled && safetyErr == nil {
-		if err := s.store.SetSessionManagedOutputBlackout(ctx, session.ID, false, req.Issuer); err != nil {
-			safetyErr = fmt.Errorf("clear emergency blackout latch: %w", err)
+	// Send the managed safe-state commands before waiting on canceled Cues.
+	safetyCtx := ctx
+	if clearCtx != nil {
+		safetyCtx = clearCtx
+	}
+	if !req.Enabled {
+		if err := capability.CheckDispatch(safetyCtx); err != nil {
+			return finish(resultFromStoreError(command.CommandID, "BLACKOUT_CLEAR_DISPATCH_DENIED", err, session.ID))
 		}
+	}
+	report, safetyErr := s.emergencySafety(safetyCtx, session, command, req.Enabled)
+	cueStopErr := waitForCueRuns(ctx, runs)
+	if !req.Enabled && safetyErr == nil {
+		safetyErr = capability.CheckDispatch(clearCtx)
 	}
 
 	eventType := "runtime.emergency_blackout.cleared"
 	if req.Enabled {
 		eventType = "runtime.emergency_blackout.applied"
+	} else if safetyErr != nil {
+		eventType = "runtime.emergency_blackout.clear_failed"
 	}
 	eventPayload := report
 	if len(eventPayload) == 0 {
 		eventPayload = json.RawMessage(`{}`)
 	}
-	_, _ = s.store.AppendEvent(context.WithoutCancel(ctx), &session.ID, contracts.EventEnvelope{
+	event := contracts.EventEnvelope{
 		EventType: eventType, SchemaVersion: contracts.SchemaVersion1, Source: "hub.runtime_control",
 		ProjectID: session.ProjectID, RuntimeSnapshotID: session.RuntimeSnapshotID,
 		CorrelationID: command.CorrelationID, CausationID: command.CommandID,
 		Priority: "P0", TraceContext: json.RawMessage(`{}`), Payload: eventPayload,
-	})
-
+	}
+	result := contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload}
 	if cueStopErr != nil || safetyErr != nil {
 		message := "managed-output Emergency Blackout completed with a partial failure"
 		if !req.Enabled {
@@ -655,19 +863,40 @@ func (s *Service) EmergencyBlackout(ctx context.Context, req EmergencyRequest) c
 		if safetyErr != nil {
 			details = append(details, safetyErr.Error())
 		}
-		return finish(contracts.CommandResult{
+		result = contracts.CommandResult{
 			CommandID: command.CommandID, Status: contracts.CommandFailed, Payload: eventPayload,
 			Error: &contracts.ContractError{
 				ErrorCode: "EMERGENCY_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
 				Message: message + ": " + strings.Join(details, "; "),
 				Retryable: true, AffectedEntityID: session.ID,
 			},
-		})
+		}
 	}
 
-	return finish(contracts.CommandResult{
-		CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: eventPayload,
-	})
+	recordCtx := context.WithoutCancel(ctx)
+	clearActor := ""
+	if !req.Enabled && safetyErr == nil {
+		recordCtx = clearCtx
+		clearActor = strings.TrimSpace(req.Issuer)
+	}
+	if err := s.store.CompleteBlackout(recordCtx, &session.ID, clearActor, event, result); err != nil {
+		if req.Enabled {
+			return finish(resultFromStoreError(command.CommandID, "EMERGENCY_BLACKOUT_COMMIT_FAILED", err, session.ID))
+		}
+		// A device clear may already have been attempted. Preserve the
+		// partial-failure contract and keep the persisted GO latch set.
+		event.EventType = "runtime.emergency_blackout.clear_failed"
+		result.Status = contracts.CommandFailed
+		result.Error = &contracts.ContractError{
+			ErrorCode: "EMERGENCY_BLACKOUT_PARTIAL_FAILURE", Category: "SAFETY",
+			Message: "managed-output Emergency Blackout clear could not be committed; safety latch remains active",
+			Retryable: true, AffectedEntityID: session.ID,
+		}
+		if err := s.store.CompleteBlackout(context.WithoutCancel(ctx), &session.ID, "", event, result); err != nil {
+			return finish(result)
+		}
+	}
+	return result
 }
 
 func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.CommandResult {
@@ -685,7 +914,7 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 		return existing
 	}
 	finish := func(result contracts.CommandResult) contracts.CommandResult {
-		if err := s.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+		if err := s.store.FinishCommand(context.WithoutCancel(ctx), command.CommandID, result); err != nil {
 			return failed(command.CommandID, "COMMAND_FINISH_FAILED")
 		}
 		return result
@@ -724,16 +953,87 @@ func (s *Service) StopCue(ctx context.Context, req StopRequest) contracts.Comman
 	return finish(contracts.CommandResult{CommandID: command.CommandID, Status: contracts.CommandCompleted, Payload: payload})
 }
 
+// A clear is subordinate to STOP or a new blackout. Cancellation reaches
+// device dispatch and prevents its later latch write from committing.
+func (s *Service) beginBlackoutClear(ctx context.Context, sessionID string) (context.Context, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] || s.blackoutClears[sessionID] != nil {
+		return nil, nil
+	}
+	clearCtx, cancel := context.WithCancel(ctx)
+	s.blackoutClears[sessionID] = cancel
+	return clearCtx, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		cancel()
+		delete(s.blackoutClears, sessionID)
+	}
+}
+
+type cueAdmissionGroup struct {
+	pending int
+}
+
+// Remember which GO requests were already doing prerequisite reads when
+// STOP arrived, without holding the admission lock across those reads.
+func (s *Service) beginCueAdmission(sessionID string) (*cueAdmissionGroup, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] {
+		return nil, nil
+	}
+	group := s.pendingCueAdmissions[sessionID]
+	if group == nil {
+		group = &cueAdmissionGroup{}
+		s.pendingCueAdmissions[sessionID] = group
+	}
+	group.pending++
+	return group, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		group.pending--
+		if group.pending == 0 && s.pendingCueAdmissions[sessionID] == group {
+			delete(s.pendingCueAdmissions, sessionID)
+		}
+	}
+}
+
+// Emergency apply has its own admission gate so an ordinary STOP waiting
+// for Cue completion cannot delay the dispatch of managed safe state.
+func (s *Service) beginEmergencyApply(sessionID string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.emergencyApplying[sessionID] {
+		return nil
+	}
+	s.emergencyApplying[sessionID] = true
+	s.invalidatePendingSafetyWorkLocked(sessionID)
+	return func() {
+		s.mu.Lock()
+		delete(s.emergencyApplying, sessionID)
+		s.mu.Unlock()
+	}
+}
+
 // beginStoppingCues prevents newly admitted GO executions while STOP is
 // canceling its snapshot. It also fences a normal or forced Session exit.
 func (s *Service) beginStoppingCues(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping[sessionID] {
+	if s.stopping[sessionID] || s.emergencyApplying[sessionID] {
 		return false
 	}
 	s.stopping[sessionID] = true
+	s.invalidatePendingSafetyWorkLocked(sessionID)
 	return true
+}
+
+func (s *Service) invalidatePendingSafetyWorkLocked(sessionID string) {
+	delete(s.pendingCueAdmissions, sessionID)
+	if cancel := s.blackoutClears[sessionID]; cancel != nil {
+		cancel()
+	}
 }
 
 func (s *Service) endStoppingCues(sessionID string) {
@@ -766,10 +1066,14 @@ func (s *Service) interruptCueRuns(runs []activeRun) {
 
 func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string) error {
 	runs := s.activeRunsForSession(sessionID)
+	s.interruptCueRuns(runs)
+	return waitForCueRuns(ctx, runs)
+}
+
+func waitForCueRuns(ctx context.Context, runs []activeRun) error {
 	if len(runs) == 0 {
 		return nil
 	}
-	s.interruptCueRuns(runs)
 	timer := time.NewTimer(defaultStopWait)
 	defer timer.Stop()
 	for _, run := range runs {
@@ -787,7 +1091,7 @@ func (s *Service) stopActiveCueForSession(ctx context.Context, sessionID string)
 func (s *Service) reserve(ctx context.Context, command contracts.CommandEnvelope) (contracts.CommandResult, bool, bool) {
 	record, reserved, err := s.store.ReserveCommand(ctx, command)
 	if err != nil {
-		return failed(command.CommandID, "COMMAND_RESERVE_FAILED"), false, false
+		return resultFromStoreError(command.CommandID, "COMMAND_RESERVE_FAILED", err, ""), false, false
 	}
 	if reserved {
 		return contracts.CommandResult{}, false, true
@@ -815,11 +1119,12 @@ func sessionFromStoredResult(result contracts.CommandResult) domain.Session {
 		SessionID         string             `json:"session_id"`
 		SessionType       domain.SessionType `json:"session_type"`
 		RuntimeSnapshotID string             `json:"runtime_snapshot_id"`
+		RehearsalPurpose domain.RehearsalPurpose `json:"rehearsal_purpose"`
 	}
 	if json.Unmarshal(result.Payload, &payload) != nil {
 		return domain.Session{}
 	}
-	return domain.Session{ID: payload.SessionID, Type: payload.SessionType, RuntimeSnapshotID: payload.RuntimeSnapshotID}
+	return domain.Session{ID: payload.SessionID, Type: payload.SessionType, RuntimeSnapshotID: payload.RuntimeSnapshotID, RehearsalPurpose: payload.RehearsalPurpose}
 }
 
 func rejected(commandID, code, message, entityID string) contracts.CommandResult {
@@ -847,6 +1152,12 @@ func sessionStopSafetyFailure(commandID, code, message, entityID string) contrac
 }
 
 func resultFromStoreError(commandID, code string, err error, entityID string) contracts.CommandResult {
+	if errors.Is(err, userauth.ErrForbidden) || errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+		return rejected(commandID, "FORBIDDEN", "runtime authorization is no longer valid", "")
+	}
+	if errors.Is(err, projectaccess.ErrDenied) {
+		return rejected(commandID, "NOT_FOUND", "requested runtime entity was not found", "")
+	}
 	if errors.Is(err, domain.ErrNotFound) {
 		return rejected(commandID, "NOT_FOUND", "requested runtime entity was not found", entityID)
 	}
@@ -854,6 +1165,14 @@ func resultFromStoreError(commandID, code string, err error, entityID string) co
 		return rejected(commandID, "CONFLICT", "runtime state conflicts with the requested operation", entityID)
 	}
 	return failed(commandID, code)
+}
+
+type dispatchAuthorizationKey struct{}
+
+// WithDispatchAuthorization supplies a live boundary check for every Cue
+// capability dispatch, including actions which wait behind an authored delay.
+func WithDispatchAuthorization(ctx context.Context, authorize func(context.Context, capability.Request) error) context.Context {
+	return context.WithValue(ctx, dispatchAuthorizationKey{}, authorize)
 }
 
 type stoppableExecutor struct {
@@ -892,6 +1211,15 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 		}
 		e.mu.Unlock()
 	}()
+	if authorize, ok := ctx.Value(dispatchAuthorizationKey{}).(func(context.Context, capability.Request) error); ok && authorize != nil && executionCtx.Err() == nil {
+		executionCtx = capability.WithDispatchCheck(executionCtx, func(ctx context.Context) error { return authorize(ctx, req) })
+		if err := capability.CheckDispatch(executionCtx); err == capability.ErrDispatchAuthorityRevoked {
+			return capability.Result{
+				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode: capability.DispatchAuthorityRevokedCode, ResponseSummary: "Cue action authority ended before dispatch",
+			}
+		}
+	}
 	// STOP may have won the registration race; never call a device adapter
 	// with an already-cancelled execution context.
 	if err := executionCtx.Err(); err != nil {

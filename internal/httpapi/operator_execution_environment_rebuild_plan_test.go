@@ -150,6 +150,28 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		SourceSnapshotID: snapshot.ID,
 		Plan:             edited,
 	})
+	revoked, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedReq := authenticatedExecutionEnvironmentRequest(
+		t, revoked.Token, revoked.CSRFToken, http.MethodPut, path, updateBody,
+	)
+	revokedReq.Body = &firmwareUploadRevokeReader{ReadCloser: revokedReq.Body, revoke: func() {
+		if err := h.auth.Logout(ctx, revoked.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	revokedRes := httptest.NewRecorder()
+	handler.ServeHTTP(revokedRes, revokedReq)
+	if revokedRes.Code != http.StatusForbidden {
+		t.Fatalf("revoked rebuild plan update returned %d: %s", revokedRes.Code, revokedRes.Body)
+	}
+	unchanged, err := stageStore.GetExecutionEnvironmentRebuildPlan(ctx, environment.ID)
+	if err != nil || len(unchanged.Plan.Steps) != len(seeded.Plan.Steps) {
+		t.Fatalf("revoked request changed the rebuild plan: %+v, %v", unchanged, err)
+	}
+
 	updateReq := authenticatedExecutionEnvironmentRequest(
 		t, owner.Token, owner.CSRFToken, http.MethodPut, path, updateBody,
 	)

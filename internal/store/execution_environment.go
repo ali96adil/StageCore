@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
@@ -61,7 +62,7 @@ func (s *Store) CreateExecutionEnvironmentManifest(ctx context.Context, revision
 		return ExecutionEnvironmentManifest{}, err
 	}
 	now := s.clock.Now().UTC()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO execution_environment_manifests (
 			environment_manifest_id, revision_id, environment_key, adapter_key, application_key,
 			manifest_json, content_sha256, created_by, created_at_us
@@ -158,7 +159,7 @@ func (s *Store) UpdateExecutionEnvironmentManifest(ctx context.Context, manifest
 	if err != nil {
 		return ExecutionEnvironmentManifest{}, fmt.Errorf("hash execution environment manifest: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE execution_environment_manifests
 		SET manifest_json = ?, content_sha256 = ?
 		WHERE environment_manifest_id = ?`, string(canonical), contentHash, item.ID)
@@ -211,7 +212,7 @@ func (s *Store) SetExecutionEnvironmentMachineRole(ctx context.Context, manifest
 		boundRole = roleID
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	result, err := capability.ExecAuthorized(ctx, s.db, `
 		UPDATE execution_environment_manifests
 		SET machine_role_id = ?
 		WHERE environment_manifest_id = ?`, boundRole, item.ID)
@@ -243,7 +244,7 @@ func (s *Store) DeleteExecutionEnvironmentManifest(ctx context.Context, manifest
 	if err := s.ensureDraft(ctx, s.db, item.RevisionID); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM execution_environment_manifests WHERE environment_manifest_id = ?`, item.ID)
+	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM execution_environment_manifests WHERE environment_manifest_id = ?`, item.ID)
 	if err != nil {
 		return mapExecutionEnvironmentWriteError("delete execution environment manifest", err)
 	}

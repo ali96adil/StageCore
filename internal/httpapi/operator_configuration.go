@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -110,16 +111,25 @@ type routeConfigurationView struct {
 }
 
 func WithOperatorConfiguration(auth *userauth.Service, stageStore *store.Store) Option {
+	return withOperatorConfigurationHooks(auth, stageStore, operatorConfigurationHooks{})
+}
+
+type operatorConfigurationHooks struct {
+	AfterDraft     func()
+	BeforeResponse func()
+}
+
+func withOperatorConfigurationHooks(auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
-		registerOperatorConfigurationRoutes(s.mux, auth, stageStore)
+		registerOperatorConfigurationRoutes(s.mux, auth, stageStore, hooks)
 	}
 }
 
-func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) {
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
 		if !ok {
 			return
@@ -149,6 +159,9 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision": makeRevisionView(revision),
 			"targets":  targetViews(aliases),
@@ -159,7 +172,8 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		})
 	}))
 
-	mux.HandleFunc("POST /api/v1/projects/{project_id}/targets", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/targets", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
 			writeProjectStoreError(w, err)
@@ -172,19 +186,26 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 		if len(body.Configuration) == 0 {
 			body.Configuration = json.RawMessage(`{}`)
 		}
-		created, err := stageStore.CreateAlias(r.Context(), domain.ProjectDeviceAlias{
+		created, err := stageStore.CreateAlias(writeCtx, domain.ProjectDeviceAlias{
 			ProjectID: projectID, LogicalName: strings.TrimSpace(body.LogicalName),
 			LogicalType: strings.TrimSpace(body.LogicalType), TargetRef: strings.TrimSpace(body.TargetRef),
 			GroupName: strings.TrimSpace(body.GroupName), ProjectConfig: body.Configuration,
 		})
 		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "TARGET_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, targetView(created))
 	}))
 
-	mux.HandleFunc("PUT /api/v1/projects/{project_id}/targets/{alias_id}/configuration", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("PUT /api/v1/projects/{project_id}/targets/{alias_id}/configuration", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		var body targetConfigurationUpdateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
@@ -193,12 +214,15 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			body.Configuration = json.RawMessage(`{}`)
 		}
 		updated, err := stageStore.UpdateAliasConfiguration(
-			r.Context(),
+			writeCtx,
 			strings.TrimSpace(r.PathValue("project_id")),
 			strings.TrimSpace(r.PathValue("alias_id")),
 			body.Configuration,
 		)
 		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			switch {
 			case errors.Is(err, domain.ErrInvalidInput):
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "TARGET_CONFIGURATION_INVALID"})
@@ -207,153 +231,235 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			}
 			return
 		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusOK, targetView(updated))
 	}))
 
-	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/targets/{alias_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/targets/{alias_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		aliasID := strings.TrimSpace(r.PathValue("alias_id"))
-		if err := stageStore.DeleteAlias(r.Context(), projectID, aliasID); err != nil {
+		if err := stageStore.DeleteAlias(writeCtx, projectID, aliasID); err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/inputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body inputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
 		}
-		created, err := stageStore.CreateInput(r.Context(), domain.InputDefinition{
+		created, err := stageStore.CreateInput(writeCtx, domain.InputDefinition{
 			RevisionID: revision.ID, Name: strings.TrimSpace(body.Name), SourceRef: strings.TrimSpace(body.SourceRef),
 			EventType: strings.TrimSpace(body.EventType), ValueSchema: body.ValueSchema, Enabled: body.Enabled,
 		})
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "INPUT_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, inputView(created))
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body inputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
 		}
-		updated, err := stageStore.UpdateInput(r.Context(), domain.InputDefinition{
+		updated, err := stageStore.UpdateInput(writeCtx, domain.InputDefinition{
 			ID: strings.TrimSpace(r.PathValue("input_id")), RevisionID: revision.ID,
 			Name: strings.TrimSpace(body.Name), SourceRef: strings.TrimSpace(body.SourceRef),
 			EventType: strings.TrimSpace(body.EventType), ValueSchema: body.ValueSchema, Enabled: body.Enabled,
 		})
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "INPUT_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, inputView(updated))
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
-		if err := stageStore.DeleteInput(r.Context(), revision.ID, strings.TrimSpace(r.PathValue("input_id"))); err != nil {
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
+		if err := stageStore.DeleteInput(writeCtx, revision.ID, strings.TrimSpace(r.PathValue("input_id"))); err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/outputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body outputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
 		}
-		created, err := stageStore.CreateOutput(r.Context(), domain.OutputDefinition{
+		created, err := stageStore.CreateOutput(writeCtx, domain.OutputDefinition{
 			RevisionID: revision.ID, Name: strings.TrimSpace(body.Name), TargetRef: strings.TrimSpace(body.TargetRef),
 			CapabilityKey: strings.TrimSpace(body.CapabilityKey), ValueSchema: body.ValueSchema, Criticality: strings.TrimSpace(body.Criticality),
 		})
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "OUTPUT_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, outputView(created))
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/outputs/{output_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body outputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
 		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
 		if len(body.ValueSchema) == 0 {
 			body.ValueSchema = json.RawMessage(`{}`)
 		}
-		updated, err := stageStore.UpdateOutput(r.Context(), domain.OutputDefinition{
+		updated, err := stageStore.UpdateOutput(writeCtx, domain.OutputDefinition{
 			ID: strings.TrimSpace(r.PathValue("output_id")), RevisionID: revision.ID,
 			Name: strings.TrimSpace(body.Name), TargetRef: strings.TrimSpace(body.TargetRef),
 			CapabilityKey: strings.TrimSpace(body.CapabilityKey), ValueSchema: body.ValueSchema,
 			Criticality: strings.TrimSpace(body.Criticality),
 		})
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "OUTPUT_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, outputView(updated))
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/routes", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body routeCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
+		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ConditionDefinition) == 0 {
 			body.ConditionDefinition = json.RawMessage(`null`)
@@ -372,29 +478,42 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			}
 			actions = append(actions, domain.RouteAction{OrderIndex: index, OutputID: action.OutputID, CueID: action.CueID, Parameters: params})
 		}
-		created, err := stageStore.CreateRouteWithActions(r.Context(), domain.Route{
+		created, err := stageStore.CreateRouteWithActions(writeCtx, domain.Route{
 			RevisionID: revision.ID, Name: strings.TrimSpace(body.Name), InputID: strings.TrimSpace(body.InputID),
 			ConditionDefinition: body.ConditionDefinition, TransformDefinition: body.TransformDefinition,
 			DelayMS: body.DelayMS, DebounceMS: body.DebounceMS, PriorityClass: body.PriorityClass,
 			ErrorPolicy: body.ErrorPolicy, Enabled: body.Enabled,
 		}, actions)
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ROUTE_CREATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, routeView(created))
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/routes/{route_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Operator routing edit")
-		if err != nil {
-			writeProjectStoreError(w, err)
-			return
-		}
 		var body routeCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
 			return
+		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, projectID, session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
 		}
 		if len(body.ConditionDefinition) == 0 {
 			body.ConditionDefinition = json.RawMessage(`null`)
@@ -415,7 +534,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 				OrderIndex: index, OutputID: action.OutputID, CueID: action.CueID, Parameters: params,
 			})
 		}
-		updated, err := stageStore.UpdateRouteWithActions(r.Context(), domain.Route{
+		updated, err := stageStore.UpdateRouteWithActions(writeCtx, domain.Route{
 			ID: strings.TrimSpace(r.PathValue("route_id")), RevisionID: revision.ID,
 			Name: strings.TrimSpace(body.Name), InputID: strings.TrimSpace(body.InputID),
 			ConditionDefinition: body.ConditionDefinition, TransformDefinition: body.TransformDefinition,
@@ -423,56 +542,104 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			ErrorPolicy: body.ErrorPolicy, Enabled: body.Enabled,
 		}, actions)
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "ROUTE_UPDATE_FAILED"})
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, routeView(updated))
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/routes/{route_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
 		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
-		if err := stageStore.DeleteRoute(r.Context(), revision.ID, strings.TrimSpace(r.PathValue("route_id"))); err != nil {
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
+		if err := stageStore.DeleteRoute(writeCtx, revision.ID, strings.TrimSpace(r.PathValue("route_id"))); err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
 			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 }
 
+func recheckOperatorConfigurationMutation(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, hooks operatorConfigurationHooks) bool {
+	if hooks.BeforeResponse != nil {
+		hooks.BeforeResponse()
+	}
+	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+}
+
 func targetView(value domain.ProjectDeviceAlias) targetConfigurationView {
 	return targetConfigurationView{ID: value.ID, LogicalName: value.LogicalName, LogicalType: value.LogicalType, TargetRef: value.TargetRef, GroupName: value.GroupName, Configuration: value.ProjectConfig}
 }
 func targetViews(values []domain.ProjectDeviceAlias) []targetConfigurationView {
-	out := make([]targetConfigurationView, 0, len(values)); for _, value := range values { out = append(out, targetView(value)) }; return out
+	out := make([]targetConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, targetView(value))
+	}
+	return out
 }
 func inputView(value domain.InputDefinition) inputConfigurationView {
 	return inputConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, SourceRef: value.SourceRef, EventType: value.EventType, ValueSchema: value.ValueSchema, Enabled: value.Enabled}
 }
 func inputViews(values []domain.InputDefinition) []inputConfigurationView {
-	out := make([]inputConfigurationView, 0, len(values)); for _, value := range values { out = append(out, inputView(value)) }; return out
+	out := make([]inputConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, inputView(value))
+	}
+	return out
 }
 func outputView(value domain.OutputDefinition) outputConfigurationView {
 	return outputConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, TargetRef: value.TargetRef, CapabilityKey: value.CapabilityKey, ValueSchema: value.ValueSchema, Criticality: value.Criticality}
 }
 func outputViews(values []domain.OutputDefinition) []outputConfigurationView {
-	out := make([]outputConfigurationView, 0, len(values)); for _, value := range values { out = append(out, outputView(value)) }; return out
+	out := make([]outputConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, outputView(value))
+	}
+	return out
 }
 func routeView(value domain.Route) routeConfigurationView {
 	actions := make([]routeActionConfigurationView, 0, len(value.Actions))
-	for _, action := range value.Actions { actions = append(actions, routeActionConfigurationView{ID: action.ID, OutputID: action.OutputID, CueID: action.CueID, Parameters: action.Parameters}) }
+	for _, action := range value.Actions {
+		actions = append(actions, routeActionConfigurationView{ID: action.ID, OutputID: action.OutputID, CueID: action.CueID, Parameters: action.Parameters})
+	}
 	return routeConfigurationView{ID: value.ID, RevisionID: value.RevisionID, Name: value.Name, InputID: value.InputID, ConditionDefinition: value.ConditionDefinition, TransformDefinition: value.TransformDefinition, DelayMS: value.DelayMS, DebounceMS: value.DebounceMS, PriorityClass: value.PriorityClass, ErrorPolicy: value.ErrorPolicy, Enabled: value.Enabled, Actions: actions}
 }
 func routeViews(values []domain.Route) []routeConfigurationView {
-	out := make([]routeConfigurationView, 0, len(values)); for _, value := range values { out = append(out, routeView(value)) }; return out
+	out := make([]routeConfigurationView, 0, len(values))
+	for _, value := range values {
+		out = append(out, routeView(value))
+	}
+	return out
 }
 func cueConfigurationChoices(values []domain.Cue) []cueSummaryView {
-	out := make([]cueSummaryView, 0, len(values)); for _, value := range values { out = append(out, cueSummaryView{ID: value.ID, DisplayLabel: value.DisplayLabel, Name: value.Name, OrderIndex: value.OrderIndex}) }; return out
+	out := make([]cueSummaryView, 0, len(values))
+	for _, value := range values {
+		out = append(out, cueSummaryView{ID: value.ID, DisplayLabel: value.DisplayLabel, Name: value.Name, OrderIndex: value.OrderIndex})
+	}
+	return out
 }

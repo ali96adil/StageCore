@@ -2,14 +2,18 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -115,5 +119,128 @@ func TestStageDeviceSetupAPMaintenanceRBACCSRFAndNoCredentialReflection(t *testi
 	}
 	if strings.Contains(offline.Body.String(), secret) {
 		t.Fatal("Setup AP credential reflected in API response")
+	}
+}
+
+func TestStageDeviceSetupAPSuppressesACKAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "23c45a07-7286-4afc-91d9-7e54df72aeee", ProfileID: "stagecore.test-foundation",
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Mock Setup AP Device",
+		Platform: "esp32", Architecture: "xtensa", ClientVersion: "0.1.0",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities:    []string{devicechannel.SetupAPPasswordCapability}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "mock-only-setup-password"
+	deviceEffectCommitted := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDeviceSetupMaintenance(
+		h.auth, devices, runtime, stageStore, nil, setupAPMaintenanceHooks{
+			Configure: func(dispatch context.Context, _ string, _ string, _ string, _ string) (devicechannel.SetupAPPasswordResult, error) {
+				if err := capability.CheckDispatch(dispatch); err != nil {
+					return devicechannel.SetupAPPasswordResult{}, err
+				}
+				deviceEffectCommitted = true
+				return devicechannel.SetupAPPasswordResult{MaintenanceState: "APPLIED", Detail: "mock ACK"}, nil
+			},
+			BeforeResponse: func() {
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner after mock ACK: %v", err)
+				}
+			},
+		}),
+	).Handler()
+	response := httptest.NewRecorder()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+device.ID+"/setup-ap-password",
+		[]byte(`{"password":"`+secret+`"}`), owner.Token, owner.CSRFToken)
+	handler.ServeHTTP(response, request)
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !deviceEffectCommitted || response.Code != http.StatusForbidden ||
+		body["error_code"] != capability.DispatchAuthorityRevokedCode ||
+		body["effect_may_be_committed"] != true ||
+		body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked Owner got an inaccurate Setup AP result: HTTP %d %+v effect=%t", response.Code, body, deviceEffectCommitted)
+	}
+	if _, leaked := body["maintenance_state"]; leaked || strings.Contains(response.Body.String(), secret) || strings.Contains(response.Body.String(), "mock ACK") {
+		t.Fatalf("revoked Owner got the Setup AP ACK or credential: %+v", body)
+	}
+}
+
+func TestStageDeviceSetupAPSuppressesFailureDetailsAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: "f10b7830-3a96-43d5-9fc5-51f1d9520b48", ProfileID: "stagecore.test-foundation",
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Mock Setup AP Device",
+		Platform: "esp32", Architecture: "xtensa", ClientVersion: "0.1.0",
+		ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Capabilities:    []string{devicechannel.SetupAPPasswordCapability}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const privateDeviceDetail = "private simulated rejection detail"
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDeviceSetupMaintenance(
+		h.auth, devices, runtime, stageStore, nil, setupAPMaintenanceHooks{
+			Configure: func(dispatch context.Context, _ string, _ string, _ string, _ string) (devicechannel.SetupAPPasswordResult, error) {
+				if err := capability.CheckDispatch(dispatch); err != nil {
+					return devicechannel.SetupAPPasswordResult{}, err
+				}
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner before device rejection delivery: %v", err)
+				}
+				return devicechannel.SetupAPPasswordResult{MaintenanceState: "REJECTED", Detail: privateDeviceDetail},
+					fmt.Errorf("%w: %s", devicechannel.ErrSetupAPMaintenanceRejected, privateDeviceDetail)
+			},
+		}),
+	).Handler()
+	response := httptest.NewRecorder()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/stage-devices/"+device.ID+"/setup-ap-password",
+		[]byte(`{"password":"mock-only-setup-password"}`), owner.Token, owner.CSRFToken)
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), capability.DispatchAuthorityRevokedCode) {
+		t.Fatalf("revoked Owner received a stale device result: HTTP %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), privateDeviceDetail) || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked Owner received device details or a cacheable response: headers=%v body=%s", response.Header(), response.Body.String())
 	}
 }

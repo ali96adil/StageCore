@@ -35,17 +35,40 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Check Operator JS syntax
         if: matrix.go == '1.26.x'
-        run: node --check internal/operatorweb/static/phase4.js
+        run: |
+          node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/timing-intelligence.js
+          node --check internal/operatorweb/static/memory.js
+          node --check internal/operatorweb/static/phase4.js
+          node --check internal/operatorweb/static/cue-studio.js
+          node --check internal/operatorweb/static/guided-ux.js
+          node --check internal/operatorweb/static/stageaudio.js
+          node --check internal/operatorweb/static/lighting-authoring.js
+          node --check internal/operatorweb/static/tablet-controller.js
+          node --check internal/operatorweb/static/project-files.js
+          node --check internal/operatorweb/static/security.js
+          node --check internal/operatorweb/static/preflight.js
+          node --test tests/lighting_preview.test.js tests/cue_recovery.test.js tests/cue_action_presets.test.js tests/cue_delivery.test.js tests/cue_list_filters.test.js tests/session_memory_timeline.test.js tests/rehearsal_approval.test.js tests/security_project_access.test.js tests/preflight_report.test.js
+          node --test tools/receiver-ack-lab/*.test.js
       - name: Firmware Foundation contract
         if: matrix.go == '1.26.x'
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
       - name: Test
         run: go test ./...
+      - name: Browser Cue Delivery
+        if: matrix.go == '1.26.x'
+        run: |
+          export STAGECORE_TEST_CHROME="$(command -v google-chrome)"
+          test -n "$STAGECORE_TEST_CHROME"
+          go test ./internal/httpapi -run '^(TestBrowserCueDeliveryThroughPersistedTrace|TestBrowserShowWorkspacePinsRuntime|TestBrowserCreatesNestedMixedCueChainInDraft)$' -count=1
       - name: Vet
         run: go vet ./...
       - name: Race tests
         if: matrix.go == '1.26.x'
-        run: go test -race ./...
+        # The instrumented HTTP API suite needs longer than 20 minutes on
+        # hosted runners while applying fresh SQLite migrations per test.
+        # Keep all packages in the Race job and retain a finite deadlock guard.
+        run: go test -race -timeout 45m ./...
       - name: Linux ARM64 CGo-free product builds
         if: matrix.go == '1.26.x'
         env:
@@ -55,6 +78,7 @@ jobs:
         run: |
           go build -o /tmp/stagecore-arm64 ./cmd/stagecore
           go build -o /tmp/stagecore-hub-arm64 ./cmd/stagecore-hub
+          go build -o /tmp/stagecore-audio-arm64 ./cmd/stagecore-audio
           go build -o /tmp/stagecore-camera-relay-arm64 ./cmd/stagecore-camera-relay
           go build -o /tmp/stagecore-ha-witness-arm64 ./cmd/stagecore-ha-witness
           go build -o /tmp/stagecore-osc-plugin-arm64 ./cmd/stagecore-osc-plugin

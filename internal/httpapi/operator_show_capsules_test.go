@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,43 +14,80 @@ import (
 )
 
 type fakeShowCapsuleService struct {
-	previewCalls     int
-	exportCalls      int
-	planCalls        int
-	materializeCalls int
-	lastProjectID    string
-	lastPath         string
-	lastExportRoot   string
-	lastMode         showcapsule.ExportMode
-	lastImportedBy   string
+	previewCalls              int
+	exportCalls               int
+	planCalls                 int
+	materializeCalls          int
+	lastProjectID             string
+	lastPath                  string
+	lastExportRoot            string
+	lastMode                  showcapsule.ExportMode
+	lastImportedBy            string
+	previewErr                error
+	onPreview                 func()
+	planErr                   error
+	exportErr                 error
+	materializeErr            error
+	onExport                  func()
+	afterExportAuthorize      func()
+	onPlan                    func()
+	afterMaterializeAuthorize func()
 }
 
 func (f *fakeShowCapsuleService) BuildManifest(_ context.Context, projectID string, options showcapsule.BuildOptions) (showcapsule.Manifest, error) {
 	f.previewCalls++
 	f.lastProjectID = projectID
 	f.lastMode = options.Mode
-	return showcapsule.Manifest{ExportMode: options.Mode}, nil
+	if f.onPreview != nil {
+		f.onPreview()
+	}
+	return showcapsule.Manifest{ExportMode: options.Mode}, f.previewErr
 }
 
-func (f *fakeShowCapsuleService) Export(_ context.Context, projectID, root string, options showcapsule.BuildOptions) (showcapsule.ExportResult, error) {
+func (f *fakeShowCapsuleService) Export(ctx context.Context, projectID, root string, options showcapsule.BuildOptions) (showcapsule.ExportResult, error) {
 	f.exportCalls++
 	f.lastProjectID = projectID
 	f.lastExportRoot = root
 	f.lastMode = options.Mode
+	if f.onExport != nil {
+		f.onExport()
+	}
+	if f.exportErr != nil {
+		return showcapsule.ExportResult{}, f.exportErr
+	}
+	if options.AuthorizePublish != nil {
+		if err := options.AuthorizePublish(ctx); err != nil {
+			return showcapsule.ExportResult{}, err
+		}
+	}
+	if f.afterExportAuthorize != nil {
+		f.afterExportAuthorize()
+	}
 	return showcapsule.ExportResult{CapsuleID: "00000000-0000-7000-8000-000000000611", Manifest: showcapsule.Manifest{ExportMode: options.Mode}}, nil
 }
 
 func (f *fakeShowCapsuleService) PlanImport(_ context.Context, path string) (showcapsule.ImportPlan, error) {
 	f.planCalls++
+	if f.onPlan != nil {
+		f.onPlan()
+	}
 	f.lastPath = path
-	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, nil
+	return showcapsule.ImportPlan{CapsuleID: filepath.Base(path), MaterializationReady: true}, f.planErr
 }
 
-func (f *fakeShowCapsuleService) Materialize(_ context.Context, path string, options showcapsule.MaterializeOptions) (showcapsule.MaterializeResult, error) {
+func (f *fakeShowCapsuleService) Materialize(ctx context.Context, path string, options showcapsule.MaterializeOptions) (showcapsule.MaterializeResult, error) {
 	f.materializeCalls++
 	f.lastPath = path
 	f.lastImportedBy = options.ImportedBy
-	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, nil
+	if options.AuthorizeWrite != nil {
+		if err := options.AuthorizeWrite(ctx); err != nil {
+			return showcapsule.MaterializeResult{}, err
+		}
+	}
+	if f.afterMaterializeAuthorize != nil {
+		f.afterMaterializeAuthorize()
+	}
+	return showcapsule.MaterializeResult{CapsuleID: filepath.Base(path), ProjectID: "00000000-0000-7000-8000-000000000612"}, f.materializeErr
 }
 
 func TestShowCapsuleAPIAuthenticationRBACCSRFAndPathBounds(t *testing.T) {
@@ -177,5 +215,222 @@ func TestShowCapsuleAPIAuthenticationRBACCSRFAndPathBounds(t *testing.T) {
 	handler.ServeHTTP(ownerMaterializeRes, ownerMaterialize)
 	if ownerMaterializeRes.Code != http.StatusCreated || service.materializeCalls != 1 || service.lastImportedBy != "owner" {
 		t.Fatalf("owner materialize status=%d calls=%d actor=%q body=%s", ownerMaterializeRes.Code, service.materializeCalls, service.lastImportedBy, ownerMaterializeRes.Body.String())
+	}
+}
+
+func TestShowCapsuleExportRechecksSessionAtPublication(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{onExport: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") {
+		t.Fatalf("revoked export got HTTP %d, %d calls, %s", rec.Code, service.exportCalls, rec.Body.String())
+	}
+}
+
+func TestShowCapsulePreviewSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		previewErr: errors.New("capsule metadata lookup failed"),
+		onPreview: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule preview: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsule/preview", login.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
+		strings.Contains(response.Body.String(), "PROJECTS_UNAVAILABLE") || service.previewCalls != 1 {
+		t.Fatalf("revoked Owner received capsule preview error: status=%d calls=%d body=%s", response.Code, service.previewCalls, response.Body.String())
+	}
+}
+
+func TestShowCapsulePlanSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		planErr: errors.New("capsule readiness lookup failed"),
+		onPlan: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule plan: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/show-capsules/imports/"+capsuleID+"/plan", login.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "SESSION_INVALID") ||
+		strings.Contains(response.Body.String(), "CAPSULE_VERIFICATION_FAILED") || service.planCalls != 1 {
+		t.Fatalf("revoked Owner received capsule plan error: status=%d calls=%d body=%s", response.Code, service.planCalls, response.Body.String())
+	}
+}
+
+func TestShowCapsuleExportSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		exportErr: errors.New("capsule manifest build failed"),
+		onExport: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule export: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "FORBIDDEN") ||
+		strings.Contains(response.Body.String(), "PROJECTS_UNAVAILABLE") || service.exportCalls != 1 {
+		t.Fatalf("revoked Owner received capsule export error: status=%d calls=%d body=%s", response.Code, service.exportCalls, response.Body.String())
+	}
+}
+
+func TestShowCapsuleExportSuppressesCommittedResultAfterFinalRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{afterExportAuthorize: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, t.TempDir())).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/projects/00000000-0000-7000-8000-000000000610/show-capsules",
+		[]byte(`{"mode":"SELF_CONTAINED"}`), login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.exportCalls != 1 || strings.Contains(rec.Body.String(), "capsule_id") ||
+		!strings.Contains(rec.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(rec.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked caller received exported capsule result: HTTP %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestShowCapsuleMaterializeSuppressesCommittedResultAfterFinalRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{afterMaterializeAuthorize: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/show-capsules/imports/"+capsuleID+"/materialize", nil, login.Token, login.CSRFToken)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || service.materializeCalls != 1 || strings.Contains(rec.Body.String(), "project_id") ||
+		!strings.Contains(rec.Body.String(), `"effect_may_have_been_committed":true`) || !strings.Contains(rec.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked caller received materialized capsule result: HTTP %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestShowCapsuleMaterializeSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{
+		materializeErr: errors.New("capsule restore postflight failed"),
+		afterMaterializeAuthorize: func() {
+			if err := h.auth.Logout(ctx, login.Token); err != nil {
+				t.Errorf("revoke Owner during capsule materialization: %v", err)
+			}
+		},
+	}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	request := authenticatedMutationRequest(t, http.MethodPost,
+		"/api/v1/show-capsules/imports/"+capsuleID+"/materialize", nil, login.Token, login.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || service.materializeCalls != 1 ||
+		strings.Contains(response.Body.String(), "CAPSULE_VERIFICATION_FAILED") ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) {
+		t.Fatalf("revoked Owner received capsule restore error without commit boundary: status=%d calls=%d body=%s", response.Code, service.materializeCalls, response.Body.String())
+	}
+}
+
+func TestLegacyShowCapsulePlanWithholdsResultsAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	login, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capsuleID = "00000000-0000-7000-8000-000000000611"
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "imports", capsuleID), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	service := &fakeShowCapsuleService{onPlan: func() {
+		if err := h.auth.Logout(ctx, login.Token); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	handler := New(WithOperatorShowCapsules(h.auth, service, root)).Handler()
+	req := authenticatedMutationRequest(t, http.MethodGet, "/api/v1/show-capsules/imports/"+capsuleID+"/plan", nil, login.Token, "")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized || service.planCalls != 1 || strings.Contains(res.Body.String(), capsuleID) {
+		t.Fatalf("revoked plan response=%d body=%s calls=%d", res.Code, res.Body, service.planCalls)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
@@ -75,6 +76,9 @@ func (s *Store) CreateRuntimeSnapshot(ctx context.Context, revisionID, createdBy
 		nowUS, projectID); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("mark machine role assignments syncing: %w", err)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.RuntimeSnapshot{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.RuntimeSnapshot{}, fmt.Errorf("commit runtime snapshot: %w", err)
 	}
@@ -114,11 +118,43 @@ func (s *Store) GetRuntimeSnapshot(ctx context.Context, snapshotID string) (doma
 }
 
 func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string) (domain.Session, error) {
+	return s.CreateSessionWithPurpose(ctx, snapshotID, sessionType, name, "")
+}
+
+func (s *Store) CreateSessionWithPurpose(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, false, nil)
+}
+
+// StartOperationalSession serializes admission with other session starts and
+// checks the initiating authority in the same transaction as the insert.
+func (s *Store) StartOperationalSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true, nil)
+}
+
+// StartRecordedOperationalSession records admission and its replay result in
+// the same transaction. The recorder builds envelopes without doing I/O.
+func (s *Store) StartRecordedOperationalSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, record func(domain.Session) (contracts.EventEnvelope, contracts.CommandResult)) (domain.Session, error) {
+	return s.createSession(ctx, snapshotID, sessionType, name, purpose, true, record)
+}
+
+func (s *Store) createSession(ctx context.Context, snapshotID string, sessionType domain.SessionType, name string, purpose domain.RehearsalPurpose, exclusive bool, record func(domain.Session) (contracts.EventEnvelope, contracts.CommandResult)) (domain.Session, error) {
+	if purpose != "" && (sessionType != domain.SessionRehearsal ||
+		(purpose != domain.RehearsalPreview && purpose != domain.RehearsalTimingCapture)) {
+		return domain.Session{}, fmt.Errorf("%w: invalid rehearsal purpose", domain.ErrInvalidInput)
+	}
 	if sessionType != domain.SessionSimulation && sessionType != domain.SessionRehearsal && sessionType != domain.SessionShow {
 		return domain.Session{}, fmt.Errorf("%w: unsupported session type", domain.ErrInvalidInput)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("begin session admission: %w", err)
+	}
+	defer tx.Rollback()
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.Session{}, err
+	}
 	var projectID, snapshotStatus string
-	if err := s.db.QueryRowContext(ctx, `SELECT project_id, status FROM runtime_snapshots WHERE runtime_snapshot_id = ?`, snapshotID).Scan(&projectID, &snapshotStatus); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT project_id, status FROM runtime_snapshots WHERE runtime_snapshot_id = ?`, snapshotID).Scan(&projectID, &snapshotStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Session{}, domain.ErrNotFound
 		}
@@ -127,25 +163,57 @@ func (s *Store) CreateSession(ctx context.Context, snapshotID string, sessionTyp
 	if domain.RuntimeSnapshotStatus(snapshotStatus) != domain.SnapshotPublished {
 		return domain.Session{}, fmt.Errorf("%w: session requires PUBLISHED snapshot", domain.ErrConflict)
 	}
+	if exclusive {
+		var active bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE project_id = ? AND status = 'ACTIVE')", projectID).Scan(&active); err != nil {
+			return domain.Session{}, fmt.Errorf("check active session at admission: %w", err)
+		}
+		if active {
+			return domain.Session{}, fmt.Errorf("%w: the Project already has an active runtime Session", domain.ErrConflict)
+		}
+	}
 	sessionID, err := stageid.New()
 	if err != nil {
 		return domain.Session{}, err
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status)
-		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')`, sessionID, projectID, snapshotID, sessionType, name, clock.UnixMicros(now)); err != nil {
+	// Legacy callers can still seed an older database during migration tests.
+	const legacyInsert = `INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status)
+		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')`
+	const purposeInsert = `INSERT INTO sessions (session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, status, rehearsal_purpose)
+		VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`
+	statement := legacyInsert
+	args := []any{sessionID, projectID, snapshotID, sessionType, name, clock.UnixMicros(now)}
+	if purpose != "" {
+		statement = purposeInsert
+		args = append(args, purpose)
+	}
+	if _, err := tx.ExecContext(ctx, statement, args...); err != nil {
 		return domain.Session{}, fmt.Errorf("insert session: %w", err)
 	}
-	return domain.Session{
+	session := domain.Session{
 		ID:                sessionID,
 		ProjectID:         projectID,
 		RuntimeSnapshotID: snapshotID,
 		Type:              sessionType,
 		Name:              name,
+		RehearsalPurpose:  purpose,
 		StartedAt:         now,
 		Status:            domain.SessionActive,
-	}, nil
+	}
+	if record != nil {
+		event, result := record(session)
+		if _, err := s.appendEvent(ctx, tx, &session.ID, event); err != nil {
+			return domain.Session{}, err
+		}
+		if err := s.finishCommand(ctx, tx, result.CommandID, result); err != nil {
+			return domain.Session{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Session{}, fmt.Errorf("commit session admission: %w", err)
+	}
+	return session, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Session, error) {
@@ -155,10 +223,10 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	var endedUS sql.NullInt64
 	var current sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, ended_at_us, status, current_cue_id
+		SELECT session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, ended_at_us, status, current_cue_id, rehearsal_purpose
 		FROM sessions WHERE session_id = ?`, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.RuntimeSnapshotID, &sessionType, &session.Name,
-		&startedUS, &endedUS, &status, &current,
+		&startedUS, &endedUS, &status, &current, &session.RehearsalPurpose,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Session{}, domain.ErrNotFound
@@ -180,6 +248,16 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	return session, nil
 }
 
+const setSessionBlackoutSQL = `
+		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
+		SELECT session_id, ?, ?, ? FROM sessions
+		WHERE session_id = ? AND status = 'ACTIVE'
+		ON CONFLICT(session_id) DO UPDATE SET
+			managed_output_blackout = excluded.managed_output_blackout,
+			updated_by = excluded.updated_by,
+			updated_at_us = excluded.updated_at_us
+	`
+
 func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID string, enabled bool, updatedBy string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	updatedBy = strings.TrimSpace(updatedBy)
@@ -197,18 +275,11 @@ func (s *Store) SetSessionManagedOutputBlackout(ctx context.Context, sessionID s
 	if enabled {
 		value = 1
 	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO runtime_safety_state (session_id, managed_output_blackout, updated_by, updated_at_us)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET
-			managed_output_blackout = excluded.managed_output_blackout,
-			updated_by = excluded.updated_by,
-			updated_at_us = excluded.updated_at_us
-	`, session.ID, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()))
+	result, err := capability.ExecAuthorized(ctx, s.db, setSessionBlackoutSQL, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()), session.ID)
 	if err != nil {
 		return fmt.Errorf("set session managed-output blackout: %w", err)
 	}
-	return nil
+	return requireOneRow(result)
 }
 
 func (s *Store) SessionManagedOutputBlackout(ctx context.Context, sessionID string) (bool, error) {
@@ -262,7 +333,7 @@ func (s *Store) CreateCueExecution(ctx context.Context, sessionID, cueID, correl
 		return domain.CueExecution{}, err
 	}
 	now := s.clock.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := capability.ExecAuthorized(ctx, s.db, `
 		INSERT INTO cue_executions (
 			cue_execution_id, session_id, cue_id, correlation_id, trigger_source, started_at_us, result, manual_override
 		) VALUES (?, ?, ?, ?, ?, ?, 'RUNNING', 0)`,
@@ -369,7 +440,20 @@ func (s *Store) ListActionExecutions(ctx context.Context, cueExecutionID string)
 	return out, rows.Err()
 }
 
+// authorizedEventExecer preserves the caller's transaction-scoped browser
+// authorization when events are appended outside an existing transaction.
+// Internal callers with their own *sql.Tx remain responsible for its guard.
+type authorizedEventExecer struct{ db *sql.DB }
+
+func (e authorizedEventExecer) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return capability.ExecAuthorized(ctx, e.db, query, args...)
+}
+
 func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
+	return s.appendEvent(ctx, authorizedEventExecer{db: s.db}, sessionID, event)
+}
+
+func (s *Store) appendEvent(ctx context.Context, q execer, sessionID *string, event contracts.EventEnvelope) (contracts.EventEnvelope, error) {
 	if event.EventID == "" {
 		var err error
 		event.EventID, err = stageid.New()
@@ -395,7 +479,7 @@ func (s *Store) AppendEvent(ctx context.Context, sessionID *string, event contra
 	if err != nil {
 		return contracts.EventEnvelope{}, fmt.Errorf("event payload: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO event_records (event_id, session_id, event_type, schema_version, occurred_at_us, observed_at_us, source_ref, project_id, runtime_snapshot_id, correlation_id, causation_id, priority, trace_context_json, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.EventID, nullableString(sessionID), event.EventType, event.SchemaVersion, clock.UnixMicros(event.OccurredAt), clock.UnixMicros(event.ObservedAt), event.Source, event.ProjectID, nullableText(event.RuntimeSnapshotID), nullableText(event.CorrelationID), nullableText(event.CausationID), event.Priority, trace, payload)
+	result, err := q.ExecContext(ctx, `INSERT INTO event_records (event_id, session_id, event_type, schema_version, occurred_at_us, observed_at_us, source_ref, project_id, runtime_snapshot_id, correlation_id, causation_id, priority, trace_context_json, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.EventID, nullableString(sessionID), event.EventType, event.SchemaVersion, clock.UnixMicros(event.OccurredAt), clock.UnixMicros(event.ObservedAt), event.Source, event.ProjectID, nullableText(event.RuntimeSnapshotID), nullableText(event.CorrelationID), nullableText(event.CausationID), event.Priority, trace, payload)
 	if err != nil {
 		return contracts.EventEnvelope{}, fmt.Errorf("append event: %w", err)
 	}
@@ -438,6 +522,11 @@ func (s *Store) ListEvents(ctx context.Context, sessionID string) ([]contracts.E
 
 func (s *Store) FindCommandRecord(ctx context.Context, command contracts.CommandEnvelope) (domain.CommandRecord, bool, error) {
 	record, found, err := s.getCommandRecord(ctx, `SELECT command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us FROM command_records WHERE command_id = ?`, command.CommandID)
+	if found && (record.ProjectID != command.ProjectID || record.CommandType != command.CommandType) {
+		// Command IDs are globally unique, but knowing one is not permission
+		// to read a result for a different Project or operation.
+		return domain.CommandRecord{}, false, domain.ErrNotFound
+	}
 	if err != nil || found || command.IdempotencyKey == "" { return record, found, err }
 	return s.getCommandRecord(ctx, `SELECT command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us FROM command_records WHERE project_id = ? AND command_type = ? AND idempotency_key = ?`, command.ProjectID, command.CommandType, command.IdempotencyKey)
 }
@@ -449,7 +538,7 @@ func (s *Store) ReserveCommand(ctx context.Context, command contracts.CommandEnv
 	if issuedAt.IsZero() { issuedAt = now }
 	correlationID := command.CorrelationID
 	if correlationID == "" { correlationID = command.CommandID }
-	_, err := s.db.ExecContext(ctx, `INSERT INTO command_records (command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', '{}', ?, ?)`, command.CommandID, command.CommandType, command.SchemaVersion, clock.UnixMicros(issuedAt), command.ProjectID, command.RuntimeSnapshotID, command.IdempotencyKey, correlationID, clock.UnixMicros(now), clock.UnixMicros(now))
+	_, err := capability.ExecAuthorized(ctx, s.db, `INSERT INTO command_records (command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', '{}', ?, ?)`, command.CommandID, command.CommandType, command.SchemaVersion, clock.UnixMicros(issuedAt), command.ProjectID, command.RuntimeSnapshotID, command.IdempotencyKey, correlationID, clock.UnixMicros(now), clock.UnixMicros(now))
 	if err != nil {
 		if existing, found, lookupErr := s.FindCommandRecord(ctx, command); lookupErr == nil && found { return existing, false, nil }
 		return domain.CommandRecord{}, false, fmt.Errorf("reserve command: %w", err)
@@ -458,9 +547,13 @@ func (s *Store) ReserveCommand(ctx context.Context, command contracts.CommandEnv
 }
 
 func (s *Store) FinishCommand(ctx context.Context, commandID string, result contracts.CommandResult) error {
+	return s.finishCommand(ctx, s.db, commandID, result)
+}
+
+func (s *Store) finishCommand(ctx context.Context, q execer, commandID string, result contracts.CommandResult) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil { return fmt.Errorf("marshal command result: %w", err) }
-	res, err := s.db.ExecContext(ctx, `UPDATE command_records SET status = ?, result_json = ?, updated_at_us = ? WHERE command_id = ? AND status = 'ACCEPTED'`, result.Status, string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
+	res, err := q.ExecContext(ctx, `UPDATE command_records SET status = ?, result_json = ?, updated_at_us = ? WHERE command_id = ? AND status = 'ACCEPTED'`, result.Status, string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
 	if err != nil { return fmt.Errorf("finish command: %w", err) }
 	return requireOneRow(res)
 }

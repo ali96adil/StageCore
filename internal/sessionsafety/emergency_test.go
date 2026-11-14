@@ -200,3 +200,32 @@ func TestManagedOutputEmergencyBlackoutCoversTabletAndNativeVisualWithoutAudio(t
 		t.Fatalf("visual clear payload=%s err=%v", visual.requests[1].Parameters, err)
 	}
 }
+
+func TestRehearsalTabletStopUsesConfirmedScope(t *testing.T) {
+	session := domain.Session{ID: "rehearsal", ProjectID: "project", RuntimeSnapshotID: "snapshot", Type: domain.SessionRehearsal}
+	tablet := deviceexperience.Device{
+		ID: "assigned", Kind: deviceexperience.DeviceTabletPlayer, Enabled: true,
+		ProtocolVersion: deviceexperience.ProtocolVersion1, ProjectID: session.ProjectID,
+		Capabilities: []string{deviceexperience.CapabilityTabletStop},
+	}
+	foreign := tablet
+	foreign.ID, foreign.ProjectID = "foreign", "other"
+	fake := &fakeEmergencyRuntime{devices: []deviceexperience.Device{tablet, foreign}}
+	stop := NewRehearsalTabletStop(fake, fake)
+	command := contracts.CommandEnvelope{CommandID: "stop-1"}
+	if err := stop(context.Background(), session, command); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.inputs) != 1 {
+		t.Fatalf("dispatched to unexpected targets: %+v", fake.inputs)
+	}
+	if got := fake.inputs[0]; got.DeviceID != tablet.ID || got.CommandType != deviceexperience.CommandTabletStop ||
+		got.RuntimeSnapshotID != session.RuntimeSnapshotID || got.Priority != "P0" ||
+		got.IdempotencyKey != "rehearsal-stop:stop-1:TABLET_STOP:assigned" {
+		t.Fatalf("unexpected tablet stop: %+v", got)
+	}
+	session.Type = domain.SessionShow
+	if err := stop(context.Background(), session, command); err == nil || len(fake.inputs) != 1 {
+		t.Fatal("SHOW was allowed to dispatch rehearsal tablet STOP")
+	}
+}

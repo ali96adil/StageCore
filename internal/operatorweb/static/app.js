@@ -8,9 +8,11 @@ const state = {
   project: null,
   page: "projects",
   cues: [],
+  currentRevision: null,
   validation: null,
   runtimeTimer: null,
   runtimeForceExitAvailable: false,
+  showSessionActive: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -127,6 +129,7 @@ function showLogin(message = "") {
   stopRuntimePolling();
   state.user = null;
   state.project = null;
+  if (typeof scFilesUpdateForProject === "function") scFilesUpdateForProject("");
   loginView.classList.remove("hidden");
   appView.classList.add("hidden");
   el("userArea").classList.add("hidden");
@@ -239,12 +242,20 @@ function setPage(page) {
   if (page !== "runtime") stopRuntimePolling();
 }
 
+function setShowSessionPresentation(active) {
+  state.showSessionActive = !!active;
+  if (appView) appView.dataset.showSession = active ? "active" : "inactive";
+  const topbar = document.querySelector(".topbar");
+  if (topbar) topbar.dataset.showSession = active ? "active" : "inactive";
+}
+
 async function navigate(page) {
   if (!state.project) return;
   setPage(page);
   setMessage(globalMessage, "");
   try {
     if (page === "dashboard") await renderDashboard();
+    if (page === "files") await renderScopedProjectFiles();
     if (page === "cues") await renderCues();
     if (page === "runtime") await renderRuntime(true);
   } catch (error) {
@@ -284,6 +295,7 @@ function renderProjects() {
           <div class="row-actions">
             <button class="button primary open-project" data-project-id="${esc(project.project_id)}" type="button">Open Project</button>
             ${canEdit() ? `<button class="button duplicate-project" data-project-id="${esc(project.project_id)}" type="button">Duplicate Project</button>` : ""}
+            ${canEdit() ? `<button class="button rename-project" data-project-id="${esc(project.project_id)}" type="button">Rename Project</button>` : ""}
           </div>
         </article>`).join("") : `<div class="empty">No Projects yet.</div>`}
     </div>`;
@@ -294,7 +306,48 @@ function renderProjects() {
   content.querySelectorAll(".duplicate-project").forEach((button) => {
     button.addEventListener("click", () => duplicateProject(button.dataset.projectId, button));
   });
+  content.querySelectorAll(".rename-project").forEach((button) => {
+    button.addEventListener("click", () => renameProject(button.dataset.projectId, button));
+  });
   el("createProjectForm")?.addEventListener("submit", createProject);
+}
+
+// SC-022: Project display name is mutable metadata; IDs, linked Cues,
+// Snapshots, and Vault assets remain stable. Fine-grained Project ACL is
+// tracked separately under SC-024 and must be server-side before rollout.
+async function renameProject(projectID, button) {
+  const project = state.projects.find(p => p.project_id === projectID) ||
+    (state.project?.project_id === projectID ? state.project : null);
+  if (!canEdit() || !project || button?.disabled) return;
+  const ar = localStorage.getItem("stagecore_locale") !== "en";
+  const value = prompt(ar ? "الاسم الجديد للمشروع:" : "New Project name:", project.name);
+  if (value === null) return;
+  const name = value.trim();
+  if (!name || Array.from(name).length > 160 || /[\u0000\r\n]/.test(name)) {
+    setMessage(globalMessage, ar ? "اسم المشروع لازم يكون من 1 إلى 160 حرف." :
+      "Project name must be 1–160 characters.", "error");
+    return;
+  }
+  if (name === project.name) return;
+  if (button) button.disabled = true;
+  try {
+    const updated = await api(`/api/v1/projects/${encodeURIComponent(projectID)}`, {
+      method: "PATCH", json: {name},
+    });
+    await loadProjects();
+    if (state.project?.project_id === projectID) {
+      state.project = updated.project;
+      updateWorkspaceProject();
+    }
+    if (state.page === "projects") renderProjects();
+    else if (state.page === "dashboard") await renderDashboard();
+    setMessage(globalMessage, ar ? "تم تغيير اسم المشروع دون تعديل الكيوهات أو السناب شوت." :
+      "Project renamed without changing Cues or the Published Snapshot.", "success");
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function duplicateProject(sourceID, button) {
@@ -357,6 +410,7 @@ async function openProject(projectID) {
 function updateWorkspaceProject() {
   el("workspaceNav").classList.remove("hidden");
   el("workspaceProjectName").textContent = state.project?.name || "Project";
+  if (typeof scFilesUpdateForProject === "function") scFilesUpdateForProject(state.project?.project_id || "");
 }
 
 function pill(text, kind = "neutral") {
@@ -371,6 +425,15 @@ async function renderDashboard() {
   ]);
   state.project = dashboard.project;
   updateWorkspaceProject();
+  const showSessionActive = runtime?.session?.type === "SHOW" || runtime?.mode === "SHOW" ||
+    dashboard.active_session?.type === "SHOW" || dashboard.mode === "SHOW";
+  setShowSessionPresentation(showSessionActive);
+  if (showSessionActive) {
+    // A reload or remembered workspace must return operators to the live
+    // controls before exposing any authoring or project navigation.
+    await navigate("runtime");
+    return;
+  }
   const published = dashboard.published_snapshot;
   const draft = dashboard.draft_revision;
   const publicationKind = dashboard.unpublished_changes ? "warn" : (published ? "good" : "bad");
@@ -386,7 +449,7 @@ async function renderDashboard() {
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">DASHBOARD</p><h1>${esc(dashboard.project.name)}</h1><p>${esc(dashboard.project.description || "No description")}</p></div>
-      <div class="toolbar">${pill(dashboard.mode, dashboard.mode === "SHOW" ? "bad" : dashboard.mode === "REHEARSAL" ? "good" : "neutral")}${pill(dashboard.unpublished_changes ? "Unpublished Changes" : dashboard.publication_state, publicationKind)}</div>
+      <div class="toolbar">${pill(dashboard.mode, dashboard.mode === "SHOW" ? "bad" : dashboard.mode === "REHEARSAL" ? "good" : "neutral")}${pill(dashboard.unpublished_changes ? "Unpublished Changes" : dashboard.publication_state, publicationKind)}${canEdit() ? `<button class="button" id="renameOpenProject" type="button">Rename Project</button>` : ""}</div>
     </div>
     <div class="stat-grid">
       <article class="stat"><span class="label">Draft Revision</span><span class="value">r${esc(draft.revision_number)} · ${esc(draft.status)}</span><span class="sub mono">${esc(draft.revision_id)}</span></article>
@@ -414,6 +477,7 @@ async function renderDashboard() {
       <button class="button" id="dashboardCues" type="button">Open Cues</button>
       <button class="button primary" id="dashboardRuntime" type="button">Open Runtime</button>
     </div>`;
+  el("renameOpenProject")?.addEventListener("click", () => renameProject(state.project.project_id, el("renameOpenProject")));
   el("dashboardCues").addEventListener("click", () => navigate("cues"));
   el("dashboardRuntime").addEventListener("click", () => navigate("runtime"));
 }
@@ -424,8 +488,96 @@ async function loadCues() {
   return payload;
 }
 
+const cueListFilterStoragePrefix = "stagecore.cue-list.filters.v1:";
+const cueListActionTypes = ["lighting", "midi", "osc", "tablet", "laser", "visual", "other"];
+
+function readCueListFilters(projectID) {
+  const defaults = { query: "", type: "all", enabled: "all", linked: "all" };
+  try {
+    const saved = JSON.parse(localStorage.getItem(cueListFilterStoragePrefix + projectID) || "{}");
+    return {
+      query: typeof saved.query === "string" ? saved.query.slice(0, 200) : defaults.query,
+      type: ["all", "mixed", ...cueListActionTypes].includes(saved.type) ? saved.type : defaults.type,
+      enabled: ["all", "enabled", "disabled"].includes(saved.enabled) ? saved.enabled : defaults.enabled,
+      linked: ["all", "linked", "standalone"].includes(saved.linked) ? saved.linked : defaults.linked,
+    };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function saveCueListFilters(projectID, filters) {
+  try { localStorage.setItem(cueListFilterStoragePrefix + projectID, JSON.stringify(filters)); }
+  catch (_) { /* Filtering remains usable if local storage is unavailable. */ }
+}
+
+function normalizeCueSearch(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase();
+}
+
+function cueCapabilityType(capability) {
+  const value = String(capability || "").toLowerCase();
+  for (const type of ["lighting", "midi", "osc", "tablet", "laser", "visual"]) {
+    if (value.startsWith(`${type}.`)) return type;
+  }
+  return "other";
+}
+
+function cueSearchRecord(cue, cuesByID, parents) {
+  const visited = new Set();
+  const actionTypes = new Set();
+  const terms = [];
+  const visit = (item) => {
+    if (!item || visited.has(item.cue_id)) return;
+    visited.add(item.cue_id);
+    terms.push(item.order_index, item.cue_id, item.display_label, item.name, item.notes_summary,
+      JSON.stringify(item.execution_policy || {}));
+    (item.actions || []).forEach((action) => {
+      actionTypes.add(cueCapabilityType(action.capability_key));
+      terms.push(action.action_id, action.target_ref, action.capability_key,
+        JSON.stringify(action.parameters || {}), action.execution_mode);
+    });
+    cueLinkedIDs(item).forEach((childID) => visit(cuesByID.get(childID)));
+  };
+  visit(cue);
+  const sortedTypes = [...actionTypes].sort();
+  return {
+    search: normalizeCueSearch(terms.filter((value) => value !== null && value !== undefined).join(" ")),
+    actionTypes: sortedTypes.join(","),
+    mixed: sortedTypes.length > 1 || String(cue.cue_type || "").toUpperCase() === "MIXED",
+    linked: cueLinkedIDs(cue).length > 0 || parents.has(cue.cue_id),
+  };
+}
+
+function applyCueListFilters() {
+  const query = normalizeCueSearch(el("cueListSearch")?.value || "");
+  const type = el("cueListTypeFilter")?.value || "all";
+  const enabled = el("cueListEnabledFilter")?.value || "all";
+  const linked = el("cueListLinkedFilter")?.value || "all";
+  const filters = { query: el("cueListSearch")?.value || "", type, enabled, linked };
+  let visible = 0;
+  const rows = [...content.querySelectorAll("tr[data-cue-id]")];
+  rows.forEach((row) => {
+    const actionTypes = row.dataset.actionTypes ? row.dataset.actionTypes.split(",") : [];
+    const typeMatches = type === "all" || (type === "mixed"
+      ? row.dataset.mixed === "true"
+      : actionTypes.includes(type) || (type === "other" && actionTypes.length === 0));
+    const enabledMatches = enabled === "all" || row.dataset.enabled === String(enabled === "enabled");
+    const linkedMatches = linked === "all" || row.dataset.linked === String(linked === "linked");
+    const matches = (!query || row.dataset.search.includes(query)) && typeMatches && enabledMatches && linkedMatches;
+    row.hidden = !matches;
+    if (matches) visible++;
+  });
+  const empty = el("cueListEmptyResult");
+  if (empty) empty.hidden = rows.length === 0 || visible > 0;
+  const count = el("cueListCount");
+  if (count) count.innerHTML = `<strong>${visible}</strong> / <strong>${rows.length}</strong> Cues shown`;
+  saveCueListFilters(state.project.project_id, filters);
+}
+
 async function renderCues(message = "", messageKind = "success") {
   const payload = await loadCues();
+  state.currentRevision = payload.revision || null;
   const hasDraft = payload.revision?.status === "DRAFT";
   let validation = null;
   if (hasDraft) {
@@ -445,6 +597,8 @@ async function renderCues(message = "", messageKind = "success") {
   const hasPublishedSnapshot = !!runtime?.runtime_snapshot;
   const cueMessageKind = ["success", "warn", "error"].includes(messageKind) ? messageKind : "success";
   const cueParents = cueParentMap();
+  const cuesByID = new Map(state.cues.map((cue) => [cue.cue_id, cue]));
+  const cueFilters = readCueListFilters(state.project.project_id);
 
   content.innerHTML = `
     <div class="page-head">
@@ -467,7 +621,7 @@ async function renderCues(message = "", messageKind = "success") {
         ${pill(runtimeMode, runtimeMode === "SHOW" ? "bad" : runtimeMode === "REHEARSAL" ? "good" : "neutral")}
       </div>
       <div class="toolbar" style="margin-top:12px">
-        <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP CUE</button>
+        <button id="cueCheckStopButton" class="button warn" ${!canControl || !runtime?.session ? "disabled" : ""} type="button">STOP ALL CUES</button>
         <button id="cueCheckBlackoutButton" class="button danger" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">BLACKOUT</button>
         <button id="cueCheckClearButton" class="button ghost" ${!canControl || !hasPublishedSnapshot ? "disabled" : ""} type="button">CLEAR BLACKOUT</button>
         <button id="cueCheckOpenRuntime" class="button" type="button">Open Runtime</button>
@@ -476,14 +630,35 @@ async function renderCues(message = "", messageKind = "success") {
         Test Cue starts a REHEARSAL automatically from EDIT and is blocked in SHOW. It always executes the matching Cue from the latest Published Runtime Snapshot. Draft-only or unpublished changes must be published before they can be tested here.
       </p>
     </section>
+    <section class="card cue-list-filter-panel" style="margin-top:14px">
+      <div class="cue-list-filters">
+        <label>Search Cues<input id="cueListSearch" type="search" value="${esc(cueFilters.query)}" placeholder="Number, label, name, notes, action or target" maxlength="200" autocomplete="off"></label>
+        <label>Action type<select id="cueListTypeFilter">
+          <option value="all">All action types</option><option value="mixed">Mixed / compound</option>
+          <option value="lighting">Lighting</option><option value="midi">MIDI</option><option value="osc">OSC</option>
+          <option value="tablet">Tablet</option><option value="laser">Laser</option><option value="visual">Visual</option><option value="other">Other / no Actions</option>
+        </select></label>
+        <label>Cue state<select id="cueListEnabledFilter">
+          <option value="all">All states</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+        </select></label>
+        <label>Linked Cues<select id="cueListLinkedFilter">
+          <option value="all">All Cues</option><option value="linked">Groups and linked children</option><option value="standalone">Standalone</option>
+        </select></label>
+        <button id="clearCueListFilters" class="button" type="button">Clear filters</button>
+      </div>
+      <p id="cueListCount" class="muted" aria-live="polite" style="margin:10px 0 0">${state.cues.length} / ${state.cues.length} Cues shown</p>
+      <p class="muted" style="margin:4px 0 0">Filtering changes this view only; sequence order and the published Snapshot are unchanged.</p>
+    </section>
     <div class="table-wrap" style="margin-top:14px">
       <table>
         <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>Group</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
         <tbody>
-          ${state.cues.length ? state.cues.map((cue, index) => `
-            <tr class="${cueRelationshipClass(cue, cueParents)}">
+          ${state.cues.length ? state.cues.map((cue, index) => {
+            const record = cueSearchRecord(cue, cuesByID, cueParents);
+            return `
+            <tr class="${cueRelationshipClass(cue, cueParents)}" data-cue-id="${esc(cue.cue_id)}" data-search="${esc(record.search)}" data-action-types="${esc(record.actionTypes)}" data-mixed="${record.mixed}" data-enabled="${cue.enabled}" data-linked="${record.linked}">
               <td>${esc(cue.order_index)}</td>
-              <td>${esc(cue.display_label || "—")}</td>
+              <td class="cue-label-cell" data-cue-color="${cueColor(cue)}">${esc(cue.display_label || "—")}</td>
               <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
               <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
               <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
@@ -498,7 +673,9 @@ async function renderCues(message = "", messageKind = "success") {
                   <button class="button cue-duplicate" data-id="${esc(cue.cue_id)}" type="button">Duplicate</button>
                   <button class="button danger cue-delete" data-id="${esc(cue.cue_id)}" type="button">Delete</button>` : canModify ? `<span class="muted">Create Draft to edit</span>` : `<span class="muted">Read only</span>`}
               </div></td>
-            </tr>`).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
+            </tr>`;
+          }).join("") : `<tr><td colspan="7"><div class="empty">No Cues in this revision.</div></td></tr>`}
+          <tr id="cueListEmptyResult" hidden><td colspan="7"><div class="empty">No Cues match these filters.</div></td></tr>
         </tbody>
       </table>
     </div>`;
@@ -512,6 +689,22 @@ async function renderCues(message = "", messageKind = "success") {
   el("cueCheckBlackoutButton")?.addEventListener("click", () => setCueWorkspaceBlackout(true));
   el("cueCheckClearButton")?.addEventListener("click", () => setCueWorkspaceBlackout(false));
   el("cueCheckOpenRuntime")?.addEventListener("click", () => navigate("runtime"));
+  el("cueListTypeFilter").value = cueFilters.type;
+  el("cueListEnabledFilter").value = cueFilters.enabled;
+  el("cueListLinkedFilter").value = cueFilters.linked;
+  el("cueListSearch").addEventListener("input", applyCueListFilters);
+  el("cueListTypeFilter").addEventListener("change", applyCueListFilters);
+  el("cueListEnabledFilter").addEventListener("change", applyCueListFilters);
+  el("cueListLinkedFilter").addEventListener("change", applyCueListFilters);
+  el("clearCueListFilters").addEventListener("click", () => {
+    el("cueListSearch").value = "";
+    el("cueListTypeFilter").value = "all";
+    el("cueListEnabledFilter").value = "all";
+    el("cueListLinkedFilter").value = "all";
+    applyCueListFilters();
+    el("cueListSearch").focus();
+  });
+  applyCueListFilters();
   content.querySelectorAll(".cue-test").forEach((button) => button.addEventListener("click", () => testCueFromWorkspace(button.dataset.id)));
   content.querySelectorAll(".cue-edit").forEach((button) => button.addEventListener("click", () => openCueEditor(cueByID(button.dataset.id))));
   content.querySelectorAll(".cue-toggle").forEach((button) => button.addEventListener("click", () => toggleCue(button.dataset.id)));
@@ -539,6 +732,7 @@ async function testCueFromWorkspace(cueID) {
     }
 
     const startRehearsal = !runtime.session;
+    let rehearsalSessionID = runtime.session?.session_id;
     let startWarning = "";
     const promptText = startRehearsal
       ? `Start REHEARSAL and test published Cue “${publishedCue.display_label || ""} · ${publishedCue.name}” now?`
@@ -554,10 +748,11 @@ async function testCueFromWorkspace(cueID) {
           request_id: requestID(),
         },
       });
+      rehearsalSessionID = started.session?.session_id;
       startWarning = String(started.result?.payload?.device_scope_warning || "").trim();
       runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     }
-    if (!runtime.session || runtime.session.type !== "REHEARSAL") {
+    if (!rehearsalSessionID || runtime.session?.session_id !== rehearsalSessionID || runtime.session.type !== "REHEARSAL") {
       setMessage(globalMessage, "Cue Check requires an active REHEARSAL Session.", "warn");
       return;
     }
@@ -567,6 +762,7 @@ async function testCueFromWorkspace(cueID) {
       json: {
         request_id: requestID(),
         cue_id: cueID,
+        rehearsal_session_id: rehearsalSessionID,
         expected_current_cue_id: runtime.current_cue?.cue_id || null,
         operator_note: "Cue Workspace individual Cue check",
         confirm: true,
@@ -582,7 +778,7 @@ async function testCueFromWorkspace(cueID) {
 }
 
 async function stopCueFromWorkspace() {
-  if (!confirm("Stop the currently running Cue? STOP CUE does not guarantee blackout.")) return;
+  if (!confirm("STOP ALL CUES interrupts every active Cue in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
     if (!runtime.session) {
@@ -593,7 +789,7 @@ async function stopCueFromWorkspace() {
       method: "POST",
       json: { request_id: requestID() },
     });
-    await renderCues("Current Cue stop requested.");
+    await renderCues("STOP ALL CUES requested.");
   } catch (error) {
     setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
   }
@@ -645,6 +841,11 @@ function renderValidation(report) {
 function cuePolicyObject(cue) {
   const value = cue?.execution_policy;
   return value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+}
+
+function cueColor(cue) {
+  const value = cuePolicyObject(cue).operator_cue_color;
+  return ["blue", "green", "amber", "purple"].includes(value) ? value : "";
 }
 
 function cueLinkedIDs(cue) {
@@ -808,6 +1009,9 @@ function openCueEditor(cue) {
   el("cueId").value = cue?.cue_id || "";
   el("cueLabel").value = cue?.display_label || String((state.cues.length || 0) + 1);
   el("cueName").value = cue?.name || "";
+  const color = el("cueColor");
+  color.value = cueColor(cue);
+  color.dataset.original = color.value;
   el("cueCriticality").value = cue?.criticality === "CRITICAL" ? "CRITICAL" : "NORMAL";
   el("cueEnabled").checked = cue?.enabled ?? true;
   el("cueExecutionPolicy").value = jsonText(cue?.execution_policy || {});
@@ -867,7 +1071,7 @@ cueForm.addEventListener("submit", async (event) => {
       display_label: el("cueLabel").value.trim(),
       name: el("cueName").value.trim(),
       order_index: existing?.order_index || nextCueOrder(),
-      cue_type: "STANDARD",
+      cue_type: existing?.cue_type || "STANDARD",
       criticality: el("cueCriticality").value,
       enabled: el("cueEnabled").checked,
       execution_policy: (() => {
@@ -881,6 +1085,11 @@ cueForm.addEventListener("submit", async (event) => {
         }
         if (delayMS) policy.start_delay_ms = delayMS;
         else delete policy.start_delay_ms;
+        const color = el("cueColor");
+        if (color.value !== color.dataset.original) {
+          if (color.value) policy.operator_cue_color = color.value;
+          else delete policy.operator_cue_color;
+        }
         return policy;
       })(),
       notes_summary: el("cueNotes").value.trim(),
@@ -890,6 +1099,7 @@ cueForm.addEventListener("submit", async (event) => {
       ? `/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(cueID)}`
       : `/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues`;
     await api(path, { method: cueID ? "PUT" : "POST", json: body });
+    cueDialog.dispatchEvent(new Event("stagecore:cue-saved"));
     cueDialog.close();
     await renderCues(cueID ? "Cue updated in Draft. Publish a new Runtime Snapshot and start a new Rehearsal to apply the delay." : "Cue created in Draft. Publish a Runtime Snapshot and start a new Rehearsal to test it.");
   } catch (error) {
@@ -962,11 +1172,23 @@ async function duplicateCue(id) {
 
 async function deleteCue(id) {
   const cue = cueByID(id);
-  if (!cue || !confirm(`Delete Draft Cue “${cue.name}”?`)) return;
+  if (!cue) return;
+  const parent = cueByID(cueParentMap().get(id));
+  if (parent) {
+    setMessage(globalMessage, `Remove this Cue from “${parent.name}” in Run together with before deleting it.`, "warn");
+    return;
+  }
+  if (!confirm(`Delete Draft Cue “${cue.name}”?`)) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/cues/${encodeURIComponent(id)}?confirm=true`, { method: "DELETE" });
     await renderCues("Cue deleted from Draft.");
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  } catch (error) {
+    if (error.payload?.error_code === "CUE_LINKED_CHILD") {
+      await renderCues("This Cue is now linked. Remove it from the parent Cue before deleting it.", "warn");
+    } else {
+      setMessage(globalMessage, errorMessage(error), "error");
+    }
+  }
 }
 
 async function moveCue(id, delta) {
@@ -1099,13 +1321,63 @@ function runtimeReadinessGroupTitle(group) {
   return summary;
 }
 
+function runtimeActiveExecutionMarkup(runtime, cues) {
+  const executions = runtime.active_executions || [];
+  if (!executions.length) return "";
+  const count = Number(runtime.active_execution_count) || executions.length;
+  return `
+    <section class="card runtime-active-executions" aria-live="polite">
+      <div class="section-title-row">
+        <h2>Active Cue executions</h2>
+        ${pill(`${count} RUNNING`, "warn")}
+      </div>
+      <div class="runtime-active-execution-list">
+        ${executions.map((execution) => {
+          const cue = cueInList(cues, execution.cue_id);
+          return `<div class="runtime-active-execution">
+            <div><strong>${esc(cue ? cueDisplayName(cue) : execution.cue_id)}</strong><span class="mono">${esc(execution.cue_execution_id)}</span></div>
+            <time class="muted" datetime="${esc(execution.started_at)}">${esc(fmtDate(execution.started_at))}</time>
+          </div>`;
+        }).join("")}
+      </div>
+    </section>`;
+}
+
 async function renderRuntime(startPolling = false) {
+  const user = state.user;
   const projectID = encodeURIComponent(state.project.project_id);
   const [runtime, preflight] = await Promise.all([
     api(`/api/v1/projects/${projectID}/runtime`),
     api(`/api/v1/projects/${projectID}/preflight`).catch(() => null),
   ]);
+  if (state.page !== "runtime" || state.user !== user || encodeURIComponent(state.project?.project_id || "") !== projectID) return;
   const active = runtime.session;
+  setShowSessionPresentation(active?.type === "SHOW" || runtime.mode === "SHOW");
+  const ended = state.runtimeEndedRehearsal;
+  const endedRehearsal = ended?.user === user && ended.projectID === projectID ? ended : null;
+  const mayReviewTiming = ["OWNER", "TECHNICIAN"].includes(user?.role) &&
+    ((active?.type === "REHEARSAL" && active.rehearsal_purpose === "TIMING_CAPTURE") ||
+      (!active && endedRehearsal?.purpose === "TIMING_CAPTURE"));
+  const remembered = state.runtimeCueReceipt;
+  const receipt = remembered?.user === user && remembered.projectID === projectID &&
+    remembered.sessionID === active?.session_id ? remembered : null;
+  const traceID = receipt ? receipt.result?.payload?.cue_execution_id : runtime.latest_execution?.cue_execution_id;
+  const failedAction = receipt?.result?.payload?.failed_action;
+  const receiptMarkup = receipt || traceID ? `
+    <section class="card">
+      <div class="section-title-row"><h2>Cue delivery</h2>
+        ${traceID ? '<button id="runtimeCueTrace" type="button" class="button ghost">Inspect execution</button>' : ""}
+      </div>
+      ${receipt ? `<p><strong>${esc(receipt.operation.toUpperCase())} · ${esc(receipt.result?.status || receipt.status)}</strong>
+        <span class="mono">${esc(receipt.requestID)}</span></p>
+        ${receipt.message ? `<p>${esc(receipt.message)}</p>` : ""}
+        ${failedAction ? `<p>${esc(failedAction.error_code)} · ${esc(failedAction.response_summary)}</p>` : ""}` : ""}
+    </section>` : "";
+  const rehearsalPurpose = el("rehearsalPurpose")?.value || "PREVIEW";
+  const timingLocale = document.documentElement.lang.startsWith("ar");
+  const rehearsalLabel = timingLocale ? "هدف البروفة" : "Rehearsal purpose";
+  const previewLabel = timingLocale ? "استعراض وتجربة" : "Preview";
+  const timingLabel = timingLocale ? "بروفة لقياس التوقيت" : "Timing Capture";
   if (!active) state.runtimeForceExitAvailable = false;
   const current = runtime.current_cue;
   const next = runtime.next_cue;
@@ -1157,7 +1429,7 @@ async function renderRuntime(startPolling = false) {
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">RUNTIME</p><h1>${esc(runtime.project.name)}</h1><p>${snapshot ? `Snapshot v${esc(snapshot.snapshot_version)}` : "No published Runtime Snapshot"}</p></div>
-      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}</div>
+      <div class="toolbar">${pill(runtime.mode, runtime.mode === "SHOW" ? "bad" : runtime.mode === "REHEARSAL" ? "good" : "neutral")}${active?.rehearsal_purpose ? pill(active.rehearsal_purpose === "TIMING_CAPTURE" ? timingLabel : previewLabel) : ""}</div>
     </div>
     <div class="runtime-hero">
       <section class="cue-focus">
@@ -1182,6 +1454,12 @@ async function renderRuntime(startPolling = false) {
             <span> · ${esc(blockers)} critical issue(s) · ${esc(warnings)} warning(s) · advisory for live start</span>
             <button id="runtimeOpenPreflight" class="button ghost" type="button">Open Preflight</button>
           </div>
+          <label>${esc(rehearsalLabel)}
+            <select id="rehearsalPurpose" ${!canControl || !snapshot ? "disabled" : ""}>
+              <option value="PREVIEW" ${rehearsalPurpose === "PREVIEW" ? "selected" : ""}>${esc(previewLabel)}</option>
+              <option value="TIMING_CAPTURE" ${rehearsalPurpose === "TIMING_CAPTURE" ? "selected" : ""}>${esc(timingLabel)}</option>
+            </select>
+          </label>
           <button id="startRehearsalButton" class="button primary big" ${!canControl || !snapshot ? "disabled" : ""} type="button">Start Rehearsal</button>
           <button id="startShowButton" class="button warn" ${!canControl || !snapshot || showBlocked ? "disabled" : ""} type="button">Enter SHOW</button>
           <button id="editBlackoutButton" class="button danger" ${!canControl || !snapshot ? "disabled" : ""} type="button">BLACKOUT MANAGED OUTPUTS</button>
@@ -1189,7 +1467,7 @@ async function renderRuntime(startPolling = false) {
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
           <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
-          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP CUE</button>
+          <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP ALL CUES</button>
           <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
@@ -1201,7 +1479,9 @@ async function renderRuntime(startPolling = false) {
             </select>
           </label>
           <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP CUE is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP CUE interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopTablets" type="checkbox" value="${esc(active.session_id)}"> Stop tablet playback when ending this rehearsal</label>` : ""}
+          ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopExternal" type="checkbox" value="${esc(active.session_id)}"> Run external STOP actions configured in this Snapshot</label>` : ""}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP ALL CUES is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP ALL CUES interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
@@ -1212,6 +1492,10 @@ async function renderRuntime(startPolling = false) {
       <article class="stat"><span class="label">Latest Result</span><span class="value">${runtime.latest_execution ? pill(runtime.latest_execution.result, runtime.latest_execution.result === "COMPLETED" ? "good" : runtime.latest_execution.result === "RUNNING" ? "warn" : "bad") : "—"}</span><span class="sub">${esc(runtime.latest_execution?.cue_execution_id || "No Cue execution yet")}</span></article>
       <article class="stat"><span class="label">Session Started</span><span class="value">${esc(fmtDate(active?.started_at))}</span><span class="sub">${esc(active?.status || "No active Session")}</span></article>
     </div>
+    ${runtimeActiveExecutionMarkup(runtime, runtimeCues)}
+    ${endedRehearsal && !active ? '<button id="runtimeRehearsalSummary" class="button" type="button">Review ended rehearsal</button>' : ""}
+    ${mayReviewTiming ? '<button id="runtimeRehearsalApproval" class="button ghost" type="button">Review timing approval</button>' : ""}
+    ${receiptMarkup}
     ${runtimeIssueMarkup}`;
 
   el("runtimeOpenPreflight")?.addEventListener("click", () => navigate("preflight"));
@@ -1219,12 +1503,27 @@ async function renderRuntime(startPolling = false) {
   el("startShowButton")?.addEventListener("click", () => startRuntime("SHOW"));
   el("editBlackoutButton")?.addEventListener("click", () => setProjectBlackoutRuntime(true));
   el("editBlackoutClearButton")?.addEventListener("click", () => setProjectBlackoutRuntime(false));
-  el("goButton")?.addEventListener("click", goRuntime);
+  el("goButton")?.addEventListener("click", () => goRuntime(projectID, runtime));
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
   el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
-  el("jumpButton")?.addEventListener("click", jumpRuntime);
-  el("stopSessionButton")?.addEventListener("click", stopSessionRuntime);
+  el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
+  el("stopSessionButton")?.addEventListener("click", () => stopSessionRuntime(active));
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
+  // Opening Timing never approves a rehearsal: the existing reviewed,
+  // reversible INCLUDE/EXCLUDE API remains the sole confirmation path.
+  el("runtimeRehearsalApproval")?.addEventListener("click", () => {
+    renderTimingIntelligenceWorkspace().catch((error) => setMessage(globalMessage, errorMessage(error), "error"));
+  });
+  el("runtimeRehearsalSummary")?.addEventListener("click", async () => {
+    setPage("sessions");
+    try { await renderSessionDetail(endedRehearsal.sessionID); }
+    catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  });
+  el("runtimeCueTrace")?.addEventListener("click", async () => {
+    setPage("sessions");
+    try { await renderSessionDetail(active.session_id, traceID); }
+    catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  });
   if (startPolling) startRuntimePolling();
 }
 
@@ -1234,7 +1533,10 @@ async function startRuntime(mode) {
     state.runtimeForceExitAvailable = false;
     const started = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/start`, {
       method: "POST",
-      json: { mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID() },
+      json: {
+        mode, name: `${mode} ${new Date().toLocaleString()}`, request_id: requestID(),
+        ...(mode === "REHEARSAL" ? { rehearsal_purpose: el("rehearsalPurpose")?.value || "PREVIEW" } : {}),
+      },
     });
     const payload = started.result?.payload || {};
     const degradedReasons = Array.isArray(payload.degraded_reasons)
@@ -1250,19 +1552,43 @@ async function startRuntime(mode) {
   } catch (error) { setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error"); }
 }
 
-async function goRuntime() {
+async function goRuntime(projectID, runtime) {
+  await dispatchRuntimeCue(projectID, runtime, "go");
+}
+
+async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
+  const user = state.user;
+  const sessionID = runtime.session?.session_id;
+  const matches = () => state.user === user && encodeURIComponent(state.project?.project_id || "") === projectID;
+  if (!matches() || !sessionID) return;
+  const receipt = { user, projectID, sessionID, operation, requestID: requestID(), status: "PENDING" };
+  state.runtimeCueReceipt = receipt;
   try {
-    const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/go`, {
+    const endpoint = operation === "go" ? "/runtime/go" : "/runtime/jump";
+    const response = await api(`/api/v1/projects/${projectID}${endpoint}`, {
       method: "POST",
-      json: { request_id: requestID(), expected_current_cue_id: runtime.current_cue?.cue_id || null },
+      json: {
+        ...extra,
+        request_id: receipt.requestID,
+        expected_session_id: sessionID,
+        expected_current_cue_id: runtime.current_cue?.cue_id || null,
+      },
     });
-    await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+    receipt.result = response?.result;
+    receipt.status = "UNCONFIRMED";
+  } catch (error) {
+    receipt.result = error.payload?.result;
+    receipt.status = error.status ? `HTTP ${error.status}` : "UNCONFIRMED";
+    receipt.message = error.status ? errorMessage(error) :
+      "Delivery unconfirmed. Check Session History before sending another command.";
+  }
+  if (!matches() || state.runtimeCueReceipt !== receipt || state.page !== "runtime") return;
+  try { await renderRuntime(true); }
+  catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
 }
 
 async function stopCueRuntime() {
-  if (!confirm("STOP CUE interrupts ALL active Cues in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
+  if (!confirm("STOP ALL CUES interrupts every active Cue in this Session, including pending delays and interruptible Actions. It does not guarantee blackout. Continue?")) return;
   try {
     await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop`, {
       method: "POST", json: { request_id: requestID() },
@@ -1310,37 +1636,48 @@ async function setEmergencyBlackoutRuntime(enabled) {
   }
 }
 
-async function jumpRuntime() {
+async function jumpRuntime(projectID, runtime) {
+  if (encodeURIComponent(state.project?.project_id || "") !== projectID || !runtime.session?.session_id) return;
   const cueID = el("jumpCueSelect")?.value;
   if (!cueID) {
     setMessage(globalMessage, "Choose a published Cue before Jump.", "warn");
     return;
   }
-  const runtime = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime`);
   const label = (runtime.cues || []).find((cue) => cue.cue_id === cueID);
   if (!confirm(`Jump runtime to “${label?.name || cueID}”? This is an explicit operator override.`)) return;
-  try {
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/jump`, {
-      method: "POST",
-      json: {
-        request_id: requestID(), cue_id: cueID,
-        expected_current_cue_id: runtime.current_cue?.cue_id || null,
-        confirm: true,
-      },
-    });
-    await renderRuntime(true);
-  } catch (error) { setMessage(globalMessage, errorMessage(error), "error"); }
+  await dispatchRuntimeCue(projectID, runtime, "jump", { cue_id: cueID, confirm: true });
 }
 
-async function stopSessionRuntime() {
-  if (!confirm("End the active runtime Session? StageCore will first require its managed blackout safety to complete.")) return;
+async function stopSessionRuntime(active) {
+  const user = state.user;
+  const projectID = encodeURIComponent(state.project.project_id);
+  const current = () => state.user === user && encodeURIComponent(state.project?.project_id || "") === projectID && state.page === "runtime";
+  const stopTablets = el("rehearsalStopTablets");
+  const tabletSessionID = stopTablets?.checked ? stopTablets.value : "";
+  const stopExternal = el("rehearsalStopExternal");
+  const externalSessionID = stopExternal?.checked ? stopExternal.value : "";
+  const selected = [tabletSessionID && "stop tablet playback", externalSessionID && "run configured external STOP actions"].filter(Boolean);
+  const prompt = selected.length
+    ? `End this rehearsal, complete lighting blackout, and ${selected.join(" and ")}?`
+    : "End the active runtime Session? StageCore will first require its managed blackout safety to complete.";
+  if (!confirm(prompt)) return;
   try {
-    await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/stop-session`, {
-      method: "POST", json: { request_id: requestID() },
+    const stopped = await api(`/api/v1/projects/${projectID}/runtime/stop-session`, {
+      method: "POST", json: {
+        request_id: requestID(),
+        ...(tabletSessionID ? { rehearsal_tablet_stop_session_id: tabletSessionID } : {}),
+        ...(externalSessionID ? { rehearsal_external_stop_session_id: externalSessionID } : {}),
+      },
     });
+    if (!current()) return;
+    const sessionID = stopped.result?.payload?.session_id;
+    if (sessionID && active?.type === "REHEARSAL" && active.session_id === sessionID) {
+      state.runtimeEndedRehearsal = { user, projectID, sessionID, purpose: active.rehearsal_purpose };
+    }
     state.runtimeForceExitAvailable = false;
     await renderRuntime(true);
   } catch (error) {
+    if (!current()) return;
     const code = error.payload?.result?.error?.error_code || "";
     state.runtimeForceExitAvailable = code === "SESSION_STOP_SAFETY_FAILED" || code === "SESSION_STOP_CUE_UNCONFIRMED";
     const suffix = state.runtimeForceExitAvailable

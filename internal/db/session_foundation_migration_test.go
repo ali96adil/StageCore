@@ -103,9 +103,15 @@ func TestSessionFoundationMigrationPreservesHistoricalSessionTruth(t *testing.T)
 	goose.SetBaseFS(nil)
 	migrationMu.Unlock()
 
+	// Read the migrated row through the current Store, including the newer
+	// rehearsal-purpose column. Pre-existing sessions retain legacy training.
+	migrateTimingTestDB(t, database, migrationFS, 57)
 	loaded, err := s.GetSessionFoundation(ctx, session.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if loaded.RehearsalPurpose != "" {
+		t.Fatalf("historical rehearsal purpose changed: %s", loaded.RehearsalPurpose)
 	}
 	if loaded.ContractVersion != domain.SessionContractVersion1 {
 		t.Fatalf("contract version=%d", loaded.ContractVersion)

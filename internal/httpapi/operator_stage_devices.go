@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/devicechannel"
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+ "github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/stagelaser"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
@@ -42,33 +44,129 @@ func WithOperatorStageDevices(
 	runtime *devicechannel.Runtime,
 	stageStore *store.Store,
 ) Option {
+	return withOperatorStageDevices(auth, devices, runtime, stageStore, nil)
+}
+
+// WithScopedOperatorStageDeviceReads qualifies inventory metadata only.
+// Device mutations still require separate authorization and cutover review.
+func WithScopedOperatorStageDeviceReads(auth *userauth.Service, devices *deviceexperience.Repository,
+	runtime *devicechannel.Runtime, stageStore *store.Store, access *projectaccess.Service,
+) Option {
+	if access == nil {
+		return func(*Server) {}
+	}
+	return withOperatorStageDevices(auth, devices, runtime, stageStore, access)
+}
+
+type stageDeviceCommandDispatcher func(context.Context, *devicechannel.Runtime, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error)
+
+type stageDeviceRouteHooks struct {
+	Dispatch       stageDeviceCommandDispatcher
+	CurrentV2Scope func(string) (devicechannel.V2RuntimeScope, bool)
+	StageLaserAssignment func(context.Context, deviceexperience.StageLaserAssignmentInput, string, func(context.Context) error) (deviceexperience.StageLaserAssignmentCommit, error)
+	SoftwareTransfer func(context.Context, deviceexperience.TransferPreflightInput, string, func(context.Context) error) (deviceexperience.TransferCommitRecord, error)
+	LightingActivation func(context.Context, deviceexperience.LightingActivationInput, string, func(context.Context) error) (deviceexperience.LightingActivationCommit, error)
+	BeforeSnapshotSyncResponse func()
+	BeforeOwnerReadResponse func(route string)
+	BeforeDeviceMetadataResponse func(route string)
+	BeforeProjectDeviceListResponse func()
+	BeforeLiveVideoSourcesResponse func()
+}
+
+func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
+	runtime *devicechannel.Runtime, stageStore *store.Store, access *projectaccess.Service,
+	hooks ...stageDeviceRouteHooks,
+) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || runtime == nil || stageStore == nil {
 			return
 		}
+		dispatchCommand := stageDeviceCommandDispatcher(dispatchBrowserStageDevice)
+		currentV2Scope := runtime.CurrentV2Scope
+		stageLaserAssignment := runtime.ExecuteStageLaserAssignmentAuthorized
+		softwareTransfer := runtime.ExecuteReservedSoftwareTransferAuthorized
+		lightingActivation := runtime.ExecuteLightingActivationAuthorized
+		beforeSnapshotSyncResponse := func() {}
+		beforeDeviceMetadataResponse := func(string) {}
+		beforeProjectDeviceListResponse := func() {}
+		beforeLiveVideoSourcesResponse := func() {}
+		if len(hooks) > 0 {
+			if hooks[0].Dispatch != nil {
+				dispatchCommand = hooks[0].Dispatch
+			}
+			if hooks[0].CurrentV2Scope != nil {
+				currentV2Scope = hooks[0].CurrentV2Scope
+			}
+			if hooks[0].StageLaserAssignment != nil {
+				stageLaserAssignment = hooks[0].StageLaserAssignment
+			}
+			if hooks[0].SoftwareTransfer != nil {
+				softwareTransfer = hooks[0].SoftwareTransfer
+			}
+			if hooks[0].LightingActivation != nil {
+				lightingActivation = hooks[0].LightingActivation
+			}
+			if hooks[0].BeforeSnapshotSyncResponse != nil {
+				beforeSnapshotSyncResponse = hooks[0].BeforeSnapshotSyncResponse
+			}
+			if hooks[0].BeforeDeviceMetadataResponse != nil {
+				beforeDeviceMetadataResponse = hooks[0].BeforeDeviceMetadataResponse
+			}
+			if hooks[0].BeforeProjectDeviceListResponse != nil {
+				beforeProjectDeviceListResponse = hooks[0].BeforeProjectDeviceListResponse
+			}
+			if hooks[0].BeforeLiveVideoSourcesResponse != nil {
+				beforeLiveVideoSourcesResponse = hooks[0].BeforeLiveVideoSourcesResponse
+			}
+		}
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if projectID == "" {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_PROJECT_REQUIRED"})
 				return
 			}
+			if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "STAGE_DEVICE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
 			active := make([]deviceexperience.Device, 0, len(items))
 			for _, item := range items {
-				if item.Enabled {
-					active = append(active, item)
+				if !item.Enabled {
+					continue
 				}
+				if access != nil && session.User.Role != userauth.RoleOwner {
+					err := access.CheckActiveV2DeviceRead(r.Context(), session.User.ID, projectID, item.ID)
+					if errors.Is(err, projectaccess.ErrDenied) {
+						continue
+					}
+					if err != nil {
+						if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+							return
+						}
+						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_UNAVAILABLE"})
+						return
+					}
+				}
+				active = append(active, item)
+			}
+			beforeProjectDeviceListResponse()
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": active})
 		}))
 
 
-		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/stage-devices/{device_id}/show-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("PUT /api/v1/projects/{project_id}/stage-devices/{device_id}/show-requirement", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			if projectID == "" || deviceID == "" {
@@ -89,8 +187,11 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_REQUIRED"})
 				return
 			}
-			assignment, err := devices.SetRequiredForShow(r.Context(), deviceID, projectID, *input.RequiredForShow)
+			assignment, err := devices.SetRequiredForShow(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure), deviceID, projectID, *input.RequiredForShow)
 			if err != nil {
+				if writeProjectMutationDenied(w, err) {
+					return
+				}
 				status := http.StatusConflict
 				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 					status = http.StatusBadRequest
@@ -177,11 +278,14 @@ func WithOperatorStageDevices(
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionSnapshotPublish); err != nil {
@@ -190,7 +294,13 @@ func WithOperatorStageDevices(
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
 					return err
 				}
-				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
+				if err := userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair); err != nil {
+					return err
+				}
+				if qualificationAccess(r, nil) != nil && next.User.Role != userauth.RoleOwner {
+					return userauth.ErrForbidden
+				}
+				return nil
 			}
 
 			items, err := devices.ListDevices(r.Context(), projectID)
@@ -220,6 +330,7 @@ func WithOperatorStageDevices(
 			}
 			results := make([]runtimeSnapshotDeviceSyncResult, 0)
 			complete := true
+			effectMayHaveBeenCommitted := false
 			for _, device := range items {
 				if !device.Enabled || device.ProtocolVersion != deviceexperience.ProtocolVersion2 ||
 					device.Assignment == nil {
@@ -291,7 +402,8 @@ func WithOperatorStageDevices(
 						continue
 					}
 					record, assignErr := runtime.ExecuteTabletAssignmentAuthorized(
-						r.Context(),
+						browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+							userauth.PermissionSnapshotPublish, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 						deviceexperience.TabletAssignmentInput{
 							DeviceID: device.ID,
 							ExpectedProjectID: projectID,
@@ -309,6 +421,7 @@ func WithOperatorStageDevices(
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "Tablet assignment committed but fresh Runtime Snapshot reconnect did not become READY in time."
@@ -328,7 +441,8 @@ func WithOperatorStageDevices(
 						continue
 					}
 					record, assignErr := runtime.ExecuteStageLaserAssignmentAuthorized(
-						r.Context(),
+						browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+							userauth.PermissionSnapshotPublish, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 						deviceexperience.StageLaserAssignmentInput{
 							DeviceID: device.ID,
 							ExpectedProjectID: projectID,
@@ -346,6 +460,7 @@ func WithOperatorStageDevices(
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					result.AssignmentEpoch = record.ToEpoch
 					if !waitForStageDeviceScope(r.Context(), runtime, device.ID, projectID, input.RuntimeSnapshotID, record.ToEpoch, 12*time.Second) {
 						result.Detail = "StageLaser safe rebind committed but fresh Runtime Snapshot reconnect did not become READY in time."
@@ -372,6 +487,7 @@ func WithOperatorStageDevices(
 						results = append(results, result)
 						continue
 					}
+					effectMayHaveBeenCommitted = true
 					if rebind.Reassign != nil {
 						result.AssignmentEpoch = rebind.Reassign.ToEpoch
 					} else if rebind.Activation != nil {
@@ -382,6 +498,16 @@ func WithOperatorStageDevices(
 				}
 			}
 
+			beforeSnapshotSyncResponse()
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended during Snapshot synchronization; refetch device assignments before taking further action.",
+					"effect_may_have_been_committed": effectMayHaveBeenCommitted,
+					"retryable": false,
+				})
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"runtime_snapshot_id": input.RuntimeSnapshotID,
 				"complete": complete,
@@ -395,6 +521,9 @@ func WithOperatorStageDevices(
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stage-devices/{device_id}/stagelaser-visual-check",
 			withPermission(auth, userauth.PermissionProjectRead,
 				func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+					if !allowScopedOwner(w, session, access) {
+						return
+					}
 					if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
 						writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGELASER_VISUAL_CHECK_PAIRING_PERMISSION_REQUIRED"})
 						return
@@ -403,6 +532,12 @@ func WithOperatorStageDevices(
 						r.Context(), r.PathValue("device_id"), r.PathValue("project_id"))
 					if err != nil {
 						writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGELASER_VISUAL_CHECK_UNAVAILABLE"})
+						return
+					}
+					if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+						hooks[0].BeforeOwnerReadResponse("stagelaser-visual-check")
+					}
+					if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
 						return
 					}
 					writeJSON(w, http.StatusOK, map[string]any{
@@ -440,11 +575,19 @@ func WithOperatorStageDevices(
 						writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGELASER_VISUAL_CHECK_CONFIRMATION_REQUIRED"})
 						return
 					}
+					ctx := projectMutationContext(r, auth, session, userauth.PermissionCompanionPair, access, projectaccess.DeviceConfigure)
 					check, err := devices.RecordStageLaserVisualCheck(
-						r.Context(), deviceID, projectID, session.User.ID,
+						ctx, deviceID, projectID, session.User.ID,
 						input.VisualState, input.ExpectedDeviceReportedState, input.ExpectedDeviceBootID,
 					)
 					if err != nil {
+						if writeProjectMutationDenied(w, err) {
+							return
+						}
+						if errors.Is(err, sql.ErrNoRows) {
+							writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
+							return
+						}
 						status := http.StatusConflict
 						if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 							status = http.StatusBadRequest
@@ -467,7 +610,11 @@ func WithOperatorStageDevices(
 		// reusable device identity, its Hub-owned assignment, and the current
 		// authenticated runtime scope. Read-only; it grants no transfer or
 		// command authority.
-		s.mux.HandleFunc("GET /api/v1/stage-devices/inventory", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/stage-devices/inventory", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
@@ -520,10 +667,20 @@ func WithOperatorStageDevices(
 				}
 				out = append(out, view)
 			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("inventory")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/stage-devices/unassigned", withPermission(auth, userauth.PermissionCompanionPair, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
@@ -562,6 +719,12 @@ func WithOperatorStageDevices(
 				}
 				out = append(out, view)
 			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("unassigned")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 		}))
 
@@ -582,9 +745,14 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "TABLET_DECOMMISSION_CONFIRMATION_REQUIRED"})
 				return
 			}
-			record, err := devices.DecommissionOfflineTablet(r.Context(), deviceID, session.User.ID, input.Reason)
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionCompanionRevoke)
+			record, err := devices.DecommissionOfflineTablet(writeCtx, deviceID, session.User.ID, input.Reason)
 			if err != nil {
 				status := http.StatusConflict
+				if errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
+					return
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					status = http.StatusNotFound
 				} else if errors.Is(err, deviceexperience.ErrInvalidDevice) {
@@ -601,6 +769,11 @@ func WithOperatorStageDevices(
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			boundProject, allowed := allowScopedDeviceMetadata(w, r, session, access, "")
+			if !allowed {
+				return
+			}
 			item, err := devices.GetDevice(r.Context(), strings.TrimSpace(r.PathValue("device_id")))
 			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
@@ -608,8 +781,16 @@ func WithOperatorStageDevices(
 			}
 			// Unassigned identities are pairing inventory, not members of
 			// whichever Project the requesting user happens to read.
-			if item.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+			if access == nil && item.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			beforeDeviceMetadataResponse("device")
+			permission := userauth.PermissionProjectRead
+			if access == nil && item.ProjectID == "" {
+				permission = userauth.PermissionCompanionPair
+			}
+			if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, permission) {
 				return
 			}
 			writeJSON(w, http.StatusOK, item)
@@ -619,6 +800,11 @@ func WithOperatorStageDevices(
 		// This does not assign or transfer a device, and LEGACY is never a
 		// statement that the new authenticated v2 handshake has completed.
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			boundProject, allowed := allowScopedDeviceMetadata(w, r, session, access, "")
+			if !allowed {
+				return
+			}
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
 			if err != nil {
@@ -633,8 +819,20 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
 				return
 			}
-			if record.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
+			if access == nil && record.ProjectID == "" && userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
+				return
+			}
+			if boundProject != "" && (record.ProjectID != boundProject || record.State != "ACTIVE") {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGE_DEVICE_NOT_FOUND"})
+				return
+			}
+			beforeDeviceMetadataResponse("assignment")
+			permission := userauth.PermissionProjectRead
+			if access == nil && record.ProjectID == "" {
+				permission = userauth.PermissionCompanionPair
+			}
+			if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, permission) {
 				return
 			}
 			writeJSON(w, http.StatusOK, record)
@@ -644,6 +842,10 @@ func WithOperatorStageDevices(
 		// An ACK stored on an earlier socket is historical, not live proof.
 		// This endpoint never reports independent physical DMX verification.
 		s.mux.HandleFunc("GET /api/v1/stage-devices/{device_id}/assignment/transfer-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			if userauth.Authorize(session.User.Role, userauth.PermissionCompanionPair) != nil {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "STAGE_DEVICE_PAIRING_PERMISSION_REQUIRED"})
 				return
@@ -691,6 +893,12 @@ func WithOperatorStageDevices(
 				if liveActive {
 					status = "ACTIVE_CURRENT_SCOPE_READY"
 				}
+			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("transfer-status")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"assignment": assignment,
@@ -740,10 +948,13 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LEGACY_V2_MIGRATION_CONFIRMATION_REQUIRED"})
 				return
 			}
+			writeCtx := browserDeviceWriteContext(r.Context(), auth, session, true, userauth.PermissionProjectEdit, userauth.PermissionCompanionPair)
 			record, err := devices.MigrateLegacyLightingToV2Blocked(
-				r.Context(), deviceID, projectID, session.User.ID)
+				writeCtx, deviceID, projectID, session.User.ID)
 			if err != nil {
 				switch {
+				case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
 				case errors.Is(err, sql.ErrNoRows):
 					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				case errors.Is(err, deviceexperience.ErrInvalidState):
@@ -859,11 +1070,14 @@ func WithOperatorStageDevices(
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -871,14 +1085,24 @@ func WithOperatorStageDevices(
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteReservedSoftwareTransferAuthorized(
-				r.Context(), intent, actor, reauthorize)
+			record, err := softwareTransfer(
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair), intent, actor, reauthorize)
 			if err != nil {
 				// Never interpret an error as a successful transfer. Client
 				// must refetch Hub-owned assignment, not retry a stale ACK.
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error": "STAGE_DEVICE_SOFTWARE_TRANSFER_NOT_COMMITTED",
 					"note": "VERIFY_HUB_ASSIGNMENT_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the software-transfer commit; refetch device assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}
@@ -936,11 +1160,14 @@ func WithOperatorStageDevices(
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -948,8 +1175,9 @@ func WithOperatorStageDevices(
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteStageLaserAssignmentAuthorized(
-				r.Context(),
+			record, err := stageLaserAssignment(
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.StageLaserAssignmentInput{
 					DeviceID: deviceID,
 					TargetProjectID: projectID,
@@ -964,6 +1192,15 @@ func WithOperatorStageDevices(
 					"error": "STAGELASER_ASSIGNMENT_NOT_COMMITTED",
 					"detail": err.Error(),
 					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_DEVICE_STATE_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the assignment commit; refetch the current assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}
@@ -1018,11 +1255,14 @@ func WithOperatorStageDevices(
 			csrf := r.Header.Get(csrfHeader)
 			actor := session.User.ID
 			reauthorize := func(ctx context.Context) error {
+				if err := capability.CheckDispatch(ctx); err != nil {
+					return err
+				}
 				next, err := auth.ValidateCSRF(ctx, token, csrf)
 				if err != nil {
 					return err
 				}
-				if next.User.ID != actor {
+				if next.User.ID != actor || next.ID != session.ID {
 					return userauth.ErrForbidden
 				}
 				if err := userauth.Authorize(next.User.Role, userauth.PermissionProjectEdit); err != nil {
@@ -1030,8 +1270,9 @@ func WithOperatorStageDevices(
 				}
 				return userauth.Authorize(next.User.Role, userauth.PermissionCompanionPair)
 			}
-			record, err := runtime.ExecuteLightingActivationAuthorized(
-				r.Context(),
+			record, err := lightingActivation(
+				browserDeviceWriteContext(r.Context(), auth, session, qualificationAccess(r, nil) != nil,
+					userauth.PermissionProjectEdit, userauth.PermissionCompanionPair),
 				deviceexperience.LightingActivationInput{
 					DeviceID: deviceID,
 					ProjectID: projectID,
@@ -1046,6 +1287,15 @@ func WithOperatorStageDevices(
 					"error": "LIGHTING_ACTIVATION_NOT_COMMITTED",
 					"detail": err.Error(),
 					"note": "REFETCH_ASSIGNMENT_AND_CURRENT_SOFTWARE_ZERO_BEFORE_RETRY",
+				})
+				return
+			}
+			if err := reauthorize(r.Context()); err != nil {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error_code": capability.DispatchAuthorityRevokedCode,
+					"detail": "Authorization ended after the lighting activation commit; refetch device assignment before taking further action.",
+					"effect_may_have_been_committed": true,
+					"retryable": false,
 				})
 				return
 			}
@@ -1105,7 +1355,7 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGELASER_RESYNC_STALE_BOOT_RELOAD_REQUIRED"})
 				return
 			}
-			scope, online := runtime.CurrentV2Scope(device.ID)
+			scope, online := currentV2Scope(device.ID)
 			if !online || !scope.CommandsEnabled ||
 				scope.ProjectID != projectID ||
 				scope.RuntimeSnapshotID != device.Assignment.RuntimeSnapshotID ||
@@ -1116,7 +1366,8 @@ func WithOperatorStageDevices(
 			payload, _ := json.Marshal(map[string]string{"state": input.State})
 			correlationID, _ := stageid.New()
 			deadline := time.Now().UTC().Add(10 * time.Second)
-			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			command, err := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 				ProjectID: projectID, DeviceID: device.ID,
 				RuntimeSnapshotID: device.Assignment.RuntimeSnapshotID,
 				CommandType: stagelaser.CommandStateResync,
@@ -1125,7 +1376,15 @@ func WithOperatorStageDevices(
 				Priority: "P1", Payload: payload, DeadlineAt: &deadline,
 			})
 			if err != nil {
+				if capability.CheckDispatch(dispatch) != nil {
+					writeStageDeviceDispatchAuthorityEnded(w, true)
+					return
+				}
 				writeStageDeviceCommandError(w, err)
+				return
+			}
+			if capability.CheckDispatch(dispatch) != nil {
+				writeStageDeviceDispatchAuthorityEnded(w, true)
 				return
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{
@@ -1177,7 +1436,8 @@ func WithOperatorStageDevices(
 				writeJSON(w, http.StatusConflict, map[string]any{"error": "STAGE_DEVICE_PROJECT_UNBOUND"})
 				return
 			}
-			command, err := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			command, err := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 				ProjectID:         commandProjectID,
 				SessionID:         input.SessionID,
 				DeviceID:          device.ID,
@@ -1192,7 +1452,15 @@ func WithOperatorStageDevices(
 				DeadlineAt:        input.DeadlineAt,
 			})
 			if err != nil {
+				if capability.CheckDispatch(dispatch) != nil {
+					writeStageDeviceDispatchAuthorityEnded(w, true)
+					return
+				}
 				writeStageDeviceCommandError(w, err)
+				return
+			}
+			if capability.CheckDispatch(dispatch) != nil {
+				writeStageDeviceDispatchAuthorityEnded(w, true)
 				return
 			}
 			status := http.StatusAccepted
@@ -1262,8 +1530,15 @@ func WithOperatorStageDevices(
 				Error    string                          `json:"error,omitempty"`
 			}
 			results := make([]batchResult, 0, len(targets))
+			effectMayHaveBeenSent := false
+			dispatch := stageDeviceDispatchContext(r, auth, session)
+			if err := capability.CheckDispatch(dispatch); err != nil {
+				writeStageDeviceCommandError(w, err)
+				return
+			}
 			for _, device := range targets {
-				command, dispatchErr := runtime.Dispatch(r.Context(), deviceexperience.CreateCommandInput{
+				effectMayHaveBeenSent = true
+				command, dispatchErr := dispatchCommand(dispatch, runtime, deviceexperience.CreateCommandInput{
 					ProjectID:         projectID,
 					SessionID:         input.SessionID,
 					DeviceID:          device.ID,
@@ -1279,31 +1554,55 @@ func WithOperatorStageDevices(
 				})
 				if dispatchErr != nil {
 					results = append(results, batchResult{DeviceID: device.ID, Error: dispatchErr.Error()})
+					if errors.Is(dispatchErr, capability.ErrDispatchAuthorityRevoked) {
+						break
+					}
 					continue
 				}
 				copy := command
 				results = append(results, batchResult{DeviceID: device.ID, Command: &copy})
 			}
+			if err := capability.CheckDispatch(dispatch); err != nil {
+				writeStageDeviceDispatchAuthorityEnded(w, effectMayHaveBeenSent)
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"correlation_id": correlationID, "results": results})
 		}))
 
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/live-video-sources", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
+				return
+			}
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "PROJECT_NOT_FOUND"})
 				return
 			}
 			sources, err := devices.ListLiveSources(r.Context(), projectID)
 			if err != nil {
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "LIVE_SOURCE_LIST_FAILED", "detail": err.Error()})
 				return
 			}
-			if !tabletHasConfiguredRelaySource(sources) {
+			if (access == nil || session.User.Role == userauth.RoleOwner) && !tabletHasConfiguredRelaySource(sources) {
 				if source, ok := tabletAutoRelaySource(projectID, tabletAutoRelayAdvertiseHost(r), time.Now()); ok {
 					sources = append(sources, source)
 				}
 			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			cameraStatus := probeTabletCameraRelay(r.Context(), tabletRelaySource(sources))
+			beforeLiveVideoSourcesResponse()
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"sources": sources, "camera_status": cameraStatus})
 		}))
 
@@ -1332,14 +1631,46 @@ func WithOperatorStageDevices(
 		}))
 
 		s.mux.HandleFunc("GET /api/v1/network/cockpit", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+			access := qualificationAccess(r, access)
+			if !allowScopedOwner(w, session, access) {
+				return
+			}
 			items, err := devices.Cockpit(r.Context(), 15*time.Second)
 			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "NETWORK_COCKPIT_FAILED", "detail": err.Error()})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "NETWORK_COCKPIT_FAILED"})
+				return
+			}
+			if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+				hooks[0].BeforeOwnerReadResponse("network-cockpit")
+			}
+			if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionProjectRead) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"targets": items, "stale_after_ms": 15000})
 		}))
 	}
+}
+
+func reauthorizeScopedOwnerRead(w http.ResponseWriter, r *http.Request,
+	auth *userauth.Service, session userauth.Session, access *projectaccess.Service, permissions ...userauth.Permission,
+) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	token, ok := browserSessionToken(r)
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if !ok || err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	if !allowScopedOwner(w, current, access) {
+		return false
+	}
+	for _, permission := range permissions {
+		if userauth.Authorize(current.User.Role, permission) != nil {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+			return false
+		}
+	}
+	return true
 }
 
 
@@ -1371,9 +1702,53 @@ func waitForStageDeviceScope(
 }
 
 
+func dispatchBrowserStageDevice(ctx context.Context, runtime *devicechannel.Runtime, input deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+	if err := capability.CheckDispatch(ctx); err != nil {
+		return deviceexperience.DeviceCommand{}, err
+	}
+	return runtime.Dispatch(ctx, input)
+}
+
+func stageDeviceDispatchContext(r *http.Request, auth *userauth.Service, session userauth.Session) context.Context {
+	token, _ := browserSessionToken(r)
+	csrf := r.Header.Get(csrfHeader)
+	ownerOnly := qualificationAccess(r, nil) != nil
+	dispatch := capability.WithDispatchCheck(r.Context(), func(ctx context.Context) error {
+		current, err := auth.ValidateCSRF(ctx, token, csrf)
+		if err != nil || current.ID != session.ID || current.User.ID != session.User.ID ||
+			userauth.Authorize(current.User.Role, userauth.PermissionRuntimeControl) != nil ||
+			(ownerOnly && current.User.Role != userauth.RoleOwner) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	return browserDeviceWriteContext(dispatch, auth, session, ownerOnly, userauth.PermissionRuntimeControl)
+}
+
+func browserDeviceWriteContext(ctx context.Context, auth *userauth.Service, session userauth.Session, ownerOnly bool, permissions ...userauth.Permission) context.Context {
+	return capability.WithWriteAuthorization(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		role, err := auth.SessionRoleInTransaction(ctx, tx, session.ID, session.User.ID)
+		if errors.Is(err, userauth.ErrSessionInvalid) || (err == nil && ownerOnly && role != userauth.RoleOwner) {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		if err != nil {
+			return err
+		}
+		for _, permission := range permissions {
+			if userauth.Authorize(role, permission) != nil {
+				return capability.ErrDispatchAuthorityRevoked
+			}
+		}
+		return nil
+	})
+}
+
 func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 	status := http.StatusConflict
 	switch {
+	case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": capability.DispatchAuthorityRevokedCode})
+		return
 	case errors.Is(err, deviceexperience.ErrCommandExpired):
 		status = http.StatusGone
 	case errors.Is(err, deviceexperience.ErrInvalidState), errors.Is(err, deviceexperience.ErrInvalidDevice):
@@ -1382,6 +1757,14 @@ func writeStageDeviceCommandError(w http.ResponseWriter, err error) {
 		status = http.StatusConflict
 	}
 	writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_COMMAND_REJECTED", "detail": err.Error()})
+}
+
+func writeStageDeviceDispatchAuthorityEnded(w http.ResponseWriter, effectMayHaveBeenSent bool) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":                     "STAGE_DEVICE_COMMAND_AUTHORITY_REVOKED",
+		"effect_may_have_been_sent": effectMayHaveBeenSent,
+		"retryable":                 false,
+	})
 }
 
 func selectStageDeviceTargets(devices []deviceexperience.Device, all bool, groupName, locationName string, deviceIDs []string) ([]deviceexperience.Device, bool) {

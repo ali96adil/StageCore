@@ -17,8 +17,11 @@ func WithOperatorTimecode(auth *userauth.Service, service TimecodeSummaryReader)
 		if auth == nil || service == nil {
 			return
 		}
-		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timecode", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/timecode", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			summary, err := service.LiveSummary(r.Context(), r.PathValue("project_id"), r.URL.Query().Get("runtime_snapshot_id"))
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			if err != nil {
 				writeProjectStoreError(w, err)
 				return

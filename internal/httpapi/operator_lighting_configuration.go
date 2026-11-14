@@ -11,6 +11,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/lightingnode"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
@@ -21,28 +22,34 @@ type lightingConfigurationRequest struct {
 }
 
 type lightingHealthView struct {
-	Status              string                        `json:"status"`
-	Reasons             []string                      `json:"reasons"`
-	Connection          deviceexperience.ConnectionState `json:"connection"`
-	Readiness           deviceexperience.Readiness       `json:"readiness"`
-	LastSeenAt          *time.Time                     `json:"last_seen_at,omitempty"`
-	DMXHealthy          *bool                          `json:"dmx_healthy,omitempty"`
-	BrownoutWarning     bool                           `json:"brownout_warning"`
-	Authority           lightingnode.AuthoritySource   `json:"authority,omitempty"`
-	ExpectedConfigHash  string                         `json:"expected_configuration_hash,omitempty"`
-	ObservedConfigHash  string                         `json:"observed_configuration_hash,omitempty"`
-	ConfigurationMatches *bool                         `json:"configuration_matches,omitempty"`
+	Status               string                           `json:"status"`
+	Reasons              []string                         `json:"reasons"`
+	Connection           deviceexperience.ConnectionState `json:"connection"`
+	Readiness            deviceexperience.Readiness       `json:"readiness"`
+	LastSeenAt           *time.Time                       `json:"last_seen_at,omitempty"`
+	DMXHealthy           *bool                            `json:"dmx_healthy,omitempty"`
+	BrownoutWarning      bool                             `json:"brownout_warning"`
+	Authority            lightingnode.AuthoritySource     `json:"authority,omitempty"`
+	ExpectedConfigHash   string                           `json:"expected_configuration_hash,omitempty"`
+	ObservedConfigHash   string                           `json:"observed_configuration_hash,omitempty"`
+	ConfigurationMatches *bool                            `json:"configuration_matches,omitempty"`
 }
 
 type lightingConfigurationNodeView struct {
-	DeviceID       string                     `json:"device_id"`
-	DisplayName    string                     `json:"display_name"`
-	Enabled        bool                       `json:"enabled"`
-	Configured     bool                       `json:"configured"`
+	DeviceID      string                      `json:"device_id"`
+	DisplayName   string                      `json:"display_name"`
+	Enabled       bool                        `json:"enabled"`
+	Configured    bool                        `json:"configured"`
 	Configuration *lightingnode.Configuration `json:"configuration,omitempty"`
-	Aliases        map[string]string          `json:"aliases,omitempty"`
-	Observed       *lightingnode.Observation  `json:"observed,omitempty"`
-	Health         lightingHealthView         `json:"health"`
+	Aliases       map[string]string           `json:"aliases,omitempty"`
+	Observed      *lightingnode.Observation   `json:"observed,omitempty"`
+	Health        lightingHealthView          `json:"health"`
+}
+
+type lightingConfigurationHooks struct {
+	BeforeMutation     func()
+	BeforeBindingWrite func()
+	BeforeResponse     func()
 }
 
 func registerOperatorLightingConfigurationRoutes(
@@ -50,8 +57,13 @@ func registerOperatorLightingConfigurationRoutes(
 	auth *userauth.Service,
 	devices *deviceexperience.Repository,
 	stageStore *store.Store,
+	hooks ...lightingConfigurationHooks,
 ) {
-	mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, _ userauth.Session) {
+	var hook lightingConfigurationHooks
+	if len(hooks) > 0 {
+		hook = hooks[0]
+	}
+	mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
@@ -71,6 +83,9 @@ func registerOperatorLightingConfigurationRoutes(
 		allDevices, err := devices.ListDevices(r.Context(), projectID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_DEVICES_UNAVAILABLE", "detail": err.Error()})
+			return
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -103,16 +118,36 @@ func registerOperatorLightingConfigurationRoutes(
 		if !decodeBoundedJSON(w, r, &input) {
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), projectID, session.User.ID, "Lighting node configuration edit")
+		if hook.BeforeMutation != nil {
+			hook.BeforeMutation()
+		}
+		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
 			writeProjectStoreError(w, err)
 			return
 		}
-		binding, err := stageStore.SetLightingNodeBinding(r.Context(), revision.ID, lightingnode.ProjectBinding{
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure)
+		revision, err := stageStore.EnsureProjectDraft(writeCtx, projectID, session.User.ID, "Lighting node configuration edit")
+		if err != nil {
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hook.BeforeBindingWrite != nil {
+			hook.BeforeBindingWrite()
+		}
+		draftForked := revision.ID != project.CurrentRevisionID
+		binding, err := stageStore.SetLightingNodeBinding(writeCtx, revision.ID, lightingnode.ProjectBinding{
 			DeviceID: device.ID, ProfileID: lightingnode.ProfileID,
 			Configuration: input.Configuration, Aliases: input.Aliases,
 		}, session.User.ID)
 		if err != nil {
+			if draftForked && projectMutationAccessDenied(err) {
+				writeCommittedProjectMutationDenied(w, err)
+				return
+			}
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			switch {
 			case errors.Is(err, domain.ErrInvalidInput):
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "LIGHTING_CONFIGURATION_INVALID", "detail": err.Error()})
@@ -126,6 +161,12 @@ func registerOperatorLightingConfigurationRoutes(
 			return
 		}
 		hash, _ := lightingnode.ConfigurationHash(binding.Configuration)
+		if hook.BeforeResponse != nil {
+			hook.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure) {
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision":                    makeRevisionView(revision),
 			"binding":                     binding,
@@ -158,17 +199,38 @@ func registerOperatorLightingConfigurationRoutes(
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_DEVICE_NOT_FOUND"})
 			return
 		}
-		revision, err := stageStore.EnsureProjectDraft(r.Context(), project.ID, session.User.ID, "Lighting node configuration removal")
+		if hook.BeforeMutation != nil {
+			hook.BeforeMutation()
+		}
+		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure)
+		revision, err := stageStore.EnsureProjectDraft(writeCtx, project.ID, session.User.ID, "Lighting node configuration removal")
 		if err != nil {
 			writeProjectStoreError(w, err)
 			return
 		}
-		if err := stageStore.DeleteLightingNodeBinding(r.Context(), revision.ID, deviceID); err != nil {
+		if hook.BeforeBindingWrite != nil {
+			hook.BeforeBindingWrite()
+		}
+		draftForked := revision.ID != project.CurrentRevisionID
+		if err := stageStore.DeleteLightingNodeBinding(writeCtx, revision.ID, deviceID); err != nil {
+			if draftForked && projectMutationAccessDenied(err) {
+				writeCommittedProjectMutationDenied(w, err)
+				return
+			}
+			if writeProjectMutationDenied(w, err) {
+				return
+			}
 			if errors.Is(err, domain.ErrNotFound) {
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "LIGHTING_CONFIGURATION_NOT_FOUND"})
 				return
 			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_CONFIGURATION_DELETE_FAILED", "detail": err.Error()})
+			return
+		}
+		if hook.BeforeResponse != nil {
+			hook.BeforeResponse()
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -222,7 +284,7 @@ func assessLightingHealth(device deviceexperience.Device, binding *lightingnode.
 	view := lightingHealthView{
 		Status: "READY", Reasons: make([]string, 0),
 		Connection: deviceexperience.ConnectionOffline,
-		Readiness: deviceexperience.ReadinessUnknown,
+		Readiness:  deviceexperience.ReadinessUnknown,
 	}
 	severity := 0
 	add := func(level int, reason string) {

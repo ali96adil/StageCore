@@ -75,6 +75,8 @@ func (v *Vault) ImportVerifiedObject(
 		)
 	}
 
+	v.objectMu.Lock()
+	defer v.objectMu.Unlock()
 	relativePath := objectRelativePath(expectedContentHash)
 	objectPath := filepath.Join(v.root, filepath.FromSlash(relativePath))
 	if err := os.MkdirAll(filepath.Dir(objectPath), directoryMode); err != nil {

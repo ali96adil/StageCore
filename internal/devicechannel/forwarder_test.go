@@ -131,9 +131,15 @@ func TestForwarderDispatchesTypedCommandAndWaitsForDeviceResult(t *testing.T) {
 		return command, nil
 	})
 	forwarder := devicechannel.NewForwarder(fixture.store, fixture.repository, dispatcher)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	request := stageDeviceRequest(fixture, "action-1")
+	// This case verifies typed dispatch and terminal-result observation, not
+	// the short command-timeout path. Leave the same five-second acceptance and
+	// result budget used by the production default; the dedicated timeout test
+	// below covers short deadlines independently.
+	request.TimeoutMS = 5_000
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	result := forwarder.Execute(ctx, stageDeviceRequest(fixture, "action-1"))
+	result := forwarder.Execute(ctx, request)
 	if result.Result != domain.ExecutionCompleted || result.AckLevel != contracts.AckDevice || result.ErrorCode != "" {
 		t.Fatalf("result=%+v", result)
 	}

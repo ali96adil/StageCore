@@ -23,19 +23,19 @@ const (
 	RoleOperator   = "OPERATOR"
 	RoleViewer     = "VIEWER"
 
-	PermissionProjectRead    Permission = "project.read"
-	PermissionProjectEdit    Permission = "project.edit"
-	PermissionSnapshotPublish Permission = "snapshot.publish"
-	PermissionRuntimeControl Permission = "runtime.control"
-	PermissionShowEnterExit  Permission = "show.enter_exit"
-	PermissionCompanionPair  Permission = "companion.pair"
-	PermissionCompanionRevoke Permission = "companion.revoke"
-	PermissionPluginManage   Permission = "plugin.manage"
-	PermissionSecretManage   Permission = "secret.manage"
-	PermissionUserManage     Permission = "user.manage"
-	PermissionBackupRestore  Permission = "backup.restore"
-	PermissionAuditRead      Permission = "audit.read"
-	PermissionDeviceFirmwareManage Permission = "device.firmware.manage"
+	PermissionProjectRead             Permission = "project.read"
+	PermissionProjectEdit             Permission = "project.edit"
+	PermissionSnapshotPublish         Permission = "snapshot.publish"
+	PermissionRuntimeControl          Permission = "runtime.control"
+	PermissionShowEnterExit           Permission = "show.enter_exit"
+	PermissionCompanionPair           Permission = "companion.pair"
+	PermissionCompanionRevoke         Permission = "companion.revoke"
+	PermissionPluginManage            Permission = "plugin.manage"
+	PermissionSecretManage            Permission = "secret.manage"
+	PermissionUserManage              Permission = "user.manage"
+	PermissionBackupRestore           Permission = "backup.restore"
+	PermissionAuditRead               Permission = "audit.read"
+	PermissionDeviceFirmwareManage    Permission = "device.firmware.manage"
 	PermissionDeviceMaintenanceManage Permission = "device.maintenance.manage"
 
 	defaultSessionTTL = 8 * time.Hour
@@ -158,6 +158,16 @@ func (s *Service) Login(ctx context.Context, username, password, remoteKey strin
 }
 
 func (s *Service) Validate(ctx context.Context, token string) (Session, error) {
+	return s.validate(ctx, token, true)
+}
+
+// ValidatePassive checks the current session without writing activity on every
+// heartbeat or streamed chunk. The initial HTTP request uses Validate.
+func (s *Service) ValidatePassive(ctx context.Context, token string) (Session, error) {
+	return s.validate(ctx, token, false)
+}
+
+func (s *Service) validate(ctx context.Context, token string, touch bool) (Session, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return Session{}, ErrSessionInvalid
@@ -188,8 +198,10 @@ func (s *Service) Validate(ctx context.Context, token string) (Session, error) {
 	if enabled != 1 || !session.ExpiresAt.After(now) {
 		return Session{}, ErrSessionInvalid
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE browser_sessions SET last_seen_at_us = ? WHERE session_id = ?`, now.UnixMicro(), session.ID); err != nil {
-		return Session{}, fmt.Errorf("touch browser session: %w", err)
+	if touch {
+		if _, err := s.db.ExecContext(ctx, `UPDATE browser_sessions SET last_seen_at_us = ? WHERE session_id = ?`, now.UnixMicro(), session.ID); err != nil {
+			return Session{}, fmt.Errorf("touch browser session: %w", err)
+		}
 	}
 	return session, nil
 }
@@ -212,6 +224,22 @@ func (s *Service) ValidateCSRF(ctx context.Context, token, csrfToken string) (Se
 		return Session{}, ErrSessionInvalid
 	}
 	return session, nil
+}
+
+// SessionRoleInTransaction rechecks the authenticated browser session on the
+// same database snapshot as a protected write. The caller must authenticate
+// the credential and CSRF before passing its session and user IDs.
+func (s *Service) SessionRoleInTransaction(ctx context.Context, tx *sql.Tx, sessionID, userID string) (string, error) {
+	var role string
+	err := tx.QueryRowContext(ctx, `
+		SELECT u.role FROM browser_sessions bs JOIN local_users u ON u.user_id = bs.user_id
+		WHERE bs.session_id = ? AND u.user_id = ? AND u.enabled = 1
+		  AND bs.revoked_at_us IS NULL AND bs.expires_at_us > ?
+	`, sessionID, userID, s.now().UTC().UnixMicro()).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrSessionInvalid
+	}
+	return role, err
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
