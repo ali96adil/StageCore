@@ -137,3 +137,21 @@ test("saving selected Mixed-Cue actions persists one ordered multi-action preset
     { method: "POST", json: { name: "Warm scene", actions: clipboard } },
   ]);
 });
+
+test("Action preset search matches nested Mixed-Cue targets and payloads", async () => {
+  const { panel } = await openPresets({ presets: [
+    { preset_id: "warm", name: "Warm scene", actions: [{ target_ref: "VDMX", capability_key: "osc.send", parameters: { address: "/scene/4" } }] },
+    { preset_id: "fade", name: "Stage wash", action: { target_ref: "LIGHTING", capability_key: "lighting.channels.fade", parameters: { levels: { blue: 40 } } } },
+  ] });
+  const search = panel.children.find((child) => child?.className === "sc010-preset-search");
+  assert.ok(search, "preset library needs a local search field");
+  const rows = find(panel, "ul").children;
+  search.value = "scene/4";
+  search.listeners.input();
+  assert.equal(rows[0].hidden, false);
+  assert.equal(rows[1].hidden, true);
+  search.value = "blue";
+  search.listeners.input();
+  assert.equal(rows[0].hidden, true);
+  assert.equal(rows[1].hidden, false);
+});

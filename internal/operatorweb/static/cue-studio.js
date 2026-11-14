@@ -1058,6 +1058,11 @@
     name.placeholder = tr("اسم القالب", "Preset name");
     name.setAttribute("aria-label", name.placeholder);
     name.maxLength = 64;
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "sc010-preset-search";
+    search.placeholder = tr("ابحث في أسماء القوالب والأهداف والإجراءات", "Search preset names, targets, and actions");
+    search.setAttribute("aria-label", search.placeholder);
     const button = (text) => {
       const result = document.createElement("button");
       result.type = "button";
@@ -1067,11 +1072,17 @@
     };
     const save = button(tr("احفظ الإجراء المنسوخ", "Save copied action"));
     const list = document.createElement("ul");
-    panel.append(heading, name, save, status, list);
+    panel.append(heading, name, save, status, search, list);
     pick(panel.id)?.remove();
     workspace.append(panel);
     const active = () => pick("cueDialog")?.open && panel.isConnected &&
       state.user === user && state.project?.project_id === projectID;
+    const filterRows = () => {
+      const query = String(search.value || "").trim().toLocaleLowerCase();
+      for (const row of list.children) {
+        row.hidden = Boolean(query) && !String(row.dataset.searchText || "").includes(query);
+      }
+    };
     const refresh = async () => {
       const { presets } = await api(path);
       if (!active()) return;
@@ -1079,6 +1090,7 @@
       for (const preset of presets) {
         const row = document.createElement("li");
         const actions = Array.isArray(preset.actions) ? preset.actions : [preset.action].filter(Boolean);
+        row.dataset.searchText = `${preset.name || ""} ${JSON.stringify(actions)}`.toLocaleLowerCase();
         const targetPresent = actions.length > 0 && actions.every((action) => {
           const targetRef = String(action?.target_ref || "").trim();
           return targetRef && (state.f002Targets || []).some((target) => target.logical_name === targetRef);
@@ -1122,7 +1134,9 @@
         row.append(preset.name, targetStatus, preview, insert, " ", remove);
         list.append(row);
       }
+      filterRows();
     };
+    search.addEventListener("input", filterRows);
     panel.addEventListener("toggle", () => {
       if (panel.open && active()) refresh().catch((error) => {
         if (active()) status.textContent = errorMessage(error);
