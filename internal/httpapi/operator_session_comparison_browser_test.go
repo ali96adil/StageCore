@@ -114,12 +114,14 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		HorizontalScroll bool   `json:"horizontal_scroll"`
 		PrivateExcluded  bool   `json:"private_excluded"`
 		ExternalUnknown  bool   `json:"external_unknown"`
+		ViewportWidth    int    `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || report.ActionRows != 4 || report.ActionColumns != 12 ||
-		!report.HorizontalScroll || !report.PrivateExcluded || !report.ExternalUnknown {
+		!report.HorizontalScroll || !report.PrivateExcluded || !report.ExternalUnknown ||
+		report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser comparison report=%+v", report)
 	}
 	if strings.Contains(outcome, "private adapter response") {

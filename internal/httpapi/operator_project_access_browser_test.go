@@ -126,7 +126,7 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
+		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "project-access-browser.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -160,18 +160,24 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
-		Status       string `json:"status"`
-		AccessLevel  string `json:"access_level"`
-		Phase        string `json:"phase"`
-		Enforced     bool   `json:"enforced"`
-		WarningShown bool   `json:"warning_shown"`
-		UnsafeCall   bool   `json:"unsafe_call"`
+		Status            string `json:"status"`
+		AccessLevel       string `json:"access_level"`
+		Phase             string `json:"phase"`
+		Enforced          bool   `json:"enforced"`
+		WarningShown      bool   `json:"warning_shown"`
+		UnsafeCall        bool   `json:"unsafe_call"`
+		RTL               bool   `json:"rtl"`
+		FieldsStack       bool   `json:"fields_stack"`
+		PageOverflow      bool   `json:"page_overflow"`
+		KeyboardFocusable bool   `json:"keyboard_focusable"`
+		ViewportWidth     int    `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	if report.AccessLevel != "OPERATE" || report.Phase != "PREPARED_NOT_ENFORCED" || report.Enforced ||
-		!report.WarningShown || report.UnsafeCall {
+		!report.WarningShown || report.UnsafeCall || !report.RTL || !report.FieldsStack ||
+		report.PageOverflow || !report.KeyboardFocusable || report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser report crossed its prepared-only boundary: %+v", report)
 	}
 	for _, permission := range []projectaccess.Permission{

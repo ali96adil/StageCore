@@ -33,6 +33,7 @@
     horizontal_scroll: Boolean(wrapper && wrapper.scrollWidth > wrapper.clientWidth && wrapper.scrollWidth >= actionTable.scrollWidth),
     private_excluded: !bodyText.includes("private adapter response"),
     external_unknown: bodyText.includes("Transport sent; external execution unknown") && bodyText.includes("Output state verified"),
+    viewport_width: document.documentElement.clientWidth,
     cell_count: cells.length,
   };
   fetch("/comparison-result", {method: "POST", body: JSON.stringify(report)});

@@ -2276,8 +2276,8 @@ This entry supersedes the preceding push instruction.
 ## Resume update — 2026-11-14 15:58 UTC · Session Memory browser comparison
 
 - Added `TestBrowserSessionMemoryActionComparison` and its Chrome fixture to
-  exercise the actual `memory.js` action comparison in a 390 px browser
-  viewport. It checks repeated Cue occurrence/Action matching, one-sided rows,
+  exercise the actual `memory.js` action comparison within the 560 px mobile
+  breakpoint. It checks repeated Cue occurrence/Action matching, one-sided rows,
   all 12 evidence columns, safe ACK wording, exclusion of free-form adapter
   response text, and horizontal scrolling. The fixture contains only static
   simulated records and exposes no execution API.
@@ -2300,3 +2300,31 @@ This entry supersedes the preceding push instruction.
   inspect the Core Race job state, preserve the exact-head push gate, then
   continue on the highest testable software gap and update the PR/handoff after
   the batch is pushed and verified.
+
+## Resume update — 2026-11-14 16:05 UTC · narrow RTL grant-editor acceptance
+
+- Extended `TestBrowserOwnerProjectAccessEditorStoresPreparedLevel` to run in
+  Chrome's narrow responsive breakpoint with the document in RTL. The browser
+  now verifies vertically stacked grant fields, no page-wide horizontal
+  overflow, naturally focusable form controls, successful `OPERATE` readback,
+  explicit `PREPARED_NOT_ENFORCED`, and no publish/runtime/safety request.
+- Extended the Session Memory comparison browser report to include the
+  measured viewport width and require the narrow breakpoint. Local Chrome
+  reports 500 CSS px even with `--window-size=390`; the tests now assert the
+  actual measured width is within the 560 px mobile breakpoint rather than
+  claiming a 390 px viewport. This Chrome build did not expose keyboard focus
+  modality through scripted `.focus()`, so the browser test checks native
+  focusability only; actual keyboard activation/focus-ring review remains open.
+- Both prepared Owner grant and Session comparison browser gates passed
+  normally and under `go test -race ./internal/httpapi -run
+  '^(TestBrowserOwnerProjectAccessEditorStoresPreparedLevel|TestBrowserSessionMemoryActionComparison)$'`.
+  `go vet ./internal/httpapi`, both browser-script syntax checks, workflow YAML
+  parsing and `git diff --check` passed. No production ACL or external output
+  was enabled.
+- Core run `43611749231` is still active in Go 1.26 Race at remote head
+  `5b6e1e356f0a02395a2630962a1695df0ba70707`; Companion and Camera Relay runs
+  at that SHA are green. No push has occurred. The source/test/docs edits in
+  this update remain local above `05dbf2e`; confirm exact local/remote state
+  and wait for Core before any push. Actual keyboard/touch workflow, full ACL
+  endpoint-policy/async review, legacy Companion compatibility, isolated
+  installed-copy rollback, and verified Pi 4 performance remain pending.

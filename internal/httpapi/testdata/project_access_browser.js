@@ -29,6 +29,7 @@
     if (document.readyState === "loading") {
       await new Promise((resolve) => document.addEventListener("DOMContentLoaded", resolve, { once: true }));
     }
+    document.documentElement.dir = "rtl";
     const configResponse = await fetch("/project-access-browser-config", { cache: "no-store" });
     if (!configResponse.ok) throw new Error(`test configuration returned HTTP ${configResponse.status}`);
     const config = await configResponse.json();
@@ -62,6 +63,20 @@
       document.getElementById("projectAccessCurrent").textContent.includes("Current: NONE"),
     "loading the Operator's current Project access");
 
+    const form = document.getElementById("projectAccessGrantForm");
+    const fieldRects = [project, user, level].map((field) => field.getBoundingClientRect());
+    const fieldsStack = fieldRects[1].top > fieldRects[0].top && fieldRects[2].top > fieldRects[1].top;
+    const pageOverflow = document.documentElement.scrollWidth > document.documentElement.clientWidth + 1;
+    const keyboardFocusable = [project, user, level, load, save].every((control) => control.tabIndex >= 0);
+    if (getComputedStyle(form).direction !== "rtl" || !fieldsStack || pageOverflow || !keyboardFocusable ||
+      document.documentElement.clientWidth > 560) {
+      throw new Error(`prepared access form failed RTL/mobile checks: ${JSON.stringify({
+        direction: getComputedStyle(form).direction, fieldsStack, pageOverflow, keyboardFocusable,
+        viewport: document.documentElement.clientWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      })}`);
+    }
+
     const offeredLevels = [...level.options].map((option) => option.value).filter(Boolean);
     if (!["VIEW", "EDIT", "OPERATE", "MANAGE", "NONE"].every((value) => offeredLevels.includes(value))) {
       throw new Error(`Operator access levels are incomplete: ${offeredLevels.join(",")}`);
@@ -90,7 +105,9 @@
     await report({
       status: "PASS", access_level: readback.access_level, phase: readback.phase,
       enforced: readback.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
-      unsafe_call: unsafeCall, requests: requestTrace,
+      unsafe_call: unsafeCall, rtl: getComputedStyle(form).direction === "rtl", fields_stack: fieldsStack,
+      page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable,
+      viewport_width: document.documentElement.clientWidth, requests: requestTrace,
     });
   } catch (error) {
     await report({ status: "FAIL", error: String(error.stack || error), requests: requestTrace });
