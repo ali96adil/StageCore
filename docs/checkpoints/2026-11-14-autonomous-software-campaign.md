@@ -1363,3 +1363,41 @@ This entry supersedes the preceding push instruction.
   the regression and matrix evidence locally, then wait for Core run
   `43566116341`; any later push must verify all three exact-head checks and the
   remote SHA.
+
+## Resume update — 2026-11-14 06:38 UTC · overlapping execution surface
+
+- Local HEAD is `b2a1a4d3c48de3658894f7f39d6ffe00d9d2fa39`; remote remains
+  `05c8c961325d38b8b39e069d807eee10d351f43c`. Four commits are ahead of
+  `origin/integration/stagecore-rc`: `f3ec183`, `8d9d427`, `0f411b9`, and
+  `b2a1a4d`. Worktree is clean. Keep these local until Core CI
+  `43566116341` finishes; Companion `43566116367` and Camera Relay
+  `43566116321` already passed on the remote SHA.
+- #455 now has a simulated Emergency Blackout ordering regression for two
+  concurrent active Cues, plus the Runtime API/UI exposes every currently
+  RUNNING execution and its Cue/Execution IDs while preserving Latest Result.
+  Runtime and Cue Check surfaces now say STOP ALL CUES and describe the
+  all-execution cancellation semantics. The matrix no longer lists missing
+  active-execution visibility as an open gap.
+- Verification on these local changes: focused `internal/httpapi` Runtime
+  status and GO/JUMP/STOP tests passed; focused HTTP API Race test passed;
+  `go vet ./internal/httpapi ./internal/operatorweb` passed; the
+  `internal/operatorweb` contract suite passed after updating its stale STOP
+  label assertion; all JavaScript tests passed (67/67); app and localization
+  JavaScript syntax checks and `git diff --check` passed. The prior local
+  #455 batch also passed full `go test ./internal/runtimecontrol`, its
+  concurrent STOP/Blackout Race tests, and runtimecontrol Vet.
+- No runtime optimization was introduced from the M3 data. Raspberry Pi 4
+  execution P95/P99/Jitter, CPU/RAM, burst and sustained qualification remain
+  open because the strict qualification SSH connection failed before host
+  identity; no remote command ran. Production services/data, physical outputs,
+  firmware and production ACL remain untouched.
+- Remaining #455 software gaps are the synchronous GO response through
+  completion, a specified conflict policy for concurrent Cues that share an
+  exclusive output, and restart handling for persisted RUNNING rows. Do not
+  weaken the safe fail-closed restart behavior or invent output arbitration
+  without a tested product rule.
+- Next action: wait for the current exact-head CI; if green, verify remote SHA,
+  push these five commits normally to this same branch, update PR #534's
+  checkpoint, and watch all exact-head CI. Then continue an independent
+  software gap. Pi/runtime qualification is Hardware Qualification Pending;
+  production release and SC-024 activation remain separately gated.
