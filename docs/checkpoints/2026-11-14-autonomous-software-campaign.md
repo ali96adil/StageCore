@@ -209,3 +209,53 @@ resume. Earlier entries are retained as history.
   execution/observation contract using simulated endpoints; do not equate MIDI
   transport acceptance with Live execution. Continue to label Pi and physical
   endpoint acceptance as hardware qualification.
+
+## Resume update — 2026-11-14 01:00 UTC
+
+This is the latest checkpoint; it supersedes the previous resume action.
+
+- Remote remains `558a6adf2765c79780ab290efb2e423bfd8ae5ee`; Draft PR #534 is
+  open on `integration/stagecore-rc`.
+- Exact remote Core run `43535359362` is now fully green: Go 1.26 (including
+  Race and ARM64 builds), Go 1.27, isolated tests/ARM64, macOS Companion
+  replacement/media and Swift CompanionCore. This run only tested `558a6ad`.
+- Local HEAD before this checkpoint update is
+  `84cd293177a65029957bf7a85174a9621d63f20f`; six commits are ahead before the
+  docs commit below. Functional commits are `864071c`, `a52f4d8`, `1007fa9`,
+  `8b96dfb`, and `84cd293`; `0f4164a` is the earlier matrix/handoff update.
+  This resume/matrix update is the seventh commit. No force push, branch
+  creation or merge occurred.
+- SC-015 local code adds a safe event timeline, warning categories/counts,
+  category filters, sanitized JSON export and summary comparison. Current
+  event records still lack per-output connection/health events, so those are
+  not inferred.
+- SC-012 has a regression for 120 linked Mixed Cues / 240 Actions with nested
+  search and stable sequence ordering. It is synthetic Node coverage, not a
+  real-browser visual/keyboard/touch qualification.
+- SC-013 Cue Inspector now states that linked Cues launch concurrently with
+  independent delays measured from GO; it explains action Sequential,
+  Parallel, Barrier, delay, timeout, required application ACK and the limited
+  pre-dispatch retry. Planning remains read-only: no publish or dispatch.
+- SC-001 already has the opt-in Max for Live / signed receiver implementation
+  and mock integration. The receiver-ACK Lab passed all 73 Node tests locally;
+  the remote Go 1.26 Node step also passed. Installed Live/Max acceptance and
+  diagnosis of the copied production misses remain pending. Do not duplicate
+  the existing receiver/gateway work.
+- Local checks: the combined Core Operator plus receiver-ACK Lab Node suite
+  passed 107 tests; Cue Inspector Node tests (8), Cue Inspector contract Go
+  test, Session Memory/API focused tests, focused Race tests and `go vet`
+  passed. No local full `go test ./...` was run in this follow-on.
+- Related PRs rechecked: TabletPlayer #36 `91613da` (Android PASS); ESP32 DMX
+  #39 `3ad7749` (six firmware jobs PASS); ESP32 Camera #20 `455b066`
+  (`hardware-probe` PASS); StageLaser #56 `b14a578` (host/build PASS) and #57
+  `c4ff10b` (host/build PASS, open and not draft). StageCore #503–#508 and
+  #514–#516 are open at the matrix heads with their Go checks passing; no PR
+  was merged or modified. Physical device qualification remains separate.
+- The previous remote CI is complete, so the next action is to commit this
+  documentation checkpoint and push the seven local commits normally to the
+  same branch/PR. Then wait for exact-head CI before another push. After that,
+  investigate SC-002 offline-clock software gaps beyond the existing #504/#505
+  status/preview stack without writing host time or touching production.
+- No Pi qualification became available. Production services/data/Vault remain
+  untouched; no device commands, firmware flash, merge, force push or
+  production Project ACL enablement occurred.
