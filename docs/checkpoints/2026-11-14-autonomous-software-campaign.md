@@ -1153,3 +1153,27 @@ This entry supersedes the preceding push instruction.
 - Pi performance remains pending after strict qualification-host SSH failed
   before identity. Production Hub/Relay/data/Vault, real devices, firmware and
   production Project ACL remain untouched/disabled.
+
+## Resume update — 2026-11-14 04:41 UTC · editor Undo/Redo shortcuts
+
+- Remote PR #534 remains at `a3b6f5d7ec009b15fb878e8da995356cee18c939`.
+  Local HEAD is `fdfcf53ea14ef09ad05cdbae62d710291f9e338b`, two commits ahead:
+  `f2e2359` refreshed the post-push checkpoint and `fdfcf53` adds Cue editor
+  Cmd/Ctrl+Z and Redo keyboard shortcuts. No push was made during exact-head
+  CI.
+- The keyboard handler uses physical `KeyZ`/`KeyY` codes for Arabic layouts,
+  supports Shift+Z/Ctrl+Y Redo, and leaves input/textarea/select/contenteditable
+  native history untouched. Buttons expose `aria-keyshortcuts`.
+- Focused `tests/lighting_preview.test.js` passes 14/14; full Node suite passes
+  61/61; JavaScript syntax and `git diff --check` pass. No Go code changed in
+  this follow-on.
+- Exact remote CI: Camera Relay `43557284429` and Companion Core `43557284414`
+  passed on `a3b6f5d`. Core `43557284478` Go 1.27 passed; Go 1.26 Race remains
+  in progress. Wait for Core completion before pushing the two local commits;
+  re-read the remote first.
+- Next larger SC-009 gap remains Project-wide atomic Draft Undo/Redo across Cue
+  creation, edit, deletion, duplication and ordering. Inspect revision,
+  concurrent-editor and publish semantics, and add a red-first regression
+  before implementing. Production services, data, Vault, physical devices and
+  production ACL remain untouched/disabled; Pi runtime qualification remains
+  pending.
