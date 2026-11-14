@@ -2401,3 +2401,27 @@ This entry supersedes the preceding push instruction.
   no concrete safe missing behavior was identified in this read-only audit.
   Production ACL remains unassembled and disabled. Continue only with a
   reproducible, testable software gap.
+
+## Resume update — 2026-11-14 16:40 UTC · StageAudio process lifecycle contract
+
+- Added `internal/stageaudio/mpv_test.go` using a temporary fake `mpv` launcher
+  and helper process. It proves two independent child processes and private
+  mode-0700 Unix sockets, deck-specific IPC request routing, returned command
+  errors, repeatable Close, child reaping and socket-directory cleanup. A
+  second-deck startup failure must clean the first deck and leave no runtime
+  artifacts. The helper never opens TCP, media output or Bluetooth.
+- Focused StageAudio tests passed; complete `go test
+  ./internal/stageaudio ./cmd/stagecore-audio -count=1` and full package Race
+  tests passed, as did `go vet` on both packages and formatting/diff checks.
+  SC-021 matrix now distinguishes this host fake-process evidence from actual
+  mpv/Pi/audio qualification.
+- Local code commit `051a13f58db880156c8e2e42a560b1641fd68fb7`; local branch is
+  two commits ahead of remote `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3` and
+  the worktree is clean. No Push has occurred for this batch. The exact-head
+  Core run `43616028757` remains in Go 1.26 Race; Go 1.27 and Companion Core
+  `43616028766` and Camera Relay `43616028829` passed. Wait for that Core job
+  before any new Push.
+- Next StageAudio regression: with `mpv` absent from an isolated PATH, assert
+  audio stays disabled, returns its explicit unavailable error, and creates
+  no socket/runtime directory. Then continue to the next reproducible software
+  gap while Pi access and physical audio acceptance remain separate.
