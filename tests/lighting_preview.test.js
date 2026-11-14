@@ -101,6 +101,102 @@ test("guided action options round-trip known fields and defer unknown policies t
   assert.equal(policies.f002ParseErrorPolicy('{"retry_before_dispatch":"yes"}'), null);
 });
 
+test("editing a guided OSC action preserves unsupported parameter metadata", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/guided-ux.js", "utf8");
+  const first = source.indexOf("function f002MIDIStatus");
+  const last = source.indexOf("addActionEditor = function f002AddActionEditor", first);
+  assert.ok(first >= 0 && last > first);
+  const helpers = vm.runInNewContext(source.slice(first, last) + "({f002SyncActionCard})");
+  const argumentControls = new Map();
+  const argumentValue = {
+    children: [],
+    set innerHTML(_value) { this.children = []; },
+    appendChild(child) { this.children.push(child); },
+  };
+  argumentControls.set(".f002-argument-type", {value: "", addEventListener() {}});
+  argumentControls.set(".f002-argument-value", argumentValue);
+  argumentControls.set(".f002-remove-argument", {addEventListener() {}});
+  const argumentRow = {
+    dataset: {},
+    set innerHTML(_value) {},
+    querySelector(selector) { return argumentControls.get(selector); },
+  };
+  const argumentEditor = vm.runInNewContext(
+    source.slice(source.indexOf("function f002ArgumentRow"), source.indexOf("function f002EnhanceActionCard")) +
+      "({f002ArgumentRow, f002ReadArgument})",
+    {document: {createElement: (tag) => tag === "div" ? argumentRow : {}}}
+  );
+  const argument = argumentEditor.f002ArgumentRow({
+    type: "string", value: "ready", vendor_argument: {index: 7},
+  });
+  argumentControls.set(".f002-argument-input", argumentValue.children[0]);
+  const fields = new Map([
+    [".action-timeout", {value: "{}"}],
+    [".action-error", {value: "{}"}],
+    [".f002-timeout-kind", {value: "none"}],
+    [".f002-error-kind", {value: "CONTINUE"}],
+    [".f002-action-kind", {value: "osc"}],
+    [".action-capability", {value: "osc.send"}],
+    [".action-parameters", {value: JSON.stringify({
+      address: "/show/go",
+      arguments: [{type: "string", value: "ready", vendor_argument: {index: 7}}],
+      vendor_extension: {keep: true},
+    })}],
+    [".f002-action-delay", {value: "250"}],
+    [".f002-osc-address", {value: "/show/go"}],
+  ]);
+  const card = {
+    dataset: {f002Enhanced: "true"},
+    querySelector(selector) { return fields.get(selector) || null; },
+    querySelectorAll(selector) {
+      assert.equal(selector, ".f002-argument-row");
+      return [argument];
+    },
+  };
+
+  helpers.f002SyncActionCard(card);
+
+  const saved = JSON.parse(fields.get(".action-parameters").value);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.vendor_extension)), {keep: true});
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.arguments[0].vendor_argument)), {index: 7});
+  assert.equal(saved.arguments[0].value, "ready");
+  assert.deepEqual(JSON.parse(JSON.stringify(argumentEditor.f002ReadArgument(argument).vendor_argument)), {index: 7});
+
+  const midiFields = new Map([
+    [".action-timeout", {value: "{}"}],
+    [".action-error", {value: "{}"}],
+    [".f002-timeout-kind", {value: "none"}],
+    [".f002-error-kind", {value: "CONTINUE"}],
+    [".f002-action-kind", {value: "midi"}],
+    [".action-capability", {value: "midi.send"}],
+    [".action-parameters", {value: JSON.stringify({
+      destination_name: "IAC Driver Bus 1",
+      bytes: [0x91, 60, 100],
+      vendor_extension: {keep: true},
+    })}],
+    [".f002-action-delay", {value: "0"}],
+    [".f002-midi-destination-mode", {value: "name"}],
+    [".f002-midi-destination-name", {value: "IAC Driver Bus 1"}],
+    [".f002-midi-destination", {value: "0"}],
+    [".f002-midi-message", {value: "note_on"}],
+    [".f002-midi-channel", {value: "2"}],
+    [".f002-midi-data1", {value: "60"}],
+    [".f002-midi-data2", {value: "100"}],
+  ]);
+  const midiCard = {
+    dataset: {f002Enhanced: "true"},
+    querySelector(selector) { return midiFields.get(selector) || null; },
+    querySelectorAll(selector) {
+      assert.equal(selector, ".f002-argument-row");
+      return [];
+    },
+  };
+  helpers.f002SyncActionCard(midiCard);
+  const savedMIDI = JSON.parse(midiFields.get(".action-parameters").value);
+  assert.deepEqual(JSON.parse(JSON.stringify(savedMIDI.vendor_extension)), {keep: true});
+  assert.deepEqual(JSON.parse(JSON.stringify(savedMIDI.bytes)), [0x91, 60, 100]);
+});
+
 test("Cue Studio action clipboard stays in the current project and user session", () => {
   const source = fs.readFileSync("internal/operatorweb/static/cue-studio.js", "utf8");
   const first = source.indexOf("function serializeActionCopy");

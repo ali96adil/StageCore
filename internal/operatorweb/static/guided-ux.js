@@ -1206,6 +1206,9 @@ function f002QLCArgument(value) {
 function f002ArgumentRow(argument = { type: "string", value: "" }) {
   const row = document.createElement("div");
   row.className = "f002-argument-row";
+  const extensions = Object.fromEntries(Object.entries(argument)
+    .filter(([key]) => key !== "type" && key !== "value"));
+  if (Object.keys(extensions).length) row.dataset.f002Metadata = JSON.stringify(extensions);
   row.innerHTML = `
     <select class="f002-argument-type" aria-label="OSC value type">
       <option value="string">Text</option>
@@ -1247,10 +1250,15 @@ function f002ArgumentRow(argument = { type: "string", value: "" }) {
 function f002ReadArgument(row) {
   const type = row.querySelector(".f002-argument-type").value;
   const raw = row.querySelector(".f002-argument-input").value;
-  if (type === "bool") return { type, value: raw === "true" };
-  if (type === "int32") return { type, value: Number.parseInt(raw, 10) };
-  if (type === "float32") return { type, value: Number(raw) };
-  return { type, value: raw };
+  let extensions = {};
+  try {
+    const parsed = JSON.parse(row.dataset?.f002Metadata || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) extensions = parsed;
+  } catch (_) { /* Ignore invalid UI-only metadata; authored value stays editable. */ }
+  const value = type === "bool" ? raw === "true"
+    : type === "int32" ? Number.parseInt(raw, 10)
+      : type === "float32" ? Number(raw) : raw;
+  return { ...extensions, type, value };
 }
 
 function f002EnhanceActionCard(card) {
@@ -1565,6 +1573,16 @@ function f002EnhanceActionCard(card) {
   applyKind();
 }
 
+function f002MergeUnknownActionFields(raw, knownFields, replacement) {
+  let parsed;
+  try { parsed = JSON.parse(String(raw || "{}")); }
+  catch (_) { return replacement; }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return replacement;
+  const known = new Set(knownFields);
+  const extensions = Object.fromEntries(Object.entries(parsed).filter(([key]) => !known.has(key)));
+  return { ...extensions, ...replacement };
+}
+
 function f002SyncActionCard(card) {
   if (!card?.dataset.f002Enhanced) return;
   const timeout = card.querySelector(".action-timeout");
@@ -1597,7 +1615,8 @@ function f002SyncActionCard(card) {
     const address = card.querySelector(".f002-osc-address").value.trim();
     const args = [...card.querySelectorAll(".f002-argument-row")].map(f002ReadArgument);
     capability.value = "osc.send";
-    params.value = JSON.stringify({ address, arguments: args }, null, 2);
+    params.value = JSON.stringify(f002MergeUnknownActionFields(params.value,
+      ["address", "arguments"], { address, arguments: args }), null, 2);
     return;
   }
   if (kind.value === "midi") {
@@ -1611,9 +1630,11 @@ function f002SyncActionCard(card) {
     const bytes = [f002MIDIStatus(message, channel), data1];
     if (message !== "program_change") bytes.push(data2);
     capability.value = "midi.send";
-    params.value = JSON.stringify(destinationMode === "name"
+    const replacement = destinationMode === "name"
       ? { destination_name: destinationName, bytes }
-      : { destination_index: destinationIndex, bytes }, null, 2);
+      : { destination_index: destinationIndex, bytes };
+    params.value = JSON.stringify(f002MergeUnknownActionFields(params.value,
+      ["destination_name", "destination_index", "bytes"], replacement), null, 2);
   }
 }
 
