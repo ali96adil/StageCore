@@ -3493,3 +3493,29 @@ This entry supersedes the preceding push instruction.
 - Next: let run `43645947408` complete, recheck branch/PR/CI exact heads, commit
   the STOP regression and report/Handoff update, then push normally to #534.
   Follow all checks at the new SHA before starting another push.
+
+## Resume update — 2026-11-14 22:16 UTC · 32-Cue STOP and Blackout regressions
+
+- Remote and PR #534 remain at `b3a4be153f4c6ee909f29196c14480cbfe26bfa3`.
+  Core run `43645947408` is still in progress: Go 1.27 and the Go 1.26 Test,
+  Browser Cue Delivery, and Vet steps passed; Go 1.26 Race is still running,
+  with ARM64 pending. Companion `43645947414` and Camera Relay `43645947412`
+  passed on this exact head. No push has been made while Core CI is active.
+- Added `TestEmergencyBlackoutCancels32OverlappingDelayedCues` beside the
+  32-Cue STOP regression. The test uses delayed simulator-only Rehearsal GO
+  calls, checks the durable Blackout latch is already set before the
+  simulated safety callback, requires exactly one callback, and verifies all
+  32 command results and persisted executions terminate as `CANCELLED`.
+- Both 32-Cue regressions passed focused normal and Race runs;
+  `go vet ./internal/runtimecontrol` and `git diff --check` passed. Updated
+  `docs/architecture/cue-execution-performance-qualification.md` with the
+  regression evidence. No runtime implementation changed and no real output
+  was registered.
+- Current local HEAD is `9bc5988f092f573aeb83b451971572b34b521d5e` with the
+  STOP test committed; the Blackout test and its report/Handoff updates are
+  still local and uncommitted at this point. The next action is inspect the
+  complete diff, commit this Blackout test batch, then wait for exact-head
+  Core Race/ARM64 completion before any normal push to #534.
+- Safety limits remain: no production service/data/Vault changes, no real
+  device commands or firmware, no production ACL activation, no force push,
+  and no PR merge.

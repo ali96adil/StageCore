@@ -104,12 +104,16 @@ completion and ACL/HTTP latency.
 | Emergency Blackout / 8 | 2.977 ms | 3.713 ms | 3.929 ms | 0.736 ms | 0.02 | 541 ns | 64,055 B; 1,431 allocs |
 | Emergency Blackout / 32 | 11.17 ms | 12.49 ms | 12.99 ms | 1.316 ms | 0.06 | 1.40 µs | 208,886 B; 4,628 allocs |
 
-`TestStopCancels32OverlappingDelayedCues` now provides an integration
-regression at the largest measured STOP load. It starts 32 simulated GO
-requests behind 60-second delays, sends STOP, then requires all 32 command
-results and persisted Cue executions to be terminal `CANCELLED`. The focused
-test passed normally and under Race, and `go vet ./internal/runtimecontrol`
-passed. No physical executor or output is registered in the test harness.
+`TestStopCancels32OverlappingDelayedCues` and
+`TestEmergencyBlackoutCancels32OverlappingDelayedCues` provide integration
+regressions at the largest measured safety-operation load. Each starts 32
+simulated GO requests behind 60-second delays, invokes STOP or Emergency
+Blackout, then requires all 32 command results and persisted Cue executions
+to be terminal `CANCELLED`. The Blackout case also verifies the durable
+blackout latch is set before its simulated safety callback and that the
+callback is dispatched exactly once. Both focused tests passed normally and
+under Race, and `go vet ./internal/runtimecontrol` passed. No physical
+executor or output is registered in either test harness.
 
 For this combined local run, `/usr/bin/time -l` reported 54.45 seconds wall,
 33.21 seconds user CPU, 15.94 seconds system CPU, and 223,526,912 bytes

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -258,6 +259,84 @@ func TestStopCancels32OverlappingDelayedCues(t *testing.T) {
 	for _, execution := range executions {
 		if execution.Result != domain.ExecutionCancelled || execution.CompletedAt == nil {
 			t.Errorf("STOP did not persist terminal cancellation: %+v", execution)
+		}
+	}
+}
+
+func TestEmergencyBlackoutCancels32OverlappingDelayedCues(t *testing.T) {
+	const activeCues = 32
+	policies := make([]json.RawMessage, activeCues)
+	parameters := make([]json.RawMessage, activeCues)
+	for i := range activeCues {
+		policies[i] = json.RawMessage(`{"start_delay_ms":60000}`)
+		parameters[i] = json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`)
+	}
+	h := newRuntimeHarnessWithPolicies(t, policies, parameters...)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: runtimeControlBenchID(92001),
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	var simulatedSafetyCalls atomic.Int64
+	h.service.emergencySafety = func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope, enabled bool) (json.RawMessage, error) {
+		latched, err := h.store.SessionManagedOutputBlackout(ctx, got.ID)
+		if err != nil || !enabled || !latched {
+			return nil, fmt.Errorf("simulated safe-state dispatch lacked durable blackout latch: enabled=%v latched=%v err=%v", enabled, latched, err)
+		}
+		simulatedSafetyCalls.Add(1)
+		return json.RawMessage(`{"simulated":true}`), nil
+	}
+	goResults := make(chan contracts.CommandResult, activeCues)
+	for i := range activeCues {
+		requestID := runtimeControlBenchID(92100 + i)
+		go func() {
+			goResults <- h.service.Go(ctx, CueRequest{
+				SessionID: session.ID, Issuer: "owner", RequestID: requestID,
+			})
+		}()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(h.service.activeRunsForSession(session.ID)) != activeCues {
+		if time.Now().After(deadline) {
+			t.Fatalf("active delayed Cues=%d want=%d", len(h.service.activeRunsForSession(session.ID)), activeCues)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	blackout := h.service.EmergencyBlackout(ctx, EmergencyRequest{
+		SessionID: session.ID, Issuer: "owner", Enabled: true,
+		RequestID: runtimeControlBenchID(92201),
+	})
+	if blackout.Status != contracts.CommandCompleted {
+		t.Fatalf("Emergency Blackout across %d delayed Cues=%+v", activeCues, blackout)
+	}
+	if got := simulatedSafetyCalls.Load(); got != 1 {
+		t.Fatalf("simulated safety dispatch count=%d want=1", got)
+	}
+	latched, err := h.store.SessionManagedOutputBlackout(ctx, session.ID)
+	if err != nil || !latched {
+		t.Fatalf("Emergency Blackout latch=%v err=%v", latched, err)
+	}
+	for range activeCues {
+		select {
+		case result := <-goResults:
+			if result.Status != contracts.CommandCancelled {
+				t.Fatalf("GO after Emergency Blackout=%+v, want CANCELLED", result)
+			}
+		case <-ctx.Done():
+			t.Fatalf("not all %d delayed Cues terminated after Emergency Blackout: %v", activeCues, ctx.Err())
+		}
+	}
+	executions, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(executions) != activeCues {
+		t.Fatalf("persisted Cue executions=%d want=%d err=%v", len(executions), activeCues, err)
+	}
+	for _, execution := range executions {
+		if execution.Result != domain.ExecutionCancelled || execution.CompletedAt == nil {
+			t.Errorf("Emergency Blackout did not persist terminal cancellation: %+v", execution)
 		}
 	}
 }
