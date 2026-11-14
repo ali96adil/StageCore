@@ -2506,3 +2506,23 @@ This entry supersedes the preceding push instruction.
   command has run. Pi P95/P99, jitter, CPU/RAM, schedule load and sustained
   rehearsal remain pending. No production service/data, real output, firmware,
   or production ACL was touched.
+
+## Resume update — 2026-11-14 17:00 UTC · Push to existing PR #534
+
+- After confirming the remote branch and PR both remained at
+  `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3` and its Core CI completed green,
+  pushed the accumulated ten commits normally. No new branch/PR or force push.
+- The remote branch, PR #534 and local source HEAD now agree at
+  `a90403b863009081447d1cb2ebbce88947ad1cf6`. PR remains OPEN/DRAFT. Exact-head
+  runs started at 16:59:23 UTC and are active: Core `43618591866`, Companion
+  Core `43618591864`, Camera Relay `43618591875`. Wait for all three before any
+  further push.
+- The latest code batch fixes Project duplication's overbroad JSON ID rewrite.
+  Its regression first failed because a UUID-valued `filename` was changed,
+  then passed after limiting remapping to recognized media/role/live-source
+  identity fields. Full `internal/store` normal and Race suites, duplicate
+  regressions, Vet, Show Capsule checks and Vault reopen/integrity checks passed.
+- Pi qualification remains blocked by SSH banner timeout; no remote command or
+  device action occurred. No production service/data/Vault, real stage output,
+  firmware, or production ACL enforcement was changed. Keep #534 draft and do
+  not merge/force-push.
