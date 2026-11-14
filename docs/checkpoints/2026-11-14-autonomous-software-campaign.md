@@ -2827,3 +2827,29 @@ This entry supersedes the preceding push instruction.
   new exact-head Core/Companion/Relay runs. If it fails, repair that failure
   first. Continue the SC-023/SC-024 software audit while keeping production ACL
   disabled and all device/output tests simulated.
+
+## Resume update — 2026-11-14 18:48 UTC · localized usage UI regression
+
+- Local HEAD is now `da76d9013527719ea96e79966f29776d6e7cdacd`, four commits
+  ahead of remote `9df291527dafd0ec8ab52d6b801d03566dcf4528`; PR #534 remains
+  OPEN/Draft at the remote SHA. The two earlier docs/code commits and two
+  checkpoint/test commits are all local. No push was made while exact-head Core
+  CI was in progress.
+- Core run `43627228963` remains in progress: Go 1.27 passes; Go 1.26 is still
+  running. Companion `43627229094` and Relay `43627228900` remain green. The
+  exact PR and `git ls-remote` head were rechecked at `9df2915`.
+- Added `tests/project_files.test.js` and included it in Core CI's Node test
+  command. It executes the actual Project Files render function under a DOM
+  shim and verifies English/Arabic total-entry labels, 3 GiB formatting, and
+  the note that content-addressed Vault bytes can be shared. `node --test
+  tests/*.test.js` passed all 77 tests locally. The test was checked/fixed for
+  the browser globals (`dataset`, `URLSearchParams`) required by the actual UI.
+- The Project Files UI and API changes are qualification-only and remain
+  separately opt-in. SC-023 #510 asks for streaming/capacity quotas but gives no
+  capacity value or allocation rule. Keep the measured logical version-byte
+  total; do not turn it into an arbitrary admission limit. Per-Project quota
+  policy and delete/retention/ref-count UX remain explicit open work.
+- Next: continue waiting for Core Go 1.26 on `9df2915`; then verify the remote
+  head again before normally pushing all local commits to the existing branch.
+  New exact-head CI must finish before another push. Do not retry the known Pi
+  SSH endpoint failure unless its endpoint/credential condition changes.
