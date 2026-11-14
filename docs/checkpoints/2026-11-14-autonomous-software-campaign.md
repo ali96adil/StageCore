@@ -2445,3 +2445,35 @@ This entry supersedes the preceding push instruction.
 - Next independent software gap remains to be selected from the matrix after
   the exact-head CI gate; do not infer Pi ARM64 performance or real audio
   behavior from these host tests. Production ACL stays disabled.
+
+## Resume update — 2026-11-14 16:50 UTC · Capsule portability and Vault reopen
+
+- Added `TestSelfContainedMaterializePreservesExecutionEnvironmentAndExtensionAssets`
+  coverage for OSC target Alias portability: ProjectConfig and logical identity
+  survive a Show Capsule round-trip, while the host/device-local TargetRef is
+  intentionally cleared for remapping. Updated SC-023 in the completion matrix.
+  Focused normal and Race tests plus `go vet ./internal/showcapsule` passed.
+- Added `TestManagedVaultObjectAndSQLiteMetadataSurviveReopen`. It imports a
+  managed media object using temporary SQLite/Vault roots, closes and reopens
+  SQLite, verifies `PRAGMA integrity_check`, then confirms Project, Media Asset,
+  content-version metadata and exact Vault bytes remain available. Full
+  `go test ./internal/vault -count=1`, the focused Race test, `go vet
+  ./internal/vault`, formatting and diff checks passed.
+- Current local code HEAD is `4f9417695034850166f922250b83ab58a1efdbdc`,
+  seven commits ahead of remote `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3`.
+  The latest code commits are `a788128` (Capsule alias portability) and
+  `4f94176` (Vault reopen regression). No push has occurred.
+- PR #534 remains OPEN/DRAFT at remote `e9ece08`. Core run `43616028757` remains
+  in Go 1.26 Race; Go 1.27 passed. Companion Core `43616028766` and Camera
+  Relay `43616028829` passed on the same SHA. Wait for the Core run to finish,
+  then recheck the remote branch and PR SHA before a normal push; monitor CI for
+  the newly pushed exact head.
+- The `stagecore-qualification` SSH alias timed out during banner exchange
+  (`ConnectTimeout=8`); no remote command ran. Pi 4 engine performance remains
+  pending; do not substitute Mac results or ARM64 cross-builds. Production
+  services, Vault/data, ACL enforcement, physical outputs and firmware remain
+  untouched.
+- Next task: after the exact-head CI gate, push the seven preserved commits
+  without force, monitor their CI, then continue the highest reproducible
+  software gap from the completion matrix. Keep Project ACL production-off and
+  PR #534 draft/unmerged.

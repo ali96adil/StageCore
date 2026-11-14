@@ -70,28 +70,28 @@ matrix:
 | [#483](https://github.com/ali96adil/StageCore/issues/483), [#459](https://github.com/ali96adil/StageCore/issues/459) | Cue-authoring freeze and peripheral-before-Hub rollout tracker; both describe deployed-source, verified-backup, compatibility and attended acceptance gates. | **Release / operational gates.** Green CI and this experimental branch do not authorize production authoring, rollout, or device updates. Preserve source pins, independent backups, current Snapshots, and all physical outputs until explicit acceptance. |
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 
-## Current campaign checkpoint — 2026-11-14
+## Current campaign checkpoint — 2026-11-14 16:50 UTC
 
-The latest pushed source is `759bcbd21ae331759443c2c37fe451d0e96bc78a` on
-`integration/stagecore-rc`, Draft PR #534. Its exact-head Camera Relay and
-Companion workflows pass; Core `43608326253` was still running Go 1.26 Race at
-the last check. Do not push until that Core run completes and the remote/PR
-head is rechecked.
+Draft PR #534 remains OPEN on `integration/stagecore-rc`. The verified remote
+branch and PR head are `e9ece082debaa303f7cb5f4edf2b9491e4ef41a3`. Core CI run
+`43616028757` is still active on its Go 1.26 Race job; Go 1.27 passed. Companion
+Core `43616028766` and Camera Relay `43616028829` passed on that exact remote
+SHA. Do not push until Core completes, then recheck both remote and PR heads.
 
-The next code gap after this browser qualification is the remaining SC-024
-endpoint-to-policy and asynchronous delivery reconciliation. Continue only
-with reproducible staged-ACL gaps, preserve current production assembly and
-keep Project ACL disabled. Other partial Cue/UI items still need narrow-layout,
-keyboard, touch and RTL acceptance. SC-009 history remains Cue-scoped and its
-full installed-copy update/restore cycle still needs isolated qualification.
+Local code HEAD before this checkpoint update is `4f9417695034850166f922250b83ab58a1efdbdc`,
+seven commits ahead of remote. It includes the StageAudio fake-process and
+missing-binary tests, Show Capsule target-alias remapping coverage, and a
+SQLite/Vault reopen integrity regression. Focused Show Capsule normal/Race/Vet
+and Vault package normal/Race/Vet checks passed. The worktree was clean before
+this checkpoint edit. The qualification SSH alias timed out during banner
+exchange; no remote command ran, so Pi 4 P95/P99, jitter, CPU/RAM and sustained
+ARM64 performance remain unqualified. Do not infer them from Mac results or
+cross-builds.
 
-Mac performance already covers Mixed Cues, linked compound chains,
-100-Cue/200-Action execution, scheduling, sustained rehearsal, STOP and
-Emergency Blackout; ACL timing is reported separately. Pi 4 runtime P95/P99,
-jitter, CPU/RAM and ARM64 sustained-load qualification remains pending because
-no verified isolated target is available. Do not infer it from Mac results or
-ARM64 cross-builds.
-
-Production Hub/Relay/data/Vault, physical output and firmware remain untouched;
+Mac qualification already covers flat Mixed Cues, nested linked compound
+chains, 100-Cue/200-Action execution, scheduled actions, sustained rehearsal,
+STOP and Emergency Blackout; ACL-only timing is separate. Continue software
+work on reproducible gaps from the matrix while waiting for exact-head Core CI.
+Production Hub/Relay/data/Vault, real output and firmware remain untouched;
 production ACL stays disabled. Keep PR #534 in Draft and do not merge or
 force-push.
