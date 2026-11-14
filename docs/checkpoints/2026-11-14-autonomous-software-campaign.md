@@ -2701,3 +2701,65 @@ This entry supersedes the preceding push instruction.
   extend supported content verification based on demonstrated operator needs.
   Continue to treat Hardware Qualification and production approval as separate
   gates; StageCore ACL/SC-024 remains off in production.
+
+## Resume update — 2026-11-14 18:30 UTC · Capsule file portability warning
+
+- Remote/PR HEAD is `1418cb780b661a33fb82c012bd9a764a16782099`; this is also the
+  last pushed local commit. Exact-head Core run `43626455867` completed **fail**
+  on both Go versions because `TestProjectFilesProgressiveScopedUIContract`
+  still required the old `payload?.read_only` and “Read-only” strings after the
+  authorized upload form was added. All other Core packages passed, including
+  `internal/httpapi`, `internal/showcapsule`, `internal/projectaccess` and
+  `internal/usbdmx`; Companion `43626455728` and Camera Relay
+  `43626455739` passed. Do not report this HEAD green.
+- Updated the stale browser contract to assert scoped, capability-gated upload
+  UI and the encoded filename request. The focused `internal/operatorweb`
+  contract now passes. This repairs a test expectation; it does not change
+  runtime authorization.
+- Continued SC-023 Capsule review. A Project Files upload not referenced by
+  the selected published Snapshot was previously silently omitted from a
+  self-contained Capsule. Capsule preview now counts those versions in SQL and
+  warns that draft, tablet-only and other unreferenced media must be transferred
+  separately. Snapshot-referenced optional media still participates in the
+  Capsule. An “include every workspace file” mode is intentionally not added:
+  the immutable Snapshot is the Capsule boundary, avoiding an unreviewed export
+  of post-publish uploads. Regressions verify warning/count/exclusion and
+  optional referenced media inclusion.
+- Local checks for the Capsule change passed: full `go test ./internal/showcapsule
+  ./internal/store -count=1`, focused Capsule Race tests, `go vet` for both
+  packages, and diff checks. The updated Operator web contract also passes.
+  Current changes are not committed or pushed yet; `git status` and
+  `git rev-parse HEAD` are authoritative. After committing this batch, recheck
+  all exact-head state before a normal push to PR #534. Then wait for Core,
+  Companion, and Camera Relay CI on the new SHA; continue other work while CI
+  runs without replacing that SHA.
+- Next SC-023 software gaps remain file-byte decoding/signatures, per-Project
+  quotas, and delete/retention/ref-count UX. Hardware qualification and
+  production release remain separate; production Hub/Relay/data/Vault and ACL
+  remain untouched/off.
+
+## Resume update — 2026-11-14 18:32 UTC · repaired Core web contract
+
+- Remote/PR HEAD is still `1418cb780b661a33fb82c012bd9a764a16782099` with a
+  completed Core failure on Go 1.26 and 1.27. The only failing assertion was
+  `TestProjectFilesProgressiveScopedUIContract` expecting read-only UI text and
+  not recognizing the conditional upload form. Companion and Camera Relay
+  checks on this same SHA passed.
+- Local commit `b92bde82cae7ab8dbac055afbb2e4c003bd53659` now contains the
+  repaired web contract and the Capsule portability warning. It is one commit
+  ahead of remote; the handoff update itself is still a documentation change.
+- The capsule preview counts Snapshot-unreferenced Project media versions in a
+  bounded SQL aggregate (without loading Vault bytes) and warns when those
+  uploads are omitted. Self-contained export still includes optional media
+  referenced by that Snapshot. The optional include-every-file mode is not
+  offered; such files transfer separately from Project Files. Tests passed for
+  both omission/warning and optional inclusion.
+- Latest local validation passed: `go test ./internal/showcapsule
+  ./internal/store ./internal/operatorweb -count=1`, focused Race tests for
+  omitted/optional Capsule media, `go vet` for the three packages, and
+  `git diff --check`. No new remote CI run is active on the failed SHA.
+- Before next push: commit this resume update, verify remote branch and PR still
+  point to `1418cb7`, then normally push the local fix to the same Draft PR.
+  Wait for fresh Core/Companion/Camera Relay checks on the new SHA; do not infer
+  green from the prior passing Companion/Relay runs. Continue remaining SC-023
+  work while CI runs without changing the pushed SHA.
