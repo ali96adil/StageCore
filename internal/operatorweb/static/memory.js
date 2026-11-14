@@ -51,6 +51,14 @@ async function renderSessions() {
 
 function actionTraceCard(action) {
   const interrupted = action.interrupted ? pill("INTERRUPTED", "bad") : "";
+  const deliveryEvidence = {
+    UNKNOWN: "External execution not observed",
+    EXTERNAL_EXECUTION_UNKNOWN: "Transport sent; external execution unknown",
+    OUTPUT_ACCEPTED: "Output reported acceptance",
+    DEVICE_ACKNOWLEDGED: "Device acknowledged execution",
+    APPLICATION_ACKNOWLEDGED: "Application acknowledged execution",
+    STATE_VERIFIED: "Output state verified",
+  }[action.delivery_evidence] || "External execution not observed";
   const error = action.error_code ? `<p class="muted" style="margin-top:8px"><strong>${esc(action.error_code)}</strong> · ${esc(action.response_summary || "No response summary")}</p>` : (action.response_summary ? `<p class="muted" style="margin-top:8px">${esc(action.response_summary)}</p>` : "");
   return `
     <article class="action-editor">
@@ -59,12 +67,30 @@ function actionTraceCard(action) {
         <div class="toolbar">${pill(action.result, memoryKind(action.result))}${interrupted}</div>
       </div>
       <div class="meta" style="margin-top:10px">
+        <span>${esc(deliveryEvidence)}</span>
         <span>Ack ${esc(action.ack_level || "NONE")}</span>
+        ${action.dispatch_attempts === null || action.dispatch_attempts === undefined ? "" : `<span>Hub dispatch attempts ${esc(action.dispatch_attempts)}</span>`}
         <span>${action.latency_ms === null || action.latency_ms === undefined ? "Latency —" : `${esc(action.latency_ms)} ms`}</span>
         <span>${esc(fmtDate(action.started_at))}</span>
       </div>
       ${error}
       <p class="mono muted" style="margin-top:8px">${esc(action.action_execution_id)}</p>
+    </article>`;
+}
+
+function cueTraceCard(cue) {
+  const started = Date.parse(cue.started_at);
+  const completed = cue.completed_at ? Date.parse(cue.completed_at) : NaN;
+  const durationMS = Number.isFinite(started) && Number.isFinite(completed) ? Math.max(0, completed - started) : null;
+  return `
+    <article class="card">
+      <div class="section-title-row">
+        <div><p class="eyebrow">CUE ${esc(cue.display_label || "")}</p><h2>${esc(cue.name || cue.cue_id)}</h2></div>
+        <div class="toolbar">${pill(cue.result, memoryKind(cue.result))}${cue.interrupted ? pill("INTERRUPTED", "bad") : ""}</div>
+      </div>
+      <div class="meta" style="margin-top:10px"><span>${esc(fmtDate(cue.started_at))}</span><span>Trigger ${esc(cue.trigger_source || "—")}</span>${durationMS === null ? "" : `<span>Duration ${durationMS} ms</span>`}</div>
+      <p class="mono muted" style="margin-top:8px">Cue execution ${esc(cue.cue_execution_id)} · Correlation ${esc(cue.correlation_id || "—")}</p>
+      <div class="actions-editor" style="margin-top:14px">${(cue.actions || []).length ? cue.actions.map(actionTraceCard).join("") : `<div class="empty">Cue had no Action executions.</div>`}</div>
     </article>`;
 }
 
@@ -154,16 +180,7 @@ async function renderSessionDetail(sessionID, executionID = "") {
       <div id="rehearsalApproval"><button type="button" class="button">Review timing approval</button></div>
     </article>` : ""}
     <div class="grid cards">
-      ${cues.length ? cues.map((cue) => `
-        <article class="card">
-          <div class="section-title-row">
-            <div><p class="eyebrow">CUE ${esc(cue.display_label || "")}</p><h2>${esc(cue.name || cue.cue_id)}</h2></div>
-            <div class="toolbar">${pill(cue.result, memoryKind(cue.result))}${cue.interrupted ? pill("INTERRUPTED", "bad") : ""}</div>
-          </div>
-          <div class="meta" style="margin-top:10px"><span>${esc(fmtDate(cue.started_at))}</span><span>Trigger ${esc(cue.trigger_source || "—")}</span></div>
-          <p class="mono muted" style="margin-top:8px">${esc(cue.cue_execution_id)}</p>
-          <div class="actions-editor" style="margin-top:14px">${(cue.actions || []).length ? cue.actions.map(actionTraceCard).join("") : `<div class="empty">Cue had no Action executions.</div>`}</div>
-        </article>`).join("") : `<div class="empty">${executionID ? "This execution was not found in the session trace." : "No Cue executions were recorded for this Session."}</div>`}
+      ${cues.length ? cues.map(cueTraceCard).join("") : `<div class="empty">${executionID ? "This execution was not found in the session trace." : "No Cue executions were recorded for this Session."}</div>`}
     </div>`;
   const approval = el("rehearsalApproval");
   approval?.querySelector("button").addEventListener("click", () => {

@@ -27,11 +27,11 @@ type SessionStartPositionSummary struct {
 }
 
 type SessionStateTruthSummary struct {
-	Version                    int                              `json:"version"`
+	Version                    int                             `json:"version"`
 	RestorationStatus          domain.SessionRestorationStatus `json:"restoration_status"`
-	DesiredStateRef            *string                          `json:"desired_state_ref,omitempty"`
-	VerifiedStateRef           *string                          `json:"verified_state_ref,omitempty"`
-	ManualConfirmationRequired bool                             `json:"manual_confirmation_required"`
+	DesiredStateRef            *string                         `json:"desired_state_ref,omitempty"`
+	VerifiedStateRef           *string                         `json:"verified_state_ref,omitempty"`
+	ManualConfirmationRequired bool                            `json:"manual_confirmation_required"`
 }
 
 type SessionSummary struct {
@@ -78,9 +78,16 @@ type ActionTrace struct {
 	Result            domain.ExecutionResult `json:"result"`
 	LatencyMS         *int64                 `json:"latency_ms,omitempty"`
 	AckLevel          string                 `json:"ack_level"`
+	DeliveryEvidence  string                 `json:"delivery_evidence"`
+	DispatchAttempts  *int                   `json:"dispatch_attempts,omitempty"`
 	ResponseSummary   string                 `json:"response_summary"`
 	ErrorCode         *string                `json:"error_code,omitempty"`
 	Interrupted       bool                   `json:"interrupted"`
+}
+
+type actionEvidence struct {
+	AckLevel         string
+	DispatchAttempts *int
 }
 
 type SessionDetail struct {
@@ -133,7 +140,7 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 			actionMeta[action.ID] = action
 		}
 	}
-	ackByExecution, err := s.actionAcknowledgements(ctx, session.ID)
+	evidenceByExecution, err := s.actionEvidenceByExecution(ctx, session.ID)
 	if err != nil {
 		return SessionDetail{}, err
 	}
@@ -157,9 +164,9 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 		}
 		for _, actionExecution := range actions {
 			meta := actionMeta[actionExecution.ActionID]
-			ack := ackByExecution[actionExecution.ID]
-			if ack == "" {
-				ack = string(contracts.AckNone)
+			evidence := evidenceByExecution[actionExecution.ID]
+			if evidence.AckLevel == "" {
+				evidence.AckLevel = string(contracts.AckNone)
 			}
 			interrupted := actionExecution.ErrorCode != nil && *actionExecution.ErrorCode == "HUB_RESTART_INTERRUPTED"
 			if interrupted {
@@ -170,7 +177,8 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 				TargetRef: meta.TargetRef, CapabilityKey: meta.CapabilityKey,
 				StartedAt: actionExecution.StartedAt, CompletedAt: actionExecution.CompletedAt,
 				Result: actionExecution.Result, LatencyMS: actionExecution.LatencyMS,
-				AckLevel: ack, ResponseSummary: actionExecution.ResponseSummary,
+				AckLevel: evidence.AckLevel, DeliveryEvidence: deliveryEvidence(evidence.AckLevel),
+				DispatchAttempts: evidence.DispatchAttempts, ResponseSummary: actionExecution.ResponseSummary,
 				ErrorCode: actionExecution.ErrorCode, Interrupted: interrupted,
 			})
 		}
@@ -179,12 +187,31 @@ func (s *Service) Detail(ctx context.Context, projectID, sessionID string) (Sess
 	return SessionDetail{Session: summary(session), Cues: traces}, nil
 }
 
-func (s *Service) actionAcknowledgements(ctx context.Context, sessionID string) (map[string]string, error) {
+func deliveryEvidence(ackLevel string) string {
+	// Evidence follows the explicit acknowledgement level only. A completed
+	// Hub Action by itself must never promote external execution evidence.
+	switch contracts.AckLevel(ackLevel) {
+	case contracts.AckTransportOnly:
+		return "EXTERNAL_EXECUTION_UNKNOWN"
+	case contracts.AckAccepted:
+		return "OUTPUT_ACCEPTED"
+	case contracts.AckDevice:
+		return "DEVICE_ACKNOWLEDGED"
+	case contracts.AckApplication:
+		return "APPLICATION_ACKNOWLEDGED"
+	case contracts.AckVerifiedState:
+		return "STATE_VERIFIED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func (s *Service) actionEvidenceByExecution(ctx context.Context, sessionID string) (map[string]actionEvidence, error) {
 	events, err := s.store.ListEvents(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	acks := make(map[string]string)
+	evidenceByExecution := make(map[string]actionEvidence)
 	for _, event := range events {
 		switch event.EventType {
 		case "action.completed", "action.failed", "action.timed_out":
@@ -194,15 +221,18 @@ func (s *Service) actionAcknowledgements(ctx context.Context, sessionID string) 
 		var payload struct {
 			ActionExecutionID string `json:"action_execution_id"`
 			AckLevel          string `json:"ack_level"`
+			DispatchAttempts  *int   `json:"dispatch_attempts"`
 		}
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			continue
 		}
 		if strings.TrimSpace(payload.ActionExecutionID) != "" && strings.TrimSpace(payload.AckLevel) != "" {
-			acks[payload.ActionExecutionID] = payload.AckLevel
+			evidenceByExecution[payload.ActionExecutionID] = actionEvidence{
+				AckLevel: payload.AckLevel, DispatchAttempts: payload.DispatchAttempts,
+			}
 		}
 	}
-	return acks, nil
+	return evidenceByExecution, nil
 }
 
 func summary(session domain.Session) SessionSummary {
