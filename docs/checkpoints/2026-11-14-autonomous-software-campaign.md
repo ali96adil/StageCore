@@ -1681,3 +1681,16 @@ This entry supersedes the preceding push instruction.
   unqualified until the isolated qualification alias becomes reachable.
 - Safety state unchanged: no production service/data/Vault access, physical
   output, firmware action, or production Project ACL activation.
+
+## CI gate update — 2026-11-14 07:57 UTC · prior remote head cleared
+
+- Core CI `43571216920` completed successfully on remote HEAD
+  `bc31914bc944ce6735a6c10224a57d42b2bc00cb`: Go 1.27 passed in 3m06s and
+  Go 1.26 passed Test, Browser Cue Delivery, Vet, Race and Linux ARM64 product
+  builds in 29m03s. Companion Core `43571216881` and Camera Relay
+  `43571216851` had already passed on the same exact SHA.
+- The local SC-025 batch through `dc6fd91` has focused host validation and
+  Linux ARM64/AMD64 compile/Vet evidence recorded above. Push it normally to
+  the existing branch and PR #534 now that the old-head CI gate is clear; wait
+  for every new exact-head workflow, particularly Linux runtime execution of
+  `internal/usbdmx` tests, before starting the next push batch.
