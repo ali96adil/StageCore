@@ -177,10 +177,15 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		PaletteVisible   bool     `json:"palette_visible"`
 		LabelReadable    bool     `json:"label_color_readable"`
 		PageOverflow     bool     `json:"page_overflow"`
+		LTRLabel         string   `json:"ltr_label"`
+		LTRPalette       bool     `json:"ltr_palette_visible"`
+		LTRReadable      bool     `json:"ltr_label_readable"`
+		LTROverflow      bool     `json:"ltr_page_overflow"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
-		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || report.PageOverflow {
+		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || report.PageOverflow ||
+		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || report.LTROverflow {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	project, err = st.GetProject(ctx, project.ID)
