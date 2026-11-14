@@ -3108,3 +3108,23 @@ This entry supersedes the preceding push instruction.
   the Core run completes, then recheck branch and PR. SC-024 production ACL
   stays off; Pi 4 optimized-code qualification remains blocked by the
   unchanged failed isolated SSH handshake.
+
+## Resume update — 2026-11-14 20:23 UTC · palette plus RTL/LTR acceptance
+
+- The real-Chrome SC-005 test now reloads the same Draft in English LTR after
+  its 390×844 Arabic RTL pass. It verifies all four color markers, persistent
+  edited label, unchanged computed text color and no horizontal page overflow
+  in both directions. Temporary Chrome session storage carries only the
+  browser report across reload; no show data is persisted outside the test DB.
+- Normal Chrome and Race Chrome passed locally; the accessibility Node tests,
+  JavaScript syntax and diff checks pass. Updated the matrix: only actual
+  keyboard/focus use and measured rendered-background contrast remain.
+- Commit `54a6b48` (`test(cue-studio): verify color in both locales`). Local
+  HEAD before this entry is
+  `54a6b485f958e10571e209099e39fb1197c58a49`, four commits ahead of clean
+  origin/PR `5fb3a6889e823aecb067b519c5a8b206f84cae21`; worktree was clean
+  before this checkpoint commit.
+- CI for exact head `5fb3a68`: Core `43636803011` passed Go 1.26 tests and the
+  Browser Cue Delivery gate and is running Vet; Companion `43636803043` and
+  Relay `43636803216` are green. Race and ARM64 Core checks are still pending.
+  Keep local commits unpushed until the complete exact-head CI finishes.
