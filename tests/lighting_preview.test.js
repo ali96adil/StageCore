@@ -24,7 +24,10 @@ test("manual DMX preview supports continuous, timed and blackout without dispatc
       addEventListener() {},
       querySelectorAll(selector) {
         assert.equal(selector, ".lighting-level-row");
-        return [{ querySelector: (field) => ({ value: field.endsWith("alias") ? "warm" : String(levels.warm) }) }];
+        return [{ querySelector: (field) => ({
+          value: field.endsWith("alias") ? "warm" : String(levels.warm),
+          valueAsNumber: field.endsWith("alias") ? NaN : levels.warm,
+        }) }];
       },
     },
     api() { assert.fail("preview attempted an API call"); },
@@ -69,6 +72,55 @@ test("manual DMX preview supports continuous, timed and blackout without dispatc
   get("Raw").value = "1=20\n001=255";
   get("Run").click();
   assert.match(get("Result").textContent, /Use unique channels/);
+});
+
+test("Lighting Cue authoring rejects invalid levels and stale aliases with actionable errors", () => {
+  const source = fs.readFileSync("internal/operatorweb/static/lighting-authoring.js", "utf8");
+  const start = source.indexOf("function readOperation()");
+  const end = source.indexOf("function lightingErrorMessage", start);
+  const channelList = [{alias: "warm", minimum_level: 0, maximum_level: 80}];
+  const run = ({command = "LIGHTING_CHANNELS_SET", alias = "warm", level = 55, fade = 0, selected = []} = {}) => {
+    const rows = alias === null ? [] : [{
+      querySelector(selector) {
+        if (selector === ".lighting-level-alias") return {value: alias};
+        if (selector === ".lighting-level-value") return {valueAsNumber: level};
+        return null;
+      },
+    }];
+    const document = {
+      getElementById(id) {
+        if (id === "lightingCueOperation") return {value: command};
+        if (id === "lightingFadeMS") return {valueAsNumber: fade};
+        return null;
+      },
+      querySelectorAll(selector) {
+        if (selector === ".lighting-level-row") return rows;
+        if (selector === ".lighting-blackout-node:checked") return selected.map((value) => ({value}));
+        return [];
+      },
+    };
+    const readOperation = vm.runInNewContext(source.slice(start, end) + "readOperation", {
+      document, channels: () => channelList, tx: (key) => key,
+    });
+    return readOperation();
+  };
+
+  assert.deepEqual(JSON.parse(JSON.stringify(run())), {command_type: "LIGHTING_CHANNELS_SET", levels: {warm: 55}, fade_ms: 0});
+  assert.throws(() => run({level: 125}), /levelInvalid/);
+  assert.throws(() => run({level: NaN}), /levelInvalid/);
+  assert.throws(() => run({alias: "stale"}), /channelUnavailable/);
+  assert.throws(() => run({command: "LIGHTING_CHANNELS_FADE", level: 20, fade: 1.5}), /fadeInvalid/);
+  assert.throws(() => run({command: "LIGHTING_BLACKOUT", fade: 600001, selected: ["node-a"]}), /blackoutFadeInvalid/);
+  assert.throws(() => run({command: "LIGHTING_BLACKOUT", fade: 0}), /chooseNode/);
+
+  const messageStart = source.indexOf("function lightingErrorMessage");
+  const messageEnd = source.indexOf("async function saveCue", messageStart);
+  const lightingErrorMessage = vm.runInNewContext(source.slice(messageStart, messageEnd) + "lightingErrorMessage", {
+    tx: (key) => key, errorMessage: () => "fallback",
+  });
+  assert.equal(lightingErrorMessage({payload: {error: "LIGHTING_ALIAS_RESOLUTION_FAILED"}}), "cueInvalid");
+  assert.equal(lightingErrorMessage({payload: {error: "LIGHTING_DEVICE_UNAVAILABLE"}}), "deviceUnavailable");
+  assert.equal(lightingErrorMessage({payload: {error: "OTHER_ERROR"}}), "fallback");
 });
 
 test("QLC+ draft preset produces one bounded OSC Float32 argument", () => {

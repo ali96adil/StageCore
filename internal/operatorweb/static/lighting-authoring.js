@@ -7,6 +7,11 @@
       refresh: "Refresh", newCue: "New lighting cue", noCues: "No Lighting Cues yet.", edit: "Edit", duplicate: "Duplicate", remove: "Remove",
       moveUp: "Move up", moveDown: "Move down", back: "Back", save: "Save lighting cue", name: "Cue name", label: "Label",
       operation: "Operation", set: "Set levels", fade: "Fade levels", blackout: "Blackout", fadeMS: "Fade duration (ms)", addChannel: "Add channel",
+      levelInvalid: "Enter a lighting level from 0 to 100.", fadeInvalid: "Enter a whole Fade duration from 1 to 600000 ms.",
+      blackoutFadeInvalid: "Enter a whole Blackout fade duration from 0 to 600000 ms.", channelUnavailable: "This logical channel is no longer configured. Refresh Lighting Configuration and select an available channel.",
+      cueInvalid: "This Lighting Cue no longer matches the current channel configuration. Refresh, review its channel assignments and save again.",
+      deviceUnavailable: "A selected lighting node is no longer enabled or configured. Refresh and review this Cue.",
+      configurationInvalid: "The Draft lighting configuration is invalid. Check unique channel numbers, aliases, enabled channels and 0–100 level bounds.",
       dmxEstimate: "Estimated DMX value (offline)",
       preview: "Manual DMX preview · simulation only", previewRun: "Run preview", previewStop: "Simulate blackout",
       previewHold: "Continuous", previewTimed: "Timed", previewDuration: "Duration (ms)",
@@ -26,6 +31,11 @@
       refresh: "تحديث", newCue: "كيو إضاءة جديد", noCues: "ماكو كيوهات إضاءة حالياً.", edit: "تعديل", duplicate: "نسخ", remove: "حذف",
       moveUp: "للأعلى", moveDown: "للأسفل", back: "رجوع", save: "حفظ كيو الإضاءة", name: "اسم الكيو", label: "الرمز",
       operation: "العملية", set: "تعيين المستويات", fade: "Fade للمستويات", blackout: "Blackout", fadeMS: "مدة الـ Fade (ms)", addChannel: "إضافة قناة",
+      levelInvalid: "أدخل مستوى إضاءة من 0 إلى 100.", fadeInvalid: "أدخل مدة Fade صحيحة كعدد صحيح من 1 إلى 600000 ms.",
+      blackoutFadeInvalid: "أدخل مدة Blackout صحيحة كعدد صحيح من 0 إلى 600000 ms.", channelUnavailable: "القناة المنطقية لم تعد مضبوطة. حدّث إعداد الإضاءة واختار قناة متاحة.",
+      cueInvalid: "كيو الإضاءة ما عاد يطابق إعداد القنوات الحالي. حدّث الصفحة وراجع تعيين القنوات ثم احفظ من جديد.",
+      deviceUnavailable: "عقدة إضاءة مختارة لم تعد مفعلة أو مضبوطة. حدّث الصفحة وراجع الكيو.",
+      configurationInvalid: "إعداد الإضاءة بالمسودة غير صالح. راجع أرقام القنوات الفريدة والـAliases والقنوات المفعلة وحدود المستوى 0–100.",
       dmxEstimate: "قيمة DMX المتوقعة بدون تشغيل",
       preview: "معاينة DMX يدوية · محاكاة فقط", previewRun: "ابدأ المعاينة", previewStop: "حاكي الـ Blackout",
       previewHold: "مستمر", previewTimed: "مؤقت", previewDuration: "المدة (ms)",
@@ -342,8 +352,10 @@
 
   function readOperation() {
     const command = document.getElementById("lightingCueOperation")?.value || "LIGHTING_CHANNELS_FADE";
-    const fadeMS = Math.max(0, Number(document.getElementById("lightingFadeMS")?.value || 0));
+    const fadeInput = document.getElementById("lightingFadeMS");
+    const fadeMS = fadeInput ? fadeInput.valueAsNumber : 0;
     if (command === "LIGHTING_BLACKOUT") {
+      if (!Number.isInteger(fadeMS) || fadeMS < 0 || fadeMS > 600000) throw new Error(tx("blackoutFadeInvalid"));
       const deviceIDs = [...document.querySelectorAll(".lighting-blackout-node:checked")].map((node) => node.value);
       if (!deviceIDs.length) throw new Error(tx("chooseNode"));
       return { command_type: command, device_ids: deviceIDs, fade_ms: fadeMS };
@@ -354,11 +366,22 @@
     for (const row of rows) {
       const alias = row.querySelector(".lighting-level-alias")?.value || "";
       if (!alias) throw new Error(tx("emptyLevels"));
+      if (!channels().some((channel) => channel.alias === alias)) throw new Error(tx("channelUnavailable"));
       if (Object.prototype.hasOwnProperty.call(levels, alias)) throw new Error(tx("duplicateAlias"));
-      levels[alias] = Math.min(100, Math.max(0, Number(row.querySelector(".lighting-level-value")?.value || 0)));
+      const level = row.querySelector(".lighting-level-value")?.valueAsNumber;
+      if (!Number.isFinite(level) || level < 0 || level > 100) throw new Error(tx("levelInvalid"));
+      levels[alias] = level;
     }
-    if (command === "LIGHTING_CHANNELS_FADE" && fadeMS < 1) throw new Error(tx("fadeMS"));
+    if (command === "LIGHTING_CHANNELS_FADE" && (!Number.isInteger(fadeMS) || fadeMS < 1 || fadeMS > 600000)) throw new Error(tx("fadeInvalid"));
     return { command_type: command, levels, fade_ms: command === "LIGHTING_CHANNELS_FADE" ? fadeMS : 0 };
+  }
+
+  function lightingErrorMessage(error) {
+    const code = error?.payload?.error;
+    if (code === "LIGHTING_CUE_INVALID" || code === "LIGHTING_ALIAS_RESOLUTION_FAILED" || code === "LIGHTING_CUE_RELOAD_REQUIRED") return tx("cueInvalid");
+    if (code === "LIGHTING_DEVICE_UNAVAILABLE" || code === "LIGHTING_CAPABILITY_UNAVAILABLE") return tx("deviceUnavailable");
+    if (code === "LIGHTING_CONFIGURATION_INVALID" || code === "LIGHTING_DEVICE_INVALID") return tx("configurationInvalid");
+    return errorMessage(error);
   }
 
   async function saveCue() {
@@ -403,7 +426,7 @@
       };
       await api(`/api/v1/projects/${encodeURIComponent(pid())}/cues${cueID ? `/${encodeURIComponent(cueID)}` : ""}`, { method: cueID ? "PUT" : "POST", json: body });
       await renderLightingCues(tx("saved"), "success");
-    } catch (error) { setMessage(message, errorMessage(error), "error"); }
+    } catch (error) { setMessage(message, lightingErrorMessage(error), "error"); }
     finally { if (button) button.disabled = false; }
   }
 
