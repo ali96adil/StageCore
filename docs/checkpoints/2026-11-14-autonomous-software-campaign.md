@@ -501,3 +501,77 @@ This entry supersedes the preceding push instruction.
 - Next: commit this documentation checkpoint locally, then continue the ACL
   route audit or another verified software gap while waiting for exact-head
   CI. Push the local group only after run `43542130109` completes.
+
+## Resume update — 2026-11-14 01:59 UTC
+
+- Local code base is `0fc26289de2736c1492b662536f2b131ddc7bd05` on
+  `integration/stagecore-rc`; remote
+  remains `c9f2d47487bc90aaee80b6705a8fefab898c65a5`. The gated Security
+  grant editor, Node regression suite, workflow wiring, and SC-024 docs are
+  local and uncommitted. Prior local commits are preserved.
+- Core run `43542130109` for `c9f2d47` still has Go 1.26 Race in progress;
+  Go 1.27, normal tests, Browser Cue Delivery, Vet, Companion/Swift and
+  isolated/ARM64 pass. Do not push yet.
+- The Owner grant UI is rendered only when optional cutover preview returns
+  `enforced=false`, warns that grants do not restrict access, requires current
+  grant readback and explicit confirmation, and checks the same prepared state
+  on write response. The test executes mocked form load/save and checks
+  Viewer, disabled and unknown-role restrictions. No production route or
+  authority was added.
+- `node --check internal/operatorweb/static/security.js` passes; the combined
+  local Node suite passed 43 tests, and the new `security_project_access`
+  suite passes 6 tests. `git diff --check` passes. Actual browser visual,
+  keyboard, touch and RTL acceptance remains unavailable because the Mac is
+  locked.
+- Next: commit the UI/tests/workflow/docs locally, wait for Core run
+  `43542130109` to finish, then push the accumulated commits normally to PR
+  #534. Continue other software gaps while CI runs and preserve the hardware
+  and production ACL boundaries.
+
+## Resume update — 2026-11-14 02:13 UTC
+
+- Latest committed source HEAD is
+  `60bf4877dba21f43bca870ca4633a3ebee0bcd96` on
+  `integration/stagecore-rc`; remote remains
+  `c9f2d47487bc90aaee80b6705a8fefab898c65a5` before the next push. Four local
+  commits are ahead of remote (`46d3b4f`, `66ea389`, `0fc2628`, `60bf487`). The
+  matrix and this handoff have a final documentation update in the worktree.
+- Current remote CI is complete and green for `c9f2d47`: Core `43542130109`
+  passed Go 1.26/1.27, Browser Cue Delivery, Vet, Race and Linux ARM64 builds;
+  Companion/Swift `43542130081` and isolated/ARM64 `43542130095` passed. This
+  satisfies the wait-before-push condition for that exact HEAD. Recheck the
+  remote ref before the normal fast-forward push and then follow CI for the new
+  exact HEAD.
+- Commit `60bf487` adds a concurrent Mixed-Cue burst regression and benchmark,
+  plus the prepared Owner grant editor and stale-read guard. Red-first UI
+  regression failed while a Project was changed during an in-flight access
+  read, then passed after the result was bound to its requested Project/User.
+  Production API assembly and Project ACL enforcement remain unchanged.
+- New simulation-only burst benchmark: 4 and 8 independent GO requests, each
+  running a six-Cue/24-Action linked compound chain in its own SIMULATION
+  Session; 100 bursts per worker count at Go `-cpu=1,4`. On M3, eight-way GO
+  P95/P99 was 73.30/78.02 ms at CPU 1 and 92.53/97.27 ms at CPU 4; burst P95/P99
+  was 83.75/85.91 ms and 94.65/101.00 ms. The eight-way CPU 4 case allocated
+  3,809,552 B and 70,550 allocations per burst, averaged 1.77 GC/burst with
+  60.14 µs pause; release-to-worker start skew P95/P99 was 12.17/18.00 ms.
+  The complete benchmark command used 27.33 s wall, 13.31 s user CPU, 12.17 s
+  system CPU and 224,460,800 bytes peak process-tree RSS. These Mac figures
+  include setup/migrations where applicable and are not Hub-only or Pi data;
+  the 100 burst P99 is a stress indicator. No optimization was made without a
+  justified profile.
+- Test evidence: the new eight-session regression passed with 192 simulated
+  Actions and zero physical-executor calls; its focused Race test passed.
+  `go test ./internal/cueengine ./internal/operatorweb -count=1`, package Vet,
+  `node --check` for Security, and the combined Core Node UI set (44/44) passed.
+  `git diff --check` passed before source commit.
+- Pi qualification remains open. The explicitly named qualification SSH
+  endpoint returned `websocket: bad handshake` and closed before a remote
+  command ran. Do not infer Pi performance from M3 results or ARM64 cross-builds;
+  do not try the ambiguous `stagecore-pi` alias. No production service/data,
+  original show, physical output or ACL activation was touched.
+- First action on resume: read current `git rev-parse HEAD`, `git status`, and
+  `git ls-remote`; commit the matrix/handoff documentation update, push normally
+  to the existing branch/PR #534 only if it remains a fast-forward, and watch
+  new exact-head Core CI. Then pursue the next verified software gap from the
+  matrix (SC-011 Preflight drift/remedies or SC-024 route fencing) while keeping
+  Pi performance and browser visual acceptance explicitly open.
