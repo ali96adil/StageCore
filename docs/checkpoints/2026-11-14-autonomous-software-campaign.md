@@ -2086,6 +2086,47 @@ This entry supersedes the preceding push instruction.
 - Verification after this change passed: `STAGECORE_TEST_CHROME=... go test ./internal/httpapi -run '^TestBrowserCreatesNestedMixedCueChainInDraft$' -count=1`; the three Chrome browser tests under Race; `go vet ./internal/httpapi`; JS syntax checks; full Node suite (72/72); full `STAGECORE_TEST_CHROME=... go test ./internal/httpapi -count=1` (67.441s); and `git diff --check`.
 - Push the completed 3-commit local batch normally to existing PR #534 after rechecking remote SHA/state; this starts a new exact-head CI. Update the PR body for the 63-Cue navigation and current CI IDs, then wait for all Core/Companion/Camera Relay checks before any additional push. Continue next with Draft restore/rollback evidence. Pi 4 performance still needs a verified isolated target. No production service/data/Vault, physical output, firmware, or production ACL changed; ACL stays disabled, PR stays Draft, and merge/force-push are prohibited.
 
+## Resume update — 2026-11-14 15:12 UTC · 123-Cue browser search and Inspector
+
+- Rechecked `git status`, local/remote HEAD and PR #534. The worktree was clean
+  at resume; local and remote both matched `759bcbd21ae331759443c2c37fe451d0e96bc78a`.
+  PR #534 remains OPEN/DRAFT on `integration/stagecore-rc`.
+- Exact pushed-head Camera Relay `43608326224` and Companion `43608326350`
+  passed. Core `43608326253` Go 1.27 passed; Go 1.26 Race remained in progress
+  on the last query. No push is allowed until this exact Core run completes and
+  the PR/remote SHA are rechecked.
+- Local follow-on expands the isolated Chrome Draft fixture from 63 to 123
+  Cues. It searches the 120th Cue, finds a Lighting Action inside a nested
+  three-Cue Mixed chain, combines Mixed and Linked filters, clears the filters,
+  and verifies the complete row sequence is unchanged. It then navigates the
+  Inspector through all 123 rows and checks Action context, focus, viewport and
+  boundary buttons. All data is in temporary SQLite; target is `SIM`; no Cue is
+  published, run, or sent to a device.
+- The first Race run exposed a browser-test-only rerender race between two DOM
+  assertions. Replaced the split assertions with a stable combined DOM query;
+  the focused Chrome test then passed normally (7.9 s) and under Race (12.4 s).
+  `node --test tests/cue_list_filters.test.js` passed 5/5, browser script
+  `node --check`, `go vet ./internal/httpapi`, and `git diff --check` passed.
+- Matrix SC-012 and SC-014 now record the 123-Cue browser evidence and the
+  remaining actual keyboard/touch, RTL/LTR and narrow-layout checks. The
+  related-component matrix was refreshed: TabletPlayer #36 (`91613da`), DMX
+  #39 (`3ad7749`), Camera #20 (`455b066`), StageLaser #56 (`b14a578`) and #57
+  (`c4ff10b`) remain open at the reviewed heads. No linked checkout was
+  available, so no linked repository was changed.
+- Four files are modified locally (the two browser test files and two
+  qualification matrices); this checkpoint is the fifth. Commit the tested
+  batch locally, then wait for Core `43608326253` before any push. Once that
+  run is green, verify source HEAD and PR #534, push normally to the existing
+  branch, update the PR description with exact new CI and browser evidence, and
+  wait for the new exact-head checks.
+- Next software focus after the CI gate: continue SC-024 only on a reproducible
+  endpoint-to-policy/asynchronous-delivery gap, without changing Production
+  Assembler or enabling ACL. Pi 4 runtime P95/P99, jitter, CPU/RAM and sustained
+  ARM64 measurements remain blocked because no verified isolated target is
+  available; Mac evidence is already recorded and is not being repeated.
+  Production services/data/Vault, physical output and firmware remain untouched;
+  PR stays Draft, no merge/force push, and SC-024 stays off in Production.
+
 ## Resume update — 2026-11-14 12:40 UTC · SC-019 reversible approval evidence
 
 - Commit `e457922955124e86f8a3e6455f6246b05bc8951e` extends the existing timing approval regression: it records raw timing observations before approval, repeats INCLUDE while the Rehearsal is active, verifies the active candidate remains pending, then verifies learning after stop and reversibility through AUTO/EXCLUDE. It asserts the complete raw observation records are identical before and after all selection changes. No production implementation change was necessary; the completion matrix now records the verified test evidence.

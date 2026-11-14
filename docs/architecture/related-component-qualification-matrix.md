@@ -1,20 +1,20 @@
 # Related component qualification matrix
 
-Status refreshed 2026-11-14 15:04 UTC from the open PRs and exact head commits.
+Status refreshed 2026-11-14 15:11 UTC from the open PRs and exact head commits.
 TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
 #20 (`455b066`), and StageLaser #56 (`b14a578`) are open drafts; their listed
 exact-head CI runs pass. StageLaser #57 (`c4ff10b`) is open and not marked
 draft; its listed CI passes. StageCore #503–#508 and #514–#516 remain open at
 the heads listed below, with their listed Go 1.26/1.27 CI passing. StageCore
-Draft PR #534 is at remote head `66bff3bb276eb64b60926e209ad476221bbbbcda`
-on `integration/stagecore-rc`. Camera Relay `43607240271` and Companion
-`43607240272` passed. Core `43607240278` Go 1.27 passed; Go 1.26 failed only
-Browser Cue Delivery: the nested Mixed Cue quick-edit test queried a detached
-Inspector node after rerender. The failure is reproduced locally and fixed in
-the pending commit `41d5279`; the full local HTTP API suite with Chrome now
-passes. `c1a4e49` was fully green. The current local source fix plus the
-checkpoint are ahead of remote; recheck PR/head and the completed failing run
-before a normal push, then wait for all exact-head workflows to pass.
+Draft PR #534 is at remote head `759bcbd21ae331759443c2c37fe451d0e96bc78a`
+on `integration/stagecore-rc`. Camera Relay `43608326224` and Companion
+`43608326350` passed. Core `43608326253` Go 1.27 passed; Go 1.26 Race was still
+in progress at the last check. The prior `66bff3b` Go 1.26 Browser Cue Delivery
+failure was a test synchronization defect after Inspector rerender and has been
+fixed in `759bcbd`. A new local-only browser qualification extends the list to
+123 Cues and covers search, Mixed/Linked filtering, sequence-order invariance
+and Inspector traversal; its focused run passes both normally and under Go
+Race. Recheck exact-head CI before pushing this local follow-on.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. No linked repository checkout is available in
 this workspace, so no other repository was modified.

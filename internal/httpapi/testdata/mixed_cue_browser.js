@@ -24,6 +24,17 @@
     }
     throw new Error(`Timed out waiting for ${label}`);
   };
+  const waitForStable = async (predicate, label) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if (predicate()) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (predicate()) return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`Timed out waiting for stable ${label}`);
+  };
   const setValue = (element, value) => {
     element.value = value;
     element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -139,22 +150,43 @@
     });
 
     if (createdIDs.length !== 3 || createdIDs[2] !== parentID) throw new Error("nested Mixed Cue IDs were not retained");
-    await waitFor(() => document.querySelectorAll("#content .sc008-type-badge").length >= 6,
-      "Cue Studio rendering the saved Mixed Cue action types");
     const linkedChainRows = () => [...document.querySelectorAll("#content tr[data-cue-id]")]
       .filter((row) => createdIDs.includes(row.dataset.cueId));
-    await waitFor(() => linkedChainRows().length === 3 &&
-      linkedChainRows().every((row) => row.querySelector(".cue-link-cell")),
-      "Cue Studio rendering the linked Cue chain");
-    if (document.querySelectorAll("#content .sc008-type-badge").length < 6) {
-      throw new Error("Cue Studio did not render the saved Mixed Cue action type badges");
-    }
-    if (linkedChainRows().length !== 3 || linkedChainRows().some((row) => !row.querySelector(".cue-link-cell"))) {
-      throw new Error("Cue Studio did not render all linked-chain rows");
+    await waitForStable(() => document.querySelectorAll("#content .sc008-type-badge").length >= 6 &&
+      linkedChainRows().length === 3 && linkedChainRows().every((row) => row.querySelector(".cue-link-cell")),
+    "Cue Studio Mixed Cue badges and linked-chain rows");
+
+    const allCueRows = [...document.querySelectorAll("#content tr[data-cue-id]")];
+    const originalCueOrder = allCueRows.map((row) => row.dataset.cueId);
+    const visibleCueRows = () => [...document.querySelectorAll("#content tr[data-cue-id]")].filter((row) => !row.hidden);
+    if (allCueRows.length !== 123) throw new Error(`Cue list=${allCueRows.length}, want 123`);
+
+    const search = document.getElementById("cueListSearch");
+    setValue(search, "Navigation Cue 120");
+    await waitFor(() => visibleCueRows().length === 1 && visibleCueRows()[0].innerText.includes("Navigation Cue 120"),
+      "searching a named Cue in a list over 100 rows");
+    setValue(search, "lighting.channels.fade");
+    await waitFor(() => visibleCueRows().length === 3 &&
+      visibleCueRows().every((row) => createdIDs.includes(row.dataset.cueId)),
+    "searching an Action nested in a three-Cue Mixed chain");
+    setValue(search, "");
+    const typeFilter = document.getElementById("cueListTypeFilter");
+    const linkedFilter = document.getElementById("cueListLinkedFilter");
+    typeFilter.value = "mixed";
+    typeFilter.dispatchEvent(new Event("change", { bubbles: true }));
+    linkedFilter.value = "linked";
+    linkedFilter.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitFor(() => visibleCueRows().length === 3 &&
+      visibleCueRows().every((row) => createdIDs.includes(row.dataset.cueId)),
+    "combining Mixed and linked Cue filters");
+    document.getElementById("clearCueListFilters").click();
+    await waitFor(() => visibleCueRows().length === 123, "restoring the full sequence after clearing filters");
+    if (JSON.stringify(visibleCueRows().map((row) => row.dataset.cueId)) !== JSON.stringify(originalCueOrder)) {
+      throw new Error("search and filters changed Cue execution order");
     }
 
-    const navigationRows = [...document.querySelectorAll("#content tr[data-cue-id]")].filter((row) => !row.hidden);
-    if (navigationRows.length !== 63) throw new Error(`Cue navigation list=${navigationRows.length}, want 63`);
+    const navigationRows = visibleCueRows();
+    if (navigationRows.length !== 123) throw new Error(`Cue navigation list=${navigationRows.length}, want 123`);
     const firstNavigationDetails = navigationRows[0].querySelector("details");
     firstNavigationDetails?.querySelector("summary")?.click();
     await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),

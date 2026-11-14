@@ -44,7 +44,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if _, err := st.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 60; index++ {
+	for index := 0; index < 120; index++ {
 		_, err := st.CreateCueWithActions(ctx, domain.Cue{
 			RevisionID: revision.ID, DisplayLabel: fmt.Sprintf("N%02d", index+1),
 			Name: fmt.Sprintf("Navigation Cue %02d", index+1), OrderIndex: index, Enabled: true,
@@ -179,8 +179,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cues) != 63 {
-		t.Fatalf("persisted cues=%d, want 63 (60 navigation fixtures + 3 linked Mixed Cues)", len(cues))
+	if len(cues) != 123 {
+		t.Fatalf("persisted cues=%d, want 123 (120 navigation fixtures + 3 linked Mixed Cues)", len(cues))
 	}
 	byID := make(map[string]domain.Cue, len(cues))
 	for _, cue := range cues {
