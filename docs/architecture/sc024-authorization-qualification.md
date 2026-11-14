@@ -1543,3 +1543,38 @@ preserves its grants.
 
 This is least-privilege cleanup in the opt-in SC-024 service/API. Production
 assembly is unchanged; no grants were written to production data.
+
+## SC-024 continuation · 2026-11-14 · gated Owner grant editor
+
+The existing Security page now includes a Project grant editor only when the
+read-only Owner cutover-preview endpoint exists and explicitly reports
+`enforced: false`. It then loads the Project list. When the optional API is not
+assembled, or does not report the prepared state, the Security workspace stays
+usable and the Project grant editor is absent.
+
+The editor requires loading the current User/Project grant before it enables
+Save. It presents the simple access levels, restricts Viewers to VIEW/NONE,
+restricts disabled or unknown-role accounts to NONE, and requires an explicit
+confirmation before replacement. Disabled users can therefore be cleaned up
+without making new grants. The page displays the existing permissions and
+rechecks `PREPARED_NOT_ENFORCED` on both read and write responses; it warns
+that saved values do not restrict Hub access and cannot be relied on for SHOW
+safety.
+
+Six Node tests cover optional-route detection, absent/active fail-closed UI,
+the prepared Security markup, Owner read-and-save through mocked API calls,
+Viewer/disabled/unknown-role choices and the explicit not-enforced guard. The
+security asset syntax check passes. The tests are added to Core CI. No actual
+browser was available for this session because the Mac remained locked; visual,
+keyboard, touch and RTL acceptance remain open. Production API assembly and
+ACL enforcement are unchanged.
+
+The first UI regression review found a pending-read race: if the Project
+selection changed while the Owner grant read was in flight, its older response
+could be attached to the new selection. A deferred mocked-API test failed
+before the fix. The editor now retains the requested Project/User key and
+discards the response if selection changed before it arrived; the form remains
+disabled until the new pair is loaded. The focused Security UI suite now passes
+7/7 tests, including this stale-read regression, and Core's focused Operator UI
+package test passes. This is only prepared-data review and does not enable
+production ACL enforcement.

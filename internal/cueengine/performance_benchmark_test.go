@@ -7,6 +7,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,6 +82,147 @@ func TestMixedCueNestedCompoundChainRunsOnlyInSimulation(t *testing.T) {
 			t.Fatalf("action %s result=%s want=%s", execution.ActionID, execution.Result, domain.ExecutionCompleted)
 		}
 	}
+}
+
+// TestMixedCueBurstRunsOnlyInSimulation exercises a simultaneous batch of
+// independent Rehearsal GO requests against the same immutable show snapshot.
+// Each Session has its own execution state; all outputs remain Digital Twin
+// actions and the guarded physical executor must remain untouched.
+func TestMixedCueBurstRunsOnlyInSimulation(t *testing.T) {
+	f := newMixedCuePerfFixture(t, true, false)
+	sessions := newMixedCuePerfSessions(t, f, 8)
+	commands := make([]contracts.CommandEnvelope, len(sessions))
+	for i := range commands {
+		commands[i] = f.command(t)
+	}
+	burst := executeMixedCueBurst(f, sessions, commands)
+	for i, result := range burst.results {
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("burst GO %d status=%s error=%+v", i, result.Status, result.Error)
+		}
+		var payload struct {
+			CueExecutionID string `json:"cue_execution_id"`
+		}
+		if err := json.Unmarshal(result.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		actions, err := f.store.ListActionExecutions(context.Background(), payload.CueExecutionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(actions) != mixedCueActionCount {
+			t.Fatalf("burst GO %d persisted %d Actions, want %d", i, len(actions), mixedCueActionCount)
+		}
+		for _, action := range actions {
+			if action.Result != domain.ExecutionCompleted {
+				t.Fatalf("burst GO %d Action %s result=%s", i, action.ActionID, action.Result)
+			}
+		}
+	}
+	if calls := f.physicalHits.Load(); calls != 0 {
+		t.Fatalf("simulation reached the physical executor %d time(s)", calls)
+	}
+}
+
+// BenchmarkMixedCueBurst reports per-GO latency, whole-burst completion time,
+// launch skew, allocations and GC for concurrent nested Mixed Cue runs. CI
+// validates correctness; qualification runs choose bounded repetitions and
+// vary -cpu to sample scheduler and persistence pressure.
+func BenchmarkMixedCueBurst(b *testing.B) {
+	for _, concurrency := range []int{4, 8} {
+		b.Run(fmt.Sprintf("ConcurrentGO_%d", concurrency), func(b *testing.B) {
+			f := newMixedCuePerfFixture(b, true, false)
+			sessions := newMixedCuePerfSessions(b, f, concurrency)
+			latencies := make([]time.Duration, 0, b.N*concurrency)
+			launchSkew := make([]time.Duration, 0, b.N*concurrency)
+			burstLatencies := make([]time.Duration, 0, b.N)
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			b.ReportAllocs()
+			b.ReportMetric(float64(concurrency), "gos/burst")
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				commands := make([]contracts.CommandEnvelope, concurrency)
+				for j := range commands {
+					commands[j] = f.command(b)
+				}
+				b.StartTimer()
+				burst := executeMixedCueBurst(f, sessions, commands)
+				latencies = append(latencies, burst.latencies...)
+				launchSkew = append(launchSkew, burst.launchSkew...)
+				burstLatencies = append(burstLatencies, burst.duration)
+				for j, result := range burst.results {
+					if result.Status != contracts.CommandCompleted {
+						b.Fatalf("burst %d GO %d status=%s error=%+v", i, j, result.Status, result.Error)
+					}
+				}
+				if calls := f.physicalHits.Load(); calls != 0 {
+					b.Fatalf("simulation reached the physical executor %d time(s)", calls)
+				}
+			}
+			b.StopTimer()
+			runtime.ReadMemStats(&after)
+			reportLatencyDistribution(b, latencies)
+			reportLatencyDistributionWithPrefix(b, burstLatencies, "burst")
+			reportDurationPercentiles(b, launchSkew, "launch-skew")
+			if b.N > 0 {
+				b.ReportMetric(float64(after.NumGC-before.NumGC)/float64(b.N), "gc/burst")
+				b.ReportMetric(float64(after.PauseTotalNs-before.PauseTotalNs)/float64(b.N), "gc-pause-ns/burst")
+			}
+		})
+	}
+}
+
+type mixedCueBurstResult struct {
+	results    []contracts.CommandResult
+	latencies  []time.Duration
+	launchSkew []time.Duration
+	duration   time.Duration
+}
+
+func newMixedCuePerfSessions(tb testing.TB, f *mixedCuePerfFixture, count int) []string {
+	tb.Helper()
+	if count < 1 {
+		tb.Fatalf("burst session count must be positive, got %d", count)
+	}
+	sessions := make([]string, count)
+	sessions[0] = f.sessionID
+	for i := 1; i < count; i++ {
+		session, err := f.store.CreateSession(context.Background(), f.snapshotID, domain.SessionSimulation, "mixed cue burst performance")
+		if err != nil {
+			tb.Fatal(err)
+		}
+		sessions[i] = session.ID
+	}
+	return sessions
+}
+
+func executeMixedCueBurst(f *mixedCuePerfFixture, sessions []string, commands []contracts.CommandEnvelope) mixedCueBurstResult {
+	result := mixedCueBurstResult{
+		results:    make([]contracts.CommandResult, len(sessions)),
+		latencies:  make([]time.Duration, len(sessions)),
+		launchSkew: make([]time.Duration, len(sessions)),
+	}
+	start := make(chan struct{})
+	var releaseAt time.Time
+	var group sync.WaitGroup
+	for i, sessionID := range sessions {
+		group.Add(1)
+		go func(index int, session string) {
+			defer group.Done()
+			<-start
+			started := time.Now()
+			result.launchSkew[index] = started.Sub(releaseAt)
+			result.results[index] = f.engine.ExecuteCueGo(context.Background(), session, commands[index])
+			result.latencies[index] = time.Since(started)
+		}(i, sessionID)
+	}
+	releaseAt = time.Now()
+	close(start)
+	group.Wait()
+	result.duration = time.Since(releaseAt)
+	return result
 }
 
 // BenchmarkMixedCueGroupExecution compares one flat Mixed Cue with the same
@@ -536,21 +678,31 @@ func (f *mixedCuePerfFixture) readScheduleJitter(result contracts.CommandResult)
 }
 
 func reportLatencyDistribution(b *testing.B, values []time.Duration) {
+	reportLatencyDistributionWithPrefix(b, values, "")
+}
+
+func reportLatencyDistributionWithPrefix(b *testing.B, values []time.Duration, prefix string) {
 	if len(values) == 0 {
 		return
 	}
 	sorted := append([]time.Duration(nil), values...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 	median := durationPercentile(sorted, 50)
-	b.ReportMetric(float64(median)/float64(time.Millisecond), "p50-ms")
-	b.ReportMetric(float64(durationPercentile(sorted, 95))/float64(time.Millisecond), "p95-ms")
-	b.ReportMetric(float64(durationPercentile(sorted, 99))/float64(time.Millisecond), "p99-ms")
+	metric := func(name string) string {
+		if prefix == "" {
+			return name
+		}
+		return prefix + "-" + name
+	}
+	b.ReportMetric(float64(median)/float64(time.Millisecond), metric("p50-ms"))
+	b.ReportMetric(float64(durationPercentile(sorted, 95))/float64(time.Millisecond), metric("p95-ms"))
+	b.ReportMetric(float64(durationPercentile(sorted, 99))/float64(time.Millisecond), metric("p99-ms"))
 	deviations := make([]time.Duration, len(values))
 	for i, value := range values {
 		deviations[i] = absoluteDuration(value - median)
 	}
 	sort.Slice(deviations, func(i, j int) bool { return deviations[i] < deviations[j] })
-	b.ReportMetric(float64(durationPercentile(deviations, 95))/float64(time.Microsecond), "latency-jitter-p95-us")
+	b.ReportMetric(float64(durationPercentile(deviations, 95))/float64(time.Microsecond), metric("latency-jitter-p95-us"))
 }
 
 func reportDurationPercentiles(b *testing.B, values []time.Duration, prefix string) {

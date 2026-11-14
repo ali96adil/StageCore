@@ -115,6 +115,46 @@ The isolated six-case safety benchmark took 23.33 seconds wall (18.92 user,
 RSS, including migration and setup. Only the timed operation window contributes
 to its GC and allocation metrics.
 
+### Simultaneous Mixed-Cue GO burst · 2026-11-14
+
+`BenchmarkMixedCueBurst` starts 4 or 8 independent GO requests together, each
+in its own `SIMULATION` Session against the same immutable Snapshot. Every GO
+executes a six-Cue linked compound chain with 24 heterogeneous Actions. The
+Digital Twin handles every Action; the guarded physical executor stayed at
+zero. Each case used 100 bursts on the Apple M3 Max (`darwin/arm64`, Go 1.27.1)
+with `-cpu=1,4`. The Engine boundary includes SQLite-backed reservations,
+schedule, simulated Action execution, event persistence and terminal results;
+HTTP, ACL and physical/external adapter time are excluded.
+
+| Concurrent GO / Go CPUs | GO P50 / P95 / P99 | GO latency jitter P95 | Burst P50 / P95 / P99 | Burst jitter P95 |
+| --- | ---: | ---: | ---: | ---: |
+| 4 / 1 | 31.83 / 37.40 / 39.68 ms | 6.611 ms | 40.23 / 42.31 / 43.79 ms | 3.563 ms |
+| 4 / 4 | 42.53 / 45.48 / 48.57 ms | 12.741 ms | 44.33 / 45.89 / 48.58 ms | 1.969 ms |
+| 8 / 1 | 61.56 / 73.30 / 78.02 ms | 13.265 ms | 81.65 / 83.75 / 85.91 ms | 2.389 ms |
+| 8 / 4 | 80.26 / 92.53 / 97.27 ms | 41.194 ms | 91.13 / 94.65 / 101.00 ms | 9.953 ms |
+
+| Concurrent GO / Go CPUs | Start skew P50 / P95 / P99 | GC / burst | GC pause / burst | Allocations / burst |
+| --- | ---: | ---: | ---: | ---: |
+| 4 / 1 | 2.255 / 4.248 / 4.743 ms | 0.72 | 13.25 µs | 1,799,638 B; 33,200 allocs |
+| 4 / 4 | 2.708 / 8.709 / 11.290 ms | 0.88 | 29.93 µs | 1,903,990 B; 35,272 allocs |
+| 8 / 1 | 4.755 / 9.347 / 10.131 ms | 1.34 | 23.77 µs | 3,600,295 B; 66,424 allocs |
+| 8 / 4 | 5.875 / 12.170 / 18.000 ms | 1.77 | 60.14 µs | 3,809,552 B; 70,550 allocs |
+
+GO latency percentiles aggregate 400 samples at concurrency 4 and 800 at
+concurrency 8. Burst percentiles use 100 samples per row, so P99 is the
+nearest-rank top sample and is a tail-stress indicator, not a stable SLO
+estimate. Start skew is worker start time relative to the shared release
+barrier; authored per-Cue delay jitter is measured separately above. The
+combined command took 27.33 seconds wall (13.31 user CPU, 12.17 system CPU)
+and peaked at 224,460,800 bytes (about 214.1 MiB) process-tree RSS. These are
+whole-command figures including fixture setup and database migrations, not
+Hub service CPU or RAM. No optimization is justified by this Mac-only result.
+
+The Pi 4 burst/sustained gate remains open. The qualification SSH alias failed
+with `websocket: bad handshake` before opening a remote shell; no remote command
+ran. This benchmark is an additional M3 baseline only and does not qualify
+Raspberry Pi performance.
+
 ### Sustained Rehearsal sequence
 
 `TestSustainedReferenceRehearsalRuns100Cues200Actions` and
@@ -190,6 +230,11 @@ authorization report and are not inferred from this Mac run.
   missing/disabled children, multiple parents and cycles.
 - `TestMixedCueNestedCompoundChainRunsOnlyInSimulation` passed: all six linked
   Cues and 24 Action executions completed, with zero physical-executor calls.
+- `TestMixedCueBurstRunsOnlyInSimulation` passed with eight independent
+  sessions, 192 completed Action executions, and a zero physical-executor
+  tripwire. `go test -race ./internal/cueengine -run
+  '^TestMixedCueBurstRunsOnlyInSimulation$' -count=1` is the focused race gate
+  for this concurrent workload.
 - `TestReference100Cue200ActionLinkedChainRunsOnlyInSimulation` passed with
   99 linked children and 200 completed persisted Actions; the physical
   executor tripwire stayed at zero.

@@ -31,6 +31,17 @@ async function securityLoad() {
     api("/api/v1/security/companions/pairing/pending"),
     api("/api/v1/security/companions"),
   ]);
+  let projectAccess = null;
+  try {
+    const preview = await api("/api/v1/project-access/cutover-preview");
+    if (preview?.enforced === false) {
+      const projectList = await api("/api/v1/projects");
+      projectAccess = { projects: projectList.projects || [], enforced: false };
+    }
+  } catch (_) {
+    // The grant routes stay absent from production until the complete Project
+    // ACL cutover is approved. Keep Security usable when opt-in routes are off.
+  }
   return {
     secrets: secrets.secrets || [],
     users: users.users || [],
@@ -38,6 +49,7 @@ async function securityLoad() {
     audit: audit.records || [],
     pendingPairing: pairing.requests || [],
     companions: companions.companions || [],
+    projectAccess,
   };
 }
 
@@ -45,6 +57,41 @@ function securityRoleOptions(selected) {
   return ["OWNER", "TECHNICIAN", "OPERATOR", "VIEWER"]
     .map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${role}</option>`)
     .join("");
+}
+
+function securityProjectAccessLevelOptions(role, enabled, currentLevel = "") {
+  const labels = {
+    VIEW: "View",
+    EDIT: "Edit",
+    OPERATE: "Operate",
+    MANAGE: "Manage",
+    NONE: "No Project access",
+    CUSTOM: "Custom fine-grained permissions",
+  };
+  const scopedOperator = role === "OPERATOR" || role === "TECHNICIAN";
+  const allowed = !enabled || (!scopedOperator && role !== "VIEWER") ? ["NONE"]
+    : role === "VIEWER" ? ["VIEW", "NONE"]
+      : ["VIEW", "EDIT", "OPERATE", "MANAGE", "NONE"];
+  const knownCurrent = Object.prototype.hasOwnProperty.call(labels, currentLevel) ? currentLevel : "";
+  const currentUnavailable = knownCurrent && !allowed.includes(knownCurrent);
+  const placeholder = currentUnavailable
+    ? `<option value="${knownCurrent}" selected disabled>${labels[knownCurrent]} (current)</option>`
+    : knownCurrent ? "" : `<option value="" selected disabled>Choose a level</option>`;
+  return placeholder + allowed.map((level) =>
+    `<option value="${level}" ${level === knownCurrent ? "selected" : ""}>${labels[level]}</option>`
+  ).join("");
+}
+
+function securityProjectAccessLevelDescription(level) {
+  const descriptions = {
+    VIEW: "View Project information and read assigned media.",
+    EDIT: "View, edit Project/Cues, and upload media.",
+    OPERATE: "Run Rehearsal/SHOW, STOP and Emergency Blackout, and control assigned lighting/audio.",
+    MANAGE: "Edit and operate; publish Snapshots, configure devices, manage media, rename Projects, and export Capsules. Only the Owner can grant access or manage memberships.",
+    NONE: "Remove this account's Project membership and grants.",
+    CUSTOM: "This account has fine-grained custom permissions. Use the qualified grant API to inspect or change individual capabilities.",
+  };
+  return descriptions[level] || "Load the current access level before making a change.";
 }
 
 async function renderSecurity() {
@@ -55,6 +102,8 @@ async function renderSecurity() {
   const model = await securityLoad();
   const trustedCompanions = model.companions.filter((companion) => companion.trust_state === "TRUSTED");
   const historicalCompanions = model.companions.filter((companion) => companion.trust_state !== "TRUSTED");
+  const projectAccessAvailable = model.projectAccess?.enforced === false;
+  const projectAccessUsers = model.users.filter((user) => user.role !== "OWNER");
   content.innerHTML = `
     <div class="page-head">
       <div><p class="eyebrow">HUB SECURITY</p><h1>Security operations</h1><p>Secrets, users, first-party Plugin permissions and append-oriented audit records stay local to this Hub.</p></div>
@@ -109,6 +158,21 @@ async function renderSecurity() {
             </div>
           </div>`).join("")}
       </div>
+      ${projectAccessAvailable ? `
+        <section class="action-editor" style="margin-top:16px">
+          <div class="section-title-row"><div><p class="eyebrow">PROJECT ACCESS · QUALIFICATION ONLY</p><h3>Project permissions</h3></div>${pill("PREPARED · NOT ENFORCED", "warn")}</div>
+          <p class="muted">These grants are stored by the opt-in qualification API but are not enforced by this Hub. Do not rely on them to restrict Project, Cue, Vault, device, or Show access. A separate reviewed cutover is required.</p>
+          ${model.projectAccess.projects.length && projectAccessUsers.length ? `
+            <form id="projectAccessGrantForm" class="form-grid three" style="margin-top:12px">
+              <label>Project<select id="projectAccessProject" required><option value="" selected disabled>Choose a Project</option>${model.projectAccess.projects.map((project) => `<option value="${esc(project.project_id)}">${esc(project.name)}</option>`).join("")}</select></label>
+              <label>Account<select id="projectAccessUser" required><option value="" selected disabled>Choose an account</option>${projectAccessUsers.map((user) => `<option value="${esc(user.user_id)}" data-role="${esc(user.role)}" data-enabled="${String(!!user.enabled)}">${esc(user.username)} · ${esc(user.role)}${user.enabled ? "" : " · disabled"}</option>`).join("")}</select></label>
+              <label>Access level<select id="projectAccessLevel" disabled required><option value="" selected disabled>Load current access first</option></select></label>
+              <div class="toolbar"><button id="loadProjectAccess" class="button ghost" type="button">Load current access</button><button id="saveProjectAccess" class="button primary" type="submit" disabled>Save prepared access</button></div>
+            </form>
+            <p id="projectAccessLevelDescription" class="muted" aria-live="polite" style="margin-top:8px">Load the current access level before making a change.</p>
+            <p id="projectAccessCurrent" class="muted" role="status" aria-live="polite" style="margin-top:10px">Select a Project and account, then load current access.</p>
+          ` : `<div class="empty" style="margin-top:12px">An account and Project are required to review prepared grants.</div>`}
+        </section>` : ""}
     </article>
 
     <article class="card" style="margin-top:16px">
@@ -203,6 +267,94 @@ async function renderSecurity() {
       setMessage(globalMessage, "Local session renewed; the previous session credential is revoked.", "good");
     } catch (error) { securityError(error); }
   });
+  const projectAccessForm = el("projectAccessGrantForm");
+  if (projectAccessForm) {
+    const projectSelect = el("projectAccessProject");
+    const userSelect = el("projectAccessUser");
+    const levelSelect = el("projectAccessLevel");
+    const loadButton = el("loadProjectAccess");
+    const saveButton = el("saveProjectAccess");
+    const levelDescription = el("projectAccessLevelDescription");
+    const currentStatus = el("projectAccessCurrent");
+    let loadedTarget = "";
+    const targetKey = () => `${projectSelect.value}/${userSelect.value}`;
+    const canSaveLoadedLevel = () => {
+      const selectedUser = projectAccessUsers.find((user) => user.user_id === userSelect.value);
+      return loadedTarget === targetKey() && !!levelSelect.value && levelSelect.value !== "CUSTOM" &&
+        (!!selectedUser?.enabled || levelSelect.value === "NONE");
+    };
+    const resetLoadedAccess = () => {
+      loadedTarget = "";
+      levelSelect.disabled = true;
+      levelSelect.innerHTML = `<option value="" selected disabled>Load current access first</option>`;
+      saveButton.disabled = true;
+      levelDescription.textContent = securityProjectAccessLevelDescription("");
+      currentStatus.textContent = "Select a Project and account, then load current access.";
+    };
+    projectSelect.addEventListener("change", resetLoadedAccess);
+    userSelect.addEventListener("change", resetLoadedAccess);
+    levelSelect.addEventListener("change", () => {
+      levelDescription.textContent = securityProjectAccessLevelDescription(levelSelect.value);
+      saveButton.disabled = !canSaveLoadedLevel();
+    });
+    loadButton.addEventListener("click", async () => {
+      const projectID = projectSelect.value;
+      const userID = userSelect.value;
+      const requestedTarget = targetKey();
+      if (!projectID || !userID) {
+        currentStatus.textContent = "Choose both a Project and account first.";
+        return;
+      }
+      loadButton.disabled = true;
+      saveButton.disabled = true;
+      try {
+        const access = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/access/users/${encodeURIComponent(userID)}`);
+        if (access.enforced !== false || access.phase !== "PREPARED_NOT_ENFORCED") {
+          throw new Error("The Project grant API did not confirm its not-enforced qualification state.");
+        }
+        if (targetKey() !== requestedTarget) {
+          resetLoadedAccess();
+          currentStatus.textContent = "Selection changed while loading. Load access again.";
+          return;
+        }
+        const user = projectAccessUsers.find((candidate) => candidate.user_id === userID);
+        levelSelect.innerHTML = securityProjectAccessLevelOptions(user?.role || "VIEWER", !!user?.enabled, access.access_level || "CUSTOM");
+        levelSelect.disabled = false;
+        loadedTarget = requestedTarget;
+        levelDescription.textContent = securityProjectAccessLevelDescription(levelSelect.value);
+        currentStatus.textContent = `Current: ${access.access_level || "CUSTOM"}. Fine-grained permissions: ${(access.permissions || []).join(", ") || "none"}. Stored grants are not enforced.`;
+        saveButton.disabled = !canSaveLoadedLevel();
+      } catch (error) {
+        resetLoadedAccess();
+        currentStatus.textContent = errorMessage(error);
+      } finally {
+        loadButton.disabled = false;
+      }
+    });
+    projectAccessForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!canSaveLoadedLevel()) return;
+      const projectID = projectSelect.value;
+      const userID = userSelect.value;
+      const level = levelSelect.value;
+      if (!confirm(`Store ${level} access for this account? These grants remain PREPARED_NOT_ENFORCED and do not restrict this Hub.`)) return;
+      saveButton.disabled = true;
+      try {
+        const result = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/access/users/${encodeURIComponent(userID)}`, {
+          method: "PUT", json: { access_level: level },
+        });
+        if (result.enforced !== false || result.phase !== "PREPARED_NOT_ENFORCED") {
+          throw new Error("The Project grant API did not confirm its not-enforced qualification state.");
+        }
+        currentStatus.textContent = `Saved ${result.access_level}. PREPARED_NOT_ENFORCED. Fine-grained permissions: ${(result.permissions || []).join(", ") || "none"}.`;
+      } catch (error) {
+        currentStatus.textContent = errorMessage(error);
+        securityError(error);
+      } finally {
+        saveButton.disabled = !canSaveLoadedLevel();
+      }
+    });
+  }
   el("createSecretForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
