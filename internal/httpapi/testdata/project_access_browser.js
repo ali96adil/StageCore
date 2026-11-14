@@ -38,12 +38,23 @@
     sessionStorage.setItem("stagecore_csrf", state.csrf);
     window.confirm = () => true;
     showApp();
+    let sawTouchPointer = false;
+    document.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") sawTouchPointer = true;
+    }, true);
 
     const securityButton = document.getElementById("securityNav");
     if (!securityButton || securityButton.classList.contains("hidden")) {
       throw new Error("Owner Security navigation is unavailable");
     }
-    securityButton.click();
+    const securityRect = securityButton.getBoundingClientRect();
+    const touchResponse = await fetch("/project-access-browser-touch-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: securityRect.left + securityRect.width / 2, y: securityRect.top + securityRect.height / 2 }),
+    });
+    if (!touchResponse.ok) throw new Error(`emulated touch request returned HTTP ${touchResponse.status}`);
+    const touchActivated = sawTouchPointer;
+    if (!touchActivated) throw new Error("Project Access navigation did not receive a touch pointer event");
     await waitFor(() => !!document.getElementById("projectAccessGrantForm"), "prepared Project grant editor");
     if (!document.getElementById("content").innerText.includes("not enforced by this Hub")) {
       throw new Error("grant editor did not explain that saved access is not enforced");
@@ -120,7 +131,7 @@
       enforced: readback.enforced, warning_shown: document.getElementById("content").innerText.includes("not enforced by this Hub"),
       unsafe_call: unsafeCall, rtl: getComputedStyle(form).direction === "rtl", fields_stack: fieldsStack,
       page_overflow: pageOverflow, keyboard_focusable: keyboardFocusable, tab_traversal: tabTraversal,
-      focus_visible: focusVisible,
+      focus_visible: focusVisible, touch_activated: touchActivated,
       viewport_width: document.documentElement.clientWidth, requests: requestTrace,
     });
   } catch (error) {

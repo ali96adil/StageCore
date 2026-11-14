@@ -388,32 +388,49 @@ func connectChromePage(ctx context.Context, profileDir, pageURL string) (*websoc
 func dispatchChromeTab(conn *websocket.Conn) error {
 	for id, eventType := range []string{"keyDown", "keyUp"} {
 		commandID := id + 1
-		command := map[string]any{
-			"id":     commandID,
-			"method": "Input.dispatchKeyEvent",
-			"params": map[string]any{
-				"type": eventType, "key": "Tab", "code": "Tab",
-				"windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
-			},
-		}
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-		if err := websocket.JSON.Send(conn, command); err != nil {
+		if err := chromeDevToolsCommand(conn, commandID, "Input.dispatchKeyEvent", map[string]any{
+			"type": eventType, "key": "Tab", "code": "Tab",
+			"windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
+		}); err != nil {
 			return err
 		}
-		var response struct {
-			ID    int `json:"id"`
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
+	}
+	return nil
+}
+
+func dispatchChromeTouch(conn *websocket.Conn, x, y float64) error {
+	if err := chromeDevToolsCommand(conn, 10, "Emulation.setTouchEmulationEnabled",
+		map[string]any{"enabled": true, "maxTouchPoints": 1}); err != nil {
+		return err
+	}
+	point := map[string]any{"x": x, "y": y, "radiusX": 1, "radiusY": 1, "force": 1, "id": 1}
+	if err := chromeDevToolsCommand(conn, 11, "Input.dispatchTouchEvent",
+		map[string]any{"type": "touchStart", "touchPoints": []any{point}}); err != nil {
+		return err
+	}
+	return chromeDevToolsCommand(conn, 12, "Input.dispatchTouchEvent",
+		map[string]any{"type": "touchEnd", "touchPoints": []any{}})
+}
+
+func chromeDevToolsCommand(conn *websocket.Conn, id int, method string, params map[string]any) error {
+	command := map[string]any{"id": id, "method": method, "params": params}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := websocket.JSON.Send(conn, command); err != nil {
+		return err
+	}
+	var response struct {
+		ID    int `json:"id"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	for response.ID != id {
+		if err := websocket.JSON.Receive(conn, &response); err != nil {
+			return err
 		}
-		for response.ID != commandID {
-			if err := websocket.JSON.Receive(conn, &response); err != nil {
-				return err
-			}
-		}
-		if response.Error != nil {
-			return fmt.Errorf("Chrome DevTools command failed: %s", response.Error.Message)
-		}
+	}
+	if response.Error != nil {
+		return fmt.Errorf("Chrome DevTools command failed: %s", response.Error.Message)
 	}
 	return nil
 }

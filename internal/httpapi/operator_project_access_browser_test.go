@@ -83,6 +83,10 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	focusRequests := make(chan chan struct{}, 1)
+	touchRequests := make(chan struct {
+		x, y   float64
+		resume chan struct{}
+	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -109,6 +113,30 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 			resume := make(chan struct{})
 			select {
 			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/project-access-browser-touch-ready":
+			var request struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				request.X < 0 || request.X > 390 || request.Y < 0 || request.Y > 844 {
+				http.Error(w, "invalid touch test coordinates", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case touchRequests <- struct {
+				x, y   float64
+				resume chan struct{}
+			}{x: request.X, y: request.Y, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -177,6 +205,11 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
 			}
 			close(resume)
+		case request := <-touchRequests:
+			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
+				t.Fatalf("send emulated touch to isolated Chrome: %v", err)
+			}
+			close(request.resume)
 		case err := <-done:
 			exited = true
 			output, _ := os.ReadFile(browserLog.Name())
@@ -199,13 +232,14 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		KeyboardFocusable bool   `json:"keyboard_focusable"`
 		TabTraversal      bool   `json:"tab_traversal"`
 		FocusVisible      bool   `json:"focus_visible"`
+		TouchActivated    bool   `json:"touch_activated"`
 		ViewportWidth     int    `json:"viewport_width"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil || report.Status != "PASS" {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	if report.AccessLevel != "OPERATE" || report.Phase != "PREPARED_NOT_ENFORCED" || report.Enforced ||
-		!report.WarningShown || report.UnsafeCall || !report.RTL || !report.FieldsStack ||
+		!report.WarningShown || report.UnsafeCall || !report.RTL || !report.FieldsStack || !report.TouchActivated ||
 		report.PageOverflow || !report.KeyboardFocusable || !report.TabTraversal || !report.FocusVisible || report.ViewportWidth > 560 || report.ViewportWidth < 1 {
 		t.Fatalf("browser report crossed its prepared-only boundary: %+v", report)
 	}
