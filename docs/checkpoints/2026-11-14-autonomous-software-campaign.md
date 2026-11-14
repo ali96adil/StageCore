@@ -3599,3 +3599,28 @@ This entry supersedes the preceding push instruction.
   confirmation.
 - Safety limits remain unchanged: no production service/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
+
+## Resume update — 2026-11-14 22:54 UTC · Core browser gate repair
+
+- PR #534 and `origin/integration/stagecore-rc` remain at
+  `774414d6a8c2ab6c4c597f886eb0dd7e5bfea9bc`; local HEAD is `0ac5d50` with
+  this browser-gate repair still uncommitted. Core run `43649877977` completed
+  with failure only in Go 1.26 Browser Cue Delivery. Its Go 1.26 Test and
+  Go 1.27 Test/Vet passed. Companion Core `43649877980` and Camera Relay
+  `43649877969` passed. All workflows are now completed; no new commit has
+  been pushed since the failure.
+- Failure was reproduced locally with Chrome. The new Session Memory browser
+  fixture called `sessionEventTimelineMarkup`, which uses the app's `fmtDate`
+  helper, but the test page had not defined that app-provided helper. The
+  fixture now provides the same date-format contract and reports uncaught
+  browser exceptions directly to the Go test instead of timing out without a
+  JavaScript error. The exact seven-test Browser Cue Delivery command passed
+  locally on Go 1.27.1, macOS ARM64; `go vet ./internal/httpapi` and
+  `git diff --check` passed.
+- Next: commit this focused harness repair and checkpoint, verify PR/remote
+  heads and absence of active Core CI again, then push normally to #534. Wait
+  for Go 1.26 Browser Cue Delivery and the rest of exact-head Core CI before
+  any subsequent push. The Companion transport timeline work is deferred until
+  this CI regression is cleared.
+- Safety limits remain unchanged: no production service/data/Vault, real
+  device commands, firmware, production ACL activation, force push or merge.
