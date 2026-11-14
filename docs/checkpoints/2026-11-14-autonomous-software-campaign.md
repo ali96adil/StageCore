@@ -259,3 +259,113 @@ This is the latest checkpoint; it supersedes the previous resume action.
 - No Pi qualification became available. Production services/data/Vault remain
   untouched; no device commands, firmware flash, merge, force push or
   production Project ACL enablement occurred.
+
+## Resume update — 2026-11-14 01:16 UTC
+
+This checkpoint records the local SC-013 follow-on. The remote CI state below
+is for the last pushed HEAD and does not include these local edits.
+
+- Branch: `integration/stagecore-rc`; last pushed Remote HEAD remains
+  `f64cde026a0fe890eb39e0b0fee89eda7af84d9d` on Draft PR #534. Local commit
+  `e5fd6f1` contains the SC-013 Cue Inspector feature and tests. Uncommitted
+  work also contains the SC-020 SQLite restart regression and updated matrix
+  and checkpoint. Preserve all of it.
+- Exact pushed-head CI: Go 1.27, isolated tests/ARM64, real macOS Companion
+  replacement/media and Swift CompanionCore pass. Go 1.26 unit tests, Browser
+  Cue Delivery and Vet pass; its Race tests are still in progress. **Wait for
+  run `43538108851` to finish before pushing.**
+- SC-013 now has a local-only Draft timeline for linked Mixed Cues. It models
+  independent GO-relative Cue delays, per-Action delay before dispatch,
+  SEQUENTIAL completion, PARALLEL fan-out and barrier joins. It includes
+  authored `fade_ms` and timeout values, virtual offline target, missing
+  Companion for known MACHINE_ROLE targets, missing DMX for lighting actions,
+  and fixed assumed latency. Unknown target metadata is labeled unverified.
+  Fail-soft errors continue; strict `FAIL_CUE` and fatal pending failures stop
+  later work at the engine's corresponding sequential/barrier boundary. The
+  UI says explicitly that this does not prove dispatch, application ACK or
+  physically observed output. The planner contains no API call and sends no
+  device command.
+- Local tests: `node --test tests/lighting_preview.test.js
+  tests/cue_list_filters.test.js` passed 16 tests, including linked Mixed Cue
+  timing, target fault reasons, timeout, fail-soft/strict policy and large
+  120-Cue/240-Action filtering. The Cue Studio Go contract passed and
+  `go vet ./internal/operatorweb ./internal/cueengine` passed. `node --check`
+  and `git diff --check` passed. No browser-based accessibility/RTL/LTR
+  acceptance is claimed.
+- Remaining SC-013 work: fixed latency is an explicit hypothetical, not a
+  measured distribution; the no-latency schedule is a lower bound because
+  capability completion time is unknown; fade planning currently recognizes
+  `fade_ms`; fresh target metadata and real-browser interaction still need
+  qualification.
+- No Pi identity was established. Existing Mac performance measurements are
+  recorded in the qualification report and were not repeated. Do not infer Pi
+  performance from ARM64 cross-builds. No production service/data/Vault,
+  physical output, firmware flash, force push, merge, or production ACL change
+  occurred.
+- Next: wait for the exact-head Go 1.26 Race job. If the entire pushed-head CI
+  is green, commit the tested docs and SC-020 regression, push normally to the
+  same branch/PR, then follow exact-head CI. Continue with SC-002 only
+  beyond the existing #504/#505 status/preview work and with SC-024 isolated
+  tests; keep production clock writes and Project ACL activation out of scope.
+
+## Resume update — 2026-11-14 01:20 UTC
+
+- Local commit `e5fd6f1dd1feb3c6b73017d2e62b112c04ad9f39` is the tested SC-013
+  Draft path simulation; it is not pushed yet. Matrix/handoff edits and the
+  SC-020 restart test remain uncommitted. Remote HEAD is still `f64cde0`.
+- The SC-020 test `TestTimingCapturePauseSurvivesRestartClockJumpAndKeepsGOAvailable`
+  closes and reopens the isolated SQLite DB while an active rehearsal is
+  paused. It verifies paused state survives, duplicate Pause is idempotent,
+  a simulated backward clock correction does not change event-order state, the first
+  post-Resume observation reanchors, and the next positive 2-second interval
+  is the only learned transition. Store records are retained; there is no
+  OS/system clock write. Full `go test ./internal/timingintelligence`, focused
+  Race, Vet and `git diff --check` passed.
+- A separate Runtime Control/Cue Engine regression completes a simulated GO
+  while capture is paused and verifies the raw timing event remains visible
+  but is excluded from learning. The authenticated timing API test verifies
+  Owner + CSRF can pause and rejects Viewer or missing-CSRF writes. Focused
+  normal/Race tests and `go vet ./internal/runtimecontrol ./internal/httpapi`
+  pass.
+- Initial test assertion incorrectly expected the first post-Resume Cue to be
+  trainable; it correctly remains excluded for reanchoring. No production code
+  defect was found. Real-browser interaction and Pi clock qualification remain
+  open.
+- Exact remote run `43538108851` is still waiting on Go 1.26 Race; all other
+  jobs previously listed for `f64cde0` passed. Do not push until this run is
+  complete.
+- Next: finish the Go 1.26 Race check; if green, commit the pending SC-020
+  Store/Runtime Control/HTTP regressions and qualification docs, push the local
+  commit group to the existing branch, and monitor exact-head CI. Continue
+  SC-002 beyond #504/#505 with browser/Pi qualification still open.
+
+## Resume update — 2026-11-14 01:25 UTC
+
+This section supersedes the 01:20 local-work pointers above.
+
+- Branch: `integration/stagecore-rc`; pushed Remote HEAD remains
+  `f64cde026a0fe890eb39e0b0fee89eda7af84d9d`, Draft PR #534. Local HEAD is
+  `68a64c967f22c23cb33a5b6dbec409ee38c146fe`, two commits ahead:
+  `e5fd6f1` local SC-013 path simulation and `68a64c9` SC-020 pause/lifecycle
+  regressions. Matrix and handoff documentation are the only uncommitted
+  changes. No pre-existing user edits were overwritten.
+- Core CI run `43538108851` is still active at Go 1.26 Race. Go 1.27,
+  isolated tests/ARM64, macOS Companion/media and Swift CompanionCore pass;
+  Go 1.26 test, Browser Cue Delivery and Vet pass. Do not push until the exact
+  run finishes.
+- SC-020 tests now include active SQLite close/reopen, idempotent Pause,
+  simulated wall-clock rollback while paused, pause reanchor, one valid
+  post-resume interval, actual simulated Runtime Control/Cue Engine GO while
+  capture is paused, and HTTP Owner+CSRF authorization versus Viewer/missing
+  CSRF rejection. `go test` for `timingintelligence`, `runtimecontrol` and the
+  focused `httpapi` route passed; focused Race runs and Vet passed. The GO test
+  uses only the registered simulator adapter; raw timing evidence is retained
+  but excluded from learning while paused.
+- SC-013 and SC-020 remain partial overall: real-browser keyboard/touch/RTL
+  review is pending; SC-013 assumed latency is not measured endpoint timing;
+  Pi 4 qualification is blocked on a verified isolated host identity. No
+  production clock write, ACL activation, real output, force push or merge.
+- Next: wait for the Go 1.26 Race job. If run `43538108851` is green, commit
+  the pending matrix/handoff edits and push both local feature/test commits
+  normally to the existing branch/PR. Then monitor all checks for the exact
+  new HEAD before starting another push; continue with SC-002 beyond #504/#505.
