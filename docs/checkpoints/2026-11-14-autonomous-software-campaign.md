@@ -1042,3 +1042,34 @@ This entry supersedes the preceding push instruction.
   durable history and SC-010 preset portability after that. Keep production
   Hub/Relay/show/Vault data untouched, all physical outputs simulated, and
   production Project ACL disabled.
+
+## Resume update — 2026-11-14 04:08 UTC · nested Mixed-Cue round trip
+
+- Local source/test HEAD is `0435b0e8c8b9d0a2d24c95d54118f47c2c4a6283`;
+  pushed branch and PR #534 remain at `ce927d63e5f37f6a02d6a745b98567f9eb9928d5`.
+  The three local commits are `4e89372` (preserve unknown typed OSC/MIDI
+  metadata), `9c9c299` (SC-008 checkpoint), and `0435b0e` (nested Mixed-Cue
+  round-trip test). A matrix/handoff refresh is being committed with this entry.
+- `tests/cue_studio_roundtrip.test.js` exercises the actual Cue editor submit
+  handler for edit (PUT) and creation (POST), saves five mixed Actions across
+  OSC, MIDI, Lighting, Tablet and Laser in a three-level linked group, checks
+  order, barriers, start delay, error policy and JSON extension fields, reopens
+  the saved payloads, then runs the Inspector's local no-dispatch plan. API
+  calls are captured by an in-memory stub; outputs are never invoked.
+- The full Node suite passes 58/58. The prior SC-008 implementation batch also
+  passed Operator Web package tests, Race, Vet, both relevant JavaScript syntax
+  checks and `git diff --check`.
+- At 04:08 UTC exact-head Core `43553686731` on remote `ce927d6` remains in Go
+  1.26; Go 1.27 is green. Companion `43553686720` and Camera Relay
+  `43553686712` are green. No push until exact-head Core completes; re-read
+  remote before a normal fast-forward push of the accumulated tested commits.
+- Strict read-only SSH to `stagecore-qualification` still fails before host
+  identity with `websocket: bad handshake`; no remote command ran. Pi 4 full
+  Engine, burst/sustained P95/P99/Jitter, and CPU/RAM qualification remain
+  open. No Mac or CI ARM64 value is substituted for Pi runtime evidence.
+- SC-008's nested mixed create/edit/save/reopen/preview software-model gap is
+  now covered. First next implementation/qualification task is SC-009 undo/
+  redo across Mixed Action edits, ordering, Cue links, reload and overlapping
+  tabs; durable named checkpoints remain open only if the existing recovery
+  workflow cannot meet that acceptance. Production/data/device/ACL boundaries
+  remain unchanged.
