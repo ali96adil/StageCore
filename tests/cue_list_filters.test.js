@@ -120,3 +120,31 @@ test("saved filters are isolated by Project and malformed storage fails open", (
   view.values.set("stagecore.cue-list.filters.v1:broken", "{");
   assert.equal(view.context.readCueListFilters("broken").type, "all");
 });
+
+test("large linked Mixed-Cue lists remain searchable without changing sequence order", () => {
+  const large = Array.from({length: 120}, (_, index) => ({
+    cue_id: `scale-${index + 1}`,
+    order_index: index + 1,
+    display_label: `Q${index + 1}`,
+    name: `Scale Cue ${index + 1}`,
+    notes_summary: "",
+    enabled: true,
+    cue_type: "STANDARD",
+    execution_policy: index < 119 ? {linked_cue_ids: [`scale-${index + 2}`]} : {},
+    actions: [
+      {action_id: `midi-${index}`, capability_key: "midi.send", target_ref: `MIDI-${index}`},
+      {action_id: `osc-${index}`, capability_key: "osc.send", target_ref: index === 119 ? "ENDPOINT-120" : `OSC-${index}`},
+    ],
+  }));
+  const view = makeView(large, "large-show");
+  const sequence = view.rows.map((row) => row.dataset.cueId);
+  view.controls.cueListSearch.value = "endpoint-120";
+  view.context.applyCueListFilters();
+  assert.equal(view.rows.filter((row) => !row.hidden).length, 120);
+  view.controls.cueListSearch.value = "";
+  view.controls.cueListTypeFilter.value = "mixed";
+  view.context.applyCueListFilters();
+  assert.equal(view.rows.filter((row) => !row.hidden).length, 120);
+  assert.deepEqual(view.rows.map((row) => row.dataset.cueId), sequence);
+  assert.equal(large.reduce((count, cue) => count + cue.actions.length, 0), 240);
+});
