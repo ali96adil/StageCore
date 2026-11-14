@@ -1,16 +1,16 @@
 # StageCore software completion matrix
 
 Reviewed against local `integration/stagecore-rc` HEAD
-`6b3fb1280abd43d4736c64ba5a7d93837960f2d2`, pushed HEAD
-`f64cde026a0fe890eb39e0b0fee89eda7af84d9d`, Issue #486 and child Issues
+`66ea389` (full commit in the campaign handoff), pushed HEAD
+`c9f2d47487bc90aaee80b6705a8fefab898c65a5`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 01:35 UTC, exact pushed-head Core run `43538108851` completed
-successfully, including Go 1.26 Race and Linux ARM64 builds. Local follow-ons
-in the handoff are not part of this remote run; the completed result now
-permits the normal push of the reviewed local group. This matrix keeps
-software evidence separate from installed application and physical
-qualification.
+At 2026-11-14 01:49 UTC, exact pushed-head Core run `43542130109` has passed
+Go 1.27, Browser Cue Delivery, Vet and Go 1.26 normal tests; Go 1.26 Race is
+still running. Companion/Swift run `43542130081` and isolated/ARM64 run
+`43542130095` passed. Local follow-ons in the handoff are not part of this
+remote CI. This matrix keeps software evidence separate from installed
+application and physical qualification.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
 qualification.

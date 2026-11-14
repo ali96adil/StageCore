@@ -483,3 +483,21 @@ This entry supersedes the preceding push instruction.
 - Next: commit this small fix and docs to the existing local chain, keep
   auditing software gaps while `c9f2d47` CI runs, and push only after its exact
   Core CI run completes. Production ACL stays disabled.
+
+## Resume update — 2026-11-14 01:50 UTC
+
+- Revocation fix is committed locally as
+  `66ea38979ac03ca47193c33c9a6a909ab18bb7b9`; local HEAD is `66ea389`, remote
+  remains `c9f2d47487bc90aaee80b6705a8fefab898c65a5`. The branch is two commits
+  ahead. The only uncommitted change updates the matrix's reviewed HEAD/CI
+  state.
+- Exact remote Core run `43542130109` remains active in Go 1.26 Race. Go 1.27,
+  Go 1.26 normal tests/Browser Cue Delivery/Vet, Companion/Swift and isolated
+  ARM64 pass. No further push before Race completes.
+- Red-first disabled-user revoke regression, service/API tests, full
+  `projectaccess` and `httpapi` package tests, focused Race, Vet and
+  `git diff --check` all pass locally. Temporary disable/re-enable without an
+  Owner revoke remains unchanged and retains its stored grants.
+- Next: commit this documentation checkpoint locally, then continue the ACL
+  route audit or another verified software gap while waiting for exact-head
+  CI. Push the local group only after run `43542130109` completes.
