@@ -1598,3 +1598,15 @@ grant revoked after commit suppresses the checkpoint result while retaining
 the committed checkpoint truthfully. This feature is part of the staged
 qualification router only; production ACL assembly and activation remain
 unchanged.
+
+## SC-024 continuation · 2026-11-14 · Project Draft history route fence
+
+The new Project Cue Draft history GET/POST routes require the existing
+Project-edit role permission and the qualified `cue.edit` Project grant. Reads
+are `no-store`; writes carry the authenticated actor into the Store and recheck
+the browser session and grant after commit. The Store also verifies write
+authorization in the transaction and applies the active SHOW configuration
+lock. API tests cover two editor scopes, persisted Cue/action identity across
+Undo/Redo, Route-reference conflict and no Snapshot publication. The feature
+is in the staged candidate path only; production ACL assembly and activation
+remain unchanged.

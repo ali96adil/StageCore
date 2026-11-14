@@ -1276,3 +1276,42 @@ This entry supersedes the preceding push instruction.
   `websocket: bad handshake`; no remote command ran. Mac/ARM64 CI is not Pi
   runtime evidence. Production Hub/Relay/data/Vault, real devices and outputs,
   and production SC-024 remain untouched/disabled. No force push or merge.
+
+## Resume update — 2026-11-14 06:22 UTC · Project Cue Draft Undo/Redo
+
+- The current branch is `integration/stagecore-rc`; PR #534 remains open and
+  draft. Local code commits are `dffe840` (persistent Store history and
+  migration 60) and `2715a38` (scoped HTTP API and Draft-only Cue Studio
+  controls). The remote is still `14887b6699709a71f61fd86a68adc38577abb3a2`;
+  these feature commits and the refreshed matrix/SC-024 qualification notes
+  are not pushed yet.
+- Current pushed-head CI finished successfully on exact SHA `14887b6`:
+  Core `43563053431`, Companion `43563053405`, Camera Relay `43563053512`.
+  Confirm the remote SHA still matches before normally pushing the completed
+  feature batch to the same PR. Do not force-push or merge.
+- Migration 60 stores up to 50 actor-scoped Draft operations per revision.
+  Cue create/edit/delete/duplicate/reorder, single Cue Assistant proposals and
+  Cue mutations in atomic Assistant batches now record identity-preserving
+  deltas. Undo/Redo restores Mixed/linked Cue fields, Actions, order and named
+  checkpoints removed by Cue deletion. Hash/cursor checks reject stale edits;
+  SHOW configuration lock remains enforced. Removal conflicts when external
+  Routes/rehearsal records reference the Cue. History covers Cue/Action Draft
+  changes, not unrelated Project objects such as Routes.
+- Verification on the current code: `go test ./internal/db ./internal/store
+  -count=1`, `go test ./internal/httpapi -count=1`, focused Store Race,
+  `go vet ./internal/store ./internal/httpapi`, and
+  `go test ./internal/operatorweb -count=1` passed. `node --test tests/*.test.js`
+  passed 64/64; JS syntax and `git diff --check` passed. Core's next full CI
+  run must validate the commits after push.
+- The opened linked repository PR heads remain those recorded in the previous
+  checkpoint; no linked repo was modified. Pi 4 runtime P95/P99/Jitter remains
+  pending because strict SSH to `stagecore-qualification` failed before host
+  identity (`websocket: bad handshake`); no remote command ran. Do not infer
+  Pi runtime qualification from Mac or cross-build results.
+- Production Hub/Camera Relay/data/Vault, physical devices and outputs remain
+  untouched. Project ACL/SC-024 remains disabled in production.
+- First next action after push: watch Core/Companion/Camera CI on the new exact
+  head and handle any failure before another push. Then continue the highest
+  open software gaps in the matrix; revisit #455 concurrent GO only with a
+  complete tracked-execution/STOP/Blackout/output-conflict design and simulated
+  race/fault coverage. Hardware and release gates do not block software work.
