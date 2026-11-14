@@ -725,3 +725,35 @@ This entry supersedes the preceding push instruction.
   clipboard fallback. Existing tests cover current-user/current-Project
   isolation; check before adding tests so completed behavior is not repeated.
   Keep the hardware, production service/data and ACL restrictions unchanged.
+
+## Resume update — 2026-11-14 02:51 UTC
+
+- Pushed HEAD remains `70a7061d2597e14273fb51468b269c7dff73ea71`; latest local
+  code HEAD is `b6284cb48829614e3119c0e389e711e030f6001f`. Local branch is ahead
+  by two commits (`5822020` checkpoint and `b6284cb` source), and the matrix
+  update is being committed. Do not push before the current exact-head Core CI
+  completes.
+- CI for `70a7061`: Core run `43548179642` passed Go 1.26/1.27 tests, Browser
+  Cue Delivery and Vet; Go 1.26 Race is in progress and ARM64 builds are
+  pending. Companion/Swift `43548179629` and isolated/ARM64 `43548179637` both
+  passed. This is the only current pushed HEAD; the previous `447849f` set is
+  fully green.
+- SC-016 Issue #495 review found the clipboard was already local/offline,
+  scoped to the same User and Project, ID-clearing and cloning on each paste.
+  Its existing test had not covered error policy, mode, priority, enabled
+  state, or target loss. Commit `b6284cb` adds a red-first target-unavailable
+  warning that leaves the pasted action editable, plus coverage for full
+  execution-policy fidelity and suppressing warnings for a configured target.
+  Cross-Project paste is still refused by the existing scope fence.
+- Local checks after SC-016: full Node suite 51/51, focused clipboard suite
+  included in that run, `go test ./internal/operatorweb -count=1`, Cue Studio
+  JS syntax and `git diff --check`. The pre-fix test failed because no target
+  warning was emitted; it passed after the change. The operator is not required
+  to grant native clipboard access.
+- The matrix now records this evidence and keeps multi-select copy and
+  interactive remapping as remaining SC-016 work. First action on resume:
+  poll Core run `43548179642`; when Core Race/ARM64 finish successfully, verify
+  the branch remote remains exactly `70a7061` and fast-forward push the local
+  code/doc batch to PR #534. Then follow exact-head CI before another push.
+  Production ACL remains disabled; no devices, production services or show
+  data were changed.

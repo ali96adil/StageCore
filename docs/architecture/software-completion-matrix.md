@@ -1,19 +1,21 @@
 # StageCore software completion matrix
 
-Reviewed against local code HEAD `dd77070aa05288939240919b51ba73aaac9434b4`
+Reviewed against local code HEAD `b6284cb48829614e3119c0e389e711e030f6001f`
 on `integration/stagecore-rc`, pushed HEAD
 `70a7061d2597e14273fb51468b269c7dff73ea71`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
 The exact pushed-head CI set for `70a7061` started at 2026-11-14 02:47 UTC.
-Core run `43548179642` and Companion/Swift run `43548179629` are in progress;
-isolated/ARM64 run `43548179637` passed. The preceding exact-head Core run
+At 02:51 UTC, Core run `43548179642` had passed Go 1.26/1.27 tests, Browser
+Cue Delivery and Vet; Go 1.26 Race was still running and ARM64 builds were
+pending. Companion/Swift `43548179629` and isolated/ARM64 `43548179637` passed.
+The preceding exact-head Core run
 `43545195433` on `447849f` passed Go 1.26/1.27, Browser Cue Delivery, Vet,
 Race and ARM64 builds; Companion/Swift `43545195409` and isolated/ARM64
-`43545195451` also passed. Eight local code commits (`d67da3c` through
-`dd77070`) and the current documentation update await the new exact-head CI
-before any further push. This matrix keeps software evidence separate from
-installed application and physical qualification.
+`43545195451` also passed. The local SC-016 commit `b6284cb` and this matrix
+update await the new exact-head CI before any further push. This matrix keeps
+software evidence separate from installed application and physical
+qualification.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
 qualification.
@@ -40,7 +42,7 @@ gap or missing implementation remains. Hardware is called out separately.
 | SC-013 · #492 | Explain a Draft Mixed/linked Cue execution plan without actuating hardware. | `cueInspectionTimeline` builds a local Draft-only dispatch schedule across linked Mixed Cues, independent GO-relative Cue delays, action start delays, SEQUENTIAL/PARALLEL/PARALLEL_BARRIER joins, authored `fade_ms`, timeouts, target-map unknowns, and fail-soft/`FAIL_CUE` behavior. Operator-selectable simulations cover a virtual offline target, missing Companion for known MACHINE_ROLE targets, missing DMX for lighting actions, and fixed assumed per-Action latency. The UI explicitly separates simulation from dispatch, application ACK and physical observation. Node tests cover nested branch timing, barriers, fault reasons, strict/fail-soft behavior and prove the planner has no API path; Go Cue Studio contract and `go vet` pass. | **Partial.** Assumed latency is a deterministic what-if input, not a measured distribution; the local schedule is a lower bound when action completion is unknown, and fade rendering currently recognizes `fade_ms` only. Real-browser Draft interaction, target metadata/readiness freshness and full parameter-specific fade planning remain open. | Cue Studio, Cue Engine and Digital Twin. Planner tests use in-memory Cues and loaded configuration metadata only; simulation does not call execution APIs or actuate hardware. |
 | SC-014 · #493 | Cue Inspector with concise action/link/timing/readiness details and safe quick edits. | `cue-studio.js::cueInspector` renders a Cue Inspector/Dry-run and findings; Cue Studio contract coverage exists. | **Partial.** Verify persistent side panel/mobile layout, retained selection, notes and target summaries, unsaved-change guard and accessible quick edits in browser interaction tests. | Cue Studio, validation, responsive Operator UI. No hardware required. |
 | SC-015 · #494 | Real Rehearsal report distinguishing Hub dispatch, Companion receipt and externally observed execution. | `internal/sessionmemory` returns project-scoped Cue/Action traces and ACK-derived delivery evidence; `TRANSPORT_ONLY` stays `EXTERNAL_EXECUTION_UNKNOWN`. The local follow-on adds a whitelisted session/safety/device/simulation event timeline, warning categories/counts without raw warning text, event-category filtering, sanitized JSON export and same-type/same-Project summary comparison including Snapshot match. Go, API, Race, contract and Node tests cover the projection and view. | **Partial.** The current canonical session stream has no per-output connection/health events, so the report cannot show a complete connection timeline; do not infer connectivity from command attempts. Comparison is aggregate, not action-by-action. Keep external execution unknown unless explicit ACK/readback evidence exists. | Runtime Control, Event Store, Companion and adapters. Timeline projection uses recorded events only; actual Ableton reception, endpoint connection state and output confirmation require adapter evidence/supervised integration. |
-| SC-016 · #495 | Copy/paste/duplicate Actions between Cues with safe independent identity and remapping. | `cue-studio.js` has action paste UI and store supports independent Action creation; Cue Studio contract checks. | **Partial.** Test selected-action clipboard, new IDs, payload/timing fidelity, target warnings/remap and unavailable system clipboard fallback. | Cue Studio and Draft Store. No hardware required. |
+| SC-016 · #495 | Copy/paste/duplicate Actions between Cues with safe independent identity and remapping. | Cue Studio uses a session-local clipboard bound to the current User and Project. Serialized copies preserve payload, start-delay/timeout, error policy, execution mode, priority and enabled state; paste clears Action ID and clones per insertion. Pasting warns when the target is absent from the current Project configuration and keeps it editable; tests cover missing/present targets, repeated independent copies and cross-Project/User refusal. No system clipboard permission is needed. | **Partial.** Multi-selected mixed-Action copy and interactive target remapping are not implemented; missing target currently produces an advisory so the operator can edit the Draft. | Cue Studio and Draft Store. Offline software tests only; no hardware required. |
 | SC-017 · #496 | Clear Design/Rehearsal/Show workspaces that expose only appropriate controls. | Existing Operator workspaces, session mode/role gates and Workspace Profile state; `workspace_profile_contract_test.go`, role/SHOW-lock API tests. | **Partial.** Current workspace/profile foundation does not prove the requested end-to-end separation, especially stripped-down Show surface, selected Cue persistence and wrong-button prevention across roles/devices. | Operator shell, runtime, auth. Browser and permission tests; hardware only for final operator rehearsal. |
 | SC-018 · #497 | Responsive layout, screen-space and accessible density across desktop/tablet. | Responsive CSS breakpoints and mobile/touch StageAudio/tablet surfaces exist; static UI contract coverage. | **Partial.** No complete route-by-route visual/keyboard audit or screenshots at target desktop/tablet sizes. Add deterministic layout checks for overflow, focus, contrast and GO/STOP visibility. | All Operator web workspaces. Browser/emulator only; physical tablet fit is deployment acceptance. |
 | SC-019 · #498 | Preview by default; explicit reversible adoption of rehearsal timing into learning. | F-028 timing intelligence, rehearsal purpose/approval API and timing review UI (`internal/timingintelligence`, `internal/store/timing_intelligence.go`, `memory.js`); focused service/store tests. | **Implemented in code; qualify edge cases.** Verify approval/revocation before, during and after a Rehearsal, unchanged raw evidence, repeated approval idempotency and only approved timing entering predictions. | Runtime Control, timing intelligence, Store, Operator UI. No hardware required for contract tests. |
@@ -75,11 +77,13 @@ for virtual offline, missing Companion/DMX, and assumed-latency scenarios.
 SC-011 now detects persisted Draft lighting drift from the selected published
 Snapshot, exports the exact Preflight report, explains RTC/authentication risk,
 and labels MIDI inventory as inventory evidence only. SC-010 now previews saved
-Action preset content and warns when its target is absent. Remaining SC-010 and
-Preflight work and evidence boundaries are in their rows above.
+Action preset content and warns when its target is absent. SC-016's existing
+session-local copy path now warns on unavailable targets and has policy-fidelity
+coverage. Remaining SC-010, SC-016 and Preflight work is in the rows above.
 
-The exact-head Core run on pushed HEAD `447849f` is still running Go 1.26 Race;
-do not push eight local code commits and the checkpoint until that run completes. SC-015 has a
+The exact-head Core run on pushed HEAD `70a7061` is still running Go 1.26 Race;
+do not push local commit `b6284cb` and its checkpoint until that run completes.
+SC-015 has a
 safe event timeline, warning categories, JSON export and summary comparison.
 Its canonical session stream still lacks per-output connection/health events;
 the report must not infer them. SC-012 has synthetic 120/240 linked-list
