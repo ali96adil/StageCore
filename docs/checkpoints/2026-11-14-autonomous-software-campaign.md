@@ -1073,3 +1073,31 @@ This entry supersedes the preceding push instruction.
   tabs; durable named checkpoints remain open only if the existing recovery
   workflow cannot meet that acceptance. Production/data/device/ACL boundaries
   remain unchanged.
+
+## Resume update — 2026-11-14 04:12 UTC · SC-009 Mixed-Cue history
+
+- Local code/test HEAD is `75068afe830cd3f40028dd7514527fffb13871df`;
+  remote branch and Draft PR #534 stay at `ce927d63e5f37f6a02d6a745b98567f9eb9928d5`.
+  Five local commits form the tested continuation: `4e89372`, `9c9c299`,
+  `0435b0e`, `a7eea73`, `75068af`; this matrix/handoff update is pending its
+  documentation commit. The worktree was otherwise clean.
+- SC-009 history regression now undoes and redoes a two-Action mixed Cue after
+  reordering/editing, including Cue links, GO-relative delay, timecode, OSC and
+  MIDI payload metadata, Action start delays, timeout/error policy, priority
+  and enabled state. Full Node suite remains 58/58. Existing `tests/cue_recovery.test.js`
+  already covers closed-tab recovery, overlapping editors and stale generation
+  fencing, so those paths were not recreated.
+- Reviewing Issue #488 confirmed timestamped named checkpoints with restore
+  preview and Cue-level create/delete/duplicate/reorder undo are still
+  unimplemented. Current server recovery stores only the latest Draft per
+  user/Project and Cue history is dialog-local. Next software task: implement
+  a bounded Draft-only timestamped checkpoint workflow with explicit preview
+  and restore, scoped to the current user/Project/Cue, without publishing or
+  affecting runtime snapshots.
+- At 04:11 UTC exact-head Core run `43553686731` on pushed `ce927d6` remained
+  in Go 1.26; Go 1.27 passed. Companion `43553686720` and Camera Relay
+  `43553686712` passed. Wait for Core to finish before pushing the five
+  existing local commits plus this checkpoint; re-read remote `ce927d6` first.
+- Pi performance remains unqualified because strict SSH still fails before
+  host identity. No remote command, production service/data, Vault, physical
+  output or production ACL was touched.
