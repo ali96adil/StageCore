@@ -369,3 +369,64 @@ This section supersedes the 01:20 local-work pointers above.
   the pending matrix/handoff edits and push both local feature/test commits
   normally to the existing branch/PR. Then monitor all checks for the exact
   new HEAD before starting another push; continue with SC-002 beyond #504/#505.
+
+## Resume update — 2026-11-14 01:31 UTC
+
+This section supersedes the local HEAD and worktree statements above.
+
+- Pre-checkpoint Local HEAD: `6b3fb1280abd43d4736c64ba5a7d93837960f2d2`;
+  Remote HEAD: `f64cde026a0fe890eb39e0b0fee89eda7af84d9d`. Three local commits
+  are ahead: `e5fd6f1` SC-013 local Draft simulation, `68a64c9` SC-020 Store,
+  Runtime Control and HTTP lifecycle regressions, `6b3fb12` matrix/handoff
+  qualification update. Worktree was clean before this resume entry.
+- Exact remote run `43538108851` remains in Go 1.26 Race; all other Core CI
+  checks for `f64cde0` pass. Workflow runs `go test -race -timeout 45m ./...`;
+  do not push while it is active.
+- Local evidence since `f64cde0`: SC-013 Node suite (16 including SC-012
+  large-list tests), Cue Studio contract, and `go vet` pass. SC-020
+  `timingintelligence` full package, `runtimecontrol` simulated GO, and
+  `httpapi` authenticated pause-route tests pass; focused Race and Vet pass
+  for the touched packages. No production code change was needed for the
+  paused-capture lifecycle: it is opt-in learning exclusion and reanchors on
+  the first post-resume observation while GO remains available.
+- #504/#505 are still open draft PRs and already cover clock status/correction
+  preview; no duplicate edits or real clock write. Pi identity remains
+  unverified. Production Project ACL remains disabled.
+- Next: wait for run `43538108851`. If green, push the local feature/test/doc
+  commits normally to PR #534 and wait for exact-new-head CI before another
+  push. Then continue the next verified software gap while retaining browser,
+  Pi and production qualification boundaries.
+
+## Resume update — 2026-11-14 01:40 UTC
+
+This entry supersedes the prior CI and next-action statements.
+
+- Branch `integration/stagecore-rc`; pre-batch local HEAD
+  `6b3fb1280abd43d4736c64ba5a7d93837960f2d2`; remote HEAD
+  `f64cde026a0fe890eb39e0b0fee89eda7af84d9d`; Draft PR #534 remains open.
+  The three commits since remote are the SC-013 simulator, SC-020 lifecycle
+  regressions, and their matrix/checkpoint update. SC-024 access-level code,
+  tests, qualification docs and the 01:31/01:40 handoff entries are the
+  current additional local work. Earlier user edits have been preserved.
+- Core run `43538108851` for exact remote `f64cde0` completed successfully at
+  01:35 UTC. All Go 1.26/1.27, Race, Vet, isolated tests/ARM64 and macOS
+  Companion checks passed. The normal push gate for this exact base is clear.
+- SC-024 now has opt-in API support for `VIEW`, `EDIT`, `OPERATE`, `MANAGE`
+  and `NONE`, with existing fine-grained custom permissions preserved.
+  `MANAGE` cannot grant membership administration; STOP and Blackout remain
+  separate underlying capabilities. Tests verify Viewer restrictions,
+  independent STOP/Blackout custom grants, audit/readback and the explicit
+  `PREPARED_NOT_ENFORCED` state. This is not installed in production.
+- Verification of the authorization batch: full
+  `go test ./internal/projectaccess ./internal/httpapi -count=1` passed;
+  after splitting a new focused API test file to avoid unrelated gofmt churn,
+  focused access-level/API tests passed again. Focused Race and Vet passed for
+  the final test layout. `git diff --check` passed. The production assembly
+  source guard remains unchanged.
+- CUA browser inspection could not run because the Mac was locked. No browser
+  or app interaction occurred. Real-browser UX and Pi 4 qualification remain
+  open; no physical output or production resource was accessed.
+- Next: commit the tested SC-024 API and docs to this local group, push
+  normally to existing PR #534, and wait for exact-new-head Core CI before
+  another push. Continue a verified software gap while that CI runs; retain
+  Pi identity and production ACL boundaries.

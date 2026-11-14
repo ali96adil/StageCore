@@ -1,14 +1,15 @@
 # StageCore software completion matrix
 
-Reviewed against `integration/stagecore-rc` at the last pushed HEAD
-`558a6adf2765c79780ab290efb2e423bfd8ae5ee`, Issue #486 and child Issues
+Reviewed against local `integration/stagecore-rc` HEAD
+`6b3fb1280abd43d4736c64ba5a7d93837960f2d2`, pushed HEAD
+`f64cde026a0fe890eb39e0b0fee89eda7af84d9d`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 01:00 UTC, exact pushed-head Core run `43535359362` is fully
-green, including Go 1.26 Race and Linux ARM64 builds. The local follow-ons
-recorded in [`2026-11-14-autonomous-software-campaign.md`](../checkpoints/2026-11-14-autonomous-software-campaign.md)
-are not part of that run and await the normal push to the same PR. This matrix
-keeps software evidence separate from installed application and physical
+At 2026-11-14 01:35 UTC, exact pushed-head Core run `43538108851` completed
+successfully, including Go 1.26 Race and Linux ARM64 builds. Local follow-ons
+in the handoff are not part of this remote run; the completed result now
+permits the normal push of the reviewed local group. This matrix keeps
+software evidence separate from installed application and physical
 qualification.
 Issue status and software status are separate: an open issue can have
 implemented code, and a passing software test does not imply physical
@@ -44,7 +45,7 @@ gap or missing implementation remains. Hardware is called out separately.
 | SC-021 · #502, #506–#508 | Offline local two-deck StageAudio, selectable wired/Bluetooth output and authenticated phone UI. | Open stacked Draft PRs #506 (`3783fdd`, Go run `39035955572`), #507 (`c9440fe`, run `39037378296`) and #508 (`df13c0d`, run `39038867865`) implement engine, output selection and Operator controls. Each has Go 1.26/1.27 CI green. Current integration source also contains StageAudio controller/client/media/show-fence tests. | **Partial.** Do not recreate the PR stack. Prove process lifecycle, offline file behavior, reconnect/authority loss, output-switch guard and sidecar absence handling on target ARM64; physical Pi audio acceptance remains open. | Hub StageAudio API, `cmd/stagecore-audio`, mpv/BlueZ, Operator UI. Requires Pi 4 analog/Bluetooth, speakers and supervised listening/STOP tests. |
 | SC-022 · #509, #512 | Rename Project without changing stable runtime identities. | `internal/httpapi/operator_projects.go`, `app.js::renameProject`, `operator_project_rename_test.go`; update is metadata-only. | **Implemented in code.** Continue acceptance for Unicode names, concurrent rename, duplicate projects and immutable Snapshot/Cue IDs. | Project API, Store, Operator UI. No hardware required. |
 | SC-023 · #510 | Project-named workspace for media/files, backed by Vault metadata and immutable content. | `internal/projectaccess/project_files.go`, project-file routes/UI, Vault media/assets, duplicate and file contract tests. | **Partial.** Verify all supported asset classes, duplicate/copy semantics, export/import and ACL coverage; no second storage authority or loose project-independent files. | Project API, Vault, Media, export/import, Tablet/StageAudio. SQLite/content-hash tests; actual media output requires devices. |
-| SC-024 · #511 | Simple Owner-managed Project permissions, enforced at every Project/Vault/runtime/realtime boundary; production stays disabled. | `internal/projectaccess`, `operator_project_access.go`, route ACL inventory and access/revocation tests; isolated authoring and runtime grants are implemented. ACL-only performance is documented separately from Cue completion in `sc024-authorization-qualification.md`. | **Partial; production cutover not authorized.** Complete route-by-route inventory, simple View/Edit/Operate/Manage mapping, grant/revoke during active GO, Companion/session/ticket fencing, backup/rollback rehearsal and isolated full-suite qualification. Keep production ACL opt-in/off. | Hub auth/API/store, Vault, snapshots/capsules, Companion/StageAudio/realtime. Software verification can be isolated; production deployment/cutover is expressly out of scope. |
+| SC-024 · #511 | Simple Owner-managed Project permissions, enforced at every Project/Vault/runtime/realtime boundary; production stays disabled. | `internal/projectaccess/access_level.go` maps View/Edit/Operate/Manage and NONE to the existing scoped capability model; custom grants remain supported. The opt-in Owner grant API reads/reports `access_level` and accepts it as an alternative to explicit fine-grained `permissions`. `operator_project_access_test.go` and `access_level_test.go` cover mapping, revocation, Viewer denial, independent STOP/Blackout capabilities, audit, and the `PREPARED_NOT_ENFORCED` response. ACL-only performance remains separate in `sc024-authorization-qualification.md`. | **Partial; production cutover not authorized.** A browser Owner grant page is still absent; the tested API is not assembled in production. Complete route-to-policy audit, active-GO/realtime/session/ticket fencing, compatibility and isolated backup/rollback/full-suite qualification. Keep production ACL opt-in/off. | Hub auth/API/store, Vault, snapshots/capsules, Companion/StageAudio/realtime. Software verification uses the optional isolated API; production deployment/cutover is expressly out of scope. |
 | SC-025 · #513 | Support DMXking ultraDMX Micro 0084 USB-DMX on Pi 4 alongside V2 nodes. | `internal/usbdmx` contains ENTTEC DMX USB Pro framing, Linux FTDI discovery/port and transmitter/manual API; protocol, discovery, port, transmitter and Hub tests; qualification runbook. | **Partial.** Verify disconnect/reopen, partial write, frame/refresh bounds, STOP/Blackout path and no port ambiguity under Linux ARM64; do not claim fixture delivery from mocks. | Hub `internal/usbdmx`, Pi 4 USB/FTDI. ARM64 loopback/simulations first; 0084 interface, DMX line and safe fixture are needed for physical output timing and blackout acceptance. |
 
 ## Integration and resilience coverage

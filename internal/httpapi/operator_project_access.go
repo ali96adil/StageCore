@@ -60,7 +60,8 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]any{
 				"project_id": projectID, "user_id": userID, "permissions": grants,
-				"enforced": false, "phase": "PREPARED_NOT_ENFORCED",
+				"access_level": projectaccess.AccessLevelForPermissions(grants),
+				"enforced":     false, "phase": "PREPARED_NOT_ENFORCED",
 			})
 		}))
 
@@ -84,19 +85,34 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 
 			var request struct {
 				Permissions json.RawMessage `json:"permissions"`
+				AccessLevel *string         `json:"access_level"`
 			}
 			if !decodeBoundedJSON(w, r, &request) {
 				return
 			}
-			raw := bytes.TrimSpace(request.Permissions)
-			if len(raw) == 0 || raw[0] != '[' {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_EXPLICIT_ARRAY_REQUIRED"})
-				return
-			}
 			var permissions []projectaccess.Permission
-			if err := json.Unmarshal(raw, &permissions); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_PERMISSIONS_INVALID"})
-				return
+			raw := bytes.TrimSpace(request.Permissions)
+			if request.AccessLevel != nil {
+				if len(raw) != 0 {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_GRANT_INPUT_CONFLICT"})
+					return
+				}
+				level := projectaccess.AccessLevel(strings.ToUpper(strings.TrimSpace(*request.AccessLevel)))
+				var err error
+				permissions, err = projectaccess.PermissionsForAccessLevel(level)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_ACCESS_LEVEL_INVALID"})
+					return
+				}
+			} else {
+				if len(raw) == 0 || raw[0] != '[' {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_EXPLICIT_ARRAY_REQUIRED"})
+					return
+				}
+				if err := json.Unmarshal(raw, &permissions); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_PERMISSIONS_INVALID"})
+					return
+				}
 			}
 			if len(permissions) > 32 {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "PROJECT_ACCESS_PERMISSIONS_INVALID"})
@@ -149,7 +165,8 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]any{
 				"project_id": projectID, "user_id": userID, "permissions": grants,
-				"enforced": false, "phase": "PREPARED_NOT_ENFORCED",
+				"access_level": projectaccess.AccessLevelForPermissions(grants),
+				"enforced":     false, "phase": "PREPARED_NOT_ENFORCED",
 			})
 		}))
 }

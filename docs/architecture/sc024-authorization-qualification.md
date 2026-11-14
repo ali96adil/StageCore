@@ -1486,3 +1486,38 @@ reviewed local commits normally, wait for exact-head CI, then continue the
 endpoint/async audit with a failing regression for each reproducible issue.
 Keep production ACL disabled and Pi performance checks uncached unless new
 measurements justify otherwise. Next-session prompt: **«كمل»**.
+
+## SC-024 continuation · 2026-11-14 · simple Project access levels
+
+The optional Owner grant API now accepts an `access_level` in place of the
+existing explicit `permissions` array and reports the corresponding level on
+readback. This is a compatibility-preserving API simplification: existing
+fine-grained permission requests remain valid, custom grants read back as
+`CUSTOM`, and `NONE` removes membership. The level mapping is implemented in
+`internal/projectaccess/access_level.go` and covered by service and HTTP API
+tests.
+
+| Level | Expanded Project capabilities |
+| --- | --- |
+| VIEW | Project view and media read |
+| EDIT | VIEW plus Project/Cue edit and media upload |
+| OPERATE | VIEW plus rehearsal control, Show GO, Show STOP, Emergency Blackout, show enter/exit, manual lighting and audio control |
+| MANAGE | EDIT + OPERATE plus Project rename, media manage, Snapshot publish, device configuration and Capsule export |
+
+`MANAGE` applies to Project resources and does not grant membership or ACL
+administration; granting and revoking access remains Owner-only. STOP and
+Emergency Blackout remain separate underlying permissions. Owners can still
+assign either independently with a custom grant. A Viewer is still restricted
+to read-only grants, including when the level API is used.
+
+This route is still added only through `WithOperatorProjectAccess` in
+qualification assemblies. Every successful response continues to say
+`"enforced":false` and `"phase":"PREPARED_NOT_ENFORCED"`; production assembly
+and ACL enforcement are unchanged. The web application still lacks an Owner
+Project grant page, so SC-024 remains partial.
+
+The full `projectaccess` and `httpapi` suites, focused Race variants, Vet,
+and diff checks pass. The exact prior pushed HEAD
+`f64cde026a0fe890eb39e0b0fee89eda7af84d9d` completed Core CI run
+`43538108851` successfully, including Go 1.26 Race; this local change is not
+included in that run and is eligible for a normal push.
