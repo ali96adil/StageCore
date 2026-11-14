@@ -3600,6 +3600,53 @@ This entry supersedes the preceding push instruction.
 - Safety limits remain unchanged: no production service/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
 
+## Resume update — 2026-11-14 23:35 UTC · Race failure and SC-024 keyboard gate
+
+- Branch: `integration/stagecore-rc`; PR #534 remains OPEN/Draft. Before this
+  checkpoint edit, local HEAD was
+  `2e7997e5c03ddeda933fc9b34ee545151dbb6a46`; remote and PR head remain
+  `c52a453c2d838935e1f7601fa748cec2e43ec725`. Seven commits are ahead of
+  remote: `0b57512`, `dca2ef6`, `6e170f5`, `7d1f03e`, `398f804`, `85fc149`,
+  and `2e7997e`. This checkpoint-only commit will be the next local commit.
+- Exact remote Core run `43650575318` completed with Go 1.26 Race failure;
+  Go 1.26 Test/Browser/Vet, Go 1.27 Test/Vet, Companion Core and Camera Relay
+  checks passed. ARM64 was skipped because Race failed. The race log reports
+  `TestStopCancels32OverlappingDelayedCues` returning `STOP_UNCONFIRMED` and
+  `TestEmergencyBlackoutCancels32OverlappingDelayedCues` failing during the
+  same cancellation fan-out. No race-detector report appeared. Both operations
+  shared a two-second terminal wait while 32 simulated delayed Cues persisted
+  cancellation.
+- `internal/runtimecontrol/service.go` now allows five seconds for the bounded
+  cancellation/persistence fan-out. Cancellation is still issued immediately;
+  Emergency Blackout still latches and dispatches its simulated safety callback
+  before waiting for Cue termination. Full Runtime Control tests pass normally
+  and under Race; `go vet ./internal/runtimecontrol ./internal/httpapi` passes.
+- SC-024's Owner permission editor now has real-Chrome coverage for keyboard
+  type-to-select (`o` → OPERATE, `n` → NONE) using CDP input, in addition to
+  native Tab/Enter traversal, save/readback/revoke, RTL and touch. The test
+  stores only `PREPARED_NOT_ENFORCED` qualification grants and asserts there
+  are no GO, publish or Blackout requests. Full `STAGECORE_TEST_CHROME=... go
+  test ./internal/httpapi -count=1` passed (86.4 s); the focused browser test
+  passed under Race; JS syntax, Vet and diff checks passed. The SC-024 matrix
+  now records this completed keyboard gate while whole-server policy cutover
+  and production activation remain open/off.
+- Companion transport timeline changes remain software-local and tested as
+  recorded above. Local functional HEAD before this checkpoint is the seven
+  commits listed above; run `git rev-parse HEAD` to read the final local tip.
+  No new CI was launched for unpushed commits. The failed exact-head run is
+  complete, so recheck remote/PR and all exact-head workflows, then push the
+  validated batch by normal fast-forward to PR #534. Wait for the new exact
+  Core run before another push.
+- Next independent gap after the push: continue SC-002 offline boot/session
+  recovery software review without writing the host clock, then resume the
+  SC-001–SC-025 matrix and isolated Raspberry Pi gate. The prior qualification
+  Pi endpoint did not pass identity verification; do not use that ambiguous
+  alias. Preserve existing performance measurements unless code or lab access
+  changes justify a new run.
+- Safety remains unchanged: no production services/data/Vault, real-device
+  commands, firmware, production Project ACL, force push, new branch/PR, or
+  merge.
+
 ## Resume update — 2026-11-14 22:55 UTC · browser gate repair pushed
 
 - Local, remote branch, and OPEN/Draft PR #534 are now at
