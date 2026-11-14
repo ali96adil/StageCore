@@ -2,6 +2,7 @@ package showcapsule
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -235,6 +236,7 @@ func newCapsuleFixture(t *testing.T) capsuleFixture {
 	if _, err := stageStore.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "1", Name: "Opening", OrderIndex: 1,
 		Enabled: true, NotesSummary: "Stand by projection",
+		ExecutionPolicy: json.RawMessage(`{"operator_cue_color":"purple"}`),
 	}, []domain.Action{{
 		OrderIndex: 1, TargetRef: "VIDEO-MAIN", CapabilityKey: "osc.send", Enabled: true,
 	}}); err != nil {
