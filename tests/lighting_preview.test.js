@@ -223,9 +223,14 @@ test("Cue Studio copies selected Mixed-Cue actions in order as independent copie
   assert.equal(inserted[1].error_policy.retry_before_dispatch, true);
   assert.equal(inserted[1].enabled, false);
   assert.equal(cards[0][".action-id"].value, "lighting-original");
+  clipboard.pasteClipboardAction();
+  assert.equal(inserted.length, 4);
+  assert.notStrictEqual(inserted[0].parameters, inserted[2].parameters);
+  inserted[2].parameters.levels.warm = 10;
+  assert.equal(inserted[0].parameters.levels.warm, 60);
   state.project = { project_id: "project-b" };
   clipboard.pasteClipboardAction();
-  assert.equal(inserted.length, 2, "a copied Mixed Cue must not cross Project boundaries");
+  assert.equal(inserted.length, 4, "a copied Mixed Cue must not cross Project boundaries");
 });
 
 test("raw preview values copy only through unique representable logical channels", () => {
