@@ -42,7 +42,8 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		case "/":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			io.WriteString(w, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body>
-			<div id="comparison"></div><div id="timeline"></div><script>function navigate(){} function esc(value){const node=document.createElement("span");node.textContent=String(value??"");return node.innerHTML}</script>
+			<div id="comparison"></div><div id="timeline"></div><script>function navigate(){} function esc(value){const node=document.createElement("span");node.textContent=String(value??"");return node.innerHTML} function fmtDate(value){if(!value)return "—";const date=new Date(value);return Number.isNaN(date.getTime())?"—":date.toLocaleString()}</script>
+			<script>const reportBrowserFailure=(message)=>fetch("/comparison-result",{method:"POST",body:JSON.stringify({status:"FAIL",error:String(message||"browser script failed")})});window.addEventListener("error",event=>reportBrowserFailure(event.message));window.addEventListener("unhandledrejection",event=>reportBrowserFailure(event.reason));</script>
 			<script src="/memory.js"></script><script src="/comparison-test.js"></script></body></html>`)
 		case "/app.css":
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -118,6 +119,7 @@ func TestBrowserSessionMemoryActionComparison(t *testing.T) {
 		TransportWarning bool   `json:"transport_warning"`
 		ExportSanitized  bool   `json:"export_sanitized"`
 		ViewportWidth    int    `json:"viewport_width"`
+		Error            string `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
