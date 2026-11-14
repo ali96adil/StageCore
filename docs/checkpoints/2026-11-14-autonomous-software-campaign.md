@@ -3193,3 +3193,35 @@ This entry supersedes the preceding push instruction.
   production services/data/Vault, real stage devices and firmware remain
   untouched. Pi ARM64 performance requalification remains pending the
   unchanged isolated SSH handshake failure.
+
+## Resume update — 2026-11-14 20:53 UTC · SC-024 touch simulation
+
+- Local code/test HEAD is `32a3be9aa61658f02335c4368b211fc1906c9e53`; the
+  remote branch and OPEN/Draft PR #534 remain at
+  `5fb3a6889e823aecb067b519c5a8b206f84cae21`. Ten local commits currently
+  precede the remote before this Handoff entry; worktree is clean. The ahead
+  commits are `a947e24`, `9ae3226`, `7e43e77`, `54a6b48`, `ee447fc`,
+  `9626c49`, `447691b`, `ac0bdd4`, `d9f42f9`, and `32a3be9`.
+- SC-024 Owner editor Chrome acceptance now also delivers a CDP touch gesture
+  at the visible Security navigation control, verifies `pointerType ===
+  "touch"`, and waits for the grant editor to open at 390×844 RTL. The test
+  remains on temporary SQLite and the optional `PREPARED_NOT_ENFORCED` API;
+  it asserts no publish, runtime or safety call. Local normal and Race runs
+  passed. This is browser touch emulation, not physical Android qualification.
+- The earlier native Tab pass remains; end-to-end keyboard selection/save and
+  revoke interactions remain open. A trial Enter/Space activation did not
+  trigger the button handlers and was reverted. The matrix records keyboard
+  completion and real Android touch acceptance as still open.
+- Focused validation after the touch update: Owner grant Chrome test normal
+  and Race; `go vet ./internal/httpapi`; `tests/operator_accessibility.test.js`
+  (2/2); JS syntax and diff checks passed. SC-005 contrast and Mixed Cue
+  browser normal/Race results are in the preceding entry.
+- Exact-head Core `43636803011` on `5fb3a68` is still in full Go 1.26 Race
+  after about 32 minutes. Go 1.26 regular tests, Browser Cue Delivery and Vet,
+  Go 1.27, Companion `43636803043`, and Relay `43636803216` are green. Do not
+  interrupt it with a push.
+- Resume by watching that Core run. After completion, recheck the remote and
+  PR head, then push the complete local ahead range normally to the same PR
+  and follow its exact-head CI. Keep production ACL off. Pi 4 performance
+  requalification and isolated installed-copy rollback remain open; no real
+  stage device, production data/service/Vault or firmware was touched.
