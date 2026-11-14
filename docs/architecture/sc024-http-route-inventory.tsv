@@ -26,6 +26,9 @@ internal/httpapi/operator_configuration_draft.go	POST /api/v1/projects/{project_
 internal/httpapi/operator_cue_action_presets.go	DELETE /api/v1/projects/{project_id}/cue-action-presets/{preset_id}
 internal/httpapi/operator_cue_action_presets.go	GET /api/v1/projects/{project_id}/cue-action-presets
 internal/httpapi/operator_cue_action_presets.go	POST /api/v1/projects/{project_id}/cue-action-presets
+internal/httpapi/operator_cue_editor_checkpoints.go	DELETE /api/v1/projects/{project_id}/cues/{cue_id}/editor-checkpoints/{checkpoint_id}
+internal/httpapi/operator_cue_editor_checkpoints.go	GET /api/v1/projects/{project_id}/cues/{cue_id}/editor-checkpoints
+internal/httpapi/operator_cue_editor_checkpoints.go	POST /api/v1/projects/{project_id}/cues/{cue_id}/editor-checkpoints
 internal/httpapi/operator_cue_recovery.go	DELETE /api/v1/projects/{project_id}/cue-editor-recovery
 internal/httpapi/operator_cue_recovery.go	GET /api/v1/projects/{project_id}/cue-editor-recovery
 internal/httpapi/operator_cue_recovery.go	PUT /api/v1/projects/{project_id}/cue-editor-recovery

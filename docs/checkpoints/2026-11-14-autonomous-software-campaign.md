@@ -1101,3 +1101,35 @@ This entry supersedes the preceding push instruction.
 - Pi performance remains unqualified because strict SSH still fails before
   host identity. No remote command, production service/data, Vault, physical
   output or production ACL was touched.
+
+## Resume update — 2026-11-14 04:31 UTC · named Draft checkpoints
+
+- Code HEAD: `c6a99decf37deb58a1b3bba72043c3640117b4ed`; remote branch and PR
+  #534 remain at `ce927d63e5f37f6a02d6a745b98567f9eb9928d5`. Seven local
+  commits are ahead of the same branch; no reset, clean, rebase or force push
+  was used. The matrix/security inventory and this handoff update are the
+  documentation commit still to make before pushing.
+- SC-009 now has migration 59 for bounded (20 newest) named checkpoints scoped
+  by User/Project/Cue. The Cue Studio panel lists timestamps, previews the full
+  Draft, and restores only into the open editor after explicit operator
+  action; Cue save/publish remains separate. API checks Cue→Project scope,
+  edit grants and live session at commit/response; records are private and
+  deleted when the Cue is deleted. The production ACL assembly is unchanged.
+- Verification: Node suite 60/60; `go test ./internal/store -count=1`,
+  `go test ./internal/db -count=1`, `go test ./internal/httpapi -count=1`
+  pass. Focused Store and HTTP API Race checks, `go vet ./internal/store
+  ./internal/httpapi`, changed JavaScript syntax, route-inventory and schema
+  tests, and `git diff --check` pass. The full HTTP API package took about 64s.
+- The earlier exact pushed-head Core run `43553686731` on `ce927d6` completed
+  successfully at 04:24 UTC: Go 1.26/1.27 tests, Browser Cue Delivery, Vet,
+  Go 1.26 Race and Linux ARM64 product builds. Companion `43553686720` and
+  Camera Relay `43553686712` passed on the same SHA. Before pushing, re-read
+  `git ls-remote`; push normally only if `integration/stagecore-rc` is still
+  exactly `ce927d6`. Then wait for the full new exact-head CI before the next
+  push.
+- Remaining SC-009 software gap: Project-wide Undo/Redo for Cue
+  create/delete/duplicate/reorder and checkpoint recovery before a new Cue's
+  first save. Start with code/API behavior and regression design; keep all
+  outputs mocked. Pi 4 full-engine timing/CPU/RAM remains unqualified because
+  the strict SSH handshake still failed before host identity. No real devices,
+  production Hub/Relay/data/Vault or production ACL were touched.

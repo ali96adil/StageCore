@@ -1578,3 +1578,23 @@ disabled until the new pair is loaded. The focused Security UI suite now passes
 7/7 tests, including this stale-read regression, and Core's focused Operator UI
 package test passes. This is only prepared-data review and does not enable
 production ACL enforcement.
+
+## SC-024 continuation · 2026-11-14 · named Cue draft checkpoints
+
+The Cue editor checkpoint routes are now included in the reviewed route
+inventory. GET, POST and DELETE require the scoped `cue.edit` grant, validate
+that the Cue belongs to the requested Project, and scope records by the live
+browser user, Project and Cue. Responses use `Cache-Control: no-store`;
+checkpoint documents are bounded Draft envelopes, retained to the newest 20
+per scope, and writes recheck session and grant before returning a result.
+The handler does not publish a Snapshot or invoke Cue execution. The UI
+previews a selected Draft and restores it into the editor only after an
+explicit operator action; saving the Cue remains a separate action.
+
+`TestCueEditorCheckpointsArePrivateScopedAndDraftOnly` covers cross-user and
+cross-Project isolation, invalid and mismatched Cue documents, deletion scope,
+and unchanged authored Cue data. The response-boundary regression verifies a
+grant revoked after commit suppresses the checkpoint result while retaining
+the committed checkpoint truthfully. This feature is part of the staged
+qualification router only; production ACL assembly and activation remain
+unchanged.

@@ -1,15 +1,17 @@
 # StageCore software completion matrix
 
 Reviewed on `integration/stagecore-rc`: local code HEAD
-`75068afe830cd3f40028dd7514527fffb13871df`, pushed HEAD
+`c6a99decf37deb58a1b3bba72043c3640117b4ed`, pushed HEAD
 `ce927d63e5f37f6a02d6a745b98567f9eb9928d5`, Issue #486 and child Issues
 #487–#513, and the open PRs listed in
 [`related-component-qualification-matrix.md`](related-component-qualification-matrix.md).
-At 2026-11-14 04:00 UTC, exact-head Core run `43553686731` on `ce927d6` was
-still running its Go 1.26 job; Go 1.27 passed. Companion/Swift run
-`43553686720` and isolated/ARM64 Camera Relay run `43553686712` passed. The
-local follow-on `4e89372` and `0435b0e` pass Node 58/58 and Operator Web Go test, Race,
-Vet, JavaScript syntax and diff checks; wait for exact-head Core before pushing.
+At 2026-11-14 04:31 UTC, exact-head Core run `43553686731` on `ce927d6`
+completed successfully on Go 1.26 and 1.27, including Race and ARM64 product
+builds. Companion/Swift run `43553686720` and isolated/ARM64 Camera Relay run
+`43553686712` also passed. Local Node passes 60/60; full Store, DB and HTTP API
+package tests, focused Race, Vet, JavaScript syntax and diff checks pass. The
+seven local commits are ready for the normal fast-forward to PR #534 after a
+fresh exact remote-head check.
 This matrix keeps software evidence separate from installed application and
 physical qualification.
 Issue status and software status are separate: an open issue can have
@@ -30,8 +32,8 @@ gap or missing implementation remains. Hardware is called out separately.
 | SC-005 · #486 | Optional operator labels and colors with useful defaults and non-color cues to meaning. | Cue display-label/color fields, Draft edit persistence and Cue Studio rendering exist; `internal/store/draft_cue_edit_stale_action_test.go` covers stale-edit label/color preservation. Store duplication now asserts the display label and color survive the independent Draft copy. The Show Capsule round-trip test asserts the published Snapshot's label and operator color survive self-contained export/import/materialization. | **Partial.** Complete accessible contrast/keyboard presentation checks across Cue labels, narrow layouts and RTL; color remains supplemental to the visible text label. | Store, Cue Studio, import/export. No hardware required. |
 | SC-006 · #486 | Configure and safely apply Rehearsal end actions. | `internal/runtimecontrol/rehearsal_outputs.go` plus `rehearsal_outputs_test.go` exercise configured managed-output shutdown with a test executor. | **Implemented in code.** Keep explicit semantics for audio/external OSC/VDMX and prove idempotent end/retry behavior; do not imply STOP is Blackout. | Runtime Control, Tablet/lighting/native visual safety adapters. Automated paths are simulated; installed outputs require hardware acceptance. |
 | SC-007 · #486 | Preview lighting values and copy a tested value into a Draft Cue. | `internal/operatorweb/static/lighting-authoring.js`, `internal/httpapi/operator_lighting_controller.go`; lighting controller/API/UI contract tests. | **Partial.** Finish Draft-to-published snapshot reconciliation and actionable validation for invalid channel/value/device assignment. | Lighting authoring, controller API, snapshot publisher. Simulator first; physical DMX output is separate. |
-| SC-008 · #487 | Guided unified Cue creation/editing for all Mixed Cue action types. | `internal/operatorweb/static/cue-studio.js`, shared Cue API and composer provide typed authoring alongside specialized Tablet/lighting workspaces. A red-first regression verifies that visible OSC/MIDI edits preserve unknown parameter fields and per-argument OSC metadata. `tests/cue_studio_roundtrip.test.js` executes the actual edit and create submit handlers, reopens both payloads, and locally previews a three-level linked group with five compound Actions spanning OSC, MIDI, Lighting, Tablet and Laser. Node suite passes 58/58; `go test -race ./internal/operatorweb`, package tests and Vet pass. | **Partial.** Browser-model round trips pass; complete real-browser keyboard/touch/layout acceptance for every adapter and continue checking API persistence through restart/restore. | Cue Studio, Cue APIs, Tablet/lighting/MIDI/OSC/laser action editors. Offline browser-model tests and simulated outputs only; no actuation. |
-| SC-009 · #488 | Undo/Redo and recoverable Draft editing history. | Cue Studio keeps a bounded in-dialog history of the full Cue form, ordered Actions, links, policies, labels, color and timecode. The updated regression undoes and redoes a reordered Mixed Cue with OSC/MIDI/Lighting Actions, independent delays, failure policy, enabled state and unknown parameter fields. Migration 55 and `internal/store/cue_editor_recovery.go` persist the latest per-user recovery with generation fencing; `tests/cue_recovery.test.js` covers reload, overlapping tabs and stale revision retention. | **Partial.** Durable recovery is one latest draft, not timestamped named checkpoints with preview/restore. Undo is per-Cue dialog and does not cover Cue create/delete/duplicate/reorder as a Project-wide atomic history. | Cue Studio, Store, SQLite. No hardware required; checkpoint persistence/restart and safe Draft-only restore need software regressions. |
+| SC-008 · #487 | Guided unified Cue creation/editing for all Mixed Cue action types. | `internal/operatorweb/static/cue-studio.js`, shared Cue API and composer provide typed authoring alongside specialized Tablet/lighting workspaces. A red-first regression verifies that visible OSC/MIDI edits preserve unknown parameter fields and per-argument OSC metadata. `tests/cue_studio_roundtrip.test.js` executes the actual edit and create submit handlers, reopens both payloads, and locally previews a three-level linked group with five compound Actions spanning OSC, MIDI, Lighting, Tablet and Laser. Node suite passes 60/60; `go test -race ./internal/operatorweb`, package tests and Vet pass. | **Partial.** Browser-model round trips pass; complete real-browser keyboard/touch/layout acceptance for every adapter and continue checking API persistence through restart/restore. | Cue Studio, Cue APIs, Tablet/lighting/MIDI/OSC/laser action editors. Offline browser-model tests and simulated outputs only; no actuation. |
+| SC-009 · #488 | Undo/Redo and recoverable Draft editing history. | Cue Studio keeps a bounded in-dialog history of the full Cue form, ordered Actions, links, policies, labels, color and timecode. The regression undoes/redoes a reordered Mixed Cue with OSC/MIDI/Lighting Actions, independent delays, failure policy, enabled state and unknown parameter fields. Migration 55 persists the latest per-user recovery with generation fencing. Migration 59 adds up to 20 named timestamped Draft checkpoints per User/Project/Cue; scoped API tests cover isolation, validation, deletion, grant revocation and authored Cue invariance. The UI previews a selected checkpoint and restores it into the editor only after an explicit action; it never publishes or executes. | **Partial.** Undo remains dialog-local and does not cover Cue create/delete/duplicate/reorder as a Project-wide atomic history. Checkpoints currently apply to persisted Cues; recoverable creation before the first Cue save remains open. | Cue Studio, Store, SQLite. No hardware required; restart/backup restoration and Project-wide history still need software qualification. |
 | SC-010 · #489 | Reusable Actions and Cue presets with independent IDs and safe target remapping. | Migration 56 and `internal/store/cue_action_presets.go`, `internal/httpapi/operator_cue_action_presets.go`; project/user-scoped Store/API/revocation tests. Cue Studio presets preview saved content and flag missing targets. The existing single-action JSON shape remains unchanged; named multi-action Mixed-Cue presets store ordered action arrays in the same column without a schema migration. Insert creates fresh Action IDs and deep copies. The local preset library search filters names and nested serialized action data, including target, capability and parameters. Missing Mixed-Cue actions sharing the same old target are grouped into one lazily rendered selector; an operator can choose a target configured in the current Project. Remapping only affects the new Draft copy and warns that compatibility must be checked before publishing. Node round-trip tests cover Lighting, MIDI, OSC and Tablet actions together, repeated independent insertion, search, per-target mapping, save payload and target state; Go API tests cover persistent legacy+multi readback across the same four capability types, ordering, fresh identities and existing ownership/revocation boundaries. | **Partial.** Presets still lack descriptions and safe cross-Project import with explicit target mapping. Missing targets remain advisory if the operator leaves the target unchanged. | Cue Studio, store, project import/duplicate. Offline software tests; no hardware required. |
 | SC-011 · #490 | One-click, offline show-readiness Preflight with operator-level remedies. | `internal/preflight.Service.Evaluate` validates published Snapshot status, Project/revision identity, manifest hash/schema and validated revision; evaluates required role/capability/config/Snapshot readiness, execution-environment readiness, required media and storage. Hub assembly wires advisory offline-RTC evidence; MIDI Actions are checked against assigned Companion destination inventory, including missing, ambiguous, stale-index and unavailable names, with explicit inventory-only evidence. It compares the current revision's lighting bindings with the selected immutable Runtime Snapshot and reports drift as an advisory warning with a configuration link. RTC guidance explains local sign-in/session impact; a timestamped JSON report exports the already evaluated result without a second read. Preflight/service/environment/MIDI/report tests cover pass/warn/block, mismatch, export and non-actuation paths. | **Partial.** Reconcile other relevant Draft/readiness evidence where trustworthy, add remedies for remaining offline dependencies, and verify freshness/degraded behavior across all evidence sources. Installed Ableton/Max execution readiness still needs explicit ACK or an attended test; inventory and network observations do not prove output. | Hub, Companion, device inventory, media/Snapshot, MIDI, lighting configuration. Software simulation first; installed app, real links and physical device readiness remain hardware/integration qualification. |
 | SC-012 · #491 | Fast Cue search/filter/navigation on long lists without changing execution order. | Pushed `4352f67` adds client-only search across number, label, name, notes, nested linked actions/targets and multi-filters for action type (including Mixed), enabled state and linked/group state. Search preferences are saved per Project. Node tests cover nested chains, Mixed, combined filters, project isolation, malformed storage and order preservation; local `tests/cue_list_filters.test.js` now also covers a 120-Cue/240-Action linked list. | **Partial.** Add error/readiness filters only where a trustworthy source exists and complete real-browser visual/keyboard/touch acceptance for 100+ Cues, RTL/LTR and narrow layouts. Filter view does not change Cue order, Draft or Snapshot. | Cue Studio, Operator UI. Synthetic Node scaling test only; no hardware required. |
@@ -70,21 +72,21 @@ MIDI, Lighting, Tablet and Laser, ordering, per-Action policies, metadata,
 reopen and local Inspector preview. Real-browser touch/keyboard/layout and
 installed adapter acceptance remain separate.
 
-SC-009's latest regression covers undo/redo of mixed Action order, links,
-timing, policies and unknown fields. Existing recovery is one latest per-user
-draft and has generation fencing, but the Issue #488 timestamped named history
-and restore-preview workflow is still missing; Project-wide undo for Cue
-create/delete/duplicate/reorder is also not present. Implement the bounded
-Draft-only checkpoint workflow next, with isolation by user/Project/Cue,
-timestamp, preview, explicit restore and no Snapshot/runtime mutation.
+SC-009 now has bounded timestamped named Draft checkpoints, private to the
+current User/Project/Cue, with preview, explicit editor-only restore and
+deletion. Migration 59 and API/UI tests cover persistence, validation, stale
+Project reads, revocation and no authored Cue mutation. The highest remaining
+SC-009 gap is Project-wide Undo/Redo for Cue create/delete/duplicate/reorder
+and recovery before a new Cue's first save. Implement the Project-level history
+next without changing publish/runtime semantics.
 
-The exact-head Core run `43553686731` on pushed `ce927d6` is still active in
-Go 1.26. Do not push local commits until it completes successfully and the
-remote branch is re-read. Companion `43553686720` and Camera Relay
-`43553686712` passed on that exact head. Pi 4 runtime qualification remains
-pending: a strict, read-only SSH retry to `stagecore-qualification` failed
-before host identity with `websocket: bad handshake`; no remote command ran.
-Do not infer Pi P95/P99/Jitter from Mac or ARM64 cross-build results.
+The exact-head Core run `43553686731` on pushed `ce927d6` completed successfully
+in Go 1.26 and 1.27, including Race and Linux ARM64 product builds. Companion
+`43553686720` and Camera Relay `43553686712` also passed on that exact head.
+Pi 4 runtime qualification remains pending: a strict, read-only SSH retry to
+`stagecore-qualification` failed before host identity with `websocket: bad
+handshake`; no remote command ran. Do not infer Pi P95/P99/Jitter from Mac or
+ARM64 cross-build results.
 
 SC-003 remains implemented in open Draft PR #503; the Ableton Lab receiver
 already has software coverage; SC-013/011/015/012/016 evidence is recorded in
