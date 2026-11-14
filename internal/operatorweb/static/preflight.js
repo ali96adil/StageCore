@@ -36,7 +36,7 @@ function preflightDestination(category) {
     case "companion": return { page: "configuration", anchor: "machineRolesCard", label: "Open Machine Roles" };
     case "media": return { page: "environments", label: "Open Environments" };
     case "snapshot": return { page: "cues", label: "Open Cues / Publish" };
-    case "lighting": return { page: "configuration", label: "Open Lighting Configuration" };
+    case "lighting": return { page: "lighting-setup", label: "Open Lighting Configuration" };
     case "adapter":
     case "capability": return { page: "configuration", label: "Open Configuration" };
     default: return null;

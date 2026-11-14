@@ -105,7 +105,7 @@ test("lighting drift warning links to configuration without blocking the report"
     roles: [], media: [], storage: {state: "HEALTHY", status: "PASS"},
   };
   const ui = await renderPreflightHarness(report);
-  assert.match(ui.content.innerHTML, /data-page="configuration"/);
+  assert.match(ui.content.innerHTML, /data-page="lighting-setup"/);
   assert.match(ui.content.innerHTML, /Open Lighting Configuration/);
   assert.match(ui.content.innerHTML, /Draft lighting configuration differs from published Snapshot/);
 });
