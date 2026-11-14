@@ -3563,3 +3563,39 @@ This entry supersedes the preceding push instruction.
   CI at the new exact head.
 - Safety limits remain unchanged: no production services/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
+
+## Resume update — 2026-11-14 22:49 UTC · pushed transport and safety regressions
+
+- Local, `origin/integration/stagecore-rc`, and OPEN/Draft PR #534 are at
+  `774414d6a8c2ab6c4c597f886eb0dd7e5bfea9bc`. Four commits are now pushed:
+  `9bc5988` (32-Cue STOP), `f6e1409` (32-Cue Emergency Blackout),
+  `669e6cc` (SC-015 Hub transport timeline), and `774414d` (matrix/Handoff).
+- Exact-head CI: Core run `43649877977` is still in progress; Companion Core
+  `43649877980` and Camera Relay `43649877969` passed. Do not push another
+  commit until Core `43649877977` completes and the exact PR/branch heads and
+  all relevant workflows are checked again.
+- Verification on the pushed code: affected Go package tests, focused HTTP
+  API tests, vet, six Node timeline tests, JavaScript syntax checks, and
+  `git diff --check` passed. Full Race passed before the final transport
+  reconnect case; focused Race passed for reconnect, Hub restart, the 32-cue
+  STOP/Blackout regressions, and their related safety paths. The optional
+  Chrome browser test could not run because Chrome and
+  `STAGECORE_TEST_CHROME` are unavailable locally.
+- The two 32-cue regressions use only simulator delays and confirm STOP and
+  Emergency Blackout cancel all 32 overlapping delayed executions. SC-015
+  records authenticated Hub transport transitions, scoped by Project and
+  Session window, with generation/reason evidence. It deliberately does not
+  claim Companion/adapter endpoint health or physical output confirmation.
+- Next software gap to inspect while CI runs: Companion runtime socket
+  lifecycle and project-scoped transport evidence. First map existing
+  Companion health/events and session identity, then add only a regression
+  or implementation if the code proves a gap. Preserve replacement fencing,
+  authorization boundaries, and the distinction between Hub transport,
+  Companion reachability, adapter health, and physical output.
+- Pi ARM64 qualification, broader SC-001–SC-025 evidence, linked repository
+  PR/CI review, production release approval, and hardware acceptance remain
+  open. Earlier Pi measurements are not being repeated absent a change that
+  justifies it; isolated Pi access and formal CPU/memory isolation still need
+  confirmation.
+- Safety limits remain unchanged: no production service/data/Vault, real
+  device commands, firmware, production ACL activation, force push or merge.
