@@ -98,9 +98,23 @@ test("Preflight report export uses the already loaded result without a second AP
   assert.equal(JSON.parse(ui.downloaded.blob.parts[0]).evaluated_at, report.evaluated_at);
 });
 
+test("lighting drift warning links to configuration without blocking the report", async () => {
+  const report = {
+    status: "WARN", project_id: "show-a", evaluated_at: "2026-11-14T02:00:00Z",
+    checks: [{key: "lighting.draft_snapshot_sync", category: "lighting", status: "WARN", summary: "Draft lighting configuration differs from published Snapshot"}],
+    roles: [], media: [], storage: {state: "HEALTHY", status: "PASS"},
+  };
+  const ui = await renderPreflightHarness(report);
+  assert.match(ui.content.innerHTML, /data-page="configuration"/);
+  assert.match(ui.content.innerHTML, /Open Lighting Configuration/);
+  assert.match(ui.content.innerHTML, /Draft lighting configuration differs from published Snapshot/);
+});
+
 test("the report download control has an Arabic label", () => {
   assert.match(localization, /"Download report": "تنزيل التقرير"/);
   assert.ok(localization.includes("Run stagecore clock, then compare the Hub and RTC against a trusted local (LAN) time reference before rehearsal. If the Hub clock is outside the token validity window, local sign-in and session checks can fail."));
   assert.match(localization, /"MIDI destination is listed on the assigned Companion": "وجهة MIDI مدرجة في الجهاز المرافق المعيّن"/);
   assert.ok(localization.includes("Companion inventory lists this exact name. This does not verify Ableton receipt or external execution; use an attended non-show test for end-to-end evidence."));
+  assert.match(localization, /"Draft lighting configuration differs from published Snapshot":/);
+  assert.ok(localization.includes("Runtime execution remains bound to the immutable published Snapshot"));
 });

@@ -14,6 +14,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
@@ -174,6 +175,7 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 
 	manifest, snapshotUsable := s.evaluateSnapshot(ctx, &report, project, runtimeSnapshot)
 	if snapshotUsable {
+		s.evaluateLightingSnapshotSync(ctx, &report, project, runtimeSnapshot, manifest)
 		environments, environmentsUsable := s.loadExecutionEnvironments(ctx, &report, runtimeSnapshot.RevisionID)
 		s.evaluateCapabilitiesAndRoles(ctx, &report, manifest, runtimeSnapshot, environments)
 		if environmentsUsable {
@@ -189,6 +191,75 @@ func (s *Service) Evaluate(ctx context.Context, projectID, runtimeSnapshotID str
 		return report.Checks[i].Category < report.Checks[j].Category
 	})
 	return report, nil
+}
+
+func (s *Service) evaluateLightingSnapshotSync(ctx context.Context, report *Report, project domain.Project, runtimeSnapshot domain.RuntimeSnapshot, manifest snapshot.Manifest) {
+	const key = "lighting.draft_snapshot_sync"
+	currentRevision, err := s.store.GetRevision(ctx, project.CurrentRevisionID)
+	if err != nil || currentRevision.ProjectID != project.ID {
+		detail := "The current Project revision could not be identified; compare Draft lighting with the published Runtime Snapshot before relying on recent edits."
+		if err != nil {
+			detail = err.Error()
+		}
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", detail, project.CurrentRevisionID)
+		return
+	}
+	currentBindings, err := s.store.ListLightingNodeBindings(ctx, currentRevision.ID)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", err.Error(), currentRevision.ID)
+		return
+	}
+	currentHash, err := lightingBindingsFingerprint(currentBindings)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Current Draft lighting configuration could not be compared", err.Error(), currentRevision.ID)
+		return
+	}
+	snapshotHash, err := lightingBindingsFingerprint(manifest.LightingNodes)
+	if err != nil {
+		report.add(Warn, key, "lighting", "Published Snapshot lighting configuration could not be compared", err.Error(), runtimeSnapshot.ID)
+		return
+	}
+	if currentHash != snapshotHash {
+		detail := fmt.Sprintf("Current revision %d has lighting configuration that differs from published Runtime Snapshot %s. Runtime execution remains bound to the immutable published Snapshot; review and validate/publish the Draft if these changes are intended.", currentRevision.RevisionNumber, runtimeSnapshot.ID)
+		report.add(Warn, key, "lighting", "Draft lighting configuration differs from published Snapshot", detail, currentRevision.ID)
+		return
+	}
+	report.add(Pass, key, "lighting", "Draft lighting configuration matches published Snapshot", fmt.Sprintf("Current revision %d matches Runtime Snapshot %s.", currentRevision.RevisionNumber, runtimeSnapshot.ID), currentRevision.ID)
+}
+
+func lightingBindingsFingerprint(bindings []lightingnode.ProjectBinding) (string, error) {
+	type fingerprintBinding struct {
+		DeviceID      string          `json:"device_id"`
+		ProfileID     string          `json:"profile_id"`
+		Configuration json.RawMessage `json:"configuration"`
+		Aliases       json.RawMessage `json:"aliases"`
+	}
+	normalized := make([]fingerprintBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		configuration, err := lightingnode.CanonicalConfiguration(binding.Configuration)
+		if err != nil {
+			return "", fmt.Errorf("canonicalize lighting configuration for %s: %w", binding.DeviceID, err)
+		}
+		aliases := binding.Aliases
+		if aliases == nil {
+			aliases = map[string]string{}
+		}
+		aliasJSON, err := json.Marshal(aliases)
+		if err != nil {
+			return "", fmt.Errorf("encode lighting aliases for %s: %w", binding.DeviceID, err)
+		}
+		normalized = append(normalized, fingerprintBinding{
+			DeviceID: binding.DeviceID, ProfileID: binding.ProfileID,
+			Configuration: configuration, Aliases: aliasJSON,
+		})
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].DeviceID < normalized[j].DeviceID })
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (s *Service) evaluateRTC(report *Report) {

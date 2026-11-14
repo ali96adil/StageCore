@@ -13,7 +13,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companion"
 	"github.com/ali96adil/StageCore/internal/db"
+	"github.com/ali96adil/StageCore/internal/deviceexperience"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/lightingnode"
 	"github.com/ali96adil/StageCore/internal/offlineclock"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
@@ -42,6 +44,85 @@ func TestPreflightRTCDriftExplainsLocalAuthenticationImpactAndRemedy(t *testing.
 		!strings.Contains(detail, "token validity window") ||
 		!strings.Contains(detail, "local sign-in") {
 		t.Fatalf("RTC warning omits operator remedy or authentication impact: %q", detail)
+	}
+}
+
+func TestPreflightWarnsWhenDraftLightingDiffersFromPublishedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	handle, err := db.Open(ctx, db.Config{DataRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+
+	stageStore := store.New(handle.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Lighting Drift", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(handle.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := devices.UpsertDevice(ctx, deviceexperience.Device{
+		ID: "lighting-drift", ProjectID: project.ID, ProfileID: lightingnode.ProfileID,
+		Kind: deviceexperience.DeviceGeneric, DisplayName: "Simulated Lighting", ProtocolVersion: deviceexperience.ProtocolVersion1,
+		Capabilities: lightingnode.CapabilityKeys(), Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binding := lightingnode.ProjectBinding{
+		DeviceID: "lighting-drift", ProfileID: lightingnode.ProfileID,
+		Configuration: lightingnode.Configuration{SchemaVersion: lightingnode.SchemaVersion1, Channels: []lightingnode.ChannelConfig{{
+			ChannelKey: "front", ChannelNumber: 1, DisplayName: "Front", Kind: lightingnode.ChannelWarmWhite,
+			MinimumLevel: 0, MaximumLevel: 80, Enabled: true,
+		}}},
+		Aliases: map[string]string{"front_warm": "front"},
+	}
+	if _, err := stageStore.SetLightingNodeBinding(ctx, revision.ID, binding, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(stageStore, capability.NewRegistry(), healthyMonitor(root))
+	matching, err := service.Evaluate(ctx, project.ID, published.ID)
+	if err != nil || !hasCheck(matching, "lighting.draft_snapshot_sync", Pass) {
+		t.Fatalf("matching Draft/Snapshot lighting not reported as pass: checks=%+v err=%v", matching.Checks, err)
+	}
+
+	draft, err := stageStore.EnsureProjectDraft(ctx, project.ID, "owner", "adjust simulated lighting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := stageStore.ListLightingNodeBindings(ctx, draft.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("inherited draft bindings=%+v err=%v", bindings, err)
+	}
+	bindings[0].Configuration.Channels[0].MaximumLevel = 70
+	if _, err := stageStore.SetLightingNodeBinding(ctx, draft.ID, bindings[0], "owner"); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := service.Evaluate(ctx, project.ID, published.ID)
+	if err != nil || changed.Status != Warn || !changed.AllowsShow() || !hasCheck(changed, "lighting.draft_snapshot_sync", Warn) {
+		t.Fatalf("Draft lighting drift should be advisory and visible: status=%s checks=%+v err=%v", changed.Status, changed.Checks, err)
+	}
+	var check Check
+	for _, candidate := range changed.Checks {
+		if candidate.Key == "lighting.draft_snapshot_sync" {
+			check = candidate
+			break
+		}
+	}
+	if !strings.Contains(check.Summary, "differs") || !strings.Contains(check.Detail, published.ID) {
+		t.Fatalf("lighting drift lacks actionable published Snapshot identity: %+v", check)
 	}
 }
 
