@@ -3600,6 +3600,50 @@ This entry supersedes the preceding push instruction.
 - Safety limits remain unchanged: no production service/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
 
+## Resume update — 2026-11-15 · SC-002 expired-session rollback regression
+
+- Branch is `integration/stagecore-rc`; OPEN/Draft PR #534 and remote are at
+  `460db92eb9a8457b840aa0ddd7aef1b5ebb91c43`. Local HEAD before this batch is
+  `5aa718381f60d020c99cce2145daf9704fa99bda`, with its handoff checkpoint
+  already committed locally. SC-002 source/test/matrix commit
+  `fcb5fbff4927e8f7b6733cc62ac48765348de17b` is now local; this Handoff update
+  remains uncommitted. Local HEAD is `fcb5fbf`, two commits ahead of remote.
+  No push has been made.
+- Core run `43654085363` is still in progress on the exact remote head
+  `460db92`; Go 1.27 Test and Go 1.26 Test/Browser/Vet have passed, while Go
+  1.26 Race and ARM64 were still pending at last check. Companion Core
+  `43654085383` and Camera Relay `43654085434` passed. Do not push until the
+  full Core run is complete and the branch, PR, and exact workflow heads are
+  rechecked.
+- Static review of the existing #504/#505 clock dashboard and correction
+  preview found a session-safety gap: observing a browser session expired
+  after a forward wall-clock correction did not persist its retirement, so a
+  later clock rollback could make the original cookie valid again. `Validate`
+  and `ValidatePassive` now retire an expired session once in SQLite and fail
+  closed if that write fails. Renewal also checks that the validated
+  credential is still unexpired after generating its replacement material.
+  The red-first fake-clock regression reproduced the resurrection before the
+  fix, and now proves the old cookie stays invalid after rollback while the
+  Owner can sign in locally and receive a fresh valid session. No host clock
+  command or production session was touched.
+- Focused regression passed under normal and Race tests; full
+  `internal/userauth` normal and Race tests passed; HTTP `BrowserAuthAuditAndRenewal`
+  passed; `go vet ./internal/userauth ./internal/httpapi`, gofmt verification,
+  and `git diff --check` passed after the final code edit. Full HTTP API tests
+  with local Chrome had passed earlier in the same feature batch before the
+  final relocation of the validation timestamp; re-run if a later change
+  touches this path. Matrix SC-002 wording now records only the tested
+  software behavior and leaves RTC, actual clock correction, WAN-off Pi cold
+  boot, and tablet reauthentication as outstanding qualification.
+- Next: commit this handoff checkpoint. Keep all commits local while Core
+  `43654085363` is active; then inspect the completed
+  run and push a normal fast-forward to the same PR if it passes. Continue
+  with the next evidenced software gap while Pi hardware access remains
+  unavailable. Production Project ACL remains disabled.
+- Safety remains unchanged: no production service/data/Vault, original show
+  data, real device commands, firmware, production ACL activation, force push,
+  merge, paid action, or backup deletion.
+
 ## Resume update — 2026-11-14 23:35 UTC · Race failure and SC-024 keyboard gate
 
 - Branch: `integration/stagecore-rc`; PR #534 remains OPEN/Draft. Before this
