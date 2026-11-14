@@ -2990,3 +2990,21 @@ This entry supersedes the preceding push instruction.
   optimization remains blocked by the unchanged `websocket: bad handshake`
   qualification SSH endpoint, which failed before a shell or command. Do not
   claim qualification or retry unless the endpoint/credential changes.
+
+## Resume update — 2026-11-14 19:43 UTC · search batch pushed
+
+- Correcting the immediately preceding pre-push note: after checkpoint commit
+  `569247e`, local HEAD was `569247ed8090f42a54b833d02608917b188a75ff`, not
+  `725d3ff`. The search feature is `725d3ff`; `569247e` records its evidence.
+- The older exact-head Core CI `43630696006` on `61fd27e` completed green,
+  including Go 1.26 full Race and Linux ARM64 product builds; Companion and
+  Camera Relay runs `43630695925` and `43630695973` also completed green.
+- Rechecked clean local state, `git ls-remote`, `origin`, and OPEN/Draft PR #534
+  at `61fd27e`, then pushed six accumulated local commits normally. No force
+  push or merge. Branch, local tracking ref, remote branch and PR now agree on
+  `569247ed8090f42a54b833d02608917b188a75ff`; worktree is clean.
+- New exact-head runs are active: Core `43633596721`, Companion `43633596728`,
+  and Camera Relay `43633596765`. Do not push another change until all three
+  finish. First action after resuming is inspect those results and exact PR
+  head; if green, continue the SC-024 route-policy audit and do not re-run
+  already qualified Mac performance measurements.
