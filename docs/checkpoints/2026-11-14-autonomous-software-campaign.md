@@ -430,3 +430,20 @@ This entry supersedes the prior CI and next-action statements.
   normally to existing PR #534, and wait for exact-new-head Core CI before
   another push. Continue a verified software gap while that CI runs; retain
   Pi identity and production ACL boundaries.
+
+## Resume update — 2026-11-14 01:44 UTC
+
+This entry supersedes the preceding push instruction.
+
+- SC-024 access-level batch commit `c9f2d47487bc90aaee80b6705a8fefab898c65a5`
+  is pushed to the existing `integration/stagecore-rc` branch and Draft PR
+  #534. Local and remote HEAD both equal `c9f2d47`; worktree is clean.
+- The prior exact-head Core run `43538108851` on `f64cde0` completed green
+  before push. New exact-head Core jobs are pending/in progress at run
+  `43542130109`; the Companion workflow is `43542130081` and isolated/ARM64
+  is `43542130095`. Wait for checks at `c9f2d47` before the next push.
+- `c9f2d47` contains the tested opt-in `VIEW/EDIT/OPERATE/MANAGE/NONE` API
+  mapping and compatibility tests. Production assembly remains unchanged.
+- CUA inventory reported the Mac locked; no UI/browser actions occurred.
+  Continue software work locally while CI runs, with real-browser and Pi 4
+  checks still unqualified.
