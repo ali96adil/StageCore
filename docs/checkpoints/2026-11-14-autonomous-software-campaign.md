@@ -3282,3 +3282,44 @@ This entry supersedes the preceding push instruction.
   `websocket: bad handshake`; Mac figures do not substitute. Keep Project ACL
   disabled in production. Do not touch production services/data/Vault, send
   physical-stage commands, flash hardware, force-push, or merge.
+
+## Resume update — 2026-11-14 21:19 UTC · dual-theme Cue contrast and SC-024 keyboard controls
+
+- Remote and OPEN/Draft PR #534 were at `7df82f198bdf1d3832539155211060bfd836c51f`
+  on `integration/stagecore-rc`. Core `43640865645`, Companion
+  `43640865619`, and Camera Relay `43640865680` completed before the next
+  change; Companion/Relay passed, Core failed only Browser Cue Delivery. No
+  active CI was interrupted.
+- Core's Linux browser measured the previous light marker colors against the
+  system-light background at blue 1.695:1, green 1.498:1, amber 1.251:1 and
+  purple 1.810:1. Go 1.26 regular tests and Go 1.27 passed; Core Vet/Race/ARM64
+  steps were skipped after the browser failure. The prior attempt over-lightened
+  the palette because local Chrome defaulted to dark mode; it did not fix Linux.
+- Cue markers now use balanced colors (`#3374b5`, `#2f855a`, `#a66a00`,
+  `#805ad5`). `TestBrowserCreatesNestedMixedCueChainInDraft` now explicitly
+  qualifies dark RTL and light LTR, rather than depending on each host's system
+  theme. Local Chrome reports dark RTL blue/green/amber/purple 3.24/3.57/3.62/
+  3.58:1 and light LTR 4.68/4.46/4.41/4.84:1, all above 3:1. Focused normal
+  and Race tests pass; nested Mixed/Linked actions still use temporary SQLite
+  and simulation only.
+- SC-024 Owner grant browser qualification now sends actual CDP Tab and Enter
+  events to focus and activate Load/Save. The Enter helper supplies carriage-
+  return text so Chromium performs native button activation. After the
+  asynchronous load, the UI restores focus to the enabled Access-level select.
+  The test passes normal and Race; the fixture still sets select values in JS,
+  so native keyboard selection of options and browser revoke remain open. The
+  optional API remains `PREPARED_NOT_ENFORCED`; no publish, GO, STOP or
+  Emergency Blackout request is made.
+- Focused Mixed Cue browser normal/Race and SC-024 browser normal/Race passed;
+  `go vet ./internal/httpapi`, Node syntax checks, `tests/operator_accessibility.test.js`
+  (2/2), and the prior/current `git diff --check` passed. Matrix updates record
+  the exact CI failure and local evidence. Re-run `git diff --check` after the
+  latest documentation edits, commit the balanced palette/theme test and
+  keyboard-control batch, then push normally to the same branch and wait for
+  exact-head Core CI before any other push.
+- Pi 4 qualification remains pending. Read-only config inspection confirms
+  `stagecore-qualification` still resolves to the unchanged `ai.ali96adil.com:22`
+  endpoint after the previous `websocket: bad handshake`; it was not retried.
+  No Mac measurement substitutes for the missing ARM64 Pi run. Production
+  services/data/Vault and production ACL stay untouched; no real device,
+  firmware, force push, or merge was used.
