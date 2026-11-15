@@ -17,6 +17,14 @@ Chrome regressions cover both transitions; Node also verifies the Arabic
 announcement. This improves discoverability but does not close the remaining
 keyboard and target-compatibility gaps below.
 
+**SC-008 execution follow-up (2026-11-15):** the nested compound Mixed-Cue
+simulation fixture now has a JUMP regression that selects a Cue inside a linked
+chain and asserts that only that Cue and its nested subtree execute, the
+ancestor and sibling Actions do not replay, the rehearsal cursor moves to the
+selected Cue, and the guarded physical executor stays unused. Normal and Race
+runs pass; this adds execution evidence without changing the existing Partial
+authoring/adapter acceptance status.
+
 **Status key:** `Implemented` means the requested behavior is present in code
 and has relevant automated checks; `Partial` means code exists but a stated
 software acceptance condition remains; `Open` means a reproducible software

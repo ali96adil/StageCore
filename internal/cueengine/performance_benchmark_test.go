@@ -84,6 +84,83 @@ func TestMixedCueNestedCompoundChainRunsOnlyInSimulation(t *testing.T) {
 	}
 }
 
+// TestMixedCueJumpIntoNestedCompoundChainRunsOnlyInSimulation verifies that
+// an operator can JUMP directly to a nested Mixed Cue and still execute its
+// own linked subtree without replaying its ancestors or sibling branches.
+func TestMixedCueJumpIntoNestedCompoundChainRunsOnlyInSimulation(t *testing.T) {
+	f := newMixedCuePerfFixture(t, true, false)
+	runtimeSnapshot, err := f.store.GetRuntimeSnapshot(context.Background(), f.snapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := snapshot.Decode(runtimeSnapshot.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selectedID string
+	var expectedActionIDs = map[string]bool{}
+	var terminalID string
+	for _, cue := range manifest.Cues {
+		switch cue.Name {
+		case "Compound VDMX Audio":
+			selectedID = cue.ID
+			for _, action := range cue.Actions {
+				expectedActionIDs[action.ID] = true
+			}
+		case "Nested Display Media":
+			terminalID = cue.ID
+			for _, action := range cue.Actions {
+				expectedActionIDs[action.ID] = true
+			}
+		}
+	}
+	if selectedID == "" || terminalID == "" {
+		t.Fatalf("nested Mixed Cue fixture missing selected=%q terminal=%q", selectedID, terminalID)
+	}
+
+	command := f.commandFor(t, selectedID)
+	result := f.engine.ExecuteCueGo(context.Background(), f.sessionID, command)
+	if result.Status != contracts.CommandCompleted {
+		t.Fatalf("nested Mixed Cue JUMP status=%s error=%+v", result.Status, result.Error)
+	}
+	if calls := f.physicalHits.Load(); calls != 0 {
+		t.Fatalf("simulation reached the physical executor %d time(s)", calls)
+	}
+	var payload struct {
+		CueExecutionID string   `json:"cue_execution_id"`
+		CueID          string   `json:"cue_id"`
+		LinkedCueIDs   []string `json:"linked_cue_ids"`
+	}
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.CueID != selectedID || len(payload.LinkedCueIDs) != 1 || payload.LinkedCueIDs[0] != terminalID {
+		t.Fatalf("nested Mixed Cue JUMP payload=%+v", payload)
+	}
+	actions, err := f.store.ListActionExecutions(context.Background(), payload.CueExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != len(expectedActionIDs) {
+		t.Fatalf("nested Mixed Cue JUMP executed %d Actions, want only selected subtree's %d", len(actions), len(expectedActionIDs))
+	}
+	for _, execution := range actions {
+		if !expectedActionIDs[execution.ActionID] {
+			t.Errorf("nested Mixed Cue JUMP replayed unrelated Action %s", execution.ActionID)
+		}
+		if execution.Result != domain.ExecutionCompleted {
+			t.Errorf("nested Mixed Cue JUMP Action %s result=%s want=%s", execution.ActionID, execution.Result, domain.ExecutionCompleted)
+		}
+	}
+	state, err := f.store.GetSession(context.Background(), f.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentCueID == nil || *state.CurrentCueID != selectedID {
+		t.Fatalf("current Cue after nested JUMP=%v want %s", state.CurrentCueID, selectedID)
+	}
+}
+
 // TestMixedCueBurstRunsOnlyInSimulation exercises a simultaneous batch of
 // independent Rehearsal GO requests against the same immutable show snapshot.
 // Each Session has its own execution state; all outputs remain Digital Twin
@@ -624,12 +701,16 @@ func (f *mixedCuePerfFixture) execute(tb testing.TB) contracts.CommandResult {
 }
 
 func (f *mixedCuePerfFixture) command(tb testing.TB) contracts.CommandEnvelope {
+	return f.commandFor(tb, f.rootCueID)
+}
+
+func (f *mixedCuePerfFixture) commandFor(tb testing.TB, cueID string) contracts.CommandEnvelope {
 	tb.Helper()
 	commandID, err := stageid.New()
 	if err != nil {
 		tb.Fatal(err)
 	}
-	payload, err := json.Marshal(cueengine.CueGoPayload{RequestedNextCueID: &f.rootCueID})
+	payload, err := json.Marshal(cueengine.CueGoPayload{RequestedNextCueID: &cueID})
 	if err != nil {
 		tb.Fatal(err)
 	}
