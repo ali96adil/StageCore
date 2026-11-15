@@ -83,6 +83,14 @@ session at the response boundary and requires `SESSION_INVALID`. Focused normal
 and Race tests, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (82.613 s).
 
+The Owner-only global Stage Device `inventory` and `unassigned` GETs now also
+recheck the live session before returning list/store errors. Red-first
+`TestStageDeviceGlobalInventorySuppressesListErrorAfterOwnerRevocation`
+covers both routes against temporary SQLite failures; each failed with 503
+after logout before the fence and now returns `SESSION_INVALID`. Focused
+normal/Race tests, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (82.984 s).
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

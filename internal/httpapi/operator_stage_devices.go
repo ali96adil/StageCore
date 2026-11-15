@@ -617,6 +617,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
+				if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+					hooks[0].BeforeOwnerReadResponse("inventory")
+				}
+				if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
 				return
 			}
@@ -642,6 +648,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
 				if err != nil {
+					if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+						hooks[0].BeforeOwnerReadResponse("inventory")
+					}
+					if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+						return
+					}
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
 					return
 				}
@@ -683,6 +695,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			items, err := devices.ListDevices(r.Context(), "")
 			if err != nil {
+				if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+					hooks[0].BeforeOwnerReadResponse("unassigned")
+				}
+				if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_INVENTORY_UNAVAILABLE"})
 				return
 			}
@@ -702,6 +720,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 				}
 				assignment, err := devices.GetAssignmentRecord(r.Context(), item.ID)
 				if err != nil {
+					if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+						hooks[0].BeforeOwnerReadResponse("unassigned")
+					}
+					if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+						return
+					}
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"})
 					return
 				}

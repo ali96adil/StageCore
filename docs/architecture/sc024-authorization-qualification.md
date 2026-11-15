@@ -1867,3 +1867,20 @@ temporary SQLite database.
 Focused normal/Race tests, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass. The Owner routes remain read-only;
 the tests do not query or change production network/device state.
+
+
+## SC-024 continuation · 2026-11-15 · Owner inventory read failures
+
+The Owner-only global Stage Device `inventory` and `unassigned` routes already
+rechecked the session after successful inventory construction, but returned
+`STAGE_DEVICE_INVENTORY_UNAVAILABLE` directly on repository errors.
+`TestStageDeviceGlobalInventorySuppressesListErrorAfterOwnerRevocation` first
+reproduced HTTP 503 after Owner logout for both routes using temporary SQLite.
+The handlers now revalidate the exact Owner session and role before returning
+list or per-device assignment read errors. Revoked sessions receive
+`SESSION_INVALID`; inventory behavior remains read-only and no physical device
+is contacted.
+
+Focused normal/Race tests, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (82.984 s). No production device
+inventory or network observation data was read.

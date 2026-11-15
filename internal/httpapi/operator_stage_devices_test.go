@@ -659,6 +659,63 @@ func TestNetworkCockpitSuppressesStoreErrorAfterOwnerRevocation(t *testing.T) {
 	}
 }
 
+func TestStageDeviceGlobalInventorySuppressesListErrorAfterOwnerRevocation(t *testing.T) {
+	for _, route := range []struct {
+		name string
+		path string
+	}{
+		{name: "inventory", path: "/api/v1/stage-devices/inventory"},
+		{name: "unassigned", path: "/api/v1/stage-devices/unassigned"},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			devices, err := deviceexperience.NewRepository(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			access, err := projectaccess.New(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE stage_devices"); err != nil {
+				t.Fatal(err)
+			}
+			runtime := devicechannel.New(devices, nil)
+			defer runtime.Close()
+			revoked := false
+			handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+				h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+					BeforeOwnerReadResponse: func(name string) {
+						if name != route.name {
+							return
+						}
+						revoked = true
+						if err := h.auth.Logout(ctx, owner.Token); err != nil {
+							t.Errorf("revoke Owner session at %s error boundary: %v", route.name, err)
+						}
+					},
+				}),
+			).Handler()
+			request := httptest.NewRequest(http.MethodGet, route.path, nil)
+			request.RemoteAddr = "127.0.0.1:20202"
+			request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized ||
+				strings.Contains(response.Body.String(), "STAGE_DEVICE_INVENTORY_UNAVAILABLE") {
+				t.Fatalf("revoked Owner received %s list error: HTTP %d %s (hook ran=%t)",
+					route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}
+
 func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
