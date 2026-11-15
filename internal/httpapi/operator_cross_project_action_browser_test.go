@@ -159,7 +159,8 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 				return
 			}
 			for _, key := range input.Keys {
-				if key != "Tab" && key != "Enter" {
+				if key != "Tab" && key != "Enter" && key != "Backspace" &&
+					!(len(key) == 1 && key[0] >= 'a' && key[0] <= 'z') {
 					http.Error(w, "unsupported preset keyboard key", http.StatusBadRequest)
 					return
 				}

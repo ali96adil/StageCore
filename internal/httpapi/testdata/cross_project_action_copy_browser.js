@@ -99,12 +99,20 @@
     await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
     const presetRow = presetPanel.querySelector("li");
     const presetSearch = presetPanel.querySelector("input[type=search]");
-    presetSearch.value = "missing-preset-query";
-    presetSearch.dispatchEvent(new Event("input", {bubbles: true}));
-    if (!presetRow.hidden) throw new Error("Action preset search did not hide a nonmatching row");
-    presetSearch.value = "SOURCE-OSC";
-    presetSearch.dispatchEvent(new Event("input", {bubbles: true}));
-    if (presetRow.hidden) throw new Error("Action preset search did not match a nested target");
+    if (!presetSearch) throw new Error("Action preset search control is missing");
+    const typeSearch = async (keys) => {
+      const response = await sendPresetKeys(keys);
+      if (!response.ok) throw new Error(`native preset search input returned HTTP ${response.status}`);
+    };
+    presetSearch.focus();
+    await typeSearch(["s", "o", "u", "r"]);
+    await typeSearch(["c", "e", "x"]);
+    await waitFor(() => presetSearch.value === "sourcex" && presetRow.hidden,
+      "filtering the preset library from native keyboard input");
+    await typeSearch(["Backspace", "Backspace", "Backspace", "Backspace"]);
+    await typeSearch(["Backspace", "Backspace", "Backspace"]);
+    await waitFor(() => presetSearch.value === "" && !presetRow.hidden,
+      "restoring the preset row with native Backspace");
     const presetPreview = presetRow.querySelector("pre");
     if (!presetPreview?.textContent.includes("/source/open") || !presetPreview.textContent.includes("SOURCE-LIGHT")) {
       throw new Error(`Mixed Action preset preview lost saved content: ${presetPreview?.textContent}`);

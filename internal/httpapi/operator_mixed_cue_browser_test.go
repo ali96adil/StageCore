@@ -954,6 +954,8 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		virtualKeyCode = 9
 	case "Enter":
 		virtualKeyCode = 13
+	case "Backspace":
+		virtualKeyCode = 8
 	case "j":
 		virtualKeyCode = 74
 	case "k":
@@ -963,12 +965,18 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 	case "n":
 		virtualKeyCode = 78
 	default:
-		return fmt.Errorf("unsupported browser key %q", key)
+		if len(key) != 1 || key[0] < 'a' || key[0] > 'z' {
+			return fmt.Errorf("unsupported browser key %q", key)
+		}
+		virtualKeyCode = int(strings.ToUpper(key)[0])
 	}
 	eventTypes := []string{"keyDown", "keyUp"}
 	for id, eventType := range eventTypes {
 		eventKey, eventCode := key, key
-		if key == "o" || key == "n" || key == "j" || key == "k" {
+		if key == "Backspace" {
+			eventCode = "Backspace"
+		}
+		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
 			eventCode = "Key" + strings.ToUpper(key)
 		}
 		params := map[string]any{
@@ -979,7 +987,7 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 			params["text"] = "\r"
 			params["unmodifiedText"] = "\r"
 		}
-		if (key == "o" || key == "n" || key == "j" || key == "k") && eventType == "keyDown" {
+		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' && eventType == "keyDown" {
 			params["text"] = key
 			params["unmodifiedText"] = key
 		}
