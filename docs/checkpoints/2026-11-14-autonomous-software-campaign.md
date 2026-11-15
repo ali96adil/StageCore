@@ -4563,6 +4563,12 @@ This entry supersedes the preceding push instruction.
 - Previously completed Pi performance evidence in `cue-execution-performance-qualification.md` used a device-hidden namespace and remains applicable because Cue Engine/Runtime timing sources have not changed in the current UI/test batches. The host CPU/RAM controllers were not isolated; formal Pi performance acceptance and any timing SLO remain open. Do not use `stagecore-pi` for new workload testing. `stagecore-qualification` remains unverified from its prior failed handshake and was not contacted again.
 - Continue software work using isolated local/CI simulations. Any future Pi run requires an independently verified isolated environment with production services and physical device paths excluded.
 
+## Related repository state — 2026-11-15
+
+- Read-only PR review: TabletPlayer #36 `91613da`, ESP32 DMX Lighting #39 `3ad7749`, ESP32 Camera #20 `455b066`, and StageLaser #56 `b14a578` remain OPEN/Draft with their listed checks passing. StageLaser #57 `c4ff10b` remains OPEN/non-Draft with both firmware checks passing. These checks are source/build probes, not physical qualification.
+- No checkout for those linked repositories is available in this workspace, so no linked repository was edited. Exact check names and links are in [`related-component-qualification-matrix.md`](../architecture/related-component-qualification-matrix.md).
+- Main PR #534 remains OPEN/Draft at remote `3955c65fbc7b10d3b36015dd4642fb8dd9ca7fdc`; Core `43684038797` remains active in Go 1.26 Race with ARM64 pending, while Companion `43684038783` and Camera Relay `43684038809` pass. Local commits `ff820cb`, `4e4dc6d`, and this documentation update are preserved; do not push until exact-head Core completes.
+
 ## Resume update — 2026-11-15 · exact-head Race retry fixed
 
 - The rerun of Core CI `43680858030` at pushed HEAD `5d654d7c31a377b67c64f6ab65b7c713fa95229e` completed. Go 1.26 Test, Browser Cue Delivery, and Vet passed, but Race failed only at `TestCompanionTransportTimelineChangesProjectScopeWithRoleAssignment`; Go 1.27 and exact-head Companion/Camera Relay workflows passed. ARM64 did not start because the Race step failed.
