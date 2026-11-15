@@ -16,7 +16,7 @@ test("interactive Operator controls keep a visible keyboard focus ring", () => {
 });
 
 test("Cue color remains supplemental to the visible Cue label text", () => {
-  assert.match(app, /<td class="cue-label-cell" data-cue-color="\$\{cueColor\(cue\)\}">\$\{esc\(cue\.display_label \|\| "—"\)\}<\/td>/);
+  assert.match(app, /<td role="cell" class="cue-label-cell" data-label="Label" data-cue-color="\$\{cueColor\(cue\)\}">\$\{esc\(cue\.display_label \|\| "—"\)\}<\/td>/);
   assert.match(cueStudioCSS, /\.cue-label-cell\[data-cue-color="blue"\]\s*\{\s*box-shadow:\s*inset 0 -3px/);
   assert.match(cueStudioCSS, /\.cue-label-cell\[data-cue-color="green"\]/);
   assert.match(cueStudioCSS, /\.cue-label-cell\[data-cue-color="amber"\]/);

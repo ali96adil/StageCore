@@ -125,10 +125,15 @@
     await typeSearch(["c", "e", "x"]);
     await waitFor(() => presetSearch.value === "sourcex" && presetRow.hidden,
       "filtering the preset library from native keyboard input");
+    const emptySearch = presetPanel.querySelector(".sc010-preset-empty");
+    if (!emptySearch || emptySearch.hidden || emptySearch.getAttribute("role") !== "status") {
+      throw new Error("empty preset search needs a visible accessible status");
+    }
     await typeSearch(["Backspace", "Backspace", "Backspace", "Backspace"]);
     await typeSearch(["Backspace", "Backspace", "Backspace"]);
     await waitFor(() => presetSearch.value === "" && !presetRow.hidden,
       "restoring the preset row with native Backspace");
+    if (!emptySearch.hidden) throw new Error("preset empty-search status stayed visible after clearing search");
     const presetPreview = presetRow.querySelector("pre");
     if (!presetPreview?.textContent.includes("/source/open") || !presetPreview.textContent.includes("SOURCE-LIGHT")) {
       throw new Error(`Mixed Action preset preview lost saved content: ${presetPreview?.textContent}`);

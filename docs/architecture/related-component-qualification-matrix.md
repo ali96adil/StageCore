@@ -14,20 +14,23 @@ StageCore #503–#508 and #514–#516 remain open at the heads listed below; the
 listed Go 1.26/1.27 checks pass. StageCore Draft PR #534 is open on
 `integration/stagecore-rc` at remote HEAD
 `993da0848e37511ffeb181188e0fa286dcbc19a9`. Core run `43737062171` is active
-on that exact SHA: Go 1.27 passed and Go 1.26 Test is running. Companion
-`43737062177` and Camera Relay `43737062158` passed. The predecessor SHA
+on that exact SHA: Go 1.27 passed; Go 1.26 Test, isolated installed-copy
+rollback, Browser Cue Delivery and Vet passed; Go 1.26 Race is active and
+Linux ARM64 product builds are pending. Companion `43737062177` and Camera
+Relay `43737062158` passed. The predecessor SHA
 `29ac4b566e19728c0c4b03886b7a144a3b17cb88` passed Core Go 1.26/1.27 tests,
 isolated installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux
 ARM64 builds, plus Companion and Camera Relay. Local HEAD
-`4e5e19ee0c68710c0373ace86538e97688d1dd29` was two commits ahead before the
-current browser-test checkpoint; hold the local follow-up push until the new
-exact-head Core run completes.
+`9db4d0bab4574f4f6c43310196847652d012b187` was three commits ahead before the
+current preset-search empty-state checkpoint. Hold the local follow-up push
+until the new exact-head Core run completes.
 
 The current Chrome browser regression covers the Mixed Lighting+OSC preset
-save/focus, native search typing and Backspace, preview, insertion and Draft
-discard guard, then continues the existing cross-Project clipboard/remap flow.
-Focused normal/Race tests and the full real-Chrome `^TestBrowser` suite pass;
-see the dated campaign checkpoint. All linked firmware checks remain
+save/focus, native search typing and Backspace, an accessible localized
+no-results status, preview, insertion and Draft discard guard, then continues
+the existing cross-Project clipboard/remap flow. Focused normal/Race tests and
+the full real-Chrome `^TestBrowser` suite pass; see the dated campaign
+checkpoint. All linked firmware checks remain
 source/build probes, not physical board qualification.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. The linked PR checkouts were not modified;

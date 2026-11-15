@@ -1384,16 +1384,24 @@
     };
     const save = button(tr("احفظ الإجراء المنسوخ", "Save copied action"));
     const list = document.createElement("ul");
-    panel.append(heading, name, description, save, status, search, list);
+    const emptySearch = document.createElement("p");
+    emptySearch.className = "muted sc010-preset-empty";
+    emptySearch.setAttribute("role", "status");
+    emptySearch.textContent = tr("لا توجد قوالب مطابقة.", "No matching presets.");
+    emptySearch.hidden = true;
+    panel.append(heading, name, description, save, status, search, list, emptySearch);
     pick(panel.id)?.remove();
     workspace.append(panel);
     const active = () => pick("cueDialog")?.open && panel.isConnected &&
       state.user === user && state.project?.project_id === projectID;
     const filterRows = () => {
       const query = String(search.value || "").trim().toLocaleLowerCase();
+      let visibleRows = false;
       for (const row of list.children) {
         row.hidden = Boolean(query) && !String(row.dataset.searchText || "").includes(query);
+        visibleRows ||= !row.hidden;
       }
+      emptySearch.hidden = visibleRows || list.children.length === 0;
     };
     const refresh = async () => {
       const { presets } = await api(path);

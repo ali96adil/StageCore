@@ -159,6 +159,9 @@ test("Action preset search matches nested Mixed-Cue targets and payloads", async
   ] });
   const search = panel.children.find((child) => child?.className === "sc010-preset-search");
   assert.ok(search, "preset library needs a local search field");
+  const emptySearch = panel.children.find((child) => child?.className === "muted sc010-preset-empty");
+  assert.ok(emptySearch, "preset search needs an accessible empty-result status");
+  assert.equal(emptySearch.hidden, true);
   const rows = find(panel, "ul").children;
   search.value = "scene/4";
   search.listeners.input();
@@ -172,6 +175,16 @@ test("Action preset search matches nested Mixed-Cue targets and payloads", async
   search.listeners.input();
   assert.equal(rows[0].hidden, true);
   assert.equal(rows[1].hidden, false);
+  assert.equal(emptySearch.hidden, true);
+  search.value = "no matching cue preset";
+  search.listeners.input();
+  assert.equal(rows.every((row) => row.hidden), true);
+  assert.equal(emptySearch.hidden, false);
+  assert.equal(emptySearch.textContent, "No matching presets.");
+  search.value = "";
+  search.listeners.input();
+  assert.equal(rows.every((row) => !row.hidden), true);
+  assert.equal(emptySearch.hidden, true);
 });
 
 test("Missing Mixed-Cue preset targets can be explicitly remapped per action", async () => {
