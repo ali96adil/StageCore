@@ -370,6 +370,20 @@
     if (requestTrace.length !== requestsBeforePreview) {
       throw new Error(`Cue Inspector simulation made network requests: ${requestTrace.slice(requestsBeforePreview).join("; ")}`);
     }
+    const requestsBeforeDMXPreview = requestTrace.length;
+    setValue(scenarioSelect, "missing-dmx");
+    previewButton.click();
+    const dmxTimeline = inspector.querySelector(".cue-inspection-result .cue-inspection-timeline");
+    await waitFor(() => dmxTimeline?.querySelectorAll("li").length === 6,
+      "rendering the missing-DMX simulation for all linked Actions");
+    const dmxOutcomes = [...dmxTimeline.querySelectorAll("li")].map((item) => item.innerText);
+    const dmxBlocked = dmxOutcomes.filter((item) => item.includes("DMX_NODE_MISSING") && item.includes("SIMULATED_BLOCKED"));
+    if (dmxBlocked.length !== 1) {
+      throw new Error(`missing-DMX simulation should block only the Lighting Action: ${JSON.stringify(dmxOutcomes)}`);
+    }
+    if (requestTrace.length !== requestsBeforeDMXPreview) {
+      throw new Error(`missing-DMX simulation made network requests: ${requestTrace.slice(requestsBeforeDMXPreview).join("; ")}`);
+    }
     const forbiddenRequests = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (forbiddenRequests.length) throw new Error(`browser authoring/inspection attempted runtime commands: ${forbiddenRequests.join("; ")}`);
 
