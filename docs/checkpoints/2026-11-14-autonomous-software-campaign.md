@@ -4752,3 +4752,27 @@ This entry supersedes the preceding push instruction.
   endpoint-to-policy and asynchronous-delivery audit, while preserving the
   existing grant revocation, STOP/Blackout independence, and production-off
   boundary. The route review must not query or alter production services/data.
+
+## Push checkpoint — 2026-11-15 · isolated update rehearsal
+
+- Normal fast-forward push moved `integration/stagecore-rc` and OPEN/Draft PR
+  #534 from `5331d3b674e3464a4b3b088616f307b565356a11` to
+  `528bac6b912f500bdeef85e1dabd50a15e3faa71`. Local HEAD, `origin`,
+  `git ls-remote`, and PR head match; the PR remains OPEN/Draft. The five
+  pushed commits are `825fc60`, `d530598`, `84f1a86`, `3f5b405`, and
+  `528bac6`. No force push, branch/PR creation, or merge occurred.
+- The exact prior-head gate was green: Core `43692176474`, Companion Core
+  `43692176470`, and Camera Relay `43692176469`. New exact-head runs at
+  `528bac6` are Core `43694919781`, Companion Core `43694919744`, and Camera
+  Relay `43694919806`, all in progress at this checkpoint. Do not push again
+  until each has completed and its result is inspected.
+- The F-010 transaction test passed in Linux ARM64 Go 1.27.1 both normally and
+  under Race, including the full `internal/update` package with all three
+  installed-copy scenarios. macOS package/Race/Vet checks passed; the
+  Linux-root-only integration test skips on macOS and is explicitly executed
+  normal/Race under sudo in Core CI. This Colima result is not Pi or real
+  systemd qualification; its VM has been stopped.
+- Next: while the three exact-head workflows run, continue the SC-024
+  whole-server endpoint-to-policy and asynchronous-delivery review. Preserve
+  the production ACL-off rule and stop/Blackout grants; do not query or alter
+  production services or data.
