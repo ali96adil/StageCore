@@ -1752,3 +1752,23 @@ After this addition, full `go test ./internal/httpapi -count=1` passed in
 80.750 s; `go vet ./internal/httpapi` and `git diff --check` pass. The list,
 detail and diff use simulated stored snapshots only; no runtime adapter or
 physical device is contacted. Production ACL remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · F-025 execution-environment read errors
+
+The execution-environment collection and rebuild-plan GET paths returned Store
+errors without rechecking `project.view` after the read failed. Red-first tests
+`TestExecutionEnvironmentListSuppressesStoreErrorAfterGrantRevocation` and
+`TestExecutionEnvironmentRebuildPlanSuppressesStoreErrorAfterGrantRevocation`
+use temporary SQLite, drop only the relevant test tables, and revoke the
+operator grant at the failure boundary. Both tests first reproduced HTTP 503
+with the old response path. The handlers now recheck the live session and
+Project grant before returning the mapped Store error, so the revoked operator
+receives the scoped 404. The environment collection also fences a failed
+Machine Role list read.
+
+The environment-list, snapshot-list, Vault-status and rebuild-plan regressions
+pass normally and under Race. `go vet ./internal/httpapi`, the full
+`go test ./internal/httpapi -count=1` suite, and `git diff --check` pass. All
+failures are injected only into temporary databases; no physical output or
+production data/service is involved. Production ACL remains disabled.
