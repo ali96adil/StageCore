@@ -12,7 +12,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/companionchannel"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 type fakeExecutionEnvironmentOperationRuntime struct {
@@ -280,5 +282,65 @@ func TestExecutionEnvironmentOperationRechecksRevokedSessionAtBothBoundaries(t *
 				t.Fatalf("status=%d calls=%d body=%s", res.Code, runtime.calls, res.Body)
 			}
 		})
+	}
+}
+
+func TestExecutionEnvironmentOperationSuppressesStoreErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Environment operation ACL error", CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.CreateExecutionEnvironmentManifest(
+		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("operation-acl-error"), owner.Session.User.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "environment-operation-acl-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl, projectaccess.MediaRead}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeExecutionEnvironmentOperationRuntime{status: companionchannel.EnvironmentOperationCompleted}
+	handler := New(
+		withOperatorExecutionEnvironmentOperations(h.auth, stageStore, runtime, executionEnvironmentOperationHooks{
+			BeforeStoreErrorResponse: func() {
+				if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+					t.Errorf("revoke operation grants before Store error delivery: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE execution_environment_manifests"); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID +
+		"/execution-environments/operation-acl-error/operations"
+	body := []byte(`{"operation_id":"revoked-before-dispatch","kind":"OPEN","timeout_ms":1000}`)
+	req := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodPost, path, body)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || runtime.calls != 0 || strings.Contains(res.Body.String(), "EXECUTION_ENVIRONMENT_OPERATION_FAILED") {
+		t.Fatalf("operation Store error escaped after Project grant revocation: HTTP %d calls=%d %s", res.Code, runtime.calls, res.Body.String())
 	}
 }

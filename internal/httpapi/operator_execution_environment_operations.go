@@ -36,22 +36,41 @@ type executionEnvironmentOperationView struct {
 	CaptureUpload   *companionchannel.EnvironmentCaptureUploadReceipt    `json:"capture_upload,omitempty"`
 }
 
+type executionEnvironmentOperationHooks struct {
+	BeforeStoreErrorResponse func()
+}
+
 // WithOperatorExecutionEnvironmentOperations exposes only the bounded F-025
 // operation kinds. The browser cannot supply a Companion capability, manifest,
 // Machine Role, Runtime Snapshot, adapter parameters, or command payload.
 func WithOperatorExecutionEnvironmentOperations(auth *userauth.Service, stageStore *store.Store, runtime executionEnvironmentOperationRuntime) Option {
+	return withOperatorExecutionEnvironmentOperations(auth, stageStore, runtime, executionEnvironmentOperationHooks{})
+}
+
+func withOperatorExecutionEnvironmentOperations(
+	auth *userauth.Service,
+	stageStore *store.Store,
+	runtime executionEnvironmentOperationRuntime,
+	hooks executionEnvironmentOperationHooks,
+) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil || runtime == nil {
 			return
 		}
-		registerOperatorExecutionEnvironmentOperationRoutes(s.mux, auth, stageStore, runtime)
+		registerOperatorExecutionEnvironmentOperationRoutes(s.mux, auth, stageStore, runtime, hooks)
 		if discovery, ok := runtime.(oscQueryDiscoveryRuntime); ok {
 			registerOperatorOSCQueryDiscoveryRoute(s.mux, auth, stageStore, discovery)
 		}
 	}
 }
 
-func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, runtime executionEnvironmentOperationRuntime) {
+func registerOperatorExecutionEnvironmentOperationRoutes(
+	mux *http.ServeMux,
+	auth *userauth.Service,
+	stageStore *store.Store,
+	runtime executionEnvironmentOperationRuntime,
+	hooks executionEnvironmentOperationHooks,
+) {
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/operations"
 	mux.HandleFunc("POST "+path, withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
@@ -61,6 +80,12 @@ func registerOperatorExecutionEnvironmentOperationRoutes(mux *http.ServeMux, aut
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_OPERATION_FAILED")
 			return
 		}
