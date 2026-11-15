@@ -4821,3 +4821,30 @@ This entry supersedes the preceding push instruction.
   commits normally to this same PR. Keep Production ACL off and preserve all
   production, show/Vault/data, real-device, firmware, backup, merge, force-push,
   and paid-action restrictions.
+
+## Qualification batch checkpoint — 2026-11-15 · HTTP read-error fences
+
+- At the start of this checkpoint, local HEAD was `2893ec52c69a123e8c3a332db5f26a82e6696c03`,
+  six commits ahead of origin `528bac6b912f500bdeef85e1dabd50a15e3faa71`:
+  `851c4c6`, `5a64767`, `f11e1db`, `6390701`, `1570a97`, and `2893ec5`.
+  PR #534 remains OPEN/Draft at `528bac6`; no change was pushed.
+- Full `go test ./internal/httpapi -count=1` passed in 78.973 s after both
+  SC-024 fixes. The Runtime grant-revocation regression and all
+  `TestLightingConfiguration*` tests passed normally and under Race;
+  `go vet ./internal/httpapi` and `git diff --check` passed. The two red-first
+  failures and fixed behavior are recorded above and in the authorization
+  qualification/matrix docs.
+- Exact-head `528bac6`: Companion Core `43694919744` and Camera Relay
+  `43694919806` passed. Core `43694919781`: Go 1.27 passed; Go 1.26 Test,
+  installed-copy rollback, Browser Cue Delivery and Vet passed; Race remains
+  in progress, Linux ARM64 builds pending. No push until Core finishes and the
+  exact-head three-workflow gate is inspected.
+- Pi 4 results are historical for source `a90403b`. Current-head P95/P99 and
+  resource qualification remain pending an isolated Pi 4 environment; do not
+  use the production `stagecore-pi` host. Mac performance results were not
+  repeated. Production ACL stays disabled.
+- First action after this checkpoint: inspect the final `528bac6` Core Race
+  and ARM64 results. If all three workflows are green and branch/PR ancestry
+  still matches, push the saved stack normally to the same PR, then inspect
+  every exact-new-head workflow before another push. Continue the SC-024
+  endpoint/delivery audit while CI runs.
