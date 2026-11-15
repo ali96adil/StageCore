@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,7 +102,16 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	zoomTestScript, err := os.ReadFile(filepath.Join("testdata", "mixed_cue_zoom_browser.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	browserResult := make(chan string, 1)
+	zoomBrowserResult := make(chan string, 1)
+	zoomScreenshotRequests := make(chan struct {
+		locale string
+		resume chan struct{}
+	}, 2)
 	focusRequests := make(chan chan struct{}, 2)
 	keyCommandID := 100
 	viewportCommandID := 200
@@ -129,7 +139,11 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			http.SetCookie(w, &http.Cookie{Name: browserSessionCookie, Value: owner.Token, HttpOnly: true, Path: "/"})
 			setOperatorWebSecurityHeaders(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			page := strings.Replace(indexHTML, `</body>`, `<script src="/mixed-cue-test.js" defer></script></body>`, 1)
+			scriptPath := "/mixed-cue-test.js"
+			if r.URL.Query().Get("layout-zoom") == "200" {
+				scriptPath = "/mixed-cue-zoom-test.js"
+			}
+			page := strings.Replace(indexHTML, `</body>`, `<script src="`+scriptPath+`" defer></script></body>`, 1)
 			io.WriteString(w, page)
 		case "/cue-editor-app.js":
 			rec := httptest.NewRecorder()
@@ -147,6 +161,33 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/mixed-cue-zoom-result":
+			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
+			zoomBrowserResult <- string(body)
+			w.WriteHeader(http.StatusNoContent)
+		case "/mixed-cue-zoom-ready":
+			var request struct {
+				Locale string `json:"locale"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Locale != "ar" && request.Locale != "en") {
+				http.Error(w, "invalid zoom screenshot request", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case zoomScreenshotRequests <- struct {
+				locale string
+				resume chan struct{}
+			}{locale: request.Locale, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/mixed-cue-focus-ready":
 			resume := make(chan struct{})
 			select {
@@ -277,6 +318,9 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		case "/mixed-cue-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			w.Write(testScript)
+		case "/mixed-cue-zoom-test.js":
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			w.Write(zoomTestScript)
 		default:
 			handler.ServeHTTP(w, r)
 		}
@@ -614,6 +658,185 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatalf("browser authoring/inspection changed the immutable Published Snapshot: before=%+v after=%+v err=%v",
 			baselineSnapshot, snapshot, err)
 	}
+	if err := runMixedCue200PercentZoomAudit(t, ctx, chrome, server.URL, zoomBrowserResult,
+		zoomScreenshotRequests); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runMixedCue200PercentZoomAudit(t *testing.T, ctx context.Context, chrome, serverURL string,
+	result <-chan string, screenshotRequests <-chan struct {
+		locale string
+		resume chan struct{}
+	}) error {
+	t.Helper()
+	profileDir, err := os.MkdirTemp("", "stagecore-cue-zoom-chrome-")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for attempt := 0; attempt < 20; attempt++ {
+			if err := os.RemoveAll(profileDir); err == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Errorf("200%% Chrome profile cleanup failed for %s", profileDir)
+	}()
+	preferencesDir := filepath.Join(profileDir, "Default")
+	if err := os.MkdirAll(preferencesDir, 0o700); err != nil {
+		return err
+	}
+	preferences := []byte(`{"partition":{"default_zoom_level":{"x":3.801784}}}`)
+	if err := os.WriteFile(filepath.Join(preferencesDir, "Preferences"), preferences, 0o600); err != nil {
+		return err
+	}
+	screenshotDir := t.TempDir()
+	if configured := os.Getenv("STAGECORE_TEST_SCREENSHOT_DIR"); configured != "" {
+		screenshotDir = configured
+		if !filepath.IsAbs(screenshotDir) {
+			screenshotDir = filepath.Join("..", "..", screenshotDir)
+		}
+	}
+	if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
+		return err
+	}
+	browserLog, err := os.Create(filepath.Join(t.TempDir(), "cue-zoom-browser.log"))
+	if err != nil {
+		return err
+	}
+	defer browserLog.Close()
+	zoomURL := serverURL + "?layout-zoom=200"
+	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		"--remote-debugging-port=0", "--remote-allow-origins=*", "--disable-background-networking",
+		"--window-size=1440,900", "--user-data-dir="+profileDir, zoomURL)
+	cmd.Stdout, cmd.Stderr = browserLog, browserLog
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	cdp, err := connectChromePage(ctx, profileDir, serverURL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("connect to 200%% Chrome DevTools: %w", err)
+	}
+	exited := false
+	defer func() {
+		_ = cdp.Close()
+		if exited {
+			return
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	}()
+	var outcome string
+	screenshotID := 700
+	for outcome == "" {
+		select {
+		case request := <-screenshotRequests:
+			if request.locale != "ar" && request.locale != "en" {
+				return fmt.Errorf("unexpected screenshot locale %q", request.locale)
+			}
+			image, err := captureChromeScreenshot(cdp, screenshotID)
+			screenshotID++
+			if err != nil {
+				return fmt.Errorf("capture 200%% %s Cue Inspector: %w", request.locale, err)
+			}
+			if len(image) < 4096 || !bytes.HasPrefix(image, []byte("\x89PNG\r\n\x1a\n")) {
+				return fmt.Errorf("200%% %s screenshot is not a complete PNG (%d bytes)", request.locale, len(image))
+			}
+			name := "cue-inspector-200-percent-" + request.locale + ".png"
+			if err := os.WriteFile(filepath.Join(screenshotDir, name), image, 0o600); err != nil {
+				return err
+			}
+			t.Logf("captured 200%% %s screenshot: %s (%d bytes)", request.locale, filepath.Join(screenshotDir, name), len(image))
+			close(request.resume)
+		case outcome = <-result:
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(browserLog.Name())
+			return fmt.Errorf("200%% Chrome exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(browserLog.Name())
+			return fmt.Errorf("200%% Chrome zoom audit timed out: %s", output)
+		}
+	}
+	var report struct {
+		Status       string `json:"status"`
+		Measurements []struct {
+			Locale              string  `json:"locale"`
+			Direction           string  `json:"direction"`
+			ZoomPercent         int     `json:"zoom_percent"`
+			DevicePixelRatio    float64 `json:"device_pixel_ratio"`
+			ViewportWidth       int     `json:"viewport_width"`
+			PageWidth           int     `json:"page_width"`
+			PageOverflow        bool    `json:"page_overflow"`
+			InspectorVisible    bool    `json:"inspector_visible"`
+			InspectorInViewport bool    `json:"inspector_in_viewport"`
+			TableClientWidth    int     `json:"table_client_width"`
+			TableScrollWidth    int     `json:"table_scroll_width"`
+			APIMutations        int     `json:"api_mutations"`
+		} `json:"measurements"`
+		Failure string `json:"failure,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
+		return fmt.Errorf("decode 200%% browser report %q: %w", outcome, err)
+	}
+	if report.Status != "PASS" || len(report.Measurements) != 2 {
+		return fmt.Errorf("200%% browser audit failed: %s", outcome)
+	}
+	want := []struct{ locale, direction string }{{"ar", "rtl"}, {"en", "ltr"}}
+	for index, measurement := range report.Measurements {
+		if measurement.Locale != want[index].locale || measurement.Direction != want[index].direction ||
+			measurement.ZoomPercent != 200 || measurement.DevicePixelRatio < 1.95 ||
+			measurement.ViewportWidth != 720 || measurement.PageWidth > measurement.ViewportWidth ||
+			measurement.PageOverflow || !measurement.InspectorVisible || !measurement.InspectorInViewport ||
+			measurement.TableClientWidth <= 0 || measurement.TableScrollWidth < measurement.TableClientWidth ||
+			measurement.APIMutations != 0 {
+			return fmt.Errorf("invalid 200%% %s browser evidence: %+v", measurement.Locale, measurement)
+		}
+		t.Logf("200%% %s Cue Inspector: viewport=%d px, DPR=%.2f, page=%d px, inspector visible, Cue table=%d/%d px",
+			measurement.Locale, measurement.ViewportWidth, measurement.DevicePixelRatio, measurement.PageWidth,
+			measurement.TableClientWidth, measurement.TableScrollWidth)
+	}
+	return nil
+}
+
+func captureChromeScreenshot(conn *websocket.Conn, id int) ([]byte, error) {
+	command := map[string]any{"id": id, "method": "Page.captureScreenshot", "params": map[string]any{"format": "png", "captureBeyondViewport": false}}
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if err := websocket.JSON.Send(conn, command); err != nil {
+		return nil, err
+	}
+	var response struct {
+		ID     int `json:"id"`
+		Result struct {
+			Data string `json:"data"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	for response.ID != id {
+		if err := websocket.JSON.Receive(conn, &response); err != nil {
+			return nil, err
+		}
+	}
+	if response.Error != nil {
+		return nil, fmt.Errorf("Chrome DevTools screenshot failed: %s", response.Error.Message)
+	}
+	image, err := base64.StdEncoding.DecodeString(response.Result.Data)
+	if err != nil {
+		return nil, fmt.Errorf("decode Chrome DevTools screenshot: %w", err)
+	}
+	return image, nil
 }
 
 func connectChromePage(ctx context.Context, profileDir, pageURL string) (*websocket.Conn, error) {
