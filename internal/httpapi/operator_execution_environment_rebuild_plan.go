@@ -46,7 +46,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("GET "+path, withPermission(auth, userauth.PermissionProjectRead, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks.BeforeStoreErrorResponse)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -70,7 +70,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("POST "+path+"/seed", withPermission(auth, userauth.PermissionProjectEdit, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks.BeforeStoreErrorResponse)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -174,7 +174,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("PUT "+path, withPermission(auth, userauth.PermissionProjectEdit, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks.BeforeStoreErrorResponse)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -214,7 +214,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux.HandleFunc("DELETE "+path, withPermission(auth, userauth.PermissionProjectEdit, func(
 		w http.ResponseWriter, r *http.Request, session userauth.Session,
 	) {
-		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks.BeforeStoreErrorResponse)
+		environment, ok := loadRebuildPlanEnvironment(w, r, stageStore, hooks)
 		if !ok {
 			return
 		}
@@ -248,7 +248,7 @@ func loadRebuildPlanEnvironment(
 	w http.ResponseWriter,
 	r *http.Request,
 	stageStore *store.Store,
-	beforeError func(route string),
+	hooks executionEnvironmentReadHooks,
 ) (store.ExecutionEnvironmentManifest, bool) {
 	_, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 	if !ok {
@@ -257,8 +257,8 @@ func loadRebuildPlanEnvironment(
 	environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 	environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 	if err != nil {
-		if beforeError != nil {
-			beforeError("rebuild-plan-environment")
+		if hooks.BeforeStoreErrorResponse != nil {
+			hooks.BeforeStoreErrorResponse("rebuild-plan-environment")
 		}
 		if !recheckQualifiedProjectRoute(w, r) {
 			return store.ExecutionEnvironmentManifest{}, false
@@ -267,6 +267,12 @@ func loadRebuildPlanEnvironment(
 		return store.ExecutionEnvironmentManifest{}, false
 	}
 	if environment.RevisionID != revision.ID {
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-environment-mismatch")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return store.ExecutionEnvironmentManifest{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{
 			"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND",
 		})
