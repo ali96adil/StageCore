@@ -1767,8 +1767,14 @@ Project grant before returning the mapped Store error, so the revoked operator
 receives the scoped 404. The environment collection also fences a failed
 Machine Role list read.
 
-The environment-list, snapshot-list, Vault-status and rebuild-plan regressions
-pass normally and under Race. `go vet ./internal/httpapi`, the full
+The bounded execution-environment Companion-operation POST also reads the
+Manifest before dispatch. `TestExecutionEnvironmentOperationSuppressesStoreErrorAfterGrantRevocation`
+reproduces a 503 after `RehearsalControl` and `MediaRead` are revoked during a
+failed Manifest read; after the fix it receives the scoped 404 and the fake
+runtime operation count stays zero.
+
+The environment-list, snapshot-list, Vault-status, rebuild-plan and operation
+regressions pass normally and under Race. `go vet ./internal/httpapi`, the full
 `go test ./internal/httpapi -count=1` suite, and `git diff --check` pass. All
 failures are injected only into temporary databases; no physical output or
 production data/service is involved. Production ACL remains disabled.
