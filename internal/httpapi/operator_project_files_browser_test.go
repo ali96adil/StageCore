@@ -103,6 +103,20 @@ async function api(path, options={}) {
 <main id="content"></main><div id="globalMessage"></div>
 <script src="/project-files-bootstrap.js"></script><script src="/project-files.js"></script><script src="/project-files-browser.js"></script></body></html>`
 	browserReports := make(chan string, 2)
+	screenshotRequests := make(chan struct {
+		locale string
+		resume chan struct{}
+	}, 2)
+	screenshotDir := t.TempDir()
+	if configured := os.Getenv("STAGECORE_TEST_SCREENSHOT_DIR"); configured != "" {
+		screenshotDir = configured
+		if !filepath.IsAbs(screenshotDir) {
+			screenshotDir = filepath.Join("..", "..", screenshotDir)
+		}
+	}
+	if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/project-files-bootstrap.js":
@@ -115,6 +129,29 @@ async function api(path, options={}) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 16<<10))
 			browserReports <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/project-files-browser-screenshot-ready":
+			var request struct {
+				Locale string `json:"locale"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Locale != "ar-IQ" && request.Locale != "en") {
+				http.Error(w, "invalid Project Files screenshot locale", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case screenshotRequests <- struct {
+				locale string
+				resume chan struct{}
+			}{locale: request.Locale, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/":
 			http.SetCookie(w, &http.Cookie{Name: browserSessionCookie, Value: operatorLogin.Token, HttpOnly: true, Path: "/"})
 			setOperatorWebSecurityHeaders(w)
@@ -147,7 +184,8 @@ async function api(path, options={}) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--window-size=1440,900", "--user-data-dir="+profileDir, server.URL)
+		"--disable-background-networking", "--remote-debugging-port=0", "--remote-allow-origins=*",
+		"--window-size=1440,900", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "project-files-browser.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +197,13 @@ async function api(path, options={}) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatalf("connect to Project Files Chrome DevTools: %v", err)
+	}
+	defer cdp.Close()
 	completed := false
 	defer func() {
 		cancel()
@@ -186,6 +231,24 @@ async function api(path, options={}) {
 	}, 0, 2)
 	for len(reports) < 2 {
 		select {
+		case request := <-screenshotRequests:
+			image, err := captureChromeScreenshot(cdp, 1000+len(reports))
+			if err != nil {
+				t.Fatalf("capture Project Files %s screenshot: %v", request.locale, err)
+			}
+			if len(image) < 4096 || string(image[:8]) != "\x89PNG\r\n\x1a\n" {
+				t.Fatalf("Project Files %s screenshot is not a complete PNG (%d bytes)", request.locale, len(image))
+			}
+			direction := "rtl"
+			if request.locale == "en" {
+				direction = "ltr"
+			}
+			name := filepath.Join(screenshotDir, "project-files-200-percent-"+direction+".png")
+			if err := os.WriteFile(name, image, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("captured Project Files 200%% %s screenshot: %s (%d bytes)", direction, name, len(image))
+			close(request.resume)
 		case raw := <-browserReports:
 			var report struct {
 				Status            string `json:"status"`

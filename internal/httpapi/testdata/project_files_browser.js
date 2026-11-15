@@ -39,6 +39,12 @@
       upload_form: !!el("projectFileUploadForm"),
       download_link: !!content.querySelector("a[download]"),
     };
+    const screenshotResponse = await fetch("/project-files-browser-screenshot-ready", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({locale}),
+    });
+    if (!screenshotResponse.ok) throw new Error(`Project Files screenshot capture failed for ${locale}: ${screenshotResponse.status}`);
     await fetch("/project-files-browser-report", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
