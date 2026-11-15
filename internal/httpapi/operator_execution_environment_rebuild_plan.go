@@ -87,6 +87,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		}
 		source, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), sourceID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-source-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			if errors.Is(err, domain.ErrNotFound) {
 				writeJSON(w, http.StatusNotFound, map[string]any{
 					"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
