@@ -1797,3 +1797,19 @@ The Owner review regressions pass normally and under Race; `go vet
 ./internal/httpapi` passes. Full `go test ./internal/httpapi -count=1` passed in
 81.241 s after the handler change; the added plan-error regression then passed
 in focused normal and Race runs. No production data, service or ACL was used.
+
+
+## SC-024 continuation · 2026-11-15 · Capsule library inventory error delivery
+
+The Owner-only `GET /api/v1/show-capsules` enumerates both Capsule import and
+export directories and rechecked the Owner session only after a successful
+scan. `TestShowCapsuleInventorySuppressesStorageErrorAfterOwnerSessionRevocation`
+uses a temporary root whose imports entry is a regular file and logs out the
+Owner at the storage-error boundary. The old path first returned HTTP 503 after
+logout; the handler now reauthenticates and returns `SESSION_INVALID` without
+Capsule storage error details. No export, import or restore is performed.
+
+Focused Capsule tests pass normally and under Race, `go vet ./internal/httpapi`
+passes, and full `go test ./internal/httpapi -count=1` passed in 81.251 s. All
+filesystem state is temporary; no production Capsule/Vault data or service was
+used.
