@@ -4979,3 +4979,28 @@ This entry supersedes the preceding push instruction.
   `stagecore-qualification` SSH attempt timed out during banner exchange; no
   Pi host identity or remote command was established. Current-head Pi 4
   performance remains unqualified, and Production ACL remains disabled.
+
+## Push checkpoint — 2026-11-15 · StageAudio and F-025 read-error fences
+
+- A normal fast-forward push moved `integration/stagecore-rc` and OPEN/Draft
+  PR #534 from `daae16d4c3806e7ac6b7deb1927181ba2abf26b5` to
+  `f1e6a021c7ea47c9d4a6c219f2213b9d8fbdb77d`. Local HEAD, `origin`, `git
+  ls-remote`, and PR head match. Ten saved commits were pushed; no merge,
+  force-push, branch or PR creation occurred.
+- The exact previous-head gate was green: Core Go 1.26 (including Race), Core
+  Go 1.27, Companion Core, and Camera Relay all passed at `daae16d`.
+  New exact-head checks are Core `43700059257`, Companion Core
+  `43700059241`, and Camera Relay `43700059280`; they were pending when this
+  checkpoint was written. Do not push another change until all three finish.
+- The pushed software batch adds four StageAudio live-grant response fences
+  and F-025 Vault-status/snapshot-read fences, with red-first SQLite-only
+  regressions. Focused regressions pass normally and under Race; full
+  `internal/httpapi` passes in 80.750 s; `go vet` and `git diff --check` pass.
+  No production service/data/Vault/ACL, sidecar process, audio output, stage
+  device, firmware or hardware was touched.
+- Related open PR heads remain green: TabletPlayer #36 `91613da`, DMX Lighting
+  #39 `3ad7749`, ESP32 Camera #20 `455b066`, StageLaser #56 `b14a578` and #57
+  `c4ff10b`. The separate `stagecore-qualification` SSH endpoint timed out
+  before banner completion; no Pi identity or command ran, so current-head Pi
+  performance remains unqualified. Continue the endpoint-to-policy audit
+  while the three exact-new-head workflows run; keep Production ACL disabled.
