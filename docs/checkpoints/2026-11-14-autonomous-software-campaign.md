@@ -4029,3 +4029,38 @@ This entry supersedes the preceding push instruction.
   matrix gap. No production ACL/SC-024 enablement, production service/data,
   original show data, real device, firmware, force push, merge, paid operation
   or backup deletion is allowed.
+
+## Resume update — 2026-11-15 · matrix evidence reconciliation
+
+- Before this checkpoint edit, local `integration/stagecore-rc` HEAD was
+  `8c19c1ffade1f70f5659af61b544721a916d5c42`; remote and Draft PR #534 remain
+  at `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Commit `8c19c1f` reconciles
+  the SC-013 matrix row with the existing real-Chrome nested Mixed Cue
+  Inspector test. The handoff checkpoint commit is local; inspect
+  `git rev-parse HEAD` for its resulting full tip. Four local commits are
+  currently ahead of the remote: `949c3b7`, `34edd9a`, `826f3d6`, and
+  `8c19c1f`, plus this checkpoint commit after it is created.
+- SC-013 was not an implementation gap: `TestBrowserCreatesNestedMixedCueChainInDraft`
+  already opens a three-level Draft Inspector, checks six nested Actions,
+  simulates a virtual offline target for all six, and verifies zero fetch or
+  GO/STOP/Blackout requests. This browser test is in the exact-head Core
+  Browser Cue Delivery gate on `0c05405`, which passed. Remaining SC-013 gaps
+  are fresh readiness/target metadata, missing Companion/DMX browser
+  scenarios, assumed-latency meaning and fade detail beyond `fade_ms`.
+- Performance qualification already contains isolated Raspberry Pi 4 ARM64
+  measurements for 24–200 Action Mixed Cues, linked chains through 100 Cues /
+  200 Actions, scheduled starts, simultaneous bursts, sustained 100-Cue / 200-
+  Action Rehearsal, and STOP/Blackout under delayed load, with P50/P95/P99,
+  jitter, GC/allocations and process CPU/RSS. It records the binary source and
+  verifies no Cue Engine, Runtime Control, simulator, domain or publish runtime
+  source changes since that benchmark. Do not rerun those Pi/Mac measurements
+  without a runtime code/environment change or missing evidence.
+- Core `43657410250` remains active on exact remote `0c05405`: Go 1.27 and Go
+  1.26 Test/Browser/Vet passed; Go 1.26 Race is running and ARM64 builds are
+  pending. Companion `43657410210` and Camera `43657410252` passed. No push
+  while Core is active. After it completes, verify PR/remote HEAD and all
+  workflow SHAs, then push the four local commits as a normal fast-forward to
+  the existing PR. Continue exact-head CI before the next push.
+- No production service/data/Vault, original show data, real device or firmware
+  was touched; Project ACL/SC-024 remains disabled in production. No force push,
+  merge, paid operation or backup deletion was performed.
