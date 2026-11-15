@@ -41,8 +41,7 @@ func TestRuntimeTimingApprovalReviewIsExplicitAndNeverAutomatic(t *testing.T) {
 	app := string(mustReadOperatorContractFile(t, "static/app.js"))
 	timing := string(mustReadOperatorContractFile(t, "static/timing-intelligence.js"))
 	for _, marker := range []string{
-		`endedRehearsal?.purpose === "TIMING_CAPTURE"`,
-		`active.rehearsal_purpose === "TIMING_CAPTURE"`,
+		`active?.type === "REHEARSAL" || (!active && !!endedRehearsal)`,
 		`["OWNER", "TECHNICIAN"].includes(user?.role)`,
 		`id="runtimeRehearsalApproval"`,
 		`renderTimingIntelligenceWorkspace().catch(`,

@@ -99,12 +99,14 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	var stopSafetyMu sync.Mutex
 	var stopSafetySessions []string
 	runtime := runtimecontrol.New(st, registry, runtimecontrol.WithSessionStopSafety(func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
-		if got.Type != domain.SessionShow || got.ProjectID != project.ID {
+		if (got.Type != domain.SessionShow && got.Type != domain.SessionRehearsal) || got.ProjectID != project.ID {
 			return fmt.Errorf("simulated SHOW stop safety received wrong Project/Session: %+v", got)
 		}
-		stopSafetyMu.Lock()
-		stopSafetySessions = append(stopSafetySessions, got.ID)
-		stopSafetyMu.Unlock()
+		if got.Type == domain.SessionShow {
+			stopSafetyMu.Lock()
+			stopSafetySessions = append(stopSafetySessions, got.ID)
+			stopSafetyMu.Unlock()
+		}
 		return nil
 	}))
 	handler := New(WithOperatorWeb(), WithOperatorProjects(h.auth, st), WithOperatorRuntime(h.auth, st, runtime),
@@ -135,7 +137,7 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 <button class="nav-button" data-page="dashboard" type="button">Dashboard</button><button class="nav-button" data-page="configuration" type="button">Configuration</button><button class="nav-button" data-page="cues" type="button">Cues</button><button class="nav-button" data-page="runtime" type="button">Runtime</button><button class="nav-button" data-page="preflight" type="button">Preflight</button><button class="nav-button" data-page="sessions" type="button">Sessions</button><button class="nav-button" data-page="notes" type="button">Notes</button></div></aside>
 <main class="workspace"><div id="globalMessage" class="message hidden"></div><section id="content"></section></main></div>
 <form id="loginForm"><input id="username"><input id="password" type="password"></form><dialog id="cueDialog"><form id="cueForm"><div id="actionsEditor"></div></form></dialog>
-<script src="/show-workspace-app.js"></script><script src="/workspace-profile.js"></script><script src="/show-workspace-test.js"></script></body></html>`)
+<script src="/show-workspace-app.js"></script><script src="/timing-intelligence.js"></script><script src="/workspace-profile.js"></script><script src="/show-workspace-test.js"></script></body></html>`)
 		case "/show-workspace-app.js":
 			rec := httptest.NewRecorder()
 			appReq := r.Clone(r.Context())
@@ -173,6 +175,18 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 				return
 			}
 			seeded, err := st.CreateSession(r.Context(), published.ID, domain.SessionShow, "Browser role SHOW")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]string{"session_id": seeded.ID})
+		case "/show-workspace-seed-preview":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST required", http.StatusMethodNotAllowed)
+				return
+			}
+			seeded, err := st.CreateSessionWithPurpose(r.Context(), published.ID, domain.SessionRehearsal,
+				"Browser Preview approval", domain.RehearsalPreview)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return

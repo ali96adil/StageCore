@@ -1356,8 +1356,7 @@ async function renderRuntime(startPolling = false) {
   const ended = state.runtimeEndedRehearsal;
   const endedRehearsal = ended?.user === user && ended.projectID === projectID ? ended : null;
   const mayReviewTiming = ["OWNER", "TECHNICIAN"].includes(user?.role) &&
-    ((active?.type === "REHEARSAL" && active.rehearsal_purpose === "TIMING_CAPTURE") ||
-      (!active && endedRehearsal?.purpose === "TIMING_CAPTURE"));
+    (active?.type === "REHEARSAL" || (!active && !!endedRehearsal));
   const remembered = state.runtimeCueReceipt;
   const receipt = remembered?.user === user && remembered.projectID === projectID &&
     remembered.sessionID === active?.session_id ? remembered : null;

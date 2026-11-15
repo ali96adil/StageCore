@@ -92,11 +92,13 @@
 
     const originalFetch = window.fetch.bind(window);
     const postRequests = [];
+    const apiMutations = [];
     const fetchTrace = [];
     window.fetch = async (input, init = {}) => {
       const method = String(init.method || "GET").toUpperCase();
       const url = String(input);
       if (method === "POST" && url.startsWith("/api/v1/")) postRequests.push(url);
+      if (method !== "GET" && url.startsWith("/api/v1/")) apiMutations.push(`${method} ${url}`);
       const response = await originalFetch(input, init);
       fetchTrace.push(`${method} ${url} -> ${response.status}`);
       return response;
@@ -116,6 +118,33 @@
     if (getComputedStyle(profile).display === "none") throw new Error("workspace profile control did not return after SHOW presentation cleared");
     assertNoHorizontalOverflow("stopped SHOW workspace");
 
+    const previewResponse = await fetch("/show-workspace-seed-preview", { method: "POST" });
+    if (!previewResponse.ok) throw new Error(`Preview rehearsal fixture returned HTTP ${previewResponse.status}`);
+    await previewResponse.json();
+    await navigate("runtime");
+    const previewReview = document.getElementById("runtimeRehearsalApproval");
+    if (!previewReview || state.showSessionActive) {
+      throw new Error("active Preview rehearsal does not expose reviewed timing approval navigation");
+    }
+    previewReview.click();
+    if (state.page !== "timing") throw new Error("Preview timing review control did not open the Timing workspace");
+    await authenticateRole("TECHNICIAN");
+    await navigate("runtime");
+    if (!document.getElementById("runtimeRehearsalApproval")) {
+      throw new Error("active Preview rehearsal does not expose timing review navigation to the Technician");
+    }
+    document.getElementById("runtimeRehearsalApproval").click();
+    if (state.page !== "timing") throw new Error("Technician Preview timing review control did not open the Timing workspace");
+    await navigate("runtime");
+    document.getElementById("stopSessionButton")?.click();
+    const previewStopDeadline = Date.now() + 5000;
+    while (Date.now() < previewStopDeadline && document.getElementById("appView").dataset.showSession !== "inactive") {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (document.getElementById("appView").dataset.showSession !== "inactive" ||
+        !document.getElementById("runtimeRehearsalApproval")) {
+      throw new Error("ended Preview rehearsal did not retain access to timing review");
+    }
     await keyboardNavigate("cues");
     if (state.page !== "cues" || !document.querySelector("#content h1")?.textContent.includes("Cues")) {
       throw new Error(`operator could not re-enter Cue authoring after ending SHOW: page=${state.page}, heading=${document.querySelector("#content h1")?.textContent || "missing"}, message=${document.getElementById("globalMessage")?.textContent || ""}, requests=${fetchTrace.join(" | ")}`);
@@ -155,7 +184,7 @@
         throw new Error(`SHOW did not stop for ${state.user.role}`);
       }
     };
-    const authenticateRole = async (role) => {
+    async function authenticateRole(role) {
       const response = await fetch("/show-workspace-switch-role", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }),
       });
@@ -164,7 +193,7 @@
       state.user = session.user;
       state.csrf = session.csrf;
       sessionStorage.setItem("stagecore_csrf", state.csrf);
-    };
+    }
     const switchRole = async (role) => {
       await authenticateRole(role);
       await keyboardNavigate("cues");
@@ -211,8 +240,9 @@
     }
     await assertResponsiveAtAllWidths("Owner Viewer-session exit workspace");
     await stopCurrentShow();
-    if (postRequests.length !== 4 || postRequests.some((url) => !url.includes("/runtime/stop-session"))) {
-      throw new Error(`unexpected role workflow mutations: ${postRequests.join(", ")}`);
+    if (postRequests.length !== 5 || postRequests.some((url) => !url.includes("/runtime/stop-session")) ||
+        apiMutations.length !== 5 || apiMutations.some((request) => !request.includes("/runtime/stop-session"))) {
+      throw new Error(`unexpected role workflow mutations: POST=${postRequests.join(", ")}; API=${apiMutations.join(", ")}`);
     }
     await report({ status: "PASS", seeded_sessions: seededSessions });
   } catch (error) {
