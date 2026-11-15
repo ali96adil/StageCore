@@ -5346,3 +5346,28 @@ This entry supersedes the preceding push instruction.
   authorization error and asynchronous delivery boundaries while the existing
   Core workflow runs. Pi performance qualification still requires the verified
   isolated Raspberry Pi 4 lab.
+
+## Resume update — 2026-11-15 · Project detail and Dashboard read fences
+
+- Pushed PR/remote HEAD remains
+  `4ff6ed3f018c1589b5ed49a9972e423eddadddba`; local code commit
+  `c9cb7b32f4ca270b9509d4c86e8f3c6bd9a0e669` is 25 commits ahead. This
+  checkpoint is documentation-only and the worktree was clean after the code
+  commit. No push has occurred.
+- Exact-head Core run `43705363041` still has Go 1.26 Race in progress; Go
+  1.27 passed. Companion `43705363040` and Camera Relay `43705363044` passed.
+  Keep waiting; do not push while that Core job runs. Once it completes, verify
+  the PR/remote HEAD and all checks, then push the next fast-forward batch only
+  through `3c53554` and wait for its exact-head workflows.
+- `c9cb7b3` closes stale errors from project detail and Dashboard reads.
+  Red-first temporary-SQLite tests removed `project_revisions` and
+  `runtime_snapshots` and reproduced `REVISION_UNAVAILABLE` and
+  `DASHBOARD_UNAVAILABLE` after grant revocation. Both responses now recheck
+  the exact session and current Project grant first.
+- Focused normal/Race tests, `go vet ./internal/httpapi`, `git diff --check`,
+  and full `go test ./internal/httpapi -count=1` passed (87.279 s). The tests
+  restore SQLite foreign-key enforcement after their isolated schema fault.
+  Production ACL remains off; no production service or hardware was used.
+- Continue the whole-server response/error and asynchronous dispatch audit.
+  After the CI gate, retain the current branch and Draft PR. The isolated Pi 4
+  performance lab is still required for hardware performance qualification.
