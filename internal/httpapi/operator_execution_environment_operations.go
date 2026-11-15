@@ -38,6 +38,7 @@ type executionEnvironmentOperationView struct {
 
 type executionEnvironmentOperationHooks struct {
 	BeforeStoreErrorResponse func()
+	BeforeResponse           func(route string)
 }
 
 // WithOperatorExecutionEnvironmentOperations exposes only the bounded F-025
@@ -59,7 +60,7 @@ func withOperatorExecutionEnvironmentOperations(
 		}
 		registerOperatorExecutionEnvironmentOperationRoutes(s.mux, auth, stageStore, runtime, hooks)
 		if discovery, ok := runtime.(oscQueryDiscoveryRuntime); ok {
-			registerOperatorOSCQueryDiscoveryRoute(s.mux, auth, stageStore, discovery)
+			registerOperatorOSCQueryDiscoveryRoute(s.mux, auth, stageStore, discovery, hooks)
 		}
 	}
 }
@@ -90,6 +91,12 @@ func registerOperatorExecutionEnvironmentOperationRoutes(
 			return
 		}
 		if environment.RevisionID != revision.ID {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("operation-environment-mismatch")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+				return
+			}
 			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 			return
 		}
