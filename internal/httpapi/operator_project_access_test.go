@@ -262,3 +262,46 @@ func TestProjectGrantMutationReportsCommittedResultAfterOwnerRevocation(t *testi
 		t.Fatalf("committed Owner grant update was lost: grants=%v err=%v", grants, err)
 	}
 }
+
+func TestProjectAccessSuppressesPreflightErrorsAfterOwnerSessionRevocation(t *testing.T) {
+	for _, route := range []struct {
+		name   string
+		method string
+		table  string
+	}{
+		{name: "grant-read", method: http.MethodGet, table: "project_permission_grants"},
+		{name: "active-session-read", method: http.MethodPut, table: "sessions"},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			f := setupProjectAccessAPI(t)
+			revoked := false
+			f.handler = New(withOperatorProjectAccessHooks(
+				f.h.auth, f.access, f.projects, f.audit,
+				operatorProjectAccessHooks{BeforeErrorResponse: func(name string) {
+					if name != route.name {
+						return
+					}
+					revoked = true
+					if err := f.h.auth.Logout(context.Background(), f.owner.Token); err != nil {
+						t.Errorf("revoke Owner at %s error boundary: %v", route.name, err)
+					}
+				}},
+			)).Handler()
+			if _, err := f.h.db.DB.ExecContext(context.Background(), "DROP TABLE "+route.table); err != nil {
+				t.Fatal(err)
+			}
+			body := ""
+			if route.method == http.MethodPut {
+				body = `{"permissions":["project.view"]}`
+			}
+			response := callProjectAccess(t, f, &f.owner, route.method, f.projectID,
+				f.operatorID, body, route.method == http.MethodPut)
+			if !revoked || response.Code != http.StatusUnauthorized ||
+				strings.Contains(response.Body.String(), "PROJECT_ACCESS_UNAVAILABLE") ||
+				strings.Contains(response.Body.String(), "PROJECT_ACCESS_SESSION_UNKNOWN") {
+				t.Fatalf("revoked Owner received %s error: HTTP %d %s (hook ran=%t)",
+					route.name, response.Code, response.Body.String(), revoked)
+			}
+		})
+	}
+}

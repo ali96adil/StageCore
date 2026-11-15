@@ -1900,3 +1900,19 @@ revoked Owners receive `SESSION_INVALID` with no device/error detail.
 Focused normal/Race regressions, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (83.553 s). No production data or
 device was read or contacted.
+
+
+## SC-024 continuation · 2026-11-15 · Owner Project Access preflight errors
+
+The prepared Owner Project Access API returned grant-read and active-Session
+preflight errors without rechecking the exact Owner session. Red-first
+`TestProjectAccessSuppressesPreflightErrorsAfterOwnerSessionRevocation`
+reproduced HTTP 503 after logout for both the grants query and the idle-session
+query using temporary SQLite. GET and PUT error responses now check the live
+session and `user.manage` role before returning storage status. Revoked Owners
+receive `SESSION_INVALID`; grant writes remain transactional and the Project
+ACL is still `PREPARED_NOT_ENFORCED`.
+
+Focused normal/Race tests, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (84.061 s). No production ACL was
+enabled.

@@ -28,6 +28,7 @@ func WithOperatorProjectAccess(auth *userauth.Service, access *projectaccess.Ser
 
 type operatorProjectAccessHooks struct {
 	BeforeResponse func()
+	BeforeErrorResponse func(route string)
 }
 
 func withOperatorProjectAccessHooks(auth *userauth.Service, access *projectaccess.Service,
@@ -51,6 +52,12 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			userID := strings.TrimSpace(r.PathValue("user_id"))
 			grants, err := access.PermissionsForUser(r.Context(), session.User.ID, userID, projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("grant-read")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
+					return
+				}
 				writeProjectAccessError(w, err)
 				return
 			}
@@ -73,6 +80,12 @@ func registerProjectAccessRoutes(mux *http.ServeMux, auth *userauth.Service,
 			// Report an active Session early and recheck in the write transaction.
 			active, err := projects.ActiveOperationalSessionType(r.Context())
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("active-session-read")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionUserManage) {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_ACCESS_SESSION_UNKNOWN"})
 				return
 			}

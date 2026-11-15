@@ -99,6 +99,14 @@ reproduced 404/503 responses after logout for temporary `stage_devices` and
 ./internal/httpapi`, and full `go test ./internal/httpapi -count=1` pass
 (83.553 s).
 
+Owner Project Access GET and pre-mutation active-session errors now recheck
+`user.manage` against the exact live session before returning storage details.
+Red-first `TestProjectAccessSuppressesPreflightErrorsAfterOwnerSessionRevocation`
+covers both temporary `project_permission_grants` and `sessions` read failures;
+both previously returned 503 after Owner logout and now return
+`SESSION_INVALID`. Focused normal/Race tests and `go vet ./internal/httpapi`
+pass; full `go test ./internal/httpapi -count=1` passes (84.061 s).
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,
