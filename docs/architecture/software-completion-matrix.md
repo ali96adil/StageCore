@@ -240,3 +240,11 @@ grant before returning Project-read errors. Red-first temporary-SQLite
 reproduced a second `PROJECTS_UNAVAILABLE` response after the scoped denial;
 the handler now stops after the authorization response. Focused normal/Race
 tests and the full HTTP API suite pass. The route does not dispatch output.
+
+The shared F-025 Project/Revision loader also checks the qualified live grant
+before returning Store errors, covering Execution Environment list, snapshot,
+capture, rebuild-plan and operation entry points. Red-first temporary-SQLite
+`TestExecutionEnvironmentRevisionReadSuppressesStoreErrorAfterGrantRevocation`
+reproduced a second `EXECUTION_ENVIRONMENTS_UNAVAILABLE` body after the scoped
+denial; the handler now stops after authorization fails. Focused normal/Race
+tests and the full HTTP API suite pass. Production ACL remains disabled.

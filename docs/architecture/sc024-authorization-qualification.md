@@ -2052,3 +2052,18 @@ second `PROJECTS_UNAVAILABLE` body. The handler now stops after the denial.
 Focused normal/Race tests, `go vet ./internal/httpapi`, diff checks and full
 `go test ./internal/httpapi -count=1` (89.684 s) pass. The diagnostic reader is
 not called on the fault path; no output command exists in this route.
+
+
+## SC-024 continuation · 2026-11-15 · Execution Environment Project/Revision preflight
+
+The shared F-025 Project/Revision loader now rechecks the qualified route
+grant before returning either Store error. Red-first
+`TestExecutionEnvironmentRevisionReadSuppressesStoreErrorAfterGrantRevocation`
+renamed only `projects.current_revision_id` in temporary SQLite, revoked
+`ProjectView` at the failing Project-read boundary, and reproduced a scoped
+404 followed by `EXECUTION_ENVIRONMENTS_UNAVAILABLE`. The response now stops
+after the scoped denial. The shared fence applies to execution-environment
+list, snapshot, capture, rebuild-plan and operation entry points. Focused
+normal/Race tests, `go vet ./internal/httpapi`, `git diff --check`, and full
+`go test ./internal/httpapi -count=1` (90.693 s) pass. Production ACL remains
+disabled.

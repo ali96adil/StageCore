@@ -5557,3 +5557,28 @@ This entry supersedes the preceding push instruction.
 - Continue reviewing the F-025 Project/Revision preflight errors and remaining
   project-scoped read projections while CI runs. Production ACL remains off;
   current-head isolated Pi 4 performance qualification is still pending.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 Project/Revision preflight
+
+- PR #534 / remote remains at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. Local code HEAD is
+  `636b13659a67e7bd9102e8373059a1ab486039b2`, 35 commits ahead; this
+  qualification/matrix/handoff update is documentation-only and is being
+  committed separately. No new push.
+- Exact remote-head run `43710243386`: Go 1.27 passed, Go 1.26 still pending.
+  Companion run `43710243389` and Camera Relay run `43710243382` passed. Keep
+  the push gate closed until all exact-head checks are green.
+- `636b136` makes `loadExecutionEnvironmentRevision` recheck the live
+  qualified route grant before either Project or Revision Store errors are
+  returned. Red-first `TestExecutionEnvironmentRevisionReadSuppressesStoreErrorAfterGrantRevocation`
+  renames a Project column only in temporary SQLite and revokes `ProjectView`
+  at the error boundary. Before the fix, the handler appended
+  `EXECUTION_ENVIRONMENTS_UNAVAILABLE` after the scoped 404; now it returns
+  immediately. This shared preflight covers F-025 list/snapshot/capture/
+  rebuild-plan/operation entry points.
+- Focused normal/Race tests, `go vet ./internal/httpapi`, diff checks, and full
+  `go test ./internal/httpapi -count=1` (90.693 s) passed. No Vault or
+  production data, service or device was touched.
+- Next inspect remaining F-025 manifest/asset error boundaries and other
+  project-scoped read projections. Production ACL remains disabled; current
+  isolated Pi 4 performance qualification is still pending.
