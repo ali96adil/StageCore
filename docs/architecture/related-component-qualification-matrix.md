@@ -13,17 +13,14 @@ modified.
 StageCore #503–#508 and #514–#516 remain open at the heads listed below; their
 listed Go 1.26/1.27 checks pass. StageCore Draft PR #534 is open on
 `integration/stagecore-rc` at remote HEAD
-`993da0848e37511ffeb181188e0fa286dcbc19a9`. Core run `43737062171` is active
-on that exact SHA: Go 1.27 passed; Go 1.26 Test, isolated installed-copy
-rollback, Browser Cue Delivery and Vet passed; Go 1.26 Race is active and
-Linux ARM64 product builds are pending. Companion `43737062177` and Camera
-Relay `43737062158` passed. The predecessor SHA
-`29ac4b566e19728c0c4b03886b7a144a3b17cb88` passed Core Go 1.26/1.27 tests,
-isolated installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux
-ARM64 builds, plus Companion and Camera Relay. Local HEAD
-`9db4d0bab4574f4f6c43310196847652d012b187` was three commits ahead before the
-current preset-search empty-state checkpoint. Hold the local follow-up push
-until the new exact-head Core run completes.
+`fd8a63dcb1337e8e4868ff12734b421d62780f96`. New Core run `43741501871` and
+Companion Core `43741501870` are pending on that exact SHA; Camera Relay
+`43741501849` passed. The preceding exact-head run `43737062171` on
+`993da0848e37511ffeb181188e0fa286dcbc19a9` passed Go 1.26/1.27 tests,
+installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux ARM64
+builds, plus Companion and Camera Relay. The seven-commit preset-search batch
+is now on the existing Draft PR. Hold further pushes until all new exact-head
+workflows complete.
 
 The current Chrome browser regression covers the Mixed Lighting+OSC preset
 save/focus, native search typing and Backspace, an accessible localized
