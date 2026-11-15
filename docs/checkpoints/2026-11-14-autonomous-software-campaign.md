@@ -5232,3 +5232,25 @@ This entry supersedes the preceding push instruction.
   `c8d77a5`. It is unpushed. Continue the route/error and asynchronous safety
   audit. Preserve the same branch/PR and wait for all exact-head CI before any
   push. Production ACL, services/data, physical devices and outputs stay off.
+
+## Qualification batch checkpoint — 2026-11-15 · Direct device metadata errors
+
+- Starting local HEAD: `0376f3879e83a84f3c2b250f79e871c4691cd265`, 18 commits
+  ahead of remote/PR #534 at `c11e29b5a98f69d42812b2b597619a8093043e15`.
+  Exact-head Core `43702159421` remains in Go 1.26 Race; Go 1.27, Companion
+  `43702159473`, and Camera Relay `43702159464` pass. No push while Core Race
+  is active.
+- Red-first `TestStageDeviceMetadataSuppressesStoreErrorAfterOwnerSessionRevocation`
+  reproduced stale 404/503 results after Owner logout for direct device and
+  assignment reads. The handlers now recheck session, role and scope before
+  returning those repository errors. The test uses only temporary SQLite and
+  requires `SESSION_INVALID` after logout.
+- Focused normal/Race tests, `go vet ./internal/httpapi`, and full
+  `go test ./internal/httpapi -count=1` pass (83.553 s). Matrix and
+  qualification docs are updated.
+- The direct metadata fix and regressions are saved in local commit
+  `915fa899698ff9619e10865238c62cb5f414f1b5`, on top of `0376f38`. It is
+  unpushed; local is now 19 commits ahead of remote `c11e29b`. Continue the
+  endpoint/error audit, and wait for exact-head CI before normal fast-forward
+  pushes to the existing PR. Production ACL/services/data and physical device
+  access remain prohibited.
