@@ -136,15 +136,16 @@ matrix:
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 | [#535](https://github.com/ali96adil/StageCore/issues/535) | Post-RC Web-first repeat-load optimization, local cache, incremental refresh, safe offline authoring, and installable web shell. The issue explicitly marks this scope non-blocking and says not to implement during the current autonomous SC-024/F-025 campaign; it requires a separate Owner decision. | **Deferred by explicit issue scope.** Do not add PWA/service-worker/cache/offline-queue changes, CI, branch or PR in this campaign. Continue qualifying the existing browser-local recoverable Draft flow under SC-009 and keep Hub state authoritative. |
 
-## Current campaign checkpoint — 2026-11-15 16:47 UTC
+## Current campaign checkpoint — 2026-11-15 16:50 UTC
 
 Draft PR #534 remains OPEN and Draft on `integration/stagecore-rc`. Remote/PR
 HEAD is `993da0848e37511ffeb181188e0fa286dcbc19a9`; local HEAD before this
-checkpoint is `543ab133a45176716c57e308a654f19f7801d253`, one commit ahead
-with a clean worktree. Core run `43737062171` is active on the exact remote
-SHA: Go 1.27 passed and Go 1.26 Test is running. Companion `43737062177` and
-Camera Relay `43737062158` both passed on the same SHA. Do not push this local
-SC-010 keyboard text-entry test until Core completes and every exact-head
+checkpoint is `4e5e19ee0c68710c0373ace86538e97688d1dd29`, two commits ahead
+before this local SC-010 test update. Core run `43737062171` is active on the
+exact remote SHA: Go 1.27, Go 1.26 Test and installed-copy rollback passed;
+Browser Cue Delivery is running, while Vet, Race and Linux ARM64 are pending.
+Companion `43737062177` and Camera Relay `43737062158` passed on the same SHA.
+Do not push the local follow-up until Core completes and every exact-head
 workflow is green.
 
 The latest Pi 4 Rev 1.4 ARM64 simulations cover flat Mixed Cues, nested linked

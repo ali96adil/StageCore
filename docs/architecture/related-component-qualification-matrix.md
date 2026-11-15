@@ -19,9 +19,9 @@ on that exact SHA: Go 1.27 passed and Go 1.26 Test is running. Companion
 `29ac4b566e19728c0c4b03886b7a144a3b17cb88` passed Core Go 1.26/1.27 tests,
 isolated installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux
 ARM64 builds, plus Companion and Camera Relay. Local HEAD
-`543ab133a45176716c57e308a654f19f7801d253` adds a real-Chrome native preset
-name/description entry test and is one clean commit ahead; hold its push until
-the new exact-head Core run completes.
+`4e5e19ee0c68710c0373ace86538e97688d1dd29` was two commits ahead before the
+current browser-test checkpoint; hold the local follow-up push until the new
+exact-head Core run completes.
 
 The current Chrome browser regression covers the Mixed Lighting+OSC preset
 save/focus, native search typing and Backspace, preview, insertion and Draft

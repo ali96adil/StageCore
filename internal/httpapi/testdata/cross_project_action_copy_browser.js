@@ -107,6 +107,9 @@
     if (!presetEnter.ok) throw new Error(`native preset Enter returned HTTP ${presetEnter.status}`);
     await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
     const presetRow = presetPanel.querySelector("li");
+    if (!presetRow.textContent.includes("reusable mixed pair")) {
+      throw new Error(`native preset name was not saved: ${presetRow.textContent}`);
+    }
     const savedDescription = presetRow.querySelector(".sc010-preset-description");
     if (savedDescription?.textContent !== "reusable lighting and osc") {
       throw new Error(`native preset description was not saved: ${savedDescription?.textContent}`);
