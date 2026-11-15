@@ -195,34 +195,36 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}
 	var report struct {
-		Status            string             `json:"status"`
-		IDs               []string           `json:"ids"`
-		ActionIDs         []string           `json:"action_ids"`
-		EditedName        string             `json:"edited_name"`
-		QuickEditedLabel  string             `json:"quick_edited_label"`
-		QuickEditedNotes  string             `json:"quick_edited_notes"`
-		MixedFormUndo     bool               `json:"mixed_form_undo"`
-		MixedFormRedo     bool               `json:"mixed_form_redo"`
-		CueColor          string             `json:"cue_color"`
-		CueLabelText      string             `json:"cue_label_text"`
-		ColorMarker       bool               `json:"color_marker_visible"`
-		PaletteVisible    bool               `json:"palette_visible"`
-		LabelReadable     bool               `json:"label_color_readable"`
-		MarkerContrast    map[string]float64 `json:"marker_contrast"`
-		TextContrast      float64            `json:"text_contrast"`
-		FocusRingVisible  bool               `json:"focus_ring_visible"`
-		FocusContrast     float64            `json:"focus_contrast"`
-		PageOverflow      bool               `json:"page_overflow"`
-		LTRLabel          string             `json:"ltr_label"`
-		LTRPalette        bool               `json:"ltr_palette_visible"`
-		LTRReadable       bool               `json:"ltr_label_readable"`
-		LTRMarkerContrast map[string]float64 `json:"ltr_marker_contrast"`
-		LTRTextContrast   float64            `json:"ltr_text_contrast"`
-		LTRFocusVisible   bool               `json:"ltr_focus_visible"`
-		LTRFocusContrast  float64            `json:"ltr_focus_contrast"`
-		LTROverflow       bool               `json:"ltr_page_overflow"`
-		LocalRecovery     bool               `json:"local_recovery_available"`
-		LocalRestored     bool               `json:"local_recovery_restored"`
+		Status              string             `json:"status"`
+		IDs                 []string           `json:"ids"`
+		ActionIDs           []string           `json:"action_ids"`
+		EditedName          string             `json:"edited_name"`
+		QuickEditedLabel    string             `json:"quick_edited_label"`
+		QuickEditedNotes    string             `json:"quick_edited_notes"`
+		MixedFormUndo       bool               `json:"mixed_form_undo"`
+		MixedFormRedo       bool               `json:"mixed_form_redo"`
+		CueColor            string             `json:"cue_color"`
+		CueLabelText        string             `json:"cue_label_text"`
+		ColorMarker         bool               `json:"color_marker_visible"`
+		PaletteVisible      bool               `json:"palette_visible"`
+		LabelReadable       bool               `json:"label_color_readable"`
+		MarkerContrast      map[string]float64 `json:"marker_contrast"`
+		TextContrast        float64            `json:"text_contrast"`
+		FocusRingVisible    bool               `json:"focus_ring_visible"`
+		FocusContrast       float64            `json:"focus_contrast"`
+		PageOverflow        bool               `json:"page_overflow"`
+		LTRLabel            string             `json:"ltr_label"`
+		LTRPalette          bool               `json:"ltr_palette_visible"`
+		LTRReadable         bool               `json:"ltr_label_readable"`
+		LTRMarkerContrast   map[string]float64 `json:"ltr_marker_contrast"`
+		LTRTextContrast     float64            `json:"ltr_text_contrast"`
+		LTRFocusVisible     bool               `json:"ltr_focus_visible"`
+		LTRFocusContrast    float64            `json:"ltr_focus_contrast"`
+		LTROverflow         bool               `json:"ltr_page_overflow"`
+		LocalRecovery       bool               `json:"local_recovery_available"`
+		LocalRestored       bool               `json:"local_recovery_restored"`
+		LocalActionPayload  bool               `json:"local_action_payload_restored"`
+		LocalActionIdentity bool               `json:"local_action_identity_restored"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
@@ -239,7 +241,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		return true
 	}
 	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
-		!report.LocalRecovery || !report.LocalRestored || len(report.IDs) != 3 ||
+		!report.LocalRecovery || !report.LocalRestored || !report.LocalActionPayload || !report.LocalActionIdentity || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
 		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {
@@ -289,6 +291,12 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		if report.ActionIDs[index] == "" || action.ID != report.ActionIDs[index] {
 			t.Fatalf("editing Cue changed Action %d identity: browser=%q persisted=%q", index, report.ActionIDs[index], action.ID)
 		}
+	}
+	var savedVisualParameters struct {
+		SceneID string `json:"scene_id"`
+	}
+	if err := json.Unmarshal(parent.Actions[0].Parameters, &savedVisualParameters); err != nil || savedVisualParameters.SceneID != "opening-sim" {
+		t.Fatalf("offline local recovery changed persisted Action payload: parameters=%s err=%v", parent.Actions[0].Parameters, err)
 	}
 	var midPolicy, parentPolicy struct {
 		LinkedCueIDs     []string `json:"linked_cue_ids"`

@@ -151,10 +151,17 @@
       localRestore.click();
       const recoveredLink = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${previous.ids[1]}"]`);
       if (!recoveredLink) throw new Error("linked child control is missing during local recovery");
+      const recoveredActionParameters = document.querySelector("#actionsEditor .action-editor .action-parameters");
+      const recoveredActionID = document.querySelector("#actionsEditor .action-editor .action-id")?.value;
+      let recoveredPayload;
+      try { recoveredPayload = JSON.parse(recoveredActionParameters?.value || "null"); }
+      catch (_) { throw new Error("recovered Mixed Action payload is not valid JSON"); }
       await waitFor(() => document.getElementById("cueName")?.value === "Offline restored Mixed Parent" &&
-        document.querySelector("#actionsEditor .action-editor .action-mode")?.value === "SEQUENTIAL" && !recoveredLink.checked,
+        document.querySelector("#actionsEditor .action-editor .action-mode")?.value === "SEQUENTIAL" && !recoveredLink.checked &&
+        recoveredPayload?.scene_id === "offline-sim" && recoveredPayload?.preserve?.vendor === "mixed-cue" &&
+        recoveredActionID === previous.action_ids[0],
       "restoring Cue fields, Action mode and linked child from browser-local recovery").catch(() => {
-        throw new Error(`local recovery state mismatch: name=${document.getElementById("cueName")?.value}, mode=${document.querySelector("#actionsEditor .action-editor .action-mode")?.value}, linked=${recoveredLink?.checked}, reviewVisible=${!document.getElementById("sc009LocalReview")?.hidden}, confirms=${confirmationRequests}`);
+        throw new Error(`local recovery state mismatch: name=${document.getElementById("cueName")?.value}, mode=${document.querySelector("#actionsEditor .action-editor .action-mode")?.value}, linked=${recoveredLink?.checked}, payload=${recoveredActionParameters?.value}, actionID=${recoveredActionID}, reviewVisible=${!document.getElementById("sc009LocalReview")?.hidden}, confirms=${confirmationRequests}`);
       });
       if (offlineRecoveryRequests < 1) throw new Error("server recovery endpoint was not offline during local recovery");
       if (confirmationRequests) throw new Error(`matching local recovery unexpectedly prompted for confirmation (${confirmationRequests})`);
@@ -163,6 +170,7 @@
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
         local_recovery_available: true, local_recovery_restored: true,
+        local_action_payload_restored: true, local_action_identity_restored: true,
         theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } }));
       return;
     }
@@ -518,6 +526,8 @@
     setValue(document.getElementById("cueName"), recoveryDraftName);
     const recoveryActionMode = document.querySelector("#actionsEditor .action-editor .action-mode");
     setValue(recoveryActionMode, "SEQUENTIAL");
+    const recoveryActionParameters = document.querySelector("#actionsEditor .action-editor .action-parameters");
+    setValue(recoveryActionParameters, JSON.stringify({scene_id: "offline-sim", preserve: {vendor: "mixed-cue"}}));
     const recoveryLinkedCue = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${middleID}"]`);
     if (!recoveryLinkedCue?.checked) throw new Error("saved parent-to-middle link was unavailable for recovery draft");
     recoveryLinkedCue.checked = false;
