@@ -4133,3 +4133,43 @@ This entry supersedes the preceding push instruction.
   newer commit label. Project ACL/SC-024 remains production-off. Production
   services/data/Vault, original show data and real devices remain untouched;
   no firmware, force push, merge, paid action or backup deletion.
+
+## Resume update — 2026-11-15 · simulated SHOW stop and authoring re-entry
+
+- Main branch `integration/stagecore-rc`, Draft PR #534. Remote remains
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Local HEAD before this
+  checkpoint is `830e095eaea3a29a1b5496cbd557220d055c8819`; twelve commits are
+  ahead of the remote. This checkpoint commit becomes the thirteenth. Earlier
+  local lighting/Cue-inspector commits remain preserved; no push has occurred.
+- SC-017 `TestBrowserShowWorkspacePinsRuntime` now drives the normal Runtime
+  Stop button in real Chrome after opening a seeded active SHOW in temporary
+  SQLite. The runtime uses only the `sim.test` adapter and an explicit no-op
+  managed-output safety seam. The browser proves the only mutation is
+  `runtime/stop-session`, the completed Session is no longer active, SHOW UI
+  restrictions clear, and Cues/authoring controls return. The GO, Cue STOP and
+  Emergency Blackout controls are checked before exit; no Cue executes and no
+  device or live output is contacted. Matrix SC-017 now records this exact
+  scope; keyboard/touch/RTL and target-width/role browser acceptance remain.
+- Verification: focused Chrome browser test passed three consecutive runs and
+  passed once under `go test -race`; `go vet ./internal/httpapi`, JS syntax,
+  gofmt and `git diff --check` passed. The first test iteration exposed that
+  this browser fixture had omitted the Cue Publish API registration; the test
+  server now registers that existing route so re-entry is exercised through
+  the actual UI/API path.
+- Exact remote Core CI run `43657410250` remains in progress on
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`: Go 1.27 is green; Go 1.26 is
+  still running. Companion `43657410210` and Camera `43657410252` were green
+  at the last check. Do not push until Core finishes; then verify branch, PR
+  and exact workflow SHAs before normal fast-forward to #534. Re-run exact-head
+  Core/Companion/Camera checks after that push and do not enqueue another push
+  while they are active.
+- Pi 4 performance qualification remains based on the already documented
+  ARM64 engine/linked-chain/STOP/Blackout measurements; this UI-only test change
+  does not alter the measured runtime binary. Keep Engine timing separate from
+  ACL/HTTP and external outputs. SC-024/Project ACL remains off in production.
+- No production service/data/Vault, original show data or real device was
+  touched. No firmware, force push, merge, paid operation or backup deletion.
+- Next: check exact-head Core CI. When it completes, push the preserved local
+  batch to existing PR #534 using a normal fast-forward, then watch all exact-
+  head checks. Continue with the next independently testable software gap;
+  retain hardware/production qualification as separately pending.
