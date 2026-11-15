@@ -1421,9 +1421,10 @@ source guard and Production ACL state are unchanged; Project ACL remains
 disabled. **SC-024 is not software-qualified.** Remaining software gates are
 the final endpoint-to-policy and asynchronous delivery reconciliation, a
 complete production-like ACL migration/preview/restore rehearsal, compatibility
-evidence for already-deployed Companion/tickets, and a simple Owner-facing
-Project permission UX. The current Project Access API is preparation-only and
-the web app has no Project grant management page. Hardware STOP/Blackout,
+evidence for already-deployed Companion/tickets, and qualification of the
+Owner-facing Project Access workflow. The Security workspace now offers
+View/Edit/Operate/Manage presets and a Custom level behind its explicit
+`PREPARED_NOT_ENFORCED` check; Project grants are not enforced in Production. Hardware STOP/Blackout,
 StageAudio during a physical operation, independent laser safe-off, and
 Production Activation remain pending.
 
