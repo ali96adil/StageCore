@@ -19,7 +19,7 @@ function node(tagName = "div") {
   };
 }
 
-async function openPresets({ presets, targets = [], clipboard = [] }) {
+async function openPresets({ presets, targets = [], clipboard = [], language = "en" }) {
   const user = { user_id: "operator" };
   const dialog = node("dialog");
   dialog.open = true;
@@ -37,7 +37,7 @@ async function openPresets({ presets, targets = [], clipboard = [] }) {
     structuredClone,
     window: { confirm: () => true },
     pick: (id) => id === "cueDialog" ? dialog : null,
-    tr: (_arabic, english) => english,
+    tr: (arabic, english) => language === "ar" ? arabic : english,
     api: async (_path, request) => {
       if (request) requests.push(request);
       return { presets };
@@ -185,6 +185,22 @@ test("Action preset search matches nested Mixed-Cue targets and payloads", async
   search.listeners.input();
   assert.equal(rows.every((row) => !row.hidden), true);
   assert.equal(emptySearch.hidden, true);
+});
+
+test("Arabic Action preset search announces when there are no matching presets", async () => {
+  const { panel } = await openPresets({ language: "ar", presets: [
+    { preset_id: "preset", name: "إضاءة الافتتاح", action: { target_ref: "LIGHTING", capability_key: "lighting.channels.fade" } },
+  ] });
+  const search = panel.children.find((child) => child?.className === "sc010-preset-search");
+  const emptySearch = panel.children.find((child) => child?.className === "muted sc010-preset-empty");
+  assert.ok(search);
+  assert.ok(emptySearch);
+  assert.equal(emptySearch.hidden, true);
+  search.value = "no matching cue preset";
+  search.listeners.input();
+  assert.equal(emptySearch.hidden, false);
+  assert.equal(emptySearch.role, "status");
+  assert.equal(emptySearch.textContent, "لا توجد قوالب مطابقة.");
 });
 
 test("Missing Mixed-Cue preset targets can be explicitly remapped per action", async () => {

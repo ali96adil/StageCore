@@ -13,8 +13,9 @@ qualification.
 **SC-010 UI follow-up (2026-11-15):** the preset library now exposes a
 localized `role="status"` message when a search returns no saved presets, and
 hides it again when results return or the library is empty. Node and real
-Chrome regressions cover both transitions. This improves discoverability but
-does not close the remaining keyboard and target-compatibility gaps below.
+Chrome regressions cover both transitions; Node also verifies the Arabic
+announcement. This improves discoverability but does not close the remaining
+keyboard and target-compatibility gaps below.
 
 **Status key:** `Implemented` means the requested behavior is present in code
 and has relevant automated checks; `Partial` means code exists but a stated
