@@ -37,9 +37,38 @@
     if (getComputedStyle(sidebar).display !== "none") throw new Error("workspace navigation remained visible during SHOW");
     if (getComputedStyle(profile).display !== "none") throw new Error("workspace profile control remained visible during SHOW");
 
-    setShowSessionPresentation(false);
+    const originalFetch = window.fetch.bind(window);
+    const postRequests = [];
+    const fetchTrace = [];
+    window.fetch = async (input, init = {}) => {
+      const method = String(init.method || "GET").toUpperCase();
+      const url = String(input);
+      if (method === "POST") postRequests.push(url);
+      const response = await originalFetch(input, init);
+      fetchTrace.push(`${method} ${url} -> ${response.status}`);
+      return response;
+    };
+    window.confirm = () => true;
+    document.getElementById("stopSessionButton").click();
+    const stopDeadline = Date.now() + 5000;
+    while (Date.now() < stopDeadline && document.getElementById("appView").dataset.showSession !== "inactive") {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (document.getElementById("appView").dataset.showSession !== "inactive") throw new Error("normal SHOW stop did not clear the active presentation");
+    if (document.getElementById("stopSessionButton")) throw new Error("runtime still shows an active Session after SHOW stop");
+    if (postRequests.length !== 1 || !postRequests[0].includes("/runtime/stop-session")) {
+      throw new Error(`SHOW exit made unexpected mutation requests: ${postRequests.join(", ")}`);
+    }
     if (getComputedStyle(sidebar).display === "none") throw new Error("workspace navigation did not return after SHOW presentation cleared");
     if (getComputedStyle(profile).display === "none") throw new Error("workspace profile control did not return after SHOW presentation cleared");
+
+    await navigate("cues");
+    if (state.page !== "cues" || !document.querySelector("#content h1")?.textContent.includes("Cues")) {
+      throw new Error(`operator could not re-enter Cue authoring after ending SHOW: page=${state.page}, heading=${document.querySelector("#content h1")?.textContent || "missing"}, message=${document.getElementById("globalMessage")?.textContent || ""}, requests=${fetchTrace.join(" | ")}`);
+    }
+    if (!document.getElementById("createDraftButton") && !document.getElementById("createCueButton")) {
+      throw new Error("Cue authoring controls did not return after SHOW ended");
+    }
     await report("PASS");
   } catch (error) {
     await report(`FAIL: ${error?.stack || error}`);

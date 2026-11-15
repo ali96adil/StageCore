@@ -16,7 +16,9 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
+	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/publish"
 	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -68,11 +70,20 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	}
 	// Seed an active SHOW row directly in the temporary test database so this
 	// UI-routing test does not depend on operational admission or touch outputs.
-	if _, err := st.CreateSession(ctx, published.ID, domain.SessionShow, "Browser SHOW workspace"); err != nil {
+	showSession, err := st.CreateSession(ctx, published.ID, domain.SessionShow, "Browser SHOW workspace")
+	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := runtimecontrol.New(st, registry)
-	handler := New(WithOperatorWeb(), WithOperatorProjects(h.auth, st), WithOperatorRuntime(h.auth, st, runtime)).Handler()
+	stopSafetyCalls := 0
+	runtime := runtimecontrol.New(st, registry, runtimecontrol.WithSessionStopSafety(func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
+		if got.ID != showSession.ID {
+			return fmt.Errorf("simulated SHOW stop safety received Session %s, want %s", got.ID, showSession.ID)
+		}
+		stopSafetyCalls++
+		return nil
+	}))
+	handler := New(WithOperatorWeb(), WithOperatorProjects(h.auth, st), WithOperatorRuntime(h.auth, st, runtime),
+		WithOperatorCuePublish(h.auth, st, publish.New(st, registry))).Handler()
 	testScript, err := os.ReadFile(filepath.Join("testdata", "show_workspace_browser.js"))
 	if err != nil {
 		t.Fatal(err)
@@ -158,5 +169,16 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	case <-ctx.Done():
 		output, _ := os.ReadFile(browserLog.Name())
 		t.Fatalf("browser did not finish: %s", output)
+	}
+	stopped, err := st.GetSession(ctx, showSession.ID)
+	if err != nil || stopped.Status != domain.SessionCompleted {
+		t.Fatalf("SHOW stop endpoint did not complete the isolated Session: session=%+v err=%v", stopped, err)
+	}
+	if stopSafetyCalls != 1 {
+		t.Fatalf("normal SHOW stop did not run the isolated managed-output safety seam exactly once: calls=%d", stopSafetyCalls)
+	}
+	active, err := st.ActiveSessionForProject(ctx, project.ID)
+	if err != nil || active != nil {
+		t.Fatalf("SHOW stop endpoint left an active Project Session: active=%+v err=%v", active, err)
 	}
 }
