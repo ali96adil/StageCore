@@ -1721,3 +1721,18 @@ The focused StageAudio and unified-ACL tests pass normally and under Race;
 `go vet ./internal/httpapi` and `git diff --check` pass. This closes these
 four staged delivery gaps only; the whole-server audit remains open and
 Production ACL stays disabled.
+
+## SC-024 continuation · 2026-11-15 · Execution-environment Vault status
+
+The Project-scoped execution-environment `vault-status` GET previously returned
+`EXECUTION_ENVIRONMENT_VAULT_STATUS_UNAVAILABLE` when the Store lookup failed,
+without the live session and `media.read` check used by successful status
+responses. A regression creates a content-bound asset in temporary Vault/SQLite,
+drops only the test database's `vault_objects` table, and revokes `media.read`
+at the error boundary. Before the fix it returned HTTP 503 after revocation; the
+handler now applies `allowLiveProjectRead` before exposing that service error.
+
+The focused Vault-status and capture tests pass normally and under Race. Full
+`go test ./internal/httpapi -count=1` passed in 80.854 s; `go vet
+./internal/httpapi` and `git diff --check` pass. The test uses no production
+Vault, production service, device or ACL activation.
