@@ -100,6 +100,11 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	mapReadyRequests := make(chan chan struct{}, 1)
+	type nativeKeyRequest struct {
+		keys   []string
+		resume chan struct{}
+	}
+	presetKeyRequests := make(chan nativeKeyRequest, 1)
 	type touchRequest struct {
 		x, y   float64
 		resume chan struct{}
@@ -142,6 +147,31 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 			}
 			select {
 			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/cross-project-copy-preset-keyboard-ready":
+			var input struct {
+				Keys []string `json:"keys"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&input); err != nil || len(input.Keys) == 0 || len(input.Keys) > 4 {
+				http.Error(w, "invalid preset keyboard request", http.StatusBadRequest)
+				return
+			}
+			for _, key := range input.Keys {
+				if key != "Tab" && key != "Enter" {
+					http.Error(w, "unsupported preset keyboard key", http.StatusBadRequest)
+					return
+				}
+			}
+			request := nativeKeyRequest{keys: input.Keys, resume: make(chan struct{})}
+			select {
+			case presetKeyRequests <- request:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-request.resume:
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
@@ -235,6 +265,14 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 			}
 			keyCommandID += 2
 			close(resume)
+		case request := <-presetKeyRequests:
+			for _, key := range request.keys {
+				if err := dispatchChromeKey(cdp, keyCommandID, key, false); err != nil {
+					t.Fatalf("send native %s in the Action preset form: %v", key, err)
+				}
+				keyCommandID += 2
+			}
+			close(request.resume)
 		case request := <-touchRequests:
 			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
 				t.Fatalf("emulate touch on Apply target mapping: %v", err)

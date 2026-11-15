@@ -84,7 +84,19 @@
     presetName.dispatchEvent(new Event("input", {bubbles: true}));
     presetDescription.value = "Reusable lighting and OSC";
     presetDescription.dispatchEvent(new Event("input", {bubbles: true}));
-    presetPanel.querySelector("button").click();
+    const savePreset = presetPanel.querySelector("button");
+    presetName.focus();
+    const presetTabs = await fetch("/cross-project-copy-preset-keyboard-ready", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: ["Tab", "Tab"]}),
+    });
+    if (!presetTabs.ok) throw new Error(`native preset Tab traversal returned HTTP ${presetTabs.status}`);
+    if (document.activeElement !== savePreset) {
+      throw new Error(`two native Tabs from the preset name did not focus Save: ${document.activeElement?.outerHTML?.slice(0, 180)}`);
+    }
+    const presetEnter = await fetch("/cross-project-copy-preset-keyboard-ready", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: ["Enter"]}),
+    });
+    if (!presetEnter.ok) throw new Error(`native preset Enter returned HTTP ${presetEnter.status}`);
     await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
     const presetRow = presetPanel.querySelector("li");
     const presetSearch = presetPanel.querySelector("input[type=search]");
