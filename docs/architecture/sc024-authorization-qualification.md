@@ -1778,3 +1778,21 @@ regressions pass normally and under Race. `go vet ./internal/httpapi`, the full
 `go test ./internal/httpapi -count=1` suite, and `git diff --check` pass. All
 failures are injected only into temporary databases; no physical output or
 production data/service is involved. Production ACL remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Owner Capsule review error delivery
+
+The opt-in, read-only Owner Capsule import review previously rechecked the
+Owner session only before a successful response. Filesystem inventory, safe
+path, signature verification and readiness-planning errors could return after
+the session ended. `TestOwnerCapsuleImportReviewSuppressesErrorsAfterSessionRevocation`
+uses temporary roots and revokes the Owner session at inventory and safe-path
+error boundaries; both now return `SESSION_INVALID` without Capsule failure
+details. The inventory case first reproduced HTTP 503 with the old response
+path. Error responses after verification and PlanImport now use the same live
+session recheck. The route remains opt-in and read-only; no capsule was restored
+or materialized by this test.
+
+The Owner review regressions pass normally and under Race, `go vet
+./internal/httpapi` passes, and the full `go test ./internal/httpapi -count=1`
+suite is rerun for this batch. No production data, service or ACL was used.
