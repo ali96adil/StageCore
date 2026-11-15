@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
+	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/simulator"
@@ -92,7 +94,9 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
 		RequestID: "00000000-0000-7000-8000-000000000901",
 	})
-	if started.Status != contracts.CommandCompleted { t.Fatalf("start=%+v", started) }
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
 	finished := make(chan contracts.CommandResult, 1)
 	go func() {
 		finished <- h.service.Go(ctx, CueRequest{
@@ -105,7 +109,9 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 		h.service.mu.Lock()
 		_, active := h.service.active[session.ID]
 		h.service.mu.Unlock()
-		if active { break }
+		if active {
+			break
+		}
 		select {
 		case <-deadline:
 			t.Fatal("delayed Cue never became active")
@@ -209,6 +215,9 @@ func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T) {
 	parameters := json.RawMessage(`{"simulation":{"behavior":"COMPLETE","delay_ms":5000}}`)
 	h := newRuntimeHarness(t, parameters)
+	probe := &blockingCancellationExecutor{entered: make(chan struct{})}
+	h.service.executor = newStoppableExecutor(probe)
+	h.service.engine = cueengine.NewWithExecutor(h.store, h.service.executor)
 	ctx := context.Background()
 	session, startResult := h.service.StartSession(ctx, StartRequest{
 		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
@@ -224,28 +233,13 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 			SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000202",
 		})
 	}()
-	// Wait for the interruptible Action to be persisted, not just the Cue.
-	// Under the race detector a STOP between Cue RUNNING and Action dispatch
-	// can validly cancel a Cue that has no ActionExecution row yet.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		executions, err := h.store.ListCueExecutions(ctx, session.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(executions) == 1 {
-			actions, err := h.store.ListActionExecutions(ctx, executions[0].ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(actions) == 1 {
-				break
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("Action did not enter persisted execution before stop test deadline")
-		}
-		time.Sleep(10 * time.Millisecond)
+	// Wait until the test executor confirms dispatch. A persisted ActionExecution
+	// row alone only proves pre-dispatch bookkeeping and is not enough to claim
+	// this test exercised interruption of an in-flight Action.
+	select {
+	case <-probe.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Action did not enter the interruptible executor before stop test deadline")
 	}
 
 	stop := h.service.StopCue(ctx, StopRequest{
@@ -276,6 +270,20 @@ func TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult(t *testing.T
 	}
 	if len(actions) != 1 || actions[0].Result != domain.ExecutionCancelled || actions[0].ErrorCode == nil || *actions[0].ErrorCode != "CANCELLED" {
 		t.Fatalf("Action execution did not persist cancellation: %+v", actions)
+	}
+}
+
+type blockingCancellationExecutor struct {
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingCancellationExecutor) Execute(ctx context.Context, _ capability.Request) capability.Result {
+	e.once.Do(func() { close(e.entered) })
+	<-ctx.Done()
+	return capability.Result{
+		Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+		ErrorCode: "CANCELLED", ResponseSummary: "simulated executor cancelled",
 	}
 }
 
@@ -522,7 +530,6 @@ func TestStopSessionCancelsActiveCueBeforeCompleting(t *testing.T) {
 	}
 }
 
-
 func TestForceStopSessionBypassesFailedSafetyAndRecordsAbortedExit(t *testing.T) {
 	h := newRuntimeHarness(t)
 	ctx := context.Background()
@@ -632,7 +639,6 @@ func TestProjectBlackoutWorksWithoutActiveSessionAndUsesPublishedSnapshot(t *tes
 	}
 }
 
-
 func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *testing.T) {
 	h := newRuntimeHarness(t)
 	h.service.startGate = func(_ context.Context, projectID, snapshotID string) (bool, string, error) {
@@ -653,8 +659,8 @@ func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			session, result := h.service.StartSession(context.Background(), StartRequest{
 				ProjectID: h.project.ID,
-				Mode: tc.mode,
-				Issuer: "owner",
+				Mode:      tc.mode,
+				Issuer:    "owner",
 				RequestID: tc.requestID,
 			})
 			if session.ID != "" || result.Status != contracts.CommandRejected ||
@@ -672,7 +678,6 @@ func TestSessionStartGateBlocksRehearsalAndShowOnStaleManagedDeviceScope(t *test
 	}
 }
 
-
 func TestSessionStartGateWarningAllowsDegradedRehearsal(t *testing.T) {
 	h := newRuntimeHarness(t)
 	h.service.startGate = func(context.Context, string, string) (bool, string, error) {
@@ -681,9 +686,9 @@ func TestSessionStartGateWarningAllowsDegradedRehearsal(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionRehearsal,
-		Name: "Degraded rehearsal",
-		Issuer: "owner",
+		Mode:      domain.SessionRehearsal,
+		Name:      "Degraded rehearsal",
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009101",
 	})
 	if result.Status != contracts.CommandCompleted || session.ID == "" {
@@ -710,9 +715,9 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionRehearsal,
-		Name: "Invalid rehearsal",
-		Issuer: "owner",
+		Mode:      domain.SessionRehearsal,
+		Name:      "Invalid rehearsal",
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009102",
 	})
 	if session.ID != "" || result.Status != contracts.CommandRejected ||
@@ -720,7 +725,6 @@ func TestSessionStartGateHardInvariantStillBlocks(t *testing.T) {
 		t.Fatalf("hard Session-start invariant was not blocked: result=%+v session=%+v", result, session)
 	}
 }
-
 
 func TestShowOperationalPreflightWarningStartsDegradedSession(t *testing.T) {
 	h := newRuntimeHarness(t)
@@ -730,9 +734,9 @@ func TestShowOperationalPreflightWarningStartsDegradedSession(t *testing.T) {
 
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionShow,
-		Name: "Degraded show",
-		Issuer: "operator",
+		Mode:      domain.SessionShow,
+		Name:      "Degraded show",
+		Issuer:    "operator",
 		RequestID: "00000000-0000-7000-8000-000000009103",
 	})
 	if result.Status != contracts.CommandCompleted || session.ID == "" || session.Type != domain.SessionShow {
@@ -758,8 +762,8 @@ func TestShowStructuralPreflightBlockStillRejects(t *testing.T) {
 	}
 	session, result := h.service.StartSession(context.Background(), StartRequest{
 		ProjectID: h.project.ID,
-		Mode: domain.SessionShow,
-		Issuer: "owner",
+		Mode:      domain.SessionShow,
+		Issuer:    "owner",
 		RequestID: "00000000-0000-7000-8000-000000009104",
 	})
 	if session.ID != "" || result.Status != contracts.CommandRejected ||
