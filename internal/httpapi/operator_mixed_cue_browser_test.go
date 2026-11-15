@@ -217,6 +217,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				return
 			}
 			validViewport := (request.Width == 390 && request.Height == 844 && request.Mobile) ||
+				(request.Width == 720 && request.Height == 900 && !request.Mobile) ||
 				(request.Width == 768 && request.Height == 1024 && request.Mobile) ||
 				(request.Width == 1024 && request.Height == 768 && !request.Mobile) ||
 				(request.Width == 1440 && request.Height == 900 && !request.Mobile)
@@ -473,7 +474,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		want := []struct {
 			width, height int
 			mobile        bool
-		}{{390, 844, true}, {768, 1024, true}, {1024, 768, false}, {1440, 900, false}}
+		}{{390, 844, true}, {720, 900, false}, {768, 1024, true}, {1024, 768, false}, {1440, 900, false}}
 		if len(measurements) != len(want) {
 			return false
 		}

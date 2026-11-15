@@ -96,7 +96,7 @@
   const measureInspectorViewports = async () => {
     const measurements = [];
     for (const [width, height, mobile] of [
-      [390, 844, true], [768, 1024, true], [1024, 768, false], [1440, 900, false],
+      [390, 844, true], [720, 900, false], [768, 1024, true], [1024, 768, false], [1440, 900, false],
     ]) {
       const response = await fetch("/mixed-cue-viewport-ready", {
         method: "POST", headers: { "Content-Type": "application/json" },
