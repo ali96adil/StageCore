@@ -5290,3 +5290,34 @@ This entry supersedes the preceding push instruction.
   the next small fast-forward group to the same PR and inspect its CI. Keep
   Production ACL disabled and production services/data and physical outputs
   untouched.
+
+## Resume update — 2026-11-15 · Project editor read-error fences
+
+- Branch `integration/stagecore-rc`, OPEN/Draft PR #534. The last verified
+  pushed Local/Remote/PR HEAD remains
+  `4ff6ed3f018c1589b5ed49a9972e423eddadddba`. Code commit
+  `261e071eda5da02516c350bcc8984c31bd1387fd` was 21 commits ahead; this
+  handoff update is documentation-only. Read `git rev-parse HEAD` for the
+  current local HEAD. The worktree was clean after the code commit. Nothing
+  new has been pushed.
+- Exact-head Core run `43705363041`: Go 1.27 passed; Go 1.26 remains in
+  progress. Companion run `43705363040` (macOS replacement/media and Swift
+  CompanionCore) passed; Camera Relay run `43705363044` passed. Wait for Go
+  1.26 and recheck all exact-head runs before any push. The next normal
+  fast-forward push target is the 4-commit Capsule review group ending at
+  `3c53554`; do not push a later local commit in its place.
+- Commit `261e071` fences project editor read errors. Red-first temporary
+  SQLite tests reproduced stale `PROJECTS_UNAVAILABLE` for all four
+  Draft-history endpoints and `CONFIGURATION_UNAVAILABLE` for Project
+  Configuration after project grant revocation. The handlers now recheck the
+  exact session and live grant before returning Store errors.
+- Verification passed: focused normal tests for both regressions; their
+  focused `go test -race`; `go vet ./internal/httpapi`; `git diff --check`; and
+  full `go test ./internal/httpapi -count=1` (85.563 s). Changes are limited to
+  the opt-in qualification API and qualification docs; production ACL remains
+  disabled.
+- Next local audit: private Cue editor recovery, checkpoint and action-preset
+  read failures, then continue route-by-route authorization and asynchronous
+  dispatch review while CI runs. Preserve the no-production/no-real-device
+  constraints. Pi current-head performance still requires a verified isolated
+  Raspberry Pi 4 lab; never use the production-like `stagecore-pi` host.
