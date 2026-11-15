@@ -434,28 +434,49 @@ isolated tests/ARM64 and both Swift Companion checks.
 The report, benchmarks and matrix do not imply a Pi performance pass.
 The run is complete; subsequent pushes must still wait for their exact-head CI.
 
-The requested Pi 4 performance cases have already been measured in the tables
-above: Mixed Cues from 24 through 200 Actions, linked compound chains through
-100 Cues / 200 Actions, scheduled starts, 4/8-GO bursts, 100-Cue/200-Action
-sustained Rehearsal, and STOP/Blackout against 1/8/32 delayed Cues. The runs
-record P50/P95/P99, latency and schedule jitter, GC and allocation counts, and
-process CPU/RSS. They used the device-hidden simulator sandbox described above.
-Their source is `a90403b`; comparison with current branch HEAD `055e980`
-confirms no Cue Engine, Runtime Control, simulator, domain, or publish runtime
-source changes since that benchmark build. The separate Pi authorization
-baseline measures `ValidateCSRF` and `CheckRuntimeIntent`; those benchmark and
-check implementations are unchanged since their recorded source. Do not repeat
-these successful measurements solely to refresh the commit label.
+The historical Pi 4 runs above cover Mixed Cues from 24 through 200 Actions,
+linked compound chains through 100 Cues / 200 Actions, scheduled starts, 4/8-GO
+bursts, 100-Cue/200-Action sustained Rehearsal, and STOP/Blackout against
+1/8/32 delayed Cues. They record P50/P95/P99, latency and schedule jitter, GC,
+allocations, and process CPU/RSS through the device-hidden simulator sandbox.
+Their binaries were built from `a90403b`; these results are useful as a
+historical ARM64 baseline, not current-source qualification. Since that source,
+`96895ec` changed Cue GO to load Session foundation state and reject an
+unconfirmed restored start, and `85fc149` increased Runtime Control's bounded
+STOP wait from 2 to 5 seconds. Those changes affect measured Engine and
+STOP/Blackout boundaries, so a current-source Pi run is required. The explicit
+Stage Device and Companion socket-transition recording added in `669e6cc` is
+not exercised by these SIM-only output workloads.
 
-Performance evidence is extensive but does not establish a formal acceptance
-pass: no full Cue-completion latency/jitter limits were specified, the Pi host
-CPU and memory controllers were not isolated, and nearest-rank P99 from
+The separate Pi authorization baseline measures `ValidateCSRF` and
+`CheckRuntimeIntent`; `internal/projectaccess` has no direct source changes
+since that measurement. Keep that component-only ACL cost separate from full
+Engine completion, scheduling, and STOP/Blackout results.
+
+On 2026-11-15 at 16:30 UTC, a read-only host identity check through
+`stagecore-qualification` again timed out during the SSH banner exchange. No
+host identity was verified and no remote command or workload ran. Current
+Cue Engine and Runtime Control ARM64 test binaries were cross-compiled on the
+local Go 1.27.1 host from source HEAD `514ba86` and saved only under `/tmp`:
+`/tmp/stagecore-pi-current-cueengine.test`
+(SHA-256 `a36ab5c2d2a3ae4524fd41417bfa2b142cee7fccd8c1818d9fdddf6d64e8ae42`)
+and `/tmp/stagecore-pi-current-runtimecontrol.test`
+(SHA-256 `983dda6c4096d8af96d0382ca68574c69053550343d74d12668977be36f239fb`).
+They have not been copied to or executed on a remote machine. Rebuild them if
+the local `/tmp` artifacts are unavailable. Do not use the production-like
+`stagecore-pi` host. Current-source Pi P95/P99, jitter, CPU/RAM, GC/allocations,
+burst/sustained, and STOP/Blackout qualification remains open.
+
+The historical performance evidence is extensive but does not establish a
+current-source or formal acceptance pass: no full Cue-completion latency or
+jitter limits were specified, the Pi host CPU and memory controllers were not
+isolated, and nearest-rank P99 from
 100-sample scale/burst/safety cases is only a top-sample stress observation.
 The recorded 32-delayed-Cue STOP/Blackout P95 reaches about one second and
 scheduled linked-Cue P99 jitter reached 75.443 ms; these need an explicit
-timing acceptance decision. A later read-only SSH attempt to
-`stagecore-qualification` failed before host identity was established, so a
-new Pi run cannot currently be started if Engine/Runtime code changes. Continue
-software work while access is unavailable. Physical outputs remained simulated;
-this report does not qualify hardware or production release. Keep production
-services/data untouched and Production Project ACL disabled.
+timing acceptance decision. The latest read-only identity attempt to
+`stagecore-qualification` failed before host identity was established, so the
+current-source Pi run cannot start until the isolated endpoint is reachable.
+Continue software work while access is unavailable. Physical outputs remained
+simulated; this report does not qualify hardware or production release. Keep
+production services/data untouched and Production Project ACL disabled.

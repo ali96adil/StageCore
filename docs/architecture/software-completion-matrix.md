@@ -136,15 +136,17 @@ matrix:
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 | [#535](https://github.com/ali96adil/StageCore/issues/535) | Post-RC Web-first repeat-load optimization, local cache, incremental refresh, safe offline authoring, and installable web shell. The issue explicitly marks this scope non-blocking and says not to implement during the current autonomous SC-024/F-025 campaign; it requires a separate Owner decision. | **Deferred by explicit issue scope.** Do not add PWA/service-worker/cache/offline-queue changes, CI, branch or PR in this campaign. Continue qualifying the existing browser-local recoverable Draft flow under SC-009 and keep Hub state authoritative. |
 
-## Current campaign checkpoint — 2026-11-14 17:56 UTC
+## Current campaign checkpoint — 2026-11-15 16:36 UTC
 
-Draft PR #534 remains OPEN on `integration/stagecore-rc`. Remote/PR/local
-committed HEAD is `b1b3cb4198e109fe4807f1250f4e54a58cd0b084`. Its exact-head
-Core run `43622805955` is still active in Go 1.26; Go 1.27 passes. Companion
-Core `43622805947` and Camera Relay `43622805957` pass. Do not push while the
-Go 1.26 job remains active. The current local `internal/usbdmx` refresh
-benchmark and its performance/matrix/handoff updates are an uncommitted batch;
-use `git status` and `git rev-parse HEAD` before resuming.
+Draft PR #534 remains OPEN and Draft on `integration/stagecore-rc`. Remote/PR
+HEAD is `29ac4b566e19728c0c4b03886b7a144a3b17cb88`; local HEAD is
+`514ba8607112779f5d0a09026f9bfae1c9b407ca`, six commits ahead with a clean
+worktree before this documentation update. Exact-head Core run `43734098541`
+has Go 1.27 passed and Go 1.26 Race active after Test, isolated installed-copy
+rollback, Browser Cue Delivery and Vet passed; Linux ARM64 product builds are
+pending. Companion `43734097838` and Camera Relay `43734097852` both passed on
+the same SHA. Do not push while Core is active; recheck PR and remote SHA before
+the normal push.
 
 The latest Pi 4 Rev 1.4 ARM64 simulations cover flat Mixed Cues, nested linked
 compound chains through 100 Cues/200 Actions, scheduling, 4/8-GO bursts,
@@ -158,19 +160,35 @@ setting, P95/P99 refresh intervals were `253.7/253.7 ms` at Go CPU 1 and
 Actual USB adapter, DMX line, fixture, and physical blackout acceptance remain
 hardware work.
 
-The local benchmark batch passed `go test ./internal/usbdmx -count=1`, its
-Race suite, `go vet ./internal/usbdmx`, a Race-instrumented refresh benchmark,
-Linux ARM64 cross-build, the complete Pi ARM64 test binary, and the Pi refresh
-benchmark. All outputs were simulated. No performance runtime code changed;
-the only code addition is a test-only refresh measurement. Production
-Hub/Relay/data/Vault, physical outputs, firmware, and production ACL remain
-untouched; keep SC-024 production-off and PR #534 in Draft.
+The earlier USB-DMX refresh qualification passed `go test ./internal/usbdmx`,
+Race, Vet, Linux ARM64 cross-build, and the Pi ARM64 test binary plus the
+in-memory refresh benchmark; `/dev` remained hidden and the test port was
+synthetic. Its physical USB, DMX-line, fixture, and blackout limits still
+apply.
 
-After the current exact-head Core run completes, recheck remote/PR and the
-workflow set, then commit and push this validated batch normally. Continue
-software work while its CI runs. The next matrix candidates are SC-009 Route
-history and SC-015's lack of explicit per-output health events; preserve the
-distinction between an absent health event and inferred device connectivity.
+**Performance checkpoint correction:** the historical Cue Engine and Runtime
+Control Pi measurements were built from `a90403b`, not the current source.
+`96895ec` added the fail-closed restored-Session state gate to Cue GO and
+`85fc149` changed the bounded STOP wait from 2 to 5 seconds; current-source
+Pi timing must be measured again. The isolated `stagecore-qualification` SSH
+identity check timed out during banner exchange at 16:30 UTC, before identity
+verification or remote command. Current-source static ARM64 test binaries were
+compiled with Go 1.27.1 at local HEAD `514ba86` into `/tmp`, but were not sent
+to or run on a remote host. See
+[`cue-execution-performance-qualification.md`](cue-execution-performance-qualification.md)
+for their hashes and the historical/current measurement boundary. Do not use
+`stagecore-pi`. Production services/data/Vault, physical outputs and firmware
+remain untouched; production ACL stays disabled.
+
+The completed local real-Chrome preset tests now cover native focus/save,
+search typing/Backspace, preview opening, and Insert activation in the Mixed
+Lighting+OSC Draft workflow. Focused normal/Race tests, the full real-Chrome
+`^TestBrowser` suite, `go vet ./internal/httpapi`, JavaScript syntax and diff
+checks pass. Continue independent software work while the exact-head Core job
+runs; after it turns green, push the validated local batch normally and wait
+for the new exact-head workflows before another push. Keep the distinction
+between missing per-output health evidence and inferred connectivity; no
+device's final physical output is claimed healthy without explicit evidence.
 
 ## SC-024 read-failure fence update — 2026-11-15
 
