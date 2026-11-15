@@ -1848,3 +1848,22 @@ Capsule is exported, materialized or restored.
 Focused normal and Race tests, `go vet ./internal/httpapi`, and the full
 `go test ./internal/httpapi -count=1` pass. This qualification uses temporary
 SQLite and filesystem roots only; Production ACL remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Owner device-read error fences
+
+The Owner-only `GET .../assignment/transfer-status` returned repository and
+epoch-ACK failure codes without rechecking the live Owner session. The
+`GET /api/v1/network/cockpit` error path had the same gap. Red-first regressions
+`TestStageDeviceTransferStatusSuppressesAssignmentErrorAfterOwnerRevocation`
+and `TestNetworkCockpitSuppressesStoreErrorAfterOwnerRevocation` reproduced a
+503 and 500 after logout at temporary SQLite read failures. The transfer-status
+ACK path also now rechecks after an epoch-ACK storage failure, covered by
+`TestStageDeviceTransferStatusSuppressesEpochAckErrorAfterOwnerRevocation`.
+All three paths return `SESSION_INVALID` after revocation. They use no real
+device connection; the Network Cockpit fixture removes only a table in its
+temporary SQLite database.
+
+Focused normal/Race tests, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass. The Owner routes remain read-only;
+the tests do not query or change production network/device state.

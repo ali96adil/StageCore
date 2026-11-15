@@ -853,6 +853,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			assignment, err := devices.GetAssignmentRecord(r.Context(), deviceID)
 			if err != nil {
+				if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+					hooks[0].BeforeOwnerReadResponse("transfer-status")
+				}
+				if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+					return
+				}
 				if errors.Is(err, sql.ErrNoRows) {
 					writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_ASSIGNMENT_NOT_FOUND"})
 					return
@@ -870,6 +876,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					ack = &record
 					reported = online && generation == record.ConnectionGeneration
 				} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+						hooks[0].BeforeOwnerReadResponse("transfer-status")
+					}
+					if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionCompanionPair) {
+						return
+					}
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGE_DEVICE_EPOCH_ACK_UNAVAILABLE"})
 					return
 				}
@@ -1637,6 +1649,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			items, err := devices.Cockpit(r.Context(), 15*time.Second)
 			if err != nil {
+				if len(hooks) > 0 && hooks[0].BeforeOwnerReadResponse != nil {
+					hooks[0].BeforeOwnerReadResponse("network-cockpit")
+				}
+				if !reauthorizeScopedOwnerRead(w, r, auth, session, access, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "NETWORK_COCKPIT_FAILED"})
 				return
 			}

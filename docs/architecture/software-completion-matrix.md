@@ -75,6 +75,14 @@ scan failure; the handler now returns the scoped 404. Focused normal/Race tests
 and `go vet ./internal/httpapi` pass. The default Hub assembly remains
 unchanged.
 
+The Owner-only Stage Device transfer-status and Network Cockpit GETs now also
+recheck the live Owner session and role before returning assignment, epoch-ACK
+or cockpit read errors. Red-first temporary-SQLite regressions cover assignment
+and epoch-ACK failures and Cockpit storage failure; each revokes the Owner
+session at the response boundary and requires `SESSION_INVALID`. Focused normal
+and Race tests, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (82.613 s).
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

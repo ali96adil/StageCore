@@ -498,6 +498,167 @@ func TestStageDeviceOwnerReadSuppressesResultsAfterSessionRevocation(t *testing.
 	}
 }
 
+func TestStageDeviceTransferStatusSuppressesAssignmentErrorAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE stage_device_assignments"); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeOwnerReadResponse: func(route string) {
+				if route != "transfer-status" {
+					return
+				}
+				revoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner session at transfer-status error boundary: %v", err)
+				}
+			},
+		}),
+	).Handler()
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/stage-devices/offline-transfer-status/assignment/transfer-status", nil)
+	request.RemoteAddr = "127.0.0.1:20202"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked || response.Code != http.StatusUnauthorized ||
+		strings.Contains(response.Body.String(), "STAGE_DEVICE_TRANSFER_STATUS_UNAVAILABLE") {
+		t.Fatalf("revoked Owner received transfer-status error: HTTP %d %s (hook ran=%t)",
+			response.Code, response.Body.String(), revoked)
+	}
+}
+
+func TestStageDeviceTransferStatusSuppressesEpochAckErrorAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Transfer ACK error fence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const deviceID = "stagelaser-transfer-ack-error"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: deviceID, Kind: deviceexperience.DeviceGeneric, ProfileID: stagelaser.ProfileID,
+		DisplayName: "Transfer ACK error", Platform: "esp32", Architecture: "riscv32",
+		ClientVersion: "0.1.0-test", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		Enabled: true, Capabilities: stagelaser.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx,
+		"UPDATE stage_device_assignments SET project_id = ?, assignment_state = 'BLOCKED', assignment_epoch = assignment_epoch + 1 WHERE device_id = ?",
+		project.ID, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE stage_device_epoch_acks"); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeOwnerReadResponse: func(route string) {
+				if route != "transfer-status" {
+					return
+				}
+				revoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner session at transfer-status ACK error boundary: %v", err)
+				}
+			},
+		}),
+	).Handler()
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/stage-devices/"+deviceID+"/assignment/transfer-status", nil)
+	request.RemoteAddr = "127.0.0.1:20202"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked || response.Code != http.StatusUnauthorized ||
+		strings.Contains(response.Body.String(), "STAGE_DEVICE_EPOCH_ACK_UNAVAILABLE") {
+		t.Fatalf("revoked Owner received epoch-ACK error: HTTP %d %s (hook ran=%t)",
+			response.Code, response.Body.String(), revoked)
+	}
+}
+
+func TestNetworkCockpitSuppressesStoreErrorAfterOwnerRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE network_observations"); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeOwnerReadResponse: func(route string) {
+				if route != "network-cockpit" {
+					return
+				}
+				revoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner session at Network Cockpit error boundary: %v", err)
+				}
+			},
+		}),
+	).Handler()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/network/cockpit", nil)
+	request.RemoteAddr = "127.0.0.1:20202"
+	request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked || response.Code != http.StatusUnauthorized ||
+		strings.Contains(response.Body.String(), "NETWORK_COCKPIT_FAILED") {
+		t.Fatalf("revoked Owner received Network Cockpit error: HTTP %d %s (hook ran=%t)",
+			response.Code, response.Body.String(), revoked)
+	}
+}
+
 func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

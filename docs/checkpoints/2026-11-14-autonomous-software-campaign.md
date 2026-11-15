@@ -5158,3 +5158,53 @@ This entry supersedes the preceding push instruction.
   qualification SSH endpoint timed out before its banner. Keep production
   services/data, the production Pi host, physical outputs and Production ACL
   untouched.
+
+## Qualification batch checkpoint — 2026-11-15 · Capsule export scan fence
+
+- Starting point: local `integration/stagecore-rc` HEAD `a71fefe396d77909e4b71b5d309d85313883fe18`, 13 commits ahead of remote/PR #534 at
+  `c11e29b5a98f69d42812b2b597619a8093043e15`; no local edits to the scoped
+  export files were present before this batch. Core run `43702159421` has Go
+  1.27 passed and Go 1.26 Race still in progress; Companion `43702159473` and
+  Camera Relay `43702159464` passed. Do not push until all exact-head checks
+  finish and local/remote/PR ancestry is rechecked.
+- Red-first `TestScopedCapsuleExportListSuppressesScanErrorAfterGrantRevocation`
+  first observed HTTP 503 after the live `capsule.export` grant was revoked at
+  a temporary-root scan error. The opt-in listing now reauthenticates the
+  exact session and checks the current Project grant before returning either
+  filesystem failure details or entries. The regression requires the scoped
+  404 and confirms the unavailable response does not escape.
+- The focused regression and sibling scoped Capsule export tests pass normally
+  and under Race; `go vet ./internal/httpapi`, `git diff --check`, and full
+  `go test ./internal/httpapi -count=1` pass (82.137 s). The private test seam
+  is unavailable through the public option. No Capsule content was changed
+  and no export/restore or hardware operation occurred.
+- Qualification/matrix documentation is updated. First next step: record the
+  full package result, commit the small tested fix and docs locally, then
+  continue endpoint/session-fence review while c11e29b CI completes. After the
+  CI gate, push in a normal fast-forward batch to the same PR and inspect all
+  exact-head workflows. Pi performance, production acceptance, production
+  services/data, real devices and Production ACL remain gated.
+
+## Qualification batch checkpoint — 2026-11-15 · Owner device-read error fences
+
+- The Capsule scan fence and its qualification/matrix update are saved in
+  commit `1ae431c6f35af8812f84f4d1eae24582a2499663`; it is local and unpushed.
+  That change passed the focused normal/Race tests, `go vet ./internal/httpapi`,
+  and full HTTP API tests (82.137 s).
+- Red-first `TestStageDeviceTransferStatusSuppressesAssignmentErrorAfterOwnerRevocation`
+  reproduced a 503 after Owner logout at a temporary assignment-store failure.
+  `TestNetworkCockpitSuppressesStoreErrorAfterOwnerRevocation` reproduced a
+  500 at a temporary Network Cockpit read failure. Owner session/role checks
+  now run before returning either error. The transfer-status Epoch ACK error
+  also rechecks the Owner session; a dedicated regression covers that branch.
+- The four Owner read/error regressions pass normally and under Race;
+  `go vet ./internal/httpapi` and `git diff --check` pass. A new full
+  `go test ./internal/httpapi -count=1` is still running. Only temporary SQLite
+  tables were dropped; no network/device probe or production data was used.
+- Current local code HEAD is `1ae431c6f35af8812f84f4d1eae24582a2499663` with
+  Owner-read code/tests and this checkpoint being prepared locally; remote and
+  PR #534 remain `c11e29b5a98f69d42812b2b597619a8093043e15`. Exact-head Core
+  run `43702159421` still has Go 1.26 Race in progress; Go 1.27, Companion
+  `43702159473`, and Camera Relay `43702159464` pass. No push until that run
+  completes. Then continue the scoped device and asynchronous boundary audit,
+  keep pushes fast-forward-only, and inspect each new-head CI before advancing.
