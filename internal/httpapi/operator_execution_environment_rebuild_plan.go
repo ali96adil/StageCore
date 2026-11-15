@@ -141,6 +141,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-seed")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+			return
+		}
 		writeJSON(w, http.StatusCreated, makeExecutionEnvironmentRebuildPlanView(stored))
 	}))
 
@@ -169,6 +175,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UPDATE_FAILED")
 			return
 		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-update")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+			return
+		}
 		writeJSON(w, http.StatusOK, makeExecutionEnvironmentRebuildPlanView(stored))
 	}))
 
@@ -187,6 +199,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		}
 		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID); err != nil {
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_DELETE_FAILED")
+			return
+		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-delete")
+		}
+		if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
