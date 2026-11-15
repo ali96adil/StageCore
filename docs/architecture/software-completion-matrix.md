@@ -136,17 +136,16 @@ matrix:
 | [#429](https://github.com/ali96adil/StageCore/issues/429), [#307](https://github.com/ali96adil/StageCore/issues/307) | StageLaser attended hardware qualification and the final integrated physical rehearsal. | **Hardware Qualification Pending.** Software CI, simulation, and no-actuation checks cannot satisfy relay polarity, optical safety, device playback, integrated output, STOP, or blackout observations. |
 | [#535](https://github.com/ali96adil/StageCore/issues/535) | Post-RC Web-first repeat-load optimization, local cache, incremental refresh, safe offline authoring, and installable web shell. The issue explicitly marks this scope non-blocking and says not to implement during the current autonomous SC-024/F-025 campaign; it requires a separate Owner decision. | **Deferred by explicit issue scope.** Do not add PWA/service-worker/cache/offline-queue changes, CI, branch or PR in this campaign. Continue qualifying the existing browser-local recoverable Draft flow under SC-009 and keep Hub state authoritative. |
 
-## Current campaign checkpoint — 2026-11-15 16:36 UTC
+## Current campaign checkpoint — 2026-11-15 16:41 UTC
 
 Draft PR #534 remains OPEN and Draft on `integration/stagecore-rc`. Remote/PR
-HEAD is `29ac4b566e19728c0c4b03886b7a144a3b17cb88`; local HEAD is
-`514ba8607112779f5d0a09026f9bfae1c9b407ca`, six commits ahead with a clean
-worktree before this documentation update. Exact-head Core run `43734098541`
-has Go 1.27 passed and Go 1.26 Race active after Test, isolated installed-copy
-rollback, Browser Cue Delivery and Vet passed; Linux ARM64 product builds are
-pending. Companion `43734097838` and Camera Relay `43734097852` both passed on
-the same SHA. Do not push while Core is active; recheck PR and remote SHA before
-the normal push.
+HEAD is `29ac4b566e19728c0c4b03886b7a144a3b17cb88`; local HEAD before this
+checkpoint is `a552734afb29fb154a2b33ac53f2b5996032d6bd`, seven commits ahead
+with a clean worktree. Exact-head Core run `43734098541` passed all checks:
+Go 1.26/1.27 tests, isolated installed-copy rollback, Browser Cue Delivery,
+Vet, Race and Linux ARM64 product builds. Companion `43734097838` and Camera
+Relay `43734097852` also passed on the same SHA. The branch and Draft PR were
+rechecked after fetch; a normal push of the local batch is now safe.
 
 The latest Pi 4 Rev 1.4 ARM64 simulations cover flat Mixed Cues, nested linked
 compound chains through 100 Cues/200 Actions, scheduling, 4/8-GO bursts,
