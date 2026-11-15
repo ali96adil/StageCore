@@ -5411,3 +5411,27 @@ This entry supersedes the preceding push instruction.
   update, resolve, reopen) for result delivery after revocation. Keep this
   local while the 3c53554 Core workflow is active; no ACL production cutover,
   hardware command or production data operation is allowed.
+
+## Qualification batch checkpoint — 2026-11-15 · Project Note mutation delivery
+
+- PR #534 and `origin/integration/stagecore-rc` remain at
+  `3c535543c0242d349a94f23948a1ad18747468c0`; local HEAD is
+  `2f3f8f5b4ed7b5fe4807888c3ed1455dc0375c65`, 27 commits ahead. The working
+  tree is clean. No new push has occurred.
+- Exact-head Core run `43707820414` still has Go 1.26 pending/in progress;
+  Go 1.27 passed. Companion run `43707820363` and Camera Relay run
+  `43707820418` passed. Do not push until all checks for `3c53554` are green.
+- `2f3f8f5` fences Project Note create/update/resolve/reopen response bodies
+  after a post-mutation session or ProjectEdit revocation. Red-first SQLite
+  hooks reproduced four successful responses containing Note details despite
+  revocation; the corrected responses report commit uncertainty, are
+  non-retryable, and suppress Note details while preserving the completed
+  Store operation.
+- Focused normal and Race regressions passed; `go vet ./internal/httpapi`,
+  `git diff --check`, and full `go test ./internal/httpapi -count=1` passed
+  (88.780 s). This is opt-in authorization qualification only; production ACL,
+  services, data and hardware remain untouched.
+- Next: continue the project-scoped response/error audit, add a regression
+  before correcting any reproducible stale response, and maintain the exact
+  old-head CI gate. Isolated Raspberry Pi 4 qualification and hardware/production
+  acceptance remain separate.
