@@ -800,6 +800,10 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			item, err := devices.GetDevice(r.Context(), strings.TrimSpace(r.PathValue("device_id")))
 			if err != nil {
+				beforeDeviceMetadataResponse("device")
+				if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "STAGE_DEVICE_NOT_FOUND"})
 				return
 			}
@@ -832,6 +836,10 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			deviceID := strings.TrimSpace(r.PathValue("device_id"))
 			record, err := devices.GetAssignmentRecord(r.Context(), deviceID)
 			if err != nil {
+				beforeDeviceMetadataResponse("assignment")
+				if !reauthorizeScopedDeviceMetadata(w, r, auth, session, access, boundProject, userauth.PermissionProjectRead) {
+					return
+				}
 				if errors.Is(err, deviceexperience.ErrInvalidDevice) {
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": "STAGE_DEVICE_ID_INVALID"})
 					return

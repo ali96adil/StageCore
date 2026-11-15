@@ -1884,3 +1884,19 @@ is contacted.
 Focused normal/Race tests, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (82.984 s). No production device
 inventory or network observation data was read.
+
+
+## SC-024 continuation · 2026-11-15 · direct device metadata errors
+
+Owner-only `GET /api/v1/stage-devices/{device_id}` and its read-only
+`/assignment` route returned repository failure responses without rechecking
+the live Owner session. Red-first
+`TestStageDeviceMetadataSuppressesStoreErrorAfterOwnerSessionRevocation`
+reproduced the stale responses for both routes after dropping the corresponding
+table in temporary SQLite and logging out at the error boundary. Both handlers
+now recheck the exact session, role and applicable scope before responding;
+revoked Owners receive `SESSION_INVALID` with no device/error detail.
+
+Focused normal/Race regressions, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (83.553 s). No production data or
+device was read or contacted.

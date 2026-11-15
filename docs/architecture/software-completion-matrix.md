@@ -91,6 +91,14 @@ after logout before the fence and now returns `SESSION_INVALID`. Focused
 normal/Race tests, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (82.984 s).
 
+Owner-only direct Stage Device and assignment metadata GETs now recheck the
+session/role before returning repository errors too. Red-first
+`TestStageDeviceMetadataSuppressesStoreErrorAfterOwnerSessionRevocation`
+reproduced 404/503 responses after logout for temporary `stage_devices` and
+`stage_device_assignments` failures. Focused normal/Race tests, `go vet
+./internal/httpapi`, and full `go test ./internal/httpapi -count=1` pass
+(83.553 s).
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

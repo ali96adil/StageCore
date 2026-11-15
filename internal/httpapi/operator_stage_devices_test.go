@@ -716,6 +716,69 @@ func TestStageDeviceGlobalInventorySuppressesListErrorAfterOwnerRevocation(t *te
 	}
 }
 
+func TestStageDeviceMetadataSuppressesStoreErrorAfterOwnerSessionRevocation(t *testing.T) {
+	for _, route := range []struct {
+		name      string
+		path      string
+		table     string
+		leakCodes []string
+	}{
+		{name: "device", path: "/api/v1/stage-devices/private-device", table: "stage_devices", leakCodes: []string{"STAGE_DEVICE_NOT_FOUND"}},
+		{name: "assignment", path: "/api/v1/stage-devices/private-device/assignment", table: "stage_device_assignments", leakCodes: []string{"STAGE_DEVICE_ASSIGNMENT_UNAVAILABLE"}},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			stageStore := store.New(h.db.DB, clock.Real{})
+			devices, err := deviceexperience.NewRepository(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			access, err := projectaccess.New(h.db.DB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE "+route.table); err != nil {
+				t.Fatal(err)
+			}
+			runtime := devicechannel.New(devices, nil)
+			defer runtime.Close()
+			revoked := false
+			handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+				h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+					BeforeDeviceMetadataResponse: func(name string) {
+						if name != route.name {
+							return
+						}
+						revoked = true
+						if err := h.auth.Logout(ctx, owner.Token); err != nil {
+							t.Errorf("revoke Owner session at %s read error: %v", route.name, err)
+						}
+					},
+				}),
+			).Handler()
+			request := httptest.NewRequest(http.MethodGet, route.path, nil)
+			request.RemoteAddr = "127.0.0.1:20202"
+			request.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !revoked || response.Code != http.StatusUnauthorized {
+				t.Fatalf("revoked Owner received %s read result: HTTP %d %s (hook ran=%t)",
+					route.name, response.Code, response.Body.String(), revoked)
+			}
+			for _, code := range route.leakCodes {
+				if strings.Contains(response.Body.String(), code) {
+					t.Fatalf("revoked Owner received %s error detail: %s", route.name, response.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestStageDeviceMetadataDoesNotDeliverAfterOwnerSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
