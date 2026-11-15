@@ -43,9 +43,28 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	input, err := s.CreateInput(ctx, domain.InputDefinition{
+		RevisionID: draft.ID, Name: "GO", SourceRef: "osc:/go", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeHistoryCtx := store.WithRouteDraftHistoryActor(ctx, "backup-editor")
+	draftCueID := draftCue.ID
+	draftRoute, err := s.CreateRouteWithActions(routeHistoryCtx, domain.Route{
+		RevisionID: draft.ID, Name: "Undo Route after restore", InputID: input.ID,
+		PriorityClass: domain.PriorityP2, Enabled: true,
+	}, []domain.RouteAction{{CueID: &draftCueID, Parameters: json.RawMessage(`{"source":"backup"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	historyBeforeBackup, err := s.CueDraftHistory(historyCtx, project.ID)
 	if err != nil || !historyBeforeBackup.CanUndo || historyBeforeBackup.RevisionID != draft.ID {
 		t.Fatalf("Draft Undo history before backup=%+v err=%v", historyBeforeBackup, err)
+	}
+	routeHistoryBeforeBackup, err := s.RouteDraftHistory(routeHistoryCtx, project.ID)
+	if err != nil || !routeHistoryBeforeBackup.CanUndo || routeHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Route Draft Undo history before backup=%+v err=%v", routeHistoryBeforeBackup, err)
 	}
 	manager := managerForStore(s)
 	service, err := backup.New(h, s, root, manager)
@@ -106,6 +125,29 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	restoredDraftHistory, err := restoredStore.CueDraftHistory(historyCtx, project.ID)
 	if err != nil || !restoredDraftHistory.CanUndo || restoredDraftHistory.RevisionID != draft.ID {
 		t.Fatalf("restored Draft Undo history=%+v err=%v", restoredDraftHistory, err)
+	}
+	restoredRouteHistory, err := restoredStore.RouteDraftHistory(routeHistoryCtx, project.ID)
+	if err != nil || !restoredRouteHistory.CanUndo || restoredRouteHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Route Draft Undo history=%+v err=%v", restoredRouteHistory, err)
+	}
+	undoneRoute, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID)
+	if err != nil || undoneRoute.CanUndo || !undoneRoute.CanRedo {
+		t.Fatalf("Route Undo after backup restore=%+v err=%v", undoneRoute, err)
+	}
+	if routes, err := restoredStore.ListRoutes(ctx, draft.ID); err != nil || len(routes) != 0 {
+		t.Fatalf("Route Undo after restore left Routes=%+v err=%v", routes, err)
+	}
+	if _, err := restoredStore.RedoRouteDraft(routeHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Route Redo after backup restore: %v", err)
+	}
+	routes, err := restoredStore.ListRoutes(ctx, draft.ID)
+	if err != nil || len(routes) != 1 || routes[0].ID != draftRoute.ID || len(routes[0].Actions) != 1 ||
+		routes[0].Actions[0].ID != draftRoute.Actions[0].ID || routes[0].Actions[0].CueID == nil ||
+		*routes[0].Actions[0].CueID != draftCue.ID || string(routes[0].Actions[0].Parameters) != `{"source":"backup"}` {
+		t.Fatalf("Route Redo after backup restore changed identity or action: routes=%+v want=%+v err=%v", routes, draftRoute, err)
+	}
+	if _, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID); err != nil {
+		t.Fatalf("remove restored Route before Cue Undo: %v", err)
 	}
 	undone, err := restoredStore.UndoCueDraft(historyCtx, project.ID)
 	if err != nil || undone.CanUndo || !undone.CanRedo {

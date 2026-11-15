@@ -20,15 +20,21 @@ async function loadConfiguration() {
   const projectID = encodeURIComponent(state.project.project_id);
   const configuration = await api(`/api/v1/projects/${projectID}/configuration`);
   let machineRoles = { roles: [], companions: [] };
+  let routeHistory = { can_undo: false, can_redo: false };
   if (configurationEditable()) {
     try {
       machineRoles = await api(`/api/v1/projects/${projectID}/machine-roles`);
     } catch (_) {}
+    if (configuration.revision?.status === "DRAFT") {
+      try { routeHistory = await api(`/api/v1/projects/${projectID}/route-draft-history`); }
+      catch (_) {}
+    }
   }
   return {
     ...configuration,
     machine_roles: machineRoles.roles || [],
     companions: machineRoles.companions || [],
+    route_history: routeHistory,
   };
 }
 
@@ -137,6 +143,10 @@ async function renderConfiguration() {
           <label>Action parameters JSON<textarea id="routeParameters" class="mono" rows="3" ${disabled}>{}</textarea></label>
           <div class="row-actions"><button id="routeSubmit" class="button primary" type="submit" ${disabled}>Add route</button><button id="routeCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Route Draft history")}">
+          <button id="routeHistoryUndo" class="button ghost" type="button" ${!editable || !model.route_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo routing change")}</button>
+          <button id="routeHistoryRedo" class="button ghost" type="button" ${!editable || !model.route_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo routing change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.routes || []).length ? model.routes.map((route) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(route.name)}</strong><div class="row-actions">${pill(route.enabled ? "ENABLED" : "DISABLED", route.enabled ? "good" : "neutral")}${editable && (route.actions || []).length === 1 ? `<button class="button ghost route-edit" type="button" data-route-id="${esc(route.route_id)}">Edit</button>` : ""}${editable ? `<button class="button ghost route-toggle" type="button" data-route-id="${esc(route.route_id)}">${route.enabled ? "Disable" : "Enable"}</button><button class="button danger route-remove" type="button" data-route-id="${esc(route.route_id)}">Remove</button>` : ""}</div></div><p class="muted">Input ${esc(route.input_id)} · ${esc(route.priority_class)} · ${(route.actions || []).length} action(s)</p><p class="mono muted">${esc(route.route_id)}</p></div>`).join("") : `<div class="empty">No routes yet.</div>`}</div>
       </article>
@@ -221,6 +231,22 @@ async function renderConfiguration() {
     </div>`;
 
   el("refreshConfiguration").addEventListener("click", () => renderConfiguration().catch(configurationError));
+  el("routeHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/route-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("routeHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/route-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
   el("jumpMachineRoles")?.addEventListener("click", () => document.getElementById("machineRolesCard")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   const startButton = el("startRoutingEdit");
   if (startButton) {

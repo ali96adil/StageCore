@@ -236,6 +236,9 @@ const f001Arabic = {
   "Action parameters JSON": "معاملات الإجراء JSON",
   "Add route": "إضافة مسار",
   "No routes yet.": "لا توجد مسارات بعد.",
+  "Route Draft history": "سجل مسودة التوجيه",
+  "Undo routing change": "تراجع عن تعديل التوجيه",
+  "Redo routing change": "إعادة تعديل التوجيه",
   "Start routing edit": "بدء تعديل التوجيه",
   "New routing Draft created. The published Runtime Snapshot remains unchanged.": "تم إنشاء مسودة توجيه جديدة، ولقطة التشغيل المنشورة لم تتغير.",
 
