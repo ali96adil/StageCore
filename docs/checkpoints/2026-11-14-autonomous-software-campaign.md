@@ -5261,3 +5261,32 @@ This entry supersedes the preceding push instruction.
   VDMX, Ableton and QLC+ are qualified through the existing source/tests and
   Core integration; their dedicated endpoint/physical acceptance remains
   separate where the matrix says so.
+
+## Push checkpoint — 2026-11-15 · first F-025 operation-error batch
+
+- All checks on pushed HEAD `c11e29b5a98f69d42812b2b597619a8093043e15` passed:
+  Core Go 1.26 Race and Go 1.27, Companion Core, and Camera Relay. PR #534 was
+  still OPEN/Draft on `integration/stagecore-rc`.
+- A normal fast-forward push advanced only the first three commits after c11:
+  `bce462c` operation read-error fence, `c0cb187` qualification, and `4ff6ed3`
+  checkpoint. PR/remote HEAD is now `4ff6ed3f018c1589b5ed49a9972e423eddadddba`.
+  No force push, new branch/PR, or merge occurred.
+- Exact new-head workflows are active: Core `43705363041` (Go 1.26 and 1.27),
+  Companion `43705363040`, and Camera Relay `43705363044`. All were pending on
+  the last read. Do not push again until every exact-head job completes.
+- Local code HEAD before this uncommitted Project Access batch is
+  `a7cf2dbe6a64ec6cb648582dd02e8c785eae4954`, 18 commits ahead of remote
+  `4ff6ed3`. The red-first
+  `TestProjectAccessSuppressesPreflightErrorsAfterOwnerSessionRevocation`
+  reproduced HTTP 503 after Owner logout on both grant-read and active-session
+  preflight failures; handlers now check the exact Owner session and
+  `user.manage` before returning these errors. Focused normal/Race tests and
+  `go vet ./internal/httpapi` pass. Full `go test ./internal/httpapi -count=1`
+  passes (84.061 s); matrix and qualification docs are updated.
+- Project Access handler/tests and qualification/matrix changes are saved in
+  local commit `3df576b138110b9da173b4f10b62a70b43b1eaca`. It remains
+  unpushed; local is now 19 commits ahead of remote `4ff6ed3`. Continue the
+  ACL/read-error audit while the new-head CI runs. After that gate, push only
+  the next small fast-forward group to the same PR and inspect its CI. Keep
+  Production ACL disabled and production services/data and physical outputs
+  untouched.
