@@ -2184,3 +2184,18 @@ The corrected route returns only `PROJECT_NOT_FOUND`. Focused normal/Race
 rebuild-plan coverage, `go vet ./internal/httpapi`, diff checks, and full
 `go test ./internal/httpapi -count=1` (94.220 s) pass. No production state
 was used; ACL remains disabled.
+
+## SC-024 · Rebuild-plan route scope mismatch response
+
+The rebuild-plan Environment loader now rechecks the qualified live Project
+route grant before returning a not-found response when the Environment manifest
+belongs to a different Revision. Red-first
+`TestExecutionEnvironmentRebuildPlanScopeMismatchSuppressesResultAfterGrantRevocation`
+uses two Projects in disposable SQLite and revokes `ProjectView` at the mismatch
+response boundary; before the fix it returned
+`EXECUTION_ENVIRONMENT_NOT_FOUND` instead of the scoped `PROJECT_NOT_FOUND`.
+The corrected response does not reveal the foreign Environment's existence.
+Focused normal and Race rebuild-plan tests, `go vet ./internal/httpapi`,
+diff checks, and full `go test ./internal/httpapi -count=1` pass (94.626 s).
+No production database, Vault data or physical output was involved. Production
+ACL remains disabled.

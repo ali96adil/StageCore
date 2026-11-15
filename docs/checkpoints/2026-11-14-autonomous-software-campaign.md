@@ -5804,3 +5804,30 @@ This entry supersedes the preceding push instruction.
   mismatch responses. Do not push until `0b09158` Core Go 1.26 and the full
   exact-head CI set are green. Production ACL remains off; Pi 4 timing
   qualification is pending.
+
+## Qualification checkpoint — 2026-11-15 · Rebuild-plan scope mismatch
+
+- `64c9535d70d4703264b9a5e42796bb64aeee7d90` fixes the rebuild-plan response
+  when an Environment manifest belongs to another Revision. The handler now
+  rechecks the live qualified route grant before returning the mismatch 404.
+- Red-first `TestExecutionEnvironmentRebuildPlanScopeMismatchSuppressesResultAfterGrantRevocation`
+  used two Projects in temporary SQLite and revoked `ProjectView` at the
+  mismatch response boundary. The old response disclosed
+  `EXECUTION_ENVIRONMENT_NOT_FOUND`; the fixed response returns only
+  `PROJECT_NOT_FOUND`.
+- Focused normal/Race rebuild-plan regressions passed, as did
+  `go vet ./internal/httpapi`, `git diff --check`, and full
+  `go test ./internal/httpapi -count=1` (94.626 s).
+- Local code HEAD before this documentation commit is
+  `64c9535d70d4703264b9a5e42796bb64aeee7d90`, 10 commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b`. The exact-head Core CI run
+  `43713024420` was still running Go 1.26 Race at the last check; Go 1.27,
+  Companion Swift/macOS and Camera Relay isolated ARM64 checks had passed.
+  Do not push until that run and the complete exact-head check set finish green.
+- No production services, show data, Vault originals or real outputs were
+  touched. Project ACL remains disabled in production. Pi 4 current-head
+  performance qualification remains open; historical simulation is not Pi
+  acceptance.
+- Resume by checking exact-head CI for `0b091584d07f9324683e18954f37707b3d57941b`,
+  then push the accumulated tested commits to the existing branch/PR only when
+  green. Continue the F-025 response-boundary review while the gate runs.
