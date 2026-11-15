@@ -5661,3 +5661,26 @@ This entry supersedes the preceding push instruction.
   plan conflicts and mutation results) and continue the Project-scoped error
   audit. Current isolated Pi 4 performance qualification remains pending;
   production ACL stays disabled and PR #534 stays Draft.
+
+## Qualification batch checkpoint — 2026-11-15 · Rebuild-plan conflict delivery
+
+- Before this documentation commit, local code HEAD is
+  `3167cb248d8d2ee54f044f66eddc9d248a419379`, 43 commits ahead of remote
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. The exact old-head gate is
+  now green: Core Go 1.26 Race and Go 1.27, Companion Core plus macOS
+  replacement/media, and Camera Relay isolated ARM64 all passed on
+  `9760e9d`. A normal push is now permitted after this checkpoint is saved.
+- `3167cb2` rechecks the live qualified route grant after reading an existing
+  rebuild plan and before returning its conflict response with the private
+  plan ID. Red-first
+  `TestExecutionEnvironmentRebuildPlanConflictSuppressesPlanIDAfterGrantRevocation`
+  revoked ProjectEdit at that boundary; before the fix, the 409 included
+  `rebuild_plan_id`, and now the handler returns only `PROJECT_NOT_FOUND`.
+- Focused normal and Race rebuild-plan tests passed, `go vet ./internal/httpapi`
+  passed, and full `go test ./internal/httpapi -count=1` passed in 92.820 s.
+  `git diff --check` passed. Project state was disposable SQLite only.
+- Next push the validated batch normally to PR #534, record the new remote
+  SHA and exact-head CI identifiers, then wait for its complete green gate
+  before any later push. Continue the rebuild-plan Store-error audit and keep
+  production ACL off; current-head isolated Pi 4 performance acceptance is
+  still pending.

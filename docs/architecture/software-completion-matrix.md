@@ -257,3 +257,9 @@ temporary-SQLite revocation tests prove the scoped denial suppresses the
 stale capture, setup, and seed errors. The full HTTP API suite, focused Race
 coverage, and `go vet ./internal/httpapi` pass. This remains opt-in
 qualification code; Production ACL remains disabled.
+
+The rebuild-plan seed route also rechecks `ProjectEdit` after a successful
+existing-plan read and before returning a conflict that includes the private
+plan ID. A red-first revocation regression reproduced the ID disclosure and
+now requires the scoped denial. Focused Race, full HTTP API and vet checks
+pass.

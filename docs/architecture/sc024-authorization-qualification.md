@@ -2114,3 +2114,17 @@ Focused normal/Race tests for the rebuild-plan lifecycle and all three
 revocation boundaries, `go vet ./internal/httpapi`, diff checks and full
 `go test ./internal/httpapi -count=1` (92.980 s) pass. No Snapshot bytes,
 production database or output device was accessed.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan conflict response
+
+The rebuild-plan seed route now rechecks `ProjectEdit` after reading an
+existing plan and before returning a conflict containing its plan ID (or
+continuing a replacement). Red-first
+`TestExecutionEnvironmentRebuildPlanConflictSuppressesPlanIDAfterGrantRevocation`
+revoked the temporary operator grant at that boundary and observed a 409 with
+`rebuild_plan_id` before the fix; the corrected path returns only
+`PROJECT_NOT_FOUND`. Focused normal/Race rebuild-plan tests, `go vet
+./internal/httpapi`, diff checks and full
+`go test ./internal/httpapi -count=1` (92.820 s) pass. Project ACL remains
+opt-in and no production data was used.
