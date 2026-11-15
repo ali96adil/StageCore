@@ -214,6 +214,8 @@ func (s *Store) CreateRouteWithActions(ctx context.Context, route domain.Route, 
 			return domain.Route{}, err
 		}
 	}
+	route.Name = strings.TrimSpace(route.Name)
+	route.InputID = strings.TrimSpace(route.InputID)
 	if route.PriorityClass == "" {
 		route.PriorityClass = domain.PriorityP2
 	}
@@ -236,6 +238,10 @@ func (s *Store) CreateRouteWithActions(ctx context.Context, route domain.Route, 
 	}
 	defer tx.Rollback()
 	if err := s.ensureDraft(ctx, tx, route.RevisionID); err != nil {
+		return domain.Route{}, err
+	}
+	beforeRoute, err := readRouteTx(ctx, tx, route.RevisionID, route.ID)
+	if err != nil {
 		return domain.Route{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -290,6 +296,13 @@ func (s *Store) CreateRouteWithActions(ctx context.Context, route domain.Route, 
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Route{}, err
 	}
+	afterRoute, err := readRouteTx(ctx, tx, route.RevisionID, route.ID)
+	if err != nil {
+		return domain.Route{}, err
+	}
+	if err := recordRouteDraftHistoryTx(ctx, tx, route.RevisionID, "CREATE", route.ID, beforeRoute, afterRoute, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.Route{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Route{}, fmt.Errorf("commit create route: %w", err)
 	}
@@ -305,6 +318,8 @@ func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, 
 	if route.ID == "" || route.RevisionID == "" {
 		return domain.Route{}, fmt.Errorf("%w: route and revision are required", domain.ErrInvalidInput)
 	}
+	route.Name = strings.TrimSpace(route.Name)
+	route.InputID = strings.TrimSpace(route.InputID)
 	if route.PriorityClass == "" {
 		route.PriorityClass = domain.PriorityP2
 	}
@@ -333,6 +348,13 @@ func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, 
 		return domain.Route{}, err
 	} else if !ok {
 		return domain.Route{}, fmt.Errorf("%w: route does not belong to revision", domain.ErrInvalidInput)
+	}
+	beforeRoute, err := readRouteTx(ctx, tx, route.RevisionID, route.ID)
+	if err != nil {
+		return domain.Route{}, err
+	}
+	if beforeRoute == nil {
+		return domain.Route{}, domain.ErrNotFound
 	}
 	if ok, err := s.entityBelongsToRevisionTx(ctx, tx, "input_definitions", "input_id", route.InputID, route.RevisionID); err != nil {
 		return domain.Route{}, err
@@ -405,11 +427,16 @@ func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, 
 	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
 		return domain.Route{}, err
 	}
+	afterRoute, err := readRouteTx(ctx, tx, route.RevisionID, route.ID)
+	if err != nil {
+		return domain.Route{}, err
+	}
+	if err := recordRouteDraftHistoryTx(ctx, tx, route.RevisionID, "EDIT", route.ID, beforeRoute, afterRoute, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.Route{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Route{}, fmt.Errorf("commit update route: %w", err)
 	}
-	route.Name = strings.TrimSpace(route.Name)
-	route.InputID = strings.TrimSpace(route.InputID)
 	route.ConditionDefinition = json.RawMessage(condition)
 	route.TransformDefinition = json.RawMessage(transform)
 	route.ErrorPolicy = json.RawMessage(errorPolicy)
@@ -419,19 +446,32 @@ func (s *Store) UpdateRouteWithActions(ctx context.Context, route domain.Route, 
 func (s *Store) DeleteRoute(ctx context.Context, revisionID, routeID string) error {
 	revisionID = strings.TrimSpace(revisionID)
 	routeID = strings.TrimSpace(routeID)
-	if err := s.ensureDraft(ctx, s.db, revisionID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete route: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.ensureDraft(ctx, tx, revisionID); err != nil {
 		return err
 	}
-	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM routes WHERE route_id = ? AND revision_id = ?`, routeID, revisionID)
+	beforeRoute, err := readRouteTx(ctx, tx, revisionID, routeID)
 	if err != nil {
+		return err
+	}
+	if beforeRoute == nil {
+		return domain.ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE route_id = ? AND revision_id = ?`, routeID, revisionID); err != nil {
 		return fmt.Errorf("delete route: %w", err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("count deleted routes: %w", err)
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
 	}
-	if rows != 1 {
-		return domain.ErrNotFound
+	if err := recordRouteDraftHistoryTx(ctx, tx, revisionID, "DELETE", routeID, beforeRoute, nil, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete route: %w", err)
 	}
 	return nil
 }

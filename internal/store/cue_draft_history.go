@@ -283,6 +283,9 @@ func recordCueDraftHistoryTx(ctx context.Context, tx *sql.Tx, revisionID, operat
 	`, revisionID, actor, cursor); err != nil {
 		return fmt.Errorf("discard Cue Draft redo history: %w", err)
 	}
+	// Reuse the first discarded sequence when an editor branches after Undo.
+	// A cursor gap would make the retained preceding operation unreachable.
+	nextSequence = cursor + 1
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO cue_draft_history_events
 		(revision_id, actor_id, sequence, operation, cue_id, created_at_us, delta_json)

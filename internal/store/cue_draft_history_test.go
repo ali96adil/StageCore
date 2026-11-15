@@ -339,3 +339,56 @@ func TestCueDraftHistoryUndoRespectsActiveShowConfigurationLock(t *testing.T) {
 		t.Fatalf("locked Undo changed Draft Cue: cue=%+v err=%v", stored, err)
 	}
 }
+
+func TestCueDraftHistoryCanUndoAfterBranchingFromRedo(t *testing.T) {
+	base := context.Background()
+	s, _ := newStore(t)
+	project, revision, err := s.CreateProject(base, store.CreateProjectParams{Name: "Cue history branch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := store.WithCueDraftHistoryActor(base, "owner")
+	cue, err := s.CreateCueWithActions(owner, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Opening", OrderIndex: 0,
+		Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := cue
+	second.Name = "Second"
+	if _, err := s.ReplaceDraftCue(owner, second, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UndoCueDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo before branching: %v", err)
+	}
+	branch := cue
+	branch.NotesSummary = "branched edit"
+	if _, err := s.ReplaceDraftCue(owner, branch, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UndoCueDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo branch edit: %v", err)
+	}
+	status, err := s.CueDraftHistory(owner, project.ID)
+	if err != nil || !status.CanUndo || !status.CanRedo {
+		t.Fatalf("branch history after undo=%+v err=%v; want Create undo and branch redo", status, err)
+	}
+	if _, err := s.UndoCueDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo Create after branching: %v", err)
+	}
+	if _, err := s.GetCue(base, cue.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("undo Create after branching left Cue: err=%v", err)
+	}
+	if _, err := s.RedoCueDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo Create after branching: %v", err)
+	}
+	if _, err := s.RedoCueDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo branch edit: %v", err)
+	}
+	restored, err := s.GetCue(base, cue.ID)
+	if err != nil || restored.Name != "Opening" || restored.NotesSummary != "branched edit" {
+		t.Fatalf("branch Redo failed to restore retained Cue history: cue=%+v err=%v", restored, err)
+	}
+}
