@@ -241,9 +241,37 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if _, err := projectStore.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
 		t.Fatal(err)
 	}
+	nestedLeaf, err := projectStore.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.2.1", Name: "Nested Terminal", OrderIndex: 3,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "PARALLEL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		Parameters: json.RawMessage(`{"branch":"terminal"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nestedPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{nestedLeaf.ID}, "linked_cue_mode": "TOGETHER",
+	})
+	nested, err := projectStore.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.2", Name: "Nested Compound Cue", OrderIndex: 2,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: nestedPolicy,
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		Parameters: json.RawMessage(`{"branch":"selected"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{nested.ID}, "linked_cue_mode": "TOGETHER",
+	})
 	first, err := projectStore.CreateCueWithActions(ctx, domain.Cue{
 		RevisionID: revision.ID, DisplayLabel: "1", Name: "Opening", OrderIndex: 1,
-		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: rootPolicy,
 	}, []domain.Action{{
 		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
 		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
@@ -253,7 +281,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := projectStore.CreateCueWithActions(ctx, domain.Cue{
-		RevisionID: revision.ID, DisplayLabel: "2", Name: "Second", OrderIndex: 2,
+		RevisionID: revision.ID, DisplayLabel: "2", Name: "Second", OrderIndex: 4,
 		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
 	}, []domain.Action{{
 		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
@@ -334,6 +362,33 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if goResponse.Result.Status != contracts.CommandCompleted {
 		t.Fatalf("GO result=%+v", goResponse.Result)
 	}
+	var goReceipt struct {
+		CueExecutionID string   `json:"cue_execution_id"`
+		CueID          string   `json:"cue_id"`
+		LinkedCueIDs   []string `json:"linked_cue_ids"`
+	}
+	if err := json.Unmarshal(goResponse.Result.Payload, &goReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if goReceipt.CueID != first.ID || len(goReceipt.LinkedCueIDs) != 2 {
+		t.Fatalf("GO did not execute the root's full nested Cue chain: %+v", goReceipt)
+	}
+	goActions, err := projectStore.ListActionExecutions(ctx, goReceipt.CueExecutionID)
+	if err != nil || len(goActions) != 3 {
+		t.Fatalf("GO root+chain Action executions=%+v err=%v", goActions, err)
+	}
+	expectedGOActions := map[string]bool{
+		first.Actions[0].ID: true, nested.Actions[0].ID: true, nestedLeaf.Actions[0].ID: true,
+	}
+	for _, actionExecution := range goActions {
+		if !expectedGOActions[actionExecution.ActionID] || actionExecution.Result != domain.ExecutionCompleted {
+			t.Errorf("GO chain Action execution=%+v is outside the completed root subtree", actionExecution)
+		}
+		delete(expectedGOActions, actionExecution.ActionID)
+	}
+	if len(expectedGOActions) != 0 {
+		t.Errorf("GO omitted root-subtree Actions: %v", expectedGOActions)
+	}
 
 	statusReq := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/runtime", owner.Token)
 	statusRes := httptest.NewRecorder()
@@ -399,7 +454,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	}
 
 	unconfirmedPayload, _ := json.Marshal(runtimeJumpRequest{
-		RequestID: "00000000-0000-7000-8000-000000000403", CueID: second.ID, Confirm: false,
+		RequestID: "00000000-0000-7000-8000-000000000403", CueID: nested.ID, Confirm: false,
 	})
 	unconfirmedReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/jump", unconfirmedPayload, owner.Token, owner.CSRFToken)
 	unconfirmedRes := httptest.NewRecorder()
@@ -410,7 +465,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 
 	staleSession := "a-different-rehearsal"
 	staleCheck, _ := json.Marshal(runtimeJumpRequest{
-		RequestID: "00000000-0000-7000-8000-000000000413", CueID: second.ID,
+		RequestID: "00000000-0000-7000-8000-000000000413", CueID: nested.ID,
 		Confirm: true, RehearsalSessionID: &staleSession,
 	})
 	staleReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/jump", staleCheck, owner.Token, owner.CSRFToken)
@@ -422,7 +477,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 
 	expected := first.ID
 	jumpPayload, _ := json.Marshal(runtimeJumpRequest{
-		RequestID: "00000000-0000-7000-8000-000000000404", CueID: second.ID,
+		RequestID: "00000000-0000-7000-8000-000000000404", CueID: nested.ID,
 		ExpectedCurrentCueID: &expected, Confirm: true,
 	})
 	jumpReq := authenticatedMutationRequest(t, http.MethodPost, "/api/v1/projects/"+project.ID+"/runtime/jump", jumpPayload, owner.Token, owner.CSRFToken)
@@ -439,6 +494,39 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	}
 	if jumpResponse.Result.Status != contracts.CommandCompleted {
 		t.Fatalf("Jump result=%+v", jumpResponse.Result)
+	}
+	var jumpReceipt struct {
+		CueExecutionID string   `json:"cue_execution_id"`
+		CueID          string   `json:"cue_id"`
+		LinkedCueIDs   []string `json:"linked_cue_ids"`
+	}
+	if err := json.Unmarshal(jumpResponse.Result.Payload, &jumpReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if jumpReceipt.CueID != nested.ID || len(jumpReceipt.LinkedCueIDs) != 1 || jumpReceipt.LinkedCueIDs[0] != nestedLeaf.ID {
+		t.Fatalf("HTTP JUMP did not select only the nested subtree: %+v", jumpReceipt)
+	}
+	jumpActions, err := projectStore.ListActionExecutions(ctx, jumpReceipt.CueExecutionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jumpActions) != 2 {
+		t.Fatalf("nested HTTP JUMP executed %d Actions, want selected Cue plus terminal child", len(jumpActions))
+	}
+	seenJumpActions := map[string]bool{}
+	for _, actionExecution := range jumpActions {
+		seenJumpActions[actionExecution.ActionID] = true
+		if actionExecution.Result != domain.ExecutionCompleted {
+			t.Errorf("nested HTTP JUMP Action %s result=%s want=%s", actionExecution.ActionID, actionExecution.Result, domain.ExecutionCompleted)
+		}
+	}
+	for _, want := range []string{nested.Actions[0].ID, nestedLeaf.Actions[0].ID} {
+		if !seenJumpActions[want] {
+			t.Errorf("nested HTTP JUMP omitted selected-subtree Action %s", want)
+		}
+	}
+	if seenJumpActions[first.Actions[0].ID] || seenJumpActions[second.Actions[0].ID] {
+		t.Errorf("nested HTTP JUMP replayed an ancestor or later sibling Action: %v", seenJumpActions)
 	}
 
 	trace := httptest.NewRecorder()
@@ -472,8 +560,17 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 		}
 	}
 	active, err := projectStore.ActiveSessionForProject(ctx, project.ID)
-	if err != nil || active == nil || active.CurrentCueID == nil || *active.CurrentCueID != second.ID {
-		t.Fatalf("Jump did not move current Cue: active=%+v err=%v", active, err)
+	if err != nil || active == nil || active.CurrentCueID == nil || *active.CurrentCueID != nested.ID {
+		t.Fatalf("Jump did not move current Cue to nested target: active=%+v err=%v", active, err)
+	}
+	statusAfterJumpReq := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/runtime", owner.Token)
+	statusAfterJumpRes := httptest.NewRecorder()
+	handler.ServeHTTP(statusAfterJumpRes, statusAfterJumpReq)
+	var statusAfterJump runtimeStatusView
+	if statusAfterJumpRes.Code != http.StatusOK || json.Unmarshal(statusAfterJumpRes.Body.Bytes(), &statusAfterJump) != nil ||
+		statusAfterJump.CurrentCue == nil || statusAfterJump.CurrentCue.ID != nested.ID ||
+		statusAfterJump.NextCue == nil || statusAfterJump.NextCue.ID != second.ID {
+		t.Fatalf("runtime status after nested JUMP=%d %+v %s", statusAfterJumpRes.Code, statusAfterJump, statusAfterJumpRes.Body.String())
 	}
 
 	noRunStopPayload, _ := json.Marshal(runtimeCommandRequest{RequestID: "00000000-0000-7000-8000-000000000405"})

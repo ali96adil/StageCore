@@ -25,6 +25,13 @@ selected Cue, and the guarded physical executor stays unused. Normal and Race
 runs pass; this adds execution evidence without changing the existing Partial
 authoring/adapter acceptance status.
 
+The authenticated Runtime HTTP regression now also covers GO through a nested
+linked chain followed by a confirmed JUMP directly to an inner compound Cue.
+It verifies the command receipt, executed Action set, rehearsal cursor and next
+top-level Cue, then ends the session with STOP. The route, Runtime Control and
+Cue Engine use only the `sim.test` adapter in this temporary database test;
+normal and Race runs pass.
+
 **Status key:** `Implemented` means the requested behavior is present in code
 and has relevant automated checks; `Partial` means code exists but a stated
 software acceptance condition remains; `Open` means a reproducible software
