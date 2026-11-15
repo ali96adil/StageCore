@@ -4953,3 +4953,29 @@ This entry supersedes the preceding push instruction.
   is not pushed. Next: wait for the exact `daae16d` Core gate, then verify
   branch ancestry and push the saved fast-forward stack normally if it is
   green; inspect all newly triggered checks before the next push.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 snapshot read fences
+
+- Local HEAD is `f2db1706620935bfaa957c90b76fb0eb60992c0c`, nine commits
+  ahead of `origin/integration/stagecore-rc` and PR #534 at
+  `daae16d4c3806e7ac6b7deb1927181ba2abf26b5`. The stack contains the
+  StageAudio error/SHOW fences, F-025 Vault-status and snapshot-read fences,
+  and architecture/checkpoint updates. No changes were pushed after `daae16d`.
+- The red-first snapshot-list test revokes `media.read` at a failed snapshot
+  Store read in temporary SQLite; before the fix, the operator received HTTP
+  503. Snapshot list/detail/diff Store and lookup errors now share a live
+  session/Project-grant recheck before the mapped error response. Focused
+  snapshot/Vault tests pass normally and under Race; full
+  `go test ./internal/httpapi -count=1` passed in 80.750 s; `go vet
+  ./internal/httpapi` and `git diff --check` pass.
+- Related open PRs remain green at: TabletPlayer #36 `91613da`, DMX Lighting
+  #39 `3ad7749` (6 checks), ESP32 Camera #20 `455b066`, StageLaser #56
+  `b14a578` and #57 `c4ff10b`. No linked checkout was edited.
+- Exact remote `daae16d` gate: Core Go 1.27, Companion Core and Camera Relay
+  passed; Core Go 1.26 Race is still in progress. Do not push the local stack
+  until Go 1.26 completes and the entire exact-head gate is green. Then verify
+  PR/remote ancestry and worktree, push normally to the existing branch, and
+  inspect every exact-new-head check before another push. The latest
+  `stagecore-qualification` SSH attempt timed out during banner exchange; no
+  Pi host identity or remote command was established. Current-head Pi 4
+  performance remains unqualified, and Production ACL remains disabled.
