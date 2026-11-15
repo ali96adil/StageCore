@@ -42,6 +42,12 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	otherProject, otherRevision, err := projects.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Lighting Preview Destination", CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	devices, err := deviceexperience.NewRepository(h.db.DB)
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +93,9 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
+	armSaveTranslationGate := make(chan struct{}, 1)
+	saveTranslations := make(chan struct{}, 1)
+	releaseSaveTranslation := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -103,7 +112,30 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = io.WriteString(w, strings.TrimSuffix(strings.TrimSpace(rec.Body.String()), "boot();"))
 		case "/lighting-preview-config":
-			writeJSON(w, http.StatusOK, map[string]string{"csrf": owner.CSRFToken, "project": project.ID})
+			writeJSON(w, http.StatusOK, map[string]string{
+				"csrf": owner.CSRFToken, "project": project.ID, "other_project": otherProject.ID,
+			})
+		case "/lighting-preview-arm-save-gate":
+			select {
+			case armSaveTranslationGate <- struct{}{}:
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.Error(w, "save gate already armed", http.StatusConflict)
+			}
+		case "/lighting-preview-save-ready":
+			select {
+			case <-saveTranslations:
+				w.WriteHeader(http.StatusNoContent)
+			case <-time.After(5 * time.Second):
+				http.Error(w, "lighting translation request did not arrive", http.StatusGatewayTimeout)
+			case <-r.Context().Done():
+			}
+		case "/lighting-preview-save-release":
+			select {
+			case releaseSaveTranslation <- struct{}{}:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/lighting-preview-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
@@ -112,10 +144,32 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = w.Write(testScript)
 		default:
+			if r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/"+project.ID+"/lighting-controller/cue-actions" {
+				select {
+				case <-armSaveTranslationGate:
+					select {
+					case saveTranslations <- struct{}{}:
+					case <-r.Context().Done():
+						return
+					}
+					select {
+					case <-releaseSaveTranslation:
+					case <-r.Context().Done():
+						return
+					}
+				default:
+				}
+			}
 			handler.ServeHTTP(w, r)
 		}
 	}))
 	defer server.Close()
+	defer func() {
+		select {
+		case releaseSaveTranslation <- struct{}{}:
+		default:
+		}
+	}()
 	profileDir, err := os.MkdirTemp("", "stagecore-lighting-preview-chrome-")
 	if err != nil {
 		t.Fatal(err)
@@ -161,23 +215,33 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 		t.Fatalf("browser did not finish: %s", output)
 	}
 	var report struct {
-		Status             string   `json:"status"`
-		SimulatedRun       bool     `json:"simulated_run"`
-		SimulatedStop      bool     `json:"simulated_stop"`
-		UnmappedError      bool     `json:"unmapped_error"`
-		CorrectedCopy      bool     `json:"corrected_copy"`
-		PreviewNoRequests  bool     `json:"preview_no_requests"`
-		SavedCue           string   `json:"saved_cue"`
-		PreviewRequestURLs []string `json:"preview_request_urls"`
-		ExecutionRequests  []string `json:"execution_requests"`
+		Error string `json:"error"`
+		Trace []struct {
+			Method string `json:"method"`
+			URL    string `json:"url"`
+			Status int    `json:"status"`
+		} `json:"trace"`
+		Status                        string   `json:"status"`
+		SimulatedRun                  bool     `json:"simulated_run"`
+		SimulatedStop                 bool     `json:"simulated_stop"`
+		UnmappedError                 bool     `json:"unmapped_error"`
+		CorrectedCopy                 bool     `json:"corrected_copy"`
+		PreviewNoRequests             bool     `json:"preview_no_requests"`
+		SavedCue                      string   `json:"saved_cue"`
+		PreviewRequestURLs            []string `json:"preview_request_urls"`
+		ExecutionRequests             []string `json:"execution_requests"`
+		ProjectSwitchBlockedStaleSave bool     `json:"project_switch_blocked_stale_save"`
+		CrossProjectCueWrites         []string `json:"cross_project_cue_writes"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || !report.SimulatedRun || !report.SimulatedStop ||
 		!report.UnmappedError || !report.CorrectedCopy || !report.PreviewNoRequests ||
-		report.SavedCue != "Lighting Preview Recovery" || len(report.PreviewRequestURLs) != 0 || len(report.ExecutionRequests) != 0 {
-		t.Fatalf("browser lighting preview acceptance failed: %+v", report)
+		report.SavedCue != "Lighting Preview Recovery" || len(report.PreviewRequestURLs) != 0 ||
+		len(report.ExecutionRequests) != 0 || !report.ProjectSwitchBlockedStaleSave ||
+		len(report.CrossProjectCueWrites) != 0 {
+		t.Fatalf("browser lighting preview acceptance failed: %+v error=%s trace=%+v", report, report.Error, report.Trace)
 	}
 	cues, err := projects.ListCues(ctx, revision.ID)
 	if err != nil || len(cues) != 1 || cues[0].Name != report.SavedCue || len(cues[0].Actions) != 1 {
@@ -203,5 +267,9 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 	snapshot, err := projects.LatestPublishedRuntimeSnapshotForProject(ctx, project.ID)
 	if err != nil || snapshot != nil {
 		t.Fatalf("lighting preview authoring published a Snapshot: snapshot=%+v err=%v", snapshot, err)
+	}
+	otherCues, err := projects.ListCues(ctx, otherRevision.ID)
+	if err != nil || len(otherCues) != 0 {
+		t.Fatalf("pending save crossed into another Project: cues=%+v err=%v", otherCues, err)
 	}
 }

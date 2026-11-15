@@ -86,13 +86,36 @@
     document.getElementById("lightingCueSave").click();
     await waitFor(() => document.querySelector(".lighting-cue-card h2")?.textContent === "Lighting Preview Recovery",
       "saved Lighting Cue in the Draft list");
+    const savedCue = document.querySelector(".lighting-cue-card h2")?.textContent || "";
+    await window.renderLightingCues();
+    document.getElementById("lightingNewCue").click();
+    await waitFor(() => document.querySelector(".lighting-cue-editor"), "second Lighting Cue editor");
+    document.getElementById("lightingCueName").value = "Must Stay in Original Project";
+    const armSaveGate = await nativeFetch("/lighting-preview-arm-save-gate", {method: "POST"});
+    if (!armSaveGate.ok) throw new Error(`pending-save gate arm returned HTTP ${armSaveGate.status}`);
+    document.getElementById("lightingCueSave").click();
+    const saveReady = await nativeFetch("/lighting-preview-save-ready", {method: "POST"});
+    if (!saveReady.ok) throw new Error(`pending-save gate returned HTTP ${saveReady.status}`);
+    await window.openProject(config.other_project);
+    await window.renderLightingCues();
+    const saveRelease = await nativeFetch("/lighting-preview-save-release", {method: "POST"});
+    if (!saveRelease.ok) throw new Error(`pending-save release returned HTTP ${saveRelease.status}`);
+    await waitFor(() => trace.some(({method, url}) => method === "POST" &&
+      url === `/api/v1/projects/${config.project}/lighting-controller/cue-actions`),
+    "completed translation response for the original Project");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const crossProjectCueWrites = trace.filter(({method, url}) => method !== "GET" &&
+      url === `/api/v1/projects/${config.other_project}/cues`).map(({method, url}) => `${method} ${url}`);
+    const projectSwitchBlockedStaleSave = crossProjectCueWrites.length === 0;
     const executionRequests = trace.filter(({method, url}) => method !== "GET" &&
       /\/api\/v1\/projects\/[^/]+\/(?:runtime\/(?:go|jump|start)|publish|lighting-controller\/(?:nodes|cue-actions)\/.*(?:apply|identify))(?:\?|$)/.test(url));
     await report({
       status: "PASS", simulated_run: simulatedRun, simulated_stop: simulatedStop,
       unmapped_error: unmappedError, corrected_copy: correctedCopy, preview_no_requests: previewNoRequests,
-      saved_cue: document.querySelector(".lighting-cue-card h2")?.textContent || "",
+      saved_cue: savedCue,
       preview_request_urls: previewRequestURLs, execution_requests: executionRequests,
+      project_switch_blocked_stale_save: projectSwitchBlockedStaleSave,
+      cross_project_cue_writes: crossProjectCueWrites,
     });
   } catch (error) {
     await report({status: "FAIL", error: String(error?.stack || error), trace});

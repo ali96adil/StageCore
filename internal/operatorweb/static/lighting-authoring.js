@@ -83,14 +83,14 @@
   }
   function nodeName(id) { return nodes().find((node) => node.device_id === id)?.display_name || id || "—"; }
 
-  async function loadModels() {
-    [controllerModel, cueModel, allCueModel] = await Promise.all([
-      api(`/api/v1/projects/${encodeURIComponent(pid())}/lighting-controller`),
-      api(`/api/v1/projects/${encodeURIComponent(pid())}/lighting-controller/cues`),
+  async function loadModels(projectID = pid()) {
+    return Promise.all([
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller`),
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller/cues`),
       // The lighting-only view excludes OSC and other Cue types, but order_index
       // is unique across the entire project revision. Never allocate from only
       // the filtered lighting list: it can collide with an existing OSC Cue.
-      api(`/api/v1/projects/${encodeURIComponent(pid())}/cues`),
+      api(`/api/v1/projects/${encodeURIComponent(projectID)}/cues`),
     ]);
   }
 
@@ -125,7 +125,12 @@
   async function renderLightingCues(message = "", kind = "") {
     if (!state.project) return;
     setPage("lighting-cues");
-    await loadModels();
+    const projectID = pid();
+    const [nextControllerModel, nextCueModel, nextAllCueModel] = await loadModels(projectID);
+    if (pid() !== projectID) return;
+    controllerModel = nextControllerModel;
+    cueModel = nextCueModel;
+    allCueModel = nextAllCueModel;
     const cues = cueModel.cues || [];
     content.innerHTML = `<div class="page-head lighting-cues-head">
       <div><p class="eyebrow">LIGHTING AUTHORING</p><h1>${esc(tx("title"))}</h1><p>${esc(tx("sub"))}</p></div>
@@ -386,6 +391,8 @@
 
   async function saveCue() {
     const editor = document.querySelector(".lighting-cue-editor");
+    if (!editor?.isConnected) return;
+    const projectID = pid();
     const message = document.getElementById("lightingCueEditorMessage");
     const name = document.getElementById("lightingCueName")?.value.trim() || "";
     if (!name) { setMessage(message, tx("name"), "warn"); return; }
@@ -393,9 +400,10 @@
     if (button) button.disabled = true;
     try {
       const request = readOperation();
-      const translated = await api(`/api/v1/projects/${encodeURIComponent(pid())}/lighting-controller/cue-actions`, {
+      const translated = await api(`/api/v1/projects/${encodeURIComponent(projectID)}/lighting-controller/cue-actions`, {
         method: "POST", json: { ...request, execution_mode: "PARALLEL_BARRIER" },
       });
+      if (!editor.isConnected || pid() !== projectID) return;
       const descriptors = translated.actions || [];
       if (!descriptors.length) throw new Error("LIGHTING_ACTION_TRANSLATION_FAILED");
       const cueID = editor.dataset.cueId || "";
@@ -424,10 +432,13 @@
         enabled: existing?.enabled ?? true, execution_policy: existing?.execution_policy || {},
         notes_summary: existing?.notes_summary ?? "Lighting Cue", actions,
       };
-      await api(`/api/v1/projects/${encodeURIComponent(pid())}/cues${cueID ? `/${encodeURIComponent(cueID)}` : ""}`, { method: cueID ? "PUT" : "POST", json: body });
+      await api(`/api/v1/projects/${encodeURIComponent(projectID)}/cues${cueID ? `/${encodeURIComponent(cueID)}` : ""}`, { method: cueID ? "PUT" : "POST", json: body });
+      if (!editor.isConnected || pid() !== projectID) return;
       await renderLightingCues(tx("saved"), "success");
-    } catch (error) { setMessage(message, lightingErrorMessage(error), "error"); }
-    finally { if (button) button.disabled = false; }
+    } catch (error) {
+      if (editor.isConnected && pid() === projectID) setMessage(message, lightingErrorMessage(error), "error");
+    }
+    finally { if (button?.isConnected) button.disabled = false; }
   }
 
   async function duplicateCue(cue) {
