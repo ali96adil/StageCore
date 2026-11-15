@@ -28,6 +28,15 @@
       const width = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
       if (width > window.innerWidth + 1) throw new Error(`${stage} overflows the ${window.innerWidth}px RTL viewport: ${width}px`);
     };
+    const setViewport = async (width, height) => {
+      await fetch("/show-workspace-resize-ready", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ width, height }),
+      });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (window.innerWidth !== width) throw new Error(`viewport resize applied ${window.innerWidth}px, expected ${width}px`);
+    };
 
     f017RememberPage(config.project, "cues");
     if (f017PreferredPage(config.project) !== "cues") throw new Error("fixture did not remember the authoring page");
@@ -87,6 +96,11 @@
       throw new Error("Cue authoring controls did not return after SHOW ended");
     }
     assertNoHorizontalOverflow("Cue authoring workspace");
+    for (const [width, height] of [[768, 1024], [1280, 800]]) {
+      await setViewport(width, height);
+      assertNoHorizontalOverflow(`Cue authoring workspace at ${width}px`);
+    }
+    await setViewport(390, 844);
 
     const runtimeNav = document.querySelector('[data-page="runtime"]');
     const runtimeBounds = runtimeNav.getBoundingClientRect();
@@ -103,6 +117,10 @@
       throw new Error("emulated touch did not return to the inactive Runtime workspace");
     }
     assertNoHorizontalOverflow("inactive Runtime workspace");
+    for (const [width, height] of [[768, 1024], [1280, 800]]) {
+      await setViewport(width, height);
+      assertNoHorizontalOverflow(`inactive Runtime workspace at ${width}px`);
+    }
     await report("PASS");
   } catch (error) {
     await report(`FAIL: ${error?.stack || error}`);

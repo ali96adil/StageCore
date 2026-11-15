@@ -89,7 +89,11 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
-	viewportRequests := make(chan chan struct{}, 1)
+	type viewportRequest struct {
+		width, height int
+		resume        chan struct{}
+	}
+	viewportRequests := make(chan viewportRequest, 1)
 	keyRequests := make(chan chan struct{}, 1)
 	touchRequests := make(chan struct {
 		x, y   float64
@@ -123,7 +127,28 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		case "/show-workspace-viewport-ready":
 			resume := make(chan struct{})
 			select {
-			case viewportRequests <- resume:
+			case viewportRequests <- viewportRequest{width: 390, height: 844, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/show-workspace-resize-ready":
+			var request struct {
+				Width  int `json:"width"`
+				Height int `json:"height"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Width != 390 && request.Width != 768 && request.Width != 1280) || request.Height <= 0 || request.Height > 1200 {
+				http.Error(w, "invalid responsive test viewport", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case viewportRequests <- viewportRequest{width: request.Width, height: request.Height, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -219,16 +244,18 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		}
 	}()
 	keyCommandID := 100
+	viewportCommandID := 90
 	outcome := ""
 	for outcome == "" {
 		select {
-		case resume := <-viewportRequests:
-			if err := chromeDevToolsCommand(cdp, 90, "Emulation.setDeviceMetricsOverride", map[string]any{
-				"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true,
+		case request := <-viewportRequests:
+			if err := chromeDevToolsCommand(cdp, viewportCommandID, "Emulation.setDeviceMetricsOverride", map[string]any{
+				"width": request.width, "height": request.height, "deviceScaleFactor": 1, "mobile": true,
 			}); err != nil {
 				t.Fatalf("set isolated Chrome mobile viewport: %v", err)
 			}
-			close(resume)
+			viewportCommandID++
+			close(request.resume)
 		case outcome = <-browserResult:
 			if outcome != "PASS" {
 				t.Fatal(outcome)
