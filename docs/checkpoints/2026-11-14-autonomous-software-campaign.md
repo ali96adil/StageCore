@@ -4848,3 +4848,34 @@ This entry supersedes the preceding push instruction.
   still matches, push the saved stack normally to the same PR, then inspect
   every exact-new-head workflow before another push. Continue the SC-024
   endpoint/delivery audit while CI runs.
+
+## Qualification batch checkpoint — 2026-11-15 · StageAudio ACL error fences
+
+- Started at local `646e926b9102a01af75985f5b3809a4647e5f4cc`, seven commits
+  ahead of remote/origin/OPEN Draft PR #534 at
+  `528bac6b912f500bdeef85e1dabd50a15e3faa71`. The prior Core run
+  `43694919781` completed successfully: Go 1.26 and Go 1.27 tests, Race,
+  installed-copy rollback, Browser Cue Delivery, Vet, and Linux ARM64 CGo-free
+  product builds passed. Companion Core `43694919744` and Camera Relay
+  `43694919806` also passed. No push occurred during that gate.
+- Red-first SC-024 tests reproduced three StageAudio response-boundary gaps
+  using temporary SQLite only: GET status returned 503 after Project-view
+  revocation during a failed session-state read; POST command returned 503
+  after `audio.control` revocation at the same failure boundary; and a scoped
+  command with no Project grant returned `STAGEAUDIO_NOT_CONFIGURED` before
+  evaluating `audio.control`. The routes now recheck the live session and
+  Project permissions before these service errors. The revoked-command test
+  confirms zero calls to the fake local sidecar.
+- Commits: `88698f6` adds the error fences and regressions; `0ccba79` updates
+  the SC-024 qualification record and completion matrix. The StageAudio and
+  unified-ACL focused group passed normally and under Race. Full
+  `go test ./internal/httpapi -count=1` passed in 80.070 s; `go vet
+  ./internal/httpapi` and `git diff --check` passed. No sidecar process, audio
+  output, stage device, production service/data, or production ACL was used.
+- Next: add this checkpoint, then verify local ancestry, clean worktree,
+  `git ls-remote`, and PR #534 still point to `528bac6`. With the old-head CI
+  gate already green, push the saved fast-forward stack normally to the same
+  branch/PR and inspect every exact-new-head workflow before another push.
+  Continue the endpoint-to-policy and asynchronous-delivery audit; keep
+  Production ACL disabled and keep the Pi performance report historical until
+  an isolated Raspberry Pi 4 lab is available.
