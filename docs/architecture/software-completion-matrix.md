@@ -279,3 +279,8 @@ Before seed returns source/project mismatch or unsupported-plan results, it
 also checks the live ProjectEdit grant after reading the source Snapshot. A
 red-first temporary SQLite regression proves revoked clients receive the
 scoped denial rather than the unsupported-source response.
+
+F-025 rebuild-plan write errors from seed/update/delete now recheck the live
+route grant before returning Store failure details. A red-first temporary
+SQLite trigger test reproduces and closes the revoked ProjectEdit response
+on seed; production ACL remains disabled.

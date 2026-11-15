@@ -5781,3 +5781,26 @@ This entry supersedes the preceding push instruction.
   and route mismatch outcomes. Keep the push gate closed on `0b09158` until
   all exact-head checks pass. Production ACL remains disabled; Pi 4 current
   head timing qualification is pending.
+
+## Qualification batch checkpoint — 2026-11-15 · Rebuild-plan write errors
+
+- Latest code commit: `a6a6cfc89a6b345523850e14e32fa3d541330c01`; local code
+  HEAD is eight commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b` before this documentation
+  update. No further push has occurred.
+- Exact-head CI on `0b09158`: Core Go 1.26 Race run `43713024420` remains
+  in progress. Go 1.27, Companion Swift/macOS and Camera Relay isolated ARM64
+  passed. Keep the gate closed until Go 1.26 completes green.
+- `a6a6cfc` adds live route-grant checks to Store write-error responses from
+  rebuild-plan seed, update and delete. Red-first
+  `TestExecutionEnvironmentRebuildPlanWriteErrorSuppressesStoreErrorAfterGrantRevocation`
+  injects a temporary SQLite trigger that fails seed insertion, revokes
+  `ProjectEdit`, and reproduced the generic seed 503 before the fix; it now
+  returns only `PROJECT_NOT_FOUND`.
+- Focused normal/Race tests, `go vet ./internal/httpapi`, diff checks and full
+  `go test ./internal/httpapi -count=1` passed (94.220 s). Temporary database
+  trigger only; production data, Vault and devices untouched.
+- Next continue auditing F-025 mutation Store errors and project/revision
+  mismatch responses. Do not push until `0b09158` Core Go 1.26 and the full
+  exact-head CI set are green. Production ACL remains off; Pi 4 timing
+  qualification is pending.

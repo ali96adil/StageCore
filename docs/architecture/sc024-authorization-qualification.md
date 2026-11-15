@@ -2171,3 +2171,16 @@ the fence. The corrected route returns only `PROJECT_NOT_FOUND`. Focused
 normal/Race rebuild-plan tests, `go vet ./internal/httpapi`, diff checks, and
 full `go test ./internal/httpapi -count=1` (94.281 s) pass. Production ACL
 remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan write errors
+
+Store write errors from rebuild-plan seed, update and delete now recheck the
+qualified route grant before returning their mutation error. Red-first
+`TestExecutionEnvironmentRebuildPlanWriteErrorSuppressesStoreErrorAfterGrantRevocation`
+uses a temporary SQLite trigger to fail the seed insert, revokes `ProjectEdit`
+at the failure boundary, and reproduced the generic seed 503 before the fix.
+The corrected route returns only `PROJECT_NOT_FOUND`. Focused normal/Race
+rebuild-plan coverage, `go vet ./internal/httpapi`, diff checks, and full
+`go test ./internal/httpapi -count=1` (94.220 s) pass. No production state
+was used; ACL remains disabled.
