@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +82,13 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	zoomTestScript, err := os.ReadFile(filepath.Join("testdata", "project_access_zoom_browser.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	browserResult := make(chan string, 1)
+	zoomBrowserResult := make(chan string, 1)
+	zoomScreenshotReady := make(chan chan struct{}, 1)
 	focusRequests := make(chan chan struct{}, 1)
 	keyRequests := make(chan struct {
 		key    string
@@ -98,7 +105,11 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 			http.SetCookie(w, &http.Cookie{Name: browserSessionCookie, Value: owner.Token, HttpOnly: true, Path: "/"})
 			setOperatorWebSecurityHeaders(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = io.WriteString(w, strings.Replace(indexHTML, `</body>`, `<script src="/project-access-browser-test.js" defer></script></body>`, 1))
+			scriptPath := "/project-access-browser-test.js"
+			if r.URL.Query().Get("layout-zoom") == "200" {
+				scriptPath = "/project-access-zoom-test.js"
+			}
+			_, _ = io.WriteString(w, strings.Replace(indexHTML, `</body>`, `<script src="`+scriptPath+`" defer></script></body>`, 1))
 		case "/project-access-browser-app.js":
 			rec := httptest.NewRecorder()
 			appReq := r.Clone(r.Context())
@@ -114,6 +125,22 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/project-access-browser-zoom-result":
+			body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+			zoomBrowserResult <- string(body)
+			w.WriteHeader(http.StatusNoContent)
+		case "/project-access-browser-zoom-ready":
+			resume := make(chan struct{})
+			select {
+			case zoomScreenshotReady <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/project-access-browser-focus-ready":
 			resume := make(chan struct{})
 			select {
@@ -178,6 +205,9 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 		case "/project-access-browser-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = w.Write(testScript)
+		case "/project-access-zoom-test.js":
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			_, _ = w.Write(zoomTestScript)
 		default:
 			handler.ServeHTTP(w, r)
 		}
@@ -305,4 +335,131 @@ func TestBrowserOwnerProjectAccessEditorStoresPreparedLevel(t *testing.T) {
 	if err := access.Check(ctx, operator.ID, project.ID, projectaccess.CueEdit); err == nil {
 		t.Fatal("NONE unexpectedly granted Cue editing")
 	}
+	if err := runProjectAccess200PercentZoomAudit(t, ctx, chrome, server.URL, zoomBrowserResult, zoomScreenshotReady); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runProjectAccess200PercentZoomAudit(t *testing.T, ctx context.Context, chrome, serverURL string,
+	result <-chan string, screenshotReady <-chan chan struct{}) error {
+	t.Helper()
+	profileDir, err := os.MkdirTemp("", "stagecore-project-access-zoom-")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for attempt := 0; attempt < 20; attempt++ {
+			if err := os.RemoveAll(profileDir); err == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Errorf("Project Access 200%% Chrome profile cleanup failed for %s", profileDir)
+	}()
+	preferencesDir := filepath.Join(profileDir, "Default")
+	if err := os.MkdirAll(preferencesDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(preferencesDir, "Preferences"),
+		[]byte(`{"partition":{"default_zoom_level":{"x":3.801784}}}`), 0o600); err != nil {
+		return err
+	}
+	screenshotDir := t.TempDir()
+	if configured := os.Getenv("STAGECORE_TEST_SCREENSHOT_DIR"); configured != "" {
+		screenshotDir = configured
+		if !filepath.IsAbs(screenshotDir) {
+			screenshotDir = filepath.Join("..", "..", screenshotDir)
+		}
+	}
+	if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
+		return err
+	}
+	log, err := os.Create(filepath.Join(t.TempDir(), "project-access-zoom-browser.log"))
+	if err != nil {
+		return err
+	}
+	defer log.Close()
+	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		"--remote-debugging-port=0", "--remote-allow-origins=*", "--disable-background-networking",
+		"--window-size=1440,900", "--user-data-dir="+profileDir, serverURL+"?layout-zoom=200")
+	cmd.Stdout, cmd.Stderr = log, log
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	cdp, err := connectChromePage(ctx, profileDir, serverURL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("connect to Project Access 200%% Chrome: %w", err)
+	}
+	exited := false
+	defer func() {
+		_ = cdp.Close()
+		if exited {
+			return
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	}()
+	var outcome string
+	for outcome == "" {
+		select {
+		case resume := <-screenshotReady:
+			image, err := captureChromeScreenshot(cdp, 811)
+			if err != nil {
+				return fmt.Errorf("capture Project Access 200%% screenshot: %w", err)
+			}
+			if len(image) < 4096 {
+				return fmt.Errorf("Project Access 200%% screenshot is unexpectedly small (%d bytes)", len(image))
+			}
+			name := filepath.Join(screenshotDir, "project-access-200-percent-rtl.png")
+			if err := os.WriteFile(name, image, 0o600); err != nil {
+				return err
+			}
+			t.Logf("captured Project Access 200%% screenshot: %s (%d bytes)", name, len(image))
+			close(resume)
+		case outcome = <-result:
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(log.Name())
+			return fmt.Errorf("Project Access 200%% Chrome exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(log.Name())
+			return fmt.Errorf("Project Access 200%% zoom audit timed out: %s", output)
+		}
+	}
+	var report struct {
+		Status           string  `json:"status"`
+		Direction        string  `json:"direction"`
+		ZoomPercent      int     `json:"zoom_percent"`
+		ViewportWidth    int     `json:"viewport_width"`
+		PageWidth        int     `json:"page_width"`
+		PageOverflow     bool    `json:"page_overflow"`
+		FormOverflow     bool    `json:"form_overflow"`
+		SaveVisible      bool    `json:"save_visible"`
+		WarningVisible   bool    `json:"warning_visible"`
+		SelectedLevel    string  `json:"selected_level"`
+		APIMutations     int     `json:"api_mutations"`
+		DevicePixelRatio float64 `json:"device_pixel_ratio"`
+		Failure          string  `json:"failure,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
+		return fmt.Errorf("decode Project Access 200%% report %q: %w", outcome, err)
+	}
+	if report.Status != "PASS" || report.Direction != "rtl" || report.ZoomPercent != 200 ||
+		report.DevicePixelRatio < 1.95 || report.ViewportWidth != 720 || report.PageWidth > 720 ||
+		report.PageOverflow || report.FormOverflow || !report.SaveVisible || !report.WarningVisible ||
+		report.SelectedLevel != "OPERATE" || report.APIMutations != 0 {
+		return fmt.Errorf("invalid Project Access 200%% evidence: %+v", report)
+	}
+	t.Logf("Project Access at 200%% RTL: viewport=%d px, page=%d px, Project grant form fits, Save visible; no API mutations",
+		report.ViewportWidth, report.PageWidth)
+	return nil
 }
