@@ -39,6 +39,10 @@ type showCapsuleEntry struct {
 	Location          string                 `json:"location"`
 }
 
+type showCapsuleHooks struct {
+	BeforeListErrorResponse func(source string)
+}
+
 func WithOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string) Option {
 	return withOperatorShowCapsules(auth, service, root, nil)
 }
@@ -52,6 +56,16 @@ func WithScopedOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleS
 }
 
 func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService, root string, access *projectaccess.Service) Option {
+	return withOperatorShowCapsulesHooks(auth, service, root, access, showCapsuleHooks{})
+}
+
+func withOperatorShowCapsulesHooks(
+	auth *userauth.Service,
+	service ShowCapsuleService,
+	root string,
+	access *projectaccess.Service,
+	hooks showCapsuleHooks,
+) Option {
 	return func(s *Server) {
 		if auth == nil || service == nil || strings.TrimSpace(root) == "" {
 			return
@@ -190,6 +204,12 @@ func withOperatorShowCapsules(auth *userauth.Service, service ShowCapsuleService
 			}{{"imports", importRoot}, {"exports", exportRoot}} {
 				items, err := listShowCapsules(source.path, source.name)
 				if err != nil {
+					if hooks.BeforeListErrorResponse != nil {
+						hooks.BeforeListErrorResponse(source.name)
+					}
+					if !recheckRead(w, r, session) {
+						return
+					}
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CAPSULE_STORAGE_UNAVAILABLE"})
 					return
 				}

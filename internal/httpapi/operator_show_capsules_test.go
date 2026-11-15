@@ -434,3 +434,36 @@ func TestLegacyShowCapsulePlanWithholdsResultsAfterSessionRevocation(t *testing.
 		t.Fatalf("revoked plan response=%d body=%s calls=%d", res.Code, res.Body, service.planCalls)
 	}
 }
+
+func TestShowCapsuleInventorySuppressesStorageErrorAfterOwnerSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "imports"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		WithUserAuth(h.auth, h.hub),
+		withOperatorShowCapsulesHooks(h.auth, &fakeShowCapsuleService{}, root, nil, showCapsuleHooks{
+			BeforeListErrorResponse: func(source string) {
+				if source == "imports" {
+					if err := h.auth.Logout(ctx, owner.Token); err != nil {
+						t.Errorf("revoke Owner session before inventory error delivery: %v", err)
+					}
+				}
+			},
+		}),
+	).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/show-capsules", nil)
+	req.RemoteAddr = "127.0.0.1:19800"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "CAPSULE_STORAGE_UNAVAILABLE") {
+		t.Fatalf("revoked Owner session received Capsule storage error: HTTP %d %s", res.Code, res.Body.String())
+	}
+}
