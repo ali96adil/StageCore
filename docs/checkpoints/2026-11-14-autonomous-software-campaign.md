@@ -4209,3 +4209,34 @@ This entry supersedes the preceding push instruction.
   action: recheck Core CI; then push only after completion and continue the
   next software-only gap while keeping hardware and production approval
   separately pending.
+
+## Resume update — 2026-11-15 · workspace breakpoint coverage
+
+- Branch `integration/stagecore-rc`, Draft PR #534. Remote remains
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Local HEAD before this
+  checkpoint is `962d2f69a2a97d3779746654ae60a2084bc58772`; sixteen commits
+  are ahead. This Handoff becomes commit seventeen. No push has been made.
+- SC-017 browser acceptance now checks the Owner workspace at mobile 390×844,
+  tablet 768×1024 and desktop 1280×800 while in RTL. Cues and inactive Runtime
+  are checked at all three sizes; active SHOW and post-stop states are checked
+  at 390×844. All views assert no horizontal page overflow. Chrome DevTools
+  applies each viewport before the browser continues. Native keyboard/touch
+  navigation and real normal session exit remain part of the same isolated
+  browser flow. SC-017 matrix records the still-open browser role matrix.
+- Verification after the viewport changes: Chrome browser test passed three
+  consecutive normal runs and one Race run; `go vet ./internal/httpapi`, JS
+  syntax, gofmt and `git diff --check` passed. Test fixture remains temporary
+  SQLite + `sim.test` plus a no-op stop-safety seam, with no Cue dispatch or
+  actual device/hardware request.
+- Core run `43657410250` remains in progress at exact remote SHA
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`; Go 1.27 is green and Go 1.26
+  has not completed at the last check. Companion `43657410210` and Camera
+  `43657410252` remain green from their last exact-head checks. Wait before any
+  push, then confirm the PR and all required check SHAs and push normally to
+  #534; wait on the pushed SHA before another batch push.
+- No performance runtime source changed; retain the already recorded Pi 4
+  ARM64 Mixed/linked-chain, schedule/jitter, CPU/RAM/GC, burst/sustained and
+  STOP/Blackout evidence, with ACL/HTTP/external output time kept separate.
+  Production ACL stays disabled. No production services, show data, Vault,
+  real devices, firmware or backup artifacts were touched; no force push,
+  merge or paid action.
