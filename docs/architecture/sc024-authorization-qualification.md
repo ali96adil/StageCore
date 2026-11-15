@@ -2299,3 +2299,26 @@ Before the fix, the responses contained the respective
 each returns only `PROJECT_NOT_FOUND`. Focused normal/Race tests, `go vet
 ./internal/httpapi`, diff checks and full `go test ./internal/httpapi -count=1`
 pass (99.353 s). No production data or output was involved.
+
+## SC-024 continuation · 2026-11-15 · Device-operation result fences
+
+The earlier post-commit response blocker above is closed in the current source.
+StageLaser assignment, opt-in V2 software transfer, and opt-in lighting
+activation suppress their operation records if the Owner session is revoked
+after commit. The response returns the authorization-revoked code,
+`effect_may_have_been_committed: true`, and `retryable: false`; committed work
+is not described as rolled back and the client is told to refetch before acting.
+`TestStageLaserAssignmentSuppressesCommittedRecordAfterOwnerRevocation` and
+`TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation`
+exercise these response boundaries. The latter uses injected operation hooks
+that simulate a completed transaction and revoke the session before the HTTP
+handler delivers its result; it does not write to a device socket. Test-only
+feature flags expose the two experimental routes; production defaults remain
+disabled.
+
+This closes the specific response interval, not the complete SC-024 audit.
+Full endpoint-to-permission reconciliation, deployed Companion/session/ticket
+compatibility, and disposable installed-copy migration/update/restore/health
+qualification remain open. Production Assembler and Migration 53 are unchanged;
+Project ACL remains disabled in production. The 2026-11-15 campaign handoff
+records the current branch, exact-head CI state, and next audit boundary.
