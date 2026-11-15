@@ -4307,3 +4307,34 @@ This entry supersedes the preceding push instruction.
   timing separation. Production ACL remains off. No production services/data,
   original show, Vault, real devices, firmware, backups, paid action, merge or
   force push were touched.
+
+## Resume update — 2026-11-15 · native navigation across operator roles
+
+- Branch `integration/stagecore-rc`, Draft PR #534. Remote remains
+  `3f4f55b79b4fcdfa8da8d67e3212a628dbd835ee`. Local HEAD before this Handoff
+  is `1caec125e72a32f8f2f60ad589b351bd353a5176`, three commits ahead; this
+  checkpoint will be the fourth. Do not push while its Core CI is active.
+- SC-017's real-Chrome fixture now switches through authenticated temporary
+  Owner, Technician, Operator and Viewer sessions and drives Cues navigation
+  with native CDP Enter and Runtime navigation with emulated touch for every
+  role at 390×844 RTL. Each role checks Cues, inactive Runtime and active SHOW
+  layout at 390×844, 768×1024 and 1280×800. Viewer has no edit/GO/STOP/Blackout
+  capability; Technician/Operator use the isolated normal STOP; Owner exits
+  the final Viewer-seeded SHOW. All temp SHOWs complete through the no-op
+  safety seam and only the four `runtime/stop-session` API requests occur.
+  The matrix records the remaining other-route and physical tablet limits.
+- Verification for this native-input extension: Chrome test passed three
+  consecutive runs and a Race run; `go vet ./internal/httpapi`, JS syntax and
+  `git diff --check` passed. The full `go test ./...` passed before these test-
+  only viewport/input additions; local browser normal/Race checks passed after
+  them.
+- Remote Core `43661757214` is still in progress on exact `3f4f55b`:
+  Go 1.27 is successful; Go 1.26 Race remains active. Companion
+  `43661757151` and Camera Relay `43661757135` are successful at the same SHA.
+  Wait for that Core completion, confirm same PR/branch/remote SHA, then push
+  the preserved local commits normally and wait all checks on the new SHA.
+- This batch touches only browser tests and qualification docs; no Cue Engine,
+  Runtime Control, ACL or performance source changed. Keep Pi 4 ARM64 results
+  and separate Engine/ACL/HTTP/output timing. Production ACL remains off; no
+  production services/data/Vault, original show, real device, firmware,
+  backup, paid action, merge or force push was used.
