@@ -3716,6 +3716,35 @@ This entry supersedes the preceding push instruction.
   data, real device commands, firmware, production ACL, force push, merge,
   paid actions and backup deletion remain untouched.
 
+## Resume update — 2026-11-15 · batch pushed; exact-head CI running
+
+- Normal fast-forward push completed from `460db92` to
+  `6529a8bbca33e9bdc974f517ce8cdbb81eed75b5` on the existing
+  `integration/stagecore-rc` branch and Draft PR #534. Remote and PR both
+  report exactly `6529a8b`; the worktree was clean immediately after push.
+- Exact-head workflows are now running: Core `43656497568`, Companion Core
+  `43656497653`, and Camera Relay `43656497519`, all on `6529a8b`. Do not push
+  another batch until Core has completed; wait for all three relevant checks
+  and verify their exact HEADs before relying on the results.
+- The pushed batch contains SC-002 session retirement and request/passive/
+  renewal fake-clock regressions plus SC-009 real-Chrome keyboard Undo/touch
+  Redo acceptance. Locally passed: full userauth normal/Race, HTTP renewal
+  regression, the Chrome history test normal/Race, Cue history Node tests,
+  Go vet for affected packages, JavaScript syntax and diff checks. The next
+  Core Browser Cue Delivery gate now includes the new Chrome test.
+- Linked component checks were freshly re-read before push and remain on
+  existing heads: TabletPlayer #36 `91613da` (pass), ESP32 DMX #39 `3ad7749`
+  (all build/host-contract checks pass), ESP32 Camera #20 `455b066` (pass),
+  StageLaser #56 `b14a578` (firmware build/host contract pass), and #57
+  `c4ff10b` (firmware build/host contract pass). No linked repo was modified.
+- Next highest independent browser acceptance gap in the matrix is SC-007:
+  validate the actual lighting preview-to-Draft flow and actionable error
+  recovery in a local Chrome/SQLite fixture, without dispatching DMX. Do not
+  change Project ACL production wiring or any real device path.
+- Safety remains unchanged: production services/data/Vault, original show
+  data, real device commands, firmware, production ACL, force push, merge,
+  paid actions and backup deletion remain untouched.
+
 ## Resume update — 2026-11-14 23:35 UTC · Race failure and SC-024 keyboard gate
 
 - Branch: `integration/stagecore-rc`; PR #534 remains OPEN/Draft. Before this
