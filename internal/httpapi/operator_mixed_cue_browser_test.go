@@ -200,6 +200,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		EditedName        string             `json:"edited_name"`
 		QuickEditedLabel  string             `json:"quick_edited_label"`
 		QuickEditedNotes  string             `json:"quick_edited_notes"`
+		MixedFormUndo     bool               `json:"mixed_form_undo"`
+		MixedFormRedo     bool               `json:"mixed_form_redo"`
 		CueColor          string             `json:"cue_color"`
 		CueLabelText      string             `json:"cue_label_text"`
 		ColorMarker       bool               `json:"color_marker_visible"`
@@ -233,7 +235,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 		return true
 	}
-	if report.Status != "PASS" || len(report.IDs) != 3 ||
+	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
 		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {

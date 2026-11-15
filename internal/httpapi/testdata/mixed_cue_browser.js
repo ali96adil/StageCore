@@ -320,6 +320,31 @@
     const selectedMiddle = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${middleID}"]`);
     if (!selectedMiddle?.checked) throw new Error("Parent-to-middle Cue link was not restored in the editor");
     const editedName = "Native Visual and MIDI Parent · Browser Edit";
+    const localUndo = document.getElementById("sc009UndoDraft");
+    const localRedo = document.getElementById("sc009RedoDraft");
+    const firstActionMode = () => document.querySelector("#actionsEditor .action-editor .action-mode");
+    if (!localUndo || !localRedo || firstActionMode()?.value !== "PARALLEL") {
+      throw new Error("Cue editor local history or the original Mixed Action mode is missing");
+    }
+    const temporaryName = "Temporary Mixed Cue history state";
+    setValue(document.getElementById("cueName"), temporaryName);
+    setValue(firstActionMode(), "SEQUENTIAL");
+    selectedMiddle.checked = false;
+    selectedMiddle.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitFor(() => !localUndo.disabled, "Cue editor Undo after changing Mixed fields, Action mode and link");
+    localUndo.click();
+    await waitFor(() => document.getElementById("cueName").value === "Native Visual and MIDI Parent" &&
+      firstActionMode()?.value === "PARALLEL" && selectedMiddle.checked,
+    "restoring the full Mixed Cue form with local Undo");
+    if (localRedo.disabled) throw new Error("Cue editor local Redo was not enabled after Undo");
+    localRedo.click();
+    await waitFor(() => document.getElementById("cueName").value === temporaryName &&
+      firstActionMode()?.value === "SEQUENTIAL" && !selectedMiddle.checked,
+    "restoring the full Mixed Cue form with local Redo");
+    localUndo.click();
+    await waitFor(() => document.getElementById("cueName").value === "Native Visual and MIDI Parent" &&
+      firstActionMode()?.value === "PARALLEL" && selectedMiddle.checked,
+    "returning the linked Mixed Cue form to its saved baseline");
     setValue(document.getElementById("cueName"), editedName);
     document.getElementById("cueForm").requestSubmit();
     await waitFor(() => !editor.open && state.cues.find((cue) => cue.cue_id === parentID)?.name === editedName,
@@ -464,6 +489,7 @@
     }
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
+      mixed_form_undo: true, mixed_form_redo: true,
       theme: document.documentElement.dataset.theme,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,
       palette_visible: paletteVisible, label_color_readable: labelColorReadable,
