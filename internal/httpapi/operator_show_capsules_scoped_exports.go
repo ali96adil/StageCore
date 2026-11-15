@@ -30,6 +30,14 @@ const maxScopedCapsuleScanEntries = 128
 func WithScopedLocalCapsuleExports(
 	auth *userauth.Service, access *projectaccess.Service, capsuleRoot string,
 ) Option {
+	return withScopedLocalCapsuleExports(auth, access, capsuleRoot, nil)
+}
+
+// The hook is private and exists only to exercise permission changes at the
+// filesystem-scan boundary. The public option never installs one.
+func withScopedLocalCapsuleExports(
+	auth *userauth.Service, access *projectaccess.Service, capsuleRoot string, afterScan func(),
+) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || access == nil ||
 			strings.TrimSpace(capsuleRoot) == "" {
@@ -49,6 +57,12 @@ func WithScopedLocalCapsuleExports(
 					return
 				}
 				entries, err := listScopedLocalCapsuleExports(r.Context(), exportsRoot, access, session.User.ID, projectID)
+				if afterScan != nil {
+					afterScan()
+				}
+				if !validateScopedCapsuleExportRead(w, r, auth, access, session, token, projectID) {
+					return
+				}
 				if err != nil {
 					if errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound) {
 						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "SCOPED_CAPSULES_NOT_FOUND"})
@@ -57,25 +71,31 @@ func WithScopedLocalCapsuleExports(
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "SCOPED_CAPSULES_UNAVAILABLE"})
 					return
 				}
-				current, err := auth.ValidatePassive(r.Context(), token)
-				if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
-					writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
-					return
-				}
-				// Recheck the live grant after inspecting files on disk.
-				if err := access.Check(r.Context(), session.User.ID, projectID, projectaccess.CapsuleExport); err != nil {
-					writeScopedExportAccessError(w, err)
-					return
-				}
 				writeJSON(w, http.StatusOK, map[string]any{
 					"project_id": projectID,
-					"capsules": entries,
-					"scoped": true,
-					"read_only": true,
-					"location": "exports",
+					"capsules":   entries,
+					"scoped":     true,
+					"read_only":  true,
+					"location":   "exports",
 				})
 			}))
 	}
+}
+
+func validateScopedCapsuleExportRead(w http.ResponseWriter, r *http.Request, auth *userauth.Service,
+	access *projectaccess.Service, session userauth.Session, token, projectID string) bool {
+	current, err := auth.ValidatePassive(r.Context(), token)
+	if err != nil || current.ID != session.ID || current.User.ID != session.User.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error_code": "SESSION_INVALID"})
+		return false
+	}
+	// Recheck the live grant after inspecting files on disk, including when
+	// the inspection failed so a revoked grant cannot learn about that error.
+	if err := access.Check(r.Context(), session.User.ID, projectID, projectaccess.CapsuleExport); err != nil {
+		writeScopedExportAccessError(w, err)
+		return false
+	}
+	return true
 }
 
 func writeScopedExportAccessError(w http.ResponseWriter, err error) {

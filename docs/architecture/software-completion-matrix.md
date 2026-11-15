@@ -66,6 +66,15 @@ boundary previously returned raw `stage_devices` SQL diagnostics; its red-first
 regression now requires a scoped denial. The full `TestLightingConfiguration*`
 group passes normally and under Race.
 
+The opt-in, read-only Project Capsule export inventory rechecks the exact
+session and live `capsule.export` grant after filesystem scanning on both
+success and failure. Red-first
+`TestScopedCapsuleExportListSuppressesScanErrorAfterGrantRevocation`
+reproduced `SCOPED_CAPSULES_UNAVAILABLE` after revocation at a temporary-root
+scan failure; the handler now returns the scoped 404. Focused normal/Race tests
+and `go vet ./internal/httpapi` pass. The default Hub assembly remains
+unchanged.
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

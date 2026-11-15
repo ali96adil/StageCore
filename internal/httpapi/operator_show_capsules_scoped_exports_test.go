@@ -163,3 +163,51 @@ func TestScopedCapsuleExportListFailsClosedForSymlinkRootAndTooManyItems(t *test
 		t.Fatalf("large export inventory leaked or truncated: %d %s",got.Code,got.Body.String())
 	}
 }
+
+func TestScopedCapsuleExportListSuppressesScanErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	st := store.New(h.db.DB, clock.Real{})
+	show, _, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Export Scan Fence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "capsule-scan-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorSession, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, show.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.CapsuleExport}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "exports"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := New(WithUserAuth(h.auth, h.hub), withScopedLocalCapsuleExports(h.auth, access, root, func() {
+		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, show.ID, nil); err != nil {
+			t.Errorf("revoke export grant at scan boundary: %v", err)
+		}
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+show.ID+"/show-capsules/exports", nil)
+	req.RemoteAddr = "127.0.0.1:18110"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: operatorSession.Token})
+	w := httptest.NewRecorder()
+	api.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "SCOPED_CAPSULES_NOT_FOUND") ||
+		strings.Contains(w.Body.String(), "SCOPED_CAPSULES_UNAVAILABLE") {
+		t.Fatalf("scan error escaped after export grant revocation: %d %s", w.Code, w.Body.String())
+	}
+}

@@ -1831,3 +1831,20 @@ Focused Tablet/StageLaser regressions pass normally and under Race;
 `go vet ./internal/httpapi`, `git diff --check` and full
 `go test ./internal/httpapi -count=1` (81.994 s) pass. No production service,
 data, device or Production ACL was used.
+
+
+## SC-024 continuation · 2026-11-15 · scoped Capsule export scan errors
+
+The opt-in, read-only Project Capsule export inventory previously returned
+`SCOPED_CAPSULES_UNAVAILABLE` when its filesystem scan failed, even if the
+operator's `capsule.export` grant was revoked during that scan.
+`TestScopedCapsuleExportListSuppressesScanErrorAfterGrantRevocation` first
+reproduced this using a temporary exports-root file and a grant revoked at the
+scan boundary. The handler now revalidates the exact browser session and live
+Project grant before returning either scan errors or results. A revoked grant
+receives the scoped 404. The normal Hub assembly remains unchanged, and no
+Capsule is exported, materialized or restored.
+
+Focused normal and Race tests, `go vet ./internal/httpapi`, and the full
+`go test ./internal/httpapi -count=1` pass. This qualification uses temporary
+SQLite and filesystem roots only; Production ACL remains disabled.
