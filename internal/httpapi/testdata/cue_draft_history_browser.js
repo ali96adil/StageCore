@@ -42,10 +42,22 @@
       "persistent Cue Draft history toolbar");
     const buttons = toolbar.querySelectorAll("button");
     const undo = buttons[0];
+    const redo = buttons[1];
+    if (undo.getAttribute("aria-keyshortcuts") !== "Control+Z Meta+Z" ||
+        redo.getAttribute("aria-keyshortcuts") !== "Control+Y Control+Shift+Z Meta+Y Meta+Shift+Z") {
+      throw new Error("Cue Draft history buttons do not expose their keyboard shortcuts");
+    }
     const historyStatus = toolbar.querySelector('[role="status"]');
     await waitFor(() => historyStatus?.textContent.trim(), "persisted history status");
     const initialUndoEnabled = !undo.disabled;
     if (!initialUndoEnabled) throw new Error("Undo was disabled despite a persisted Draft change");
+    const searchInput = document.querySelector("#sc008CueFilter input[type='search']");
+    if (!searchInput) throw new Error("Cue list search input is missing");
+    searchInput.focus();
+    const textShortcutReady = await nativeFetch("/cue-draft-history-input-key-ready", {method: "POST"});
+    if (!textShortcutReady.ok) throw new Error(`text-field keyboard gate returned HTTP ${textShortcutReady.status}`);
+    await waitFor(() => !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`) && !undo.disabled,
+      "text field preserving persistent Cue history");
     undo.focus();
     if (document.activeElement !== undo) throw new Error("Undo button did not receive keyboard focus");
     const keyboardReady = await nativeFetch("/cue-draft-history-key-ready", {method: "POST"});
@@ -59,8 +71,28 @@
       return redo && !redo.disabled;
     }, "Redo becoming available after Undo");
     const afterUndoToolbar = document.getElementById("sc009ProjectDraftHistory");
-    const redo = afterUndoToolbar.querySelectorAll("button")[1];
-    const rect = redo.getBoundingClientRect();
+    const keyboardRedo = afterUndoToolbar.querySelectorAll("button")[1];
+    keyboardRedo.focus();
+    const keyboardRedoReady = await nativeFetch("/cue-draft-history-redo-key-ready", {method: "POST"});
+    if (!keyboardRedoReady.ok) throw new Error(`native keyboard Redo gate returned HTTP ${keyboardRedoReady.status}`);
+    await waitFor(() => !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
+      "Cue restoration after keyboard Redo");
+    await waitFor(() => {
+      const undo = document.querySelector("#sc009ProjectDraftHistory button");
+      return undo && !undo.disabled;
+    }, "Undo becoming available after keyboard Redo");
+    const secondUndo = document.querySelector("#sc009ProjectDraftHistory button");
+    secondUndo.focus();
+    const secondKeyboardReady = await nativeFetch("/cue-draft-history-key-ready", {method: "POST"});
+    if (!secondKeyboardReady.ok) throw new Error(`second native keyboard Undo gate returned HTTP ${secondKeyboardReady.status}`);
+    await waitFor(() => !document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
+      "Cue removal after second keyboard Undo");
+    await waitFor(() => {
+      const redo = document.querySelectorAll("#sc009ProjectDraftHistory button")[1];
+      return redo && !redo.disabled;
+    }, "Redo becoming available before touch Redo");
+    const touchRedo = document.querySelectorAll("#sc009ProjectDraftHistory button")[1];
+    const rect = touchRedo.getBoundingClientRect();
     const touchReady = await nativeFetch("/cue-draft-history-touch-ready", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({x: rect.left + rect.width / 2, y: rect.top + rect.height / 2}),
@@ -77,7 +109,7 @@
     const overflow = document.documentElement.scrollWidth > window.innerWidth;
     await report({
       status: "PASS", undo_enabled: initialUndoEnabled, redo_after_undo: true,
-      keyboard_undo: true, touch_redo: true,
+      keyboard_undo: true, keyboard_redo: true, touch_redo: true,
       restored_same_cue: !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
       overflow, history_requests: historyRequests, execution_requests: executionRequests,
     });

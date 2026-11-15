@@ -2286,6 +2286,28 @@
     redo.disabled = !status?.can_redo;
   }
 
+  function installProjectDraftHistoryShortcuts() {
+    if (document.documentElement.dataset.sc009ProjectHistoryShortcuts) return;
+    document.documentElement.dataset.sc009ProjectHistoryShortcuts = "true";
+    document.addEventListener("keydown", (event) => {
+      if (state.page !== "cues" || event.defaultPrevented || event.isComposing ||
+          !(event.ctrlKey || event.metaKey) || event.altKey || document.querySelector("dialog[open]")) return;
+      const target = event.target;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(String(target?.tagName || "").toUpperCase()) ||
+          target?.closest?.("input,textarea,select,[contenteditable='true']")) return;
+      const key = String(event.code || event.key || "").toLowerCase();
+      const isUndo = key === "keyz" || key === "z";
+      const isRedo = key === "keyy" || key === "y";
+      const wantsUndo = isUndo && !event.shiftKey;
+      const wantsRedo = (isRedo && !event.shiftKey) || (isUndo && event.shiftKey);
+      if (!wantsUndo && !wantsRedo) return;
+      const button = document.querySelector(`#sc009ProjectDraftHistory button:nth-of-type(${wantsUndo ? 1 : 2})`);
+      if (!button || button.disabled) return;
+      event.preventDefault();
+      button.click();
+    });
+  }
+
   function refreshCueInspectorNavigation() {
     const rows = Array.from(content.querySelectorAll("tr[data-cue-id]")).filter((row) => !row.hidden);
     rows.forEach((row, index) => {
@@ -2314,10 +2336,12 @@
       const undo = document.createElement("button");
       undo.type = "button";
       undo.className = "button ghost";
+      undo.setAttribute("aria-keyshortcuts", "Control+Z Meta+Z");
       undo.textContent = tr("تراجع عن تغيير", "Undo change");
       const redo = document.createElement("button");
       redo.type = "button";
       redo.className = "button ghost";
+      redo.setAttribute("aria-keyshortcuts", "Control+Y Control+Shift+Z Meta+Y Meta+Shift+Z");
       redo.textContent = tr("إعادة تغيير", "Redo change");
       undo.disabled = redo.disabled = true;
       historyToolbar.append(historyTitle, undo, redo, historyStatus);
@@ -2364,6 +2388,7 @@
       };
       undo.addEventListener("click", () => moveHistory("UNDO", undo));
       redo.addEventListener("click", () => moveHistory("REDO", redo));
+      installProjectDraftHistoryShortcuts();
       loadHistory();
     }
     const toolbar = document.createElement("section");

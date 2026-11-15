@@ -81,7 +81,8 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
-	keyRequests := make(chan chan struct{}, 1)
+	keyRequests := make(chan chan struct{}, 2)
+	redoKeyRequests := make(chan chan struct{}, 1)
 	touchRequests := make(chan struct {
 		x, y   float64
 		resume chan struct{}
@@ -110,10 +111,22 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
-		case "/cue-draft-history-key-ready":
+		case "/cue-draft-history-key-ready", "/cue-draft-history-input-key-ready":
 			resume := make(chan struct{})
 			select {
 			case keyRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/cue-draft-history-redo-key-ready":
+			resume := make(chan struct{})
+			select {
+			case redoKeyRequests <- resume:
 			case <-r.Context().Done():
 				return
 			}
@@ -203,8 +216,14 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 				t.Fatal(outcome)
 			}
 		case resume := <-keyRequests:
-			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
-				t.Fatalf("send native Enter key to Undo button: %v", err)
+			if err := dispatchChromeShortcut(cdp, keyCommandID, "z", 4); err != nil {
+				t.Fatalf("send native Meta+Z shortcut to Undo button: %v", err)
+			}
+			keyCommandID += 2
+			close(resume)
+		case resume := <-redoKeyRequests:
+			if err := dispatchChromeShortcut(cdp, keyCommandID, "z", 12); err != nil {
+				t.Fatalf("send native Meta+Shift+Z shortcut to Redo button: %v", err)
 			}
 			keyCommandID += 2
 			close(resume)
@@ -227,6 +246,7 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		UndoEnabled       bool     `json:"undo_enabled"`
 		RedoAfterUndo     bool     `json:"redo_after_undo"`
 		KeyboardUndo      bool     `json:"keyboard_undo"`
+		KeyboardRedo      bool     `json:"keyboard_redo"`
 		TouchRedo         bool     `json:"touch_redo"`
 		RestoredSameCue   bool     `json:"restored_same_cue"`
 		Overflow          bool     `json:"overflow"`
@@ -237,7 +257,7 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || !report.UndoEnabled || !report.RedoAfterUndo ||
-		!report.KeyboardUndo || !report.TouchRedo || !report.RestoredSameCue || report.Overflow ||
+		!report.KeyboardUndo || !report.KeyboardRedo || !report.TouchRedo || !report.RestoredSameCue || report.Overflow ||
 		len(report.HistoryRequests) < 2 || len(report.ExecutionRequests) != 0 {
 		t.Fatalf("browser Draft history acceptance failed: %+v", report)
 	}

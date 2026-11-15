@@ -431,6 +431,25 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 	return nil
 }
 
+func dispatchChromeShortcut(conn *websocket.Conn, firstID int, key string, modifiers int) error {
+	if strings.ToLower(key) != "z" {
+		return fmt.Errorf("unsupported browser shortcut key %q", key)
+	}
+	for index, eventType := range []string{"keyDown", "keyUp"} {
+		params := map[string]any{
+			"type": eventType, "key": "z", "code": "KeyZ",
+			"windowsVirtualKeyCode": 90, "nativeVirtualKeyCode": 90,
+		}
+		if modifiers != 0 {
+			params["modifiers"] = modifiers
+		}
+		if err := chromeDevToolsCommand(conn, firstID+index, "Input.dispatchKeyEvent", params); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func dispatchChromeTouch(conn *websocket.Conn, x, y float64) error {
 	if err := chromeDevToolsCommand(conn, 10, "Emulation.setTouchEmulationEnabled",
 		map[string]any{"enabled": true, "maxTouchPoints": 1}); err != nil {
