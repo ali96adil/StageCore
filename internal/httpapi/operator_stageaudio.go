@@ -22,8 +22,10 @@ type StageAudioLocal interface {
 }
 
 type stageAudioHooks struct {
-	BeforeStatusResponse func()
-	BeforeMediaChoices   func()
+	BeforeStatusResponse              func()
+	BeforeStatusErrorResponse         func()
+	BeforeCommandRuntimeErrorResponse func()
+	BeforeMediaChoices                func()
 }
 
 // WithOperatorStageAudio exposes an optional, OFF-by-default rehearsal audio
@@ -111,7 +113,14 @@ func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 				}
 				session, err := checkRuntime(r.Context())
 				if err != nil {
-					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code":"STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
+					if hooks.BeforeStatusErrorResponse != nil {
+						hooks.BeforeStatusErrorResponse()
+					}
+					if !authorize(r, sessionUser, false) {
+						writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+						return
+					}
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
 					return
 				}
 				if client == nil {
@@ -154,6 +163,10 @@ func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 		s.mux.HandleFunc("POST /api/v1/system/audio/command", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			w.Header().Set("Cache-Control", "no-store")
 			if client == nil {
+				if !authorize(r, session, true) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_NOT_CONFIGURED"})
 				return
 			}
@@ -182,6 +195,13 @@ func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 			}
 			active, err := checkRuntime(ctx)
 			if err != nil {
+				if hooks.BeforeCommandRuntimeErrorResponse != nil {
+					hooks.BeforeCommandRuntimeErrorResponse()
+				}
+				if !authorize(r, session, true) {
+					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
 				return
 			}

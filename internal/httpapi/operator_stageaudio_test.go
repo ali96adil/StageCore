@@ -285,6 +285,159 @@ func TestScopedStageAudioOfflineStatusRechecksGrantBeforeDelivery(t *testing.T) 
 	}
 }
 
+func TestScopedStageAudioSuppressesSessionStatusErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped audio status error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "audio-error-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE sessions"); err != nil {
+		t.Fatal(err)
+	}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(withScopedOperatorStageAudio(h.auth, projects, nil, nil, stageaudio.NewShowFence(), scope,
+		stageAudioHooks{BeforeStatusErrorResponse: func() {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke Project view before session-status error delivery: %v", err)
+			}
+		}})).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/audio/status?project_id="+project.ID, nil)
+	req.RemoteAddr = "127.0.0.1:9128"
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE") {
+		t.Fatalf("session-status error escaped after Project grant revocation: HTTP %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestScopedStageAudioSuppressesCommandSessionErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped audio command error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "audio-command-error-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead, projectaccess.AudioControl}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE sessions"); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := &fakeStageAudio{}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(withScopedOperatorStageAudio(h.auth, projects, sidecar, nil, stageaudio.NewShowFence(), scope,
+		stageAudioHooks{BeforeCommandRuntimeErrorResponse: func() {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke audio.control before session-status error delivery: %v", err)
+			}
+		}})).Handler()
+	body, err := json.Marshal(stageaudio.Request{Operation: "PLAY", Deck: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/audio/command?project_id="+project.ID, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:9129"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, login.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE") || len(sidecar.calls) != 0 {
+		t.Fatalf("command error escaped after Project grant revocation: HTTP %d body=%s sidecar calls=%d", res.Code, res.Body.String(), len(sidecar.calls))
+	}
+}
+
+func TestScopedStageAudioUnconfiguredCommandRequiresProjectGrant(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Unconfigured scoped audio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "unconfigured-audio-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(WithScopedOperatorStageAudio(h.auth, projects, nil, nil, stageaudio.NewShowFence(), scope)).Handler()
+	body, err := json.Marshal(stageaudio.Request{Operation: "PLAY", Deck: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/audio/command?project_id="+project.ID, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:9130"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, login.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "STAGEAUDIO_NOT_CONFIGURED") {
+		t.Fatalf("unconfigured StageAudio leaked across the Project boundary: HTTP %d %s", res.Code, res.Body.String())
+	}
+}
+
 type audioLocalFunc func(context.Context, stageaudio.Request) (stageaudio.LocalReply, error)
 
 func (f audioLocalFunc) Call(ctx context.Context, req stageaudio.Request) (stageaudio.LocalReply, error) {
