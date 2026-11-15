@@ -8,7 +8,7 @@
   const browserFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const url = String(args[0]);
-    if (sessionStorage.getItem("stagecore_test_offline_recovery") === "1" && url.includes("/cue-editor-recovery")) {
+    if (localStorage.getItem("stagecore_test_offline_recovery") === "1" && url.includes("/cue-editor-recovery")) {
       offlineRecoveryRequests++;
       requestTrace.push(`${url} → simulated offline`);
       throw new TypeError("simulated offline Cue recovery endpoint");
@@ -105,11 +105,15 @@
     state.csrf = config.csrf;
     state.project = { project_id: config.project, name: config.name };
     sessionStorage.setItem("stagecore_csrf", state.csrf);
-    if (!sessionStorage.getItem("stagecore_mixed_cue_ltr_evidence")) f016SetMode("dark");
+    if (!localStorage.getItem("stagecore_mixed_cue_ltr_evidence")) f016SetMode("dark");
     showApp();
     await navigate("cues");
 
-    const ltrEvidence = sessionStorage.getItem("stagecore_mixed_cue_ltr_evidence");
+    const ltrEvidence = localStorage.getItem("stagecore_mixed_cue_ltr_evidence");
+    const restartMarker = "stagecore_mixed_cue_process_restart";
+    const restartSessionMarker = "stagecore_mixed_cue_process_restart_session";
+    const processRestarted = localStorage.getItem(restartMarker) === "1" &&
+      sessionStorage.getItem(restartSessionMarker) !== "1";
     const staleReviewKey = "stagecore_mixed_cue_stale_review";
     if (sessionStorage.getItem(staleReviewKey) === "1") {
       const previous = JSON.parse(ltrEvidence || "null");
@@ -148,12 +152,15 @@
         throw new Error(`stale recovery review unexpectedly used the server or confirmation (${offlineRecoveryRequests}/${confirmationRequests})`);
       }
       sessionStorage.removeItem(staleReviewKey);
-      sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
+      localStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
+      localStorage.removeItem(restartMarker);
+      localStorage.removeItem("stagecore_test_offline_recovery");
       await report(JSON.stringify({ ...previous, stale_review_available: true, stale_review_not_applied: true,
         stale_review_name: document.getElementById("cueName").value }));
       return;
     }
     if (ltrEvidence) {
+      if (!processRestarted) throw new Error("the browser profile reopened without a fresh session after process restart");
       const previous = JSON.parse(ltrEvidence);
       const parentID = previous.ids[2];
       await waitFor(() => document.documentElement.dir === "ltr" && document.documentElement.dataset.theme === "light" &&
@@ -211,10 +218,11 @@
       const ltrProof = { ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
+        browser_process_restarted: processRestarted,
         local_recovery_available: true, local_recovery_restored: true,
         local_action_payload_restored: true, local_action_identity_restored: true,
         theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } };
-      sessionStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(ltrProof));
+      localStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(ltrProof));
       sessionStorage.setItem(staleReviewKey, "1");
       const staleReady = await fetch("/mixed-cue-stale-ready", {method: "POST",
         headers: {"Content-Type": "application/json"}, body: JSON.stringify({cue_id: parentID})});
@@ -569,7 +577,7 @@
     if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {
       throw new Error(`quick metadata edit did not use the Draft update path safely: ${requestTrace.slice(-10).join("; ")}`);
     }
-    sessionStorage.setItem("stagecore_test_offline_recovery", "1");
+    localStorage.setItem("stagecore_test_offline_recovery", "1");
     const recoveryDraftName = "Offline restored Mixed Parent";
     setValue(document.getElementById("cueName"), recoveryDraftName);
     const recoveryActionMode = document.querySelector("#actionsEditor .action-editor .action-mode");
@@ -591,10 +599,12 @@
       palette_visible: paletteVisible, label_color_readable: labelColorReadable,
       marker_contrast: colorContrast, text_contrast: textContrast,
       focus_ring_visible: focusRingVisible, focus_contrast: focusContrast, page_overflow: pageOverflow };
-    sessionStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(firstPass));
+    localStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(firstPass));
     localStorage.setItem("stagecore_locale", "en");
     f016SetMode("light");
-    window.location.reload();
+    sessionStorage.setItem(restartSessionMarker, "1");
+    localStorage.setItem(restartMarker, "1");
+    await fetch("/mixed-cue-restart-ready", { method: "POST" });
   } catch (error) {
     await report(JSON.stringify({ status: "FAIL", error: error?.stack || String(error), requests: requestTrace.slice(-16) }));
   }

@@ -93,6 +93,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		cueID  string
 		resume chan struct{}
 	}, 1)
+	restartRequests := make(chan chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -151,6 +152,18 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
+		case "/mixed-cue-restart-ready":
+			resume := make(chan struct{})
+			select {
+			case restartRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/mixed-cue-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			w.Write(testScript)
@@ -172,31 +185,44 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
-	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--remote-debugging-port=0", "--remote-allow-origins=*",
-		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "mixed-cue-browser.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer browserLog.Close()
-	cmd.Stdout, cmd.Stderr = browserLog, browserLog
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+	launch := func() (*exec.Cmd, chan error, *websocket.Conn, error) {
+		cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+			"--remote-debugging-port=0", "--remote-allow-origins=*",
+			"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
+		cmd.Stdout, cmd.Stderr = browserLog, browserLog
+		if err := cmd.Start(); err != nil {
+			return nil, nil, nil, err
+		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		cdp, err := connectChromePage(ctx, profileDir, server.URL)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			<-done
+			return nil, nil, nil, err
+		}
+		return cmd, done, cdp, nil
 	}
-	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	cmd, done, cdp, err := launch()
 	if err != nil {
-		_ = cmd.Process.Kill()
-		t.Fatalf("connect to isolated Chrome DevTools: %v", err)
+		t.Fatalf("start isolated Chrome: %v", err)
 	}
-	defer cdp.Close()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
 	exited := false
 	defer func() {
 		cancel()
 		if !exited {
+			_ = cmd.Process.Signal(os.Interrupt)
 			<-done
+		}
+	}()
+	defer func() {
+		if cdp != nil {
+			_ = cdp.Close()
 		}
 	}()
 	var outcome string
@@ -221,6 +247,28 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				t.Fatalf("simulate an authorized concurrent Draft edit: %v", err)
 			}
 			close(request.resume)
+		case resume := <-restartRequests:
+			_ = cdp.Close()
+			if err := cmd.Process.Signal(os.Interrupt); err != nil {
+				t.Fatalf("request graceful shutdown of isolated Chrome: %v", err)
+			}
+			select {
+			case <-done:
+				exited = true
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+				exited = true
+				t.Fatal("isolated Chrome did not stop before its restart")
+			case <-ctx.Done():
+				t.Fatalf("isolated Chrome restart exceeded test deadline: %v", ctx.Err())
+			}
+			cmd, done, cdp, err = launch()
+			if err != nil {
+				t.Fatalf("relaunch isolated Chrome with its existing profile: %v", err)
+			}
+			exited = false
+			close(resume)
 		case err := <-done:
 			exited = true
 			output, _ := os.ReadFile(browserLog.Name())
@@ -259,6 +307,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		LTROverflow           bool               `json:"ltr_page_overflow"`
 		LocalRecovery         bool               `json:"local_recovery_available"`
 		LocalRestored         bool               `json:"local_recovery_restored"`
+		ProcessRestarted      bool               `json:"browser_process_restarted"`
 		LocalActionPayload    bool               `json:"local_action_payload_restored"`
 		LocalActionIdentity   bool               `json:"local_action_identity_restored"`
 		StaleReview           bool               `json:"stale_review_available"`
@@ -280,7 +329,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		return true
 	}
 	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
-		!report.LocalRecovery || !report.LocalRestored || !report.LocalActionPayload || !report.LocalActionIdentity ||
+		!report.LocalRecovery || !report.LocalRestored || !report.ProcessRestarted || !report.LocalActionPayload || !report.LocalActionIdentity ||
 		!report.StaleReview || !report.StaleReviewNotApplied || report.StaleReviewName != "Concurrent saved parent" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
