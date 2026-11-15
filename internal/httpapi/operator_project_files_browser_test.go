@@ -129,6 +129,14 @@ async function api(path, options={}) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	preferencesDir := filepath.Join(profileDir, "Default")
+	if err := os.MkdirAll(preferencesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(preferencesDir, "Preferences"),
+		[]byte(`{"partition":{"default_zoom_level":{"x":3.801784}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		for attempt := 0; attempt < 20; attempt++ {
 			if err := os.RemoveAll(profileDir); err == nil {
@@ -139,7 +147,7 @@ async function api(path, options={}) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
+		"--disable-background-networking", "--window-size=1440,900", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "project-files-browser.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -169,6 +177,9 @@ async function api(path, options={}) {
 		HTML              string `json:"html"`
 		RTL               bool   `json:"rtl"`
 		PageOverflow      bool   `json:"page_overflow"`
+		ZoomPercent       int    `json:"zoom_percent"`
+		ViewportWidth     int    `json:"viewport_width"`
+		DocumentWidth     int    `json:"document_width"`
 		KeyboardFocusable bool   `json:"keyboard_focusable"`
 		UploadForm        bool   `json:"upload_form"`
 		DownloadLink      bool   `json:"download_link"`
@@ -187,6 +198,9 @@ async function api(path, options={}) {
 				HTML              string `json:"html"`
 				RTL               bool   `json:"rtl"`
 				PageOverflow      bool   `json:"page_overflow"`
+				ZoomPercent       int    `json:"zoom_percent"`
+				ViewportWidth     int    `json:"viewport_width"`
+				DocumentWidth     int    `json:"document_width"`
 				KeyboardFocusable bool   `json:"keyboard_focusable"`
 				UploadForm        bool   `json:"upload_form"`
 				DownloadLink      bool   `json:"download_link"`
@@ -206,9 +220,12 @@ async function api(path, options={}) {
 	}
 	for _, report := range reports {
 		if report.Status != "PASS" || report.Rows != 2 || report.SearchRows != 1 || !report.SearchMatch || !report.SearchCleared || report.PageOverflow ||
+			report.ZoomPercent != 200 || report.ViewportWidth != 720 || report.DocumentWidth > 720 ||
 			!report.KeyboardFocusable || report.UploadForm || report.DownloadLink {
-			t.Errorf("Project Files browser report crossed its read-only/mobile boundary: %+v", report)
+			t.Errorf("Project Files browser report crossed its read-only/zoom boundary: %+v", report)
 		}
+		t.Logf("Project Files %s at actual 200%% zoom: viewport=%d px, document=%d px, no horizontal overflow",
+			report.Locale, report.ViewportWidth, report.DocumentWidth)
 		switch report.Locale {
 		case "ar-IQ":
 			if !report.RTL || !strings.Contains(report.Text, "المعروض 2 / 2 عنصر") ||
