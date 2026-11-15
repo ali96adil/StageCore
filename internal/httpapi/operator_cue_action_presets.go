@@ -13,7 +13,8 @@ import (
 )
 
 type cueActionPresetHooks struct {
-	BeforeResponse func()
+	BeforeResponse      func()
+	BeforeErrorResponse func(route string)
 }
 
 func withCueActionPresets(auth *userauth.Service, st *store.Store, hooks cueActionPresetHooks) Option {
@@ -32,6 +33,12 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 		}
 		ctx, projectID, userID := r.Context(), r.PathValue("project_id"), session.User.ID
 		if _, err := st.GetProject(ctx, projectID); err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-action-presets-project")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
@@ -40,6 +47,12 @@ func registerCueActionPresets(mux *http.ServeMux, auth *userauth.Service, st *st
 		case http.MethodGet:
 			presets, err := st.ListCueActionPresets(ctx, projectID, userID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("cue-action-presets-list")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

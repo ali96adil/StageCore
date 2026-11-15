@@ -11,7 +11,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st *store.Store, beforeMutationResponse func()) {
+func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st *store.Store, hooks cuePublishHooks) {
 	handle := func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 			return
@@ -19,16 +19,34 @@ func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st
 		projectID, cueID, userID := r.PathValue("project_id"), r.PathValue("cue_id"), session.User.ID
 		project, err := st.GetProject(r.Context(), projectID)
 		if err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-editor-checkpoint-project")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
 		cue, err := st.GetCue(r.Context(), cueID)
 		if err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-editor-checkpoint-cue")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
 		revision, err := st.GetRevision(r.Context(), cue.RevisionID)
 		if err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-editor-checkpoint-revision")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
@@ -41,6 +59,12 @@ func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st
 		case http.MethodGet:
 			checkpoints, err := st.ListCueEditorCheckpoints(r.Context(), projectID, userID, cueID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("cue-editor-checkpoint-list")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -70,8 +94,8 @@ func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st
 				writeProjectStoreError(w, err)
 				return
 			}
-			if beforeMutationResponse != nil {
-				beforeMutationResponse()
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
 			}
 			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 				return
@@ -88,8 +112,8 @@ func registerCueEditorCheckpoints(mux *http.ServeMux, auth *userauth.Service, st
 				writeProjectStoreError(w, err)
 				return
 			}
-			if beforeMutationResponse != nil {
-				beforeMutationResponse()
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse()
 			}
 			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 				return

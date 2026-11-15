@@ -11,13 +11,19 @@ import (
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
-func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *store.Store, beforeMutationResponse func()) {
+func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *store.Store, hooks cuePublishHooks) {
 	handle := func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		if _, err := currentProjectRouteGrant(r); !writeProjectQualificationError(w, err) {
 			return
 		}
 		projectID := r.PathValue("project_id")
 		if _, err := st.GetProject(r.Context(), projectID); err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-editor-recovery-project")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
@@ -41,14 +47,20 @@ func registerCueEditorRecovery(mux *http.ServeMux, auth *userauth.Service, st *s
 			return
 		}
 		if err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("cue-editor-recovery-read")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
 		if r.Method == http.MethodGet && !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
 			return
 		}
-		if r.Method != http.MethodGet && beforeMutationResponse != nil {
-			beforeMutationResponse()
+		if r.Method != http.MethodGet && hooks.BeforeResponse != nil {
+			hooks.BeforeResponse()
 		}
 		if r.Method != http.MethodGet && !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.CueEdit) {
 			return

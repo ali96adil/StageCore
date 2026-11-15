@@ -1934,3 +1934,14 @@ Output failure test also reproduced `CONFIGURATION_UNAVAILABLE` after grant
 revocation. Focused normal/Race regressions, `go vet ./internal/httpapi`,
 `git diff --check`, and full `go test ./internal/httpapi -count=1` (85.563 s)
 pass. No authored data, production ACL or device was used.
+
+
+## SC-024 continuation · 2026-11-15 · private Cue editor read errors
+
+Cue Editor Recovery, Cue Editor Checkpoint listing, and Cue Action Preset
+listing now recheck the exact session and `CueEdit` grant before returning
+Store errors. Red-first `TestPrivateCueEditorReadsSuppressStoreErrorsAfterProjectGrantRevocation`
+reproduced `PROJECTS_UNAVAILABLE` for all three routes after grant revocation
+at temporary-SQLite read failures. The same fence covers the checkpoint and
+recovery preflight Project/Cue/Revision reads. These routes remain in the
+qualification assembly; production ACL is unchanged.

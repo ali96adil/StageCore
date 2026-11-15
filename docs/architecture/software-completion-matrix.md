@@ -182,3 +182,9 @@ HTTP API verification, `go vet ./internal/httpapi`, and diff checks pass. The
 aggregate Project Configuration endpoint applies the same check to Project,
 Revision, Target, Input, Output, Route and Cue read failures. This only hardens
 the opt-in qualification assembly; the production ACL remains disabled.
+
+The private Cue Editor Recovery, Checkpoint and Action Preset read paths also
+recheck the live `CueEdit` grant before returning Store failures. Red-first
+temporary-SQLite regressions reproduce and close the revoked-grant error path;
+normal and focused Race runs pass. These checks do not qualify production ACL
+activation or real hardware.
