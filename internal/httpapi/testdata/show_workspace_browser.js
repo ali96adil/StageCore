@@ -120,7 +120,7 @@
 
     const previewResponse = await fetch("/show-workspace-seed-preview", { method: "POST" });
     if (!previewResponse.ok) throw new Error(`Preview rehearsal fixture returned HTTP ${previewResponse.status}`);
-    await previewResponse.json();
+    const previewSession = await previewResponse.json();
     await navigate("runtime");
     const previewReview = document.getElementById("runtimeRehearsalApproval");
     if (!previewReview || state.showSessionActive) {
@@ -128,6 +128,27 @@
     }
     previewReview.click();
     if (state.page !== "timing") throw new Error("Preview timing review control did not open the Timing workspace");
+    const mutationsBeforeReview = apiMutations.length;
+    const captureToggle = () => document.querySelector(`tr[data-timing-session="${previewSession.session_id}"] .timing-capture-toggle`);
+    const reviewDeadline = Date.now() + 5000;
+    while (Date.now() < reviewDeadline && !captureToggle()) await new Promise((resolve) => setTimeout(resolve, 25));
+    if (!captureToggle() || captureToggle().dataset.paused !== "false") {
+      throw new Error(`active Preview timing controls did not load: ${document.getElementById("globalMessage")?.textContent || document.querySelector("#content .empty")?.textContent || "missing session row"}`);
+    }
+    if (apiMutations.length !== mutationsBeforeReview) throw new Error(`opening Preview timing review changed session approval: ${apiMutations.slice(mutationsBeforeReview).join(", ")}`);
+    const mutationsBeforeCapture = apiMutations.length;
+    captureToggle().click();
+    const pauseDeadline = Date.now() + 5000;
+    while (Date.now() < pauseDeadline && captureToggle()?.dataset.paused !== "true") await new Promise((resolve) => setTimeout(resolve, 25));
+    if (captureToggle()?.dataset.paused !== "true") throw new Error("Preview timing capture did not enter the paused state");
+    captureToggle().click();
+    const resumeDeadline = Date.now() + 5000;
+    while (Date.now() < resumeDeadline && captureToggle()?.dataset.paused !== "false") await new Promise((resolve) => setTimeout(resolve, 25));
+    if (captureToggle()?.dataset.paused !== "false") throw new Error("Preview timing capture did not resume");
+    const captureWrites = apiMutations.slice(mutationsBeforeCapture);
+    if (captureWrites.length !== 2 || captureWrites.some((request) => !request.startsWith(`PUT /api/v1/projects/${config.project}/timing-intelligence/sessions/${previewSession.session_id}`))) {
+      throw new Error(`Pause/Resume wrote unexpected API mutations: ${captureWrites.join(", ")}`);
+    }
     await authenticateRole("TECHNICIAN");
     await navigate("runtime");
     if (!document.getElementById("runtimeRehearsalApproval")) {
@@ -240,8 +261,10 @@
     }
     await assertResponsiveAtAllWidths("Owner Viewer-session exit workspace");
     await stopCurrentShow();
+    const stopMutations = apiMutations.filter((request) => request.startsWith("POST ") && request.includes("/runtime/stop-session"));
+    const timingMutations = apiMutations.filter((request) => request.startsWith("PUT ") && request.includes("/timing-intelligence/sessions/"));
     if (postRequests.length !== 5 || postRequests.some((url) => !url.includes("/runtime/stop-session")) ||
-        apiMutations.length !== 5 || apiMutations.some((request) => !request.includes("/runtime/stop-session"))) {
+        stopMutations.length !== 5 || timingMutations.length !== 2 || apiMutations.length !== 7) {
       throw new Error(`unexpected role workflow mutations: POST=${postRequests.join(", ")}; API=${apiMutations.join(", ")}`);
     }
     await report({ status: "PASS", seeded_sessions: seededSessions });

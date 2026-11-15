@@ -24,6 +24,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/timingintelligence"
 	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
@@ -110,7 +111,8 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		return nil
 	}))
 	handler := New(WithOperatorWeb(), WithOperatorProjects(h.auth, st), WithOperatorRuntime(h.auth, st, runtime),
-		WithOperatorCuePublish(h.auth, st, publish.New(st, registry))).Handler()
+		WithOperatorCuePublish(h.auth, st, publish.New(st, registry)),
+		WithOperatorTimingIntelligence(h.auth, timingintelligence.New(st, clock.Real{}))).Handler()
 	testScript, err := os.ReadFile(filepath.Join("testdata", "show_workspace_browser.js"))
 	if err != nil {
 		t.Fatal(err)
