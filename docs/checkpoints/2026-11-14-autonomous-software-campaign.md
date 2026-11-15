@@ -3985,3 +3985,47 @@ This entry supersedes the preceding push instruction.
   Hub/Camera Relay/data/Vault, original show data and real devices remain
   untouched; no firmware flash, force push, merge, paid operation or backup
   deletion was performed.
+
+## Resume update — 2026-11-15 · lighting Project fence follow-on
+
+- Branch `integration/stagecore-rc`, existing PR #534 OPEN/Draft. Remote PR and
+  branch remain at `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Local HEAD before
+  this Handoff edit is `34edd9adc425654735ef3309ed4eb6b167174a3b`; the two
+  committed follow-ons are `949c3b7` (fence lighting Cue saves to the
+  originating Project) and `34edd9a` (qualification matrix evidence). No
+  follow-on push has been made; read `git rev-parse HEAD` after the handoff
+  checkpoint commit for the resulting full local tip.
+- Current exact-head workflows for remote `0c05405`: Core `43657410250` is
+  still active. Go 1.27 Test/Vet pass; Go 1.26 Test, Browser Cue Delivery and
+  Vet pass, including the Linux regression for SC-009's re-query of the Cue
+  history toolbar. Go 1.26 Race is running and ARM64 product builds are
+  pending. Companion Core `43657410210` and Camera Relay `43657410252` have
+  passed. No push until Core finishes, then verify exact remote/PR heads again.
+- SC-007 browser acceptance exposed and now closes a Project-crossing race:
+  `lighting-authoring.js::saveCue` captures the source Project ID, uses it for
+  both translation and Draft write, and after the asynchronous translation
+  confirms the editor remains connected to that Project. Lighting model reads
+  are held locally until the response still matches the selected Project, so a
+  delayed response cannot replace the destination Project's model. The Chrome
+  regression explicitly gates the second translation response, switches to a
+  second temporary Project, releases the response, then asserts no Cue write
+  reached that destination. A defensive release unblocks the isolated test
+  server on failures. No physical output or runtime command is used.
+- Local verification on this follow-on: real Chrome SC-007 test passed three
+  consecutive runs and passed under `go test -race`; SC-009 test had passed
+  three consecutive runs and both SC-007/SC-009 passed together under Race
+  before the follow-on. The 71-test focused Operator Node suite, `go vet
+  ./internal/httpapi`, Go formatting, JavaScript syntax and `git diff --check`
+  passed. The first local browser attempts exposed and fixed test-fixture
+  issues (an overly broad gate and an unnecessary page-name guard); these
+  failed attempts did not touch remote CI or any production state.
+- SC-007 remains Partial: the in-flight save Project fence, simulation-only
+  preview/error recovery and Draft copy are qualified; broader editor behavior
+  through Project reassignment and physical DMX output are not. First next
+  action: wait for exact `0c05405` Core Race/ARM64 completion, handle any
+  failure, then push committed `949c3b7` and `34edd9a` as a normal fast-forward
+  to the same PR and wait for all exact-head checks before another push.
+  Continue with isolated Pi 4 performance qualification and the next software
+  matrix gap. No production ACL/SC-024 enablement, production service/data,
+  original show data, real device, firmware, force push, merge, paid operation
+  or backup deletion is allowed.
