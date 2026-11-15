@@ -17,6 +17,7 @@ import (
 
 type executionEnvironmentCaptureHooks struct {
 	BeforeResponse                 func()
+	BeforeCaptureErrorResponse     func(route string)
 	BeforeVaultStatusErrorResponse func()
 	BeforeAssetReadErrorResponse   func()
 }
@@ -107,10 +108,22 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		// Reject known-invalid mutations before accepting bytes. Store repeats
 		// these checks after import so a SHOW/freeze race still fails closed.
 		if err := stageStore.RequireProjectConfigurationMutable(r.Context(), project.ID); err != nil {
+			if hooks.BeforeCaptureErrorResponse != nil {
+				hooks.BeforeCaptureErrorResponse("capture-project-mutable")
+			}
+			if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 			return
 		}
 		if revision.Status != domain.RevisionDraft {
+			if hooks.BeforeCaptureErrorResponse != nil {
+				hooks.BeforeCaptureErrorResponse("capture-revision-frozen")
+			}
+			if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, domain.ErrRevisionFrozen, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 			return
 		}
@@ -137,7 +150,19 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 				return
 			}
 			if errors.Is(err, storagehealth.ErrRuntimeReserve) {
+				if hooks.BeforeCaptureErrorResponse != nil {
+					hooks.BeforeCaptureErrorResponse("capture-vault-import")
+				}
+				if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
+					return
+				}
 				writeJSON(w, http.StatusInsufficientStorage, map[string]any{"error_code": "STORAGE_RUNTIME_RESERVE"})
+				return
+			}
+			if hooks.BeforeCaptureErrorResponse != nil {
+				hooks.BeforeCaptureErrorResponse("capture-vault-import")
+			}
+			if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
 				return
 			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_CAPTURE_VAULT_FAILED"})
@@ -148,6 +173,12 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 		updated, err := stageStore.CaptureExecutionEnvironmentAsset(ctx, environment.ID, asset.Key, object.ContentHash, object.SizeBytes, environment.ContentSHA256)
 		if err != nil {
 			_, _ = vault.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
+			if hooks.BeforeCaptureErrorResponse != nil {
+				hooks.BeforeCaptureErrorResponse("capture-store-write")
+			}
+			if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit, projectaccess.MediaUpload) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 			return
 		}
@@ -186,6 +217,12 @@ func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stage
 		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
 	}
 	if environment.RevisionID != revision.ID {
+		if len(beforeError) > 0 && beforeError[0] != nil {
+			beforeError[0]()
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_NOT_FOUND"})
 		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
 	}
@@ -193,6 +230,12 @@ func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stage
 		if asset.Key == assetKey {
 			return project, revision, environment, asset, true
 		}
+	}
+	if len(beforeError) > 0 && beforeError[0] != nil {
+		beforeError[0]()
+	}
+	if !recheckQualifiedProjectRoute(w, r) {
+		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_ASSET_NOT_FOUND"})
 	return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
