@@ -5034,3 +5034,33 @@ This entry supersedes the preceding push instruction.
   `stagecore-qualification` SSH endpoint timed out before banner completion.
   Do not use the `stagecore-pi` production host, change production services or
   data, send real-device commands, or enable Project ACL in production.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 operation dispatch fence
+
+- Local HEAD before this checkpoint is `c0cb187ae3163711145c23c97c53f167a5f80958`,
+  six commits ahead of OPEN/Draft PR #534 and `origin/integration/stagecore-rc`
+  at `f1e6a021c7ea47c9d4a6c219f2213b9d8fbdb77d`. The saved stack includes
+  execution-environment list/rebuild-plan read fences and a bounded Companion
+  operation dispatch fence, with qualification and matrix updates. No push has
+  been made after `f1e6a02`.
+- `TestExecutionEnvironmentOperationSuppressesStoreErrorAfterGrantRevocation`
+  first reproduced HTTP 503 after `RehearsalControl` and `MediaRead` were
+  revoked during the Manifest lookup. The handler now checks the live session
+  and both route-scoped grants before returning that Store error; the regression
+  verifies the revoked operator gets a scoped 404 and the fake runtime is called
+  zero times. Normal and Race focused tests pass.
+- Full `go test ./internal/httpapi -count=1` passed in 80.740 s after this
+  operation change; `go vet ./internal/httpapi` and `git diff --check` pass.
+  No runtime output is connected; no device, production service/data or
+  production ACL was used.
+- Exact pushed-head checks at `f1e6a02`: Companion Core `43700059241` and
+  Camera Relay `43700059280` passed; Core Go 1.27 passed; Core Go 1.26 Race
+  (`43700059257`) remains in progress. Do not push until Core and the entire
+  exact-head gate finish. Afterward verify local/remote/PR ancestry, push only
+  by normal fast-forward to the existing PR, then inspect every new-head check.
+- Next independent work: continue the SC-024 asynchronous delivery and
+  endpoint-to-permission audit while Core runs. Current-head Raspberry Pi 4
+  performance remains pending an isolated Pi environment; the qualification
+  SSH endpoint timed out before banner completion. Production services/data,
+  the production Pi host, original Vault/show, real device commands, firmware,
+  force-push, merge, and Production ACL activation remain off limits.
