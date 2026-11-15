@@ -228,17 +228,6 @@
 .sc008-optional .cue-link-editor { background: var(--panel, #111820); }
 .sc008-optional-flags { margin-block: 10px; }
 .sc008-optional #cueStartDelaySeconds { max-width: 160px; }
-.sc008-list-toolbar {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-block: 14px 10px;
-  padding: 12px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
 .sc009-project-history {
   display: flex;
   align-items: center;
@@ -252,23 +241,6 @@
 }
 .sc009-project-history strong { margin-inline-end: 4px; }
 .sc009-project-history [role="status"] { flex: 1 1 220px; }
-.sc008-list-toolbar label {
-  flex: 1 1 260px;
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-  font-size: .78rem;
-  color: var(--muted);
-}
-.sc008-list-toolbar input { width: 100%; }
-.sc008-list-toolbar select { min-width: min(230px, 100%); }
-.sc008-list-count {
-  color: var(--muted);
-  font-size: .79rem;
-  min-width: 80px;
-  text-align: end;
-}
-
 .sc008-type-badges {
   display: flex;
   flex-wrap: wrap;
@@ -411,7 +383,6 @@
   .sc008-action-card .action-head { align-items: flex-start; }
   .sc008-action-tools { margin-inline-start: 0; width: 100%; justify-content: flex-start; }
   .sc008-dialog .dialog-actions { margin: 0 -12px -12px; padding: 12px; }
-  .sc008-list-toolbar > * { flex-basis: 100%; }
   .cue-inspection-controls > * { flex: 1 1 100%; }
 }
 @media (max-width: 420px) {

@@ -51,7 +51,7 @@
     summary.click();
     await waitFor(() => details.querySelector(".cue-inspection-navigation"), "Cue Inspector navigation");
     const navigation = details.querySelector(".cue-inspection-navigation");
-    navigation.scrollIntoView({ block: "nearest" });
+    navigation.scrollIntoView({ block: "center" });
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const bounds = navigation.getBoundingClientRect();
     const pageWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
@@ -64,6 +64,7 @@
       page_width: pageWidth,
       page_overflow: pageWidth > window.innerWidth,
       inspector_visible: bounds.width > 0,
+      inspector_bounds: {left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom},
       inspector_in_viewport: bounds.left >= -1 && bounds.right <= window.innerWidth + 1 &&
         bounds.top >= -1 && bounds.bottom <= window.innerHeight + 1,
       table_client_width: table?.clientWidth || 0,
@@ -72,7 +73,7 @@
     };
     if (measurement.zoom_percent !== 200 || measurement.viewport_width !== 720 || measurement.page_overflow ||
         !measurement.inspector_visible || !measurement.inspector_in_viewport || apiMutations.length) {
-      throw new Error(`200% Cue Inspector layout failed: ${JSON.stringify(measurement)}; mutations=${apiMutations.join(",")}`);
+      throw new Error(`200% Cue Inspector layout failed: ${JSON.stringify(measurement)}; viewport_height=${window.innerHeight}; mutations=${apiMutations.join(",")}`);
     }
     const ready = await originalFetch("/mixed-cue-zoom-ready", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locale }),

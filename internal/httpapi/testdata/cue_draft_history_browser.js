@@ -76,7 +76,10 @@
     await waitFor(() => historyStatus?.textContent.trim(), "persisted history status");
     const initialUndoEnabled = !undo.disabled;
     if (!initialUndoEnabled) throw new Error("Undo was disabled despite a persisted Draft change");
-    const searchInput = document.querySelector("#sc008CueFilter input[type='search']");
+    const searchInput = document.querySelector("#cueListSearch");
+    if (document.getElementById("sc008CueFilter") || document.querySelectorAll("#content input[type='search']").length !== 1) {
+      throw new Error("Cue list renders duplicate search controls");
+    }
     if (!searchInput) throw new Error("Cue list search input is missing");
     searchInput.focus();
     const textShortcutReady = await nativeFetch("/cue-draft-history-input-key-ready", {method: "POST"});

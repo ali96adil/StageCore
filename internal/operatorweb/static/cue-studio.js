@@ -2329,9 +2329,10 @@
   }
 
   function enhanceCueList() {
-    const tableWrap = content.querySelector(".table-wrap");
+    const tableWrap = content.querySelector(".cue-list-table-wrap");
     const tbody = tableWrap?.querySelector("tbody");
-    if (!tbody || pick("sc008CueFilter")) return;
+    if (!tbody || tableWrap.dataset.cueStudioEnhanced === "true") return;
+    tableWrap.dataset.cueStudioEnhanced = "true";
     if (state.currentRevision?.status === "DRAFT" && canEdit()) {
       const historyToolbar = document.createElement("section");
       historyToolbar.id = "sc009ProjectDraftHistory";
@@ -2401,37 +2402,6 @@
       installProjectDraftHistoryShortcuts();
       loadHistory();
     }
-    const toolbar = document.createElement("section");
-    toolbar.id = "sc008CueFilter";
-    toolbar.className = "sc008-list-toolbar";
-    const label = document.createElement("label");
-    label.textContent = tr("بحث في الكيوهات", "Find Cues");
-    const input = document.createElement("input");
-    input.type = "search";
-    input.placeholder = tr("رقم، اسم أو نوع الإجراء…", "Number, name or action type…");
-    label.append(input);
-    const select = document.createElement("select");
-    select.setAttribute("aria-label", tr("تصفية الكيوهات", "Filter Cues"));
-    [
-      ["all", tr("كل الكيوهات", "All Cues")],
-      ["osc", "OSC / VDMX"],
-      ["midi", "MIDI / Ableton"],
-      ["lighting", "DMX"],
-      ["tablet", "Tablet"],
-      ["laser", "StageLaser"],
-      ["visual", "Native Visual"],
-      ["mixed", tr("مركب", "Mixed")],
-      ["disabled", tr("معطّل", "Disabled")],
-    ].forEach(([value, text]) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = text;
-      select.append(option);
-    });
-    const counter = document.createElement("span");
-    counter.className = "sc008-list-count";
-    toolbar.append(label, select, counter);
-    tableWrap.before(toolbar);
     const rows = Array.from(tbody.querySelectorAll("tr"));
     const cues = state.cues || [];
     const classify = (cue) => {
@@ -2447,35 +2417,6 @@
       }));
       return types;
     };
-    const apply = () => {
-      const query = input.value.trim().toLocaleLowerCase();
-      let visible = 0;
-      rows.forEach((row, index) => {
-        const cue = cues[index];
-        if (!cue) return;
-        const types = classify(cue);
-        const matchKind = select.value === "all" ||
-          (select.value === "disabled" && !cue.enabled) ||
-          (select.value === "mixed" && types.size > 1) ||
-          types.has(select.value);
-        const text = [cue.order_index, cue.display_label, cue.name,
-          ...(cue.actions || []).map((a) => a.capability_key)].join(" ").toLocaleLowerCase();
-        const show = matchKind && text.includes(query);
-        row.hidden = !show;
-        if (show) visible++;
-      });
-      counter.textContent = tr("ظاهر ", "Showing ") + visible + " / " + cues.length;
-    };
-    input.addEventListener("input", () => {
-      apply();
-      refreshCueInspectorNavigation();
-    });
-    select.addEventListener("change", () => {
-      apply();
-      refreshCueInspectorNavigation();
-    });
-    apply();
-
     rows.forEach((row, index) => {
       const cue = cues[index];
       if (!cue) return;
