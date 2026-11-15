@@ -4930,3 +4930,26 @@ This entry supersedes the preceding push instruction.
   inspect all exact-new-head CI before any next push. Continue auditing scoped
   read-error and asynchronous-delivery paths. Current-head Pi 4 performance
   remains unqualified pending an isolated Pi 4 lab; keep Production ACL off.
+
+## Resume checkpoint — 2026-11-15 · qualification endpoint and linked PR review
+
+- Read-only SSH configuration confirms `stagecore-qualification` uses a
+  hostname separate from the `stagecore-pi` production alias. A new
+  `BatchMode=yes`, 8-second, read-only identity attempt timed out during SSH
+  banner exchange (`Connection to UNKNOWN port 65535 timed out`); no remote
+  shell or command ran. The current Pi 4 performance gate therefore remains
+  open, and the performance report now records both failure modes. Do not infer
+  Pi 4 P95/P99/CPU/RAM from M3 or cross-built ARM64 runs.
+- Related Draft PRs are still OPEN at their previously verified heads and
+  checks: TabletPlayer #36 `91613da` (1 check), ESP32 DMX Lighting #39
+  `3ad7749` (6 checks), ESP32 Camera #20 `455b066` (hardware-probe CI),
+  StageLaser #56 `b14a578` and #57 `c4ff10b` (firmware no-actuation plus host
+  contract). No linked repository was edited. Do not inspect or modify
+  `pi-backups`.
+- Main PR #534 remains at `daae16d4c3806e7ac6b7deb1927181ba2abf26b5`.
+  Its Companion Core and Camera Relay workflows passed, and Core Go 1.27
+  passed; Core Go 1.26 Race is still in progress. The local StageAudio and
+  execution-environment follow-up stack is documented immediately above and
+  is not pushed. Next: wait for the exact `daae16d` Core gate, then verify
+  branch ancestry and push the saved fast-forward stack normally if it is
+  green; inspect all newly triggered checks before the next push.

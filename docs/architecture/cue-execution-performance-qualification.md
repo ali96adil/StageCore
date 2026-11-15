@@ -161,10 +161,13 @@ and peaked at 224,460,800 bytes (about 214.1 MiB) process-tree RSS. These are
 whole-command figures including fixture setup and database migrations, not
 Hub service CPU or RAM. No optimization is justified by this Mac-only result.
 
-The Pi 4 burst/sustained gate remains open. The qualification SSH alias failed
-with `websocket: bad handshake` before opening a remote shell; no remote command
-ran. This benchmark is an additional M3 baseline only and does not qualify
-Raspberry Pi performance.
+The Pi 4 burst/sustained gate remains open. The earlier qualification SSH
+attempt failed with `websocket: bad handshake`; a 2026-11-15 read-only retry
+with an 8-second connection timeout failed during banner exchange, before a
+remote shell or command. Local SSH configuration keeps the qualification alias
+separate from `stagecore-pi`, but the remote host identity and Pi hardware could
+not be verified. No remote workload ran. This benchmark is an additional M3
+baseline only and does not qualify Raspberry Pi performance.
 
 ### Sustained Rehearsal sequence
 
