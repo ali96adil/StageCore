@@ -1997,3 +1997,18 @@ preserving the database result. Focused normal/Race tests, `go vet
 ./internal/httpapi`, `git diff --check`, and full
 `go test ./internal/httpapi -count=1` (88.780 s) pass. These tests use
 temporary SQLite only.
+
+
+## SC-024 continuation · 2026-11-15 · Configuration lock error responses
+
+The Project Configuration lock GET and Draft-creation preflight now recheck
+the current session and scoped grant before returning Store failures. The
+Draft-creation path also rechecks before returning lock state, and Draft
+mutation errors use an uncertainty-safe response fence. Red-first
+`TestConfigurationLockStoreErrorsSuppressAfterGrantRevocation` altered only
+the temporary SQLite schema to force lock-query errors and observed
+`PROJECTS_UNAVAILABLE` after grant revocation on both GET and POST. The
+corrected endpoints return the scoped `PROJECT_NOT_FOUND` denial. The SHOW
+lock regression also revokes `ProjectEdit` immediately before a locked
+response and confirms that the SHOW session and Snapshot identifiers are
+withheld. Production ACL remains disabled.

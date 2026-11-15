@@ -5435,3 +5435,32 @@ This entry supersedes the preceding push instruction.
   before correcting any reproducible stale response, and maintain the exact
   old-head CI gate. Isolated Raspberry Pi 4 qualification and hardware/production
   acceptance remain separate.
+
+## Qualification batch checkpoint — 2026-11-15 · Project Configuration lock
+
+- PR #534 and remote branch remain at
+  `3c535543c0242d349a94f23948a1ad18747468c0`; local code HEAD is
+  `d43ddf6ab10d74990425c209b994fd6812ad06ce`, 29 commits ahead. The tested
+  implementation is committed; qualification/matrix and this handoff update
+  are being committed as the next documentation-only commit. Nothing new has
+  been pushed.
+- Exact-head Core run `43707820414`: Go 1.27 passed; Go 1.26 is still in the
+  Race step. Companion `43707820363` and Camera Relay `43707820418` passed.
+  Preserve this gate before pushing any later local commit.
+- `d43ddf6` fences Project Configuration lock GET and Draft preflight errors,
+  lock-state responses, and draft mutation errors before returning data after
+  revocation. Red-first temporary-SQLite tests reproduced stale
+  `PROJECTS_UNAVAILABLE` on GET and POST after grant revocation. The lock
+  response regression also revokes `ProjectEdit` immediately before returning
+  SHOW state and verifies that Session/Snapshot identifiers are suppressed.
+- Verification passed: focused normal regression, focused Race tests for both
+  error and lock-state response paths, `go vet ./internal/httpapi`,
+  `git diff --check`, and full `go test ./internal/httpapi -count=1`
+  (89.540 s). Schema faults were confined to temporary test SQLite.
+- Read-only related PR review is unchanged and green: TabletPlayer #36 at
+  `91613da`, DMX Lighting #39 at `3ad7749`, Camera #20 at `455b066`, and
+  StageLaser #56/#57 at `b14a578`/`c4ff10b`. No related repository was edited.
+- Continue the whole-server project-scoped error and response-delivery audit.
+  Production ACL remains disabled; no production service/data, physical output,
+  firmware or paid service was used. Current-head isolated Pi 4 performance
+  qualification is still pending; historical simulation is not current Pi proof.

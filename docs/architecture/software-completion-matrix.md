@@ -211,3 +211,11 @@ after commit. Red-first response-boundary regressions prove revoked clients
 receive commit uncertainty and no Note details; the committed Note remains.
 Focused normal/Race regressions, full HTTP API tests, `go vet
 ./internal/httpapi`, and diff checks pass.
+
+Configuration lock GET and Draft preflight failures now recheck the live
+session and scoped Project grant before returning Store errors. The lock-state
+responses also recheck before returning SHOW identifiers. Red-first
+temporary-SQLite `TestConfigurationLockStoreErrorsSuppressAfterGrantRevocation`
+reproduced stale `PROJECTS_UNAVAILABLE` responses after ProjectView/ProjectEdit
+revocation on GET and POST; the new response is the scoped Project denial.
+Production ACL remains disabled.
