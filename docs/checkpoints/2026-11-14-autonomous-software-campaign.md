@@ -5638,3 +5638,26 @@ This entry supersedes the preceding push instruction.
   project-scoped Store error responses; continue while exact-head CI is
   running. Isolated Pi 4 current-head timing qualification is still pending.
   Production ACL remains disabled; PR #534 remains Draft.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 source Snapshot read
+
+- PR #534 and remote remain at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. Latest code commit:
+  `1b9ad2f1db1201816c0807812b4c5b9027aa5c95`, 41 commits ahead before this
+  documentation commit. No push occurred.
+- Core Go 1.26 run `43710243386` is still active in its Race tests step
+  (started `2026-11-15T11:46:42Z`); Go 1.27, both Companion checks and Camera
+  Relay passed. The run is unusually long, but it remains active. Do not
+  cancel or push over it.
+- `1b9ad2f` fences F-025 source Snapshot read errors in the rebuild-plan seed
+  route. Red-first `TestExecutionEnvironmentRebuildPlanSourceReadSuppressesStoreErrorAfterGrantRevocation`
+  renamed only `snapshot_json` in temporary SQLite and revoked `ProjectEdit`
+  at the read boundary; before the fix, seed returned its generic 503 after
+  revocation, and now it returns only the scoped denial.
+- Focused normal and Race rebuild-plan tests passed, `go vet ./internal/httpapi`
+  passed, and full `go test ./internal/httpapi -count=1` passed in 92.980 s.
+  Diff checks passed. Test data stayed in disposable SQLite.
+- Next inspect other rebuild-plan response boundaries (especially existing
+  plan conflicts and mutation results) and continue the Project-scoped error
+  audit. Current isolated Pi 4 performance qualification remains pending;
+  production ACL stays disabled and PR #534 stays Draft.

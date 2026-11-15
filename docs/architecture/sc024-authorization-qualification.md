@@ -2099,3 +2099,18 @@ at the read boundary; before the fix, GET returned
 `go vet ./internal/httpapi`, diff checks, and full
 `go test ./internal/httpapi -count=1` (92.043 s) pass. Production data and
 ACL state are unchanged.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan source Snapshot read
+
+The F-025 rebuild-plan seed route now rechecks the qualified `ProjectEdit`
+grant after source Snapshot reads fail and before returning either Store
+errors or `EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND`. Red-first
+`TestExecutionEnvironmentRebuildPlanSourceReadSuppressesStoreErrorAfterGrantRevocation`
+renamed only `snapshot_json` in temporary SQLite, revoked `ProjectEdit` at the
+failing read boundary, and reproduced `EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED`
+(503) after revocation. The fixed path returns only `PROJECT_NOT_FOUND`.
+Focused normal/Race tests for the rebuild-plan lifecycle and all three
+revocation boundaries, `go vet ./internal/httpapi`, diff checks and full
+`go test ./internal/httpapi -count=1` (92.980 s) pass. No Snapshot bytes,
+production database or output device was accessed.

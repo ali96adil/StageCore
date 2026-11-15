@@ -248,3 +248,12 @@ capture, rebuild-plan and operation entry points. Red-first temporary-SQLite
 reproduced a second `EXECUTION_ENVIRONMENTS_UNAVAILABLE` body after the scoped
 denial; the handler now stops after authorization fails. Focused normal/Race
 tests and the full HTTP API suite pass. Production ACL remains disabled.
+
+F-025 asset-manifest reads for vault-status/capture and rebuild-plan setup now
+also fence Store errors against the qualified live grant. Rebuild-plan setup
+covers manifest reads for GET/seed/update/delete; source Snapshot reads for
+seed recheck `ProjectEdit` before returning even `NotFound`. Red-first
+temporary-SQLite revocation tests prove the scoped denial suppresses the
+stale capture, setup, and seed errors. The full HTTP API suite, focused Race
+coverage, and `go vet ./internal/httpapi` pass. This remains opt-in
+qualification code; Production ACL remains disabled.
