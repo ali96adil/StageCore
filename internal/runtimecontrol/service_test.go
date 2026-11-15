@@ -139,6 +139,151 @@ func TestStopCueCancelsPendingStartDelayWithoutWaitingForTimer(t *testing.T) {
 	}
 }
 
+func TestStopCancelsDelayedNestedMixedCueSubtreeWithoutWaiting(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	projects := store.New(handle.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Nested Mixed STOP", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := projects.CreateAlias(ctx, domain.ProjectDeviceAlias{ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC"}); err != nil {
+		t.Fatal(err)
+	}
+	registry := capability.NewRegistry()
+	for _, key := range []string{"sim.test", "sim.secondary"} {
+		if err := registry.Register(key, simulator.Adapter{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	terminal, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.1.1", Name: "Delayed Terminal", OrderIndex: 3,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
+		ExecutionPolicy: json.RawMessage(`{"start_delay_ms":8000}`),
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nestedPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{terminal.ID}, "linked_cue_mode": "TOGETHER",
+	})
+	nested, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1.1", Name: "Compound Mixed Child", OrderIndex: 2,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: nestedPolicy,
+	}, []domain.Action{
+		{OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test", Parameters: json.RawMessage(`{"branch":"lighting"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+		{OrderIndex: 1, ExecutionMode: "PARALLEL", TargetRef: "SIM", CapabilityKey: "sim.secondary", Parameters: json.RawMessage(`{"branch":"osc"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPolicy, _ := json.Marshal(map[string]any{
+		"linked_cue_ids": []string{nested.ID}, "linked_cue_mode": "TOGETHER",
+	})
+	root, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Mixed Root", OrderIndex: 1,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true, ExecutionPolicy: rootPolicy,
+	}, []domain.Action{
+		{OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test", Parameters: json.RawMessage(`{"branch":"root"}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(projects).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(projects, registry)
+	session, started := service.StartSession(ctx, StartRequest{
+		ProjectID: project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000000921",
+	})
+	if started.Status != contracts.CommandCompleted || session.RuntimeSnapshotID != published.ID {
+		t.Fatalf("start=%+v session=%+v", started, session)
+	}
+	goResult := make(chan contracts.CommandResult, 1)
+	go func() {
+		goResult <- service.Go(ctx, CueRequest{
+			SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000922",
+		})
+	}()
+	var cueExecution domain.CueExecution
+	var activeActions []domain.ActionExecution
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		executions, listErr := projects.ListCueExecutions(ctx, session.ID)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(executions) == 1 {
+			cueExecution = executions[0]
+			activeActions, listErr = projects.ListActionExecutions(ctx, cueExecution.ID)
+			if listErr != nil {
+				t.Fatal(listErr)
+			}
+			if len(activeActions) == 3 {
+				allDone := true
+				for _, action := range activeActions {
+					allDone = allDone && action.Result == domain.ExecutionCompleted
+				}
+				if allDone {
+					break
+				}
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if cueExecution.ID == "" || cueExecution.CueID != root.ID || len(activeActions) != 3 {
+		t.Fatalf("root and nested Actions did not finish before terminal delay: Cue=%+v Actions=%+v", cueExecution, activeActions)
+	}
+	for _, action := range activeActions {
+		if action.Result != domain.ExecutionCompleted || action.ActionID == terminal.Actions[0].ID {
+			t.Fatalf("unexpected Action before STOP while terminal Cue is delayed: %+v", action)
+		}
+	}
+
+	stopStarted := time.Now()
+	stop := service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000000923",
+	})
+	if stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP nested delayed Cue=%+v", stop)
+	}
+	if elapsed := time.Since(stopStarted); elapsed > 1500*time.Millisecond {
+		t.Fatalf("STOP waited for the terminal Cue's 8s delay: %s", elapsed)
+	}
+	select {
+	case result := <-goResult:
+		if result.Status != contracts.CommandCancelled {
+			t.Fatalf("GO after nested STOP=%+v, want CANCELLED", result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nested delayed GO did not terminate after STOP")
+	}
+	finished, err := projects.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(finished) != 1 || finished[0].Result != domain.ExecutionCancelled {
+		t.Fatalf("nested STOP persisted Cue results=%+v err=%v", finished, err)
+	}
+	finalActions, err := projects.ListActionExecutions(ctx, cueExecution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finalActions) != 3 {
+		t.Fatalf("delayed terminal Action dispatched after nested STOP: %+v", finalActions)
+	}
+}
+
 func TestRehearsalGoJumpNoReplayAndStopSession(t *testing.T) {
 	h := newRuntimeHarness(t)
 	ctx := context.Background()

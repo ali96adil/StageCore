@@ -32,6 +32,11 @@ top-level Cue, then ends the session with STOP. The route, Runtime Control and
 Cue Engine use only the `sim.test` adapter in this temporary database test;
 normal and Race runs pass.
 
+Runtime Control also has a nested STOP regression: the root and inner Mixed
+Actions complete while the terminal linked Cue is held behind an 8-second
+start delay; STOP returns promptly, cancels the GO and proves the terminal
+Action never dispatches. Normal and Race runs use two simulated capabilities.
+
 **Status key:** `Implemented` means the requested behavior is present in code
 and has relevant automated checks; `Partial` means code exists but a stated
 software acceptance condition remains; `Open` means a reproducible software
