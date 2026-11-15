@@ -5612,3 +5612,29 @@ This entry supersedes the preceding push instruction.
   Project-scoped read audit while the exact-head CI runs. Current isolated
   Pi 4 performance qualification remains pending; Mac/simulation results are
   not Pi evidence. Production ACL remains disabled and PR #534 stays Draft.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 rebuild-plan setup
+
+- PR #534 and remote remain at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. The latest code commit is
+  `7e2de95530ef47ff2971b7f766158e75a149a5ba`, 39 commits ahead before this
+  documentation commit. No push occurred.
+- Exact remote-head Core Go 1.26 run `43710243386` remains in progress; Go
+  1.27, both Companion checks and Camera Relay passed. Keep the push gate
+  closed until the same-head workflow set completes green.
+- `7e2de95` extends the shared F-025 rebuild-plan loader with a read-error
+  boundary hook and live route-grant recheck for the Environment manifest
+  query, covering GET, seed, update and delete. Red-first
+  `TestExecutionEnvironmentRebuildPlanEnvironmentSuppressesStoreErrorAfterGrantRevocation`
+  renamed only `manifest_json` in temporary SQLite and revoked `ProjectView`;
+  before the change, GET returned the generic 503, and now returns only the
+  scoped `PROJECT_NOT_FOUND` response.
+- Focused normal and Race rebuild-plan lifecycle/revocation tests passed,
+  `go vet ./internal/httpapi` passed, and full
+  `go test ./internal/httpapi -count=1` passed in 92.043 s. `git diff --check`
+  passed. No production SQLite, service, Vault bytes, or output device was
+  used.
+- Next inspect rebuild-plan source-snapshot read failures and remaining
+  project-scoped Store error responses; continue while exact-head CI is
+  running. Isolated Pi 4 current-head timing qualification is still pending.
+  Production ACL remains disabled; PR #534 remains Draft.

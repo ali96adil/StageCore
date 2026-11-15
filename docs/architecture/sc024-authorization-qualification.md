@@ -2083,3 +2083,19 @@ snapshot-list, rebuild-plan and operation Store-error fences. `go vet
 ./internal/httpapi`, diff checks, and full `go test ./internal/httpapi -count=1`
 (92.060 s) pass. No Vault bytes, production data, or output devices were
 accessed; production ACL remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan environment read errors
+
+The F-025 rebuild-plan loader now invokes the read-error test hook and
+rechecks the qualified route grant before writing an error for its Environment
+manifest read. All four routes using the shared loader (GET, seed, update and
+delete) now stop after a scoped denial. Red-first
+`TestExecutionEnvironmentRebuildPlanEnvironmentSuppressesStoreErrorAfterGrantRevocation`
+renamed only the manifest column in temporary SQLite and revoked `ProjectView`
+at the read boundary; before the fix, GET returned
+`EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE` (503), and now returns only
+`PROJECT_NOT_FOUND`. The focused normal and Race lifecycle/revocation tests,
+`go vet ./internal/httpapi`, diff checks, and full
+`go test ./internal/httpapi -count=1` (92.043 s) pass. Production data and
+ACL state are unchanged.
