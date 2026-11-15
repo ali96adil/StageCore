@@ -219,3 +219,10 @@ temporary-SQLite `TestConfigurationLockStoreErrorsSuppressAfterGrantRevocation`
 reproduced stale `PROJECTS_UNAVAILABLE` responses after ProjectView/ProjectEdit
 revocation on GET and POST; the new response is the scoped Project denial.
 Production ACL remains disabled.
+
+The opt-in Tablet Scene GET also fences Project, Revision, Cue, Alias and
+device read failures against the live `ProjectView` grant. Its red-first
+temporary-SQLite regression reproduced a second `TABLET_SCENES_UNAVAILABLE`
+JSON response being appended after the scoped denial; the handler now stops
+after the authorization response. Focused normal/Race tests, full HTTP API
+tests, `go vet ./internal/httpapi` and diff checks pass.

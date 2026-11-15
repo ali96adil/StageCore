@@ -5464,3 +5464,26 @@ This entry supersedes the preceding push instruction.
   Production ACL remains disabled; no production service/data, physical output,
   firmware or paid service was used. Current-head isolated Pi 4 performance
   qualification is still pending; historical simulation is not current Pi proof.
+
+## Qualification batch checkpoint — 2026-11-15 · Tablet Scene read fences
+
+- PR #534 / remote remain at `3c535543c0242d349a94f23948a1ad18747468c0`;
+  local code HEAD is `1c49bae5c1a9003d5833f8a2bc8e0afacf346ebb`, 31 commits
+  ahead. The code commit is clean; qualification and matrix updates plus this
+  checkpoint are documentation changes being saved next. No push occurred.
+- Exact-head Core `43707820414` still has Go 1.26 Race in progress; Go 1.27
+  passed. Companion `43707820363` and Camera Relay `43707820418` passed. Do
+  not push until the exact `3c53554` workflow set is fully green.
+- `1c49bae` fences the opt-in Tablet Scene projection's Project, Revision,
+  Cue, Alias and device read errors with a live session/ProjectView recheck.
+  The red-first `TestTabletSceneReadSuppressesStoreErrorAfterGrantRevocation`
+  dropped only temporary SQLite `cues`; before the fix, the revoked response
+  was followed by a second `TABLET_SCENES_UNAVAILABLE` body. The handler now
+  returns immediately after the denial.
+- Focused normal and Race tests, normal full `go test ./internal/httpapi
+  -count=1` (92.646 s), `go vet ./internal/httpapi`, and diff check passed.
+  Tablet behavior remains simulated and the opt-in ACL is not assembled in
+  production.
+- Next: apply the same red-first review to remaining project-scoped lighting
+  controller GET errors and other read projections; continue waiting on Core
+  1.26 CI. No production operations, hardware output or firmware changes.

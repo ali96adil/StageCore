@@ -2012,3 +2012,16 @@ corrected endpoints return the scoped `PROJECT_NOT_FOUND` denial. The SHOW
 lock regression also revokes `ProjectEdit` immediately before a locked
 response and confirms that the SHOW session and Snapshot identifiers are
 withheld. Production ACL remains disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Tablet Scene read errors
+
+The opt-in Tablet Scene projection now rechecks the live session and
+`ProjectView` grant before returning project, revision, Cue, Alias or device
+Store failures. Red-first `TestTabletSceneReadSuppressesStoreErrorAfterGrantRevocation`
+dropped only the temporary SQLite `cues` table and reproduced both the scoped
+denial and the subsequent `TABLET_SCENES_UNAVAILABLE` response being written
+to one body. The corrected path stops after the denial. Focused normal/Race
+tests, `go vet ./internal/httpapi`, `git diff --check`, and full
+`go test ./internal/httpapi -count=1` (92.646 s) pass. Production assembly
+and ACL state are unchanged.
