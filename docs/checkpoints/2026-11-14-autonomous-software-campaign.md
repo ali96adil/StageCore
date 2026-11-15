@@ -4173,3 +4173,39 @@ This entry supersedes the preceding push instruction.
   batch to existing PR #534 using a normal fast-forward, then watch all exact-
   head checks. Continue with the next independently testable software gap;
   retain hardware/production qualification as separately pending.
+
+## Resume update — 2026-11-15 · RTL, keyboard and touch workspace gate
+
+- Main branch `integration/stagecore-rc`, Draft PR #534. Remote is still
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Local HEAD before this
+  checkpoint is `a0c08122007f1ffeb5176889e9895c5a835b563d`; fourteen commits
+  are ahead of remote. This Handoff commit becomes the fifteenth. No push has
+  occurred.
+- Extended SC-017's actual SHOW-stop/re-entry browser gate with native CDP
+  keyboard Enter and touch events, a 390×844 device-emulated viewport, Arabic
+  RTL layout, visible keyboard focus and horizontal overflow checks for active
+  SHOW, post-stop, Cues and inactive Runtime. The script's viewport check is
+  synchronized with DevTools before page assertions; no real tablet is used.
+  SC-017 matrix now records Owner/390×844 coverage and still marks other roles
+  and desktop/tablet sizes as open.
+- The completed Chrome test passed three consecutive normal runs and one Race
+  run; `go vet ./internal/httpapi`, JS syntax, gofmt and `git diff --check`
+  passed. Session termination remains the normal API/Service route against
+  temporary SQLite with a no-op safety seam; only `/runtime/stop-session` is an
+  API mutation. No Cue ran, no real output was contacted and no Snapshot was
+  created by the browser flow.
+- Remote Core CI `43657410250` is still **in progress** at exact SHA
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`; Go 1.27 is successful and Go
+  1.26 has not completed. Companion `43657410210` and Camera `43657410252` were
+  successful at last check. Keep the fourteen local commits unpushed until
+  Core completes. Verify same PR/branch and exact check SHAs before a normal
+  fast-forward; then wait all checks before another push.
+- Existing Pi 4 ARM64 Mixed Cue/linked-chain, scheduling, burst, sustained
+  rehearsal and STOP/Blackout measurements remain valid because this batch
+  changes only the browser test and qualification docs. Keep Engine, ACL, HTTP
+  and external-output time separate. Production ACL remains disabled.
+- No production services/data/Vault, original show, real devices or firmware
+  touched; no force push, merge, paid action or backup deletion. First next
+  action: recheck Core CI; then push only after completion and continue the
+  next software-only gap while keeping hardware and production approval
+  separately pending.
