@@ -5254,3 +5254,10 @@ This entry supersedes the preceding push instruction.
   endpoint/error audit, and wait for exact-head CI before normal fast-forward
   pushes to the existing PR. Production ACL/services/data and physical device
   access remain prohibited.
+- Read-only recheck of the related open PRs found the same heads and green
+  software checks: TabletPlayer #36 `91613da`, DMX Lighting #39 `3ad7749`,
+  Camera #20 `455b066`, StageLaser #56 `b14a578`, and StageLaser #57
+  `c4ff10b`. No related checkout was modified. Companion, StageAudio, OSC,
+  VDMX, Ableton and QLC+ are qualified through the existing source/tests and
+  Core integration; their dedicated endpoint/physical acceptance remains
+  separate where the matrix says so.
