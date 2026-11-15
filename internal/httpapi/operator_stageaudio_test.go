@@ -438,6 +438,74 @@ func TestScopedStageAudioUnconfiguredCommandRequiresProjectGrant(t *testing.T) {
 	}
 }
 
+func TestScopedStageAudioShowLockResponseRechecksGrant(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, revision, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Scoped audio show lock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := projects.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(projects).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	show, err := projects.CreateSession(ctx, published.ID, domain.SessionShow, "scoped audio lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projects.EndSession(ctx, show.ID, domain.SessionCompleted)
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "audio-show-lock-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead, projectaccess.AudioControl}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := &fakeStageAudio{}
+	scope := &StageAudioProjectScope{ProjectID: project.ID, Access: access, Vault: objects}
+	handler := New(withScopedOperatorStageAudio(h.auth, projects, sidecar, nil, stageaudio.NewShowFence(), scope,
+		stageAudioHooks{BeforeCommandRuntimeStateResponse: func() {
+			if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+				t.Errorf("revoke audio.control before SHOW lock response: %v", err)
+			}
+		}})).Handler()
+	body, err := json.Marshal(stageaudio.Request{Operation: "PLAY", Deck: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/audio/command?project_id="+project.ID, bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:9131"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(csrfHeader, login.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: login.Token})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "STAGEAUDIO_SHOW_LOCKED") || len(sidecar.calls) != 0 {
+		t.Fatalf("SHOW lock response escaped after Project grant revocation: HTTP %d body=%s sidecar calls=%d", res.Code, res.Body.String(), len(sidecar.calls))
+	}
+}
+
 type audioLocalFunc func(context.Context, stageaudio.Request) (stageaudio.LocalReply, error)
 
 func (f audioLocalFunc) Call(ctx context.Context, req stageaudio.Request) (stageaudio.LocalReply, error) {

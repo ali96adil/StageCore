@@ -25,6 +25,7 @@ type stageAudioHooks struct {
 	BeforeStatusResponse              func()
 	BeforeStatusErrorResponse         func()
 	BeforeCommandRuntimeErrorResponse func()
+	BeforeCommandRuntimeStateResponse func()
 	BeforeMediaChoices                func()
 }
 
@@ -203,6 +204,13 @@ func withScopedOperatorStageAudio(auth *userauth.Service, stageStore *store.Stor
 					return
 				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "STAGEAUDIO_SESSION_STATUS_UNAVAILABLE"})
+				return
+			}
+			if hooks.BeforeCommandRuntimeStateResponse != nil {
+				hooks.BeforeCommandRuntimeStateResponse()
+			}
+			if !authorize(r, session, true) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "STAGEAUDIO_PROJECT_UNAVAILABLE"})
 				return
 			}
 			if active == domain.SessionShow {
