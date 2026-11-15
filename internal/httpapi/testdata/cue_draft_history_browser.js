@@ -2,6 +2,9 @@
 
 (async () => {
   const trace = [];
+  const reloadKey = "sc009_cue_history_reload_check";
+  const priorRun = sessionStorage.getItem(reloadKey);
+  const previousProof = priorRun ? JSON.parse(priorRun) : null;
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const response = await nativeFetch(...args);
@@ -40,6 +43,28 @@
     const toolbar = document.getElementById("sc009ProjectDraftHistory");
     await waitFor(() => toolbar && toolbar.querySelectorAll("button").length === 2,
       "persistent Cue Draft history toolbar");
+    if (previousProof) {
+      sessionStorage.removeItem(reloadKey);
+      const [undo, redo] = toolbar.querySelectorAll("button");
+      await waitFor(() => !undo.disabled && redo.disabled, "persisted Undo state after page reload");
+      const parentRestored = !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`);
+      const linkedChildRestored = !!document.querySelector(`#content tr[data-cue-id="${config.linked_cue}"]`);
+      if (!parentRestored || !linkedChildRestored) {
+        throw new Error("reload did not preserve the restored Mixed and linked Cue rows");
+      }
+      const reloadHistoryRequests = trace.filter(({url}) => url.includes("/cue-draft-history"))
+        .map(({method, status}) => `${method}:${status}`);
+      await report({
+        status: "PASS", undo_enabled: true, redo_after_undo: true,
+        keyboard_undo: true, keyboard_redo: true, touch_redo: true,
+        restored_same_cue: parentRestored, linked_child_after_undo: true,
+        linked_child_after_keyboard_redo: linkedChildRestored, persisted_after_reload: true,
+        overflow: document.documentElement.scrollWidth > window.innerWidth,
+        history_requests: [...previousProof.history_requests, ...reloadHistoryRequests],
+        execution_requests: previousProof.execution_requests,
+      });
+      return;
+    }
     const buttons = toolbar.querySelectorAll("button");
     const undo = buttons[0];
     const redo = buttons[1];
@@ -110,15 +135,9 @@
     const executionRequests = trace.filter(({url, method}) =>
       method !== "GET" && /\/api\/v1\/projects\/[^/]+\/(?:runtime\/(?:go|jump|start)|publish)(?:\?|$)/.test(url));
     const historyRequests = trace.filter(({url}) => url.includes("/cue-draft-history")).map(({method, status}) => `${method}:${status}`);
-    const overflow = document.documentElement.scrollWidth > window.innerWidth;
-    await report({
-      status: "PASS", undo_enabled: initialUndoEnabled, redo_after_undo: true,
-      keyboard_undo: true, keyboard_redo: true, touch_redo: true,
-      restored_same_cue: !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
-      linked_child_after_undo: linkedChildAfterUndo,
-      linked_child_after_keyboard_redo: linkedChildAfterKeyboardRedo,
-      overflow, history_requests: historyRequests, execution_requests: executionRequests,
-    });
+    sessionStorage.setItem(reloadKey, JSON.stringify({history_requests: historyRequests, execution_requests: executionRequests}));
+    window.location.reload();
+    return;
   } catch (error) {
     await report({status: "FAIL", error: String(error?.stack || error), trace});
   }

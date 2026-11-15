@@ -266,6 +266,7 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		RestoredSameCue   bool     `json:"restored_same_cue"`
 		LinkedChildUndo   bool     `json:"linked_child_after_undo"`
 		LinkedChildRedo   bool     `json:"linked_child_after_keyboard_redo"`
+		PersistedReload   bool     `json:"persisted_after_reload"`
 		Overflow          bool     `json:"overflow"`
 		HistoryRequests   []string `json:"history_requests"`
 		ExecutionRequests []string `json:"execution_requests"`
@@ -275,7 +276,7 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 	}
 	if report.Status != "PASS" || !report.UndoEnabled || !report.RedoAfterUndo ||
 		!report.KeyboardUndo || !report.KeyboardRedo || !report.TouchRedo || !report.RestoredSameCue ||
-		!report.LinkedChildUndo || !report.LinkedChildRedo || report.Overflow ||
+		!report.LinkedChildUndo || !report.LinkedChildRedo || !report.PersistedReload || report.Overflow ||
 		len(report.HistoryRequests) < 2 || len(report.ExecutionRequests) != 0 {
 		t.Fatalf("browser Draft history acceptance failed: %+v", report)
 	}
