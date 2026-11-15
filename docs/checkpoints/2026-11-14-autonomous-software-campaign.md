@@ -4095,3 +4095,41 @@ This entry supersedes the preceding push instruction.
   and simulation-only data. Production services, Vault/show data and hardware
   were not used; Project ACL/SC-024 remains off in production. No firmware,
   force push, merge, paid operation or backup deletion.
+
+## Resume update — 2026-11-15 · lighting save and read response fences
+
+- Main repository branch `integration/stagecore-rc`; PR #534 OPEN/Draft. Remote
+  branch/PR remain at `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`. Local HEAD
+  before this Handoff edit is `ae7e7956e0241b779cac2a58fabb5646d3d0f3b6`; ten
+  commits are ahead (`949c3b7`, `34edd9a`, `826f3d6`, `8c19c1f`, `156eff7`,
+  `169be4a`, `435a214`, `ac997bd`, `0f8bd07`, `ae7e795`). The Handoff update
+  will be the eleventh local commit. No push has been made.
+- SC-007 `lighting-authoring.js` now retains the source Project ID across
+  translation and Cue writes, abandons a stale save after the editor is
+  detached/reassigned, and keeps fetched lighting models local until the
+  selected Project still matches. Real-Chrome acceptance uses temporary
+  Projects and SQLite, blocks a second translation response while switching
+  Projects and proves no Cue write reaches the destination; it also blocks a
+  source Project lighting-model response until after the destination renders
+  and proves the stale response cannot replace that view. Preview error
+  recovery and copied-value Draft persistence stay in the same test. The test
+  sends no physical or runtime command and publishes no Snapshot.
+- SC-007 browser test passed three consecutive normal runs and one Race run;
+  `go vet ./internal/httpapi`, JS syntax, Operator Node tests, `git diff
+  --check` and Go formatting passed. The separate SC-013 nested Mixed Inspector
+  now checks offline target, missing DMX and synthetic Machine Role/missing
+  Companion scenarios, each without fetch or GO/STOP/Blackout; normal and
+  Race browser runs passed. The synthetic metadata tests scenario classification
+  only, not a real Companion connection.
+- Current remote Core `43657410250` remains **in progress** on `0c05405`:
+  Go 1.27 Test/Vet and Go 1.26 Test/Browser/Vet passed, Go 1.26 Race is still
+  running, and ARM64 builds are pending. Companion `43657410210` and Camera
+  `43657410252` pass. Keep all ten local commits unpushed until Core completes;
+  then verify branch/PR and workflow exact SHAs before normal fast-forward to
+  the existing #534. After push, wait all exact-head workflows before another
+  push.
+- Pi 4 ARM64 performance evidence remains the existing qualified dataset; no
+  runtime source changed since its measured binary. Do not rerun solely for a
+  newer commit label. Project ACL/SC-024 remains production-off. Production
+  services/data/Vault, original show data and real devices remain untouched;
+  no firmware, force push, merge, paid action or backup deletion.
