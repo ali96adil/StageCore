@@ -4240,3 +4240,39 @@ This entry supersedes the preceding push instruction.
   Production ACL stays disabled. No production services, show data, Vault,
   real devices, firmware or backup artifacts were touched; no force push,
   merge or paid action.
+
+## Resume update — 2026-11-15 · role gate and Core contract regression
+
+- Branch `integration/stagecore-rc`, Draft PR #534 OPEN. Previous push advanced
+  the remote from `0c0540574b73ab80557b31d20bfe46c6c1b6a08a` to
+  `12d7bbae3b9c1d52b9b36cb0a3dbaa3ca4b1f1ec`. Local HEAD before this Handoff
+  is `6e7b642a2be4f3fb82c38c58592d022ef23a3c11`, two commits ahead; this
+  checkpoint will be the third. No force push or branch change.
+- Core CI `43660680334` completed **failure** at `12d7bba`: Go 1.26 and 1.27
+  both failed only `internal/operatorweb/TestLightingCueBuilderOrdersAcrossAllRevisionCues`,
+  whose static marker still required the old `Promise.all` assignment after
+  the already-committed Project-response fence refactor changed the source
+  shape. The Cue-order behavior test itself remains; its contract now checks
+  all-revision Cue loading/order allocation and that stale Project responses
+  are rejected before view assignment and Cue writes. Full local `go test ./...`
+  now passes on Go 1.27.1. Re-run both CI versions after push.
+- SC-017 Chrome coverage now authenticates actual temporary Owner, Technician,
+  Operator and Viewer accounts. Technician and Operator exit simulated SHOWs;
+  Viewer lacks Cue editing and has disabled GO/STOP/Blackout while pinned to a
+  seeded SHOW, which Owner safely exits. All API session changes are
+  stop-session requests; fixtures use temporary SQLite, `sim.test` and an
+  explicit no-op safety seam. Owner layout remains checked at 390×844,
+  768×1024 and 1280×800 RTL; other roles are checked at 390×844. Matrix row
+  SC-017 describes this boundary and remaining role-at-wide-viewports gap.
+- Verification: `go test ./...` passed; Chrome SC-017 passed three consecutive
+  runs and a Race run after the role test additions; `go test ./internal/operatorweb`,
+  `go vet ./internal/httpapi ./internal/operatorweb`, JS syntax, gofmt and
+  `git diff --check` passed. Companion `43660680338` and Camera Relay
+  `43660680351` passed on exact `12d7bba`; Core must be rerun after this fix.
+- Next: verify no workflow remains active on `12d7bba`, confirm the existing
+  PR and remote SHA, then push these two test commits plus this Handoff using a
+  normal fast-forward. Wait Core, Companion and Camera checks on the new exact
+  SHA before another push. No Pi performance runtime code changed; keep the
+  existing ARM64 qualifications and Engine/ACL/HTTP/output timing separation.
+  No production service/data/Vault, original show data, real device, firmware,
+  backup, paid action, merge or force push was used.
