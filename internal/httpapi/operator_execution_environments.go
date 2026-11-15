@@ -63,7 +63,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	item := collection + "/{execution_environment_id}"
 
 	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
+		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse)
 		if !ok {
 			return
 		}
@@ -205,16 +205,28 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	}))
 }
 
-func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store) (domain.Project, domain.ProjectRevision, bool) {
+func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store, beforeError ...func(string)) (domain.Project, domain.ProjectRevision, bool) {
 	projectID := strings.TrimSpace(r.PathValue("project_id"))
 	revisionID := strings.TrimSpace(r.PathValue("revision_id"))
 	project, err := stageStore.GetProject(r.Context(), projectID)
 	if err != nil {
+		if len(beforeError) > 0 && beforeError[0] != nil {
+			beforeError[0]("revision-project")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	revision, err := stageStore.GetRevision(r.Context(), revisionID)
 	if err != nil {
+		if len(beforeError) > 0 && beforeError[0] != nil {
+			beforeError[0]("revision")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
@@ -223,6 +235,16 @@ func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, st
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	return project, revision, true
+}
+
+func recheckQualifiedProjectRoute(w http.ResponseWriter, r *http.Request) bool {
+	grant, ok := r.Context().Value(projectRouteGrantKey{}).(projectRouteGrant)
+	if !ok || grant.access == nil {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	_, err := currentProjectRouteGrant(r)
+	return writeProjectQualificationError(w, err)
 }
 
 func makeExecutionEnvironmentView(environment store.ExecutionEnvironmentManifest) executionEnvironmentView {
