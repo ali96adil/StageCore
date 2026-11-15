@@ -9,18 +9,20 @@ no linked repository checkout is available here, so none was modified.
 StageCore #503–#508 and #514–#516 remain open at the heads listed below; their
 listed Go 1.26/1.27 checks pass. StageCore Draft PR #534 is open on
 `integration/stagecore-rc` at remote HEAD
-`3955c65fbc7b10d3b36015dd4642fb8dd9ca7fdc`. Exact-head Core run `43684038797`
-has Go 1.26/1.27, Race, Browser Cue Delivery, Vet, and Linux ARM64 product
-builds PASS. Companion Core `43684038783` and Camera Relay `43684038809` also
-pass. Local commits `ff820cb`, `4e4dc6d`, `5c6d3c9`, and `5b155e1` plus the
-current zoom-qualification batch are preserved above the remote SHA and ready
-for a normal fast-forward after the batch is committed. The latest local
-regression covers offline Mixed-Cue
+`05f2cf53f0e58e8498521c638d33f0d0eea3f524`. Previous exact-head Core run
+`43684038797` passed Go 1.26/1.27, Race, Browser Cue Delivery, Vet, and Linux
+ARM64 product builds; Companion Core `43684038783` and Camera Relay
+`43684038809` also passed. Current exact-head workflows are running: Core
+`43686295363`, Companion Core `43686295344`, and Camera Relay `43686295364`.
+The five-commit qualification batch was pushed normally to the existing PR;
+local, origin and PR head match. The latest regression covers offline
+Mixed-Cue
 recovery after an isolated Chrome process restart, native touch/keyboard
 Timing controls, and actual 200% Chrome zoom for the Cue Inspector in RTL/LTR;
 see the dated campaign checkpoint and retained screenshots for evidence and
-remaining route work. All linked firmware checks remain source/build probes,
-not physical board qualification.
+remaining route work. Do not push another change until all three current
+workflows finish. All linked firmware checks remain source/build probes, not
+physical board qualification.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. No linked repository checkout is available in
 this workspace, so no other repository was modified.
