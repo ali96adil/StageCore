@@ -334,7 +334,7 @@ tr:last-child td { border-bottom: 0; }
 .dialog form { padding: 22px; display: grid; gap: 15px; }
 .dialog-head, .action-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .dialog-head h2 { margin: 0; }
-.dialog-actions { position: sticky; bottom: -22px; margin: 6px -22px -22px; padding: 14px 22px; border-top: 1px solid var(--line); background: #111820; display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-actions { position: sticky; bottom: 0; margin: 6px -22px 0; padding: 14px 22px; border-top: 1px solid var(--line); background: #111820; display: flex; justify-content: flex-end; gap: 8px; }
 .actions-editor { display: grid; gap: 12px; }
 .action-editor { padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: #0e141b; display: grid; gap: 12px; }
 .action-title { color: var(--accent); font-size: .78rem; }
