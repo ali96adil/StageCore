@@ -1736,3 +1736,19 @@ The focused Vault-status and capture tests pass normally and under Race. Full
 `go test ./internal/httpapi -count=1` passed in 80.854 s; `go vet
 ./internal/httpapi` and `git diff --check` pass. The test uses no production
 Vault, production service, device or ACL activation.
+
+## SC-024 continuation · 2026-11-15 · Execution-environment snapshot reads
+
+The execution-environment snapshot list, detail and diff routes returned Store
+errors before the final live `media.read` check used for successful responses.
+`TestExecutionEnvironmentSnapshotListSuppressesStoreErrorAfterGrantRevocation`
+drops `execution_environment_snapshots` only in temporary SQLite and revokes
+`media.read` at the Store failure boundary; before the fix, the operator
+received HTTP 503 after revocation. Snapshot Store and lookup error branches
+now recheck the current session and Project grant before exposing the mapped
+error. The focused regression passes normally and under Race.
+
+After this addition, full `go test ./internal/httpapi -count=1` passed in
+80.750 s; `go vet ./internal/httpapi` and `git diff --check` pass. The list,
+detail and diff use simulated stored snapshots only; no runtime adapter or
+physical device is contacted. Production ACL remains disabled.
