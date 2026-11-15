@@ -5321,3 +5321,28 @@ This entry supersedes the preceding push instruction.
   dispatch review while CI runs. Preserve the no-production/no-real-device
   constraints. Pi current-head performance still requires a verified isolated
   Raspberry Pi 4 lab; never use the production-like `stagecore-pi` host.
+
+## Resume update — 2026-11-15 · private Cue editor read fences
+
+- Remote/PR #534 remains at `4ff6ed3f018c1589b5ed49a9972e423eddadddba` on
+  `integration/stagecore-rc`. Code commit
+  `b159c2a9daf97bee5fee52c43625246ba9574a95` is the current local code tip,
+  23 commits ahead; its qualification documentation is committed. The
+  worktree is clean and nothing from the local stack has been pushed.
+- Core run `43705363041` still has Go 1.26 Race in progress; Go 1.27 passed.
+  Companion run `43705363040` and Camera Relay run `43705363044` passed. Do not
+  push until the exact 4ff head's remaining Core job finishes and all runs are
+  green. Afterward, verify PR/remote ancestry and push only the next normal
+  fast-forward group ending at `3c53554`; then wait for its exact-head CI.
+- Commit `b159c2a` fences Store errors from Cue Editor Recovery, Checkpoint
+  and Action Preset reads. Red-first SQLite tests reproduced stale 503
+  responses on all three after live grant revocation. Preflight Project/Cue/
+  Revision errors are also fenced. Verification: focused normal tests for the
+  three private editor reads and the preceding five read-fence cases; focused
+  Race test covering all cases; `go vet ./internal/httpapi`;
+  `git diff --check`; and full `go test ./internal/httpapi -count=1` (84.780 s).
+- The campaign remains in qualification mode. Production ACL is disabled;
+  no production services/data or physical device were used. Continue auditing
+  authorization error and asynchronous delivery boundaries while the existing
+  Core workflow runs. Pi performance qualification still requires the verified
+  isolated Raspberry Pi 4 lab.
