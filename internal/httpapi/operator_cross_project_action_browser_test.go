@@ -99,6 +99,8 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
+	mapReadyRequests := make(chan chan struct{}, 1)
+	applyReadyRequests := make(chan chan struct{}, 1)
 	browserRequests := make(chan string, 256)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -127,6 +129,30 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/cross-project-copy-map-ready":
+			resume := make(chan struct{})
+			select {
+			case mapReadyRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/cross-project-copy-apply-ready":
+			resume := make(chan struct{})
+			select {
+			case applyReadyRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/cross-project-copy-test.js":
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = w.Write(testScript)
@@ -158,7 +184,7 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--window-size=1440,900",
+		"--remote-debugging-port=0", "--remote-allow-origins=*", "--window-size=1440,900",
 		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "cross-project-copy-browser.log"))
 	if err != nil {
@@ -171,6 +197,13 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		<-done
+		t.Fatalf("connect to cross-Project target-map Chrome: %v", err)
+	}
+	defer cdp.Close()
 	exited := false
 	defer func() {
 		cancel()
@@ -179,22 +212,44 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 		}
 	}()
 	var outcome string
-	select {
-	case outcome = <-browserResult:
-		if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
-			t.Fatal(outcome)
+	keyCommandID := 300
+	for outcome == "" {
+		select {
+		case outcome = <-browserResult:
+		case resume := <-mapReadyRequests:
+			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
+				t.Fatalf("send native Enter to the target selector: %v", err)
+			}
+			keyCommandID += 2
+			close(resume)
+		case resume := <-applyReadyRequests:
+			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
+				t.Fatalf("send native Enter to Apply target mapping: %v", err)
+			}
+			keyCommandID += 2
+			close(resume)
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(browserLog.Name())
+			requests := make([]string, 0, len(browserRequests))
+			for len(browserRequests) > 0 {
+				requests = append(requests, <-browserRequests)
+			}
+			t.Fatalf("browser did not finish: %s\nrequests=%v", output, requests)
 		}
-	case err := <-done:
-		exited = true
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser exited before reporting: %v\n%s", err, output)
-	case <-ctx.Done():
-		output, _ := os.ReadFile(browserLog.Name())
-		requests := make([]string, 0, len(browserRequests))
-		for len(browserRequests) > 0 {
-			requests = append(requests, <-browserRequests)
+	}
+	if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
+		var failure struct {
+			Error          string `json:"error"`
+			TargetMapDebug any    `json:"target_map_debug"`
 		}
-		t.Fatalf("browser did not finish: %s\nrequests=%v", output, requests)
+		if err := json.Unmarshal([]byte(outcome), &failure); err != nil {
+			t.Fatalf("browser copy failed with invalid report %q: %v", outcome, err)
+		}
+		t.Fatalf("browser copy failed: %s; target map state: %+v", failure.Error, failure.TargetMapDebug)
 	}
 
 	var report struct {

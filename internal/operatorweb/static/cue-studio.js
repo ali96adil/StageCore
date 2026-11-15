@@ -309,7 +309,6 @@
     dialog.className = "dialog sc008-target-map-dialog";
     dialog.setAttribute("aria-labelledby", "sc008TargetMapTitle");
     const form = document.createElement("form");
-    form.method = "dialog";
     const heading = document.createElement("div");
     heading.className = "dialog-head";
     const title = document.createElement("h2");
@@ -356,13 +355,12 @@
     cancel.textContent = tr("إلغاء", "Cancel");
     cancel.addEventListener("click", () => dialog.close());
     const apply = document.createElement("button");
-    apply.type = "submit";
+    apply.type = "button";
     apply.className = "button primary";
     apply.textContent = tr("تطبيق على المسودة", "Apply to Draft");
     actions.append(cancel, apply);
     form.append(actions);
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
+    apply.addEventListener("click", () => {
       if (!isCurrentCrossProjectMapContext(cards)) {
         crossProjectPasteContext = null;
         crossProjectPastedCards = [];

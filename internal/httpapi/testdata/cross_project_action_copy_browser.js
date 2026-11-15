@@ -4,6 +4,7 @@
   const requestTrace = [];
   const confirmMessages = [];
   let targetMapLayout = null;
+  let targetMapDebug = null;
   window.confirm = (message) => { confirmMessages.push(String(message)); return true; };
   const browserFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
@@ -112,7 +113,7 @@
     const mapDialog = document.getElementById("sc008TargetMapDialog");
     await waitFor(() => mapDialog?.open, "opening bulk target mapping dialog");
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const mapApply = mapDialog.querySelector('button[type="submit"]');
+    const mapApply = mapDialog.querySelector(".button.primary");
     mapApply.scrollIntoView({block: "nearest"});
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const mapApplyBounds = mapApply.getBoundingClientRect();
@@ -140,13 +141,36 @@
       if (!sourceTarget || ![...select.options].some((option) => option.value === mapping[sourceTarget])) {
         throw new Error(`target map lacks configured destination for ${select.getAttribute("aria-label")}`);
       }
+    }
+    if (document.activeElement !== targetSelects[0]) throw new Error("opening target map did not focus its first destination selector");
+    const keyboardReady = await fetch("/cross-project-copy-map-ready", {method: "POST"});
+    if (!keyboardReady.ok) throw new Error(`native keyboard handshake returned HTTP ${keyboardReady.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!mapDialog.open || targetSelects.some((select) => select.value !== "")) {
+      throw new Error("Enter on an incomplete target selector closed or changed the mapping dialog");
+    }
+    for (const select of targetSelects) {
+      const sourceTarget = Object.keys(mapping).find((source) => select.getAttribute("aria-label").includes(source));
       select.value = mapping[sourceTarget];
       select.dispatchEvent(new Event("change", {bubbles: true}));
     }
-    mapDialog.querySelector("form").requestSubmit();
-    await waitFor(() => !mapDialog.open &&
-      JSON.stringify([...document.querySelectorAll("#actionsEditor .action-target")].map((input) => input.value)) ===
-        JSON.stringify(["DEST-LIGHT", "DEST-OSC"]), "applying Draft-only target mapping");
+    mapApply.focus();
+    if (document.activeElement !== mapApply) throw new Error("target-map Apply control did not receive keyboard focus");
+    const applyReady = await fetch("/cross-project-copy-apply-ready", {method: "POST"});
+    if (!applyReady.ok) throw new Error(`native Apply handshake returned HTTP ${applyReady.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    targetMapDebug = {
+      dialog_open: mapDialog.open,
+      selected_targets: targetSelects.map((select) => select.value),
+      action_targets: [...document.querySelectorAll("#actionsEditor .action-target")].map((input) => input.value),
+      focused_control: document.activeElement?.outerHTML?.slice(0, 180) || "none",
+    };
+    if (mapDialog.open || JSON.stringify(targetMapDebug.action_targets) !== JSON.stringify(["DEST-LIGHT", "DEST-OSC"])) {
+      throw new Error(`native keyboard did not apply the Draft-only target map: ${JSON.stringify(targetMapDebug)}`);
+    }
+    if (targetSelects[0].value !== "DEST-LIGHT" || targetSelects[1].value !== "DEST-OSC") {
+      throw new Error(`native keyboard mapping chose unexpected targets: ${targetSelects.map((select) => select.value).join(",")}`);
+    }
 
     document.getElementById("cueForm").requestSubmit();
     await waitFor(() => !dialog.open && state.cues.find((cue) => cue.cue_id === config.destination_cue)?.actions?.length === 2,
@@ -166,6 +190,6 @@
       configuration_copied: configurationCopied, ...targetMapLayout, requests: requestTrace,
     });
   } catch (error) {
-    await report({status: "FAIL", error: String(error.stack || error), requests: requestTrace});
+    await report({status: "FAIL", error: String(error.stack || error), target_map_debug: targetMapDebug, requests: requestTrace});
   }
 })();
