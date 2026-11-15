@@ -153,6 +153,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, source.ID, seeded, session.User.ID,
 		)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-seed-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
@@ -187,6 +193,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID, sourceID, body.Plan, session.User.ID,
 		)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-update-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UPDATE_FAILED")
 			return
 		}
@@ -213,6 +225,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		if err := stageStore.DeleteExecutionEnvironmentRebuildPlan(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), environment.ID); err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-delete-write")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_DELETE_FAILED")
 			return
 		}
