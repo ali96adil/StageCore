@@ -89,6 +89,8 @@ internal/httpapi/operator_extensions.go	GET /api/v1/extensions/packages/{package
 internal/httpapi/operator_extensions.go	POST /api/v1/extensions/catalog/sync
 internal/httpapi/operator_extensions.go	POST /api/v1/extensions/import-bundle
 internal/httpapi/operator_extensions.go	POST /api/v1/extensions/register
+internal/httpapi/operator_input_draft_history.go	GET /api/v1/projects/{project_id}/input-draft-history
+internal/httpapi/operator_input_draft_history.go	POST /api/v1/projects/{project_id}/input-draft-history
 internal/httpapi/operator_ha_authority.go	GET /api/v1/ha/authority
 internal/httpapi/operator_ha_authority.go	POST /api/v1/ha/authority/activate
 internal/httpapi/operator_ha_authority.go	POST /api/v1/ha/authority/demote

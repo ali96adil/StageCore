@@ -130,6 +130,7 @@ func withOperatorConfigurationHooks(auth *userauth.Service, stageStore *store.St
 
 func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) {
 	registerRouteDraftHistoryRoutes(mux, auth, stageStore, hooks)
+	registerInputDraftHistoryRoutes(mux, auth, stageStore, hooks)
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
 		if !ok {
@@ -260,7 +261,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/inputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		writeCtx := store.WithInputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var body inputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
@@ -298,7 +299,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		writeCtx := store.WithInputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var body inputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
@@ -337,7 +338,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	}))
 
 	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/inputs/{input_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		writeCtx := store.WithInputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
 		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
 			return

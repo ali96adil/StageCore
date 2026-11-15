@@ -45,6 +45,8 @@ var projectRoutePermissions = map[string][]projectaccess.Permission{
 	"POST " + projectRoute + "/cue-draft-history":                                  {projectaccess.CueEdit},
 	"GET " + projectRoute + "/route-draft-history":                                 {projectaccess.ProjectEdit},
 	"POST " + projectRoute + "/route-draft-history":                                {projectaccess.ProjectEdit},
+	"GET " + projectRoute + "/input-draft-history":                                 {projectaccess.ProjectEdit},
+	"POST " + projectRoute + "/input-draft-history":                                {projectaccess.ProjectEdit},
 	"GET " + projectRoute + "/cue-editor-recovery":                                 {projectaccess.CueEdit},
 	"PUT " + projectRoute + "/cue-editor-recovery":                                 {projectaccess.CueEdit},
 	"DELETE " + projectRoute + "/cue-editor-recovery":                              {projectaccess.CueEdit},

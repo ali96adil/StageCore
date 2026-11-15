@@ -25,7 +25,7 @@ import (
 //
 // REVIEWED SNAPSHOT: edit this digest only together with an explicit
 // endpoint security review and its documentation. No production cutover.
-const reviewedHTTPRouteInventorySHA256 = "434dc548052a745f31076f1bff39eee94b42aa337e567efe45da68fa3565ba13"
+const reviewedHTTPRouteInventorySHA256 = "ad88f5218ca8540ae65061b67db24f276274471b6573911073bbcff6542eab19"
 
 // routeRegistration describes a registration expression, not an assumption
 // about whether the handler actually enforces the desired Project scope.
