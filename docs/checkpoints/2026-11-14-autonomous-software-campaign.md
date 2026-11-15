@@ -4781,13 +4781,16 @@ This entry supersedes the preceding push instruction.
 
 - Branch: `integration/stagecore-rc`; OPEN/Draft PR #534. Remote/origin/PR
   head remains `528bac6b912f500bdeef85e1dabd50a15e3faa71`. The tested local
-  code commit is `5a6476785bd2878524f1b729804a89caf9a598d6`; it follows the
-  docs-only `851c4c6` resume checkpoint and is not pushed. Worktree is clean
-  after committing the batch.
+  code commits are `5a6476785bd2878524f1b729804a89caf9a598d6` and
+  `6390701b3a1449c88d5017687a2911350699c2ad`; local HEAD is `6390701` and the
+  four-commit stack also includes docs checkpoints `851c4c6` and `f11e1db`.
+  Nothing from this stack is pushed. Worktree is clean after committing the
+  implementation batches.
 - Exact `528bac6` workflows: Companion Core `43694919744` and Camera Relay
-  `43694919806` passed. Core `43694919781` passed Go 1.27, with Go 1.26 still
-  pending at its test job. Do not push until Core and the complete three-run
-  exact-head gate are green and inspected.
+  `43694919806` passed. Core `43694919781` passed Go 1.27; Go 1.26 Test,
+  isolated installed-copy rollback, Browser Cue Delivery and Vet have passed;
+  Go 1.26 Race is in progress and Linux ARM64 builds are pending. Do not push
+  until Core and the complete three-run exact-head gate are green and inspected.
 - The SC-024 audit found that GET Project Runtime returned a Store failure
   without the final live session/Project-view check used on success. The
   red-first regression observed `503 PROJECTS_UNAVAILABLE` after revocation
@@ -4796,6 +4799,13 @@ This entry supersedes the preceding push instruction.
   passed normally and under Race. The existing authenticated Runtime flow also
   passed, `go vet ./internal/httpapi` passed, and `git diff --check` passed.
   Qualification assembly only; production ACL remains disabled.
+- The same red-first response audit found the GET Lighting Configuration
+  route returning raw `stage_devices` SQLite diagnostics after Project-view
+  revocation. `TestLightingConfigurationSuppressesReadErrorAfterProjectGrantRevocation`
+  reproduces this with a dropped table only in temporary SQLite and now requires
+  the scoped denial. All `TestLightingConfiguration*` tests passed normally
+  and under Race; `go vet ./internal/httpapi` and `git diff --check` passed.
+  The focused tests invoked no physical or network device.
 - Refreshed related Draft PR heads/checks: TabletPlayer #36 `91613da` passed;
   DMX Lighting #39 `3ad7749` passed all six checks; ESP32 Camera #20
   `455b066` passed; StageLaser #56 `b14a578` and #57 `c4ff10b` passed both
