@@ -384,6 +384,25 @@
     if (requestTrace.length !== requestsBeforeDMXPreview) {
       throw new Error(`missing-DMX simulation made network requests: ${requestTrace.slice(requestsBeforeDMXPreview).join("; ")}`);
     }
+    const requestsBeforeCompanionPreview = requestTrace.length;
+    const originalTargets = state.f002Targets || [];
+    state.f002Targets = [{logical_name: "SIM", logical_type: "MACHINE_ROLE"},
+      ...originalTargets.filter((target) => target.logical_name !== "SIM")];
+    setValue(scenarioSelect, "missing-companion");
+    previewButton.click();
+    const companionTimeline = inspector.querySelector(".cue-inspection-result .cue-inspection-timeline");
+    await waitFor(() => companionTimeline?.querySelectorAll("li").length === 6,
+      "rendering the missing-Companion simulation for all linked Actions");
+    const companionOutcomes = [...companionTimeline.querySelectorAll("li")].map((item) => item.innerText);
+    const companionBlocked = companionOutcomes.filter((item) =>
+      item.includes("COMPANION_MISSING_FOR_MACHINE_ROLE") && item.includes("SIMULATED_BLOCKED"));
+    state.f002Targets = originalTargets;
+    if (companionBlocked.length !== 6) {
+      throw new Error(`missing-Companion simulation should block every Machine Role Action: ${JSON.stringify(companionOutcomes)}`);
+    }
+    if (requestTrace.length !== requestsBeforeCompanionPreview) {
+      throw new Error(`missing-Companion simulation made network requests: ${requestTrace.slice(requestsBeforeCompanionPreview).join("; ")}`);
+    }
     const forbiddenRequests = requestTrace.filter((item) => /\/go(?:\?|\s|$)|\/stop(?:\?|\s|$)|blackout/i.test(item));
     if (forbiddenRequests.length) throw new Error(`browser authoring/inspection attempted runtime commands: ${forbiddenRequests.join("; ")}`);
 
