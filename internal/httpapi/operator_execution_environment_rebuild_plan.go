@@ -102,6 +102,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
+		if hooks.BeforeResponse != nil {
+			hooks.BeforeResponse("rebuild-plan-source-loaded")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return
+		}
 		if source.EnvironmentManifestID != environment.ID || source.RevisionID != environment.RevisionID {
 			writeJSON(w, http.StatusNotFound, map[string]any{
 				"error_code": "EXECUTION_ENVIRONMENT_SNAPSHOT_NOT_FOUND",
@@ -135,6 +141,9 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 
 		seeded, err := executionenv.SeedAssistedRebuildPlan(source.Snapshot)
 		if err != nil {
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error_code": "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SOURCE_UNSUPPORTED",
 			})
