@@ -53,9 +53,12 @@
     await waitFor(() => !document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
       "Cue removal after keyboard Undo");
 
+    await waitFor(() => {
+      const toolbar = document.getElementById("sc009ProjectDraftHistory");
+      const redo = toolbar?.querySelectorAll("button")[1];
+      return redo && !redo.disabled;
+    }, "Redo becoming available after Undo");
     const afterUndoToolbar = document.getElementById("sc009ProjectDraftHistory");
-    await waitFor(() => afterUndoToolbar?.querySelectorAll("button")[1] &&
-      !afterUndoToolbar.querySelectorAll("button")[1].disabled, "Redo becoming available after Undo");
     const redo = afterUndoToolbar.querySelectorAll("button")[1];
     const rect = redo.getBoundingClientRect();
     const touchReady = await nativeFetch("/cue-draft-history-touch-ready", {
