@@ -107,6 +107,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		case "/mixed-cue-config":
 			writeJSON(w, http.StatusOK, map[string]string{
 				"csrf": owner.CSRFToken, "project": project.ID, "name": project.Name,
+				"user": owner.Session.User.ID,
 			})
 		case "/mixed-cue-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
@@ -220,6 +221,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		LTRFocusVisible   bool               `json:"ltr_focus_visible"`
 		LTRFocusContrast  float64            `json:"ltr_focus_contrast"`
 		LTROverflow       bool               `json:"ltr_page_overflow"`
+		LocalRecovery     bool               `json:"local_recovery_available"`
+		LocalRestored     bool               `json:"local_recovery_restored"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
@@ -235,7 +238,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 		return true
 	}
-	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo || len(report.IDs) != 3 ||
+	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
+		!report.LocalRecovery || !report.LocalRestored || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
 		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {

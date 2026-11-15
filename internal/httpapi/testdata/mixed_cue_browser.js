@@ -2,10 +2,19 @@
 
 (async () => {
   const requestTrace = [];
+  let offlineRecoveryRequests = 0;
+  let confirmationRequests = 0;
+  window.confirm = () => { confirmationRequests++; return true; };
   const browserFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
+    const url = String(args[0]);
+    if (sessionStorage.getItem("stagecore_test_offline_recovery") === "1" && url.includes("/cue-editor-recovery")) {
+      offlineRecoveryRequests++;
+      requestTrace.push(`${url} → simulated offline`);
+      throw new TypeError("simulated offline Cue recovery endpoint");
+    }
     const response = await browserFetch(...args);
-    requestTrace.push(`${args[0]} → ${response.status}`);
+    requestTrace.push(`${url} → ${response.status}`);
     return response;
   };
   const report = async (value) => {
@@ -92,7 +101,7 @@
     const configResponse = await fetch("/mixed-cue-config", { cache: "no-store" });
     if (!configResponse.ok) throw new Error(`test configuration returned HTTP ${configResponse.status}`);
     const config = await configResponse.json();
-    state.user = { username: "owner", role: "OWNER" };
+    state.user = { user_id: config.user, username: "owner", role: "OWNER" };
     state.csrf = config.csrf;
     state.project = { project_id: config.project, name: config.name };
     sessionStorage.setItem("stagecore_csrf", state.csrf);
@@ -133,10 +142,27 @@
         Object.values(colorContrast).some((value) => value < 3) || textContrast < 4.5 || !focusVisible || focusContrast < 3 || overflow) {
         throw new Error(`Cue label/color LTR acceptance failed: label=${labelText}, marker=${markerVisible}, palette=${paletteVisible}, readable=${readable}, contrast=${JSON.stringify(colorContrast)}, text=${textContrast}, focus=${focusVisible}, focusContrast=${focusContrast}, overflow=${overflow}`);
       }
+      const localRestore = document.getElementById("sc009LocalRestore");
+      await waitFor(() => localRestore && !localRestore.hidden, "offline Mixed Cue recovery candidate after page reload");
+      const localStatus = document.querySelector("#sc009EditorRecovery [role='status']:nth-of-type(2)");
+      if (!localStatus?.textContent.includes("recovery draft is available")) {
+        throw new Error(`offline recovery status was not actionable: ${localStatus?.textContent || "missing"}`);
+      }
+      localRestore.click();
+      const recoveredLink = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${previous.ids[1]}"]`);
+      if (!recoveredLink) throw new Error("linked child control is missing during local recovery");
+      await waitFor(() => document.getElementById("cueName")?.value === "Offline restored Mixed Parent" &&
+        document.querySelector("#actionsEditor .action-editor .action-mode")?.value === "SEQUENTIAL" && !recoveredLink.checked,
+      "restoring Cue fields, Action mode and linked child from browser-local recovery").catch(() => {
+        throw new Error(`local recovery state mismatch: name=${document.getElementById("cueName")?.value}, mode=${document.querySelector("#actionsEditor .action-editor .action-mode")?.value}, linked=${recoveredLink?.checked}, reviewVisible=${!document.getElementById("sc009LocalReview")?.hidden}, confirms=${confirmationRequests}`);
+      });
+      if (offlineRecoveryRequests < 1) throw new Error("server recovery endpoint was not offline during local recovery");
+      if (confirmationRequests) throw new Error(`matching local recovery unexpectedly prompted for confirmation (${confirmationRequests})`);
       sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
       await report(JSON.stringify({ ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
+        local_recovery_available: true, local_recovery_restored: true,
         theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } }));
       return;
     }
@@ -487,6 +513,18 @@
     if (!requestTrace.some((item) => item.includes(`/cues/${parentID} → 200`)) || runtimeRequestsAfterEdit.length) {
       throw new Error(`quick metadata edit did not use the Draft update path safely: ${requestTrace.slice(-10).join("; ")}`);
     }
+    sessionStorage.setItem("stagecore_test_offline_recovery", "1");
+    const recoveryDraftName = "Offline restored Mixed Parent";
+    setValue(document.getElementById("cueName"), recoveryDraftName);
+    const recoveryActionMode = document.querySelector("#actionsEditor .action-editor .action-mode");
+    setValue(recoveryActionMode, "SEQUENTIAL");
+    const recoveryLinkedCue = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${middleID}"]`);
+    if (!recoveryLinkedCue?.checked) throw new Error("saved parent-to-middle link was unavailable for recovery draft");
+    recoveryLinkedCue.checked = false;
+    recoveryLinkedCue.dispatchEvent(new Event("change", { bubbles: true }));
+    const recoveryPrefix = "stagecore.cue-recovery.v2:" + JSON.stringify([config.user, config.project, parentID]) + ":";
+    await waitFor(() => Array.from({length: localStorage.length}, (_, index) => localStorage.key(index))
+      .some((key) => key?.startsWith(recoveryPrefix)), "browser-local full Cue recovery write");
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
       mixed_form_undo: true, mixed_form_redo: true,
