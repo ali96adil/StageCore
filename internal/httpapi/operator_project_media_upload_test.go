@@ -295,7 +295,7 @@ func TestScopedProjectMediaUploadRollsBackGrantRevokedDuringRegistration(t *test
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "PROJECT_NOT_FOUND") ||
-		strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) {
+		strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) {
 		t.Fatalf("upload committed after transaction lost MediaUpload: status=%d body=%s", response.Code, response.Body.String())
 	}
 	if _, err := projects.GetVaultObject(ctx, hex.EncodeToString(sum[:])); !errors.Is(err, domain.ErrNotFound) {
