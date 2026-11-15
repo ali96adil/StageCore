@@ -6014,3 +6014,22 @@ This entry supersedes the preceding push instruction.
   remaining software gap in SC-024's route/delivery audit, keep the PR draft,
   and preserve the current-head isolated Pi performance qualification as
   pending until a verifiable isolated target is available.
+
+## CI completion checkpoint — 2026-11-15 · exact head `0c4b055`
+
+- Core CI `43719886374` completed successfully on
+  `0c4b055842f8755ffb2f144d0daae55d4c1bf99e`: Go 1.26 (including Race) and
+  Go 1.27 passed. Companion replacement/media and Swift CompanionCore passed
+  in `43719886173`; isolated tests and Linux ARM64 product checks passed in
+  `43719886155`.
+- Remote branch and PR #534 still point to `0c4b055`. Local HEAD is
+  `db9c61fa3d16266c176e356bc668a626aec4c0d9`, one documentation checkpoint
+  ahead; this follow-up records the completed CI and will be pushed normally
+  to the same branch now that all checks have completed. No source changes
+  are waiting in the worktree.
+- No production or physical-system boundary changed. ACL remains disabled;
+  current-head Pi performance qualification remains pending because the
+  isolated endpoint has not provided a verifiable host session.
+- After pushing the updated handoff, monitor the new exact-head CI. Continue
+  with the next software gap from the SC-024 route/delivery review without
+  using the production-like Pi host or changing production data/services.
