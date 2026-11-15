@@ -3,6 +3,7 @@ package update
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -109,6 +110,39 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 	published, _, err := snapshot.NewBuilder(baselineStore).Create(ctx, revision.ID, "rollback-fixture")
 	if err != nil {
 		t.Fatal(err)
+	}
+	draft, err := baselineStore.EnsureProjectDraft(ctx, project.ID, ownerID, "qualify Draft history across failed update rollback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftCueHistoryCtx := store.WithCueDraftHistoryActor(ctx, ownerID)
+	draftCue, err := baselineStore.CreateCueWithActions(draftCueHistoryCtx, domain.Cue{
+		RevisionID: draft.ID, DisplayLabel: "2", Name: "Draft Cue survives rollback", OrderIndex: 1,
+		Enabled: true, ExecutionPolicy: json.RawMessage(`{"linked_cue_ids":[]}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := baselineStore.CreateInput(ctx, domain.InputDefinition{
+		RevisionID: draft.ID, Name: "GO", SourceRef: "osc:/go", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeDraftHistoryCtx := store.WithRouteDraftHistoryActor(ctx, ownerID)
+	draftCueID := draftCue.ID
+	draftRoute, err := baselineStore.CreateRouteWithActions(routeDraftHistoryCtx, domain.Route{
+		RevisionID: draft.ID, Name: "Draft Route survives rollback", InputID: input.ID,
+		PriorityClass: domain.PriorityP2, Enabled: true,
+	}, []domain.RouteAction{{CueID: &draftCueID, Parameters: json.RawMessage(`{"rollback":true}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cueHistory, err := baselineStore.CueDraftHistory(draftCueHistoryCtx, project.ID); err != nil || !cueHistory.CanUndo {
+		t.Fatalf("baseline Draft Cue history=%+v err=%v", cueHistory, err)
+	}
+	if routeHistory, err := baselineStore.RouteDraftHistory(routeDraftHistoryCtx, project.ID); err != nil || !routeHistory.CanUndo {
+		t.Fatalf("baseline Draft Route history=%+v err=%v", routeHistory, err)
 	}
 	if err := baseline.Close(); err != nil {
 		t.Fatal(err)
@@ -244,6 +278,46 @@ func TestIsolatedUpdateRollbackRestoresDatabaseAndPublishedSnapshot(t *testing.T
 		got.SnapshotVersion != published.SnapshotVersion || got.Status != domain.SnapshotPublished ||
 		got.ContentHash != published.ContentHash || !bytes.Equal(got.Manifest, published.Manifest) {
 		t.Fatalf("published snapshot changed after rollback: %+v, %v", got, err)
+	}
+	loadedProject, err := restoredStore.GetProject(ctx, project.ID)
+	if err != nil || loadedProject.CurrentRevisionID != draft.ID {
+		t.Fatalf("rollback did not restore the editable Draft revision: project=%+v err=%v", loadedProject, err)
+	}
+	if history, err := restoredStore.RouteDraftHistory(routeDraftHistoryCtx, project.ID); err != nil || !history.CanUndo || history.RevisionID != draft.ID {
+		t.Fatalf("Route history did not survive failed-update rollback: %+v err=%v", history, err)
+	}
+	if _, err := restoredStore.UndoRouteDraft(routeDraftHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Route Undo after failed-update rollback: %v", err)
+	}
+	if routes, err := restoredStore.ListRoutes(ctx, draft.ID); err != nil || len(routes) != 0 {
+		t.Fatalf("Route Undo after rollback left routes=%+v err=%v", routes, err)
+	}
+	if _, err := restoredStore.RedoRouteDraft(routeDraftHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Route Redo after failed-update rollback: %v", err)
+	}
+	routes, err := restoredStore.ListRoutes(ctx, draft.ID)
+	if err != nil || len(routes) != 1 || routes[0].ID != draftRoute.ID || len(routes[0].Actions) != 1 ||
+		routes[0].Actions[0].ID != draftRoute.Actions[0].ID || routes[0].Actions[0].CueID == nil ||
+		*routes[0].Actions[0].CueID != draftCue.ID || string(routes[0].Actions[0].Parameters) != `{"rollback":true}` {
+		t.Fatalf("Route Redo after rollback changed identity or Action: routes=%+v want=%+v err=%v", routes, draftRoute, err)
+	}
+	if _, err := restoredStore.UndoRouteDraft(routeDraftHistoryCtx, project.ID); err != nil {
+		t.Fatalf("remove Route before Cue history check: %v", err)
+	}
+	if history, err := restoredStore.CueDraftHistory(draftCueHistoryCtx, project.ID); err != nil || !history.CanUndo || history.RevisionID != draft.ID {
+		t.Fatalf("Cue history did not survive failed-update rollback: %+v err=%v", history, err)
+	}
+	if _, err := restoredStore.UndoCueDraft(draftCueHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Cue Undo after failed-update rollback: %v", err)
+	}
+	if _, err := restoredStore.GetCue(ctx, draftCue.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Cue Undo after rollback left Draft Cue: %v", err)
+	}
+	if _, err := restoredStore.RedoCueDraft(draftCueHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Cue Redo after failed-update rollback: %v", err)
+	}
+	if restoredCue, err := restoredStore.GetCue(ctx, draftCue.ID); err != nil || restoredCue.ID != draftCue.ID || restoredCue.Name != draftCue.Name {
+		t.Fatalf("Cue Redo after rollback did not preserve Draft Cue: %+v err=%v", restoredCue, err)
 	}
 	manifest, err := snapshot.Decode(got.Manifest)
 	if err != nil || len(manifest.Cues) != 1 || manifest.Cues[0].ID != cue.ID {
