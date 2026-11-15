@@ -93,6 +93,41 @@
     if (!response.ok) throw new Error(`native Tab key request returned HTTP ${response.status}`);
     return labelInput;
   };
+  const measureInspectorViewports = async () => {
+    const measurements = [];
+    for (const [width, height, mobile] of [
+      [390, 844, true], [768, 1024, true], [1024, 768, false], [1440, 900, false],
+    ]) {
+      const response = await fetch("/mixed-cue-viewport-ready", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ width, height, mobile }),
+      });
+      if (!response.ok) throw new Error(`viewport gate failed at ${width}x${height}: ${response.status}`);
+      await waitFor(() => window.innerWidth === width, `applying ${width}x${height} viewport`);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const navigation = document.querySelector(".cue-inspection-navigation");
+      if (!navigation) throw new Error(`Cue Inspector navigation disappeared at ${width}x${height}`);
+      navigation.scrollIntoView({ block: "nearest" });
+      const bounds = navigation.getBoundingClientRect();
+      const pageWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+      const pageOverflow = pageWidth > window.innerWidth;
+      const navigationVisible = bounds.width > 0 && bounds.left >= -1 && bounds.right <= window.innerWidth + 1;
+      if (pageOverflow || !navigationVisible) {
+        throw new Error(`Cue Inspector responsive geometry failed at ${width}x${height}: pageWidth=${pageWidth}, viewport=${window.innerWidth}, navigation=${JSON.stringify({left: bounds.left, right: bounds.right, width: bounds.width})}`);
+      }
+      const table = navigation.closest(".table-wrap");
+      measurements.push({ width, height, mobile, pageOverflow,
+        navigationVisible, navigationWidth: Math.round(bounds.width), tableClientWidth: table?.clientWidth || 0,
+        tableScrollWidth: table?.scrollWidth || 0 });
+    }
+    const restore = await fetch("/mixed-cue-viewport-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ width: 390, height: 844, mobile: true }),
+    });
+    if (!restore.ok) throw new Error(`restoring 390x844 viewport failed: ${restore.status}`);
+    await waitFor(() => window.innerWidth === 390, "restoring mobile viewport");
+    return measurements;
+  };
 
   try {
     if (document.readyState === "loading") {
@@ -166,6 +201,11 @@
       await waitFor(() => document.documentElement.dir === "ltr" && document.documentElement.dataset.theme === "light" &&
         !!document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`),
       "reloading the Draft Cue list in English LTR and light appearance");
+      const ltrInspector = document.querySelector(`#content tr[data-cue-id="${parentID}"] details`);
+      ltrInspector?.querySelector("summary")?.click();
+      await waitFor(() => ltrInspector?.querySelector(".cue-inspection-navigation"),
+        "opening the Cue Inspector for LTR viewport measurements");
+      const responsiveLayoutsLTR = await measureInspectorViewports();
       const labelCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`);
       const plainCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] td:not(.cue-label-cell)`);
       const editButton = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`);
@@ -216,6 +256,7 @@
       if (offlineRecoveryRequests < 1) throw new Error("server recovery endpoint was not offline during local recovery");
       if (confirmationRequests) throw new Error(`matching local recovery unexpectedly prompted for confirmation (${confirmationRequests})`);
       const ltrProof = { ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
+        responsive_layout_ltr: responsiveLayoutsLTR,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
         browser_process_restarted: processRestarted,
@@ -376,6 +417,7 @@
     if (!touchResponse.ok) throw new Error(`Inspector touch gate failed: ${touchResponse.status}`);
     await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),
       "opening the first Cue in the long-list Inspector by touch");
+    const responsiveLayoutsRTL = await measureInspectorViewports();
     const inspectorShortcutTrace = [];
     firstNavigationDetails.addEventListener("keydown", (event) => inspectorShortcutTrace.push({
       key: event.key, target: event.target?.tagName, targetClass: event.target?.className,
@@ -636,6 +678,7 @@
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
       mixed_form_undo: true, mixed_form_redo: true,
+      responsive_layout_rtl: responsiveLayoutsRTL,
       theme: document.documentElement.dataset.theme,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,
       palette_visible: paletteVisible, label_color_readable: labelColorReadable,

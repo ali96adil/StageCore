@@ -104,6 +104,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	browserResult := make(chan string, 1)
 	focusRequests := make(chan chan struct{}, 2)
 	keyCommandID := 100
+	viewportCommandID := 200
 	inspectorKeyRequests := make(chan struct {
 		key    string
 		resume chan struct{}
@@ -112,6 +113,11 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		x, y   float64
 		resume chan struct{}
 	}, 1)
+	viewportRequests := make(chan struct {
+		width, height int
+		mobile        bool
+		resume        chan struct{}
+	}, 8)
 	staleReadyRequests := make(chan struct {
 		cueID  string
 		resume chan struct{}
@@ -192,6 +198,39 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				x, y   float64
 				resume chan struct{}
 			}{x: request.X, y: request.Y, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/mixed-cue-viewport-ready":
+			var request struct {
+				Width  int  `json:"width"`
+				Height int  `json:"height"`
+				Mobile bool `json:"mobile"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil {
+				http.Error(w, "invalid viewport request", http.StatusBadRequest)
+				return
+			}
+			validViewport := (request.Width == 390 && request.Height == 844 && request.Mobile) ||
+				(request.Width == 768 && request.Height == 1024 && request.Mobile) ||
+				(request.Width == 1024 && request.Height == 768 && !request.Mobile) ||
+				(request.Width == 1440 && request.Height == 900 && !request.Mobile)
+			if !validViewport {
+				http.Error(w, "unsupported viewport", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case viewportRequests <- struct {
+				width, height int
+				mobile        bool
+				resume        chan struct{}
+			}{width: request.Width, height: request.Height, mobile: request.Mobile, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -318,6 +357,15 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				t.Fatalf("send emulated touch to Cue Inspector: %v", err)
 			}
 			close(request.resume)
+		case request := <-viewportRequests:
+			if err := chromeDevToolsCommand(cdp, viewportCommandID, "Emulation.setDeviceMetricsOverride", map[string]any{
+				"width": request.width, "height": request.height, "deviceScaleFactor": 1,
+				"mobile": request.mobile, "screenWidth": request.width, "screenHeight": request.height,
+			}); err != nil {
+				t.Fatalf("set Chrome qualification viewport %dx%d: %v", request.width, request.height, err)
+			}
+			viewportCommandID++
+			close(request.resume)
 		case request := <-staleReadyRequests:
 			cue, err := st.GetCue(ctx, request.cueID)
 			if err != nil || cue.RevisionID != revision.ID {
@@ -359,6 +407,16 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			t.Fatalf("browser did not finish: %s", output)
 		}
 	}
+	type viewportEvidence struct {
+		Width             int  `json:"width"`
+		Height            int  `json:"height"`
+		Mobile            bool `json:"mobile"`
+		PageOverflow      bool `json:"pageOverflow"`
+		NavigationVisible bool `json:"navigationVisible"`
+		NavigationWidth   int  `json:"navigationWidth"`
+		TableClientWidth  int  `json:"tableClientWidth"`
+		TableScrollWidth  int  `json:"tableScrollWidth"`
+	}
 	var report struct {
 		Status                string             `json:"status"`
 		IDs                   []string           `json:"ids"`
@@ -394,6 +452,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		StaleReview           bool               `json:"stale_review_available"`
 		StaleReviewNotApplied bool               `json:"stale_review_not_applied"`
 		StaleReviewName       string             `json:"stale_review_name"`
+		ResponsiveLayoutRTL   []viewportEvidence `json:"responsive_layout_rtl"`
+		ResponsiveLayoutLTR   []viewportEvidence `json:"responsive_layout_ltr"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
@@ -409,17 +469,36 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 		return true
 	}
+	validResponsiveLayouts := func(measurements []viewportEvidence) bool {
+		want := []struct {
+			width, height int
+			mobile        bool
+		}{{390, 844, true}, {768, 1024, true}, {1024, 768, false}, {1440, 900, false}}
+		if len(measurements) != len(want) {
+			return false
+		}
+		for index, measurement := range measurements {
+			if measurement.Width != want[index].width || measurement.Height != want[index].height ||
+				measurement.Mobile != want[index].mobile || measurement.PageOverflow ||
+				!measurement.NavigationVisible || measurement.NavigationWidth <= 0 {
+				return false
+			}
+		}
+		return true
+	}
 	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
 		!report.LocalRecovery || !report.LocalRestored || !report.ProcessRestarted || !report.LocalActionPayload || !report.LocalActionIdentity ||
 		!report.StaleReview || !report.StaleReviewNotApplied || report.StaleReviewName != "Concurrent saved parent" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
-		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {
+		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow ||
+		!validResponsiveLayouts(report.ResponsiveLayoutRTL) || !validResponsiveLayouts(report.ResponsiveLayoutLTR) {
 		t.Fatalf("invalid browser result %q", outcome)
 	}
 	t.Logf("rendered WCAG ratios: RTL markers=%v text=%.2f focus=%.2f; LTR markers=%v text=%.2f focus=%.2f",
 		report.MarkerContrast, report.TextContrast, report.FocusContrast,
 		report.LTRMarkerContrast, report.LTRTextContrast, report.LTRFocusContrast)
+	t.Logf("Cue Inspector viewport geometry: RTL=%+v LTR=%+v", report.ResponsiveLayoutRTL, report.ResponsiveLayoutLTR)
 	project, err = st.GetProject(ctx, project.ID)
 	if err != nil {
 		t.Fatal(err)
