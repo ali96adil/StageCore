@@ -5096,3 +5096,34 @@ This entry supersedes the preceding push instruction.
   close a concrete SC-007/SC-008 browser authoring gap while the old-head CI
   runs. Keep current-head Pi 4 performance pending the isolated Pi lab, and
   Production ACL disabled.
+
+## Push checkpoint — 2026-11-15 · F-025 scoped read response fences
+
+- After all exact-head checks passed at `f1e6a021c7ea47c9d4a6c219f2213b9d8fbdb77d`
+  (Core Go 1.26/Race and Go 1.27, Companion Core, Camera Relay), a normal
+  fast-forward push advanced the existing `integration/stagecore-rc` branch
+  and OPEN/Draft PR #534 to `c11e29b5a98f69d42812b2b597619a8093043e15`. No new
+  branch/PR, merge or force push occurred.
+- New exact-head runs are active at `c11e29b`: Core `43702159421`, Companion
+  Core `43702159473`, and Camera Relay `43702159464`. Local changes remain
+  unpushed; wait for all three before another push.
+- Local HEAD before this checkpoint is
+  `30447695432df884b3afeb78ac5b1ec8262862b0`, nine commits ahead of the new
+  remote. After the first four-commit environment-read batch, two more tested
+  batches are saved: bounded Companion operation error fencing; then Owner
+  Capsule import and Capsule library inventory session fences. Push those as
+  small groups only after each exact-head CI gate completes.
+- Capsule inventory regression `TestShowCapsuleInventorySuppressesStorageErrorAfterOwnerSessionRevocation`
+  first returned HTTP 503 after the Owner was logged out during a temporary-root
+  read error. The library now rechecks the live Owner session before its
+  inventory error response. Owner Capsule review error responses also
+  reauthenticate at inventory, safe-path, verification and planning boundaries.
+- Full `go test ./internal/httpapi -count=1` passed in 81.251 s after the
+  current Capsule error fences. Focused Capsule tests pass normally and under
+  Race, `go vet ./internal/httpapi` and `git diff --check` pass. No production
+  data/service, Vault/show, capsule materialization, physical device or ACL
+  activation was used.
+- Continue endpoint and asynchronous-delivery review while CI runs. Current
+  Pi 4 performance qualification still requires the isolated lab; the separate
+  qualification SSH endpoint timed out before its banner, and `stagecore-pi`
+  remains a production host. Keep Production ACL disabled.
