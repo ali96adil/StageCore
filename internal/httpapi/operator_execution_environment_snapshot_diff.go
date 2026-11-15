@@ -30,17 +30,22 @@ type executionEnvironmentSnapshotDiffView struct {
 
 type executionEnvironmentSnapshotDetailView struct {
 	ExecutionEnvironmentID string                `json:"execution_environment_id"`
-	SnapshotID              string                `json:"snapshot_id"`
-	ContentSHA256           string                `json:"content_sha256"`
-	CreatedBy               string                `json:"created_by"`
-	CreatedAt               time.Time             `json:"created_at"`
-	Snapshot                executionenv.Snapshot `json:"snapshot"`
+	SnapshotID             string                `json:"snapshot_id"`
+	ContentSHA256          string                `json:"content_sha256"`
+	CreatedBy              string                `json:"created_by"`
+	CreatedAt              time.Time             `json:"created_at"`
+	Snapshot               executionenv.Snapshot `json:"snapshot"`
+}
+
+type executionEnvironmentSnapshotDiffHooks struct {
+	BeforeStoreErrorResponse func(route string)
 }
 
 func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 	mux *http.ServeMux,
 	auth *userauth.Service,
 	stageStore *store.Store,
+	hooks executionEnvironmentSnapshotDiffHooks,
 ) {
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/snapshots"
 	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(
@@ -53,7 +58,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
-			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_SNAPSHOTS_UNAVAILABLE")
+			writeExecutionEnvironmentSnapshotReadStoreError(
+				w, r, auth, session, err, "EXECUTION_ENVIRONMENT_SNAPSHOTS_UNAVAILABLE", "snapshot-list-manifest", hooks,
+			)
 			return
 		}
 		if environment.RevisionID != revision.ID {
@@ -64,7 +71,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		}
 		snapshots, err := stageStore.ListExecutionEnvironmentSnapshots(r.Context(), environment.ID)
 		if err != nil {
-			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_SNAPSHOTS_UNAVAILABLE")
+			writeExecutionEnvironmentSnapshotReadStoreError(
+				w, r, auth, session, err, "EXECUTION_ENVIRONMENT_SNAPSHOTS_UNAVAILABLE", "snapshot-list", hooks,
+			)
 			return
 		}
 		views := make([]executionEnvironmentSnapshotSummaryView, 0, len(snapshots))
@@ -104,7 +113,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
-			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_UNAVAILABLE")
+			writeExecutionEnvironmentSnapshotReadStoreError(
+				w, r, auth, session, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_UNAVAILABLE", "snapshot-detail-manifest", hooks,
+			)
 			return
 		}
 		if environment.RevisionID != revision.ID {
@@ -122,7 +133,7 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		}
 		item, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), snapshotID)
 		if err != nil {
-			writeExecutionEnvironmentSnapshotLookupError(w, err)
+			writeExecutionEnvironmentSnapshotReadLookupError(w, r, auth, session, err, "snapshot-detail", hooks)
 			return
 		}
 		if item.EnvironmentManifestID != environment.ID || item.RevisionID != revision.ID {
@@ -136,11 +147,11 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		}
 		writeJSON(w, http.StatusOK, executionEnvironmentSnapshotDetailView{
 			ExecutionEnvironmentID: environment.ID,
-			SnapshotID:              item.ID,
-			ContentSHA256:           item.ContentSHA256,
-			CreatedBy:               item.CreatedBy,
-			CreatedAt:               item.CreatedAt,
-			Snapshot:                item.Snapshot,
+			SnapshotID:             item.ID,
+			ContentSHA256:          item.ContentSHA256,
+			CreatedBy:              item.CreatedBy,
+			CreatedAt:              item.CreatedAt,
+			Snapshot:               item.Snapshot,
 		})
 	}))
 
@@ -155,7 +166,9 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 		environmentID := strings.TrimSpace(r.PathValue("execution_environment_id"))
 		environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 		if err != nil {
-			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_DIFF_UNAVAILABLE")
+			writeExecutionEnvironmentSnapshotReadStoreError(
+				w, r, auth, session, err, "EXECUTION_ENVIRONMENT_SNAPSHOT_DIFF_UNAVAILABLE", "snapshot-diff-manifest", hooks,
+			)
 			return
 		}
 		if environment.RevisionID != revision.ID {
@@ -176,12 +189,12 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 
 		before, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), beforeID)
 		if err != nil {
-			writeExecutionEnvironmentSnapshotLookupError(w, err)
+			writeExecutionEnvironmentSnapshotReadLookupError(w, r, auth, session, err, "snapshot-diff-before", hooks)
 			return
 		}
 		after, err := stageStore.GetExecutionEnvironmentSnapshot(r.Context(), afterID)
 		if err != nil {
-			writeExecutionEnvironmentSnapshotLookupError(w, err)
+			writeExecutionEnvironmentSnapshotReadLookupError(w, r, auth, session, err, "snapshot-diff-after", hooks)
 			return
 		}
 		if before.EnvironmentManifestID != environment.ID ||
@@ -211,6 +224,43 @@ func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 			Diff:                   diff,
 		})
 	}))
+}
+
+func writeExecutionEnvironmentSnapshotReadStoreError(
+	w http.ResponseWriter,
+	r *http.Request,
+	auth *userauth.Service,
+	session userauth.Session,
+	err error,
+	fallback string,
+	route string,
+	hooks executionEnvironmentSnapshotDiffHooks,
+) {
+	if hooks.BeforeStoreErrorResponse != nil {
+		hooks.BeforeStoreErrorResponse(route)
+	}
+	if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+		return
+	}
+	writeExecutionEnvironmentStoreError(w, err, fallback)
+}
+
+func writeExecutionEnvironmentSnapshotReadLookupError(
+	w http.ResponseWriter,
+	r *http.Request,
+	auth *userauth.Service,
+	session userauth.Session,
+	err error,
+	route string,
+	hooks executionEnvironmentSnapshotDiffHooks,
+) {
+	if hooks.BeforeStoreErrorResponse != nil {
+		hooks.BeforeStoreErrorResponse(route)
+	}
+	if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+		return
+	}
+	writeExecutionEnvironmentSnapshotLookupError(w, err)
 }
 
 func writeExecutionEnvironmentSnapshotLookupError(w http.ResponseWriter, err error) {

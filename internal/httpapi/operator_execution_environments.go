@@ -28,10 +28,10 @@ type executionEnvironmentBindingRequest struct {
 type executionEnvironmentView struct {
 	ID            string                `json:"execution_environment_id"`
 	RevisionID    string                `json:"revision_id"`
-	EnvironmentKey string               `json:"environment_key"`
+	EnvironmentKey string                `json:"environment_key"`
 	Name          string                `json:"name"`
 	AdapterKey    string                `json:"adapter_key"`
-	ApplicationKey string               `json:"application_key"`
+	ApplicationKey string                `json:"application_key"`
 	MachineRoleID *string               `json:"machine_role_id,omitempty"`
 	ContentSHA256 string                `json:"content_sha256"`
 	CreatedBy     string                `json:"created_by"`
@@ -40,12 +40,16 @@ type executionEnvironmentView struct {
 }
 
 func WithOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store) Option {
+	return withOperatorExecutionEnvironments(auth, stageStore, executionEnvironmentSnapshotDiffHooks{})
+}
+
+func withOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentSnapshotDiffHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
 		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore)
-		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore)
+		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore, hooks)
 		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore)
 	}
 }
