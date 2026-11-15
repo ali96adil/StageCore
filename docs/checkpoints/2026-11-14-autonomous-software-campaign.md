@@ -5064,3 +5064,35 @@ This entry supersedes the preceding push instruction.
   SSH endpoint timed out before banner completion. Production services/data,
   the production Pi host, original Vault/show, real device commands, firmware,
   force-push, merge, and Production ACL activation remain off limits.
+
+## Qualification batch checkpoint — 2026-11-15 · Capsule review session fences
+
+- Local HEAD before this checkpoint is
+  `87762882e59a996c395f6af30c69b36e946ceaaf`, nine commits ahead of the OPEN/Draft
+  PR #534 remote `f1e6a021c7ea47c9d4a6c219f2213b9d8fbdb77d`. The saved local
+  work includes F-025 read error fences, Companion operation pre-dispatch
+  rechecks, and Owner Capsule import-review session rechecks; all changes remain
+  on the existing branch. No push occurred after `f1e6a02`.
+- Red-first `TestOwnerCapsuleImportReviewSuppressesErrorsAfterSessionRevocation`
+  reproduced an inventory HTTP 503 after the Owner session was logged out.
+  Inventory, safe-path, verification, PlanImport and plan-mismatch errors now
+  reauthenticate before returning details. The test also revokes the session
+  during inventory and capsule-path failures; a PlanImport failure after
+  logout is hidden as `SESSION_INVALID`. This is an opt-in, read-only review;
+  no capsule materialization occurs.
+- Owner Capsule review tests pass normally and under Race; `go vet
+  ./internal/httpapi` and `git diff --check` pass. Full
+  `go test ./internal/httpapi -count=1` passed in 81.241 s with the error fences;
+  the added Owner-session regressions then passed focused normal/Race runs. All
+  paths and test data are under temporary roots; no production Vault/show,
+  service, device or ACL was used.
+- Exact pushed-head `f1e6a02`: Companion Core `43700059241` and Camera Relay
+  `43700059280` passed; Core Go 1.27 passed; Core Go 1.26 Race remains in
+  progress in run `43700059257`. Do not push the nine-commit local stack until
+  that exact-head workflow and all its jobs finish; then recheck ancestry and
+  PR head before a normal fast-forward push to PR #534. Inspect all new-head
+  workflows afterward.
+- Next independent work: continue the SC-024 asynchronous/endpoint audit or
+  close a concrete SC-007/SC-008 browser authoring gap while the old-head CI
+  runs. Keep current-head Pi 4 performance pending the isolated Pi lab, and
+  Production ACL disabled.
