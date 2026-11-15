@@ -2213,3 +2213,21 @@ uses a Project/foreign-Revision route in temporary SQLite and revokes
 Focused normal and Race revocation groups and `go vet ./internal/httpapi`
 passed; full `go test ./internal/httpapi -count=1` passed (94.791 s). No
 production data or real outputs were used. Production ACL remains disabled.
+
+## SC-024 · Execution-environment mutation delivery fences
+
+Create, update, Machine-Role binding and delete routes now recheck the live
+qualified Project grant before returning Store failures. Successful mutations
+revalidate the exact session and required Project capabilities before returning
+the Environment payload or no-content response; if authority was revoked after
+commit, the handler returns a non-retryable response that explicitly warns the
+effect may have committed and suppresses mutation details. Cross-Revision
+Environment mismatch responses also recheck the live grant.
+Red-first `TestExecutionEnvironmentMutationsSuppressCommittedResultsAfterGrantRevocation`
+revokes ProjectEdit (and DeviceConfigure for binding) after each of the four
+commits; before the change each route returned its success response. It now
+requires `effect_may_be_committed`, `retryable:false` and `Cache-Control:
+no-store`, and verifies the committed create/update/binding/deletion in
+isolated SQLite. Focused Race regressions, `go vet ./internal/httpapi`, and full
+`go test ./internal/httpapi -count=1` pass (96.638 s). Production ACL remains
+disabled.

@@ -5854,3 +5854,26 @@ This entry supersedes the preceding push instruction.
 - Resume with live Project-scoped response auditing of the remaining
   execution-environment CRUD paths. Production ACL remains disabled, and
   current-head Pi 4 performance qualification is still pending.
+
+## Qualification checkpoint — 2026-11-15 · Environment mutation delivery
+
+- `c7ea8e3cf06b99c61366eea1352072f63506dc1d` fences execution-environment
+  create, update, Machine-Role bind and delete responses. Store failures now
+  recheck the live route grant; successful commits revalidate the session and
+  required Project capability before exposing a payload or returning 204.
+- Red-first `TestExecutionEnvironmentMutationsSuppressCommittedResultsAfterGrantRevocation`
+  revokes authority after each commit. Before the change the four routes all
+  returned success details; afterward each returns a non-retryable
+  committed-effect response with `Cache-Control: no-store`, and the test checks
+  the create/update/bind/delete side effect remains in temporary SQLite.
+- Focused normal/Race tests passed, `go vet ./internal/httpapi` passed, and
+  full `go test ./internal/httpapi -count=1` passed (96.638 s). No production
+  data or real outputs were used.
+- Local code HEAD before this documentation commit is
+  `c7ea8e3cf06b99c61366eea1352072f63506dc1d`, 14 commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b`. Core run `43713024420` remains
+  in Go 1.26 Race on that remote HEAD; Go 1.27 and related Companion/Camera
+  checks passed. Keep the push gate closed until all exact-head checks finish.
+- Resume by testing failure-path revocation for Environment CRUD, then
+  continue the wider F-025 response audit. Production ACL remains disabled;
+  current-head isolated Pi 4 performance qualification remains pending.
