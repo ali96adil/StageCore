@@ -104,13 +104,22 @@ func uploadProjectMedia(w http.ResponseWriter, r *http.Request, auth *userauth.S
 		writeProjectMediaUploadError(w, body.denied, nil)
 		return
 	}
-	managed, err := projects.RegisterManagedMedia(r.Context(), store.RegisterManagedMediaParams{
+	writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, access, projectaccess.MediaUpload)
+	managed, err := projects.RegisterManagedMedia(writeCtx, store.RegisterManagedMediaParams{
 		ProjectID: projectID, Name: assetName, AssetPolicy: store.MediaPolicyManaged,
 		ContentHash: object.ContentHash, SizeBytes: object.SizeBytes,
 		RelativePath: object.RelativePath, OriginalFilename: filename,
 	})
 	if err != nil {
 		_, _ = objects.RemoveObjectIfUnreferenced(context.WithoutCancel(r.Context()), object.ContentHash)
+		if errors.Is(err, projectaccess.ErrDenied) || errors.Is(err, projectaccess.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
+			return
+		}
+		if errors.Is(err, userauth.ErrForbidden) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error_code": "FORBIDDEN"})
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECT_FILE_REGISTER_FAILED"})
 		return
 	}

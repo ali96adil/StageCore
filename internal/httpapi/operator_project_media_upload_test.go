@@ -244,3 +244,64 @@ func TestScopedProjectMediaUploadStopsOnRevocationAndBoundsRequest(t *testing.T)
 		t.Fatalf("oversized upload status=%d body=%s", largeResponse.Code, largeResponse.Body.String())
 	}
 }
+
+func TestScopedProjectMediaUploadRollsBackGrantRevokedDuringRegistration(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := vault.Open(t.TempDir(), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Revoked registration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "revoked-registration-uploader", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead, projectaccess.MediaUpload}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, permissions); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(WithScopedProjectMediaUpload(h.auth, access, projects, objects)).Handler()
+	payload := []byte("upload whose grant is withdrawn during registration")
+	sum := sha256.Sum256(payload)
+	request := authenticatedExecutionEnvironmentRequest(t, login.Token, login.CSRFToken, http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/files", payload)
+	request.Header.Set("X-Project-File-Name", "revoked.wav")
+	request.Header.Set("Content-Type", "audio/wav")
+	if _, err := h.db.DB.ExecContext(ctx, `
+		CREATE TRIGGER revoke_media_upload_during_registration
+		AFTER INSERT ON media_content_versions
+		BEGIN
+			DELETE FROM project_permission_grants WHERE permission = 'media.upload';
+		END`); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "PROJECT_NOT_FOUND") ||
+		strings.Contains(response.Body.String(), `"effect_may_be_committed":true`) {
+		t.Fatalf("upload committed after transaction lost MediaUpload: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := projects.GetVaultObject(ctx, hex.EncodeToString(sum[:])); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("revoked registration left a Vault object: %v", err)
+	}
+	if err := access.Check(ctx, operator.ID, project.ID, projectaccess.MediaUpload); err != nil {
+		t.Fatalf("simulated in-transaction grant revocation escaped rollback: %v", err)
+	}
+}

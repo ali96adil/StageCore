@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	stageid "github.com/ali96adil/StageCore/internal/id"
@@ -162,15 +163,18 @@ func (s *Store) RegisterManagedMedia(ctx context.Context, p RegisterManagedMedia
 		VALUES (?, ?, 'HUB', ?, 'AVAILABLE', ?)`, locationID, versionID, p.RelativePath, nowUS); err != nil {
 		return ManagedMedia{}, fmt.Errorf("create Hub media location: %w", err)
 	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return ManagedMedia{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return ManagedMedia{}, fmt.Errorf("commit managed media registration: %w", err)
 	}
 
 	verified := now
 	return ManagedMedia{
-		Object: VaultObject{ContentHash: p.ContentHash, SizeBytes: p.SizeBytes, RelativePath: p.RelativePath, CreatedAt: clock.FromUnixMicros(objectCreatedUS)},
-		Asset: MediaAsset{ID: assetID, ProjectID: p.ProjectID, Name: p.Name, AssetPolicy: p.AssetPolicy, CreatedAt: now, UpdatedAt: now},
-		Version: MediaContentVersion{ID: versionID, MediaAssetID: assetID, ContentHash: p.ContentHash, OriginalFilename: p.OriginalFilename, SizeBytes: p.SizeBytes, CreatedAt: now},
+		Object:   VaultObject{ContentHash: p.ContentHash, SizeBytes: p.SizeBytes, RelativePath: p.RelativePath, CreatedAt: clock.FromUnixMicros(objectCreatedUS)},
+		Asset:    MediaAsset{ID: assetID, ProjectID: p.ProjectID, Name: p.Name, AssetPolicy: p.AssetPolicy, CreatedAt: now, UpdatedAt: now},
+		Version:  MediaContentVersion{ID: versionID, MediaAssetID: assetID, ContentHash: p.ContentHash, OriginalFilename: p.OriginalFilename, SizeBytes: p.SizeBytes, CreatedAt: now},
 		Location: MediaLocation{ID: locationID, ContentVersionID: versionID, LocationType: "HUB", Locator: p.RelativePath, Status: "AVAILABLE", VerifiedAt: &verified},
 	}, nil
 }
