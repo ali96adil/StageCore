@@ -48,14 +48,29 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := projects.CreateCueWithActions(store.WithCueDraftHistoryActor(ctx, owner.Session.User.ID), domain.Cue{
-		RevisionID: revision.ID, DisplayLabel: "2", Name: "Undo Me", OrderIndex: 1,
+	linked, err := projects.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "2A", Name: "Linked child", OrderIndex: 1,
 		Enabled: true, ExecutionPolicy: json.RawMessage(`{}`),
 	}, []domain.Action{{
-		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
-		Parameters: json.RawMessage(`{"value":1}`), TimeoutPolicy: json.RawMessage(`{}`),
-		ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true,
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM-LIGHT", CapabilityKey: "lighting.set",
+		Parameters: json.RawMessage(`{"channel":1,"value":60}`), TimeoutPolicy: json.RawMessage(`{}`),
+		ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP2, Enabled: true,
 	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedID := linked.ID
+	created, err := projects.CreateCueWithActions(store.WithCueDraftHistoryActor(ctx, owner.Session.User.ID), domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "2", Name: "Undo Mixed Linked Cue", OrderIndex: 2,
+		Enabled: true, ExecutionPolicy: json.RawMessage(`{"linked_cue_ids":["` + linked.ID + `"],"linked_cue_mode":"TOGETHER"}`),
+	}, []domain.Action{
+		{OrderIndex: 0, ExecutionMode: "PARALLEL", TargetRef: "SIM-VIDEO", CapabilityKey: "osc.send",
+			Parameters: json.RawMessage(`{"address":"/cue/fire"}`), TimeoutPolicy: json.RawMessage(`{}`),
+			ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP1, Enabled: true},
+		{OrderIndex: 1, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM-AUDIO", CapabilityKey: "midi.send",
+			Parameters: json.RawMessage(`{"note":60}`), TimeoutPolicy: json.RawMessage(`{"start_delay_ms":250}`),
+			ErrorPolicy: json.RawMessage(`{}`), PriorityClass: domain.PriorityP2, Enabled: true},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +120,7 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		case "/cue-draft-history-config":
 			writeJSON(w, http.StatusOK, map[string]string{
 				"csrf": owner.CSRFToken, "project": project.ID, "project_name": project.Name,
-				"baseline_cue": baseline.ID, "created_cue": created.ID,
+				"baseline_cue": baseline.ID, "linked_cue": linkedID, "created_cue": created.ID,
 			})
 		case "/cue-draft-history-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
@@ -249,6 +264,8 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		KeyboardRedo      bool     `json:"keyboard_redo"`
 		TouchRedo         bool     `json:"touch_redo"`
 		RestoredSameCue   bool     `json:"restored_same_cue"`
+		LinkedChildUndo   bool     `json:"linked_child_after_undo"`
+		LinkedChildRedo   bool     `json:"linked_child_after_keyboard_redo"`
 		Overflow          bool     `json:"overflow"`
 		HistoryRequests   []string `json:"history_requests"`
 		ExecutionRequests []string `json:"execution_requests"`
@@ -257,13 +274,20 @@ func TestBrowserCueDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || !report.UndoEnabled || !report.RedoAfterUndo ||
-		!report.KeyboardUndo || !report.KeyboardRedo || !report.TouchRedo || !report.RestoredSameCue || report.Overflow ||
+		!report.KeyboardUndo || !report.KeyboardRedo || !report.TouchRedo || !report.RestoredSameCue ||
+		!report.LinkedChildUndo || !report.LinkedChildRedo || report.Overflow ||
 		len(report.HistoryRequests) < 2 || len(report.ExecutionRequests) != 0 {
 		t.Fatalf("browser Draft history acceptance failed: %+v", report)
 	}
 	cues, err := projects.ListCues(ctx, revision.ID)
-	if err != nil || len(cues) != 2 || cues[0].ID != baseline.ID || cues[1].ID != created.ID ||
-		len(cues[1].Actions) != 1 || cues[1].Actions[0].ID == "" {
+	if err != nil || len(cues) != 3 || cues[0].ID != baseline.ID || cues[1].ID != linked.ID || cues[2].ID != created.ID ||
+		len(cues[1].Actions) != 1 || cues[1].Actions[0].ID != linked.Actions[0].ID ||
+		cues[1].Actions[0].CapabilityKey != "lighting.set" || len(cues[2].Actions) != 2 ||
+		cues[2].Actions[0].ID != created.Actions[0].ID || cues[2].Actions[1].ID != created.Actions[1].ID ||
+		cues[2].Actions[0].ExecutionMode != "PARALLEL" || cues[2].Actions[0].CapabilityKey != "osc.send" ||
+		cues[2].Actions[1].ExecutionMode != "SEQUENTIAL" || cues[2].Actions[1].CapabilityKey != "midi.send" ||
+		string(cues[2].Actions[1].TimeoutPolicy) != `{"start_delay_ms":250}` ||
+		string(cues[2].ExecutionPolicy) != string(created.ExecutionPolicy) {
 		t.Fatalf("Redo did not restore the original Cue and Action identity: cues=%+v err=%v", cues, err)
 	}
 	active, err := projects.ActiveSessionForProject(ctx, project.ID)

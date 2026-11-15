@@ -64,6 +64,8 @@
     if (!keyboardReady.ok) throw new Error(`native keyboard gate returned HTTP ${keyboardReady.status}`);
     await waitFor(() => !document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
       "Cue removal after keyboard Undo");
+    const linkedChildAfterUndo = !!document.querySelector(`#content tr[data-cue-id="${config.linked_cue}"]`);
+    if (!linkedChildAfterUndo) throw new Error("Undo removed the linked child Cue with the Mixed Cue");
 
     await waitFor(() => {
       const toolbar = document.getElementById("sc009ProjectDraftHistory");
@@ -77,6 +79,8 @@
     if (!keyboardRedoReady.ok) throw new Error(`native keyboard Redo gate returned HTTP ${keyboardRedoReady.status}`);
     await waitFor(() => !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
       "Cue restoration after keyboard Redo");
+    const linkedChildAfterKeyboardRedo = !!document.querySelector(`#content tr[data-cue-id="${config.linked_cue}"]`);
+    if (!linkedChildAfterKeyboardRedo) throw new Error("Redo removed the linked child Cue");
     await waitFor(() => {
       const undo = document.querySelector("#sc009ProjectDraftHistory button");
       return undo && !undo.disabled;
@@ -111,6 +115,8 @@
       status: "PASS", undo_enabled: initialUndoEnabled, redo_after_undo: true,
       keyboard_undo: true, keyboard_redo: true, touch_redo: true,
       restored_same_cue: !!document.querySelector(`#content tr[data-cue-id="${config.created_cue}"]`),
+      linked_child_after_undo: linkedChildAfterUndo,
+      linked_child_after_keyboard_redo: linkedChildAfterKeyboardRedo,
       overflow, history_requests: historyRequests, execution_requests: executionRequests,
     });
   } catch (error) {
