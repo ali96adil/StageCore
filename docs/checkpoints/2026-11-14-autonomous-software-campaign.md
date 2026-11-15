@@ -4064,3 +4064,34 @@ This entry supersedes the preceding push instruction.
 - No production service/data/Vault, original show data, real device or firmware
   was touched; Project ACL/SC-024 remains disabled in production. No force push,
   merge, paid operation or backup deletion was performed.
+
+## Resume update — 2026-11-15 · nested Mixed Inspector fault scenarios
+
+- Branch `integration/stagecore-rc`, PR #534 OPEN/Draft. Remote remains
+  `0c0540574b73ab80557b31d20bfe46c6c1b6a08a`; Local HEAD before this update is
+  `435a214e1d0d5e53f4ade479650d090ca8a95833`. Seven commits are ahead of the
+  remote (`949c3b7`, `34edd9a`, `826f3d6`, `8c19c1f`, `156eff7`, `169be4a`,
+  `435a214`); this Handoff commit becomes the eighth. No push has been made.
+- Extended the existing Chrome nested Mixed Cue Inspector regression: the
+  virtual offline-target case blocks all six Actions; a missing-DMX case blocks
+  only the Lighting Action; and test-only Machine Role metadata makes a missing
+  Companion scenario mark all six blocked. Each scenario asserts no fetch or
+  GO/STOP/Blackout request. The Companion case validates client-side scenario
+  classification only; it does not claim real Companion connectivity. The
+  updated test passed normally and under Race on local Chrome. Matrix SC-013
+  now records these exact test boundaries.
+- Existing exact-head workflows remain on `0c05405`. Go 1.27 Test/Vet and Go
+  1.26 Test/Browser/Vet pass; Go 1.26 Race remains active and ARM64 product
+  builds are pending. Companion Core `43657410210` and Camera Relay
+  `43657410252` pass. Wait for Core completion before pushing any of the local
+  commits; then verify exact PR/branch HEAD and workflow SHA before normal
+  fast-forward to #534.
+- Performance report review confirms Pi 4 ARM64 Mixed/linked, scheduled,
+  burst, sustained 100-Cue/200-Action, STOP/Blackout and process CPU/RSS/GC
+  evidence already exists and Cue Engine/Runtime Control/publish runtime
+  sources have not changed since the benchmark binary. Keep the measured
+  qualification; do not rerun without a runtime/source or environment change.
+- All new lighting and Cue Inspector tests use temporary SQLite, local Chrome
+  and simulation-only data. Production services, Vault/show data and hardware
+  were not used; Project ACL/SC-024 remains off in production. No firmware,
+  force push, merge, paid operation or backup deletion.
