@@ -4879,3 +4879,30 @@ This entry supersedes the preceding push instruction.
   Continue the endpoint-to-policy and asynchronous-delivery audit; keep
   Production ACL disabled and keep the Pi performance report historical until
   an isolated Raspberry Pi 4 lab is available.
+
+## Qualification batch checkpoint — 2026-11-15 · StageAudio SHOW response fence
+
+- PR #534 and `origin/integration/stagecore-rc` are at
+  `daae16d4c3806e7ac6b7deb1927181ba2abf26b5`. Two tested commits are saved
+  locally on top: `75ca868` (live grant recheck before the StageAudio SHOW-lock
+  response) and `149db97` (SC-024/matrix evidence). No push has been made for
+  this follow-up batch.
+- A red-first temporary-SQLite test revoked `audio.control` after the command
+  read an active SHOW session but before its 423 response. Before the fix, the
+  revoked operator still received `STAGEAUDIO_SHOW_LOCKED`. The handler now
+  rechecks the session and Project grant before responses derived from the
+  runtime state; the test asserts the scoped 404 and zero local-sidecar calls.
+  The broader StageAudio regressions also cover GET-status errors, command
+  session-read errors and the unconfigured-sidecar response without a grant.
+- Focused StageAudio and unified-ACL tests pass normally and under Race. Full
+  `go test ./internal/httpapi -count=1` passed in 80.185 s; `go vet
+  ./internal/httpapi` and `git diff --check` pass. All fixtures use temporary
+  SQLite and a fake sidecar; no audio playback, device, service or production
+  ACL is involved.
+- Exact `daae16d` CI is still running: Core Go 1.27 passed, Core Go 1.26 is
+  in progress; Companion Core and Camera Relay passed. Do not push the two
+  follow-up commits until Core Go 1.26 completes and the entire exact-head
+  gate is green. Then verify remote/PR ancestry again, push normally to the
+  same branch, and inspect all exact-new-head workflows. Continue the SC-024
+  whole-server and asynchronous-delivery audit; the Pi 4 current-head
+  performance rerun still requires an isolated Pi 4 lab.
