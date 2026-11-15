@@ -5004,3 +5004,33 @@ This entry supersedes the preceding push instruction.
   before banner completion; no Pi identity or command ran, so current-head Pi
   performance remains unqualified. Continue the endpoint-to-policy audit
   while the three exact-new-head workflows run; keep Production ACL disabled.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 environment-read error fences
+
+- Local HEAD is `ae286096df522fc9ee867473e9bd5dfe22d43545`, two commits ahead
+  of `origin/integration/stagecore-rc`, `git ls-remote`, and OPEN/Draft PR #534
+  at `f1e6a021c7ea47c9d4a6c219f2213b9d8fbdb77d`. `6300c6b` adds live grant
+  rechecks before execution-environment list and rebuild-plan Store failures;
+  `ae28609` records the F-025 qualification and matrix update. Working tree was
+  clean at checkpoint creation.
+- Red-first temporary-SQLite regressions for the environment-list and
+  rebuild-plan GET routes each returned HTTP 503 after `project.view` was
+  revoked. Both now return the scoped 404 without exposing Store failure
+  details. Focused environment-list, snapshot-list, Vault-status and
+  rebuild-plan tests passed normally and under Race. Full
+  `go test ./internal/httpapi -count=1` passed in 80.720 s; `go vet
+  ./internal/httpapi` and `git diff --check` passed. Fixtures used only
+  disposable database tables; Production ACL remains disabled.
+- Exact pushed-head checks for `f1e6a02`: Companion Core `43700059241` and
+  Camera Relay `43700059280` passed. Core Go 1.27 passed; Core Go 1.26 Race
+  (`43700059257`) remains in progress, with Linux ARM64 CGo-free builds pending.
+  Do not push local commits until that run and all exact-head checks complete.
+- First action on resume: inspect the final Go 1.26 Race/ARM64 results. If the
+  full old-head gate is green and PR/remote ancestry still matches, push the
+  saved fast-forward stack normally to the same branch and PR, then inspect all
+  exact-new-head workflows. Continue the SC-024 asynchronous delivery and
+  remaining endpoint-to-policy review while CI runs. Pi 4 current-head
+  performance qualification still requires the isolated Pi lab; the
+  `stagecore-qualification` SSH endpoint timed out before banner completion.
+  Do not use the `stagecore-pi` production host, change production services or
+  data, send real-device commands, or enable Project ACL in production.
