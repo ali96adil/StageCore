@@ -109,7 +109,8 @@ func withOperatorProjects(auth *userauth.Service, projectStore *store.Store, acc
 }
 
 type operatorProjectHooks struct {
-	BeforeResponse func()
+	BeforeResponse      func()
+	BeforeErrorResponse func(route string)
 }
 
 func withOperatorProjectsHooks(auth *userauth.Service, projectStore *store.Store, access *projectaccess.Service, hooks operatorProjectHooks) Option {
@@ -437,7 +438,12 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
 			return
 		}
-		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
+		project, revision, ok := loadProjectAndRevision(w, r, projectStore, func() bool {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("project-read")
+			}
+			return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+		})
 		if !ok {
 			return
 		}
@@ -457,12 +463,23 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		if !allowScopedProject(w, r, session, access, projectaccess.ProjectView) {
 			return
 		}
-		project, revision, ok := loadProjectAndRevision(w, r, projectStore)
+		project, revision, ok := loadProjectAndRevision(w, r, projectStore, func() bool {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("project-dashboard")
+			}
+			return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+		})
 		if !ok {
 			return
 		}
 		dashboard, err := buildDashboard(r, projectStore, project, revision)
 		if err != nil {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse("project-dashboard")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "DASHBOARD_UNAVAILABLE"})
 			return
 		}
@@ -476,19 +493,31 @@ func registerOperatorProjectRoutes(mux *http.ServeMux, auth *userauth.Service, p
 	}))
 }
 
-func loadProjectAndRevision(w http.ResponseWriter, r *http.Request, projectStore *store.Store) (domain.Project, domain.ProjectRevision, bool) {
+func loadProjectAndRevision(w http.ResponseWriter, r *http.Request, projectStore *store.Store, recheckBeforeError ...func() bool) (domain.Project, domain.ProjectRevision, bool) {
+	recheck := func() bool {
+		return len(recheckBeforeError) == 0 || recheckBeforeError[0]()
+	}
 	projectID := strings.TrimSpace(r.PathValue("project_id"))
 	project, err := projectStore.GetProject(r.Context(), projectID)
 	if errors.Is(err, domain.ErrNotFound) {
+		if !recheck() {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	if err != nil {
+		if !recheck() {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	revision, err := projectStore.GetRevision(r.Context(), project.CurrentRevisionID)
 	if err != nil {
+		if !recheck() {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "REVISION_UNAVAILABLE"})
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}

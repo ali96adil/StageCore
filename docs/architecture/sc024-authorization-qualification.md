@@ -1945,3 +1945,17 @@ reproduced `PROJECTS_UNAVAILABLE` for all three routes after grant revocation
 at temporary-SQLite read failures. The same fence covers the checkpoint and
 recovery preflight Project/Cue/Revision reads. These routes remain in the
 qualification assembly; production ACL is unchanged.
+
+
+## SC-024 continuation · 2026-11-15 · Project detail and dashboard reads
+
+Project detail and Dashboard reads now recheck live authorization before
+returning Project/Revision or aggregate-read errors. Red-first
+`TestProjectReadsSuppressStoreErrorsAfterProjectGrantRevocation` removed
+`project_revisions` and `runtime_snapshots` only in temporary SQLite and
+reproduced `REVISION_UNAVAILABLE` and `DASHBOARD_UNAVAILABLE` after grant
+revocation. The shared Project/Revision loader now supports a response-boundary
+authorization check. Focused normal/Race verification and full
+`go test ./internal/httpapi -count=1` (87.279 s) pass; `go vet
+./internal/httpapi` and `git diff --check` pass. No production database or
+service was touched.

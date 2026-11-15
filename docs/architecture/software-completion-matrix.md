@@ -188,3 +188,9 @@ recheck the live `CueEdit` grant before returning Store failures. Red-first
 temporary-SQLite regressions reproduce and close the revoked-grant error path;
 normal and focused Race runs pass. These checks do not qualify production ACL
 activation or real hardware.
+
+Project detail and Dashboard error responses now recheck the live project
+grant after Project/Revision/runtime snapshot reads fail. Red-first temporary
+SQLite coverage exercises both response boundaries. Focused normal/Race
+coverage, full HTTP API tests, `go vet ./internal/httpapi`, and diff checks
+pass. This remains qualification coverage only.
