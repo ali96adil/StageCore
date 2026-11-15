@@ -119,7 +119,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		key    string
 		resume chan struct{}
 	}, 4)
-	inspectorTouchRequests := make(chan struct {
+	touchRequests := make(chan struct {
 		x, y   float64
 		resume chan struct{}
 	}, 1)
@@ -223,19 +223,19 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
-		case "/mixed-cue-inspector-touch-ready":
+		case "/mixed-cue-touch-ready":
 			var request struct {
 				X float64 `json:"x"`
 				Y float64 `json:"y"`
 			}
 			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
 				request.X < 0 || request.X > 390 || request.Y < 0 || request.Y > 844 {
-				http.Error(w, "invalid Inspector touch coordinates", http.StatusBadRequest)
+				http.Error(w, "invalid native touch coordinates", http.StatusBadRequest)
 				return
 			}
 			resume := make(chan struct{})
 			select {
-			case inspectorTouchRequests <- struct {
+			case touchRequests <- struct {
 				x, y   float64
 				resume chan struct{}
 			}{x: request.X, y: request.Y, resume: resume}:
@@ -397,9 +397,9 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			}
 			keyCommandID += 2
 			close(request.resume)
-		case request := <-inspectorTouchRequests:
+		case request := <-touchRequests:
 			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
-				t.Fatalf("send emulated touch to Cue Inspector: %v", err)
+				t.Fatalf("send native touch to Cue control: %v", err)
 			}
 			close(request.resume)
 		case request := <-viewportRequests:

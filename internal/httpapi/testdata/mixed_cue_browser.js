@@ -101,6 +101,17 @@
     if (!response.ok) throw new Error(`viewport gate failed at ${width}x${height}: ${response.status}`);
     await waitFor(() => window.innerWidth === width, `applying ${width}x${height} viewport`);
   };
+  const touchElement = async (element, label) => {
+    if (!element) throw new Error(`${label} touch target is missing`);
+    element.scrollIntoView({ block: "center" });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bounds = element.getBoundingClientRect();
+    const response = await fetch("/mixed-cue-touch-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }),
+    });
+    if (!response.ok) throw new Error(`${label} native touch failed: ${response.status}, bounds=${JSON.stringify(bounds)}, body=${await response.text()}`);
+  };
   const measureInspectorViewports = async (linkedParentID) => {
     const measurements = [];
     for (const [width, height, mobile] of [
@@ -406,7 +417,7 @@
     await waitFor(() => visibleCueRows().length === 3 &&
       visibleCueRows().every((row) => createdIDs.includes(row.dataset.cueId)),
     "combining Mixed and linked Cue filters");
-    document.getElementById("clearCueListFilters").click();
+    await touchElement(document.getElementById("clearCueListFilters"), "clearing Cue filters");
     await waitFor(() => visibleCueRows().length === 123, "restoring the full sequence after clearing filters");
     if (JSON.stringify(visibleCueRows().map((row) => row.dataset.cueId)) !== JSON.stringify(originalCueOrder)) {
       throw new Error("search and filters changed Cue execution order");
@@ -415,24 +426,7 @@
     const navigationRows = visibleCueRows();
     if (navigationRows.length !== 123) throw new Error(`Cue navigation list=${navigationRows.length}, want 123`);
     const firstNavigationDetails = navigationRows[0].querySelector("details");
-    const firstNavigationSummary = firstNavigationDetails?.querySelector("summary");
-    firstNavigationSummary?.scrollIntoView({ block: "center" });
-    const firstSummaryBounds = firstNavigationSummary?.getBoundingClientRect();
-    const touchResponse = await fetch("/mixed-cue-inspector-touch-ready", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ x: firstSummaryBounds.left + firstSummaryBounds.width / 2,
-        y: firstSummaryBounds.top + firstSummaryBounds.height / 2 })
-    });
-    if (!touchResponse.ok) {
-      const touchRow = firstNavigationDetails?.closest("tr");
-      const touchCell = firstNavigationDetails?.closest("td");
-      const cueTable = document.querySelector(".cue-list-table");
-      const touchGeometry = { viewport: window.innerWidth,
-        table: cueTable && { width: cueTable.getBoundingClientRect().width, scrollWidth: cueTable.scrollWidth, display: getComputedStyle(cueTable).display },
-        row: touchRow && { left: touchRow.getBoundingClientRect().left, right: touchRow.getBoundingClientRect().right, width: touchRow.getBoundingClientRect().width, display: getComputedStyle(touchRow).display },
-        cell: touchCell && { left: touchCell.getBoundingClientRect().left, right: touchCell.getBoundingClientRect().right, width: touchCell.getBoundingClientRect().width, display: getComputedStyle(touchCell).display } };
-      throw new Error(`Inspector touch gate failed: ${touchResponse.status}, bounds=${JSON.stringify(firstSummaryBounds)}, geometry=${JSON.stringify(touchGeometry)}, body=${await touchResponse.text()}`);
-    }
+    await touchElement(firstNavigationDetails?.querySelector("summary"), "opening the first Cue Inspector");
     await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),
       "opening the first Cue in the long-list Inspector by touch");
     const responsiveLayoutsRTL = await measureInspectorViewports(parentID);
