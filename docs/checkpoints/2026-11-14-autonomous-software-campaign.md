@@ -5986,3 +5986,31 @@ This entry supersedes the preceding push instruction.
   Continue the F-025 response audit while that gate runs. Current-head isolated
   Pi 4 performance qualification remains pending; the historical Pi result is
   not current-head acceptance.
+
+## Push checkpoint — 2026-11-15 · F-025 response fences
+
+- The exact pushed head `c63160e7c50088984d7016326c31a04554afff2d` completed
+  Core run `43717094969` green: Go 1.26 Race passed in 31m17s and Go 1.27
+  passed. Companion replacement/media, Swift CompanionCore, and isolated
+  Camera Relay ARM64 checks also passed (`43717095124`, `43717094956`).
+- After that gate cleared, six accumulated commits were pushed normally to
+  the existing branch and Draft PR #534, with no force push:
+  `4dd7c49`, `bc42320`, `1d3b1c3`, `9e99150`, `0458f3d`, and `0c4b055`.
+  Remote and local code HEAD at this checkpoint: `0c4b055842f8755ffb2f144d0daae55d4c1bf99e`.
+- New exact-head checks for `0c4b055` are pending: Core run `43719886374`,
+  Companion run `43719886173`, and isolated ARM64 run `43719886155`. Do not
+  push again until every check completes; a later push would cancel active CI.
+- Batch evidence: the two red-first operation/OSCQuery scope regressions pass
+  normally and under Race; `go vet ./internal/httpapi`, diff checks, and full
+  `go test ./internal/httpapi -count=1` pass (97.913 s). Prior capture and
+  snapshot response-fence evidence is in the preceding checkpoints. Working
+  tree was clean after the push.
+- No real Companion, OSC endpoint, production service/data/Vault, original
+  show, or hardware output was used. Project ACL remains disabled. Current
+  Pi 4 qualification cannot use the production-like `stagecore-pi`; the
+  isolated SSH endpoint remains unreachable before host identity, so no Pi
+  workload ran.
+- Resume by watching all three exact-head CI runs. Then continue the highest
+  remaining software gap in SC-024's route/delivery audit, keep the PR draft,
+  and preserve the current-head isolated Pi performance qualification as
+  pending until a verifiable isolated target is available.
