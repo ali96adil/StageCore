@@ -2067,3 +2067,19 @@ list, snapshot, capture, rebuild-plan and operation entry points. Focused
 normal/Race tests, `go vet ./internal/httpapi`, `git diff --check`, and full
 `go test ./internal/httpapi -count=1` (90.693 s) pass. Production ACL remains
 disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Execution Environment asset read errors
+
+The shared F-025 asset loader now rechecks the qualified route grant after a
+manifest Store error and returns immediately when the grant has been revoked.
+Red-first `TestExecutionEnvironmentAssetReadSuppressesStoreErrorAfterGrantRevocation`
+renamed only `manifest_json` in temporary SQLite, revoked `MediaRead` at the
+failed asset-read boundary, and reproduced `PROJECT_NOT_FOUND` followed by a
+second `EXECUTION_ENVIRONMENT_CAPTURE_FAILED` body. The corrected vault-status
+read returns only the scoped denial; the same loader serves capture. Focused
+normal and Race tests passed for the asset, vault-status, revision, list,
+snapshot-list, rebuild-plan and operation Store-error fences. `go vet
+./internal/httpapi`, diff checks, and full `go test ./internal/httpapi -count=1`
+(92.060 s) pass. No Vault bytes, production data, or output devices were
+accessed; production ACL remains disabled.

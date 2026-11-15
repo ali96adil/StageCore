@@ -5582,3 +5582,33 @@ This entry supersedes the preceding push instruction.
 - Next inspect remaining F-025 manifest/asset error boundaries and other
   project-scoped read projections. Production ACL remains disabled; current
   isolated Pi 4 performance qualification is still pending.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 asset manifest read
+
+- PR #534 and the remote branch remain at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. The latest code commit is
+  `d27a6b8d14740a28299fb4e43a6b332042b41bd1`; it is 37 commits ahead of that
+  remote. Qualification, matrix and this handoff update are being recorded
+  separately; no push has occurred.
+- Exact remote-head checks remain open: Core Go 1.26 run `43710243386` is
+  still in progress; Core Go 1.27 passed. Companion run `43710243389` and
+  Camera Relay run `43710243382` passed. Do not push until all checks for
+  exactly `9760e9d` are complete and green.
+- `d27a6b8` adds a live qualified-route grant check after an F-025 asset
+  manifest read error, suppressing the Store error if authorization was
+  revoked. Red-first `TestExecutionEnvironmentAssetReadSuppressesStoreErrorAfterGrantRevocation`
+  faulted only the temporary SQLite manifest column and reproduced a scoped
+  `PROJECT_NOT_FOUND` plus an appended `EXECUTION_ENVIRONMENT_CAPTURE_FAILED`
+  response. The corrected vault-status path emits only the scoped denial;
+  capture uses the same loader.
+- Focused normal test passed; Race coverage passed for asset, vault-status,
+  revision, list, snapshot-list, rebuild-plan and operation revocation tests;
+  `go vet ./internal/httpapi` passed; full
+  `go test ./internal/httpapi -count=1` passed in 92.060 s; `git diff --check`
+  passed. All database fault injection used disposable SQLite. No production
+  data, Vault bytes, services, or output devices were accessed.
+- Next: inspect remaining manifest reads, especially rebuild-plan setup, for
+  error responses that can bypass the live grant recheck; continue the broader
+  Project-scoped read audit while the exact-head CI runs. Current isolated
+  Pi 4 performance qualification remains pending; Mac/simulation results are
+  not Pi evidence. Production ACL remains disabled and PR #534 stays Draft.
