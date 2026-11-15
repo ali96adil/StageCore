@@ -89,6 +89,10 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	focusRequests := make(chan chan struct{}, 2)
+	staleReadyRequests := make(chan struct {
+		cueID  string
+		resume chan struct{}
+	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -117,6 +121,28 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			resume := make(chan struct{})
 			select {
 			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/mixed-cue-stale-ready":
+			var request struct {
+				CueID string `json:"cue_id"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil || request.CueID == "" {
+				http.Error(w, "invalid Cue ID", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case staleReadyRequests <- struct {
+				cueID  string
+				resume chan struct{}
+			}{cueID: request.CueID, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -185,6 +211,16 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
 			}
 			close(resume)
+		case request := <-staleReadyRequests:
+			cue, err := st.GetCue(ctx, request.cueID)
+			if err != nil || cue.RevisionID != revision.ID {
+				t.Fatalf("load Cue for concurrent baseline change: cue=%+v err=%v", cue, err)
+			}
+			cue.Name = "Concurrent saved parent"
+			if _, err := st.ReplaceDraftCue(ctx, cue, cue.Actions); err != nil {
+				t.Fatalf("simulate an authorized concurrent Draft edit: %v", err)
+			}
+			close(request.resume)
 		case err := <-done:
 			exited = true
 			output, _ := os.ReadFile(browserLog.Name())
@@ -195,36 +231,39 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}
 	var report struct {
-		Status              string             `json:"status"`
-		IDs                 []string           `json:"ids"`
-		ActionIDs           []string           `json:"action_ids"`
-		EditedName          string             `json:"edited_name"`
-		QuickEditedLabel    string             `json:"quick_edited_label"`
-		QuickEditedNotes    string             `json:"quick_edited_notes"`
-		MixedFormUndo       bool               `json:"mixed_form_undo"`
-		MixedFormRedo       bool               `json:"mixed_form_redo"`
-		CueColor            string             `json:"cue_color"`
-		CueLabelText        string             `json:"cue_label_text"`
-		ColorMarker         bool               `json:"color_marker_visible"`
-		PaletteVisible      bool               `json:"palette_visible"`
-		LabelReadable       bool               `json:"label_color_readable"`
-		MarkerContrast      map[string]float64 `json:"marker_contrast"`
-		TextContrast        float64            `json:"text_contrast"`
-		FocusRingVisible    bool               `json:"focus_ring_visible"`
-		FocusContrast       float64            `json:"focus_contrast"`
-		PageOverflow        bool               `json:"page_overflow"`
-		LTRLabel            string             `json:"ltr_label"`
-		LTRPalette          bool               `json:"ltr_palette_visible"`
-		LTRReadable         bool               `json:"ltr_label_readable"`
-		LTRMarkerContrast   map[string]float64 `json:"ltr_marker_contrast"`
-		LTRTextContrast     float64            `json:"ltr_text_contrast"`
-		LTRFocusVisible     bool               `json:"ltr_focus_visible"`
-		LTRFocusContrast    float64            `json:"ltr_focus_contrast"`
-		LTROverflow         bool               `json:"ltr_page_overflow"`
-		LocalRecovery       bool               `json:"local_recovery_available"`
-		LocalRestored       bool               `json:"local_recovery_restored"`
-		LocalActionPayload  bool               `json:"local_action_payload_restored"`
-		LocalActionIdentity bool               `json:"local_action_identity_restored"`
+		Status                string             `json:"status"`
+		IDs                   []string           `json:"ids"`
+		ActionIDs             []string           `json:"action_ids"`
+		EditedName            string             `json:"edited_name"`
+		QuickEditedLabel      string             `json:"quick_edited_label"`
+		QuickEditedNotes      string             `json:"quick_edited_notes"`
+		MixedFormUndo         bool               `json:"mixed_form_undo"`
+		MixedFormRedo         bool               `json:"mixed_form_redo"`
+		CueColor              string             `json:"cue_color"`
+		CueLabelText          string             `json:"cue_label_text"`
+		ColorMarker           bool               `json:"color_marker_visible"`
+		PaletteVisible        bool               `json:"palette_visible"`
+		LabelReadable         bool               `json:"label_color_readable"`
+		MarkerContrast        map[string]float64 `json:"marker_contrast"`
+		TextContrast          float64            `json:"text_contrast"`
+		FocusRingVisible      bool               `json:"focus_ring_visible"`
+		FocusContrast         float64            `json:"focus_contrast"`
+		PageOverflow          bool               `json:"page_overflow"`
+		LTRLabel              string             `json:"ltr_label"`
+		LTRPalette            bool               `json:"ltr_palette_visible"`
+		LTRReadable           bool               `json:"ltr_label_readable"`
+		LTRMarkerContrast     map[string]float64 `json:"ltr_marker_contrast"`
+		LTRTextContrast       float64            `json:"ltr_text_contrast"`
+		LTRFocusVisible       bool               `json:"ltr_focus_visible"`
+		LTRFocusContrast      float64            `json:"ltr_focus_contrast"`
+		LTROverflow           bool               `json:"ltr_page_overflow"`
+		LocalRecovery         bool               `json:"local_recovery_available"`
+		LocalRestored         bool               `json:"local_recovery_restored"`
+		LocalActionPayload    bool               `json:"local_action_payload_restored"`
+		LocalActionIdentity   bool               `json:"local_action_identity_restored"`
+		StaleReview           bool               `json:"stale_review_available"`
+		StaleReviewNotApplied bool               `json:"stale_review_not_applied"`
+		StaleReviewName       string             `json:"stale_review_name"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
@@ -241,7 +280,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		return true
 	}
 	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
-		!report.LocalRecovery || !report.LocalRestored || !report.LocalActionPayload || !report.LocalActionIdentity || len(report.IDs) != 3 ||
+		!report.LocalRecovery || !report.LocalRestored || !report.LocalActionPayload || !report.LocalActionIdentity ||
+		!report.StaleReview || !report.StaleReviewNotApplied || report.StaleReviewName != "Concurrent saved parent" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
 		!report.ColorMarker || !report.PaletteVisible || !report.LabelReadable || !validMarkerContrast(report.MarkerContrast) || report.TextContrast < 4.5 || !report.FocusRingVisible || report.FocusContrast < 3 || report.PageOverflow ||
 		report.LTRLabel != report.QuickEditedLabel || !report.LTRPalette || !report.LTRReadable || !validMarkerContrast(report.LTRMarkerContrast) || report.LTRTextContrast < 4.5 || !report.LTRFocusVisible || report.LTRFocusContrast < 3 || report.LTROverflow {
@@ -271,8 +311,12 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}
 	parent := byID[report.IDs[2]]
-	if report.EditedName == "" || parent.Name != report.EditedName {
-		t.Fatalf("edited parent Cue name=%q, browser reported %q", parent.Name, report.EditedName)
+	expectedParentName := report.EditedName
+	if report.StaleReviewNotApplied {
+		expectedParentName = report.StaleReviewName
+	}
+	if expectedParentName == "" || parent.Name != expectedParentName {
+		t.Fatalf("edited parent Cue name=%q, expected %q", parent.Name, expectedParentName)
 	}
 	if report.QuickEditedLabel == "" || parent.DisplayLabel != report.QuickEditedLabel ||
 		parent.NotesSummary != report.QuickEditedNotes || report.QuickEditedNotes == "" {
@@ -351,6 +395,10 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	active, err := st.ActiveSessionForProject(ctx, project.ID)
 	if err != nil || active != nil {
 		t.Fatalf("browser authoring must not start a runtime session: session=%+v err=%v", active, err)
+	}
+	snapshot, err := st.LatestPublishedRuntimeSnapshotForProject(ctx, project.ID)
+	if err != nil || snapshot != nil {
+		t.Fatalf("browser recovery/preview must not publish a Snapshot: snapshot=%+v err=%v", snapshot, err)
 	}
 }
 

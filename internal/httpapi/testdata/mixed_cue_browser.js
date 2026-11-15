@@ -110,6 +110,49 @@
     await navigate("cues");
 
     const ltrEvidence = sessionStorage.getItem("stagecore_mixed_cue_ltr_evidence");
+    const staleReviewKey = "stagecore_mixed_cue_stale_review";
+    if (sessionStorage.getItem(staleReviewKey) === "1") {
+      const previous = JSON.parse(ltrEvidence || "null");
+      if (!previous?.ids?.[2]) throw new Error("stale-review evidence from the prior browser page is missing");
+      const parentID = previous.ids[2];
+      await waitFor(() => !!document.querySelector(`#content tr[data-cue-id="${parentID}"]`),
+        "loading the concurrently saved Cue before stale recovery review");
+      document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`)?.click();
+      await waitFor(() => document.getElementById("cueDialog")?.open, "opening a Cue with a stale local recovery draft");
+      const reviewButton = document.getElementById("sc009LocalRestore");
+      await waitFor(() => reviewButton && !reviewButton.hidden, "stale local recovery review control");
+      const recoveryStatus = document.querySelector("#sc009EditorRecovery [role='status']:nth-of-type(2)");
+      if (!recoveryStatus?.textContent.includes("Cue changed since") ||
+          !reviewButton.textContent.includes("Review local draft")) {
+        throw new Error(`changed Cue baseline was not marked for review: ${recoveryStatus?.textContent || "missing status"}`);
+      }
+      const serverLink = document.querySelector(`#linkedCuesEditor .linked-cue-checkbox[value="${previous.ids[1]}"]`);
+      const serverAction = document.querySelector("#actionsEditor .action-editor");
+      if (!serverLink || !serverAction) throw new Error("saved Cue fields are missing from stale-review editor");
+      const reviewPayload = document.getElementById("sc009LocalReview");
+      reviewButton.click();
+      await waitFor(() => !reviewPayload.hidden, "opening read-only stale local draft details");
+      const reviewedDraft = JSON.parse(reviewPayload.value);
+      const reviewedAction = reviewedDraft.actions?.[0];
+      const currentPayload = JSON.parse(serverAction.querySelector(".action-parameters")?.value || "null");
+      if (reviewedDraft.fields?.[1] !== "Offline restored Mixed Parent" ||
+          reviewedDraft.links?.length !== 0 || reviewedAction?.action_id !== previous.action_ids[0] ||
+          reviewedAction?.parameters?.scene_id !== "offline-sim" ||
+          reviewedAction?.parameters?.preserve?.vendor !== "mixed-cue" ||
+          document.getElementById("cueName")?.value !== "Concurrent saved parent" ||
+          document.querySelector("#actionsEditor .action-editor .action-mode")?.value !== "PARALLEL" ||
+          !serverLink.checked || currentPayload?.scene_id !== "opening-sim") {
+        throw new Error(`stale recovery review changed or omitted data: reviewed=${reviewPayload.value}, name=${document.getElementById("cueName")?.value}, mode=${document.querySelector("#actionsEditor .action-editor .action-mode")?.value}, linked=${serverLink.checked}, payload=${JSON.stringify(currentPayload)}`);
+      }
+      if (offlineRecoveryRequests < 1 || confirmationRequests) {
+        throw new Error(`stale recovery review unexpectedly used the server or confirmation (${offlineRecoveryRequests}/${confirmationRequests})`);
+      }
+      sessionStorage.removeItem(staleReviewKey);
+      sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
+      await report(JSON.stringify({ ...previous, stale_review_available: true, stale_review_not_applied: true,
+        stale_review_name: document.getElementById("cueName").value }));
+      return;
+    }
     if (ltrEvidence) {
       const previous = JSON.parse(ltrEvidence);
       const parentID = previous.ids[2];
@@ -165,13 +208,18 @@
       });
       if (offlineRecoveryRequests < 1) throw new Error("server recovery endpoint was not offline during local recovery");
       if (confirmationRequests) throw new Error(`matching local recovery unexpectedly prompted for confirmation (${confirmationRequests})`);
-      sessionStorage.removeItem("stagecore_mixed_cue_ltr_evidence");
-      await report(JSON.stringify({ ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
+      const ltrProof = { ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
         local_recovery_available: true, local_recovery_restored: true,
         local_action_payload_restored: true, local_action_identity_restored: true,
-        theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } }));
+        theme_qualification: { rtl: previous.theme, ltr: document.documentElement.dataset.theme } };
+      sessionStorage.setItem("stagecore_mixed_cue_ltr_evidence", JSON.stringify(ltrProof));
+      sessionStorage.setItem(staleReviewKey, "1");
+      const staleReady = await fetch("/mixed-cue-stale-ready", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify({cue_id: parentID})});
+      if (!staleReady.ok) throw new Error(`stale baseline synchronization returned HTTP ${staleReady.status}`);
+      window.location.reload();
       return;
     }
 
