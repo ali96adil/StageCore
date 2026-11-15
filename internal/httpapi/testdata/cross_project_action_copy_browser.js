@@ -76,6 +76,15 @@
     const sendPresetKeys = async (keys) => fetch("/cross-project-copy-preset-keyboard-ready", {
       method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys}),
     });
+    const sendPresetText = async (field, value) => {
+      field.focus();
+      const keys = [...value].map((character) => character === " " ? "Space" : character);
+      for (let offset = 0; offset < keys.length; offset += 4) {
+        const response = await sendPresetKeys(keys.slice(offset, offset + 4));
+        if (!response.ok) throw new Error(`native preset text input returned HTTP ${response.status}`);
+      }
+      if (field.value !== value) throw new Error(`native preset text input produced ${JSON.stringify(field.value)}, want ${JSON.stringify(value)}`);
+    };
     presetPanel.open = true;
     try {
       await waitFor(() => requestTrace.some((request) =>
@@ -83,13 +92,13 @@
     } catch (error) {
       throw new Error(`${error}; source=${config.source}; state_project=${state.project?.project_id}; panel_open=${presetPanel.open}; requests=${JSON.stringify(requestTrace)}`);
     }
-    presetName.value = "Reusable mixed pair";
-    presetName.dispatchEvent(new Event("input", {bubbles: true}));
-    presetDescription.value = "Reusable lighting and OSC";
-    presetDescription.dispatchEvent(new Event("input", {bubbles: true}));
+    await sendPresetText(presetName, "reusable mixed pair");
+    const nameTab = await sendPresetKeys(["Tab"]);
+    if (!nameTab.ok) throw new Error(`native preset description Tab returned HTTP ${nameTab.status}`);
+    if (document.activeElement !== presetDescription) throw new Error("native Tab from preset name did not focus description");
+    await sendPresetText(presetDescription, "reusable lighting and osc");
     const savePreset = presetPanel.querySelector("button");
-    presetName.focus();
-    const presetTabs = await sendPresetKeys(["Tab", "Tab"]);
+    const presetTabs = await sendPresetKeys(["Tab"]);
     if (!presetTabs.ok) throw new Error(`native preset Tab traversal returned HTTP ${presetTabs.status}`);
     if (document.activeElement !== savePreset) {
       throw new Error(`two native Tabs from the preset name did not focus Save: ${document.activeElement?.outerHTML?.slice(0, 180)}`);
@@ -98,6 +107,10 @@
     if (!presetEnter.ok) throw new Error(`native preset Enter returned HTTP ${presetEnter.status}`);
     await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
     const presetRow = presetPanel.querySelector("li");
+    const savedDescription = presetRow.querySelector(".sc010-preset-description");
+    if (savedDescription?.textContent !== "reusable lighting and osc") {
+      throw new Error(`native preset description was not saved: ${savedDescription?.textContent}`);
+    }
     const presetSearch = presetPanel.querySelector("input[type=search]");
     if (!presetSearch) throw new Error("Action preset search control is missing");
     const typeSearch = async (keys) => {

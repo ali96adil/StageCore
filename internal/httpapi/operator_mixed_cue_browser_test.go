@@ -956,6 +956,8 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		virtualKeyCode = 13
 	case "Backspace":
 		virtualKeyCode = 8
+	case "Space":
+		virtualKeyCode = 32
 	case "j":
 		virtualKeyCode = 74
 	case "k":
@@ -976,6 +978,9 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		if key == "Backspace" {
 			eventCode = "Backspace"
 		}
+		if key == "Space" {
+			eventKey, eventCode = " ", "Space"
+		}
 		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' {
 			eventCode = "Key" + strings.ToUpper(key)
 		}
@@ -990,6 +995,10 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		if len(key) == 1 && key[0] >= 'a' && key[0] <= 'z' && eventType == "keyDown" {
 			params["text"] = key
 			params["unmodifiedText"] = key
+		}
+		if key == "Space" && eventType == "keyDown" {
+			params["text"] = " "
+			params["unmodifiedText"] = " "
 		}
 		if shift {
 			params["modifiers"] = 8
