@@ -14,6 +14,7 @@ import (
 
 type operatorConfigurationDraftHooks struct {
 	BeforeResponse               func()
+	BeforeErrorResponse          func(route string)
 	BeforeAssistantCueDraftWrite func()
 }
 
@@ -34,6 +35,12 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			lock, err := stageStore.ShowConfigurationLockState(r.Context(), projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("configuration-lock-read")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -46,15 +53,33 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			lock, err := stageStore.ShowConfigurationLockState(r.Context(), projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("configuration-draft-lock")
+				}
+				if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			if lock.Locked {
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse()
+				}
+				if !recheckProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED", "show_configuration_lock": lock})
 				return
 			}
 			revision, err := stageStore.EnsureProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), projectID, session.User.ID, "Operator routing edit")
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("configuration-draft-ensure")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -75,10 +100,22 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			}
 			lock, err := stageStore.ShowConfigurationLockState(r.Context(), projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("configuration-draft-discard-lock")
+				}
+				if !recheckProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			if lock.Locked {
+				if hooks.BeforeResponse != nil {
+					hooks.BeforeResponse()
+				}
+				if !recheckProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultRejected, "SHOW configuration lock is active", nil)
 				writeJSON(w, http.StatusLocked, map[string]any{"error_code": "SHOW_CONFIGURATION_LOCKED", "show_configuration_lock": lock})
 				return
@@ -95,6 +132,12 @@ func withOperatorConfigurationDraft(auth *userauth.Service, stageStore *store.St
 			restored, discarded, err := stageStore.DiscardProjectDraft(projectMutationContext(r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit), projectID, session.User.ID, input.Reason)
 			if err != nil {
 				appendDraftDiscardAudit(r, audit, session, projectID, securityaudit.ResultFailed, err.Error(), nil)
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("configuration-draft-discard")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionUserManage, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
