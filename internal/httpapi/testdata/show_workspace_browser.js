@@ -44,6 +44,34 @@
       }
       await setViewport(390, 844);
     };
+    const keyboardNavigate = async (page) => {
+      const nav = document.querySelector(`[data-page="${page}"]`);
+      if (!nav) throw new Error(`${page} navigation is unavailable for ${state.user.role}`);
+      nav.focus();
+      await fetch("/show-workspace-key-ready", { method: "POST" });
+      const deadline = Date.now() + 5000;
+      const pageReady = () => page === "cues"
+        ? document.querySelector("#content h1")?.textContent.includes("Cues")
+        : !!document.getElementById("startShowButton");
+      while (Date.now() < deadline && !pageReady()) await new Promise((resolve) => setTimeout(resolve, 25));
+      if (state.page !== page || !pageReady()) throw new Error(`native keyboard did not open ${page} for ${state.user.role}`);
+      if (!nav.matches(":focus-visible")) throw new Error(`native keyboard focus is not visible for ${state.user.role}`);
+    };
+    const touchNavigate = async (page) => {
+      const nav = document.querySelector(`[data-page="${page}"]`);
+      if (!nav) throw new Error(`${page} navigation is unavailable for ${state.user.role}`);
+      const bounds = nav.getBoundingClientRect();
+      await fetch("/show-workspace-touch-ready", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }),
+      });
+      const deadline = Date.now() + 5000;
+      const pageReady = () => page === "cues"
+        ? document.querySelector("#content h1")?.textContent.includes("Cues")
+        : !!document.getElementById("startShowButton");
+      while (Date.now() < deadline && !pageReady()) await new Promise((resolve) => setTimeout(resolve, 25));
+      if (state.page !== page || !pageReady()) throw new Error(`emulated touch did not open ${page} for ${state.user.role}`);
+    };
 
     f017RememberPage(config.project, "cues");
     if (f017PreferredPage(config.project) !== "cues") throw new Error("fixture did not remember the authoring page");
@@ -88,17 +116,10 @@
     if (getComputedStyle(profile).display === "none") throw new Error("workspace profile control did not return after SHOW presentation cleared");
     assertNoHorizontalOverflow("stopped SHOW workspace");
 
-    const cuesNav = document.querySelector('[data-page="cues"]');
-    cuesNav.focus();
-    await fetch("/show-workspace-key-ready", { method: "POST" });
-    const cuesDeadline = Date.now() + 5000;
-    while (Date.now() < cuesDeadline && !document.querySelector("#content h1")?.textContent.includes("Cues")) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+    await keyboardNavigate("cues");
     if (state.page !== "cues" || !document.querySelector("#content h1")?.textContent.includes("Cues")) {
       throw new Error(`operator could not re-enter Cue authoring after ending SHOW: page=${state.page}, heading=${document.querySelector("#content h1")?.textContent || "missing"}, message=${document.getElementById("globalMessage")?.textContent || ""}, requests=${fetchTrace.join(" | ")}`);
     }
-    if (!cuesNav.matches(":focus-visible")) throw new Error("native keyboard navigation did not preserve visible focus");
     if (!document.getElementById("createDraftButton") && !document.getElementById("createCueButton")) {
       throw new Error("Cue authoring controls did not return after SHOW ended");
     }
@@ -109,13 +130,7 @@
     }
     await setViewport(390, 844);
 
-    const runtimeNav = document.querySelector('[data-page="runtime"]');
-    const runtimeBounds = runtimeNav.getBoundingClientRect();
-    await fetch("/show-workspace-touch-ready", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ x: runtimeBounds.left + runtimeBounds.width / 2, y: runtimeBounds.top + runtimeBounds.height / 2 }),
-    });
+    await touchNavigate("runtime");
     const runtimeDeadline = Date.now() + 5000;
     while (Date.now() < runtimeDeadline && !document.getElementById("startShowButton")) {
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -152,12 +167,12 @@
     };
     const switchRole = async (role) => {
       await authenticateRole(role);
-      await navigate("cues");
+      await keyboardNavigate("cues");
       const mayEdit = ["OWNER", "TECHNICIAN"].includes(role);
       const canAuthor = !!document.getElementById("createDraftButton") || !!document.getElementById("createCueButton");
       if (canAuthor !== mayEdit) throw new Error(`${role} Cue authoring controls=${canAuthor}, expected ${mayEdit}`);
       await assertResponsiveAtAllWidths(`${role} Cue workspace`);
-      await navigate("runtime");
+      await touchNavigate("runtime");
       if (!document.getElementById("startShowButton")) throw new Error(`${role} Runtime workspace is unavailable`);
       if (document.getElementById("startShowButton").disabled !== (role === "VIEWER")) {
         throw new Error(`${role} SHOW entry enabled state is incorrect`);
