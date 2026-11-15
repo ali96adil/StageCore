@@ -2341,3 +2341,14 @@ returns `FORBIDDEN` for a scoped Operator, even where that account has unrelated
 Project grants. No handler side effect is executed; direct device, firmware,
 transfer, capsule-import, and project administration routes remain Owner-only
 in the qualified test assembly.
+
+`TestQualifiedPluginAdministrationOwnerMatrixForEveryRegisteredRoute`
+extends the Owner/Operator check to all 26 unique extension and plugin
+administration route patterns from the 28 route registrations (catalog sync
+and bundle import each have two registered handlers). It mounts no-op handlers
+behind the actual `WithOwnerPluginAdministration` guard and verifies that
+Owner requests pass while Operator requests receive `FORBIDDEN`, including
+read-only and mutation methods. The probe validates route classification and
+the outer authorization guard; it deliberately does not execute install,
+update, permission-write, or plugin business handlers and does not qualify
+their asynchronous delivery boundaries.
