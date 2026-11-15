@@ -204,6 +204,71 @@ func TestOperatorExecutionEnvironmentCaptureStreamsIntoVaultAndPromotesManifest(
 	}
 }
 
+func TestExecutionEnvironmentVaultStatusSuppressesStoreErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	v, err := vault.Open(t.TempDir(), stageStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "vault-status-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Vault status ACL", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := stageStore.CreateExecutionEnvironmentManifest(ctx, revision.ID, testVDMXExecutionEnvironmentManifest("vault-status"), owner.Session.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.MediaRead}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		WithOperatorExecutionEnvironments(h.auth, stageStore),
+		withOperatorExecutionEnvironmentCapture(h.auth, stageStore, v, executionEnvironmentCaptureHooks{
+			BeforeVaultStatusErrorResponse: func() {
+				if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+					t.Errorf("revoke media.read before Vault status error delivery: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	base := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID + "/execution-environments/" + environment.ID + "/assets/workspace"
+	capture := authenticatedExecutionEnvironmentRequest(t, owner.Token, owner.CSRFToken, http.MethodPost, base+"/capture", []byte("vault-status-object"))
+	captureResponse := httptest.NewRecorder()
+	handler.ServeHTTP(captureResponse, capture)
+	if captureResponse.Code != http.StatusOK {
+		t.Fatalf("prepare content-bound Vault asset: HTTP %d %s", captureResponse.Code, captureResponse.Body.String())
+	}
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE vault_objects"); err != nil {
+		t.Fatal(err)
+	}
+	statusRequest := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodGet, base+"/vault-status", nil)
+	statusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusNotFound || strings.Contains(statusResponse.Body.String(), "EXECUTION_ENVIRONMENT_VAULT_STATUS_UNAVAILABLE") {
+		t.Fatalf("Vault status error escaped after Project grant revocation: HTTP %d %s", statusResponse.Code, statusResponse.Body.String())
+	}
+}
+
 func TestOperatorExecutionEnvironmentCaptureSHOWLockRejectsBeforeVaultImport(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

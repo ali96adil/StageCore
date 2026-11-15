@@ -16,7 +16,8 @@ import (
 )
 
 type executionEnvironmentCaptureHooks struct {
-	BeforeResponse func()
+	BeforeResponse                 func()
+	BeforeVaultStatusErrorResponse func()
 }
 
 // WithOperatorExecutionEnvironmentCapture adds the explicit local-file capture
@@ -70,6 +71,12 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 			return
 		}
 		if err != nil {
+			if hooks.BeforeVaultStatusErrorResponse != nil {
+				hooks.BeforeVaultStatusErrorResponse()
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_VAULT_STATUS_UNAVAILABLE"})
 			return
 		}
