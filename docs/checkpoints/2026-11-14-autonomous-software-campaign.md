@@ -5831,3 +5831,26 @@ This entry supersedes the preceding push instruction.
 - Resume by checking exact-head CI for `0b091584d07f9324683e18954f37707b3d57941b`,
   then push the accumulated tested commits to the existing branch/PR only when
   green. Continue the F-025 response-boundary review while the gate runs.
+
+## Qualification checkpoint — 2026-11-15 · Cross-Project Revision mismatch
+
+- `3488227dc8963ac1d6691c11cb664d8a04788bab` fences the shared
+  Project/Revision loader's mismatch response with a live qualified-route
+  recheck. A revoked Project grant now receives only `PROJECT_NOT_FOUND`.
+- Red-first `TestExecutionEnvironmentRevisionMismatchSuppressesResultAfterGrantRevocation`
+  used temporary SQLite with a Project route and a foreign Project's Revision;
+  revoking `ProjectView` at the mismatch boundary previously exposed
+  `EXECUTION_ENVIRONMENT_REVISION_NOT_FOUND`.
+- Focused normal/Race authorization regressions passed, `go vet
+  ./internal/httpapi` passed, and full `go test ./internal/httpapi -count=1`
+  passed (94.791 s). `git diff --check` passed. No production resources or
+  physical outputs were touched.
+- Code HEAD before this documentation commit is
+  `3488227dc8963ac1d6691c11cb664d8a04788bab`, 12 commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b`. The exact-head Core run
+  `43713024420` remains in progress in Go 1.26 Race; Go 1.27, Companion
+  Swift/macOS and Camera Relay isolated ARM64 checks passed. Do not push until
+  the prior remote-head Core Race and all exact-head checks finish green.
+- Resume with live Project-scoped response auditing of the remaining
+  execution-environment CRUD paths. Production ACL remains disabled, and
+  current-head Pi 4 performance qualification is still pending.

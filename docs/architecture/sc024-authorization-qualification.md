@@ -2199,3 +2199,17 @@ Focused normal and Race rebuild-plan tests, `go vet ./internal/httpapi`,
 diff checks, and full `go test ./internal/httpapi -count=1` pass (94.626 s).
 No production database, Vault data or physical output was involved. Production
 ACL remains disabled.
+
+## SC-024 · Cross-Project Revision mismatch response
+
+`loadExecutionEnvironmentRevision` now rechecks the qualified Project grant
+before returning a mismatch when the requested Revision belongs to another
+Project. Red-first
+`TestExecutionEnvironmentRevisionMismatchSuppressesResultAfterGrantRevocation`
+uses a Project/foreign-Revision route in temporary SQLite and revokes
+`ProjectView` at the mismatch boundary; the old path returned
+`EXECUTION_ENVIRONMENT_REVISION_NOT_FOUND`, while the fixed response is only
+`PROJECT_NOT_FOUND`. The check applies to all callers of the shared loader.
+Focused normal and Race revocation groups and `go vet ./internal/httpapi`
+passed; full `go test ./internal/httpapi -count=1` passed (94.791 s). No
+production data or real outputs were used. Production ACL remains disabled.
