@@ -64,7 +64,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	item := collection + "/{execution_environment_id}"
 
 	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse)
+		project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore, hooks.BeforeStoreErrorResponse, hooks.BeforeResponse)
 		if !ok {
 			return
 		}
@@ -206,13 +206,13 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 	}))
 }
 
-func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store, beforeError ...func(string)) (domain.Project, domain.ProjectRevision, bool) {
+func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, stageStore *store.Store, hooks ...func(string)) (domain.Project, domain.ProjectRevision, bool) {
 	projectID := strings.TrimSpace(r.PathValue("project_id"))
 	revisionID := strings.TrimSpace(r.PathValue("revision_id"))
 	project, err := stageStore.GetProject(r.Context(), projectID)
 	if err != nil {
-		if len(beforeError) > 0 && beforeError[0] != nil {
-			beforeError[0]("revision-project")
+		if len(hooks) > 0 && hooks[0] != nil {
+			hooks[0]("revision-project")
 		}
 		if !recheckQualifiedProjectRoute(w, r) {
 			return domain.Project{}, domain.ProjectRevision{}, false
@@ -222,8 +222,8 @@ func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, st
 	}
 	revision, err := stageStore.GetRevision(r.Context(), revisionID)
 	if err != nil {
-		if len(beforeError) > 0 && beforeError[0] != nil {
-			beforeError[0]("revision")
+		if len(hooks) > 0 && hooks[0] != nil {
+			hooks[0]("revision")
 		}
 		if !recheckQualifiedProjectRoute(w, r) {
 			return domain.Project{}, domain.ProjectRevision{}, false
@@ -232,6 +232,12 @@ func loadExecutionEnvironmentRevision(w http.ResponseWriter, r *http.Request, st
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
 	if revision.ProjectID != project.ID {
+		if len(hooks) > 1 && hooks[1] != nil {
+			hooks[1]("revision-mismatch")
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, false
+		}
 		writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "EXECUTION_ENVIRONMENT_REVISION_NOT_FOUND"})
 		return domain.Project{}, domain.ProjectRevision{}, false
 	}
