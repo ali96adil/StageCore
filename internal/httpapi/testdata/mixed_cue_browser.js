@@ -112,6 +112,61 @@
     });
     if (!response.ok) throw new Error(`${label} native touch failed: ${response.status}, bounds=${JSON.stringify(bounds)}, body=${await response.text()}`);
   };
+  const filterKey = async (key) => {
+    const response = await fetch("/mixed-cue-filter-key-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }),
+    });
+    if (!response.ok) throw new Error(`native Cue filter key ${key} failed: ${response.status}`);
+  };
+  const filterText = async (text) => {
+    const response = await fetch("/mixed-cue-filter-key-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error(`native Cue search text failed: ${response.status}`);
+  };
+  const exerciseCueFiltersWithKeyboard = async (expectedLinkedIDs, locale) => {
+    const allRows = [...document.querySelectorAll("#content tr[data-cue-id]")];
+    const originalOrder = allRows.map((row) => row.dataset.cueId);
+    const visibleRows = () => [...document.querySelectorAll("#content tr[data-cue-id]")].filter((row) => !row.hidden);
+    if (allRows.length !== 123) throw new Error(`${locale} keyboard filter fixture has ${allRows.length} Cues`);
+    const search = document.getElementById("cueListSearch");
+    search?.focus();
+    if (document.activeElement !== search) throw new Error(`${locale} Cue search did not receive keyboard focus`);
+    await filterText("Navigation Cue 120");
+    await waitFor(() => visibleRows().length === 1 && visibleRows()[0].innerText.includes("Navigation Cue 120"),
+      `${locale} native keyboard search`);
+    const searchCharacters = search.value.length;
+    for (let index = 0; index < searchCharacters; index++) await filterKey("Backspace");
+    await waitFor(() => search.value === "" && visibleRows().length === 123, `${locale} native keyboard search clear`)
+      .catch((error) => { throw new Error(`${error?.message || error}; search=${search.value}, visible=${visibleRows().length}, active=${document.activeElement?.id}`); });
+    await filterKey("Tab");
+    const typeFilter = document.getElementById("cueListTypeFilter");
+    if (document.activeElement !== typeFilter) throw new Error(`${locale} Tab did not move from Search to Action type`);
+    await filterKey("Home");
+    await filterKey("ArrowDown");
+    await filterKey("Enter");
+    if (typeFilter.value !== "mixed") throw new Error(`${locale} keyboard Action type selection=${typeFilter.value}`);
+    await filterKey("Tab");
+    await filterKey("Tab");
+    const linkedFilter = document.getElementById("cueListLinkedFilter");
+    if (document.activeElement !== linkedFilter) throw new Error(`${locale} Tab sequence skipped the Linked Cues filter`);
+    await filterKey("Home");
+    await filterKey("ArrowDown");
+    await filterKey("Enter");
+    await waitFor(() => visibleRows().length === expectedLinkedIDs.length &&
+      visibleRows().every((row) => expectedLinkedIDs.includes(row.dataset.cueId)), `${locale} combined keyboard filters`)
+      .catch((error) => { throw new Error(`${error?.message || error}; search=${search.value}, type=${typeFilter.value}, enabled=${document.getElementById("cueListEnabledFilter").value}, linked=${linkedFilter.value}, visible=${visibleRows().map((row) => row.dataset.cueId).join(",")}, expected=${expectedLinkedIDs.join(",")}`); });
+    await filterKey("Tab");
+    const clear = document.getElementById("clearCueListFilters");
+    if (document.activeElement !== clear) throw new Error(`${locale} Tab did not move to Clear filters`);
+    await filterKey("Enter");
+    await waitFor(() => visibleRows().length === 123 && document.activeElement === search,
+      `${locale} keyboard clear and focus return`);
+    if (JSON.stringify(visibleRows().map((row) => row.dataset.cueId)) !== JSON.stringify(originalOrder)) {
+      throw new Error(`${locale} keyboard search/filter changed Cue sequence order`);
+    }
+    return true;
+  };
   const measureInspectorViewports = async (linkedParentID) => {
     const measurements = [];
     for (const [width, height, mobile] of [
@@ -221,6 +276,7 @@
       await waitFor(() => document.documentElement.dir === "ltr" && document.documentElement.dataset.theme === "light" &&
         !!document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`),
       "reloading the Draft Cue list in English LTR and light appearance");
+      const filterKeyboardLTR = await exerciseCueFiltersWithKeyboard(previous.ids, "LTR");
       const ltrInspector = document.querySelector(`#content tr[data-cue-id="${parentID}"] details`);
       ltrInspector?.querySelector("summary")?.click();
       await waitFor(() => ltrInspector?.querySelector(".cue-inspection-navigation"),
@@ -277,6 +333,7 @@
       if (confirmationRequests) throw new Error(`matching local recovery unexpectedly prompted for confirmation (${confirmationRequests})`);
       const ltrProof = { ...previous, ltr_label: labelText, ltr_palette_visible: paletteVisible,
         responsive_layout_ltr: responsiveLayoutsLTR,
+        filter_keyboard_ltr: filterKeyboardLTR,
         ltr_label_readable: readable, ltr_marker_contrast: colorContrast, ltr_text_contrast: textContrast,
         ltr_focus_visible: focusVisible, ltr_focus_contrast: focusContrast, ltr_page_overflow: overflow,
         browser_process_restarted: processRestarted,
@@ -408,6 +465,7 @@
       visibleCueRows().every((row) => createdIDs.includes(row.dataset.cueId)),
     "searching an Action nested in a three-Cue Mixed chain");
     setValue(search, "");
+    const filterKeyboardRTL = await exerciseCueFiltersWithKeyboard(createdIDs, "RTL");
     const typeFilter = document.getElementById("cueListTypeFilter");
     const linkedFilter = document.getElementById("cueListLinkedFilter");
     typeFilter.value = "mixed";
@@ -690,6 +748,7 @@
     const firstPass = { status: "PASS", ids: createdIDs, action_ids: editedActionIDs,
       edited_name: editedName, quick_edited_label: quickEditedLabel, quick_edited_notes: quickEditedNotes,
       mixed_form_undo: true, mixed_form_redo: true,
+      filter_keyboard_rtl: filterKeyboardRTL,
       responsive_layout_rtl: responsiveLayoutsRTL,
       theme: document.documentElement.dataset.theme,
       cue_color: cueColor, cue_label_text: cueLabelText, color_marker_visible: colorMarkerVisible,

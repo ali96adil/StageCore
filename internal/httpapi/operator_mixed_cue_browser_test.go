@@ -123,6 +123,10 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		x, y   float64
 		resume chan struct{}
 	}, 1)
+	filterKeyboardRequests := make(chan struct {
+		key, text string
+		resume    chan struct{}
+	}, 1)
 	viewportRequests := make(chan struct {
 		width, height int
 		mobile        bool
@@ -239,6 +243,35 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				x, y   float64
 				resume chan struct{}
 			}{x: request.X, y: request.Y, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/mixed-cue-filter-key-ready":
+			var request struct {
+				Key  string `json:"key"`
+				Text string `json:"text"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Key != "" && !map[string]bool{"Tab": true, "Home": true, "ArrowDown": true, "Enter": true, "Backspace": true}[request.Key]) ||
+				(request.Text != "" && (len(request.Text) > 100 || request.Key != "")) {
+				http.Error(w, "invalid Cue filter keyboard input", http.StatusBadRequest)
+				return
+			}
+			if request.Key == "" && request.Text == "" {
+				http.Error(w, "empty Cue filter keyboard input", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case filterKeyboardRequests <- struct {
+				key, text string
+				resume    chan struct{}
+			}{key: request.Key, text: request.Text, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -397,6 +430,18 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			}
 			keyCommandID += 2
 			close(request.resume)
+		case request := <-filterKeyboardRequests:
+			var keyErr error
+			if request.text != "" {
+				keyErr = chromeDevToolsCommand(cdp, keyCommandID, "Input.insertText", map[string]any{"text": request.text})
+			} else {
+				keyErr = dispatchChromeFilterKey(cdp, keyCommandID, request.key)
+			}
+			if keyErr != nil {
+				t.Fatalf("send native Cue filter keyboard input %q/%q: %v", request.key, request.text, keyErr)
+			}
+			keyCommandID += 2
+			close(request.resume)
 		case request := <-touchRequests:
 			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
 				t.Fatalf("send native touch to Cue control: %v", err)
@@ -478,6 +523,8 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		QuickEditedNotes      string             `json:"quick_edited_notes"`
 		MixedFormUndo         bool               `json:"mixed_form_undo"`
 		MixedFormRedo         bool               `json:"mixed_form_redo"`
+		FilterKeyboardRTL     bool               `json:"filter_keyboard_rtl"`
+		FilterKeyboardLTR     bool               `json:"filter_keyboard_ltr"`
 		CueColor              string             `json:"cue_color"`
 		CueLabelText          string             `json:"cue_label_text"`
 		ColorMarker           bool               `json:"color_marker_visible"`
@@ -543,6 +590,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		return true
 	}
 	if report.Status != "PASS" || !report.MixedFormUndo || !report.MixedFormRedo ||
+		!report.FilterKeyboardRTL || !report.FilterKeyboardLTR ||
 		!report.LocalRecovery || !report.LocalRestored || !report.ProcessRestarted || !report.LocalActionPayload || !report.LocalActionIdentity ||
 		!report.StaleReview || !report.StaleReviewNotApplied || report.StaleReviewName != "Concurrent saved parent" || len(report.IDs) != 3 ||
 		report.CueColor != "blue" || report.CueLabelText != report.QuickEditedLabel ||
@@ -939,6 +987,29 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 			params["modifiers"] = 8
 		}
 		if err := chromeDevToolsCommand(conn, firstID+id, "Input.dispatchKeyEvent", params); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dispatchChromeFilterKey(conn *websocket.Conn, firstID int, key string) error {
+	keyCode := map[string]int{"Tab": 9, "Home": 36, "ArrowDown": 40, "Enter": 13, "Backspace": 8}
+	virtualKeyCode, ok := keyCode[key]
+	if !ok {
+		return fmt.Errorf("unsupported Cue filter key %q", key)
+	}
+	code := key
+	if len(key) == 1 && key >= "a" && key <= "z" {
+		code = "Key" + strings.ToUpper(key)
+	}
+	for index, eventType := range []string{"keyDown", "keyUp"} {
+		params := map[string]any{"type": eventType, "key": key, "code": code,
+			"windowsVirtualKeyCode": virtualKeyCode, "nativeVirtualKeyCode": virtualKeyCode}
+		if key == "Enter" && eventType == "keyDown" {
+			params["text"], params["unmodifiedText"] = "\r", "\r"
+		}
+		if err := chromeDevToolsCommand(conn, firstID+index, "Input.dispatchKeyEvent", params); err != nil {
 			return err
 		}
 	}
