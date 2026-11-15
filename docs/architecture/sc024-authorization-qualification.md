@@ -1793,6 +1793,7 @@ path. Error responses after verification and PlanImport now use the same live
 session recheck. The route remains opt-in and read-only; no capsule was restored
 or materialized by this test.
 
-The Owner review regressions pass normally and under Race, `go vet
-./internal/httpapi` passes, and the full `go test ./internal/httpapi -count=1`
-suite is rerun for this batch. No production data, service or ACL was used.
+The Owner review regressions pass normally and under Race; `go vet
+./internal/httpapi` passes. Full `go test ./internal/httpapi -count=1` passed in
+81.241 s after the handler change; the added plan-error regression then passed
+in focused normal and Race runs. No production data, service or ACL was used.
