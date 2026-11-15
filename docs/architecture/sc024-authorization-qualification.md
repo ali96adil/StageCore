@@ -2143,3 +2143,17 @@ the retained seed/update state or deleted state in temporary SQLite. Focused
 normal and Race tests, `go vet ./internal/httpapi`, diff checks, and full
 `go test ./internal/httpapi -count=1` (93.867 s) pass. Production ACL remains
 off.
+
+
+## SC-024 continuation · 2026-11-15 · Existing rebuild-plan read errors
+
+The seed route now rechecks the live `ProjectEdit` grant after a non-NotFound
+Store failure while reading an existing rebuild plan. Red-first
+`TestExecutionEnvironmentRebuildPlanExistingReadSuppressesStoreErrorAfterGrantRevocation`
+renamed only `plan_json` in temporary SQLite and revoked the grant at the
+read-error boundary; before the fix, seed returned
+`EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED` (503) after revocation. The
+fixed route returns only `PROJECT_NOT_FOUND`. Focused normal/Race tests across
+all rebuild-plan boundaries, `go vet ./internal/httpapi`, diff checks, and full
+`go test ./internal/httpapi -count=1` (94.441 s) pass. Production ACL remains
+disabled.

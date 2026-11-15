@@ -269,3 +269,8 @@ ProjectEdit after the write commits. Red-first response-boundary coverage
 proves the committed result stays in SQLite but its plan details are hidden
 when authority is revoked; the response marks commit uncertainty and is not
 retryable. Production Project ACL remains disabled.
+
+The seed route also rechecks ProjectEdit after a Store error reading an
+existing rebuild plan. A red-first temporary-SQLite schema fault reproduced
+the stale seed failure after grant revocation; the corrected route returns
+only the scoped denial.

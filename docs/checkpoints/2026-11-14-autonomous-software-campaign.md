@@ -5733,3 +5733,28 @@ This entry supersedes the preceding push instruction.
   continue the broader Project-scoped response audit. Do not push until the
   exact `0b09158` CI gate completes. Production ACL stays off; isolated Pi 4
   timing qualification is pending.
+
+## Qualification batch checkpoint — 2026-11-15 · Existing rebuild-plan read
+
+- Latest code commit: `286f4dbbca4f2a9520320db12ebe440a66414edc`; local code
+  HEAD is four commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b` before this documentation
+  update. No further push has occurred.
+- Exact-head CI on `0b09158`: Core Go 1.26 run `43713024420` remains in
+  progress; Core Go 1.27 passed. Companion run `43713024392` and Camera Relay
+  run `43713024390` passed all checks. Keep the push gate closed until the
+  Go 1.26 job also completes successfully.
+- `286f4db` fences non-NotFound Store errors from reading an existing plan
+  during seed. Red-first
+  `TestExecutionEnvironmentRebuildPlanExistingReadSuppressesStoreErrorAfterGrantRevocation`
+  renamed only `plan_json` in temporary SQLite, revoked `ProjectEdit` at the
+  error boundary, and reproduced the generic seed 503 after revocation; the
+  corrected route returns only `PROJECT_NOT_FOUND`.
+- Focused normal/Race rebuild-plan regressions, `go vet ./internal/httpapi`,
+  diff checks, and full `go test ./internal/httpapi -count=1` passed
+  (94.441 s). Temporary SQLite only; no production data, Vault bytes or
+  output device was used.
+- Next review remaining seed read outcomes and mutation error delivery while
+  CI runs. Do not push past `0b09158` until its exact-head gate is green.
+  Production ACL remains off; isolated current-head Pi 4 qualification is
+  pending.
