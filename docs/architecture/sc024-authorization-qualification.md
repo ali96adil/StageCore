@@ -2274,3 +2274,18 @@ asset responses and requires only `PROJECT_NOT_FOUND`. Focused normal/Race
 regressions, `go vet ./internal/httpapi`, diff checks and full
 `go test ./internal/httpapi -count=1` pass (98.949 s). No production service,
 Vault or output was used.
+
+## SC-024 · Snapshot list/detail/diff scope mismatch fences
+
+Execution-environment snapshot list/detail/diff now revalidate the live
+ProjectView session and scoped grant before returning Environment-revision or
+Snapshot-environment mismatch responses, corrupt-list scope conflicts, and
+incompatible-diff outcomes. Red-first
+`TestExecutionEnvironmentSnapshotScopeErrorsSuppressResultAfterGrantRevocation`
+used three temporary-SQLite cases: foreign Environment in the list route,
+foreign Environment Snapshot in detail, and cross-Environment Snapshot diff.
+Before the fix, the responses contained the respective
+`EXECUTION_ENVIRONMENT_*` outcome without calling the revocation boundary; now
+each returns only `PROJECT_NOT_FOUND`. Focused normal/Race tests, `go vet
+./internal/httpapi`, diff checks and full `go test ./internal/httpapi -count=1`
+pass (99.353 s). No production data or output was involved.

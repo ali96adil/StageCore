@@ -5937,3 +5937,27 @@ This entry supersedes the preceding push instruction.
   all accumulated commits to the existing PR #534 once `c63160e` Core CI is
   green. Project ACL remains disabled in production; current-head isolated Pi
   4 performance qualification remains open.
+
+## Qualification checkpoint — 2026-11-15 · Snapshot scope delivery
+
+- `1d3b1c32c3eecc5acca11e28bacb7d44439f9f61` routes snapshot-list,
+  detail and diff scope mismatch/incompatibility responses through live
+  ProjectView/session checks before returning the outcome.
+- Red-first `TestExecutionEnvironmentSnapshotScopeErrorsSuppressResultAfterGrantRevocation`
+  covers three routes (foreign Environment list, foreign Snapshot detail,
+  cross-Environment diff) using temporary SQLite. All three returned specific
+  `EXECUTION_ENVIRONMENT_*` results after grant revocation before the fix;
+  after the fix each returns only `PROJECT_NOT_FOUND`.
+- Focused Race regressions passed (49.459 s); `go vet ./internal/httpapi` and
+  `git diff --check` pass; full `go test ./internal/httpapi -count=1` passes
+  (99.353 s). No production service, media or physical output was used.
+- Local code HEAD before this documentation commit is
+  `1d3b1c32c3eecc5acca11e28bacb7d44439f9f61`, three commits ahead of remote
+  `c63160e7c50088984d7016326c31a04554afff2d`. Current Core workflow
+  `43717094969` is still running Go 1.26 Race on `c63160e`; Go 1.27,
+  Companion Swift/macOS and Camera Relay ARM64 passed. Keep pushes paused until
+  the complete exact-head set finishes.
+- Resume with the remaining F-025 read and mutation error boundaries, then
+  push the accumulated commits to PR #534 after the active Core gate is green.
+  Production ACL remains off; current-head Pi 4 performance qualification is
+  still open.
