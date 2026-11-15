@@ -50,6 +50,14 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	outputHistoryCtx := store.WithOutputDraftHistoryActor(ctx, "backup-editor")
+	output, err := s.CreateOutput(outputHistoryCtx, domain.OutputDefinition{
+		RevisionID: draft.ID, Name: "Backup output", TargetRef: "SIM", CapabilityKey: "local.echo",
+		ValueSchema: json.RawMessage(`{}`), Criticality: "NORMAL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	routeHistoryCtx := store.WithRouteDraftHistoryActor(ctx, "backup-editor")
 	draftCueID := draftCue.ID
 	draftRoute, err := s.CreateRouteWithActions(routeHistoryCtx, domain.Route{
@@ -70,6 +78,10 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	inputHistoryBeforeBackup, err := s.InputDraftHistory(inputHistoryCtx, project.ID)
 	if err != nil || !inputHistoryBeforeBackup.CanUndo || inputHistoryBeforeBackup.RevisionID != draft.ID {
 		t.Fatalf("Input Draft Undo history before backup=%+v err=%v", inputHistoryBeforeBackup, err)
+	}
+	outputHistoryBeforeBackup, err := s.OutputDraftHistory(outputHistoryCtx, project.ID)
+	if err != nil || !outputHistoryBeforeBackup.CanUndo || outputHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Output Draft Undo history before backup=%+v err=%v", outputHistoryBeforeBackup, err)
 	}
 	manager := managerForStore(s)
 	service, err := backup.New(h, s, root, manager)
@@ -138,6 +150,23 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	restoredInputHistory, err := restoredStore.InputDraftHistory(inputHistoryCtx, project.ID)
 	if err != nil || !restoredInputHistory.CanUndo || restoredInputHistory.RevisionID != draft.ID {
 		t.Fatalf("restored Input Draft Undo history=%+v err=%v", restoredInputHistory, err)
+	}
+	restoredOutputHistory, err := restoredStore.OutputDraftHistory(outputHistoryCtx, project.ID)
+	if err != nil || !restoredOutputHistory.CanUndo || restoredOutputHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Output Draft Undo history=%+v err=%v", restoredOutputHistory, err)
+	}
+	if _, err := restoredStore.UndoOutputDraft(outputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Output Undo after backup restore: %v", err)
+	}
+	if outputs, err := restoredStore.ListOutputs(ctx, draft.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("Output Undo after restore left Outputs=%+v err=%v", outputs, err)
+	}
+	if _, err := restoredStore.RedoOutputDraft(outputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Output Redo after backup restore: %v", err)
+	}
+	outputs, err := restoredStore.ListOutputs(ctx, draft.ID)
+	if err != nil || len(outputs) != 1 || outputs[0].ID != output.ID {
+		t.Fatalf("Output Redo after restore changed identity: outputs=%+v want=%q err=%v", outputs, output.ID, err)
 	}
 	if _, err := restoredStore.UndoInputDraft(inputHistoryCtx, project.ID); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("Input Undo while its Route still references it=%v, want conflict", err)
