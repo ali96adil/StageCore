@@ -4776,3 +4776,34 @@ This entry supersedes the preceding push instruction.
   whole-server endpoint-to-policy and asynchronous-delivery review. Preserve
   the production ACL-off rule and stop/Blackout grants; do not query or alter
   production services or data.
+
+## Resume checkpoint — 2026-11-15 · Runtime error delivery fence
+
+- Branch: `integration/stagecore-rc`; OPEN/Draft PR #534. Remote/origin/PR
+  head remains `528bac6b912f500bdeef85e1dabd50a15e3faa71`. The tested local
+  code commit is `5a6476785bd2878524f1b729804a89caf9a598d6`; it follows the
+  docs-only `851c4c6` resume checkpoint and is not pushed. Worktree is clean
+  after committing the batch.
+- Exact `528bac6` workflows: Companion Core `43694919744` and Camera Relay
+  `43694919806` passed. Core `43694919781` passed Go 1.27, with Go 1.26 still
+  pending at its test job. Do not push until Core and the complete three-run
+  exact-head gate are green and inspected.
+- The SC-024 audit found that GET Project Runtime returned a Store failure
+  without the final live session/Project-view check used on success. The
+  red-first regression observed `503 PROJECTS_UNAVAILABLE` after revocation
+  during status construction. The route now returns the live scoped denial
+  with `no-store`; `TestRuntimeStatusSuppressesStoreErrorAfterProjectGrantRevocation`
+  passed normally and under Race. The existing authenticated Runtime flow also
+  passed, `go vet ./internal/httpapi` passed, and `git diff --check` passed.
+  Qualification assembly only; production ACL remains disabled.
+- Refreshed related Draft PR heads/checks: TabletPlayer #36 `91613da` passed;
+  DMX Lighting #39 `3ad7749` passed all six checks; ESP32 Camera #20
+  `455b066` passed; StageLaser #56 `b14a578` and #57 `c4ff10b` passed both
+  firmware/no-actuation and host-contract checks. No linked checkout or PR was
+  changed. The Pi 4 Mixed/Linked/Burst/Sustained measurements are already
+  documented and are not repeated here.
+- Next: continue the SC-024 endpoint error/delivery audit with regressions for
+  any reproduced gap; then recheck the exact-head CI gate and push the local
+  commits normally to this same PR. Keep Production ACL off and preserve all
+  production, show/Vault/data, real-device, firmware, backup, merge, force-push,
+  and paid-action restrictions.
