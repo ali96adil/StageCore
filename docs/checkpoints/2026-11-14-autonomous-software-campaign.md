@@ -5393,3 +5393,21 @@ This entry supersedes the preceding push instruction.
 - Next review: Session Memory list/detail and Project Notes read errors, then
   continue scoped route and asynchronous delivery coverage. The Pi 4 lab and
   production release gates remain unchanged.
+
+## Resume update — 2026-11-15 · Session Memory and Notes read fences
+
+- Remote/PR #534 remains at `3c535543c0242d349a94f23948a1ad18747468c0`.
+  Code commit `e1e77362690b873dd8bde9fbbb54e4537d614a87` is 25 commits ahead;
+  the worktree was clean after commit. No later push has occurred.
+- Exact-head run `43707820414`: Go 1.27 passed; Go 1.26 remains in progress.
+  Companion `43707820363` and Camera Relay `43707820418` passed. Wait for the
+  Go 1.26 Race job and recheck every exact-head check before pushing.
+- `e1e7736` fences Project Session Memory list/detail and Project Notes GET
+  errors. Red-first temporary-SQLite regressions for all three returned
+  `PROJECTS_UNAVAILABLE` after grant revocation before the fix; they now return
+  the scoped denial. Normal/Race regressions, `go vet ./internal/httpapi`,
+  diff checks and full HTTP API tests (87.704 s) pass.
+- Next inspect the four Project Note mutation response boundaries (create,
+  update, resolve, reopen) for result delivery after revocation. Keep this
+  local while the 3c53554 Core workflow is active; no ACL production cutover,
+  hardware command or production data operation is allowed.
