@@ -1813,3 +1813,21 @@ Focused Capsule tests pass normally and under Race, `go vet ./internal/httpapi`
 passes, and full `go test ./internal/httpapi -count=1` passed in 81.251 s. All
 filesystem state is temporary; no production Capsule/Vault data or service was
 used.
+
+
+## SC-024 continuation · 2026-11-15 · Tablet and StageLaser device-list errors
+
+`GET /api/v1/projects/{project_id}/tablet-controller` and
+`GET /api/v1/projects/{project_id}/stagelaser-controller` returned repository
+errors before rechecking the live `project.view` grant.
+`TestTabletControllerListSuppressesStoreErrorAfterProjectGrantRevocation` and
+`TestStageLaserControllerSuppressesStoreErrorAfterProjectGrantRevocation`
+drop `stage_devices` only in temporary SQLite and revoke Project view at the
+error boundary. Both first reproduced a 500/503 after revocation; the handlers
+now recheck the live session and grant and return scoped 404. The device lists
+remain read-only and the tests do not contact hardware.
+
+Focused Tablet/StageLaser regressions pass normally and under Race;
+`go vet ./internal/httpapi`, `git diff --check` and full
+`go test ./internal/httpapi -count=1` (81.994 s) pass. No production service,
+data, device or Production ACL was used.
