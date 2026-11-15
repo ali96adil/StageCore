@@ -26,35 +26,39 @@ type executionEnvironmentBindingRequest struct {
 }
 
 type executionEnvironmentView struct {
-	ID            string                `json:"execution_environment_id"`
-	RevisionID    string                `json:"revision_id"`
+	ID             string                `json:"execution_environment_id"`
+	RevisionID     string                `json:"revision_id"`
 	EnvironmentKey string                `json:"environment_key"`
-	Name          string                `json:"name"`
-	AdapterKey    string                `json:"adapter_key"`
+	Name           string                `json:"name"`
+	AdapterKey     string                `json:"adapter_key"`
 	ApplicationKey string                `json:"application_key"`
-	MachineRoleID *string               `json:"machine_role_id,omitempty"`
-	ContentSHA256 string                `json:"content_sha256"`
-	CreatedBy     string                `json:"created_by"`
-	CreatedAt     time.Time             `json:"created_at"`
-	Manifest      executionenv.Manifest `json:"manifest"`
+	MachineRoleID  *string               `json:"machine_role_id,omitempty"`
+	ContentSHA256  string                `json:"content_sha256"`
+	CreatedBy      string                `json:"created_by"`
+	CreatedAt      time.Time             `json:"created_at"`
+	Manifest       executionenv.Manifest `json:"manifest"`
+}
+
+type executionEnvironmentReadHooks struct {
+	BeforeStoreErrorResponse func(route string)
 }
 
 func WithOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store) Option {
-	return withOperatorExecutionEnvironments(auth, stageStore, executionEnvironmentSnapshotDiffHooks{})
+	return withOperatorExecutionEnvironments(auth, stageStore, executionEnvironmentReadHooks{})
 }
 
-func withOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentSnapshotDiffHooks) Option {
+func withOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentReadHooks) Option {
 	return func(s *Server) {
 		if auth == nil || stageStore == nil {
 			return
 		}
-		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore)
+		registerOperatorExecutionEnvironmentRoutes(s.mux, auth, stageStore, hooks)
 		registerOperatorExecutionEnvironmentSnapshotDiffRoutes(s.mux, auth, stageStore, hooks)
-		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore)
+		registerOperatorExecutionEnvironmentRebuildPlanRoutes(s.mux, auth, stageStore, hooks)
 	}
 }
 
-func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store) {
+func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks executionEnvironmentReadHooks) {
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments"
 	item := collection + "/{execution_environment_id}"
 
@@ -65,11 +69,23 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		}
 		environments, err := stageStore.ListExecutionEnvironmentManifests(r.Context(), revision.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-list")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 			return
 		}
 		roles, err := stageStore.ListMachineRoles(r.Context(), project.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("environment-list-machine-roles")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENTS_UNAVAILABLE")
 			return
 		}
@@ -87,7 +103,7 @@ func registerOperatorExecutionEnvironmentRoutes(mux *http.ServeMux, auth *userau
 		writeJSON(w, http.StatusOK, map[string]any{
 			"revision":               makeRevisionView(revision),
 			"execution_environments": views,
-			"machine_roles":           roleViews,
+			"machine_roles":          roleViews,
 		})
 	}))
 

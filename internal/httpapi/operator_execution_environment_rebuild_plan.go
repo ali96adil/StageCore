@@ -39,6 +39,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 	mux *http.ServeMux,
 	auth *userauth.Service,
 	stageStore *store.Store,
+	hooks executionEnvironmentReadHooks,
 ) {
 	path := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/rebuild-plan"
 
@@ -51,6 +52,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		}
 		plan, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID)
 		if err != nil {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-read")
+			}
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE")
 			return
 		}
@@ -98,7 +105,7 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 		if existing, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err == nil {
 			if r.URL.Query().Get("replace") != "true" {
 				writeJSON(w, http.StatusConflict, map[string]any{
-					"error_code": "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",
+					"error_code":      "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",
 					"rebuild_plan_id": existing.ID,
 				})
 				return

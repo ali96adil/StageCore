@@ -37,15 +37,11 @@ type executionEnvironmentSnapshotDetailView struct {
 	Snapshot               executionenv.Snapshot `json:"snapshot"`
 }
 
-type executionEnvironmentSnapshotDiffHooks struct {
-	BeforeStoreErrorResponse func(route string)
-}
-
 func registerOperatorExecutionEnvironmentSnapshotDiffRoutes(
 	mux *http.ServeMux,
 	auth *userauth.Service,
 	stageStore *store.Store,
-	hooks executionEnvironmentSnapshotDiffHooks,
+	hooks executionEnvironmentReadHooks,
 ) {
 	collection := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/snapshots"
 	mux.HandleFunc("GET "+collection, withPermission(auth, userauth.PermissionProjectRead, func(
@@ -234,7 +230,7 @@ func writeExecutionEnvironmentSnapshotReadStoreError(
 	err error,
 	fallback string,
 	route string,
-	hooks executionEnvironmentSnapshotDiffHooks,
+	hooks executionEnvironmentReadHooks,
 ) {
 	if hooks.BeforeStoreErrorResponse != nil {
 		hooks.BeforeStoreErrorResponse(route)
@@ -252,7 +248,7 @@ func writeExecutionEnvironmentSnapshotReadLookupError(
 	session userauth.Session,
 	err error,
 	route string,
-	hooks executionEnvironmentSnapshotDiffHooks,
+	hooks executionEnvironmentReadHooks,
 ) {
 	if hooks.BeforeStoreErrorResponse != nil {
 		hooks.BeforeStoreErrorResponse(route)

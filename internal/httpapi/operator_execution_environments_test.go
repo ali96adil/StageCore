@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorExecutionEnvironmentLifecycleAndRevisionAuthority(t *testing.T) {
@@ -281,5 +284,62 @@ func TestExecutionEnvironmentCreateRejectsRevokedBrowserSession(t *testing.T) {
 	items, err := f.projects.ListExecutionEnvironmentManifests(ctx, project.CurrentRevisionID)
 	if err != nil || len(items) != 0 {
 		t.Fatalf("revoked request changed execution environments: %+v, %v", items, err)
+	}
+}
+
+func TestExecutionEnvironmentListSuppressesStoreErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Environment list ACL", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.CreateExecutionEnvironmentManifest(
+		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("environment-list"), owner.Session.User.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "environment-list-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorExecutionEnvironments(h.auth, stageStore, executionEnvironmentReadHooks{
+			BeforeStoreErrorResponse: func(route string) {
+				if route == "environment-list" {
+					if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+						t.Errorf("revoke project.view before environment-list error delivery: %v", err)
+					}
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE execution_environment_manifests"); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID + "/execution-environments"
+	req := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodGet, path, nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "EXECUTION_ENVIRONMENTS_UNAVAILABLE") {
+		t.Fatalf("execution-environment list error escaped after Project grant revocation: HTTP %d %s", res.Code, res.Body.String())
 	}
 }

@@ -265,7 +265,7 @@ func TestExecutionEnvironmentSnapshotListSuppressesStoreErrorAfterGrantRevocatio
 		t.Fatal(err)
 	}
 	handler := New(
-		withOperatorExecutionEnvironments(h.auth, stageStore, executionEnvironmentSnapshotDiffHooks{
+		withOperatorExecutionEnvironments(h.auth, stageStore, executionEnvironmentReadHooks{
 			BeforeStoreErrorResponse: func(route string) {
 				if route == "snapshot-list" {
 					if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {

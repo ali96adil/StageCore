@@ -11,7 +11,9 @@ import (
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/executionenv"
+	"github.com/ali96adil/StageCore/internal/projectaccess"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
@@ -21,23 +23,29 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 	handler := New(WithOperatorExecutionEnvironments(h.auth, stageStore)).Handler()
 
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
 		Name: "Editable rebuild API", CreatedBy: owner.Session.User.ID,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	environment, err := stageStore.CreateExecutionEnvironmentManifest(
 		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("video-main"), owner.Session.User.ID,
 	)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	snapshotValue := executionenv.Snapshot{
-		SchemaVersion:              executionenv.SnapshotSchemaVersion,
-		EnvironmentKey:             environment.Manifest.EnvironmentKey,
-		AdapterKey:                 environment.Manifest.AdapterKey,
-		SourceManifestSHA256:       environment.ContentSHA256,
-		CaptureStatus:              executionenv.SnapshotPartial,
-		RebuildPlanVersion:         executionenv.SnapshotRebuildPlanVersion,
+		SchemaVersion:             executionenv.SnapshotSchemaVersion,
+		EnvironmentKey:            environment.Manifest.EnvironmentKey,
+		AdapterKey:                environment.Manifest.AdapterKey,
+		SourceManifestSHA256:      environment.ContentSHA256,
+		CaptureStatus:             executionenv.SnapshotPartial,
+		RebuildPlanVersion:        executionenv.SnapshotRebuildPlanVersion,
 		ReconstructionFingerprint: strings.Repeat("c", 64),
 		RebuildPlan: []executionenv.SnapshotRebuildStep{
 			{
@@ -51,16 +59,18 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		},
 		Items: []executionenv.SnapshotItem{{
 			Key: "vdmx-app", Name: "VDMX", Kind: executionenv.SnapshotOther,
-			Provenance: executionenv.ProvenanceAdapterObservation,
+			Provenance:      executionenv.ProvenanceAdapterObservation,
 			ProvenanceClass: executionenv.SnapshotProvenanceObserved,
-			Capture: executionenv.ItemObserved,
-			Portability: executionenv.SnapshotDescriptiveOnly,
+			Capture:         executionenv.ItemObserved,
+			Portability:     executionenv.SnapshotDescriptiveOnly,
 		}},
 	}
 	snapshot, err := stageStore.CreateExecutionEnvironmentSnapshot(
 		ctx, environment.ID, snapshotValue, owner.Session.User.ID,
 	)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	path := "/api/v1/projects/" + project.ID +
 		"/revisions/" + revision.ID +
@@ -94,7 +104,9 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		t.Fatalf("seed status=%d body=%s", seedRes.Code, seedRes.Body.String())
 	}
 	var seeded executionEnvironmentRebuildPlanView
-	if err := json.Unmarshal(seedRes.Body.Bytes(), &seeded); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(seedRes.Body.Bytes(), &seeded); err != nil {
+		t.Fatal(err)
+	}
 	if seeded.ExecutionEnvironmentID != environment.ID ||
 		seeded.SourceSnapshotID != snapshot.ID ||
 		len(seeded.Plan.Steps) != 2 ||
@@ -112,7 +124,9 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		t.Fatalf("duplicate seed status=%d body=%s", duplicateSeedRes.Code, duplicateSeedRes.Body.String())
 	}
 	var duplicateSeedError map[string]any
-	if err := json.Unmarshal(duplicateSeedRes.Body.Bytes(), &duplicateSeedError); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(duplicateSeedRes.Body.Bytes(), &duplicateSeedError); err != nil {
+		t.Fatal(err)
+	}
 	if duplicateSeedError["error_code"] != "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS" {
 		t.Fatalf("duplicate seed error=%v", duplicateSeedError)
 	}
@@ -181,7 +195,9 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		t.Fatalf("update status=%d body=%s", updateRes.Code, updateRes.Body.String())
 	}
 	var updated executionEnvironmentRebuildPlanView
-	if err := json.Unmarshal(updateRes.Body.Bytes(), &updated); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(updateRes.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
 	if updated.RebuildPlanID != seeded.RebuildPlanID ||
 		len(updated.Plan.Steps) != 3 ||
 		updated.Plan.Steps[0].ProvenanceClass != executionenv.SnapshotProvenanceUserDeclared {
@@ -218,8 +234,71 @@ func TestOperatorExecutionEnvironmentRebuildPlanLifecycle(t *testing.T) {
 		t.Fatalf("seed frozen status=%d body=%s", seedAfterFreezeRes.Code, seedAfterFreezeRes.Body.String())
 	}
 	var frozenError map[string]any
-	if err := json.Unmarshal(seedAfterFreezeRes.Body.Bytes(), &frozenError); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(seedAfterFreezeRes.Body.Bytes(), &frozenError); err != nil {
+		t.Fatal(err)
+	}
 	if frozenError["error_code"] != "REVISION_NOT_DRAFT" {
 		t.Fatalf("seed frozen error=%v", frozenError)
+	}
+}
+
+func TestExecutionEnvironmentRebuildPlanSuppressesStoreErrorAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{
+		Name: "Rebuild plan ACL error", CreatedBy: owner.Session.User.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := stageStore.CreateExecutionEnvironmentManifest(
+		ctx, revision.ID, testVDMXExecutionEnvironmentManifest("rebuild-plan-acl"), owner.Session.User.ID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "rebuild-plan-acl-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorExecutionEnvironments(h.auth, stageStore, executionEnvironmentReadHooks{
+			BeforeStoreErrorResponse: func(route string) {
+				if route == "rebuild-plan-read" {
+					if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, nil); err != nil {
+						t.Errorf("revoke project.view before rebuild-plan error delivery: %v", err)
+					}
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	if _, err := h.db.DB.ExecContext(ctx, "DROP TABLE execution_environment_rebuild_plans"); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/projects/" + project.ID + "/revisions/" + revision.ID +
+		"/execution-environments/" + environment.ID + "/rebuild-plan"
+	req := authenticatedExecutionEnvironmentRequest(t, operatorLogin.Token, operatorLogin.CSRFToken, http.MethodGet, path, nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "EXECUTION_ENVIRONMENT_REBUILD_PLAN_UNAVAILABLE") {
+		t.Fatalf("rebuild-plan store error escaped after Project grant revocation: HTTP %d %s", res.Code, res.Body.String())
 	}
 }
