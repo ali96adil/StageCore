@@ -49,7 +49,7 @@ A Hub restart keeps the existing no-replay reconciliation. In-flight Cue/Action 
 
 For `BEGINNING`, `current_cue_id` is initially empty and `next_cue_id` is the first enabled Cue in the immutable Session Runtime Snapshot.
 
-For `CUE`, `current_cue_id` remains empty because the selected Cue has not happened yet. `start_cue_id` and `next_cue_id` identify the selected Cue. A selected-Cue rehearsal start is classified `MANUAL_CONFIRMATION_REQUIRED` until a later preparation/reconstruction flow proves more. A selected-Cue SHOW start is rejected in this slice; SHOW recovery remains deliberately stricter.
+For `CUE`, `current_cue_id` remains empty because the selected Cue has not happened yet. `start_cue_id` and `next_cue_id` identify the selected Cue. A selected-Cue rehearsal start is classified `MANUAL_CONFIRMATION_REQUIRED` until a later preparation/reconstruction flow proves more. Cue Engine rejects GO while that confirmation marker remains set; clearing the marker requires a deliberate confirmation/preparation flow and must not be inferred from the selected Cue pointer. A selected-Cue SHOW start is rejected in this slice; SHOW recovery remains deliberately stricter.
 
 This foundation does **not** claim that changing a pointer reconstructs pre-Cue state.
 

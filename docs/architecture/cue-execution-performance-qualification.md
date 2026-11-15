@@ -180,6 +180,15 @@ individual GO latency samples. Per-operation benchmark cost is the complete
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Before graph-validation fix | 414.01 ms | 4.121 ms | 5.324 ms | 6.028 ms | 1.409 ms | 84.9 | 1.458 ms | 217,224,530 B; 1,331,852 allocs |
 | After graph-validation fix | 305.29 ms | 3.008 ms | 4.176 ms | 4.795 ms | 1.172 ms | 15.05 | 0.347 ms | 39,004,484 B; 292,064 allocs |
+| Follow-up after Cue Engine fail-closed session-state gate | 295.62 ms | 2.929 ms | 4.050 ms | 4.462 ms | 1.122 ms | 14.80 | 0.245 ms | 39,208,563 B; 298,156 allocs |
+
+The follow-up is a separate 20-session run on the same local M3-class host, not
+a paired before/after trial. It adds no physical dispatch and does not indicate
+a sustained rehearsal regression; the small allocation difference is within
+the limits of this unpaired run. `/usr/bin/time -l` reported 7.08 seconds wall,
+5.37 seconds user CPU, 3.35 seconds system CPU, and 220,299,264 bytes (about
+210.0 MiB) maximum process-tree RSS, including test setup and migrations. This
+is not Hub service CPU or memory and does not qualify ARM64 Pi performance.
 
 The sustained command took 9.42 seconds wall (7.42 user, 3.26 system CPU),
 with 219,201,536 bytes (about 209.0 MiB) maximum RSS for the entire Go test
