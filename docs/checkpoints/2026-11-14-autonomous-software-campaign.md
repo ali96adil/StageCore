@@ -5533,3 +5533,27 @@ This entry supersedes the preceding push instruction.
 - Continue the endpoint error/delivery audit while CI runs. Production ACL is
   disabled; production services/data, device outputs and firmware are
   untouched. Isolated current-head Raspberry Pi 4 performance remains pending.
+
+## Qualification batch checkpoint — 2026-11-15 · Lighting Diagnostic error fence
+
+- PR #534 / remote remains at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. Local code HEAD is
+  `538fe5bc1ebc253e602ef41511a4fa185e8b0d68`, 33 commits ahead; qualification,
+  matrix and handoff updates are documentation changes being saved next. No
+  further push has occurred.
+- Exact-head workflow run `43710243386`: Go 1.27 passed; Go 1.26 remains in
+  progress. Companion `43710243389` and Camera Relay `43710243382` passed.
+  Keep the push gate closed until Go 1.26 and all exact-head checks are green.
+- `538fe5b` fences the software-only Lighting Diagnostic's Project read error
+  before any error response is serialized. Red-first
+  `TestLightingDiagnosticSuppressesProjectReadErrorAfterGrantRevocation`
+  faulted the Project query with a temporary SQLite column rename and revoked
+  the Viewer grant. Before the correction it wrote `PROJECT_NOT_FOUND` and
+  then appended `PROJECTS_UNAVAILABLE`; now only the scoped denial is sent.
+- Focused normal/Race regressions, full `go test ./internal/httpapi -count=1`
+  (89.684 s), `go vet ./internal/httpapi` and `git diff --check` passed. The
+  diagnostic reader does not run after the Project error; no output commands
+  or production services/data were touched.
+- Continue reviewing the F-025 Project/Revision preflight errors and remaining
+  project-scoped read projections while CI runs. Production ACL remains off;
+  current-head isolated Pi 4 performance qualification is still pending.

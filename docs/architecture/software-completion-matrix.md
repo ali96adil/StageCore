@@ -233,3 +233,10 @@ Revision, Cue, Alias, binding and device Store errors against the live
 reproduced a second `LIGHTING_CUES_UNAVAILABLE` response after the scoped
 denial; that response is now suppressed. Focused normal/Race tests and the
 full HTTP API suite pass. No device output was dispatched.
+
+The software-only Lighting Diagnostic also rechecks the live ProjectView
+grant before returning Project-read errors. Red-first temporary-SQLite
+`TestLightingDiagnosticSuppressesProjectReadErrorAfterGrantRevocation`
+reproduced a second `PROJECTS_UNAVAILABLE` response after the scoped denial;
+the handler now stops after the authorization response. Focused normal/Race
+tests and the full HTTP API suite pass. The route does not dispatch output.

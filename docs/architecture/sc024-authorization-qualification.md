@@ -2039,3 +2039,16 @@ after the scoped denial. Focused normal/Race tests, `go vet
 ./internal/httpapi`, `git diff --check`, and full
 `go test ./internal/httpapi -count=1` (92.183 s) pass. No device output was
 dispatched.
+
+
+## SC-024 continuation · 2026-11-15 · Lighting diagnostic read errors
+
+The software-only live Lighting Diagnostic now rechecks the session and
+`ProjectView` grant before returning Project-read errors. Red-first
+`TestLightingDiagnosticSuppressesProjectReadErrorAfterGrantRevocation`
+renamed only a column in temporary SQLite to fault the Project read, revoked
+the Viewer grant at that boundary, and reproduced a scoped 404 followed by a
+second `PROJECTS_UNAVAILABLE` body. The handler now stops after the denial.
+Focused normal/Race tests, `go vet ./internal/httpapi`, diff checks and full
+`go test ./internal/httpapi -count=1` (89.684 s) pass. The diagnostic reader is
+not called on the fault path; no output command exists in this route.
