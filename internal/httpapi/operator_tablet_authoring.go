@@ -14,6 +14,10 @@ import (
 
 const tabletSceneCueType = "TABLET_SCENE"
 
+type operatorTabletAuthoringHooks struct {
+	BeforeErrorResponse func(route string)
+}
+
 type tabletSceneActionView struct {
 	ActionID      string          `json:"action_id"`
 	OrderIndex    int             `json:"order_index"`
@@ -48,34 +52,59 @@ type tabletAliasBinding struct {
 // This projection only resolves internal target aliases back to device IDs so
 // the graphical editor never needs to expose target_ref values or raw config.
 func WithOperatorTabletAuthoring(auth *userauth.Service, devices *deviceexperience.Repository, stageStore *store.Store) Option {
+	return withOperatorTabletAuthoring(auth, devices, stageStore, operatorTabletAuthoringHooks{})
+}
+
+func withOperatorTabletAuthoring(auth *userauth.Service, devices *deviceexperience.Repository, stageStore *store.Store, hooks operatorTabletAuthoringHooks) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || devices == nil || stageStore == nil {
 			return
 		}
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/tablet-controller/scenes", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deliverReadError := func(route string) bool {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse(route)
+				}
+				return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+			}
 			project, err := stageStore.GetProject(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("tablet-scenes-project") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			revision, err := stageStore.GetRevision(r.Context(), project.CurrentRevisionID)
 			if err != nil {
+				if !deliverReadError("tablet-scenes-revision") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			cues, err := stageStore.ListCues(r.Context(), revision.ID)
 			if err != nil {
+				if !deliverReadError("tablet-scenes-cues") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "TABLET_SCENES_UNAVAILABLE"})
 				return
 			}
 			aliases, err := stageStore.ListAliases(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("tablet-scenes-aliases") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "TABLET_ALIASES_UNAVAILABLE"})
 				return
 			}
 			allDevices, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("tablet-scenes-devices") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "TABLET_LIST_FAILED"})
 				return
 			}
