@@ -18,6 +18,7 @@ import (
 type executionEnvironmentCaptureHooks struct {
 	BeforeResponse                 func()
 	BeforeVaultStatusErrorResponse func()
+	BeforeAssetReadErrorResponse   func()
 }
 
 // WithOperatorExecutionEnvironmentCapture adds the explicit local-file capture
@@ -41,7 +42,7 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 	base := "/api/v1/projects/{project_id}/revisions/{revision_id}/execution-environments/{execution_environment_id}/assets/{asset_key}"
 
 	mux.HandleFunc("GET "+base+"/vault-status", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		_, _, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
+		_, _, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore, hooks.BeforeAssetReadErrorResponse)
 		if !ok {
 			return
 		}
@@ -98,7 +99,7 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 	}))
 
 	mux.HandleFunc("POST "+base+"/capture", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		project, revision, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore)
+		project, revision, environment, asset, ok := loadExecutionEnvironmentAsset(w, r, stageStore, hooks.BeforeAssetReadErrorResponse)
 		if !ok {
 			return
 		}
@@ -166,7 +167,7 @@ func registerOperatorExecutionEnvironmentCaptureRoutes(mux *http.ServeMux, auth 
 	}))
 }
 
-func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stageStore *store.Store) (domain.Project, domain.ProjectRevision, store.ExecutionEnvironmentManifest, executionenv.AssetRequirement, bool) {
+func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stageStore *store.Store, beforeError ...func()) (domain.Project, domain.ProjectRevision, store.ExecutionEnvironmentManifest, executionenv.AssetRequirement, bool) {
 	project, revision, ok := loadExecutionEnvironmentRevision(w, r, stageStore)
 	if !ok {
 		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
@@ -175,6 +176,12 @@ func loadExecutionEnvironmentAsset(w http.ResponseWriter, r *http.Request, stage
 	assetKey := strings.TrimSpace(r.PathValue("asset_key"))
 	environment, err := stageStore.GetExecutionEnvironmentManifest(r.Context(), environmentID)
 	if err != nil {
+		if len(beforeError) > 0 && beforeError[0] != nil {
+			beforeError[0]()
+		}
+		if !recheckQualifiedProjectRoute(w, r) {
+			return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
+		}
 		writeExecutionEnvironmentStoreError(w, err, "EXECUTION_ENVIRONMENT_CAPTURE_FAILED")
 		return domain.Project{}, domain.ProjectRevision{}, store.ExecutionEnvironmentManifest{}, executionenv.AssetRequirement{}, false
 	}
