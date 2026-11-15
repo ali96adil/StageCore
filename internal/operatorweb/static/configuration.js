@@ -21,12 +21,15 @@ async function loadConfiguration() {
   const configuration = await api(`/api/v1/projects/${projectID}/configuration`);
   let machineRoles = { roles: [], companions: [] };
   let routeHistory = { can_undo: false, can_redo: false };
+  let inputHistory = { can_undo: false, can_redo: false };
   if (configurationEditable()) {
     try {
       machineRoles = await api(`/api/v1/projects/${projectID}/machine-roles`);
     } catch (_) {}
     if (configuration.revision?.status === "DRAFT") {
       try { routeHistory = await api(`/api/v1/projects/${projectID}/route-draft-history`); }
+      catch (_) {}
+      try { inputHistory = await api(`/api/v1/projects/${projectID}/input-draft-history`); }
       catch (_) {}
     }
   }
@@ -35,6 +38,7 @@ async function loadConfiguration() {
     machine_roles: machineRoles.roles || [],
     companions: machineRoles.companions || [],
     route_history: routeHistory,
+    input_history: inputHistory,
   };
 }
 
@@ -99,6 +103,10 @@ async function renderConfiguration() {
           <label>Value schema JSON<textarea id="inputSchema" class="mono" rows="3" ${disabled}>{}</textarea></label>
           <div class="row-actions"><button id="inputSubmit" class="button primary" type="submit" ${disabled}>Add input</button><button id="inputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Input Draft history")}">
+          <button id="inputHistoryUndo" class="button ghost" type="button" ${!editable || !model.input_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo input change")}</button>
+          <button id="inputHistoryRedo" class="button ghost" type="button" ${!editable || !model.input_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo input change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.inputs || []).length ? model.inputs.map((input) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(input.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost input-edit" type="button" data-input-id="${esc(input.input_id)}">Edit</button><button class="button danger input-remove" type="button" data-input-id="${esc(input.input_id)}">Remove</button></div>` : ""}</div><p class="muted">${esc(input.source_ref)} · ${esc(input.event_type)} · ${input.enabled ? "ENABLED" : "DISABLED"}</p><p class="mono muted">${esc(input.input_id)}</p></div>`).join("") : `<div class="empty">No inputs yet.</div>`}</div>
       </article>
@@ -242,6 +250,22 @@ async function renderConfiguration() {
   el("routeHistoryRedo").addEventListener("click", async () => {
     try {
       await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/route-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("inputHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/input-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("inputHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/input-draft-history`, {
         method: "POST", json: { direction: "REDO" },
       });
       await refreshProjectAndConfiguration();
