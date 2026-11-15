@@ -5487,3 +5487,24 @@ This entry supersedes the preceding push instruction.
 - Next: apply the same red-first review to remaining project-scoped lighting
   controller GET errors and other read projections; continue waiting on Core
   1.26 CI. No production operations, hardware output or firmware changes.
+
+## Push checkpoint — 2026-11-15 · Capsule inventory session fence
+
+- The prior exact-head gate on `3c535543c0242d349a94f23948a1ad18747468c0`
+  completed green: Core Go 1.26/1.27, Companion, and Camera Relay all passed.
+- A normal fast-forward push advanced PR #534 by only three commits:
+  `e143f6d` Capsule inventory session fence, `3044769` qualification record,
+  and `9760e9d` checkpoint. PR/remote is now
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a` on the same branch. No merge,
+  branch creation, or force push occurred.
+- Exact new-head checks are pending: Core run `43710243386`, Companion run
+  `43710243389`, and Camera Relay run `43710243382`. No further push until
+  every check for `9760e9d` is complete and green.
+- Local code HEAD is `4c1fbcd059e51c5de54320b6c2a25be0ed754536`, 29 commits
+  ahead of the new remote before the current uncommitted Lighting read-error
+  batch. That batch is under full HTTP API testing; focused normal/Race
+  regression and `go vet` passed, and the uncommitted changes must not be
+  included in a push until their full validation and checkpoint are complete.
+- Production ACL remains off. Production services/data, real outputs and
+  firmware remain untouched. Pi 4 current-head performance qualification is
+  separate and still pending an isolated ARM64 lab.
