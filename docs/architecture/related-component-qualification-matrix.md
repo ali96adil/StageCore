@@ -1,30 +1,23 @@
 # Related component qualification matrix
 
-Status refreshed 2026-11-14 22:00 UTC from the open PRs and exact head commits.
+Status refreshed 2026-11-15 from current PR heads and exact status checks.
 TabletPlayer #36 (`91613da`), ESP32 DMX Lighting #39 (`3ad7749`), ESP32 Camera
 #20 (`455b066`), and StageLaser #56 (`b14a578`) remain open drafts with passing
-checks. StageLaser #57 (`c4ff10b`) remains open and not marked draft, with
-passing checks. StageCore #503–#508 and #514–#516 remain open at the heads
-listed below; their listed Go 1.26/1.27 checks pass. StageCore Draft PR #534
-is at remote code head `055e980ac668b0771e3ae799cfce6dbe78898a79` on
-`integration/stagecore-rc`. Core run `43643450987` completed successfully:
-Go 1.26 and Go 1.27, Browser Cue Delivery, Race and Linux ARM64 CGo-free
-product builds all passed. Companion `43643451012` and Camera Relay
-`43643451028` passed. Documentation follow-on `850fdf9` contains this matrix
-refresh and does not change executable code; Core exact-head CI for that docs
-head will follow its normal push. The preceding exact-head run `43642337411`
-failed its Node ACL mock because the mock lacks global `document`; that is fixed with
-`element.ownerDocument?.activeElement`. Local Node ACL tests pass 8/8, the
-SC-024 Chrome grant/revoke test passes normally and under Race,
-`go vet ./internal/httpapi`, JS syntax and `git diff --check` pass. Mixed Cue
-browser normal/Race also pass locally with dark RTL contrast
-3.24/3.57/3.62/3.58:1 and light LTR 4.68/4.46/4.41/4.84:1
-(blue/green/amber/purple). The SC-024 flow stores `OPERATE`, verifies its
-grants, revokes to `NONE`, and confirms denial in temporary SQLite using actual
-Tab/Enter input; no runtime, safety, or publish request is made. A native
-keyboard Arrow-key select test was attempted and reverted because CDP delivered
-the key events but Chrome's focused native select did not change value; keep
-that UX qualification gap open.
+checks; StageLaser #57 (`c4ff10b`) remains open and not marked draft with
+passing checks. Their current exact PR HEADs and check links are listed below;
+no linked repository checkout is available here, so none was modified.
+StageCore #503–#508 and #514–#516 remain open at the heads listed below; their
+listed Go 1.26/1.27 checks pass. StageCore Draft PR #534 is open on
+`integration/stagecore-rc` at remote HEAD
+`ed14084e73fecd7de137b8bfae838126448f74b2`. Core run `43670843903` has Go
+1.27 PASS and Go 1.26 Race PENDING; Companion Core `43670843853` (macOS
+replacement/media and Swift CompanionCore) and Camera Relay
+`43670843835` (isolated tests and ARM64) pass. Six local commits are preserved
+above the remote SHA and will not be pushed until that exact-head Core Race
+completes. The latest local regression verifies offline Mixed-Cue recovery
+after a clean isolated Chrome process restart; see the dated campaign
+checkpoint for its exact tests. All linked firmware checks remain source/build
+probes, not physical board qualification.
 Passing CI proves only the listed software checks, not installed-app or
 physical output qualification. No linked repository checkout is available in
 this workspace, so no other repository was modified.
