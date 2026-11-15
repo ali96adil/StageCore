@@ -107,6 +107,20 @@
     const crossProjectCueWrites = trace.filter(({method, url}) => method !== "GET" &&
       url === `/api/v1/projects/${config.other_project}/cues`).map(({method, url}) => `${method} ${url}`);
     const projectSwitchBlockedStaleSave = crossProjectCueWrites.length === 0;
+    await window.openProject(config.project);
+    await window.renderLightingCues();
+    const armReadGate = await nativeFetch("/lighting-preview-arm-read-gate", {method: "POST"});
+    if (!armReadGate.ok) throw new Error(`lighting-read gate arm returned HTTP ${armReadGate.status}`);
+    const staleLightingRender = window.renderLightingCues();
+    const readReady = await nativeFetch("/lighting-preview-read-ready", {method: "POST"});
+    if (!readReady.ok) throw new Error(`pending-lighting-read gate returned HTTP ${readReady.status}`);
+    await window.openProject(config.other_project);
+    await window.renderLightingCues();
+    const readRelease = await nativeFetch("/lighting-preview-read-release", {method: "POST"});
+    if (!readRelease.ok) throw new Error(`pending-lighting-read release returned HTTP ${readRelease.status}`);
+    await staleLightingRender;
+    const projectSwitchBlockedStaleLightingRender = state.project?.project_id === config.other_project &&
+      !document.querySelector(".lighting-cue-card h2")?.textContent.includes(savedCue);
     const executionRequests = trace.filter(({method, url}) => method !== "GET" &&
       /\/api\/v1\/projects\/[^/]+\/(?:runtime\/(?:go|jump|start)|publish|lighting-controller\/(?:nodes|cue-actions)\/.*(?:apply|identify))(?:\?|$)/.test(url));
     await report({
@@ -115,6 +129,7 @@
       saved_cue: savedCue,
       preview_request_urls: previewRequestURLs, execution_requests: executionRequests,
       project_switch_blocked_stale_save: projectSwitchBlockedStaleSave,
+      project_switch_blocked_stale_lighting_render: projectSwitchBlockedStaleLightingRender,
       cross_project_cue_writes: crossProjectCueWrites,
     });
   } catch (error) {

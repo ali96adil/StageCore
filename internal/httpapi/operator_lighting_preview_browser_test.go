@@ -96,6 +96,9 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 	armSaveTranslationGate := make(chan struct{}, 1)
 	saveTranslations := make(chan struct{}, 1)
 	releaseSaveTranslation := make(chan struct{}, 1)
+	armLightingReadGate := make(chan struct{}, 1)
+	lightingReadRequests := make(chan struct{}, 1)
+	releaseLightingRead := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -136,6 +139,27 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
+		case "/lighting-preview-arm-read-gate":
+			select {
+			case armLightingReadGate <- struct{}{}:
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.Error(w, "lighting read gate already armed", http.StatusConflict)
+			}
+		case "/lighting-preview-read-ready":
+			select {
+			case <-lightingReadRequests:
+				w.WriteHeader(http.StatusNoContent)
+			case <-time.After(5 * time.Second):
+				http.Error(w, "lighting model request did not arrive", http.StatusGatewayTimeout)
+			case <-r.Context().Done():
+			}
+		case "/lighting-preview-read-release":
+			select {
+			case releaseLightingRead <- struct{}{}:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/lighting-preview-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
@@ -144,6 +168,22 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 			_, _ = w.Write(testScript)
 		default:
+			if r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+project.ID+"/lighting-controller" {
+				select {
+				case <-armLightingReadGate:
+					select {
+					case lightingReadRequests <- struct{}{}:
+					case <-r.Context().Done():
+						return
+					}
+					select {
+					case <-releaseLightingRead:
+					case <-r.Context().Done():
+						return
+					}
+				default:
+				}
+			}
 			if r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/"+project.ID+"/lighting-controller/cue-actions" {
 				select {
 				case <-armSaveTranslationGate:
@@ -167,6 +207,10 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 	defer func() {
 		select {
 		case releaseSaveTranslation <- struct{}{}:
+		default:
+		}
+		select {
+		case releaseLightingRead <- struct{}{}:
 		default:
 		}
 	}()
@@ -221,17 +265,18 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 			URL    string `json:"url"`
 			Status int    `json:"status"`
 		} `json:"trace"`
-		Status                        string   `json:"status"`
-		SimulatedRun                  bool     `json:"simulated_run"`
-		SimulatedStop                 bool     `json:"simulated_stop"`
-		UnmappedError                 bool     `json:"unmapped_error"`
-		CorrectedCopy                 bool     `json:"corrected_copy"`
-		PreviewNoRequests             bool     `json:"preview_no_requests"`
-		SavedCue                      string   `json:"saved_cue"`
-		PreviewRequestURLs            []string `json:"preview_request_urls"`
-		ExecutionRequests             []string `json:"execution_requests"`
-		ProjectSwitchBlockedStaleSave bool     `json:"project_switch_blocked_stale_save"`
-		CrossProjectCueWrites         []string `json:"cross_project_cue_writes"`
+		Status                                  string   `json:"status"`
+		SimulatedRun                            bool     `json:"simulated_run"`
+		SimulatedStop                           bool     `json:"simulated_stop"`
+		UnmappedError                           bool     `json:"unmapped_error"`
+		CorrectedCopy                           bool     `json:"corrected_copy"`
+		PreviewNoRequests                       bool     `json:"preview_no_requests"`
+		SavedCue                                string   `json:"saved_cue"`
+		PreviewRequestURLs                      []string `json:"preview_request_urls"`
+		ExecutionRequests                       []string `json:"execution_requests"`
+		ProjectSwitchBlockedStaleSave           bool     `json:"project_switch_blocked_stale_save"`
+		ProjectSwitchBlockedStaleLightingRender bool     `json:"project_switch_blocked_stale_lighting_render"`
+		CrossProjectCueWrites                   []string `json:"cross_project_cue_writes"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
@@ -240,6 +285,7 @@ func TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch(t *testing.T) 
 		!report.UnmappedError || !report.CorrectedCopy || !report.PreviewNoRequests ||
 		report.SavedCue != "Lighting Preview Recovery" || len(report.PreviewRequestURLs) != 0 ||
 		len(report.ExecutionRequests) != 0 || !report.ProjectSwitchBlockedStaleSave ||
+		!report.ProjectSwitchBlockedStaleLightingRender ||
 		len(report.CrossProjectCueWrites) != 0 {
 		t.Fatalf("browser lighting preview acceptance failed: %+v error=%s trace=%+v", report, report.Error, report.Trace)
 	}
