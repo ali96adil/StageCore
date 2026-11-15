@@ -47,9 +47,10 @@ type lightingConfigurationNodeView struct {
 }
 
 type lightingConfigurationHooks struct {
-	BeforeMutation     func()
-	BeforeBindingWrite func()
-	BeforeResponse     func()
+	BeforeMutation      func()
+	BeforeBindingWrite  func()
+	BeforeErrorResponse func()
+	BeforeResponse      func()
 }
 
 func registerOperatorLightingConfigurationRoutes(
@@ -65,23 +66,41 @@ func registerOperatorLightingConfigurationRoutes(
 	}
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
+		mayDeliverReadError := func() bool {
+			if hook.BeforeErrorResponse != nil {
+				hook.BeforeErrorResponse()
+			}
+			return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+		}
 		project, err := stageStore.GetProject(r.Context(), projectID)
 		if err != nil {
+			if !mayDeliverReadError() {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
 		revision, err := stageStore.GetRevision(r.Context(), project.CurrentRevisionID)
 		if err != nil {
+			if !mayDeliverReadError() {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}
 		bindings, err := stageStore.ListLightingNodeBindings(r.Context(), revision.ID)
 		if err != nil {
+			if !mayDeliverReadError() {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_BINDINGS_UNAVAILABLE", "detail": err.Error()})
 			return
 		}
 		allDevices, err := devices.ListDevices(r.Context(), projectID)
 		if err != nil {
+			if !mayDeliverReadError() {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_DEVICES_UNAVAILABLE", "detail": err.Error()})
 			return
 		}

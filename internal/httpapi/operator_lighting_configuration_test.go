@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -90,6 +91,35 @@ func TestLightingConfigurationDoesNotCommitAfterProjectGrantRevocation(t *testin
 	}
 	if len(bindings) != 0 {
 		t.Fatalf("lighting configuration committed after DeviceConfigure was revoked: %+v", bindings)
+	}
+}
+
+func TestLightingConfigurationSuppressesReadErrorAfterProjectGrantRevocation(t *testing.T) {
+	f := setupLightingConfigurationACLFixture(t)
+	ctx := context.Background()
+	if _, err := f.access.h.db.DB.ExecContext(ctx, `DROP TABLE stage_devices`); err != nil {
+		t.Fatal(err)
+	}
+	option := Option(func(server *Server) {
+		registerOperatorLightingConfigurationRoutes(server.mux, f.access.h.auth, f.devices, f.access.projects, lightingConfigurationHooks{
+			BeforeErrorResponse: func() {
+				if err := f.access.access.SetPermissions(ctx, f.access.owner.Session.User.ID, f.access.operatorID, f.access.projectID, nil); err != nil {
+					t.Errorf("revoke Project grant before lighting read error delivery: %v", err)
+				}
+			},
+		})
+	})
+	handler := New(option, WithProjectRouteQualification(f.access.access)).Handler()
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.access.projectID+"/lighting-controller/configuration", f.access.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error_code":"PROJECT_NOT_FOUND"`) ||
+		strings.Contains(response.Body.String(), "LIGHTING_BINDINGS_UNAVAILABLE") ||
+		strings.Contains(response.Body.String(), "lighting_node_revision_bindings") ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked Operator received lighting read failure after grant revocation: HTTP %d headers=%v body=%s",
+			response.Code, response.Header(), response.Body.String())
 	}
 }
 

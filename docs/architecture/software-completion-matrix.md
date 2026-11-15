@@ -60,6 +60,12 @@ after revocation during status construction; the route now returns the scoped
 `go vet ./internal/httpapi` pass. The whole-server ACL audit remains open and
 Production ACL stays disabled.
 
+The GET Lighting Configuration error path also rechecks before returning
+Store/device details. A SQLite failure plus a grant revoked at the response
+boundary previously returned raw `stage_devices` SQL diagnostics; its red-first
+regression now requires a scoped denial. The full `TestLightingConfiguration*`
+group passes normally and under Race.
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

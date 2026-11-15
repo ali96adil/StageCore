@@ -1688,3 +1688,13 @@ The focused Runtime/status tests passed normally and under Race, `go vet
 ./internal/httpapi` passed, and `git diff --check` passed. This closes one
 read-response boundary in the staged qualification router; it does not close
 the whole-server authorization audit or enable Production ACL.
+
+The same failure-delivery audit found that the GET Lighting Configuration
+route returned the raw device-repository error before its final live grant
+check. A regression drops `stage_devices` only in temporary SQLite and revokes
+the `project.view` grant at that failure boundary; before the fix, the route
+returned HTTP 503 with the SQLite `no such table` detail. Store and device
+read errors now pass through the live-session/Project-view fence before any
+error details are returned. The test requires the scoped `PROJECT_NOT_FOUND`
+denial and `no-store`. All `TestLightingConfiguration*` tests passed normally
+and under Race, and `go vet ./internal/httpapi` plus `git diff --check` passed.
