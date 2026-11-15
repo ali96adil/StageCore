@@ -205,3 +205,9 @@ Session Memory list/detail and Project Notes GET failures now check the live
 `ProjectView` grant before returning errors. Temporary-SQLite red-first tests
 cover all three paths. Focused normal/Race regressions, full HTTP API tests,
 `go vet ./internal/httpapi`, and diff checks pass.
+
+Project Note create/update/resolve/reopen responses now recheck `ProjectEdit`
+after commit. Red-first response-boundary regressions prove revoked clients
+receive commit uncertainty and no Note details; the committed Note remains.
+Focused normal/Race regressions, full HTTP API tests, `go vet
+./internal/httpapi`, and diff checks pass.

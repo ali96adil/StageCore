@@ -1984,3 +1984,16 @@ SQLite and reproduced `PROJECTS_UNAVAILABLE` after grant revocation on all
 three routes. Focused normal/Race tests, `go vet ./internal/httpapi`,
 `git diff --check`, and full `go test ./internal/httpapi -count=1` (87.704 s)
 pass. No note or session data was changed.
+
+
+## SC-024 continuation · 2026-11-15 · Project Note mutation responses
+
+Create, update, resolve and reopen Note responses now recheck the live
+session and `ProjectEdit` grant after the database mutation. Red-first
+`TestProjectNoteMutationsSuppressCommittedResultsAfterGrantRevocation`
+reproduced successful Note-detail responses after revocation for all four
+operations. Each now returns a non-retryable committed-effect denial while
+preserving the database result. Focused normal/Race tests, `go vet
+./internal/httpapi`, `git diff --check`, and full
+`go test ./internal/httpapi -count=1` (88.780 s) pass. These tests use
+temporary SQLite only.

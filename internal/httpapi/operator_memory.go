@@ -45,6 +45,7 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 
 type operatorMemoryHooks struct {
 	BeforeErrorResponse func(route string)
+	BeforeResponse      func()
 }
 
 func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, memory *sessionmemory.Service, hooks operatorMemoryHooks) Option {
@@ -136,7 +137,16 @@ func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, 
 				Body: body.Body, CreatedBy: session.User.Username,
 			})
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("create-note")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !authorizeOperatorNoteMutationResponse(w, r, auth, session, hooks) {
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{"note": viewNote(note)})
@@ -149,7 +159,16 @@ func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, 
 			}
 			note, err := projectStore.UpdateNote(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), body.Body, body.Category)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("update-note")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !authorizeOperatorNoteMutationResponse(w, r, auth, session, hooks) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"note": viewNote(note)})
@@ -158,7 +177,16 @@ func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, 
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/resolve", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			note, err := projectStore.SetNoteStatus(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteResolved)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("resolve-note")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !authorizeOperatorNoteMutationResponse(w, r, auth, session, hooks) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"note": viewNote(note)})
@@ -167,12 +195,28 @@ func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, 
 		s.mux.HandleFunc("POST /api/v1/projects/{project_id}/notes/{note_id}/reopen", withPermission(auth, userauth.PermissionNoteWrite, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			note, err := projectStore.SetNoteStatus(projectMutationContext(r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit), r.PathValue("project_id"), r.PathValue("note_id"), domain.NoteOpen)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("reopen-note")
+				}
+				if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
+				return
+			}
+			if !authorizeOperatorNoteMutationResponse(w, r, auth, session, hooks) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"note": viewNote(note)})
 		}))
 	}
+}
+
+func authorizeOperatorNoteMutationResponse(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, hooks operatorMemoryHooks) bool {
+	if hooks.BeforeResponse != nil {
+		hooks.BeforeResponse()
+	}
+	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionNoteWrite, nil, projectaccess.ProjectEdit)
 }
 
 func viewNote(note domain.Note) noteView {
