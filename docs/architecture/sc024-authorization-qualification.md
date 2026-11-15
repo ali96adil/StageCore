@@ -1972,3 +1972,15 @@ handlers now return the scoped Project denial. Focused normal/Race tests,
 `go vet ./internal/httpapi`, `git diff --check`, and full
 `go test ./internal/httpapi -count=1` (87.369 s) pass. No Cue data or
 production service was touched.
+
+
+## SC-024 continuation · 2026-11-15 · Session Memory and Notes read errors
+
+Project Session Memory list/detail and Project Notes GETs now recheck the live
+browser session and `ProjectView` grant before returning Store failures.
+Red-first `TestSessionMemoryAndNoteReadsSuppressStoreErrorsAfterGrantRevocation`
+dropped the operational `sessions` or `operator_notes` table in temporary
+SQLite and reproduced `PROJECTS_UNAVAILABLE` after grant revocation on all
+three routes. Focused normal/Race tests, `go vet ./internal/httpapi`,
+`git diff --check`, and full `go test ./internal/httpapi -count=1` (87.704 s)
+pass. No note or session data was changed.

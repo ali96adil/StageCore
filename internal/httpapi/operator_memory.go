@@ -40,6 +40,14 @@ type updateNoteRequest struct {
 }
 
 func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memory *sessionmemory.Service) Option {
+	return withOperatorMemoryHooks(auth, projectStore, memory, operatorMemoryHooks{})
+}
+
+type operatorMemoryHooks struct {
+	BeforeErrorResponse func(route string)
+}
+
+func withOperatorMemoryHooks(auth *userauth.Service, projectStore *store.Store, memory *sessionmemory.Service, hooks operatorMemoryHooks) Option {
 	return func(s *Server) {
 		if auth == nil || projectStore == nil || memory == nil {
 			return
@@ -57,6 +65,12 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			}
 			sessions, err := memory.List(r.Context(), r.PathValue("project_id"), limit)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("project-sessions")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -69,6 +83,12 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/sessions/{session_id}", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			detail, err := memory.Detail(r.Context(), r.PathValue("project_id"), r.PathValue("session_id"))
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("project-session-detail")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
@@ -87,6 +107,12 @@ func WithOperatorMemory(auth *userauth.Service, projectStore *store.Store, memor
 			}
 			notes, err := projectStore.ListNotes(r.Context(), r.PathValue("project_id"), filter)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("project-notes")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

@@ -200,3 +200,8 @@ Cue list and publish-validation read failures also recheck the current
 tests reproduce and close the revoked-grant path; focused normal verification
 and Race, full HTTP API tests, `go vet ./internal/httpapi`, and diff checks
 pass. This remains opt-in qualification code.
+
+Session Memory list/detail and Project Notes GET failures now check the live
+`ProjectView` grant before returning errors. Temporary-SQLite red-first tests
+cover all three paths. Focused normal/Race regressions, full HTTP API tests,
+`go vet ./internal/httpapi`, and diff checks pass.
