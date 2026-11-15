@@ -1707,15 +1707,17 @@ lookup failed, without rechecking the live Project grant. Its command counterpar
 had the same early failure path, and an unconfigured sidecar returned
 `STAGEAUDIO_NOT_CONFIGURED` before checking the Project's `audio.control` grant.
 
-Three temporary-SQLite regressions reproduce the boundaries: drop `sessions`
+Four temporary-SQLite regressions reproduce the boundaries: drop `sessions`
 only in the test database and revoke the grant at the status/command error
-boundary, or call the unconfigured command without a Project grant. The routes
-now return the scoped unavailable response before exposing those service-state
-errors. The revoked-command test also verifies zero calls to the fake local
-sidecar. These cases use no StageAudio process, playback, network adapter, or
-physical output.
+boundary, revoke it after reading an active SHOW state but before the lock
+response, or call the unconfigured command without a Project grant. Before the
+fix, those races returned HTTP 503 or 423 and the unconfigured path reported
+its sidecar state without a grant. The routes now recheck the live session and
+Project permissions before those responses. Revoked-command tests also verify
+zero calls to the fake local sidecar. These cases use no StageAudio process,
+playback, network adapter, or physical output.
 
 The focused StageAudio and unified-ACL tests pass normally and under Race;
 `go vet ./internal/httpapi` and `git diff --check` pass. This closes these
-three staged delivery gaps only; the whole-server audit remains open and
+four staged delivery gaps only; the whole-server audit remains open and
 Production ACL stays disabled.
