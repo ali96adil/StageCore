@@ -4810,8 +4810,12 @@ This entry supersedes the preceding push instruction.
   DMX Lighting #39 `3ad7749` passed all six checks; ESP32 Camera #20
   `455b066` passed; StageLaser #56 `b14a578` and #57 `c4ff10b` passed both
   firmware/no-actuation and host-contract checks. No linked checkout or PR was
-  changed. The Pi 4 Mixed/Linked/Burst/Sustained measurements are already
-  documented and are not repeated here.
+  changed. The Pi 4 Mixed/Linked/Burst/Sustained report is tied to source
+  `a90403b`, not this campaign's code head: Engine Session lookup/start-state
+  gating and Runtime Control STOP wait have changed since. The report now
+  labels the old run historical. Current-head Pi percentiles and CPU/RAM stay
+  unqualified until an isolated Pi 4 lab is available; do not use the
+  production `stagecore-pi` host. Mac results were not repeated.
 - Next: continue the SC-024 endpoint error/delivery audit with regressions for
   any reproduced gap; then recheck the exact-head CI gate and push the local
   commits normally to this same PR. Keep Production ACL off and preserve all

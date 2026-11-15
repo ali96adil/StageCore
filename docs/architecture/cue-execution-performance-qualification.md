@@ -226,6 +226,15 @@ The Cue Engine binary SHA-256 is
 Runtime Control binary SHA-256 is
 `15dc5c9beafb8c632b83c5f06f7c6edc217e623c6bd4490e43ba00b8841d60b5`.
 
+These Pi measurements qualify source `a90403b`, not the current campaign
+head. Since that binary was built, Cue Engine switched its Session read to
+`GetSessionFoundation` and added a fail-closed start-state gate; Runtime
+Control's bounded STOP wait changed from 2 to 5 seconds. The measurements
+below remain a useful historical ARM64 baseline, but current-head P95/P99,
+STOP/Blackout and CPU/RAM qualification must be rerun in an isolated Pi 4 lab.
+Do not substitute the production `stagecore-pi` host or infer current-head
+qualification from the older binaries.
+
 Each test ran as an unprivileged process at `nice +19` inside private user,
 network, mount, and PID namespaces. The sandbox mounted temporary filesystems
 over `/dev`, `/opt`, `/var/lib`, `/home`, and `/run`, checked that the sound
