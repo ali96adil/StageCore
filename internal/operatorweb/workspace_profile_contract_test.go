@@ -31,6 +31,9 @@ func TestWorkspaceProfileFoundationContract(t *testing.T) {
 			t.Fatalf("workspace profile JS missing contract marker %q", marker)
 		}
 	}
+	if strings.Contains(js, `form method="dialog"`) || !strings.Contains(js, `class="button f017-close" type="button"`) {
+		t.Fatalf("workspace profile editor must not close on an implicit form submission")
+	}
 
 	if strings.Count(js, `await refreshWritePolicy()`) < 3 {
 		t.Fatalf("workspace profile structural writes do not all recheck SHOW lock")
