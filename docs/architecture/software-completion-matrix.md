@@ -340,3 +340,11 @@ outcome. The regression covers foreign Revision, unbound Machine Role and
 unassigned Companion cases and asserts zero Companion operation/discovery
 calls. Focused normal and Race tests pass; no hardware or network endpoint is
 contacted.
+
+Scoped Project media registration now checks the live session and `MediaUpload`
+grant inside the same SQLite transaction that inserts Vault catalog rows. A
+red-first trigger regression revokes the grant during registration and proves
+the transaction and unreferenced Vault object are rolled back. Focused normal
+and Race tests plus `go vet ./internal/httpapi ./internal/store` pass. This
+closes that specific upload commit race; it does not qualify the whole-server
+SC-024 delivery audit or production cutover, and production ACL remains off.
