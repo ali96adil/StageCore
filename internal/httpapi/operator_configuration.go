@@ -115,8 +115,9 @@ func WithOperatorConfiguration(auth *userauth.Service, stageStore *store.Store) 
 }
 
 type operatorConfigurationHooks struct {
-	AfterDraft     func()
-	BeforeResponse func()
+	AfterDraft          func()
+	BeforeResponse      func()
+	BeforeErrorResponse func(route string)
 }
 
 func withOperatorConfigurationHooks(auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) Option {
@@ -133,32 +134,69 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	registerInputDraftHistoryRoutes(mux, auth, stageStore, hooks)
 	registerOutputDraftHistoryRoutes(mux, auth, stageStore, hooks)
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
-		if !ok {
+		recheckReadFailure := func(route string) bool {
+			if hooks.BeforeErrorResponse != nil {
+				hooks.BeforeErrorResponse(route)
+			}
+			return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+		}
+		project, err := stageStore.GetProject(r.Context(), strings.TrimSpace(r.PathValue("project_id")))
+		if err != nil {
+			if !recheckReadFailure("configuration-project") {
+				return
+			}
+			if errors.Is(err, domain.ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "PROJECT_NOT_FOUND"})
+			} else {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "PROJECTS_UNAVAILABLE"})
+			}
+			return
+		}
+		revision, err := stageStore.GetRevision(r.Context(), project.CurrentRevisionID)
+		if err != nil {
+			if !recheckReadFailure("configuration-revision") {
+				return
+			}
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "REVISION_UNAVAILABLE"})
 			return
 		}
 		aliases, err := stageStore.ListAliases(r.Context(), project.ID)
 		if err != nil {
+			if !recheckReadFailure("configuration-targets") {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}
 		inputs, err := stageStore.ListInputs(r.Context(), revision.ID)
 		if err != nil {
+			if !recheckReadFailure("configuration-inputs") {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}
 		outputs, err := stageStore.ListOutputs(r.Context(), revision.ID)
 		if err != nil {
+			if !recheckReadFailure("configuration-outputs") {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}
 		routes, err := stageStore.ListRoutes(r.Context(), revision.ID)
 		if err != nil {
+			if !recheckReadFailure("configuration-routes") {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}
 		cues, err := stageStore.ListCues(r.Context(), revision.ID)
 		if err != nil {
+			if !recheckReadFailure("configuration-cues") {
+				return
+			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CONFIGURATION_UNAVAILABLE"})
 			return
 		}

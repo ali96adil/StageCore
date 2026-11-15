@@ -20,6 +20,12 @@ func registerOutputDraftHistoryRoutes(mux *http.ServeMux, auth *userauth.Service
 			ctx := store.WithOutputDraftHistoryActor(r.Context(), session.User.ID)
 			status, err := st.OutputDraftHistory(ctx, projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("output-draft-history")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

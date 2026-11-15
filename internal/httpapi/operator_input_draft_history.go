@@ -20,6 +20,12 @@ func registerInputDraftHistoryRoutes(mux *http.ServeMux, auth *userauth.Service,
 			ctx := store.WithInputDraftHistoryActor(r.Context(), session.User.ID)
 			status, err := st.InputDraftHistory(ctx, projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("input-draft-history")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}

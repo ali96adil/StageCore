@@ -76,8 +76,9 @@ func WithOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 }
 
 type cuePublishHooks struct {
-	AfterDraft     func()
-	BeforeResponse func()
+	AfterDraft          func()
+	BeforeResponse      func()
+	BeforeErrorResponse func(route string)
 }
 
 func withOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, publisher *publish.Service, hooks cuePublishHooks) Option {
@@ -86,8 +87,8 @@ func withOperatorCuePublish(auth *userauth.Service, projectStore *store.Store, p
 			return
 		}
 		registerOperatorCuePublishRoutes(s.mux, auth, projectStore, publisher, hooks)
-		registerCueEditorRecovery(s.mux, auth, projectStore, hooks.BeforeResponse)
-		registerCueEditorCheckpoints(s.mux, auth, projectStore, hooks.BeforeResponse)
+	registerCueEditorRecovery(s.mux, auth, projectStore, hooks.BeforeResponse)
+	registerCueEditorCheckpoints(s.mux, auth, projectStore, hooks.BeforeResponse)
 		registerCueActionPresets(s.mux, auth, projectStore, cueActionPresetHooks{})
 	}
 }

@@ -170,3 +170,15 @@ workflow set, then commit and push this validated batch normally. Continue
 software work while its CI runs. The next matrix candidates are SC-009 Route
 history and SC-015's lack of explicit per-output health events; preserve the
 distinction between an absent health event and inferred device connectivity.
+
+## SC-024 read-failure fence update — 2026-11-15
+
+The optional qualification API's Cue, Route, Input and Output Draft-history
+GETs and aggregate Project Configuration GET now recheck the exact session and
+live project grant after a Store read fails. Red-first regressions revoke the
+grant at the failing temporary-SQLite boundary and require a scoped denial
+instead of a storage-error response. Focused normal/Race regressions, full
+HTTP API verification, `go vet ./internal/httpapi`, and diff checks pass. The
+aggregate Project Configuration endpoint applies the same check to Project,
+Revision, Target, Input, Output, Route and Cue read failures. This only hardens
+the opt-in qualification assembly; the production ACL remains disabled.

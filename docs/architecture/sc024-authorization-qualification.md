@@ -1916,3 +1916,21 @@ ACL is still `PREPARED_NOT_ENFORCED`.
 Focused normal/Race tests, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (84.061 s). No production ACL was
 enabled.
+
+
+## SC-024 continuation · 2026-11-15 · Draft-history read errors
+
+Project-scoped Cue, Route, Input and Output Draft-history GETs previously
+returned storage errors without rechecking the live browser session and edit
+grant. Red-first `TestDraftHistorySuppressesStoreErrorsAfterProjectGrantRevocation`
+dropped the respective history-state table only in temporary SQLite and
+revoked the editor's grant at the error boundary; all four routes first
+returned `PROJECTS_UNAVAILABLE` after revocation. They now recheck the exact
+session and applicable `ProjectEdit`/`CueEdit` grant before exposing the
+storage failure, returning the scoped `PROJECT_NOT_FOUND` denial instead.
+The aggregate Project Configuration GET applies the same fence across its
+Project/Revision, Target, Input, Output, Route and Cue reads; its red-first
+Output failure test also reproduced `CONFIGURATION_UNAVAILABLE` after grant
+revocation. Focused normal/Race regressions, `go vet ./internal/httpapi`,
+`git diff --check`, and full `go test ./internal/httpapi -count=1` (85.563 s)
+pass. No authored data, production ACL or device was used.

@@ -24,6 +24,12 @@ func registerCueDraftHistoryRoutes(mux *http.ServeMux, auth *userauth.Service, s
 			ctx := store.WithCueDraftHistoryActor(r.Context(), session.User.ID)
 			status, err := st.CueDraftHistory(ctx, projectID)
 			if err != nil {
+				if hooks.BeforeErrorResponse != nil {
+					hooks.BeforeErrorResponse("cue-draft-history")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectEdit) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
