@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -101,6 +102,72 @@ func TestSC024AllRegisteredPluginNamespacesUseQualifiedGuard(t *testing.T) {
 	}
 	if matched != 28 {
 		t.Fatalf("plugin inventory changed: %d", matched)
+	}
+}
+
+func TestQualifiedPluginAdministrationOwnerMatrixForEveryRegisteredRoute(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "plugin-route-matrix", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routes []string
+	seenRoutes := map[string]bool{}
+	for _, route := range collectHTTPRouteRegistrations(t) {
+		if !strings.HasPrefix(route.Source, "operator_extension") && route.Source != "security_operations.go" {
+			continue
+		}
+		if route.Source == "security_operations.go" && !strings.Contains(route.Pattern, "/security/plugins") {
+			continue
+		}
+		if isHubPluginAdminPattern(route.Pattern) && !seenRoutes[route.Pattern] {
+			seenRoutes[route.Pattern] = true
+			routes = append(routes, route.Pattern)
+		}
+	}
+	sort.Strings(routes)
+	if len(routes) != 26 {
+		t.Fatalf("unique plugin route-policy inventory changed: got %d routes, want 26", len(routes))
+	}
+	register := func(server *Server) {
+		for _, pattern := range routes {
+			server.mux.HandleFunc(pattern, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+		}
+	}
+	handler := New(register, WithOwnerPluginAdministration(h.auth)).Handler()
+	request := func(credential userauth.Credential, pattern string) *httptest.ResponseRecorder {
+		t.Helper()
+		method := methodFromPattern(pattern)
+		path := qualificationProbePath(t, pattern, "plugin-policy-probe")
+		req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+		req.RemoteAddr = "127.0.0.1:41000"
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: credential.Token})
+		if isUnsafeMethod(method) {
+			req.Header.Set(csrfHeader, credential.CSRFToken)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	for _, pattern := range routes {
+		if response := request(owner, pattern); response.Code != http.StatusNoContent {
+			t.Errorf("Owner failed no-op plugin route %s: HTTP %d %s", pattern, response.Code, response.Body.String())
+		}
+		if response := request(operatorLogin, pattern); response.Code != http.StatusForbidden ||
+			!strings.Contains(response.Body.String(), `"error_code":"FORBIDDEN"`) {
+			t.Errorf("scoped Operator crossed no-op plugin route %s: HTTP %d %s", pattern, response.Code, response.Body.String())
+		}
 	}
 }
 
