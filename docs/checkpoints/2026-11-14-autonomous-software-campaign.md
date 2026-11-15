@@ -4906,3 +4906,27 @@ This entry supersedes the preceding push instruction.
   same branch, and inspect all exact-new-head workflows. Continue the SC-024
   whole-server and asynchronous-delivery audit; the Pi 4 current-head
   performance rerun still requires an isolated Pi 4 lab.
+
+## Qualification batch checkpoint — 2026-11-15 · F-025 Vault-status delivery
+
+- The current PR #534 / remote head remains
+  `daae16d4c3806e7ac6b7deb1927181ba2abf26b5`. Local follow-up now includes
+  StageAudio commits `75ca868`, `149db97`, and `24fa3f9`, plus F-025 commits
+  `578e92b` and `2c16072`; these have not been pushed.
+- Red-first `TestExecutionEnvironmentVaultStatusSuppressesStoreErrorAfterGrantRevocation`
+  creates a content-bound Vault asset in a temporary database, drops only that
+  test database's `vault_objects` table, and revokes `media.read` at the Store
+  error boundary. Before the fix the scoped GET returned HTTP 503 after
+  revocation. It now rechecks the live browser session and Project grant before
+  returning Vault-status Store errors.
+- Focused Vault-status/Capture tests passed normally and under Race. Full
+  `go test ./internal/httpapi -count=1` passed in 80.854 s; `go vet
+  ./internal/httpapi` and `git diff --check` passed. No production Vault/data,
+  real device, external output or ACL activation was used.
+- The exact `daae16d` gate remains incomplete: Core Go 1.27, Companion Core,
+  and Camera Relay passed; Core Go 1.26 Race is still in progress. Do not push
+  until Go 1.26 and the complete old-head gate finish. Then verify branch/PR
+  ancestry and push the saved fast-forward commits normally to the same PR;
+  inspect all exact-new-head CI before any next push. Continue auditing scoped
+  read-error and asynchronous-delivery paths. Current-head Pi 4 performance
+  remains unqualified pending an isolated Pi 4 lab; keep Production ACL off.
