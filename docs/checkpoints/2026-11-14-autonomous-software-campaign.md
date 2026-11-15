@@ -5684,3 +5684,26 @@ This entry supersedes the preceding push instruction.
   before any later push. Continue the rebuild-plan Store-error audit and keep
   production ACL off; current-head isolated Pi 4 performance acceptance is
   still pending.
+
+## Push checkpoint — 2026-11-15 · F-025 rebuild-plan fences
+
+- The exact previous PR head `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`
+  completed all checks green: Core Go 1.26 Race and Go 1.27, Companion Core
+  and macOS replacement/media, and Camera Relay isolated ARM64.
+- Normal fast-forward push updated the existing branch and Draft PR #534 to
+  `0b091584d07f9324683e18954f37707b3d57941b`. No branch or PR was created;
+  there was no force push or merge. Local and remote matched immediately
+  after the push.
+- New exact-head checks on `0b09158` are queued: Core run `43713024420`
+  (Go 1.26/1.27), Companion run `43713024392` (Swift Core and macOS
+  replacement/media), and Camera Relay run `43713024390` (isolated ARM64).
+  Do not push again until every check for this exact SHA is complete and
+  green.
+- The pushed batch includes the F-025 asset-manifest, rebuild-plan setup,
+  source Snapshot and existing-plan conflict response fences, with red-first
+  disposable-SQLite tests. Focused normal/Race, full HTTP API, vet and diff
+  checks passed locally before push.
+- Continue auditing rebuild-plan read/mutation response boundaries while CI
+  runs. Keep production ACL disabled, production services/data and real
+  outputs untouched. Current isolated Raspberry Pi 4 timing qualification
+  remains pending; historical simulation is not Pi acceptance.
