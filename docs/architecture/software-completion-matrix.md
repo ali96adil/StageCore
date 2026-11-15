@@ -194,3 +194,9 @@ grant after Project/Revision/runtime snapshot reads fail. Red-first temporary
 SQLite coverage exercises both response boundaries. Focused normal/Race
 coverage, full HTTP API tests, `go vet ./internal/httpapi`, and diff checks
 pass. This remains qualification coverage only.
+
+Cue list and publish-validation read failures also recheck the current
+`ProjectView` grant before exposing store status. Red-first temporary-SQLite
+tests reproduce and close the revoked-grant path; focused normal verification
+and Race, full HTTP API tests, `go vet ./internal/httpapi`, and diff checks
+pass. This remains opt-in qualification code.

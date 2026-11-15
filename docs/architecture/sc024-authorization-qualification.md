@@ -1959,3 +1959,16 @@ authorization check. Focused normal/Race verification and full
 `go test ./internal/httpapi -count=1` (87.279 s) pass; `go vet
 ./internal/httpapi` and `git diff --check` pass. No production database or
 service was touched.
+
+
+## SC-024 continuation · 2026-11-15 · Cue list and validation read errors
+
+Cue list and publish-validation GETs now recheck the live session and
+`ProjectView` grant before returning Project, Cue-list, Revision or validation
+Store errors. Red-first `TestCueReadErrorsSuppressStoreDetailsAfterProjectGrantRevocation`
+dropped the Cue table only in temporary SQLite and reproduced
+`CUES_UNAVAILABLE` and `VALIDATION_UNAVAILABLE` after grant revocation. The
+handlers now return the scoped Project denial. Focused normal/Race tests,
+`go vet ./internal/httpapi`, `git diff --check`, and full
+`go test ./internal/httpapi -count=1` (87.369 s) pass. No Cue data or
+production service was touched.
