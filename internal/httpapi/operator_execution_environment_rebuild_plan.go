@@ -123,6 +123,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 				return
 			}
 		} else if !errors.Is(err, domain.ErrNotFound) {
+			if hooks.BeforeStoreErrorResponse != nil {
+				hooks.BeforeStoreErrorResponse("rebuild-plan-existing-read")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			writeExecutionEnvironmentRebuildPlanError(w, err, "EXECUTION_ENVIRONMENT_REBUILD_PLAN_SEED_FAILED")
 			return
 		}
