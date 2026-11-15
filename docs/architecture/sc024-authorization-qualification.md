@@ -1639,9 +1639,9 @@ rechecks the live session and grant before returning a committed result. The
 Store checks the grant in the transaction and enforces the active SHOW
 configuration lock. These routes do not appear in the production assembler.
 
-The registration inventory now contains 293 distinct HTTP registrations and
+The registration inventory now contains 296 distinct HTTP registrations and
 18 dynamic patterns, with reviewed digest
-`ad88f5218ca8540ae65061b67db24f276274471b6573911073bbcff6542eab19`.
+`fd6155536b0bbe47d41f62668fc7261f6a1f368ea620fa608a2e9d3dadc455b0`.
 The Store conflict/SHOW-lock tests exercise this boundary using temporary
 SQLite. Project ACL remains a staged qualification feature and stays disabled
 in production.
@@ -1658,3 +1658,16 @@ and refuses to remove an Input while a Route references it. The API tests
 cover editor isolation, stable Input identity, no Snapshot publication, and
 the Store tests cover conflict behavior. The feature remains on the staged
 qualification router; no production ACL assembler or activation changed.
+
+## SC-024 continuation · 2026-11-15 · Output Draft history scope
+
+The Output Draft history GET/POST and Output DELETE routes use the same
+authenticated Project-edit permission and staged Project-edit grant as Output
+configuration. History reads are `no-store`; state is scoped to the
+authenticated editor and current Draft. Create, edit, delete and history
+movement are transactional, check write authorization in-transaction and
+respect the active SHOW configuration lock. Undo rejects out-of-band changes
+and prevents deleting an Output while a Route action references it. API tests
+exercise editor isolation, stable IDs and no Snapshot publication. These
+routes remain only on the staged qualification router; Production ACL is not
+wired or activated.

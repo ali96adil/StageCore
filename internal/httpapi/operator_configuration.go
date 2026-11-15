@@ -131,6 +131,7 @@ func withOperatorConfigurationHooks(auth *userauth.Service, stageStore *store.St
 func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Service, stageStore *store.Store, hooks operatorConfigurationHooks) {
 	registerRouteDraftHistoryRoutes(mux, auth, stageStore, hooks)
 	registerInputDraftHistoryRoutes(mux, auth, stageStore, hooks)
+	registerOutputDraftHistoryRoutes(mux, auth, stageStore, hooks)
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/configuration", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		project, revision, ok := loadProjectAndRevision(w, r, stageStore)
 		if !ok {
@@ -368,7 +369,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/outputs", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		writeCtx := store.WithOutputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var body outputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
@@ -406,7 +407,7 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 	}))
 
 	mux.HandleFunc("PUT /api/v1/projects/{project_id}/outputs/{output_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		writeCtx := projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit)
+		writeCtx := store.WithOutputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
 		projectID := strings.TrimSpace(r.PathValue("project_id"))
 		var body outputCreateRequest
 		if !decodeBoundedJSON(w, r, &body) {
@@ -443,6 +444,36 @@ func registerOperatorConfigurationRoutes(mux *http.ServeMux, auth *userauth.Serv
 			return
 		}
 		writeJSON(w, http.StatusOK, outputView(updated))
+	}))
+
+	mux.HandleFunc("DELETE /api/v1/projects/{project_id}/outputs/{output_id}", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		writeCtx := store.WithOutputDraftHistoryActor(projectMutationContext(r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.ProjectEdit), session.User.ID)
+		if strings.ToLower(strings.TrimSpace(r.URL.Query().Get("confirm"))) != "true" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error_code": "CONFIRMATION_REQUIRED"})
+			return
+		}
+		revision, draftForked, err := stageStore.EnsureProjectDraftWithStatus(writeCtx, strings.TrimSpace(r.PathValue("project_id")), session.User.ID, "Operator routing edit")
+		if err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if hooks.AfterDraft != nil {
+			hooks.AfterDraft()
+		}
+		if err := stageStore.DeleteOutput(writeCtx, revision.ID, strings.TrimSpace(r.PathValue("output_id"))); err != nil {
+			if writeProjectDraftMutationDenied(w, err, draftForked) {
+				return
+			}
+			writeProjectStoreError(w, err)
+			return
+		}
+		if !recheckOperatorConfigurationMutation(w, r, auth, session, hooks) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/routes", withPermission(auth, userauth.PermissionProjectEdit, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {

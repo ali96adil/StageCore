@@ -107,6 +107,24 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if err := json.Unmarshal(outputRes.Body.Bytes(), &output); err != nil || output.ID == "" {
 		t.Fatalf("output decode=%v body=%s", err, outputRes.Body.String())
 	}
+	outputHistoryPath := "/api/v1/projects/" + project.ID + "/output-draft-history"
+	outputHistoryRes := request(http.MethodGet, outputHistoryPath, nil)
+	var outputHistory store.OutputDraftHistoryStatus
+	if err := json.Unmarshal(outputHistoryRes.Body.Bytes(), &outputHistory); err != nil || !outputHistory.CanUndo || outputHistory.CanRedo || outputHistory.UndoOperation != "CREATE" {
+		t.Fatalf("output history after create=%+v err=%v body=%s", outputHistory, err, outputHistoryRes.Body.String())
+	}
+	if response := request(http.MethodPost, outputHistoryPath, routeDraftHistoryRequest{Direction: "UNDO"}); response.Code != http.StatusOK {
+		t.Fatalf("output create Undo status=%d body=%s", response.Code, response.Body.String())
+	}
+	if outputs, err := stageStore.ListOutputs(ctx, project.CurrentRevisionID); err != nil || len(outputs) != 0 {
+		t.Fatalf("output create Undo left outputs=%+v err=%v", outputs, err)
+	}
+	if response := request(http.MethodPost, outputHistoryPath, routeDraftHistoryRequest{Direction: "REDO"}); response.Code != http.StatusOK {
+		t.Fatalf("output create Redo status=%d body=%s", response.Code, response.Body.String())
+	}
+	if outputs, err := stageStore.ListOutputs(ctx, project.CurrentRevisionID); err != nil || len(outputs) != 1 || outputs[0].ID != output.ID {
+		t.Fatalf("output create Redo did not restore identity: outputs=%+v err=%v", outputs, err)
+	}
 
 	updateOutputRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/outputs/"+output.ID, map[string]any{
 		"name": "Projector OSC", "target_ref": "PROJECTOR-MAIN", "capability_key": "local.echo", "value_schema": map[string]any{}, "criticality": "NORMAL",
@@ -163,6 +181,10 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	referencedDelete := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID+"?confirm=true", nil)
 	if referencedDelete.Code != http.StatusConflict {
 		t.Fatalf("referenced input delete status=%d body=%s", referencedDelete.Code, referencedDelete.Body.String())
+	}
+	referencedOutputDelete := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/outputs/"+output.ID+"?confirm=true", nil)
+	if referencedOutputDelete.Code != http.StatusConflict {
+		t.Fatalf("referenced output delete status=%d body=%s", referencedOutputDelete.Code, referencedOutputDelete.Body.String())
 	}
 
 	updateRouteRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/routes/"+route.ID, map[string]any{
@@ -224,6 +246,19 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	deleteInputRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID+"?confirm=true", nil)
 	if deleteInputRes.Code != http.StatusNoContent {
 		t.Fatalf("input delete status=%d body=%s", deleteInputRes.Code, deleteInputRes.Body.String())
+	}
+	deleteOutputRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/outputs/"+output.ID+"?confirm=true", nil)
+	if deleteOutputRes.Code != http.StatusNoContent {
+		t.Fatalf("output delete status=%d body=%s", deleteOutputRes.Code, deleteOutputRes.Body.String())
+	}
+	if response := request(http.MethodPost, outputHistoryPath, routeDraftHistoryRequest{Direction: "UNDO"}); response.Code != http.StatusOK {
+		t.Fatalf("output delete Undo status=%d body=%s", response.Code, response.Body.String())
+	}
+	if outputs, err := stageStore.ListOutputs(ctx, project.CurrentRevisionID); err != nil || len(outputs) != 1 || outputs[0].ID != output.ID {
+		t.Fatalf("output delete Undo did not restore identity: outputs=%+v err=%v", outputs, err)
+	}
+	if response := request(http.MethodPost, outputHistoryPath, routeDraftHistoryRequest{Direction: "REDO"}); response.Code != http.StatusOK {
+		t.Fatalf("output delete Redo status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	if _, err := h.auth.CreateUser(ctx, "routing-viewer", "routing viewer password", userauth.RoleViewer); err != nil {
