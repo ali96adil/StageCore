@@ -5508,3 +5508,28 @@ This entry supersedes the preceding push instruction.
 - Production ACL remains off. Production services/data, real outputs and
   firmware remain untouched. Pi 4 current-head performance qualification is
   separate and still pending an isolated ARM64 lab.
+
+## Qualification batch checkpoint — 2026-11-15 · Lighting read projections
+
+- PR #534 and remote remain at
+  `9760e9d6dc51eca98cb5d0a67ddf1db2c727123a`. Local code HEAD is
+  `68c361b441e511ee3868a1bbbdf5bba8c7cc216f`, 31 commits ahead; this
+  qualification/matrix/handoff update is being committed as documentation.
+  No change has been pushed beyond `9760e9d`.
+- The new exact-head workflow set is still active: Core run `43710243386`
+  (Go 1.26/1.27 pending), Companion run `43710243389` (Swift passed;
+  macOS replacement/media pending), and Camera Relay run `43710243382`
+  (isolated ARM64 job passed). Keep the push gate closed until all checks are
+  green for the same PR head.
+- `68c361b` fences Project, Revision, Cue, Alias, binding and device Store
+  failures from both optional Lighting Controller GET projections with a
+  live session/ProjectView recheck. Red-first
+  `TestLightingCueReadSuppressesStoreErrorAfterGrantRevocation` reproduced a
+  second `LIGHTING_CUES_UNAVAILABLE` body following the scoped denial after a
+  temporary SQLite Cue-table fault; the handler now returns immediately.
+- Focused normal/Race regression, `go vet ./internal/httpapi`,
+  `git diff --check`, and full `go test ./internal/httpapi -count=1`
+  (92.183 s) passed. No output was dispatched.
+- Continue the endpoint error/delivery audit while CI runs. Production ACL is
+  disabled; production services/data, device outputs and firmware are
+  untouched. Isolated current-head Raspberry Pi 4 performance remains pending.

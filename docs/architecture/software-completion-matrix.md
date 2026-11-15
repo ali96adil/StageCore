@@ -226,3 +226,10 @@ temporary-SQLite regression reproduced a second `TABLET_SCENES_UNAVAILABLE`
 JSON response being appended after the scoped denial; the handler now stops
 after the authorization response. Focused normal/Race tests, full HTTP API
 tests, `go vet ./internal/httpapi` and diff checks pass.
+
+The optional Lighting Controller and Lighting Cue GETs now fence Project,
+Revision, Cue, Alias, binding and device Store errors against the live
+`ProjectView` grant. Red-first `TestLightingCueReadSuppressesStoreErrorAfterGrantRevocation`
+reproduced a second `LIGHTING_CUES_UNAVAILABLE` response after the scoped
+denial; that response is now suppressed. Focused normal/Race tests and the
+full HTTP API suite pass. No device output was dispatched.

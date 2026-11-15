@@ -2025,3 +2025,17 @@ to one body. The corrected path stops after the denial. Focused normal/Race
 tests, `go vet ./internal/httpapi`, `git diff --check`, and full
 `go test ./internal/httpapi -count=1` (92.646 s) pass. Production assembly
 and ACL state are unchanged.
+
+
+## SC-024 continuation · 2026-11-15 · Lighting controller read errors
+
+The optional Lighting Controller and Lighting Cue projections now recheck the
+live session and `ProjectView` grant before returning Project, Revision,
+binding, device, Cue or Alias read errors. Red-first
+`TestLightingCueReadSuppressesStoreErrorAfterGrantRevocation` dropped the
+temporary SQLite Cue table and observed both `PROJECT_NOT_FOUND` and a second
+`LIGHTING_CUES_UNAVAILABLE` body before the correction. The handler now stops
+after the scoped denial. Focused normal/Race tests, `go vet
+./internal/httpapi`, `git diff --check`, and full
+`go test ./internal/httpapi -count=1` (92.183 s) pass. No device output was
+dispatched.
