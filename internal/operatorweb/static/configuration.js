@@ -22,6 +22,7 @@ async function loadConfiguration() {
   let machineRoles = { roles: [], companions: [] };
   let routeHistory = { can_undo: false, can_redo: false };
   let inputHistory = { can_undo: false, can_redo: false };
+  let outputHistory = { can_undo: false, can_redo: false };
   if (configurationEditable()) {
     try {
       machineRoles = await api(`/api/v1/projects/${projectID}/machine-roles`);
@@ -31,6 +32,8 @@ async function loadConfiguration() {
       catch (_) {}
       try { inputHistory = await api(`/api/v1/projects/${projectID}/input-draft-history`); }
       catch (_) {}
+      try { outputHistory = await api(`/api/v1/projects/${projectID}/output-draft-history`); }
+      catch (_) {}
     }
   }
   return {
@@ -39,6 +42,7 @@ async function loadConfiguration() {
     companions: machineRoles.companions || [],
     route_history: routeHistory,
     input_history: inputHistory,
+    output_history: outputHistory,
   };
 }
 
@@ -126,9 +130,13 @@ async function renderConfiguration() {
             <button id="outputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button>
           </div>
         </form>
+        <div class="row-actions" aria-label="${f001Translate("Output Draft history")}">
+          <button id="outputHistoryUndo" class="button ghost" type="button" ${!editable || !model.output_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo output change")}</button>
+          <button id="outputHistoryRedo" class="button ghost" type="button" ${!editable || !model.output_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo output change")}</button>
+        </div>
         <div class="actions-editor" style="margin-top:14px">${(model.outputs || []).length ? model.outputs.map((output) => `
           <div class="action-editor">
-            <div class="section-title-row"><strong>${esc(output.name)}</strong>${editable ? `<button class="button ghost output-edit" type="button" data-output-id="${esc(output.output_id)}">Edit</button>` : ""}</div>
+            <div class="section-title-row"><strong>${esc(output.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost output-edit" type="button" data-output-id="${esc(output.output_id)}">Edit</button><button class="button danger output-remove" type="button" data-output-id="${esc(output.output_id)}" data-output-name="${esc(output.name)}">Remove</button></div>` : ""}</div>
             <p class="muted">${esc(output.target_ref)} · ${esc(output.capability_key)}</p><p class="mono muted">${esc(output.output_id)}</p>
           </div>`).join("") : `<div class="empty">No outputs yet.</div>`}</div>
       </article>
@@ -266,6 +274,22 @@ async function renderConfiguration() {
   el("inputHistoryRedo").addEventListener("click", async () => {
     try {
       await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/input-draft-history`, {
+        method: "POST", json: { direction: "REDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("outputHistoryUndo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/output-draft-history`, {
+        method: "POST", json: { direction: "UNDO" },
+      });
+      await refreshProjectAndConfiguration();
+    } catch (error) { configurationError(error); }
+  });
+  el("outputHistoryRedo").addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/output-draft-history`, {
         method: "POST", json: { direction: "REDO" },
       });
       await refreshProjectAndConfiguration();
@@ -550,6 +574,16 @@ async function renderConfiguration() {
       el("outputSubmit").textContent = "Save output";
       el("outputCancelEdit").classList.remove("hidden");
       outputForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+  document.querySelectorAll(".output-remove").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const outputName = button.dataset.outputName || "this output";
+      if (!window.confirm(`Remove output "${outputName}"? Removal is blocked while a Route still references it.`)) return;
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/outputs/${encodeURIComponent(button.dataset.outputId)}?confirm=true`, { method: "DELETE" });
+        await refreshProjectAndConfiguration();
+      } catch (error) { configurationError(error); }
     });
   });
   el("outputCancelEdit").addEventListener("click", resetOutputEditor);

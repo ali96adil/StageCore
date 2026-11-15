@@ -242,6 +242,9 @@ const f001Arabic = {
   "Input Draft history": "سجل مسودة المدخلات",
   "Undo input change": "تراجع عن تعديل المدخل",
   "Redo input change": "إعادة تعديل المدخل",
+  "Output Draft history": "سجل مسودة المخرجات",
+  "Undo output change": "تراجع عن تعديل المخرج",
+  "Redo output change": "إعادة تعديل المخرج",
   "Start routing edit": "بدء تعديل التوجيه",
   "New routing Draft created. The published Runtime Snapshot remains unchanged.": "تم إنشاء مسودة توجيه جديدة، ولقطة التشغيل المنشورة لم تتغير.",
 
