@@ -2322,3 +2322,15 @@ compatibility, and disposable installed-copy migration/update/restore/health
 qualification remain open. Production Assembler and Migration 53 are unchanged;
 Project ACL remains disabled in production. The 2026-11-15 campaign handoff
 records the current branch, exact-head CI state, and next audit boundary.
+
+## SC-024 continuation · 2026-11-15 · project route permission matrix
+
+`TestQualifiedProjectRoutePermissionMatrix` builds a temporary router with
+no-op handlers at every pattern in `projectRoutePermissions`. For each route,
+it grants the mapped permissions and requires the request to pass, removes one
+required permission and requires the scoped `PROJECT_NOT_FOUND` denial, then
+retries against a different Project and requires the same denial. The probe
+handlers do not invoke business services, Runtime Control, Vault, Companion,
+or device adapters. This validates the policy map and the live route gate as a
+set; it does not close response-delivery races in each real handler or imply
+that Project ACL has been enabled in the production assembler.
