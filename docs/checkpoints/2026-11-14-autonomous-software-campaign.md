@@ -5961,3 +5961,28 @@ This entry supersedes the preceding push instruction.
   push the accumulated commits to PR #534 after the active Core gate is green.
   Production ACL remains off; current-head Pi 4 performance qualification is
   still open.
+
+## Qualification checkpoint — 2026-11-15 · Operation and OSCQuery scope
+
+- `0458f3d5c74238286592c6ac814d1e95800aa6a0` fences the Companion operation
+  Environment mismatch and OSCQuery Environment, Machine Role and Companion
+  lookup errors with a live qualified-route/session recheck before response.
+- Red-first regressions use temporary SQLite and a fake Companion runtime.
+  They cover a foreign Revision, an unbound Machine Role and an unassigned
+  Companion; OSCQuery previously returned the resource-specific outcome after
+  grant revocation and now returns `FORBIDDEN`. Both tests verify zero operation
+  or OSCQuery dispatch. Focused normal and Race tests, `go vet
+  ./internal/httpapi`, `git diff --check`, and full
+  `go test ./internal/httpapi -count=1` pass (97.913 s).
+- No physical Companion, network endpoint, production service, show data or
+  Vault was used. ACL remains disabled in production. The active Core CI run
+  for remote `c63160e7c50088984d7016326c31a04554afff2d` (`43717094969`) is
+  still running Go 1.26 Race; do not push until that run and all checks finish.
+- Local code HEAD is `0458f3d5c74238286592c6ac814d1e95800aa6a0`, five
+  commits ahead of remote `c63160e7c50088984d7016326c31a04554afff2d`; this
+  note and the qualification matrix updates are being committed separately.
+- First monitor the current remote-head Core CI. Push the accumulated commits
+  to existing PR #534 only after its Race and remaining checks complete green.
+  Continue the F-025 response audit while that gate runs. Current-head isolated
+  Pi 4 performance qualification remains pending; the historical Pi result is
+  not current-head acceptance.

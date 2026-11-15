@@ -284,3 +284,13 @@ F-025 rebuild-plan write errors from seed/update/delete now recheck the live
 route grant before returning Store failure details. A red-first temporary
 SQLite trigger test reproduces and closes the revoked ProjectEdit response
 on seed; production ACL remains disabled.
+
+The operation and VDMX OSCQuery routes now recheck the live qualified route
+before returning an Environment/Revision-scope mismatch. OSCQuery also fences
+unbound/missing Machine Role and unassigned Companion outcomes. Red-first
+temporary-SQLite regressions revoke the relevant project grant at the response
+boundary; OSCQuery returns `FORBIDDEN` without disclosing the scoped resource
+outcome. The regression covers foreign Revision, unbound Machine Role and
+unassigned Companion cases and asserts zero Companion operation/discovery
+calls. Focused normal and Race tests pass; no hardware or network endpoint is
+contacted.

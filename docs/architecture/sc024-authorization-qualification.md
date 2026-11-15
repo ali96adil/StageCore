@@ -25,6 +25,16 @@ The source guard rejects wiring the alternate Project/Capsule/Files options
 into the production Hub before the coordinated ACL cutover. Migration 53 is
 unchanged, and the legacy assembly continues to serve previously created shows.
 
+F-025's operation and VDMX OSCQuery handlers also recheck their qualified
+Project grant before returning an Environment/Revision mismatch. OSCQuery
+also fences errors for a missing or unbound Machine Role and an unassigned
+Companion. Temporary SQLite regressions cover foreign Revision, unbound role
+and unassigned Companion outcomes, revoke the grant at each boundary, and
+verify an authorization denial; the OSCQuery and operation simulators receive
+no call. Focused Race coverage and package qualification are recorded in the
+current campaign handoff. These routes remain qualification-only and do not
+activate Project ACL in production.
+
 
 Preflight rejects an explicit foreign Snapshot and checks live authorization after evaluation. In qualification mode a project viewer without media.read receives readiness status without media hashes or item checks.
 
