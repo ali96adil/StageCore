@@ -4276,3 +4276,34 @@ This entry supersedes the preceding push instruction.
   existing ARM64 qualifications and Engine/ACL/HTTP/output timing separation.
   No production service/data/Vault, original show data, real device, firmware,
   backup, paid action, merge or force push was used.
+
+## Resume update — 2026-11-15 · role coverage across workspace sizes
+
+- Branch `integration/stagecore-rc`, Draft PR #534. Remote is
+  `3f4f55b79b4fcdfa8da8d67e3212a628dbd835ee`. Local HEAD before this Handoff
+  is `3e8625ed2c1c377c24e747c9a63dbe4f6a532e9c`, one commit ahead; this
+  checkpoint becomes the second local commit. No new push while Core is active.
+- Extended `TestBrowserShowWorkspacePinsRuntime` so real temporary Owner,
+  Technician, Operator and Viewer sessions check Cues, inactive Runtime and
+  active SHOW overflow/layout at 390×844, 768×1024 and 1280×800 in RTL.
+  Existing native CDP keyboard/touch navigation remains Owner + mobile; role-
+  specific GO/STOP/Blackout and authoring gating is checked at all viewports.
+  The explicit test viewport channel applies device metrics before each
+  assertion. Matrix SC-017 now reports four-role/three-size software evidence
+  and the remaining input/device limits.
+- Verification for this extension: focused Chrome test passed three
+  consecutive runs and one Race run; `go vet ./internal/httpapi`, JavaScript
+  syntax and `git diff --check` passed. The full local `go test ./...` passed
+  immediately before this viewport-only test extension; the preceding code
+  batch also passed the full suite on Go 1.27.1.
+- Exact remote Core run `43661757214` is **in progress** at SHA
+  `3f4f55b79b4fcdfa8da8d67e3212a628dbd835ee` (Go 1.26/1.27 pending).
+  Companion `43661757151` and Camera Relay `43661757135` passed at that SHA.
+  Wait for Core completion before pushing the local viewport commit, then
+  verify PR #534/branch and run all checks on the new exact SHA before another
+  push.
+- No runtime Engine/ACL/output code changed, so existing Pi 4 ARM64 performance
+  evidence remains applicable; preserve Engine vs ACL/HTTP/external-output
+  timing separation. Production ACL remains off. No production services/data,
+  original show, Vault, real devices, firmware, backups, paid action, merge or
+  force push were touched.
