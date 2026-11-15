@@ -89,12 +89,18 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
+	viewportRequests := make(chan chan struct{}, 1)
+	keyRequests := make(chan chan struct{}, 1)
+	touchRequests := make(chan struct {
+		x, y   float64
+		resume chan struct{}
+	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
 			http.SetCookie(w, &http.Cookie{Name: browserSessionCookie, Value: owner.Token, HttpOnly: true, Path: "/"})
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			io.WriteString(w, `<!doctype html><html><head><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/workspace-profile.css"></head><body>
+			io.WriteString(w, `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/workspace-profile.css"></head><body>
 <div id="loginView"></div><div id="loginMessage"></div><header class="topbar"><span id="hubBadge"></span><div id="userArea"><span id="userLabel"></span><button id="logoutButton" type="button"></button></div></header>
 <div id="appView" class="app-layout"><aside id="sidebar" class="sidebar"><button id="projectsNav" class="nav-button" type="button">Projects</button><div id="workspaceNav" class="workspace-nav"><p id="workspaceProjectName" class="workspace-name"></p>
 <button class="nav-button" data-page="dashboard" type="button">Dashboard</button><button class="nav-button" data-page="configuration" type="button">Configuration</button><button class="nav-button" data-page="cues" type="button">Cues</button><button class="nav-button" data-page="runtime" type="button">Runtime</button><button class="nav-button" data-page="preflight" type="button">Preflight</button><button class="nav-button" data-page="sessions" type="button">Sessions</button><button class="nav-button" data-page="notes" type="button">Notes</button></div></aside>
@@ -114,6 +120,54 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
+		case "/show-workspace-viewport-ready":
+			resume := make(chan struct{})
+			select {
+			case viewportRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/show-workspace-key-ready":
+			resume := make(chan struct{})
+			select {
+			case keyRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/show-workspace-touch-ready":
+			var request struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				request.X < 0 || request.X > 390 || request.Y < 0 || request.Y > 844 {
+				http.Error(w, "invalid touch coordinates", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case touchRequests <- struct {
+				x, y   float64
+				resume chan struct{}
+			}{x: request.X, y: request.Y, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
 		case "/show-workspace-test.js":
 			w.Header().Set("Content-Type", "application/javascript")
 			w.Write(testScript)
@@ -138,7 +192,8 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed: %v", removeErr)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
-		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
+		"--remote-debugging-port=0", "--remote-allow-origins=*", "--disable-background-networking",
+		"--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "show-browser.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +203,12 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	cdp, err := connectChromePage(ctx, profileDir, server.URL)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("connect to isolated Chrome DevTools: %v", err)
+	}
+	defer cdp.Close()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	exited := false
@@ -157,18 +218,40 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			<-done
 		}
 	}()
-	select {
-	case outcome := <-browserResult:
-		if outcome != "PASS" {
-			t.Fatal(outcome)
+	keyCommandID := 100
+	outcome := ""
+	for outcome == "" {
+		select {
+		case resume := <-viewportRequests:
+			if err := chromeDevToolsCommand(cdp, 90, "Emulation.setDeviceMetricsOverride", map[string]any{
+				"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": true,
+			}); err != nil {
+				t.Fatalf("set isolated Chrome mobile viewport: %v", err)
+			}
+			close(resume)
+		case outcome = <-browserResult:
+			if outcome != "PASS" {
+				t.Fatal(outcome)
+			}
+		case resume := <-keyRequests:
+			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
+				t.Fatalf("send native Enter key to workspace navigation: %v", err)
+			}
+			keyCommandID += 2
+			close(resume)
+		case request := <-touchRequests:
+			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
+				t.Fatalf("send emulated touchscreen event to workspace navigation: %v", err)
+			}
+			close(request.resume)
+		case err := <-done:
+			exited = true
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser exited before reporting: %v\n%s", err, output)
+		case <-ctx.Done():
+			output, _ := os.ReadFile(browserLog.Name())
+			t.Fatalf("browser did not finish: %s", output)
 		}
-	case err := <-done:
-		exited = true
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser exited before reporting: %v\n%s", err, output)
-	case <-ctx.Done():
-		output, _ := os.ReadFile(browserLog.Name())
-		t.Fatalf("browser did not finish: %s", output)
 	}
 	stopped, err := st.GetSession(ctx, showSession.ID)
 	if err != nil || stopped.Status != domain.SessionCompleted {
