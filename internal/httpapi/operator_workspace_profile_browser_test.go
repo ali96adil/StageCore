@@ -41,7 +41,11 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	keyReadyRequests := make(chan chan struct{}, 1)
-	screenshotRequests := make(chan chan struct{}, 1)
+	type screenshotRequest struct {
+		direction string
+		resume    chan struct{}
+	}
+	screenshotRequests := make(chan screenshotRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
@@ -76,14 +80,19 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 			case <-r.Context().Done():
 			}
 		case "/workspace-profile-screenshot-ready":
-			resume := make(chan struct{})
+			direction := r.URL.Query().Get("direction")
+			if direction != "rtl" && direction != "ltr" {
+				http.Error(w, "invalid screenshot direction", http.StatusBadRequest)
+				return
+			}
+			request := screenshotRequest{direction: direction, resume: make(chan struct{})}
 			select {
-			case screenshotRequests <- resume:
+			case screenshotRequests <- request:
 			case <-r.Context().Done():
 				return
 			}
 			select {
-			case <-resume:
+			case <-request.resume:
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
@@ -151,7 +160,7 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 	for outcome == "" {
 		select {
 		case outcome = <-browserResult:
-		case resume := <-screenshotRequests:
+		case request := <-screenshotRequests:
 			image, err := captureChromeScreenshot(cdp, 901)
 			if err != nil {
 				t.Fatalf("capture Workspace Profile 200%% screenshot: %v", err)
@@ -169,12 +178,12 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 			if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			name := filepath.Join(screenshotDir, "workspace-profile-200-percent-rtl.png")
+			name := filepath.Join(screenshotDir, "workspace-profile-200-percent-"+request.direction+".png")
 			if err := os.WriteFile(name, image, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			t.Logf("captured Workspace Profile 200%% screenshot: %s (%d bytes)", name, len(image))
-			close(resume)
+			close(request.resume)
 		case resume := <-keyReadyRequests:
 			t.Log("dispatching native Enter to workspace-profile browser")
 			if err := dispatchChromeKey(cdp, 700, "Enter", false); err != nil {
@@ -205,6 +214,8 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 		ZoomPercent           int     `json:"zoom_percent"`
 		DevicePixelRatio      float64 `json:"device_pixel_ratio"`
 		SaveVisibleAtZoom     bool    `json:"save_visible_at_zoom"`
+		LTRDocumentWidth      int     `json:"ltr_document_width"`
+		LTRSaveVisibleAtZoom  bool    `json:"ltr_save_visible_at_zoom"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &result); err != nil {
 		t.Fatalf("decode workspace-profile browser result %q: %v", outcome, err)
@@ -213,8 +224,9 @@ func TestBrowserWorkspaceProfileEnterDoesNotDiscardEditorDraft(t *testing.T) {
 		result.StoredNameBeforeEnter != result.StoredNameAfterEnter ||
 		result.StoredNameAfterSave != "Keyboard-tested rehearsal profile" || !result.NoHubMutation ||
 		result.ViewportWidth != 720 || result.DocumentWidth > 720 || result.ZoomPercent != 200 ||
-		result.DevicePixelRatio < 1.95 || !result.SaveVisibleAtZoom {
+		result.DevicePixelRatio < 1.95 || !result.SaveVisibleAtZoom ||
+		result.LTRDocumentWidth > 720 || !result.LTRSaveVisibleAtZoom {
 		t.Fatalf("workspace-profile keyboard report=%+v", result)
 	}
-	t.Logf("Workspace Profile at 200%% RTL: viewport=%d px, document=%d px, Save remains visible", result.ViewportWidth, result.DocumentWidth)
+	t.Logf("Workspace Profile at 200%%: RTL viewport=%d/document=%d px, LTR document=%d px; Save remains visible in both", result.ViewportWidth, result.DocumentWidth, result.LTRDocumentWidth)
 }

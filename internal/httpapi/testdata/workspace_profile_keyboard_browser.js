@@ -42,20 +42,36 @@
     const name = dialog.querySelector("#f017ProfileName");
     phase = "qualify Workspace Profile at actual 200 percent zoom";
     const saveButton = dialog.querySelector(".f017-save");
-    saveButton.scrollIntoView({ block: "nearest", inline: "nearest" });
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const qualifyDirection = async (direction) => {
+      document.documentElement.dir = direction;
+      saveButton.scrollIntoView({ block: "nearest", inline: "nearest" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const pageWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+      const saveRect = saveButton.getBoundingClientRect();
+      const dialogRect = dialog.getBoundingClientRect();
+      return {
+        pageWidth,
+        saveVisible: saveRect.width > 0 && saveRect.height > 0 && saveRect.top >= 0 &&
+          saveRect.bottom <= window.innerHeight && saveRect.top >= dialogRect.top + 1 &&
+          saveRect.bottom <= dialogRect.bottom - 1 && dialogRect.left >= 0 && dialogRect.right <= window.innerWidth,
+        saveRect: saveRect.toJSON(),
+        dialogRect: dialogRect.toJSON(),
+      };
+    };
     const viewportWidth = window.innerWidth;
-    const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
-    const saveRect = saveButton.getBoundingClientRect();
-    const dialogRect = dialog.getBoundingClientRect();
-    const saveVisibleAtZoom = saveRect.width > 0 && saveRect.height > 0 && saveRect.top >= 0 &&
-      saveRect.bottom <= window.innerHeight && saveRect.top >= dialogRect.top + 1 &&
-      saveRect.bottom <= dialogRect.bottom - 1 && dialogRect.left >= 0 && dialogRect.right <= viewportWidth;
+    const rtl = await qualifyDirection("rtl");
     const zoomPercent = Math.round(window.devicePixelRatio * 100);
-    if (viewportWidth !== 720 || documentWidth > viewportWidth || zoomPercent !== 200 || !saveVisibleAtZoom) {
-      throw new Error(`Workspace Profile does not fit at actual 200% zoom: ${JSON.stringify({ viewportWidth, documentWidth, zoomPercent, saveVisibleAtZoom, saveRect: saveRect.toJSON(), dialogRect: dialogRect.toJSON(), devicePixelRatio: window.devicePixelRatio })}`);
+    if (viewportWidth !== 720 || rtl.pageWidth > viewportWidth || zoomPercent !== 200 || !rtl.saveVisible) {
+      throw new Error(`Workspace Profile does not fit at actual 200% RTL zoom: ${JSON.stringify({ viewportWidth, pageWidth: rtl.pageWidth, zoomPercent, saveVisible: rtl.saveVisible, saveRect: rtl.saveRect, dialogRect: rtl.dialogRect, devicePixelRatio: window.devicePixelRatio })}`);
     }
-    await fetch("/workspace-profile-screenshot-ready", { method: "POST" });
+    await fetch("/workspace-profile-screenshot-ready?direction=rtl", { method: "POST" });
+    const ltr = await qualifyDirection("ltr");
+    if (ltr.pageWidth > viewportWidth || !ltr.saveVisible) {
+      throw new Error(`Workspace Profile does not fit at actual 200% LTR zoom: ${JSON.stringify({ viewportWidth, pageWidth: ltr.pageWidth, saveVisible: ltr.saveVisible, saveRect: ltr.saveRect, dialogRect: ltr.dialogRect })}`);
+    }
+    await fetch("/workspace-profile-screenshot-ready?direction=ltr", { method: "POST" });
+    document.documentElement.dir = "rtl";
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
     const initial = JSON.parse(localStorage.getItem("stagecore_workspace_profiles_v1"));
     const profileID = initial.active_profile_id;
@@ -85,8 +101,9 @@
       stored_name_before_enter: storedBeforeEnter, stored_name_after_enter: storedAfterEnter,
       stored_name_after_save: saved.custom_profiles.find((item) => item.profile_id === profileID)?.name || "",
       no_hub_mutation: hubRequests === 0,
-      viewport_width: viewportWidth, document_width: documentWidth, zoom_percent: zoomPercent,
-      device_pixel_ratio: window.devicePixelRatio, save_visible_at_zoom: saveVisibleAtZoom,
+      viewport_width: viewportWidth, document_width: rtl.pageWidth, zoom_percent: zoomPercent,
+      device_pixel_ratio: window.devicePixelRatio, save_visible_at_zoom: rtl.saveVisible,
+      ltr_document_width: ltr.pageWidth, ltr_save_visible_at_zoom: ltr.saveVisible,
     });
   } catch (error) {
     await report({ status: "FAIL", error: String(error.stack || error) });
