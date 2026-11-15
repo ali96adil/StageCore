@@ -109,6 +109,12 @@ func registerOperatorExecutionEnvironmentRebuildPlanRoutes(
 			return
 		}
 		if existing, err := stageStore.GetExecutionEnvironmentRebuildPlan(r.Context(), environment.ID); err == nil {
+			if hooks.BeforeResponse != nil {
+				hooks.BeforeResponse("rebuild-plan-existing")
+			}
+			if !recheckQualifiedProjectRoute(w, r) {
+				return
+			}
 			if r.URL.Query().Get("replace") != "true" {
 				writeJSON(w, http.StatusConflict, map[string]any{
 					"error_code":      "EXECUTION_ENVIRONMENT_REBUILD_PLAN_EXISTS",

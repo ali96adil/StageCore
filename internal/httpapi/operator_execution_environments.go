@@ -41,6 +41,7 @@ type executionEnvironmentView struct {
 
 type executionEnvironmentReadHooks struct {
 	BeforeStoreErrorResponse func(route string)
+	BeforeResponse           func(route string)
 }
 
 func WithOperatorExecutionEnvironments(auth *userauth.Service, stageStore *store.Store) Option {
