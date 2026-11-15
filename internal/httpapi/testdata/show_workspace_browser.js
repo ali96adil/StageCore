@@ -1,11 +1,10 @@
 "use strict";
 
 (async () => {
+  const seededSessions = [];
   const report = async (value) => {
     await fetch("/show-workspace-result", {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" },
-      body: value,
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value),
     });
     window.close();
   };
@@ -121,8 +120,74 @@
       await setViewport(width, height);
       assertNoHorizontalOverflow(`inactive Runtime workspace at ${width}px`);
     }
-    await report("PASS");
+    await setViewport(390, 844);
+
+    const stopCurrentShow = async () => {
+      document.getElementById("stopSessionButton").click();
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && document.getElementById("appView").dataset.showSession !== "inactive") {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if (document.getElementById("appView").dataset.showSession !== "inactive" || document.getElementById("stopSessionButton")) {
+        throw new Error(`SHOW did not stop for ${state.user.role}`);
+      }
+    };
+    const authenticateRole = async (role) => {
+      const response = await fetch("/show-workspace-switch-role", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }),
+      });
+      if (!response.ok) throw new Error(`test role switch to ${role} returned HTTP ${response.status}`);
+      const session = await response.json();
+      state.user = session.user;
+      state.csrf = session.csrf;
+      sessionStorage.setItem("stagecore_csrf", state.csrf);
+    };
+    const switchRole = async (role) => {
+      await authenticateRole(role);
+      await navigate("cues");
+      const mayEdit = ["OWNER", "TECHNICIAN"].includes(role);
+      const canAuthor = !!document.getElementById("createDraftButton") || !!document.getElementById("createCueButton");
+      if (canAuthor !== mayEdit) throw new Error(`${role} Cue authoring controls=${canAuthor}, expected ${mayEdit}`);
+      await navigate("runtime");
+      if (!document.getElementById("startShowButton")) throw new Error(`${role} Runtime workspace is unavailable`);
+      if (document.getElementById("startShowButton").disabled !== (role === "VIEWER")) {
+        throw new Error(`${role} SHOW entry enabled state is incorrect`);
+      }
+      if (role === "VIEWER") return;
+
+      const seededResponse = await fetch("/show-workspace-seed-show", { method: "POST" });
+      if (!seededResponse.ok) throw new Error(`${role} SHOW fixture returned HTTP ${seededResponse.status}`);
+      const seeded = await seededResponse.json();
+      seededSessions.push(seeded.session_id);
+      await navigate("runtime");
+      if (!state.showSessionActive || !document.getElementById("stopSessionButton") || document.getElementById("stopSessionButton").disabled) {
+        throw new Error(`${role} cannot operate the seeded SHOW exit control`);
+      }
+      await stopCurrentShow();
+    };
+    await switchRole("TECHNICIAN");
+    await switchRole("OPERATOR");
+    await switchRole("VIEWER");
+    const viewerShowResponse = await fetch("/show-workspace-seed-show", { method: "POST" });
+    if (!viewerShowResponse.ok) throw new Error(`Viewer SHOW fixture returned HTTP ${viewerShowResponse.status}`);
+    const viewerShow = await viewerShowResponse.json();
+    seededSessions.push(viewerShow.session_id);
+    await navigate("runtime");
+    if (!state.showSessionActive) throw new Error("active SHOW did not pin Viewer to Runtime");
+    for (const id of ["goButton", "stopCueButton", "emergencyBlackoutButton", "stopSessionButton"]) {
+      if (!document.getElementById(id)?.disabled) throw new Error(`Viewer can operate ${id} during SHOW`);
+    }
+    await authenticateRole("OWNER");
+    await openProject(config.project);
+    if (!state.showSessionActive || !document.getElementById("stopSessionButton") || document.getElementById("stopSessionButton").disabled) {
+      throw new Error("Owner could not safely exit the Viewer-seeded SHOW");
+    }
+    await stopCurrentShow();
+    if (postRequests.length !== 4 || postRequests.some((url) => !url.includes("/runtime/stop-session"))) {
+      throw new Error(`unexpected role workflow mutations: ${postRequests.join(", ")}`);
+    }
+    await report({ status: "PASS", seeded_sessions: seededSessions });
   } catch (error) {
-    await report(`FAIL: ${error?.stack || error}`);
+    await report({ status: "FAIL", failure: error?.stack || String(error) });
   }
 })();

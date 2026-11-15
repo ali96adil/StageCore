@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
+	"github.com/ali96adil/StageCore/internal/userauth"
 )
 
 func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
@@ -36,6 +38,26 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
+	}
+	type browserLogin struct {
+		token, csrf, userID, username string
+	}
+	roleLogins := make(map[string]browserLogin)
+	roleLogins[userauth.RoleOwner] = browserLogin{
+		token: owner.Token, csrf: owner.CSRFToken, userID: owner.Session.User.ID, username: owner.Session.User.Username,
+	}
+	for _, role := range []string{userauth.RoleTechnician, userauth.RoleOperator, userauth.RoleViewer} {
+		username := "workspace-" + strings.ToLower(role)
+		if _, err := h.auth.CreateUser(ctx, username, h.password, role); err != nil {
+			t.Fatalf("create isolated %s browser user: %v", role, err)
+		}
+		login, err := h.auth.Login(ctx, username, h.password, "127.0.0.1")
+		if err != nil {
+			t.Fatalf("login isolated %s browser user: %v", role, err)
+		}
+		roleLogins[role] = browserLogin{
+			token: login.Token, csrf: login.CSRFToken, userID: login.Session.User.ID, username: username,
+		}
 	}
 	st := store.New(h.db.DB, clock.Real{})
 	project, revision, err := st.CreateProject(ctx, store.CreateProjectParams{Name: "Browser SHOW workspace", CreatedBy: owner.Session.User.ID})
@@ -74,12 +96,15 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopSafetyCalls := 0
+	var stopSafetyMu sync.Mutex
+	var stopSafetySessions []string
 	runtime := runtimecontrol.New(st, registry, runtimecontrol.WithSessionStopSafety(func(_ context.Context, got domain.Session, _ contracts.CommandEnvelope) error {
-		if got.ID != showSession.ID {
-			return fmt.Errorf("simulated SHOW stop safety received Session %s, want %s", got.ID, showSession.ID)
+		if got.Type != domain.SessionShow || got.ProjectID != project.ID {
+			return fmt.Errorf("simulated SHOW stop safety received wrong Project/Session: %+v", got)
 		}
-		stopSafetyCalls++
+		stopSafetyMu.Lock()
+		stopSafetySessions = append(stopSafetySessions, got.ID)
+		stopSafetyMu.Unlock()
 		return nil
 	}))
 	handler := New(WithOperatorWeb(), WithOperatorProjects(h.auth, st), WithOperatorRuntime(h.auth, st, runtime),
@@ -120,6 +145,39 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			io.WriteString(w, strings.TrimSuffix(strings.TrimSpace(rec.Body.String()), "boot();"))
 		case "/show-workspace-config":
 			writeJSON(w, http.StatusOK, map[string]string{"csrf": owner.CSRFToken, "project": project.ID})
+		case "/show-workspace-switch-role":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST required", http.StatusMethodNotAllowed)
+				return
+			}
+			var request struct {
+				Role string `json:"role"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil {
+				http.Error(w, "invalid role request", http.StatusBadRequest)
+				return
+			}
+			login, ok := roleLogins[request.Role]
+			if !ok {
+				http.Error(w, "unknown test role", http.StatusBadRequest)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: browserSessionCookie, Value: login.token, HttpOnly: true, Path: "/"})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"csrf": login.csrf,
+				"user": map[string]string{"user_id": login.userID, "username": login.username, "role": request.Role},
+			})
+		case "/show-workspace-seed-show":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST required", http.StatusMethodNotAllowed)
+				return
+			}
+			seeded, err := st.CreateSession(r.Context(), published.ID, domain.SessionShow, "Browser role SHOW")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]string{"session_id": seeded.ID})
 		case "/show-workspace-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
@@ -257,9 +315,6 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			viewportCommandID++
 			close(request.resume)
 		case outcome = <-browserResult:
-			if outcome != "PASS" {
-				t.Fatal(outcome)
-			}
 		case resume := <-keyRequests:
 			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
 				t.Fatalf("send native Enter key to workspace navigation: %v", err)
@@ -280,12 +335,39 @@ func TestBrowserShowWorkspacePinsRuntime(t *testing.T) {
 			t.Fatalf("browser did not finish: %s", output)
 		}
 	}
-	stopped, err := st.GetSession(ctx, showSession.ID)
-	if err != nil || stopped.Status != domain.SessionCompleted {
-		t.Fatalf("SHOW stop endpoint did not complete the isolated Session: session=%+v err=%v", stopped, err)
+	var browserOutcome struct {
+		Status         string   `json:"status"`
+		SeededSessions []string `json:"seeded_sessions"`
+		Failure        string   `json:"failure,omitempty"`
 	}
-	if stopSafetyCalls != 1 {
-		t.Fatalf("normal SHOW stop did not run the isolated managed-output safety seam exactly once: calls=%d", stopSafetyCalls)
+	if err := json.Unmarshal([]byte(outcome), &browserOutcome); err != nil {
+		t.Fatalf("decode browser role result %q: %v", outcome, err)
+	}
+	if browserOutcome.Status != "PASS" {
+		t.Fatalf("browser role acceptance failed: %s", browserOutcome.Failure)
+	}
+	expectedSessions := append([]string{showSession.ID}, browserOutcome.SeededSessions...)
+	stopSafetyMu.Lock()
+	safetySessions := append([]string(nil), stopSafetySessions...)
+	stopSafetyMu.Unlock()
+	if len(safetySessions) != len(expectedSessions) {
+		t.Fatalf("normal SHOW stop safety seam calls=%v, want one for each seeded Session %v", safetySessions, expectedSessions)
+	}
+	for _, expectedID := range expectedSessions {
+		found := false
+		for _, actualID := range safetySessions {
+			if actualID == expectedID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("normal SHOW stop safety did not run for Session %s: calls=%v", expectedID, safetySessions)
+		}
+		stopped, err := st.GetSession(ctx, expectedID)
+		if err != nil || stopped.Status != domain.SessionCompleted {
+			t.Fatalf("SHOW stop endpoint did not complete isolated Session %s: session=%+v err=%v", expectedID, stopped, err)
+		}
 	}
 	active, err := st.ActiveSessionForProject(ctx, project.ID)
 	if err != nil || active != nil {
