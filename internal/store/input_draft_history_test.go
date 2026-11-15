@@ -184,3 +184,72 @@ func TestInputDraftHistoryUndoRespectsShowLockAndKeepsBoundedHistory(t *testing.
 		t.Fatalf("bounded Input history status=%+v err=%v", status, err)
 	}
 }
+
+func TestInputDraftHistoryBranchAfterUndoRetainsEarlierUndo(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Input history branch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := store.WithInputDraftHistoryActor(ctx, "owner")
+	original, err := s.CreateInput(owner, domain.InputDefinition{
+		RevisionID: revision.ID, Name: "Original", SourceRef: "osc:/original", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := original
+	edited.Name = "Discarded redo"
+	if _, err := s.UpdateInput(owner, edited); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UndoInputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo edit before branching: %v", err)
+	}
+	branch, err := s.CreateInput(owner, domain.InputDefinition{
+		RevisionID: revision.ID, Name: "Branch", SourceRef: "osc:/branch", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.InputDraftHistory(owner, project.ID)
+	if err != nil || !status.CanUndo || status.CanRedo {
+		t.Fatalf("branch history status=%+v err=%v", status, err)
+	}
+	if _, err := s.UndoInputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo branch: %v", err)
+	}
+	inputs, err := s.ListInputs(ctx, revision.ID)
+	if err != nil || len(inputs) != 1 || inputs[0].ID != original.ID || inputs[0].Name != original.Name {
+		t.Fatalf("branch undo did not restore original Input: inputs=%+v err=%v", inputs, err)
+	}
+	status, err = s.InputDraftHistory(owner, project.ID)
+	if err != nil || !status.CanUndo || !status.CanRedo || status.UndoOperation != "CREATE" || status.RedoOperation != "CREATE" {
+		t.Fatalf("history cursor lost the earlier Input create after branch: status=%+v err=%v", status, err)
+	}
+	if _, err := s.UndoInputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo earlier Input create after branch: %v", err)
+	}
+	if inputs, err := s.ListInputs(ctx, revision.ID); err != nil || len(inputs) != 0 {
+		t.Fatalf("earlier Input create remained after Undo: inputs=%+v err=%v", inputs, err)
+	}
+	if _, err := s.RedoInputDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo earlier Input create: %v", err)
+	}
+	if _, err := s.RedoInputDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo branched Input create: %v", err)
+	}
+	inputs, err = s.ListInputs(ctx, revision.ID)
+	if err != nil || len(inputs) != 2 {
+		t.Fatalf("Redo did not restore both original and branched Inputs: inputs=%+v err=%v", inputs, err)
+	}
+	foundOriginal, foundBranch := false, false
+	for _, input := range inputs {
+		foundOriginal = foundOriginal || input.ID == original.ID
+		foundBranch = foundBranch || input.ID == branch.ID
+	}
+	if !foundOriginal || !foundBranch {
+		t.Fatalf("Input IDs changed across branch Undo/Redo: original=%t branch=%t inputs=%+v", foundOriginal, foundBranch, inputs)
+	}
+}

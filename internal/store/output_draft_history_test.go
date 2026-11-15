@@ -110,3 +110,74 @@ func TestOutputDraftHistoryRecordsCreateAtomically(t *testing.T) {
 		t.Fatalf("Output create Undo left outputs=%+v err=%v", outputs, err)
 	}
 }
+
+func TestOutputDraftHistoryBranchAfterUndoRetainsEarlierUndo(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	project, revision, err := s.CreateProject(ctx, store.CreateProjectParams{Name: "Output history branch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := store.WithOutputDraftHistoryActor(ctx, "owner")
+	original, err := s.CreateOutput(owner, domain.OutputDefinition{
+		RevisionID: revision.ID, Name: "Original", TargetRef: "PROJECTOR", CapabilityKey: "osc.send",
+		ValueSchema: json.RawMessage(`{}`), Criticality: "NORMAL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := original
+	edited.Name = "Discarded redo"
+	if _, err := s.UpdateOutput(owner, edited); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UndoOutputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo edit before branching: %v", err)
+	}
+	branch, err := s.CreateOutput(owner, domain.OutputDefinition{
+		RevisionID: revision.ID, Name: "Branch", TargetRef: "PROJECTOR", CapabilityKey: "osc.send",
+		ValueSchema: json.RawMessage(`{}`), Criticality: "NORMAL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.OutputDraftHistory(owner, project.ID)
+	if err != nil || !status.CanUndo || status.CanRedo {
+		t.Fatalf("branch history status=%+v err=%v", status, err)
+	}
+	if _, err := s.UndoOutputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo branch: %v", err)
+	}
+	outputs, err := s.ListOutputs(ctx, revision.ID)
+	if err != nil || len(outputs) != 1 || outputs[0].ID != original.ID || outputs[0].Name != original.Name {
+		t.Fatalf("branch undo did not restore original Output: outputs=%+v err=%v", outputs, err)
+	}
+	status, err = s.OutputDraftHistory(owner, project.ID)
+	if err != nil || !status.CanUndo || !status.CanRedo || status.UndoOperation != "CREATE" || status.RedoOperation != "CREATE" {
+		t.Fatalf("history cursor lost the earlier Output create after branch: status=%+v err=%v", status, err)
+	}
+	if _, err := s.UndoOutputDraft(owner, project.ID); err != nil {
+		t.Fatalf("undo earlier Output create after branch: %v", err)
+	}
+	if outputs, err := s.ListOutputs(ctx, revision.ID); err != nil || len(outputs) != 0 {
+		t.Fatalf("earlier Output create remained after Undo: outputs=%+v err=%v", outputs, err)
+	}
+	if _, err := s.RedoOutputDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo earlier Output create: %v", err)
+	}
+	if _, err := s.RedoOutputDraft(owner, project.ID); err != nil {
+		t.Fatalf("redo branched Output create: %v", err)
+	}
+	outputs, err = s.ListOutputs(ctx, revision.ID)
+	if err != nil || len(outputs) != 2 {
+		t.Fatalf("Redo did not restore both original and branched Outputs: outputs=%+v err=%v", outputs, err)
+	}
+	foundOriginal, foundBranch := false, false
+	for _, output := range outputs {
+		foundOriginal = foundOriginal || output.ID == original.ID
+		foundBranch = foundBranch || output.ID == branch.ID
+	}
+	if !foundOriginal || !foundBranch {
+		t.Fatalf("Output IDs changed across branch Undo/Redo: original=%t branch=%t outputs=%+v", foundOriginal, foundBranch, outputs)
+	}
+}
