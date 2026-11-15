@@ -4712,3 +4712,43 @@ This entry supersedes the preceding push instruction.
 - The SC-018 and SC-023 matrix rows record the new route evidence. The remaining SC-018 route inventory and physical tablet fit remain open.
 - Remote and PR #534 remain on `5331d3b674e3464a4b3b088616f307b565356a11`. Exact-head Camera Relay `43692176469` and Companion Core `43692176470` pass; Core `43692176474` was last observed in Go 1.26 Race. Local branch was at `d530598c91908232637ecf96c377ca9c28d994b8` before this batch; keep this test/matrix/checkpoint commit local until the exact-head Core run finishes and all three results are inspected.
 - The optional visible native-select experiment remains unqualified because the Mac session is locked; its failed conditional test changes were fully removed. Continue with safe local work; no production service/data/Vault/show, physical output/device, firmware, merge, force push, paid service, or production ACL activation was touched.
+
+## F-010 isolated installed-copy transaction — 2026-11-15
+
+- Draft PR #534 remains OPEN on `integration/stagecore-rc`. The exact remote/PR
+  head `5331d3b674e3464a4b3b088616f307b565356a11` completed green: Core run
+  `43692176474` passed Go 1.26/1.27 Test, Browser Cue Delivery, Vet, Go 1.26
+  Race and Linux ARM64 builds; Companion Core `43692176470` and Camera Relay
+  `43692176469` passed. PR and `git ls-remote` still identify the same head.
+- Local implementation commit `3f5b405` adds
+  `TestIsolatedInstalledCopyUpdateAndRollback`: actual update Service,
+  deployment Installer and verified Snapshotter, with temporary install/config/
+  Data/Vault/unit/backup roots, fake systemd and Doctor, and loopback readiness.
+  It checks candidate success, readiness-timeout rollback and postflight-Doctor
+  rollback, including byte-for-byte restoration of all required binaries,
+  config, Data Root, Vault Root and systemd unit. It proves that the isolated
+  transaction uses the named qualification service and never enables it or
+  names production units/backup roots. No real service or device is started.
+- Linux ARM64 verification ran in the local Go 1.27.1 container on the existing
+  Colima profile (not Raspberry Pi): `go test ./internal/update -count=1` and
+  `go test -race ./internal/update -count=1` both passed as root and executed all
+  three installed-copy scenarios. The ordinary macOS package/Race tests and
+  `go vet ./internal/update ./internal/deployment` passed; this Linux-root-only
+  transaction test intentionally skips on macOS/non-root runs. Core CI now
+  builds and runs it, both normally and under Race, with `sudo -n` on its Linux
+  runner. Core workflow YAML parsed successfully. The Colima VM was stopped
+  after qualification; this is software integration evidence, not Pi or real
+  systemd acceptance.
+- SC-024 matrix and F-010 feature docs now distinguish this isolated file-level
+  transaction from the still-open full migration, real systemd/Hub health and
+  physical Pi update acceptance. SC-024 remains partial and production-off.
+- Five commits are ready above remote `5331d3b`: `825fc60` (resume checkpoint),
+  `d530598` (visible selector limitation), `84f1a86` (Project Files actual
+  200% zoom), `3f5b405` (isolated update/rollback test), and this handoff
+  checkpoint. Recheck ancestry/PR head and all three old-head workflows, then
+  push normally to this same Draft PR. Wait for every exact new-head Core,
+  Companion and Camera Relay workflow before any subsequent Push.
+- Next independent software gap: continue the SC-024 whole-server
+  endpoint-to-policy and asynchronous-delivery audit, while preserving the
+  existing grant revocation, STOP/Blackout independence, and production-off
+  boundary. The route review must not query or alter production services/data.
