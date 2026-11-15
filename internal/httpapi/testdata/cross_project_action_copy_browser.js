@@ -67,9 +67,61 @@
     if (JSON.stringify(authoringFields()) !== sourceBaseline) {
       throw new Error(`clipboard selection mutated Cue editor fields: ${JSON.stringify({sourceBaseline, current: authoringFields()})}`);
     }
+    if (confirmMessages.length !== 0) throw new Error(`clipboard selection triggered an unsaved-edit confirmation: ${confirmMessages.join(" | ")}`);
+    const presetPanel = document.getElementById("sc009ActionPresets");
+    if (!presetPanel) throw new Error("Cue Action preset panel is missing");
+    const presetFields = [...presetPanel.querySelectorAll("input")].filter((field) => field.type !== "search");
+    if (presetFields.length !== 2) throw new Error(`preset fields=${presetFields.length}, want name and description`);
+    const [presetName, presetDescription] = presetFields;
+    presetPanel.open = true;
+    try {
+      await waitFor(() => requestTrace.some((request) =>
+        request.includes(`/api/v1/projects/${config.source}/cue-action-presets`)), "loading source Project Action presets");
+    } catch (error) {
+      throw new Error(`${error}; source=${config.source}; state_project=${state.project?.project_id}; panel_open=${presetPanel.open}; requests=${JSON.stringify(requestTrace)}`);
+    }
+    presetName.value = "Reusable mixed pair";
+    presetName.dispatchEvent(new Event("input", {bubbles: true}));
+    presetDescription.value = "Reusable lighting and OSC";
+    presetDescription.dispatchEvent(new Event("input", {bubbles: true}));
+    presetPanel.querySelector("button").click();
+    await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
+    const presetRow = presetPanel.querySelector("li");
+    const presetSearch = presetPanel.querySelector("input[type=search]");
+    presetSearch.value = "missing-preset-query";
+    presetSearch.dispatchEvent(new Event("input", {bubbles: true}));
+    if (!presetRow.hidden) throw new Error("Action preset search did not hide a nonmatching row");
+    presetSearch.value = "SOURCE-OSC";
+    presetSearch.dispatchEvent(new Event("input", {bubbles: true}));
+    if (presetRow.hidden) throw new Error("Action preset search did not match a nested target");
+    const presetPreview = presetRow.querySelector("pre");
+    if (!presetPreview?.textContent.includes("/source/open") || !presetPreview.textContent.includes("SOURCE-LIGHT")) {
+      throw new Error(`Mixed Action preset preview lost saved content: ${presetPreview?.textContent}`);
+    }
+    const insertPreset = presetRow.querySelector("button");
+    if (!insertPreset) throw new Error("Action preset insert control is missing");
+    insertPreset.click();
+    await waitFor(() => document.querySelectorAll("#actionsEditor .action-editor").length === 4,
+      "inserting both preset Actions into the current Draft Cue");
+    const presetCopies = [...document.querySelectorAll("#actionsEditor .action-editor")].slice(2);
+    if (presetCopies.some((card) => !card.classList.contains("sc008-action-card") ||
+        !card.querySelector(".sc008-action-select") || card.querySelector(".action-id").value !== "") ||
+        JSON.stringify(presetCopies.map((card) => card.querySelector(".action-target").value)) !== JSON.stringify(sourceTargets) ||
+        JSON.stringify(presetCopies.map((card) => card.querySelector(".action-capability").value)) !== JSON.stringify(sourceCapabilities) ||
+        JSON.stringify(presetCopies.map((card) => card.querySelector(".action-mode").value)) !== JSON.stringify(sourceModes) ||
+        presetCopies.some((card, index) => JSON.stringify(JSON.parse(card.querySelector(".action-parameters").value)) !==
+          JSON.stringify(JSON.parse(sourceCards[index].querySelector(".action-parameters").value)))) {
+      throw new Error(`preset insertion did not create fresh, fully enhanced Mixed Actions: ${JSON.stringify({
+        classes: presetCopies.map((card) => card.className),
+        targets: presetCopies.map((card) => card.querySelector(".action-target").value),
+        capabilities: presetCopies.map((card) => card.querySelector(".action-capability").value),
+        modes: presetCopies.map((card) => card.querySelector(".action-mode").value),
+        action_ids: presetCopies.map((card) => card.querySelector(".action-id").value),
+      })}`);
+    }
     document.getElementById("cancelCueButton").click();
-    await waitFor(() => !dialog.open, "closing the source editor without a Draft mutation");
-    if (confirmMessages.length !== 0) throw new Error(`clipboard selection incorrectly triggered a confirmation: ${confirmMessages.join(" | ")}`);
+    await waitFor(() => !dialog.open, "discarding the unsaved preset insertion");
+    if (confirmMessages.length !== 1) throw new Error(`preset insertion should trigger one discard confirmation: ${confirmMessages.join(" | ")}`);
 
     sourceButton.click();
     await waitFor(() => dialog.open, "reopening the source Cue for an unsaved-edit guard check");
@@ -78,7 +130,7 @@
     cueName.dispatchEvent(new Event("input", {bubbles: true}));
     document.getElementById("cancelCueButton").click();
     await waitFor(() => !dialog.open, "closing after accepting the unsaved-edit warning");
-    if (confirmMessages.length !== 1) throw new Error(`an actual Cue edit did not trigger exactly one confirmation: ${confirmMessages.join(" | ")}`);
+    if (confirmMessages.length !== 2) throw new Error(`Cue edit and preset insertion should each trigger a discard confirmation: ${confirmMessages.join(" | ")}`);
 
     document.getElementById("projectsNav").click();
     await waitFor(() => state.page === "projects" &&
