@@ -73,6 +73,9 @@
     const presetFields = [...presetPanel.querySelectorAll("input")].filter((field) => field.type !== "search");
     if (presetFields.length !== 2) throw new Error(`preset fields=${presetFields.length}, want name and description`);
     const [presetName, presetDescription] = presetFields;
+    const sendPresetKeys = async (keys) => fetch("/cross-project-copy-preset-keyboard-ready", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys}),
+    });
     presetPanel.open = true;
     try {
       await waitFor(() => requestTrace.some((request) =>
@@ -86,16 +89,12 @@
     presetDescription.dispatchEvent(new Event("input", {bubbles: true}));
     const savePreset = presetPanel.querySelector("button");
     presetName.focus();
-    const presetTabs = await fetch("/cross-project-copy-preset-keyboard-ready", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: ["Tab", "Tab"]}),
-    });
+    const presetTabs = await sendPresetKeys(["Tab", "Tab"]);
     if (!presetTabs.ok) throw new Error(`native preset Tab traversal returned HTTP ${presetTabs.status}`);
     if (document.activeElement !== savePreset) {
       throw new Error(`two native Tabs from the preset name did not focus Save: ${document.activeElement?.outerHTML?.slice(0, 180)}`);
     }
-    const presetEnter = await fetch("/cross-project-copy-preset-keyboard-ready", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({keys: ["Enter"]}),
-    });
+    const presetEnter = await sendPresetKeys(["Enter"]);
     if (!presetEnter.ok) throw new Error(`native preset Enter returned HTTP ${presetEnter.status}`);
     await waitFor(() => presetPanel.querySelectorAll("li").length === 1, "saving and rendering a Mixed Action preset");
     const presetRow = presetPanel.querySelector("li");
@@ -110,9 +109,21 @@
     if (!presetPreview?.textContent.includes("/source/open") || !presetPreview.textContent.includes("SOURCE-LIGHT")) {
       throw new Error(`Mixed Action preset preview lost saved content: ${presetPreview?.textContent}`);
     }
+    const previewDetails = [...presetRow.querySelectorAll("details")].find((details) => details.contains(presetPreview));
+    const previewSummary = previewDetails?.querySelector("summary");
     const insertPreset = presetRow.querySelector("button");
-    if (!insertPreset) throw new Error("Action preset insert control is missing");
-    insertPreset.click();
+    if (!previewSummary || !insertPreset) throw new Error("Action preset keyboard preview or insert control is missing");
+    previewSummary.focus();
+    const previewEnter = await sendPresetKeys(["Enter"]);
+    if (!previewEnter.ok) throw new Error(`native preset preview Enter returned HTTP ${previewEnter.status}`);
+    await waitFor(() => previewDetails.open, "opening the preset preview with Enter");
+    const insertTab = await sendPresetKeys(["Tab"]);
+    if (!insertTab.ok) throw new Error(`native preset insert Tab returned HTTP ${insertTab.status}`);
+    if (document.activeElement !== insertPreset) {
+      throw new Error(`Tab from preset preview did not focus Insert: ${document.activeElement?.outerHTML?.slice(0, 180)}`);
+    }
+    const insertEnter = await sendPresetKeys(["Enter"]);
+    if (!insertEnter.ok) throw new Error(`native preset insert Enter returned HTTP ${insertEnter.status}`);
     await waitFor(() => document.querySelectorAll("#actionsEditor .action-editor").length === 4,
       "inserting both preset Actions into the current Draft Cue");
     const presetCopies = [...document.querySelectorAll("#actionsEditor .action-editor")].slice(2);
