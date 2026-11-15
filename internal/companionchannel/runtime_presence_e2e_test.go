@@ -302,10 +302,24 @@ func TestCompanionTransportTimelineChangesProjectScopeWithRoleAssignment(t *test
 		t.Fatalf("Project A transport transitions=%+v connected=%v", transitionsA, runtime.IsConnected(companionID))
 	}
 	through := time.Now().UTC().Add(time.Minute)
-	projectBEvents, truncated, err := s.ListProjectTransportEvents(ctx, projectB.ID, timelineSession.StartedAt, through)
-	if err != nil || truncated || len(projectBEvents) != 1 ||
-		projectBEvents[0].EventType != contracts.CompanionTransportConnectedEventType {
-		t.Fatalf("Project B transport events=%+v truncated=%v err=%v", projectBEvents, truncated, err)
+	var projectBEvents []contracts.EventEnvelope
+	var truncated bool
+	eventDeadline := time.Now().Add(5 * time.Second)
+	for {
+		projectBEvents, truncated, err = s.ListProjectTransportEvents(ctx, projectB.ID, timelineSession.StartedAt, through)
+		if err != nil {
+			t.Fatalf("list Project B transport events: %v", err)
+		}
+		if !truncated && len(projectBEvents) == 1 {
+			break
+		}
+		if time.Now().After(eventDeadline) {
+			t.Fatalf("Project B transport event did not persist: events=%+v truncated=%v", projectBEvents, truncated)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if projectBEvents[0].EventType != contracts.CompanionTransportConnectedEventType {
+		t.Fatalf("Project B transport events=%+v", projectBEvents)
 	}
 	if projectBEvents[0].ProjectID != projectB.ID || projectBEvents[0].Source != "hub.companion_runtime" ||
 		projectBEvents[0].RuntimeSnapshotID != "" {
