@@ -100,7 +100,11 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	mapReadyRequests := make(chan chan struct{}, 1)
-	applyReadyRequests := make(chan chan struct{}, 1)
+	type touchRequest struct {
+		x, y   float64
+		resume chan struct{}
+	}
+	touchRequests := make(chan touchRequest, 1)
 	browserRequests := make(chan string, 256)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -141,15 +145,24 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
-		case "/cross-project-copy-apply-ready":
-			resume := make(chan struct{})
+		case "/cross-project-copy-touch-ready":
+			var input struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&input); err != nil ||
+				input.X < 0 || input.X > 720 || input.Y < 0 || input.Y > 450 {
+				http.Error(w, "invalid 720x450 CSS touch point", http.StatusBadRequest)
+				return
+			}
+			request := touchRequest{x: input.X, y: input.Y, resume: make(chan struct{})}
 			select {
-			case applyReadyRequests <- resume:
+			case touchRequests <- request:
 			case <-r.Context().Done():
 				return
 			}
 			select {
-			case <-resume:
+			case <-request.resume:
 				w.WriteHeader(http.StatusNoContent)
 			case <-r.Context().Done():
 			}
@@ -222,12 +235,11 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 			}
 			keyCommandID += 2
 			close(resume)
-		case resume := <-applyReadyRequests:
-			if err := dispatchChromeKey(cdp, keyCommandID, "Enter", false); err != nil {
-				t.Fatalf("send native Enter to Apply target mapping: %v", err)
+		case request := <-touchRequests:
+			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
+				t.Fatalf("emulate touch on Apply target mapping: %v", err)
 			}
-			keyCommandID += 2
-			close(resume)
+			close(request.resume)
 		case err := <-done:
 			exited = true
 			output, _ := os.ReadFile(browserLog.Name())
@@ -253,24 +265,31 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	}
 
 	var report struct {
-		Status         string   `json:"status"`
-		Targets        []string `json:"targets"`
-		ActionIDs      []string `json:"action_ids"`
-		UnsafeCall     bool     `json:"unsafe_call"`
-		ConfigCopied   bool     `json:"configuration_copied"`
-		ZoomPercent    int      `json:"zoom_percent"`
-		Direction      string   `json:"direction"`
-		ViewportWidth  int      `json:"viewport_width"`
-		PageWidth      int      `json:"page_width"`
-		DialogOverflow bool     `json:"dialog_overflow"`
-		ApplyVisible   bool     `json:"apply_visible"`
+		Status          string   `json:"status"`
+		Targets         []string `json:"targets"`
+		ActionIDs       []string `json:"action_ids"`
+		UnsafeCall      bool     `json:"unsafe_call"`
+		ConfigCopied    bool     `json:"configuration_copied"`
+		ZoomPercent     int      `json:"zoom_percent"`
+		Direction       string   `json:"direction"`
+		ViewportWidth   int      `json:"viewport_width"`
+		PageWidth       int      `json:"page_width"`
+		DialogOverflow  bool     `json:"dialog_overflow"`
+		ApplyVisible    bool     `json:"apply_visible"`
+		LTRDirection    string   `json:"ltr_direction"`
+		LTRPageWidth    int      `json:"ltr_page_width"`
+		LTRDialogOver   bool     `json:"ltr_dialog_overflow"`
+		LTRApplyVisible bool     `json:"ltr_apply_visible"`
+		TouchApplied    bool     `json:"touch_applied"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || len(report.Targets) != 2 || len(report.ActionIDs) != 2 || report.UnsafeCall || report.ConfigCopied ||
 		report.ZoomPercent != 200 || report.Direction != "rtl" || report.ViewportWidth != 720 ||
-		report.PageWidth > 720 || report.DialogOverflow || !report.ApplyVisible {
+		report.PageWidth > 720 || report.DialogOverflow || !report.ApplyVisible ||
+		report.LTRDirection != "ltr" || report.LTRPageWidth > 720 || report.LTRDialogOver || !report.LTRApplyVisible ||
+		!report.TouchApplied {
 		t.Fatalf("browser copy report=%+v", report)
 	}
 	t.Logf("cross-Project target mapping at actual 200%% zoom (%s): viewport=%d px, page=%d px, mapping dialog fits and Apply is visible",

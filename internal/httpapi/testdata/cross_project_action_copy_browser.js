@@ -114,24 +114,43 @@
     await waitFor(() => mapDialog?.open, "opening bulk target mapping dialog");
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const mapApply = mapDialog.querySelector(".button.primary");
-    mapApply.scrollIntoView({block: "nearest"});
+    const measureMap = async (direction) => {
+      document.documentElement.dir = direction;
+      mapApply.scrollIntoView({block: "nearest", inline: "nearest"});
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const bounds = mapApply.getBoundingClientRect();
+      const dialogBounds = mapDialog.getBoundingClientRect();
+      return {
+        direction: getComputedStyle(mapDialog).direction,
+        page_width: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+        dialog_overflow: mapDialog.scrollWidth > mapDialog.clientWidth + 1,
+        apply_visible: bounds.width > 0 && bounds.left >= -1 && bounds.right <= window.innerWidth + 1 &&
+          bounds.top >= -1 && bounds.bottom <= window.innerHeight + 1 &&
+          bounds.top >= dialogBounds.top + 1 && bounds.bottom <= dialogBounds.bottom - 1 &&
+          dialogBounds.left >= 0 && dialogBounds.right <= window.innerWidth + 1,
+      };
+    };
+    const rtlLayout = await measureMap("rtl");
+    const ltrLayout = await measureMap("ltr");
+    document.documentElement.dir = "rtl";
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const mapApplyBounds = mapApply.getBoundingClientRect();
-    const pageWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
-    const dialogBounds = mapDialog.getBoundingClientRect();
     targetMapLayout = {
       zoom_percent: Math.round(window.devicePixelRatio * 100),
-      direction: getComputedStyle(mapDialog).direction,
       viewport_width: window.innerWidth,
-      page_width: pageWidth,
-      dialog_overflow: mapDialog.scrollWidth > mapDialog.clientWidth + 1,
-      apply_visible: mapApplyBounds.width > 0 && mapApplyBounds.left >= -1 &&
-        mapApplyBounds.right <= window.innerWidth + 1 && mapApplyBounds.top >= -1 &&
-        mapApplyBounds.bottom <= window.innerHeight + 1 && dialogBounds.width <= window.innerWidth + 1,
+      page_width: rtlLayout.page_width,
+      dialog_overflow: rtlLayout.dialog_overflow,
+      apply_visible: rtlLayout.apply_visible,
+      direction: rtlLayout.direction,
+      ltr_direction: ltrLayout.direction,
+      ltr_page_width: ltrLayout.page_width,
+      ltr_dialog_overflow: ltrLayout.dialog_overflow,
+      ltr_apply_visible: ltrLayout.apply_visible,
     };
     if (targetMapLayout.zoom_percent !== 200 || targetMapLayout.direction !== "rtl" || targetMapLayout.viewport_width !== 720 ||
-        targetMapLayout.page_width > 720 || targetMapLayout.dialog_overflow || !targetMapLayout.apply_visible) {
-      throw new Error(`200% cross-Project target-map layout failed: ${JSON.stringify(targetMapLayout)}`);
+        targetMapLayout.page_width > 720 || targetMapLayout.dialog_overflow || !targetMapLayout.apply_visible ||
+        targetMapLayout.ltr_direction !== "ltr" || targetMapLayout.ltr_page_width > 720 ||
+        targetMapLayout.ltr_dialog_overflow || !targetMapLayout.ltr_apply_visible) {
+      throw new Error(`200% cross-Project target-map RTL/LTR layout failed: ${JSON.stringify(targetMapLayout)}`);
     }
     const targetSelects = [...mapDialog.querySelectorAll("select[aria-label]")];
     if (targetSelects.length !== 2) throw new Error(`target map rows=${targetSelects.length}, want one per source target`);
@@ -151,25 +170,37 @@
     }
     for (const select of targetSelects) {
       const sourceTarget = Object.keys(mapping).find((source) => select.getAttribute("aria-label").includes(source));
-      select.value = mapping[sourceTarget];
+      const destination = mapping[sourceTarget];
+      if (!sourceTarget) throw new Error("target map row does not match a copied source target");
+      select.value = destination;
       select.dispatchEvent(new Event("change", {bubbles: true}));
     }
-    mapApply.focus();
-    if (document.activeElement !== mapApply) throw new Error("target-map Apply control did not receive keyboard focus");
-    const applyReady = await fetch("/cross-project-copy-apply-ready", {method: "POST"});
-    if (!applyReady.ok) throw new Error(`native Apply handshake returned HTTP ${applyReady.status}`);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    mapApply.scrollIntoView({block: "nearest", inline: "nearest"});
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const touchBounds = mapApply.getBoundingClientRect();
+    if (touchBounds.left < 0 || touchBounds.top < 0 || touchBounds.right > 720 || touchBounds.bottom > 450) {
+      throw new Error(`target-map Apply control is outside the emulated 720x450 touch viewport: ${touchBounds.toJSON()}`);
+    }
+    const touchReady = await fetch("/cross-project-copy-touch-ready", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({x: touchBounds.left + touchBounds.width / 2, y: touchBounds.top + touchBounds.height / 2}),
+    });
+    if (!touchReady.ok) throw new Error(`emulated target-map Apply touch returned HTTP ${touchReady.status}`);
+    await waitFor(() => !mapDialog.open && JSON.stringify([...document.querySelectorAll("#actionsEditor .action-target")]
+      .map((input) => input.value)) === JSON.stringify(["DEST-LIGHT", "DEST-OSC"]), "touch-applied Draft target mapping");
+    const touchApplied = !mapDialog.open;
     targetMapDebug = {
       dialog_open: mapDialog.open,
       selected_targets: targetSelects.map((select) => select.value),
+      touch_applied: touchApplied,
       action_targets: [...document.querySelectorAll("#actionsEditor .action-target")].map((input) => input.value),
       focused_control: document.activeElement?.outerHTML?.slice(0, 180) || "none",
     };
     if (mapDialog.open || JSON.stringify(targetMapDebug.action_targets) !== JSON.stringify(["DEST-LIGHT", "DEST-OSC"])) {
-      throw new Error(`native keyboard did not apply the Draft-only target map: ${JSON.stringify(targetMapDebug)}`);
+      throw new Error(`touch did not apply the Draft-only target map: ${JSON.stringify(targetMapDebug)}`);
     }
     if (targetSelects[0].value !== "DEST-LIGHT" || targetSelects[1].value !== "DEST-OSC") {
-      throw new Error(`native keyboard mapping chose unexpected targets: ${targetSelects.map((select) => select.value).join(",")}`);
+      throw new Error(`target-map fixture selected unexpected targets: ${targetSelects.map((select) => select.value).join(",")}`);
     }
 
     document.getElementById("cueForm").requestSubmit();
@@ -187,7 +218,8 @@
     await report({
       status: "PASS", targets: savedCue.actions.map((action) => action.target_ref),
       action_ids: savedCue.actions.map((action) => action.action_id), unsafe_call: unsafeCall,
-      configuration_copied: configurationCopied, ...targetMapLayout, requests: requestTrace,
+      configuration_copied: configurationCopied, touch_applied: touchApplied,
+      ...targetMapLayout, requests: requestTrace,
     });
   } catch (error) {
     await report({status: "FAIL", error: String(error.stack || error), target_map_debug: targetMapDebug, requests: requestTrace});
