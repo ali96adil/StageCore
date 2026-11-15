@@ -43,7 +43,8 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := s.CreateInput(ctx, domain.InputDefinition{
+	inputHistoryCtx := store.WithInputDraftHistoryActor(ctx, "backup-editor")
+	input, err := s.CreateInput(inputHistoryCtx, domain.InputDefinition{
 		RevisionID: draft.ID, Name: "GO", SourceRef: "osc:/go", EventType: "osc.message", Enabled: true,
 	})
 	if err != nil {
@@ -65,6 +66,10 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	routeHistoryBeforeBackup, err := s.RouteDraftHistory(routeHistoryCtx, project.ID)
 	if err != nil || !routeHistoryBeforeBackup.CanUndo || routeHistoryBeforeBackup.RevisionID != draft.ID {
 		t.Fatalf("Route Draft Undo history before backup=%+v err=%v", routeHistoryBeforeBackup, err)
+	}
+	inputHistoryBeforeBackup, err := s.InputDraftHistory(inputHistoryCtx, project.ID)
+	if err != nil || !inputHistoryBeforeBackup.CanUndo || inputHistoryBeforeBackup.RevisionID != draft.ID {
+		t.Fatalf("Input Draft Undo history before backup=%+v err=%v", inputHistoryBeforeBackup, err)
 	}
 	manager := managerForStore(s)
 	service, err := backup.New(h, s, root, manager)
@@ -130,6 +135,13 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	if err != nil || !restoredRouteHistory.CanUndo || restoredRouteHistory.RevisionID != draft.ID {
 		t.Fatalf("restored Route Draft Undo history=%+v err=%v", restoredRouteHistory, err)
 	}
+	restoredInputHistory, err := restoredStore.InputDraftHistory(inputHistoryCtx, project.ID)
+	if err != nil || !restoredInputHistory.CanUndo || restoredInputHistory.RevisionID != draft.ID {
+		t.Fatalf("restored Input Draft Undo history=%+v err=%v", restoredInputHistory, err)
+	}
+	if _, err := restoredStore.UndoInputDraft(inputHistoryCtx, project.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Input Undo while its Route still references it=%v, want conflict", err)
+	}
 	undoneRoute, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID)
 	if err != nil || undoneRoute.CanUndo || !undoneRoute.CanRedo {
 		t.Fatalf("Route Undo after backup restore=%+v err=%v", undoneRoute, err)
@@ -148,6 +160,19 @@ func TestStateBackupVerifyRestorePreservesProjectSnapshotCuesAndSessionHistory(t
 	}
 	if _, err := restoredStore.UndoRouteDraft(routeHistoryCtx, project.ID); err != nil {
 		t.Fatalf("remove restored Route before Cue Undo: %v", err)
+	}
+	if _, err := restoredStore.UndoInputDraft(inputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Input Undo after backup restore: %v", err)
+	}
+	if inputs, err := restoredStore.ListInputs(ctx, draft.ID); err != nil || len(inputs) != 0 {
+		t.Fatalf("Input Undo after restore left Inputs=%+v err=%v", inputs, err)
+	}
+	if _, err := restoredStore.RedoInputDraft(inputHistoryCtx, project.ID); err != nil {
+		t.Fatalf("Input Redo after backup restore: %v", err)
+	}
+	inputs, err := restoredStore.ListInputs(ctx, draft.ID)
+	if err != nil || len(inputs) != 1 || inputs[0].ID != input.ID {
+		t.Fatalf("Input Redo after restore changed identity: inputs=%+v want=%q err=%v", inputs, input.ID, err)
 	}
 	undone, err := restoredStore.UndoCueDraft(historyCtx, project.ID)
 	if err != nil || undone.CanUndo || !undone.CanRedo {

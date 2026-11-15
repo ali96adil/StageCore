@@ -13,9 +13,6 @@ import (
 )
 
 func (s *Store) CreateInput(ctx context.Context, input domain.InputDefinition) (domain.InputDefinition, error) {
-	if err := s.ensureDraft(ctx, s.db, input.RevisionID); err != nil {
-		return domain.InputDefinition{}, err
-	}
 	if input.ID == "" {
 		var err error
 		input.ID, err = stageid.New()
@@ -27,30 +24,68 @@ func (s *Store) CreateInput(ctx context.Context, input domain.InputDefinition) (
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("input value schema: %w", err)
 	}
-	_, err = capability.ExecAuthorized(ctx, s.db, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("begin create input: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.ensureDraft(ctx, tx, input.RevisionID); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	before, err := readInputTx(ctx, tx, input.RevisionID, input.ID)
+	if err != nil {
+		return domain.InputDefinition{}, err
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO input_definitions (input_id, revision_id, name, source_ref, event_type, value_schema_json, enabled)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, input.ID, input.RevisionID, strings.TrimSpace(input.Name), input.SourceRef, input.EventType, schema, boolInt(input.Enabled))
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("insert input: %w", err)
 	}
 	input.ValueSchema = json.RawMessage(schema)
+	after, err := readInputTx(ctx, tx, input.RevisionID, input.ID)
+	if err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := recordInputDraftHistoryTx(ctx, tx, input.RevisionID, "CREATE", input.ID, before, after, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("commit create input: %w", err)
+	}
 	return input, nil
 }
 
 func (s *Store) UpdateInput(ctx context.Context, input domain.InputDefinition) (domain.InputDefinition, error) {
-	if err := s.ensureDraft(ctx, s.db, input.RevisionID); err != nil {
-		return domain.InputDefinition{}, err
-	}
+	input.ID = strings.TrimSpace(input.ID)
 	schema, err := normalizeJSON(input.ValueSchema, "{}")
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("input value schema: %w", err)
 	}
-	result, err := capability.ExecAuthorized(ctx, s.db, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("begin update input: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.ensureDraft(ctx, tx, input.RevisionID); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	before, err := readInputTx(ctx, tx, input.RevisionID, input.ID)
+	if err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if before == nil {
+		return domain.InputDefinition{}, fmt.Errorf("%w: input does not belong to revision", domain.ErrInvalidInput)
+	}
+	result, err := tx.ExecContext(ctx, `
 		UPDATE input_definitions
 		SET name = ?, source_ref = ?, event_type = ?, value_schema_json = ?, enabled = ?
 		WHERE input_id = ? AND revision_id = ?`,
 		strings.TrimSpace(input.Name), strings.TrimSpace(input.SourceRef), strings.TrimSpace(input.EventType),
-		schema, boolInt(input.Enabled), strings.TrimSpace(input.ID), input.RevisionID)
+		schema, boolInt(input.Enabled), input.ID, input.RevisionID)
 	if err != nil {
 		return domain.InputDefinition{}, fmt.Errorf("update input: %w", err)
 	}
@@ -65,28 +100,48 @@ func (s *Store) UpdateInput(ctx context.Context, input domain.InputDefinition) (
 	input.SourceRef = strings.TrimSpace(input.SourceRef)
 	input.EventType = strings.TrimSpace(input.EventType)
 	input.ValueSchema = json.RawMessage(schema)
+	after, err := readInputTx(ctx, tx, input.RevisionID, input.ID)
+	if err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := recordInputDraftHistoryTx(ctx, tx, input.RevisionID, "EDIT", input.ID, before, after, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return domain.InputDefinition{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.InputDefinition{}, fmt.Errorf("commit update input: %w", err)
+	}
 	return input, nil
 }
 
 func (s *Store) DeleteInput(ctx context.Context, revisionID, inputID string) error {
 	revisionID = strings.TrimSpace(revisionID)
 	inputID = strings.TrimSpace(inputID)
-	if err := s.ensureDraft(ctx, s.db, revisionID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete input: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.ensureDraft(ctx, tx, revisionID); err != nil {
 		return err
 	}
-	if ok, err := s.entityBelongsToRevision(ctx, "input_definitions", "input_id", inputID, revisionID); err != nil {
+	before, err := readInputTx(ctx, tx, revisionID, inputID)
+	if err != nil {
 		return err
-	} else if !ok {
+	}
+	if before == nil {
 		return fmt.Errorf("%w: input does not belong to revision", domain.ErrInvalidInput)
 	}
 	var references int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE input_id = ?`, inputID).Scan(&references); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE input_id = ?`, inputID).Scan(&references); err != nil {
 		return fmt.Errorf("count input route references: %w", err)
 	}
 	if references > 0 {
 		return fmt.Errorf("%w: input is referenced by %d route(s)", domain.ErrConflict, references)
 	}
-	result, err := capability.ExecAuthorized(ctx, s.db, `DELETE FROM input_definitions WHERE input_id = ? AND revision_id = ?`, inputID, revisionID)
+	result, err := tx.ExecContext(ctx, `DELETE FROM input_definitions WHERE input_id = ? AND revision_id = ?`, inputID, revisionID)
 	if err != nil {
 		return fmt.Errorf("delete input: %w", err)
 	}
@@ -96,6 +151,15 @@ func (s *Store) DeleteInput(ctx context.Context, revisionID, inputID string) err
 	}
 	if rows != 1 {
 		return domain.ErrNotFound
+	}
+	if err := capability.CheckWriteAuthorization(ctx, tx); err != nil {
+		return err
+	}
+	if err := recordInputDraftHistoryTx(ctx, tx, revisionID, "DELETE", inputID, before, nil, cueDraftHistoryTimestamp(s.clock)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete input: %w", err)
 	}
 	return nil
 }
