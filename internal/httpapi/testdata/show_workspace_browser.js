@@ -130,6 +130,22 @@
     if (state.page !== "timing") throw new Error("Preview timing review control did not open the Timing workspace");
     const mutationsBeforeReview = apiMutations.length;
     const captureToggle = () => document.querySelector(`tr[data-timing-session="${previewSession.session_id}"] .timing-capture-toggle`);
+    const touchActivate = async (button) => {
+      button.scrollIntoView({ block: "center", inline: "nearest" });
+      const bounds = button.getBoundingClientRect();
+      if (bounds.left < 0 || bounds.top < 0 || bounds.right > 390 || bounds.bottom > 844) {
+        throw new Error(`timing capture control is outside the emulated touch viewport: ${bounds.toJSON()}`);
+      }
+      await fetch("/show-workspace-touch-ready", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 }),
+      });
+    };
+    const keyboardActivate = async (button) => {
+      button.focus();
+      if (!button.matches(":focus")) throw new Error("timing capture control did not receive keyboard focus");
+      await fetch("/show-workspace-key-ready", { method: "POST" });
+    };
     const reviewDeadline = Date.now() + 5000;
     while (Date.now() < reviewDeadline && !captureToggle()) await new Promise((resolve) => setTimeout(resolve, 25));
     if (!captureToggle() || captureToggle().dataset.paused !== "false") {
@@ -137,11 +153,11 @@
     }
     if (apiMutations.length !== mutationsBeforeReview) throw new Error(`opening Preview timing review changed session approval: ${apiMutations.slice(mutationsBeforeReview).join(", ")}`);
     const mutationsBeforeCapture = apiMutations.length;
-    captureToggle().click();
+    await touchActivate(captureToggle());
     const pauseDeadline = Date.now() + 5000;
     while (Date.now() < pauseDeadline && captureToggle()?.dataset.paused !== "true") await new Promise((resolve) => setTimeout(resolve, 25));
     if (captureToggle()?.dataset.paused !== "true") throw new Error("Preview timing capture did not enter the paused state");
-    captureToggle().click();
+    await keyboardActivate(captureToggle());
     const resumeDeadline = Date.now() + 5000;
     while (Date.now() < resumeDeadline && captureToggle()?.dataset.paused !== "false") await new Promise((resolve) => setTimeout(resolve, 25));
     if (captureToggle()?.dataset.paused !== "false") throw new Error("Preview timing capture did not resume");
