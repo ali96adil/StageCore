@@ -155,6 +155,8 @@
 
 .f017-dialog-actions {
   flex-wrap: wrap;
+  bottom: 0;
+  margin-bottom: 0;
 }
 
 .f017-dialog-actions .f017-reset {

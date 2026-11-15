@@ -40,6 +40,23 @@
     phase = "wait for editable copy";
     await waitFor(() => dialog.open && dialog.querySelector("#f017ProfileName"), "editable custom profile copy");
     const name = dialog.querySelector("#f017ProfileName");
+    phase = "qualify Workspace Profile at actual 200 percent zoom";
+    const saveButton = dialog.querySelector(".f017-save");
+    saveButton.scrollIntoView({ block: "nearest", inline: "nearest" });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const viewportWidth = window.innerWidth;
+    const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+    const saveRect = saveButton.getBoundingClientRect();
+    const dialogRect = dialog.getBoundingClientRect();
+    const saveVisibleAtZoom = saveRect.width > 0 && saveRect.height > 0 && saveRect.top >= 0 &&
+      saveRect.bottom <= window.innerHeight && saveRect.top >= dialogRect.top + 1 &&
+      saveRect.bottom <= dialogRect.bottom - 1 && dialogRect.left >= 0 && dialogRect.right <= viewportWidth;
+    const zoomPercent = Math.round(window.devicePixelRatio * 100);
+    if (viewportWidth !== 720 || documentWidth > viewportWidth || zoomPercent !== 200 || !saveVisibleAtZoom) {
+      throw new Error(`Workspace Profile does not fit at actual 200% zoom: ${JSON.stringify({ viewportWidth, documentWidth, zoomPercent, saveVisibleAtZoom, saveRect: saveRect.toJSON(), dialogRect: dialogRect.toJSON(), devicePixelRatio: window.devicePixelRatio })}`);
+    }
+    await fetch("/workspace-profile-screenshot-ready", { method: "POST" });
+
     const initial = JSON.parse(localStorage.getItem("stagecore_workspace_profiles_v1"));
     const profileID = initial.active_profile_id;
     const storedBeforeEnter = initial.custom_profiles.find((item) => item.profile_id === profileID)?.name || "";
@@ -68,6 +85,8 @@
       stored_name_before_enter: storedBeforeEnter, stored_name_after_enter: storedAfterEnter,
       stored_name_after_save: saved.custom_profiles.find((item) => item.profile_id === profileID)?.name || "",
       no_hub_mutation: hubRequests === 0,
+      viewport_width: viewportWidth, document_width: documentWidth, zoom_percent: zoomPercent,
+      device_pixel_ratio: window.devicePixelRatio, save_visible_at_zoom: saveVisibleAtZoom,
     });
   } catch (error) {
     await report({ status: "FAIL", error: String(error.stack || error) });
