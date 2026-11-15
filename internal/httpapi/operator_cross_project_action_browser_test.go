@@ -140,6 +140,14 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	preferencesDir := filepath.Join(profileDir, "Default")
+	if err := os.MkdirAll(preferencesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(preferencesDir, "Preferences"),
+		[]byte(`{"partition":{"default_zoom_level":{"x":3.801784}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		for attempt := 0; attempt < 20; attempt++ {
 			if err := os.RemoveAll(profileDir); err == nil {
@@ -150,6 +158,7 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 		t.Errorf("Chrome profile cleanup failed for %s", profileDir)
 	}()
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		"--window-size=1440,900",
 		"--disable-background-networking", "--user-data-dir="+profileDir, server.URL)
 	browserLog, err := os.Create(filepath.Join(t.TempDir(), "cross-project-copy-browser.log"))
 	if err != nil {
@@ -189,18 +198,28 @@ func TestBrowserCopiesMixedActionsAcrossProjectsAndMapsTargets(t *testing.T) {
 	}
 
 	var report struct {
-		Status       string   `json:"status"`
-		Targets      []string `json:"targets"`
-		ActionIDs    []string `json:"action_ids"`
-		UnsafeCall   bool     `json:"unsafe_call"`
-		ConfigCopied bool     `json:"configuration_copied"`
+		Status         string   `json:"status"`
+		Targets        []string `json:"targets"`
+		ActionIDs      []string `json:"action_ids"`
+		UnsafeCall     bool     `json:"unsafe_call"`
+		ConfigCopied   bool     `json:"configuration_copied"`
+		ZoomPercent    int      `json:"zoom_percent"`
+		Direction      string   `json:"direction"`
+		ViewportWidth  int      `json:"viewport_width"`
+		PageWidth      int      `json:"page_width"`
+		DialogOverflow bool     `json:"dialog_overflow"`
+		ApplyVisible   bool     `json:"apply_visible"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("invalid browser result %q: %v", outcome, err)
 	}
-	if report.Status != "PASS" || len(report.Targets) != 2 || len(report.ActionIDs) != 2 || report.UnsafeCall || report.ConfigCopied {
+	if report.Status != "PASS" || len(report.Targets) != 2 || len(report.ActionIDs) != 2 || report.UnsafeCall || report.ConfigCopied ||
+		report.ZoomPercent != 200 || report.Direction != "rtl" || report.ViewportWidth != 720 ||
+		report.PageWidth > 720 || report.DialogOverflow || !report.ApplyVisible {
 		t.Fatalf("browser copy report=%+v", report)
 	}
+	t.Logf("cross-Project target mapping at actual 200%% zoom (%s): viewport=%d px, page=%d px, mapping dialog fits and Apply is visible",
+		report.Direction, report.ViewportWidth, report.PageWidth)
 	for i, want := range []string{"DEST-LIGHT", "DEST-OSC"} {
 		if report.Targets[i] != want || report.ActionIDs[i] == "" || report.ActionIDs[i] == sourceCue.Actions[i].ID {
 			t.Fatalf("destination Action %d identity/target=%q/%q, want fresh identity and %q", i, report.ActionIDs[i], report.Targets[i], want)

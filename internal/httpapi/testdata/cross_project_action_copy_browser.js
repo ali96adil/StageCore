@@ -3,6 +3,7 @@
 (async () => {
   const requestTrace = [];
   const confirmMessages = [];
+  let targetMapLayout = null;
   window.confirm = (message) => { confirmMessages.push(String(message)); return true; };
   const browserFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
@@ -110,6 +111,27 @@
     mapButton.click();
     const mapDialog = document.getElementById("sc008TargetMapDialog");
     await waitFor(() => mapDialog?.open, "opening bulk target mapping dialog");
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const mapApply = mapDialog.querySelector('button[type="submit"]');
+    mapApply.scrollIntoView({block: "nearest"});
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const mapApplyBounds = mapApply.getBoundingClientRect();
+    const pageWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
+    const dialogBounds = mapDialog.getBoundingClientRect();
+    targetMapLayout = {
+      zoom_percent: Math.round(window.devicePixelRatio * 100),
+      direction: getComputedStyle(mapDialog).direction,
+      viewport_width: window.innerWidth,
+      page_width: pageWidth,
+      dialog_overflow: mapDialog.scrollWidth > mapDialog.clientWidth + 1,
+      apply_visible: mapApplyBounds.width > 0 && mapApplyBounds.left >= -1 &&
+        mapApplyBounds.right <= window.innerWidth + 1 && mapApplyBounds.top >= -1 &&
+        mapApplyBounds.bottom <= window.innerHeight + 1 && dialogBounds.width <= window.innerWidth + 1,
+    };
+    if (targetMapLayout.zoom_percent !== 200 || targetMapLayout.direction !== "rtl" || targetMapLayout.viewport_width !== 720 ||
+        targetMapLayout.page_width > 720 || targetMapLayout.dialog_overflow || !targetMapLayout.apply_visible) {
+      throw new Error(`200% cross-Project target-map layout failed: ${JSON.stringify(targetMapLayout)}`);
+    }
     const targetSelects = [...mapDialog.querySelectorAll("select[aria-label]")];
     if (targetSelects.length !== 2) throw new Error(`target map rows=${targetSelects.length}, want one per source target`);
     const mapping = {"SOURCE-LIGHT": "DEST-LIGHT", "SOURCE-OSC": "DEST-OSC"};
@@ -141,7 +163,7 @@
     await report({
       status: "PASS", targets: savedCue.actions.map((action) => action.target_ref),
       action_ids: savedCue.actions.map((action) => action.action_id), unsafe_call: unsafeCall,
-      configuration_copied: configurationCopied, requests: requestTrace,
+      configuration_copied: configurationCopied, ...targetMapLayout, requests: requestTrace,
     });
   } catch (error) {
     await report({status: "FAIL", error: String(error.stack || error), requests: requestTrace});
