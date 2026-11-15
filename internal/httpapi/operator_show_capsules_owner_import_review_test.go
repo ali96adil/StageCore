@@ -144,6 +144,21 @@ func TestOwnerCapsuleImportReviewIsReadOnlyAndStrictlyOwnerOnly(t *testing.T) {
 		strings.Contains(got.Body.String(), exported.CapsuleID) || strings.Contains(got.Body.String(), snap.ID) {
 		t.Fatalf("revoked session received an import plan: %d %s", got.Code, got.Body.String())
 	}
+	planErrorSession, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorPlanner := ownerCapsulePlanFunc(func(context.Context, string) (showcapsule.ImportPlan, error) {
+		if err := h.auth.Logout(ctx, planErrorSession.Token); err != nil {
+			t.Fatal(err)
+		}
+		return showcapsule.ImportPlan{}, fmt.Errorf("private planning failure")
+	})
+	planErrorHandler := New(WithOwnerCapsuleImportReview(h.auth, errorPlanner, root))
+	if got := get(planErrorHandler.Handler(), planErrorSession.Token, detail); got.Code != http.StatusUnauthorized ||
+		strings.Contains(got.Body.String(), "CAPSULE_IMPORT_PLAN_UNAVAILABLE") {
+		t.Fatalf("revoked session received import planning error: %d %s", got.Code, got.Body.String())
+	}
 
 	// SHOW state is reflected as a blocking readiness check; preview itself
 	// remains read-only and never enters STOP/GO/restore.
@@ -213,5 +228,54 @@ func TestOwnerCapsuleReviewRejectsSymlinkRootAndInventoryOverflow(t *testing.T) 
 	}
 	if got:=get(filepath.Dir(actual));got.Code!=http.StatusServiceUnavailable{
 		t.Fatalf("overflow should fail instead of truncation: %d %s",got.Code,got.Body.String())
+	}
+}
+
+func TestOwnerCapsuleImportReviewSuppressesErrorsAfterSessionRevocation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		route       string
+		path        string
+		invalidRoot bool
+	}{
+		{name: "inventory", route: "inventory", path: "/api/v1/show-capsules/imports/review", invalidRoot: true},
+		{name: "capsule path", route: "capsule-path", path: "/api/v1/show-capsules/imports/11111111-2222-4333-8444-555555555555/review"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newAuthHarness(t)
+			ctx := context.Background()
+			owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			if test.invalidRoot {
+				if err := os.WriteFile(filepath.Join(root, "imports"), []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(filepath.Join(root, "imports"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			handler := New(
+				WithUserAuth(h.auth, h.hub),
+				withOwnerCapsuleImportReview(h.auth, &fakeShowCapsuleService{}, root, ownerCapsuleImportReviewHooks{
+					BeforeErrorResponse: func(route string) {
+						if route == test.route {
+							if err := h.auth.Logout(ctx, owner.Token); err != nil {
+								t.Errorf("revoke Owner session before %s error delivery: %v", route, err)
+							}
+						}
+					},
+				}),
+			).Handler()
+			req := httptest.NewRequest(http.MethodGet, test.path, nil)
+			req.RemoteAddr = "127.0.0.1:19800"
+			req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: owner.Token})
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "CAPSULE_IMPORT_") {
+				t.Fatalf("revoked Owner session received import error details: HTTP %d %s", res.Code, res.Body.String())
+			}
+		})
 	}
 }

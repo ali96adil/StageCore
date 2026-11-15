@@ -30,6 +30,10 @@ type ownerCapsulePlanner interface {
 	PlanImport(context.Context, string) (showcapsule.ImportPlan, error)
 }
 
+type ownerCapsuleImportReviewHooks struct {
+	BeforeErrorResponse func(route string)
+}
+
 // WithOwnerCapsuleImportReview registers an opt-in read-only import inventory
 // and readiness review. It does not replace the legacy/global Capsule
 // library, import plan or backup.restore handlers and is NOT enabled in the
@@ -37,6 +41,15 @@ type ownerCapsulePlanner interface {
 // trusted local Project/role ACL: NEVER grant this to a Project Operator.
 func WithOwnerCapsuleImportReview(
 	auth *userauth.Service, planner ownerCapsulePlanner, capsuleRoot string,
+) Option {
+	return withOwnerCapsuleImportReview(auth, planner, capsuleRoot, ownerCapsuleImportReviewHooks{})
+}
+
+func withOwnerCapsuleImportReview(
+	auth *userauth.Service,
+	planner ownerCapsulePlanner,
+	capsuleRoot string,
+	hooks ownerCapsuleImportReviewHooks,
 ) Option {
 	return func(s *Server) {
 		if s == nil || s.mux == nil || auth == nil || planner == nil ||
@@ -50,7 +63,10 @@ func WithOwnerCapsuleImportReview(
 				if !authorizeOwnerCapsuleReview(w, session) { return }
 				items, skipped, err := ownerVerifiedImportInventory(r.Context(), root)
 				if err != nil {
-					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error_code": "CAPSULE_IMPORT_REVIEW_UNAVAILABLE"})
+					writeOwnerCapsuleImportReviewError(
+						w, r, auth, session, token, hooks, "inventory",
+						http.StatusServiceUnavailable, "CAPSULE_IMPORT_REVIEW_UNAVAILABLE",
+					)
 					return
 				}
 				if !reauthorizeOwnerCapsuleReview(w, r, auth, session, token) {
@@ -77,17 +93,26 @@ func WithOwnerCapsuleImportReview(
 				}
 				path, err := ownerSafeImportCapsule(root, capsuleID)
 				if err != nil {
-					writeJSON(w, http.StatusNotFound, map[string]any{"error_code": "CAPSULE_IMPORT_NOT_FOUND"})
+					writeOwnerCapsuleImportReviewError(
+						w, r, auth, session, token, hooks, "capsule-path",
+						http.StatusNotFound, "CAPSULE_IMPORT_NOT_FOUND",
+					)
 					return
 				}
 				verified, err := showcapsule.Verify(path)
 				if err != nil || verified.CapsuleID != capsuleID {
-					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error_code": "CAPSULE_IMPORT_NOT_VERIFIED"})
+					writeOwnerCapsuleImportReviewError(
+						w, r, auth, session, token, hooks, "capsule-verify",
+						http.StatusUnprocessableEntity, "CAPSULE_IMPORT_NOT_VERIFIED",
+					)
 					return
 				}
 				plan, err := planner.PlanImport(r.Context(), path)
 				if err != nil {
-					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error_code": "CAPSULE_IMPORT_PLAN_UNAVAILABLE"})
+					writeOwnerCapsuleImportReviewError(
+						w, r, auth, session, token, hooks, "capsule-plan",
+						http.StatusUnprocessableEntity, "CAPSULE_IMPORT_PLAN_UNAVAILABLE",
+					)
 					return
 				}
 				// This is a readiness preview, not a restore action or token.
@@ -95,7 +120,10 @@ func WithOwnerCapsuleImportReview(
 				// fresh plan evaluation on the same trusted filesystem tree.
 				if plan.CapsuleID != capsuleID || plan.ProjectID != verified.Project.ProjectID ||
 					plan.RuntimeSnapshotID != verified.RuntimeSnapshot.RuntimeSnapshotID {
-					writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error_code": "CAPSULE_IMPORT_PLAN_MISMATCH"})
+					writeOwnerCapsuleImportReviewError(
+						w, r, auth, session, token, hooks, "plan-mismatch",
+						http.StatusUnprocessableEntity, "CAPSULE_IMPORT_PLAN_MISMATCH",
+					)
 					return
 				}
 				if !reauthorizeOwnerCapsuleReview(w, r, auth, session, token) {
@@ -107,6 +135,26 @@ func WithOwnerCapsuleImportReview(
 				})
 			}))
 	}
+}
+
+func writeOwnerCapsuleImportReviewError(
+	w http.ResponseWriter,
+	r *http.Request,
+	auth *userauth.Service,
+	session userauth.Session,
+	token string,
+	hooks ownerCapsuleImportReviewHooks,
+	route string,
+	status int,
+	code string,
+) {
+	if hooks.BeforeErrorResponse != nil {
+		hooks.BeforeErrorResponse(route)
+	}
+	if !reauthorizeOwnerCapsuleReview(w, r, auth, session, token) {
+		return
+	}
+	writeJSON(w, status, map[string]any{"error_code": code})
 }
 
 func reauthorizeOwnerCapsuleReview(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, token string) bool {
