@@ -81,6 +81,7 @@ func registerOperatorAssistantProposalBatchRoutes(mux *http.ServeMux, auth *user
 			projectMutationContextForPermissions(r, auth, session, permissions, nil, projectaccess.ProjectEdit),
 			session.User.ID,
 		)
+		ctx = store.WithRouteDraftHistoryActor(ctx, session.User.ID)
 		results, err := stageStore.ApplyAssistantProposalBatch(ctx, projectID, input.Proposal.BaseRevisionID, session.User.Username, mutations)
 		if errors.Is(err, store.ErrProjectRevisionChanged) {
 			err = errAssistantProposalStale

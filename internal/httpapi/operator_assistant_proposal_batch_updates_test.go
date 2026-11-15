@@ -75,6 +75,22 @@ func TestAssistantProposalBatchSupportsCueRouteAliasAndNoteUpdates(t *testing.T)
 	if updatedCue.Name != "Updated Cue" || len(routes) != 1 || routes[0].Name != "Updated Route" || len(aliases) != 1 || aliases[0].TargetRef != "device:new" || updatedNote.Body != "updated note" || updatedNote.Category != "updated" {
 		t.Fatalf("cue=%+v routes=%+v aliases=%+v note=%+v", updatedCue, routes, aliases, updatedNote)
 	}
+	routeHistoryCtx := store.WithRouteDraftHistoryActor(ctx, h.owner.Session.User.ID)
+	routeHistory, err := h.stageStore.RouteDraftHistory(routeHistoryCtx, h.project.ID)
+	if err != nil || !routeHistory.CanUndo || routeHistory.CanRedo || routeHistory.UndoOperation != "EDIT" {
+		t.Fatalf("assistant Route history=%+v err=%v", routeHistory, err)
+	}
+	if _, err := h.stageStore.UndoRouteDraft(routeHistoryCtx, h.project.ID); err != nil {
+		t.Fatalf("undo assistant Route edit: %v", err)
+	}
+	routes, err = h.stageStore.ListRoutes(ctx, h.revision.ID)
+	updatedCue, cueErr := h.stageStore.GetCue(ctx, cue.ID)
+	if err != nil || cueErr != nil || len(routes) != 1 || routes[0].Name != "Old Route" || updatedCue.Name != "Updated Cue" {
+		t.Fatalf("Route-only undo changed wrong batch content: routes=%+v cue=%+v routeErr=%v cueErr=%v", routes, updatedCue, err, cueErr)
+	}
+	if _, err := h.stageStore.RedoRouteDraft(routeHistoryCtx, h.project.ID); err != nil {
+		t.Fatalf("redo assistant Route edit: %v", err)
+	}
 }
 
 func TestAssistantProposalAtomicBatchRejectsTemplateBeforeAnyMutation(t *testing.T) {

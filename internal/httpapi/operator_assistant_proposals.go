@@ -224,7 +224,8 @@ func applyAssistantProposalOperation(r *http.Request, stageStore *store.Store, p
 			}
 			actions = append(actions, domain.RouteAction{OrderIndex: index, OutputID: action.OutputID, CueID: action.CueID, Parameters: parameters})
 		}
-		created, err := stageStore.CreateRouteWithActions(r.Context(), domain.Route{
+		routeContext := store.WithRouteDraftHistoryActor(r.Context(), session.User.ID)
+		created, err := stageStore.CreateRouteWithActions(routeContext, domain.Route{
 			RevisionID: revision.ID, Name: strings.TrimSpace(body.Name), InputID: strings.TrimSpace(body.InputID),
 			ConditionDefinition: body.ConditionDefinition, TransformDefinition: body.TransformDefinition,
 			DelayMS: body.DelayMS, DebounceMS: body.DebounceMS, PriorityClass: body.PriorityClass,

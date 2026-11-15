@@ -1628,3 +1628,20 @@ under Race. `go vet ./internal/httpapi` and `git diff --check` pass. The test
 uses only temporary SQLite, an in-process test executor and a local safety
 callback. It qualifies the staged route assembly only; Production ACL remains
 disabled and the production Hub assembler is unchanged.
+
+## SC-024 continuation · 2026-11-15 · Route Draft history scope
+
+The optional Route Draft history GET/POST endpoints are registered under the
+same authenticated Project-edit permission as routing edits. The handler
+scopes history to the authenticated User and current Project Draft, uses
+`no-store`, carries the Project-edit capability into Store Undo/Redo, and
+rechecks the live session and grant before returning a committed result. The
+Store checks the grant in the transaction and enforces the active SHOW
+configuration lock. These routes do not appear in the production assembler.
+
+The registration inventory now contains 291 distinct HTTP registrations and
+18 dynamic patterns, with reviewed digest
+`434dc548052a745f31076f1bff39eee94b42aa337e567efe45da68fa3565ba13`.
+The Store conflict/SHOW-lock tests exercise this boundary using temporary
+SQLite. Project ACL remains a staged qualification feature and stays disabled
+in production.

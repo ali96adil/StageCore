@@ -129,6 +129,28 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &route); err != nil || route.ID == "" {
 		t.Fatalf("route decode=%v body=%s", err, routeRes.Body.String())
 	}
+	routeHistoryPath := "/api/v1/projects/" + project.ID + "/route-draft-history"
+	routeHistoryRes := request(http.MethodGet, routeHistoryPath, nil)
+	var routeHistory store.RouteDraftHistoryStatus
+	if err := json.Unmarshal(routeHistoryRes.Body.Bytes(), &routeHistory); err != nil || !routeHistory.CanUndo || routeHistory.CanRedo || routeHistory.UndoOperation != "CREATE" {
+		t.Fatalf("route history after create=%+v err=%v body=%s", routeHistory, err, routeHistoryRes.Body.String())
+	}
+	undoRouteRequest := routeDraftHistoryRequest{Direction: "UNDO"}
+	redoRouteRequest := routeDraftHistoryRequest{Direction: "REDO"}
+	if response := request(http.MethodPost, routeHistoryPath, undoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route create Undo status=%d body=%s", response.Code, response.Body.String())
+	}
+	routesAfterUndo, err := stageStore.ListRoutes(ctx, project.CurrentRevisionID)
+	if err != nil || len(routesAfterUndo) != 0 {
+		t.Fatalf("route create Undo left routes=%+v err=%v", routesAfterUndo, err)
+	}
+	if response := request(http.MethodPost, routeHistoryPath, redoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route create Redo status=%d body=%s", response.Code, response.Body.String())
+	}
+	routesAfterRedo, err := stageStore.ListRoutes(ctx, project.CurrentRevisionID)
+	if err != nil || len(routesAfterRedo) != 1 || routesAfterRedo[0].ID != route.ID {
+		t.Fatalf("route create Redo did not restore identity: routes=%+v err=%v", routesAfterRedo, err)
+	}
 
 	updateInputRes := request(http.MethodPut, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID, map[string]any{
 		"name": "GO Input", "source_ref": "osc:/go-updated", "event_type": "osc.message",
@@ -151,6 +173,16 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	})
 	if updateRouteRes.Code != http.StatusOK {
 		t.Fatalf("route update status=%d body=%s", updateRouteRes.Code, updateRouteRes.Body.String())
+	}
+	if response := request(http.MethodPost, routeHistoryPath, undoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route edit Undo status=%d body=%s", response.Code, response.Body.String())
+	}
+	routesAfterEditUndo, err := stageStore.ListRoutes(ctx, project.CurrentRevisionID)
+	if err != nil || len(routesAfterEditUndo) != 1 || routesAfterEditUndo[0].PriorityClass != domain.PriorityP2 || !routesAfterEditUndo[0].Enabled {
+		t.Fatalf("route edit Undo failed to restore prior configuration: routes=%+v err=%v", routesAfterEditUndo, err)
+	}
+	if response := request(http.MethodPost, routeHistoryPath, redoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route edit Redo status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	configurationRes := request(http.MethodGet, "/api/v1/projects/"+project.ID+"/configuration", nil)
@@ -178,6 +210,16 @@ func TestOperatorCanBuildRoutingConfigurationWithoutDirectDatabaseEditing(t *tes
 	deleteRouteRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/routes/"+route.ID+"?confirm=true", nil)
 	if deleteRouteRes.Code != http.StatusNoContent {
 		t.Fatalf("route delete status=%d body=%s", deleteRouteRes.Code, deleteRouteRes.Body.String())
+	}
+	if response := request(http.MethodPost, routeHistoryPath, undoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route delete Undo status=%d body=%s", response.Code, response.Body.String())
+	}
+	routesAfterDeleteUndo, err := stageStore.ListRoutes(ctx, project.CurrentRevisionID)
+	if err != nil || len(routesAfterDeleteUndo) != 1 || routesAfterDeleteUndo[0].ID != route.ID {
+		t.Fatalf("route delete Undo failed to restore route: routes=%+v err=%v", routesAfterDeleteUndo, err)
+	}
+	if response := request(http.MethodPost, routeHistoryPath, redoRouteRequest); response.Code != http.StatusOK {
+		t.Fatalf("route delete Redo status=%d body=%s", response.Code, response.Body.String())
 	}
 	deleteInputRes := request(http.MethodDelete, "/api/v1/projects/"+project.ID+"/inputs/"+input.ID+"?confirm=true", nil)
 	if deleteInputRes.Code != http.StatusNoContent {
