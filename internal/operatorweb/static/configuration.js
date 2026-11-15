@@ -81,7 +81,7 @@ async function renderConfiguration() {
     ${roleCanEdit && !editable ? `<div class="message warn">This revision backs a published Runtime Snapshot. Start a routing edit to fork a new Draft and refresh all revision-bound IDs before changing configuration.</div>` : ""}
 
     <div class="grid cards">
-      <article class="card">
+      <article class="card" data-draft-history-scope="none">
         <p class="eyebrow">TARGETS</p><h2>Logical target aliases</h2>
         <form id="targetForm" style="margin-top:14px">
           <div class="form-grid two">
@@ -95,7 +95,7 @@ async function renderConfiguration() {
           <div class="action-editor"><div class="section-title-row"><strong>${esc(target.logical_name)}</strong>${editable ? `<button class="button danger target-remove" type="button" data-alias-id="${esc(target.alias_id)}" data-target-name="${esc(target.logical_name)}">Remove</button>` : ""}</div><p class="muted">${esc(target.logical_type)}</p><pre class="mono muted">${esc(jsonText(target.configuration))}</pre></div>`).join("") : `<div class="empty">No logical targets yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="input">
         <p class="eyebrow">INPUTS</p><h2>Runtime input definitions</h2>
         <form id="inputForm" data-input-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -108,14 +108,14 @@ async function renderConfiguration() {
           <div class="row-actions"><button id="inputSubmit" class="button primary" type="submit" ${disabled}>Add input</button><button id="inputCancelEdit" class="button ghost hidden" type="button" ${disabled}>Cancel edit</button></div>
         </form>
         <div class="row-actions" aria-label="${f001Translate("Input Draft history")}">
-          <button id="inputHistoryUndo" class="button ghost" type="button" ${!editable || !model.input_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo input change")}</button>
-          <button id="inputHistoryRedo" class="button ghost" type="button" ${!editable || !model.input_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo input change")}</button>
+          <button id="inputHistoryUndo" class="button ghost" type="button" aria-keyshortcuts="Control+Z Meta+Z" ${!editable || !model.input_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo input change")}</button>
+          <button id="inputHistoryRedo" class="button ghost" type="button" aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" ${!editable || !model.input_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo input change")}</button>
         </div>
         <div class="actions-editor" style="margin-top:14px">${(model.inputs || []).length ? model.inputs.map((input) => `
           <div class="action-editor"><div class="section-title-row"><strong>${esc(input.name)}</strong>${editable ? `<div class="row-actions"><button class="button ghost input-edit" type="button" data-input-id="${esc(input.input_id)}">Edit</button><button class="button danger input-remove" type="button" data-input-id="${esc(input.input_id)}">Remove</button></div>` : ""}</div><p class="muted">${esc(input.source_ref)} · ${esc(input.event_type)} · ${input.enabled ? "ENABLED" : "DISABLED"}</p><p class="mono muted">${esc(input.input_id)}</p></div>`).join("") : `<div class="empty">No inputs yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="output">
         <p class="eyebrow">OUTPUTS</p><h2>Capability outputs</h2>
         <form id="outputForm" data-output-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -131,8 +131,8 @@ async function renderConfiguration() {
           </div>
         </form>
         <div class="row-actions" aria-label="${f001Translate("Output Draft history")}">
-          <button id="outputHistoryUndo" class="button ghost" type="button" ${!editable || !model.output_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo output change")}</button>
-          <button id="outputHistoryRedo" class="button ghost" type="button" ${!editable || !model.output_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo output change")}</button>
+          <button id="outputHistoryUndo" class="button ghost" type="button" aria-keyshortcuts="Control+Z Meta+Z" ${!editable || !model.output_history?.can_undo ? "disabled" : ""}>${f001Translate("Undo output change")}</button>
+          <button id="outputHistoryRedo" class="button ghost" type="button" aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" ${!editable || !model.output_history?.can_redo ? "disabled" : ""}>${f001Translate("Redo output change")}</button>
         </div>
         <div class="actions-editor" style="margin-top:14px">${(model.outputs || []).length ? model.outputs.map((output) => `
           <div class="action-editor">
@@ -141,7 +141,7 @@ async function renderConfiguration() {
           </div>`).join("") : `<div class="empty">No outputs yet.</div>`}</div>
       </article>
 
-      <article class="card">
+      <article class="card" data-draft-history-scope="route">
         <p class="eyebrow">ROUTES</p><h2>Input → Cue/Output</h2>
         <form id="routeForm" data-route-id="" style="margin-top:14px">
           <div class="form-grid two">
@@ -755,6 +755,19 @@ navigate = async function stagecoreConfigurationNavigate(page) {
   catch (error) { configurationError(error); }
 };
 
+const configurationDraftHistoryButtonIDs = {
+  route: {undo: "routeHistoryUndo", redo: "routeHistoryRedo"},
+  input: {undo: "inputHistoryUndo", redo: "inputHistoryRedo"},
+  output: {undo: "outputHistoryUndo", redo: "outputHistoryRedo"},
+};
+let activeConfigurationDraftHistoryScope = "route";
+const rememberConfigurationDraftHistoryScope = (event) => {
+  const card = event.target?.closest?.(".card");
+  if (card) activeConfigurationDraftHistoryScope = card.dataset.draftHistoryScope || "";
+};
+document.addEventListener("focusin", rememberConfigurationDraftHistoryScope);
+document.addEventListener("pointerdown", rememberConfigurationDraftHistoryScope);
+
 document.addEventListener("keydown", (event) => {
   if (state.page !== "configuration" || event.defaultPrevented || event.isComposing ||
       !(event.ctrlKey || event.metaKey) || event.altKey || document.querySelector("dialog[open]")) return;
@@ -767,7 +780,9 @@ document.addEventListener("keydown", (event) => {
   const wantsUndo = isUndo && !event.shiftKey;
   const wantsRedo = (isRedo && !event.shiftKey) || (isUndo && event.shiftKey);
   if (!wantsUndo && !wantsRedo) return;
-  const button = document.getElementById(wantsUndo ? "routeHistoryUndo" : "routeHistoryRedo");
+  const scope = event.target?.closest?.(".card")?.dataset?.draftHistoryScope || activeConfigurationDraftHistoryScope;
+  const buttonID = configurationDraftHistoryButtonIDs[scope]?.[wantsUndo ? "undo" : "redo"];
+  const button = buttonID ? document.getElementById(buttonID) : null;
   if (!button || button.disabled) return;
   event.preventDefault();
   button.click();

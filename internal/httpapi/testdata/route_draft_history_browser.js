@@ -99,12 +99,49 @@
     await waitFor(() => !document.getElementById("routeHistoryUndo")?.disabled,
       "Undo becoming available after Redo");
 
+    const exerciseHistoryShortcut = async ({scope, id, rowSelector, undoID, redoID}) => {
+      const undoButton = document.getElementById(undoID);
+      if (!undoButton || undoButton.disabled) throw new Error(`${scope} Undo is unavailable for a recorded Draft change`);
+      if (undoButton.getAttribute("aria-keyshortcuts") !== "Control+Z Meta+Z") {
+        throw new Error(`${scope} Undo does not expose its keyboard shortcut`);
+      }
+      undoButton.focus();
+      if (document.activeElement !== undoButton) throw new Error(`${scope} Undo did not receive focus`);
+      const undoResponse = await nativeFetch(`/${scope}-draft-history-key-ready`, {method: "POST"});
+      if (!undoResponse.ok) throw new Error(`${scope} keyboard Undo gate returned HTTP ${undoResponse.status}`);
+      await waitFor(() => !document.querySelector(rowSelector(id)), `${scope} removal after keyboard Undo`);
+
+      const redoButton = document.getElementById(redoID);
+      if (!redoButton || redoButton.disabled) throw new Error(`${scope} Redo did not become available after Undo`);
+      if (redoButton.getAttribute("aria-keyshortcuts") !== "Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y") {
+        throw new Error(`${scope} Redo does not expose its keyboard shortcuts`);
+      }
+      redoButton.focus();
+      if (document.activeElement !== redoButton) throw new Error(`${scope} Redo did not receive focus`);
+      const redoResponse = await nativeFetch(`/${scope}-draft-history-redo-key-ready`, {method: "POST"});
+      if (!redoResponse.ok) throw new Error(`${scope} keyboard Redo gate returned HTTP ${redoResponse.status}`);
+      await waitFor(() => !!document.querySelector(rowSelector(id)), `${scope} restoration after keyboard Redo`);
+      await waitFor(() => !document.getElementById(undoID)?.disabled, `${scope} Undo after keyboard Redo`);
+      return true;
+    };
+
+    const inputKeyboardUndo = await exerciseHistoryShortcut({
+      scope: "input", id: config.input, undoID: "inputHistoryUndo", redoID: "inputHistoryRedo",
+      rowSelector: (id) => `.input-remove[data-input-id="${id}"]`,
+    });
+    const outputKeyboardUndo = await exerciseHistoryShortcut({
+      scope: "output", id: config.output, undoID: "outputHistoryUndo", redoID: "outputHistoryRedo",
+      rowSelector: (id) => `.output-remove[data-output-id="${id}"]`,
+    });
+
     const routeHistoryRequests = trace.filter(({url}) => url.includes("/route-draft-history")).map(({method, status}) => `${method}:${status}`);
-    const unexpectedMutations = trace.filter(({method, url}) => method !== "GET" && !url.includes("/route-draft-history"));
+    const unexpectedMutations = trace.filter(({method, url}) => method !== "GET" && !url.includes("-draft-history"));
     const overflow = document.documentElement.scrollWidth > window.innerWidth;
     await report({
       status: "PASS", undo_enabled: initialUndoEnabled, keyboard_undo: true, keyboard_redo: true, touch_redo: true,
       restored_same_route: !!document.querySelector(`.route-remove[data-route-id="${config.route}"]`),
+      input_keyboard_undo: inputKeyboardUndo, input_keyboard_redo: inputKeyboardUndo,
+      output_keyboard_undo: outputKeyboardUndo, output_keyboard_redo: outputKeyboardUndo,
       overflow, route_history_requests: routeHistoryRequests, unexpected_mutations: unexpectedMutations,
     });
   } catch (error) {

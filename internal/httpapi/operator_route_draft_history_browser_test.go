@@ -42,6 +42,25 @@ func TestBrowserRouteDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	inputHistoryItem, err := st.CreateInput(store.WithInputDraftHistoryActor(ctx, owner.Session.User.ID), domain.InputDefinition{
+		RevisionID: revision.ID, Name: "Undo Input", SourceRef: "osc:/history", EventType: "osc.message", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := st.CreateAlias(ctx, domain.ProjectDeviceAlias{
+		ProjectID: project.ID, LogicalName: "SIM", LogicalType: "GENERIC", ProjectConfig: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputHistoryItem, err := st.CreateOutput(store.WithOutputDraftHistoryActor(ctx, owner.Session.User.ID), domain.OutputDefinition{
+		RevisionID: revision.ID, Name: "Undo Output", TargetRef: target.LogicalName,
+		CapabilityKey: "osc.send", ValueSchema: json.RawMessage(`{}`), Criticality: "NORMAL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	route, err := st.CreateRouteWithActions(store.WithRouteDraftHistoryActor(ctx, owner.Session.User.ID), domain.Route{
 		RevisionID: revision.ID, Name: "Undo Route", InputID: input.ID,
 		PriorityClass: domain.PriorityP2, Enabled: true,
@@ -64,8 +83,12 @@ func TestBrowserRouteDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		t.Fatal(err)
 	}
 	browserResult := make(chan string, 1)
-	keyRequests := make(chan chan struct{}, 2)
-	redoKeyRequests := make(chan chan struct{}, 1)
+	type keyReadyRequest struct {
+		scope  string
+		redo   bool
+		resume chan struct{}
+	}
+	keyReadyRequests := make(chan keyReadyRequest, 8)
 	touchRequests := make(chan struct {
 		x, y   float64
 		resume chan struct{}
@@ -92,28 +115,26 @@ func TestBrowserRouteDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 			_, _ = io.WriteString(w, strings.TrimSuffix(strings.TrimSpace(rec.Body.String()), "boot();"))
 		case "/route-draft-history-config":
 			writeJSON(w, http.StatusOK, map[string]string{
-				"csrf": owner.CSRFToken, "project": project.ID, "project_name": project.Name, "route": route.ID,
+				"csrf": owner.CSRFToken, "project": project.ID, "project_name": project.Name,
+				"route": route.ID, "input": inputHistoryItem.ID, "output": outputHistoryItem.ID,
 			})
 		case "/route-draft-history-result":
 			body, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
 			browserResult <- string(body)
 			w.WriteHeader(http.StatusNoContent)
-		case "/route-draft-history-key-ready", "/route-draft-history-text-key-ready":
-			resume := make(chan struct{})
-			select {
-			case keyRequests <- resume:
-			case <-r.Context().Done():
-				return
+		case "/route-draft-history-key-ready", "/route-draft-history-text-key-ready", "/route-draft-history-redo-key-ready",
+			"/input-draft-history-key-ready", "/input-draft-history-redo-key-ready",
+			"/output-draft-history-key-ready", "/output-draft-history-redo-key-ready":
+			scope := "route"
+			if strings.HasPrefix(r.URL.Path, "/input-") {
+				scope = "input"
+			} else if strings.HasPrefix(r.URL.Path, "/output-") {
+				scope = "output"
 			}
-			select {
-			case <-resume:
-				w.WriteHeader(http.StatusNoContent)
-			case <-r.Context().Done():
-			}
-		case "/route-draft-history-redo-key-ready":
 			resume := make(chan struct{})
+			request := keyReadyRequest{scope: scope, redo: strings.Contains(r.URL.Path, "-redo-"), resume: resume}
 			select {
-			case redoKeyRequests <- resume:
+			case keyReadyRequests <- request:
 			case <-r.Context().Done():
 				return
 			}
@@ -202,18 +223,16 @@ func TestBrowserRouteDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 			if !strings.HasPrefix(outcome, `{"status":"PASS"`) {
 				t.Fatal(outcome)
 			}
-		case resume := <-keyRequests:
-			if err := dispatchChromeShortcut(cdp, keyCommandID, "z", 4); err != nil {
-				t.Fatalf("send native Meta+Z shortcut to Route Undo: %v", err)
+		case request := <-keyReadyRequests:
+			modifiers := 4
+			if request.redo {
+				modifiers = 12
+			}
+			if err := dispatchChromeShortcut(cdp, keyCommandID, "z", modifiers); err != nil {
+				t.Fatalf("send native Meta shortcut to %s history: %v", request.scope, err)
 			}
 			keyCommandID += 2
-			close(resume)
-		case resume := <-redoKeyRequests:
-			if err := dispatchChromeShortcut(cdp, keyCommandID, "z", 12); err != nil {
-				t.Fatalf("send native Meta+Shift+Z shortcut to Route Redo: %v", err)
-			}
-			keyCommandID += 2
-			close(resume)
+			close(request.resume)
 		case request := <-touchRequests:
 			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
 				t.Fatalf("send emulated touchscreen event to Route Redo: %v", err)
@@ -237,18 +256,39 @@ func TestBrowserRouteDraftHistoryKeyboardUndoAndTouchRedo(t *testing.T) {
 		RestoredSameRoute    bool             `json:"restored_same_route"`
 		Overflow             bool             `json:"overflow"`
 		RouteHistoryRequests []string         `json:"route_history_requests"`
+		InputKeyboardUndo    bool             `json:"input_keyboard_undo"`
+		InputKeyboardRedo    bool             `json:"input_keyboard_redo"`
+		OutputKeyboardUndo   bool             `json:"output_keyboard_undo"`
+		OutputKeyboardRedo   bool             `json:"output_keyboard_redo"`
 		UnexpectedMutations  []map[string]any `json:"unexpected_mutations"`
 	}
 	if err := json.Unmarshal([]byte(outcome), &report); err != nil {
 		t.Fatalf("decode browser result %q: %v", outcome, err)
 	}
 	if report.Status != "PASS" || !report.UndoEnabled || !report.KeyboardUndo || !report.KeyboardRedo || !report.TouchRedo ||
-		!report.RestoredSameRoute || report.Overflow || len(report.UnexpectedMutations) != 0 {
+		!report.RestoredSameRoute || !report.InputKeyboardUndo || !report.InputKeyboardRedo ||
+		!report.OutputKeyboardUndo || !report.OutputKeyboardRedo || report.Overflow || len(report.UnexpectedMutations) != 0 {
 		t.Fatalf("Route history browser result=%+v raw=%s", report, outcome)
 	}
 	routes, err := st.ListRoutes(ctx, revision.ID)
 	if err != nil || len(routes) != 1 || routes[0].ID != route.ID {
 		t.Fatalf("browser Redo did not restore the original Route: routes=%+v err=%v", routes, err)
+	}
+	inputs, err := st.ListInputs(ctx, revision.ID)
+	if err != nil || len(inputs) != 2 {
+		t.Fatalf("browser Redo did not restore Input history while retaining Route Input: inputs=%+v err=%v", inputs, err)
+	}
+	foundRouteInput, foundHistoryInput := false, false
+	for _, current := range inputs {
+		foundRouteInput = foundRouteInput || current.ID == input.ID
+		foundHistoryInput = foundHistoryInput || current.ID == inputHistoryItem.ID
+	}
+	if !foundRouteInput || !foundHistoryInput {
+		t.Fatalf("browser Input Redo changed stable identity: routeInput=%t historyInput=%t inputs=%+v", foundRouteInput, foundHistoryInput, inputs)
+	}
+	outputs, err := st.ListOutputs(ctx, revision.ID)
+	if err != nil || len(outputs) != 1 || outputs[0].ID != outputHistoryItem.ID {
+		t.Fatalf("browser Redo did not restore original Output: outputs=%+v err=%v", outputs, err)
 	}
 	snapshot, err := st.LatestPublishedRuntimeSnapshotForProject(ctx, project.ID)
 	if err != nil || snapshot != nil {
