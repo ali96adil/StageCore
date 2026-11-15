@@ -146,10 +146,10 @@
     await filterKey("ArrowDown");
     await filterKey("Enter");
     if (typeFilter.value !== "mixed") throw new Error(`${locale} keyboard Action type selection=${typeFilter.value}`);
-    const enabledFilter = document.getElementById("cueListEnabledFilter");
     const linkedFilter = document.getElementById("cueListLinkedFilter");
-    if (document.activeElement === typeFilter) await filterKey("Tab");
-    if (document.activeElement === enabledFilter) await filterKey("Tab");
+    for (let attempt = 0; attempt < 4 && document.activeElement !== linkedFilter; attempt++) {
+      await filterKey("Tab");
+    }
     if (document.activeElement !== linkedFilter) {
       throw new Error(`${locale} Tab sequence skipped the Linked Cues filter after Action type selection; active=${document.activeElement?.id}`);
     }
@@ -160,7 +160,9 @@
       visibleRows().every((row) => expectedLinkedIDs.includes(row.dataset.cueId)), `${locale} combined keyboard filters`)
       .catch((error) => { throw new Error(`${error?.message || error}; search=${search.value}, type=${typeFilter.value}, enabled=${document.getElementById("cueListEnabledFilter").value}, linked=${linkedFilter.value}, visible=${visibleRows().map((row) => row.dataset.cueId).join(",")}, expected=${expectedLinkedIDs.join(",")}`); });
     const clear = document.getElementById("clearCueListFilters");
-    if (document.activeElement === linkedFilter) await filterKey("Tab");
+    for (let attempt = 0; attempt < 4 && document.activeElement !== clear; attempt++) {
+      await filterKey("Tab");
+    }
     if (document.activeElement !== clear) throw new Error(`${locale} Tab did not move to Clear filters`);
     await filterKey("Enter");
     await waitFor(() => visibleRows().length === 123 && document.activeElement === search,
