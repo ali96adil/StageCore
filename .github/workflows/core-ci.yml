@@ -55,6 +55,13 @@ jobs:
         run: python3 -m unittest tests/firmware_foundation_contract_test.py -v
       - name: Test
         run: go test ./...
+      - name: Isolated installed-copy update and rollback
+        if: matrix.go == '1.26.x'
+        run: |
+          go test -c -o /tmp/stagecore-update-installed-copy.test ./internal/update
+          sudo -n /tmp/stagecore-update-installed-copy.test -test.run '^TestIsolatedInstalledCopyUpdateAndRollback$' -test.count=1 -test.v
+          go test -race -c -o /tmp/stagecore-update-installed-copy-race.test ./internal/update
+          sudo -n /tmp/stagecore-update-installed-copy-race.test -test.run '^TestIsolatedInstalledCopyUpdateAndRollback$' -test.count=1 -test.v
       - name: Browser Cue Delivery
         if: matrix.go == '1.26.x'
         run: |

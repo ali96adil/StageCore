@@ -98,6 +98,8 @@ Automated tests must prove at minimum:
 - symlinked managed state is rejected;
 - the SHOW guard reads an active SHOW from SQLite.
 
+`internal/update/installed_copy_integration_test.go` adds a Linux-only installed-copy transaction check. It runs the real update Service, deployment Installer, and checksum-verifying Snapshotter against disposable install, config, Data Root, Vault Root, unit, and backup paths. systemd commands and Doctor reports are isolated fakes; readiness uses an in-process loopback server. The test covers candidate success, readiness failure, and postflight Doctor rejection, and compares restored managed files byte-for-byte. Core CI runs this test and its Race-instrumented build under `sudo` because the installer deliberately creates root-owned program/configuration paths. This does not qualify a real systemd daemon, Hub process health, or the supported Raspberry Pi update path.
+
 Physical Phase 2 acceptance later must exercise this on the supported Raspberry Pi release path with a known-good upgrade and a deliberately failing candidate/health gate before F-010 is considered fully verified.
 
 ## Explicitly deferred
