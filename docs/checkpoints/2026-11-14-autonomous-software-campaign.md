@@ -3937,3 +3937,51 @@ This entry supersedes the preceding push instruction.
   this CI regression is cleared.
 - Safety limits remain unchanged: no production service/data/Vault, real
   device commands, firmware, production ACL activation, force push or merge.
+
+## Resume update — 2026-11-15 · browser CI repair and SC-007 acceptance
+
+- Repository: `ali96adil/StageCore`; branch `integration/stagecore-rc`; existing
+  PR #534 remains OPEN/Draft. Before this handoff update, Local HEAD was
+  `570eaec487a24b95b8a0d7907cd1c1a67c77e618`; Remote/PR HEAD remains
+  `6529a8bbca33e9bdc974f517ce8cdbb81eed75b5`. New code commits are
+  `3e15327` (make the Cue history browser gate re-query the toolbar after
+  asynchronous DOM replacement) and `570eaec` (add simulated Chrome lighting
+  preview recovery and copy-to-Draft acceptance). Existing local checkpoint
+  `d3209cd` records the prior pushed batch. This handoff commit becomes the
+  new local tip; inspect `git rev-parse HEAD` for its full ID. No new push has
+  been made yet.
+- Exact-head Core run `43656497568` on `6529a8b` completed **failed** in Go 1.26
+  Browser Cue Delivery. Its failure was the new SC-009 browser assertion:
+  after Undo removed the row, the test captured `sc009ProjectDraftHistory`
+  once while Cue Studio was still rebuilding the toolbar, then waited forever
+  on that disconnected/null reference. The browser trace showed successful
+  POST Undo and the subsequent history GET. The test now resolves the toolbar
+  afresh on every readiness poll. This is a browser-test synchronization fix;
+  no product change was needed. Companion Core `43656497653` and Camera Relay
+  `43656497519` passed on `6529a8b`. All three workflows are completed; no
+  active Core run remains.
+- SC-007 now has `TestBrowserLightingPreviewCopiesValuesToDraftWithoutDispatch`
+  in the Core browser gate. Its local isolated Chrome/SQLite flow proves the
+  simulated continuous-level/blackout preview, unmapped-channel error and
+  recovery, conversion/copy into a Draft Cue, and absence of preview network
+  requests, execution requests, Runtime Session and Published Snapshot. The
+  matrix records this tested portion as qualified; reassignment while the
+  editor remains open is still partial. No physical DMX command is sent.
+- Verification passed locally: SC-009 real-Chrome test repeated three times;
+  SC-007 real-Chrome test; both browser tests under Go Race; `go vet
+  ./internal/httpapi`; the 71-test Operator Node suite; JS syntax checks and
+  `git diff --check`. Browser tests use Chrome and temporary SQLite on macOS;
+  the corrected synchronization still needs the new Linux exact-head Core CI.
+- Immediate next action: recheck PR/branch HEAD and ensure no newer/active Core
+  run, push the committed batch as a normal fast-forward to the existing PR,
+  then wait for Core, Companion Core and Camera Relay on the exact pushed SHA.
+  Fix any failure before another push. Do not claim overall Software Complete.
+  After CI, prioritize isolated Pi 4 ARM64 performance qualification and the
+  highest remaining software-only matrix gap; do not repeat prior Mac
+  performance measurements without a measured reason.
+- Hardware Qualification Pending: Pi ARM64 qualification and physical device
+  acceptance. Production Release Approval Pending: release and any production
+  ACL enablement. Project ACL/SC-024 remains disabled in production. Production
+  Hub/Camera Relay/data/Vault, original show data and real devices remain
+  untouched; no firmware flash, force push, merge, paid operation or backup
+  deletion was performed.
