@@ -263,3 +263,9 @@ existing-plan read and before returning a conflict that includes the private
 plan ID. A red-first revocation regression reproduced the ID disclosure and
 now requires the scoped denial. Focused Race, full HTTP API and vet checks
 pass.
+
+Successful F-025 rebuild-plan seed/update/delete responses also recheck
+ProjectEdit after the write commits. Red-first response-boundary coverage
+proves the committed result stays in SQLite but its plan details are hidden
+when authority is revoked; the response marks commit uncertainty and is not
+retryable. Production Project ACL remains disabled.

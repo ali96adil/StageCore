@@ -2128,3 +2128,18 @@ revoked the temporary operator grant at that boundary and observed a 409 with
 ./internal/httpapi`, diff checks and full
 `go test ./internal/httpapi -count=1` (92.820 s) pass. Project ACL remains
 opt-in and no production data was used.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan mutation delivery
+
+Successful rebuild-plan seed, update and delete operations now recheck the
+live `ProjectEdit` authority before returning their result. If the grant is
+revoked after the Store commit, the handler uses the committed-effect response
+(`effect_may_be_committed=true`, `retryable=false`) without exposing plan
+details or suggesting the operation can be retried. Red-first
+`TestExecutionEnvironmentRebuildPlanMutationsSuppressCommittedResultsAfterGrantRevocation`
+revokes the Project grant at each post-commit response boundary and verifies
+the retained seed/update state or deleted state in temporary SQLite. Focused
+normal and Race tests, `go vet ./internal/httpapi`, diff checks, and full
+`go test ./internal/httpapi -count=1` (93.867 s) pass. Production ACL remains
+off.

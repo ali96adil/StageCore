@@ -5707,3 +5707,29 @@ This entry supersedes the preceding push instruction.
   runs. Keep production ACL disabled, production services/data and real
   outputs untouched. Current isolated Raspberry Pi 4 timing qualification
   remains pending; historical simulation is not Pi acceptance.
+
+## Qualification batch checkpoint — 2026-11-15 · Rebuild-plan mutation delivery
+
+- The latest code commit is `9811aefc03cadcf177d2c19a0ec451ba98c6b0a3`;
+  local code HEAD is two commits ahead of remote `0b091584d07f9324683e18954f37707b3d57941b`
+  before this documentation update. The other local commit is the already
+  recorded push checkpoint. No further push has occurred.
+- Exact-head CI on `0b09158`: Core Go 1.26 run `43713024420` remains in
+  progress; Go 1.27 passed. Companion `43713024392` Swift and macOS checks
+  passed; Camera Relay `43713024390` isolated ARM64 passed. Keep the push
+  gate closed until Go 1.26 and the full exact-head set are green.
+- `9811aef` adds committed-effect fences before responses from rebuild-plan
+  seed, update and delete. Red-first
+  `TestExecutionEnvironmentRebuildPlanMutationsSuppressCommittedResultsAfterGrantRevocation`
+  covers each route: on the successful paths it revokes `ProjectEdit` after
+  commit, expects a non-retryable commit-uncertainty response, and verifies
+  the changed/deleted plan state is actually retained in temporary SQLite.
+  The earlier red run showed seed details and a successful empty delete
+  response after revocation; the now-valid update case also passes.
+- Focused normal/Race tests, `go vet ./internal/httpapi`, diff checks and full
+  `go test ./internal/httpapi -count=1` passed (93.867 s). No production
+  database, Vault data or output device was used.
+- Next inspect remaining rebuild-plan read-error response branches, then
+  continue the broader Project-scoped response audit. Do not push until the
+  exact `0b09158` CI gate completes. Production ACL stays off; isolated Pi 4
+  timing qualification is pending.
