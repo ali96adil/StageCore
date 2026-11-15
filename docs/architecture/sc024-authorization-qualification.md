@@ -2157,3 +2157,17 @@ fixed route returns only `PROJECT_NOT_FOUND`. Focused normal/Race tests across
 all rebuild-plan boundaries, `go vet ./internal/httpapi`, diff checks, and full
 `go test ./internal/httpapi -count=1` (94.441 s) pass. Production ACL remains
 disabled.
+
+
+## SC-024 continuation · 2026-11-15 · Rebuild-plan source validation
+
+The seed route now rechecks the qualified Project grant after loading a
+source Snapshot and before returning source/project mismatch or deterministic
+unsupported-plan results. Red-first
+`TestExecutionEnvironmentRebuildPlanValidationSuppressesResultAfterGrantRevocation`
+created a valid partial Snapshot with no rebuild steps, revoked `ProjectEdit`
+at the loaded-source boundary, and observed the unsupported-source 400 before
+the fence. The corrected route returns only `PROJECT_NOT_FOUND`. Focused
+normal/Race rebuild-plan tests, `go vet ./internal/httpapi`, diff checks, and
+full `go test ./internal/httpapi -count=1` (94.281 s) pass. Production ACL
+remains disabled.

@@ -274,3 +274,8 @@ The seed route also rechecks ProjectEdit after a Store error reading an
 existing rebuild plan. A red-first temporary-SQLite schema fault reproduced
 the stale seed failure after grant revocation; the corrected route returns
 only the scoped denial.
+
+Before seed returns source/project mismatch or unsupported-plan results, it
+also checks the live ProjectEdit grant after reading the source Snapshot. A
+red-first temporary SQLite regression proves revoked clients receive the
+scoped denial rather than the unsupported-source response.

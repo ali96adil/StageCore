@@ -5758,3 +5758,26 @@ This entry supersedes the preceding push instruction.
   CI runs. Do not push past `0b09158` until its exact-head gate is green.
   Production ACL remains off; isolated current-head Pi 4 qualification is
   pending.
+
+## Qualification batch checkpoint — 2026-11-15 · Rebuild-plan source validation
+
+- Latest code commit: `6fb98c39767e760ccaff918bf97033b6dae2c75d`; local code
+  HEAD is six commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b` before this documentation
+  update. No further push has occurred.
+- Exact-head check state on `0b09158`: Core Go 1.26 Race run `43713024420`
+  remains in progress; Go 1.27, Companion Swift/macOS and Camera Relay
+  isolated ARM64 passed. Do not push until that Go 1.26 job completes green.
+- `6fb98c3` fences the source-loaded and unsupported-result paths of rebuild
+  plan seed. Red-first
+  `TestExecutionEnvironmentRebuildPlanValidationSuppressesResultAfterGrantRevocation`
+  uses a valid partial Snapshot without rebuild steps, revokes `ProjectEdit`
+  after the Snapshot read, and showed the unsupported-source 400 before the
+  fix. The corrected route returns only `PROJECT_NOT_FOUND`.
+- Focused normal/Race rebuild-plan tests, `go vet ./internal/httpapi`, diff
+  checks and full `go test ./internal/httpapi -count=1` passed (94.281 s).
+  Fault injection and project data remained in disposable SQLite.
+- Next continue the F-025 response audit, especially mutation Store errors
+  and route mismatch outcomes. Keep the push gate closed on `0b09158` until
+  all exact-head checks pass. Production ACL remains disabled; Pi 4 current
+  head timing qualification is pending.
