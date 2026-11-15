@@ -5127,3 +5127,34 @@ This entry supersedes the preceding push instruction.
   Pi 4 performance qualification still requires the isolated lab; the separate
   qualification SSH endpoint timed out before its banner, and `stagecore-pi`
   remains a production host. Keep Production ACL disabled.
+
+## Qualification batch checkpoint — 2026-11-15 · Tablet and StageLaser inventory errors
+
+- Local HEAD before this checkpoint is
+  `f42e27b926085334f53001071e4048cc1c6286c1`, twelve commits ahead of OPEN/Draft
+  PR #534 and the remote `c11e29b5a98f69d42812b2b597619a8093043e15`. No push
+  has occurred after `c11e29b`.
+- `GET .../tablet-controller` returned HTTP 500 after the `project.view` grant
+  was revoked while its repository read failed. `GET .../stagelaser-controller`
+  returned HTTP 503 at the same boundary. Red-first regressions
+  `TestTabletControllerListSuppressesStoreErrorAfterProjectGrantRevocation`
+  and `TestStageLaserControllerSuppressesStoreErrorAfterProjectGrantRevocation`
+  use temporary SQLite, drop only `stage_devices`, and revoke the grant before
+  error delivery. Both routes now recheck the live session and Project grant
+  and return a scoped 404. These routes only list simulated/test device rows;
+  no real stage device is contacted.
+- The focused two-route tests pass normally and under Race; `go vet
+  ./internal/httpapi` and `git diff --check` pass. Full
+  `go test ./internal/httpapi -count=1` passed in 81.994 s before a final
+  identical-patch restoration; focused normal/Race tests passed afterward.
+- Exact pushed-head `c11e29b` checks: Companion Core `43702159473` and Camera
+  Relay `43702159464` passed. Core Go 1.27 passed; Core Go 1.26 Race
+  `43702159421` remains in progress. Do not push local commits until that run
+  and all exact-head checks complete. Then check local/remote/PR ancestry and
+  push only a small fast-forward batch to the same PR; inspect every new-head
+  workflow before another push.
+- Continue the SC-024 endpoint and asynchronous-delivery review while CI runs.
+  Current-head Pi 4 performance still requires the isolated lab; the separate
+  qualification SSH endpoint timed out before its banner. Keep production
+  services/data, the production Pi host, physical outputs and Production ACL
+  untouched.
