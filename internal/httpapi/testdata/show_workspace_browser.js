@@ -36,6 +36,14 @@
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (window.innerWidth !== width) throw new Error(`viewport resize applied ${window.innerWidth}px, expected ${width}px`);
     };
+    const assertResponsiveAtAllWidths = async (stage) => {
+      assertNoHorizontalOverflow(`${stage} at 390px`);
+      for (const [width, height] of [[768, 1024], [1280, 800]]) {
+        await setViewport(width, height);
+        assertNoHorizontalOverflow(`${stage} at ${width}px`);
+      }
+      await setViewport(390, 844);
+    };
 
     f017RememberPage(config.project, "cues");
     if (f017PreferredPage(config.project) !== "cues") throw new Error("fixture did not remember the authoring page");
@@ -44,7 +52,7 @@
     if (state.page !== "runtime") throw new Error(`active SHOW opened ${state.page}, expected runtime`);
     if (!state.showSessionActive) throw new Error("active SHOW state was not reflected in the operator UI");
     if (document.getElementById("appView").dataset.showSession !== "active") throw new Error("SHOW presentation marker is missing");
-    assertNoHorizontalOverflow("active SHOW workspace");
+    await assertResponsiveAtAllWidths("Owner active SHOW workspace");
     for (const id of ["goButton", "stopCueButton", "emergencyBlackoutButton"]) {
       if (!document.getElementById(id)) throw new Error(`runtime safety control ${id} is missing`);
     }
@@ -148,11 +156,13 @@
       const mayEdit = ["OWNER", "TECHNICIAN"].includes(role);
       const canAuthor = !!document.getElementById("createDraftButton") || !!document.getElementById("createCueButton");
       if (canAuthor !== mayEdit) throw new Error(`${role} Cue authoring controls=${canAuthor}, expected ${mayEdit}`);
+      await assertResponsiveAtAllWidths(`${role} Cue workspace`);
       await navigate("runtime");
       if (!document.getElementById("startShowButton")) throw new Error(`${role} Runtime workspace is unavailable`);
       if (document.getElementById("startShowButton").disabled !== (role === "VIEWER")) {
         throw new Error(`${role} SHOW entry enabled state is incorrect`);
       }
+      await assertResponsiveAtAllWidths(`${role} inactive Runtime workspace`);
       if (role === "VIEWER") return;
 
       const seededResponse = await fetch("/show-workspace-seed-show", { method: "POST" });
@@ -163,6 +173,7 @@
       if (!state.showSessionActive || !document.getElementById("stopSessionButton") || document.getElementById("stopSessionButton").disabled) {
         throw new Error(`${role} cannot operate the seeded SHOW exit control`);
       }
+      await assertResponsiveAtAllWidths(`${role} active SHOW workspace`);
       await stopCurrentShow();
     };
     await switchRole("TECHNICIAN");
@@ -177,11 +188,13 @@
     for (const id of ["goButton", "stopCueButton", "emergencyBlackoutButton", "stopSessionButton"]) {
       if (!document.getElementById(id)?.disabled) throw new Error(`Viewer can operate ${id} during SHOW`);
     }
+    await assertResponsiveAtAllWidths("Viewer active SHOW workspace");
     await authenticateRole("OWNER");
     await openProject(config.project);
     if (!state.showSessionActive || !document.getElementById("stopSessionButton") || document.getElementById("stopSessionButton").disabled) {
       throw new Error("Owner could not safely exit the Viewer-seeded SHOW");
     }
+    await assertResponsiveAtAllWidths("Owner Viewer-session exit workspace");
     await stopCurrentShow();
     if (postRequests.length !== 4 || postRequests.some((url) => !url.includes("/runtime/stop-session"))) {
       throw new Error(`unexpected role workflow mutations: ${postRequests.join(", ")}`);
