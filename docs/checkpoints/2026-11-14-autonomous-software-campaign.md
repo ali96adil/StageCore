@@ -5912,3 +5912,28 @@ This entry supersedes the preceding push instruction.
   new exact-head CI. Current-head isolated Pi 4 performance qualification
   remains pending; historical mixed/linked simulation is not current-head Pi
   acceptance.
+
+## Qualification checkpoint — 2026-11-15 · Capture failure and asset scope
+
+- `4dd7c49775dc05a6ad0252ae1e3cf60f2a0fe4fc` fences F-025 capture error
+  responses for frozen/mutable-project checks, Vault import failures and
+  manifest-write failures. Asset reads now recheck Project scope before
+  foreign-Revision and missing-asset 404 responses.
+- Normal tests revoke ProjectEdit+MediaUpload at the two deterministic capture
+  error boundaries, verify only a denial is returned, and confirm failed
+  capture leaves no unreferenced object in the temporary Vault. Separate
+  cases revoke ProjectView/MediaRead during foreign-Environment and missing
+  asset responses; both hide the resource outcome.
+- Focused Race tests pass (38.925 s); `go vet ./internal/httpapi` and
+  `git diff --check` pass; full `go test ./internal/httpapi -count=1` passes
+  (98.949 s). No physical output or production service/data was involved.
+- Local code HEAD before this documentation commit is
+  `4dd7c49775dc05a6ad0252ae1e3cf60f2a0fe4fc`, one commit ahead of remote
+  `c63160e7c50088984d7016326c31a04554afff2d`. Exact-head Core workflow
+  `43717094969` has Go 1.27 green and Go 1.26 Race still in progress;
+  Companion and Camera Relay checks are green. Hold further pushes until that
+  complete exact-head check set finishes.
+- Resume with the remaining F-025 read/delivery error boundaries; then push
+  all accumulated commits to the existing PR #534 once `c63160e` Core CI is
+  green. Project ACL remains disabled in production; current-head isolated Pi
+  4 performance qualification remains open.

@@ -2256,3 +2256,21 @@ The revised regression passes 25 normal repetitions and 10 Race repetitions;
 the full `internal/runtimecontrol` normal package, vet and the full HTTP API
 suite also pass locally. A new exact-head CI run is required after the branch
 update; the failed old-head run is not treated as green.
+
+## SC-024 · Execution-environment capture error and asset-scope fences
+
+Capture preflight errors (`RequireProjectConfigurationMutable` and frozen
+Revision), Vault import failures and manifest-capture Store failures now
+revalidate the exact live session and ProjectEdit+MediaUpload grants before
+returning service-state details. The failed manifest update still removes an
+unreferenced Vault object. Asset reads also recheck the qualified route before
+returning a foreign-Revision Environment mismatch or missing asset-key result.
+`TestExecutionEnvironmentCaptureErrorSuppressesResultAfterGrantRevocation`
+uses validated Revision state and a temporary SQLite update trigger, revokes
+the grant at each error boundary, and verifies authorization denial plus no
+Vault object. `TestExecutionEnvironmentAssetScopeErrorsSuppressResultAfterGrantRevocation`
+revokes ProjectView/MediaRead before either foreign-Environment or missing
+asset responses and requires only `PROJECT_NOT_FOUND`. Focused normal/Race
+regressions, `go vet ./internal/httpapi`, diff checks and full
+`go test ./internal/httpapi -count=1` pass (98.949 s). No production service,
+Vault or output was used.
