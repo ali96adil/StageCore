@@ -82,6 +82,7 @@ type lightingTargetBinding struct {
 
 type lightingControllerHooks struct {
 	BeforeCueAliasCreate func()
+	BeforeReadError      func(route string)
 }
 
 func WithOperatorLightingController(auth *userauth.Service, devices *deviceexperience.Repository, stageStore *store.Store) Option {
@@ -98,23 +99,41 @@ func withOperatorLightingController(auth *userauth.Service, devices *deviceexper
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deliverReadError := func(route string) bool {
+				if hooks.BeforeReadError != nil {
+					hooks.BeforeReadError(route)
+				}
+				return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+			}
 			project, err := stageStore.GetProject(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-project") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			revision, err := stageStore.GetRevision(r.Context(), project.CurrentRevisionID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-revision") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			bindings, err := stageStore.ListLightingNodeBindings(r.Context(), revision.ID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-bindings") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_BINDINGS_UNAVAILABLE", "detail": err.Error()})
 				return
 			}
 			allDevices, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-devices") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_DEVICES_UNAVAILABLE", "detail": err.Error()})
 				return
 			}
@@ -229,28 +248,49 @@ func withOperatorLightingController(auth *userauth.Service, devices *deviceexper
 
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/lighting-controller/cues", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
+			deliverReadError := func(route string) bool {
+				if hooks.BeforeReadError != nil {
+					hooks.BeforeReadError(route)
+				}
+				return allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead)
+			}
 			project, err := stageStore.GetProject(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-cues-project") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			revision, err := stageStore.GetRevision(r.Context(), project.CurrentRevisionID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-cues-revision") {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			cues, err := stageStore.ListCues(r.Context(), revision.ID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-cues-list") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_CUES_UNAVAILABLE"})
 				return
 			}
 			aliases, err := stageStore.ListAliases(r.Context(), projectID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-cues-aliases") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_TARGETS_UNAVAILABLE"})
 				return
 			}
 			bindings, err := stageStore.ListLightingNodeBindings(r.Context(), revision.ID)
 			if err != nil {
+				if !deliverReadError("lighting-controller-cues-bindings") {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "LIGHTING_BINDINGS_UNAVAILABLE"})
 				return
 			}
