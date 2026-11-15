@@ -5877,3 +5877,38 @@ This entry supersedes the preceding push instruction.
 - Resume by testing failure-path revocation for Environment CRUD, then
   continue the wider F-025 response audit. Production ACL remains disabled;
   current-head isolated Pi 4 performance qualification remains pending.
+
+## CI recovery checkpoint — 2026-11-15 · Core Race and F-025 CRUD
+
+- Code HEAD before this documentation commit is
+  `807eb2c94ed691dedf18c6ec164d3d31da7695d0`, 17 commits ahead of remote
+  `0b091584d07f9324683e18954f37707b3d57941b`.
+- The previously pending exact-head Core workflow `43713024420` has now
+  completed. Go 1.27 passed; Go 1.26 Race failed in
+  `TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult` after its
+  ActionExecution row had persisted but before the test proved adapter entry.
+  The log reports “Action stopped before dispatch”; this is the valid
+  pre-dispatch cancellation path, while the test asserted only the in-flight
+  executor error. The test now waits on an injected executor's explicit entry
+  signal and then requests STOP. No runtime implementation changed for this
+  CI failure. Companion Swift/macOS checks and Camera Relay ARM64 also passed.
+- Regressions cover live grant revocation during Environment create/update/
+  bind/delete success delivery, all four write errors, update/bind/delete
+  manifest read errors, and Project/Revision or Environment scope mismatches.
+  The errors are suppressed after revocation; committed mutation responses
+  disclose no Environment payload and report non-retryable commit uncertainty.
+- Focused HTTP API normal/Race tests pass, full
+  `go test ./internal/httpapi -count=1` passes (97.926 s), and
+  `go vet ./internal/httpapi` passes. The runtime STOP regression passes 25
+  normal repetitions and 10 Race repetitions; full
+  `go test ./internal/runtimecontrol -count=1` and its vet pass.
+  `git diff --check` passes.
+- Temporary SQLite/fault triggers only; no production services, data, Vault
+  originals, physical devices or hardware output were touched. Production ACL
+  remains disabled.
+- The old Core workflow is complete (failed), so it can no longer be canceled
+  by a branch push. After committing these notes, push the accumulated tested
+  changes to the existing `integration/stagecore-rc` / PR #534 and watch the
+  new exact-head CI. Current-head isolated Pi 4 performance qualification
+  remains pending; historical mixed/linked simulation is not current-head Pi
+  acceptance.

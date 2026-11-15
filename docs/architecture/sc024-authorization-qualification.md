@@ -2231,3 +2231,28 @@ no-store`, and verifies the committed create/update/binding/deletion in
 isolated SQLite. Focused Race regressions, `go vet ./internal/httpapi`, and full
 `go test ./internal/httpapi -count=1` pass (96.638 s). Production ACL remains
 disabled.
+
+The execution-environment CRUD error fences have regression coverage as well.
+`TestExecutionEnvironmentWriteErrorSuppressesStoreErrorAfterGrantRevocation`
+uses temporary SQLite triggers for create, update, bind and delete failures;
+`TestExecutionEnvironmentReadErrorSuppressesStoreErrorAfterGrantRevocation`
+uses a faulted temporary manifest table for update, bind and delete reads.
+Each hook revokes the scoped Project grant at the failure boundary and requires
+only `PROJECT_NOT_FOUND`, with no generic Store-failure code or Environment ID.
+Both test groups pass normally and under Race.
+
+## Core Go 1.26 Race result · 2026-11-15
+
+The prior exact-head run `43713024420` completed with a Race failure in
+`internal/runtimecontrol` at
+`TestCueStopCancelsInterruptibleActionAndPersistsTruthfulResult`. Its log shows
+`ResponseSummary: Action stopped before dispatch`: the test treated a persisted
+ActionExecution row as proof that the simulator had entered, but under Race
+STOP could run after row creation and before dispatch. The test now injects a
+blocking executor and waits for its explicit entered signal before STOP, so it
+actually validates interruption of an in-flight Action. This is a test
+synchronization correction; runtime behavior was not changed by the fix.
+The revised regression passes 25 normal repetitions and 10 Race repetitions;
+the full `internal/runtimecontrol` normal package, vet and the full HTTP API
+suite also pass locally. A new exact-head CI run is required after the branch
+update; the failed old-head run is not treated as green.
