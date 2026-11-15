@@ -348,3 +348,16 @@ the transaction and unreferenced Vault object are rolled back. Focused normal
 and Race tests plus `go vet ./internal/httpapi ./internal/store` pass. This
 closes that specific upload commit race; it does not qualify the whole-server
 SC-024 delivery audit or production cutover, and production ACL remains off.
+
+## SC-024 feature-scope configuration guard — 2026-11-16
+
+The production Hub has two environment-gated, fixed-Project integration scopes:
+StageAudio Vault media (`STAGECORE_AUDIO_PROJECT_ID`) and Camera Relay viewing
+(`STAGECORE_CAMERA_VIEW_PROJECT_ID`). `TestSC024CameraAndStageAudioProjectScopesRemainOptIn`
+uses the Go AST to require each scope initialization to stay within its explicit
+environment guard and verifies that each uses its dedicated route option. The
+existing handler tests cover live grant checks and revocation during delivery.
+These feature-specific boundaries do not qualify or enable the general
+whole-server Project ACL cutover. Focused normal and Race runs and
+`go vet ./internal/httpapi` pass; no production setting was inspected or
+changed.

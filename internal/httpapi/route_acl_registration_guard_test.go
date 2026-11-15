@@ -199,6 +199,64 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 	}
 }
 
+// Camera viewing and StageAudio media are separate, fixed-Project integrations
+// that use Project grants even while the general route cutover stays disabled.
+// Keep their grants tied to explicit configuration and their dedicated
+// handlers; these exceptions do not prove that the whole Hub ACL is atomic.
+func TestSC024CameraAndStageAudioProjectScopesRemainOptIn(t *testing.T) {
+	mainPath := filepath.Join("..", "..", "cmd", "stagecore-hub", "main.go")
+	source, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := string(source)
+	for _, option := range []string{
+		"httpapi.WithScopedOperatorStageAudio(userAuth, application.Store, audioClient, application.SecurityAudit, audioFence, audioScope)",
+		"httpapi.WithOperatorCameraViewer(userAuth, cameraAccess, cameraViewer)",
+	} {
+		if !strings.Contains(contents, option) {
+			t.Errorf("production feature scope wiring changed; review its Project grant boundary: %s", option)
+		}
+	}
+
+	assertProductionProjectScopeInitIsGated(t, mainPath, "STAGECORE_AUDIO_PROJECT_ID",
+		"projectaccess.New(application.DB.DB)",
+		"audioScope = &httpapi.StageAudioProjectScope{ProjectID: id, Access: access, Vault: application.Vault}")
+	assertProductionProjectScopeInitIsGated(t, mainPath, "STAGECORE_CAMERA_VIEW_PROJECT_ID",
+		"cameraViewer, err = httpapi.NewProjectCameraViewer(id, address, tokenFile)",
+		"cameraAccess, err = projectaccess.New(application.DB.DB)")
+}
+
+func assertProductionProjectScopeInitIsGated(t *testing.T, filename, environmentKey string, bodyMarkers ...string) {
+	t.Helper()
+	set := token.NewFileSet()
+	parsed, err := parser.ParseFile(set, filename, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range bodyMarkers {
+		found := false
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			statement, ok := node.(*ast.IfStmt)
+			if !ok {
+				return true
+			}
+			var block bytes.Buffer
+			if err := format.Node(&block, set, statement); err != nil {
+				t.Fatalf("format production Project scope guard: %v", err)
+			}
+			if strings.Contains(block.String(), environmentKey) && strings.Contains(block.String(), marker) {
+				found = true
+				return false
+			}
+			return true
+		})
+		if !found {
+			t.Errorf("Project scope initialization %q is no longer guarded by %s in %s", marker, environmentKey, filename)
+		}
+	}
+}
+
 func TestSC024QualifiedBrowserRoutesUseLiveAuthentication(t *testing.T) {
 	for _, record := range collectHTTPRouteRegistrations(t) {
 		qualified := projectURLPattern(record.Pattern) || projectRouteIsQualified(record.Pattern)
