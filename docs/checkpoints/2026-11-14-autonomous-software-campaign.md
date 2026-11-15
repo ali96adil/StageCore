@@ -5371,3 +5371,25 @@ This entry supersedes the preceding push instruction.
 - Continue the whole-server response/error and asynchronous dispatch audit.
   After the CI gate, retain the current branch and Draft PR. The isolated Pi 4
   performance lab is still required for hardware performance qualification.
+
+## Resume update — 2026-11-15 · Cue list and validation read fences
+
+- The existing branch was normally fast-forward pushed through the four-commit
+  Capsule review group ending at `3c535543c0242d349a94f23948a1ad18747468c0`.
+  PR #534 remains OPEN/Draft. The pushed HEAD and `origin` match at `3c53554`.
+  Local code tip `7fe84d63c25a650cf679c7e1d80f92289aa58818` is 23 commits
+  ahead of that remote; the worktree was clean after the code commit.
+- Exact-head Core run `43707820414`: Go 1.27 passed; Go 1.26 remains in
+  progress. Companion `43707820363` and Camera Relay `43707820418` passed.
+  **Do not push until Go 1.26 finishes and all exact-head checks are green.**
+- `7fe84d6` fences Project read errors from Cue listing and publish validation.
+  Red-first tests dropped `cues` in temporary SQLite and reproduced
+  `CUES_UNAVAILABLE` and `VALIDATION_UNAVAILABLE` after `ProjectView` was
+  revoked. Both now return the scoped Project denial.
+- Focused normal/Race regressions, `go vet ./internal/httpapi`,
+  `git diff --check`, and full `go test ./internal/httpapi -count=1` passed
+  (87.369 s). Production ACL remains disabled; no Cue data or hardware was
+  touched.
+- Next review: Session Memory list/detail and Project Notes read errors, then
+  continue scoped route and asynchronous delivery coverage. The Pi 4 lab and
+  production release gates remain unchanged.
