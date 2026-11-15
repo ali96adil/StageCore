@@ -76,19 +76,30 @@ type runtimeStatusView struct {
 	ManagedOutputBlackout bool                   `json:"managed_output_blackout"`
 }
 
+type runtimeStatusBuilder func(*http.Request, string) (runtimeStatusView, error)
+
 func WithOperatorRuntime(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) Option {
+	return withOperatorRuntimeStatusBuilder(auth, projectStore, runtime, func(r *http.Request, projectID string) (runtimeStatusView, error) {
+		return buildRuntimeStatus(r, projectStore, projectID)
+	})
+}
+
+func withOperatorRuntimeStatusBuilder(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service, buildStatus runtimeStatusBuilder) Option {
 	return func(s *Server) {
-		if auth == nil || projectStore == nil || runtime == nil {
+		if auth == nil || projectStore == nil || runtime == nil || buildStatus == nil {
 			return
 		}
-		registerOperatorRuntimeRoutes(s.mux, auth, projectStore, runtime)
+		registerOperatorRuntimeRoutes(s.mux, auth, projectStore, runtime, buildStatus)
 	}
 }
 
-func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service) {
+func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service, buildStatus runtimeStatusBuilder) {
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
-		view, err := buildRuntimeStatus(r, projectStore, r.PathValue("project_id"))
+		view, err := buildStatus(r, r.PathValue("project_id"))
 		if err != nil {
+			if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+				return
+			}
 			writeProjectStoreError(w, err)
 			return
 		}

@@ -1672,3 +1672,19 @@ and prevents deleting an Output while a Route action references it. API tests
 exercise editor isolation, stable IDs and no Snapshot publication. These
 routes remain only on the staged qualification router; Production ACL is not
 wired or activated.
+
+## SC-024 continuation · 2026-11-15 · Runtime status failure delivery
+
+The Runtime status GET path previously returned a generic Store error without
+the live Project-session/grant recheck used before a successful status body.
+`TestRuntimeStatusSuppressesStoreErrorAfterProjectGrantRevocation` first
+reproduced HTTP 503 `PROJECTS_UNAVAILABLE` after `project.view` was revoked
+during status construction. The handler now rechecks the same live browser
+session and Project-view grant before returning either a Store error or the
+status body. The regression requires the revoked response to be the scoped
+`PROJECT_NOT_FOUND` denial with `Cache-Control: no-store`.
+
+The focused Runtime/status tests passed normally and under Race, `go vet
+./internal/httpapi` passed, and `git diff --check` passed. This closes one
+read-response boundary in the staged qualification router; it does not close
+the whole-server authorization audit or enable Production ACL.

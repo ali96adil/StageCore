@@ -53,6 +53,13 @@ synthetic Vault metadata only; it does not upload or open media bytes.
 metadata and proves a read grant revoked at the response boundary suppresses
 the filename, entry count and byte total, under normal and Race execution.
 
+SC-024 Runtime status delivery also rechecks the live Project-view grant before
+returning read failures. A red-first test reproduced `PROJECTS_UNAVAILABLE`
+after revocation during status construction; the route now returns the scoped
+`PROJECT_NOT_FOUND` denial with `no-store`. Focused normal/Race tests and
+`go vet ./internal/httpapi` pass. The whole-server ACL audit remains open and
+Production ACL stays disabled.
+
 ## Integration and resilience coverage
 
 Existing tests cover substantial network, ACK, retry, duplicate, session,

@@ -72,6 +72,40 @@ func TestRehearsalStartSuppressesResultAfterGrantRevocationAtCommit(t *testing.T
 	}
 }
 
+func TestRuntimeStatusSuppressesStoreErrorAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	buildStatus := func(_ *http.Request, _ string) (runtimeStatusView, error) {
+		if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+			return runtimeStatusView{}, err
+		}
+		revoked.Store(true)
+		return runtimeStatusView{}, errors.New("injected runtime status read failure")
+	}
+	runtime := runtimecontrol.New(f.projects, capability.NewRegistry())
+	handler := New(
+		withOperatorRuntimeStatusBuilder(f.h.auth, f.projects, runtime, buildStatus),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	request := authenticatedReadRequest(http.MethodGet, "/api/v1/projects/"+f.projectID+"/runtime", f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked.Load() {
+		t.Fatal("test did not revoke the Project grant while building Runtime status")
+	}
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error_code":"PROJECT_NOT_FOUND"`) ||
+		strings.Contains(response.Body.String(), `"error_code":"PROJECTS_UNAVAILABLE"`) ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("revoked operator received Runtime store error after grant revocation: HTTP %d headers=%v body=%s",
+			response.Code, response.Header(), response.Body.String())
+	}
+}
+
 func TestQualifiedShowGOStopAndBlackoutUseIndependentGrants(t *testing.T) {
 	f := setupProjectAccessAPI(t)
 	ctx := context.Background()
