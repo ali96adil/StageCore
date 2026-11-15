@@ -5209,3 +5209,26 @@ This entry supersedes the preceding push instruction.
   1.27, Companion `43702159473`, and Camera Relay `43702159464` pass. No push
   until that run completes. Then continue the scoped device and asynchronous
   boundary audit, keep pushes fast-forward-only, and inspect each new-head CI.
+
+## Qualification batch checkpoint — 2026-11-15 · Owner inventory errors
+
+- Starting local HEAD: `c8d77a5423f97e6d8868feb6090dc4e07c33ff36`, 16 commits
+  ahead of remote/PR #534 at `c11e29b5a98f69d42812b2b597619a8093043e15`.
+  Exact-head Core `43702159421` remains in Go 1.26 Race; Go 1.27, Companion
+  `43702159473`, and Camera Relay `43702159464` pass. No push while Core Race
+  is active.
+- Red-first `TestStageDeviceGlobalInventorySuppressesListErrorAfterOwnerRevocation`
+  reproduced HTTP 503 after the Owner session was revoked at the repository
+  error boundary for both `inventory` and `unassigned`. Those Owner-only
+  handlers now recheck session/role before returning list and per-device
+  assignment errors. The regression requires `SESSION_INVALID` and uses only
+  temporary SQLite.
+- Focused normal/Race coverage includes both inventory routes, transfer status
+  assignment/epoch-ACK failures, Network Cockpit failures, and the prior Owner
+  success-delivery fence. `go vet ./internal/httpapi` and `git diff --check`
+  pass. Full `go test ./internal/httpapi -count=1` passes (82.984 s).
+- Owner inventory code, regressions and qualification/matrix updates are saved
+  in local commit `b1b40e5108631f119ee66299cada56fd325b5610`, on top of
+  `c8d77a5`. It is unpushed. Continue the route/error and asynchronous safety
+  audit. Preserve the same branch/PR and wait for all exact-head CI before any
+  push. Production ACL, services/data, physical devices and outputs stay off.
