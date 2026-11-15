@@ -93,7 +93,7 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 		}
 	}()
 
-	session, err := e.store.GetSession(ctx, sessionID)
+	session, err := e.store.GetSessionFoundation(ctx, sessionID)
 	if err != nil {
 		return rejection(command.CommandID, "SESSION_NOT_FOUND", "VALIDATION", "session not found", false, sessionID)
 	}
@@ -105,6 +105,11 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	}
 	if session.RuntimeSnapshotID != command.RuntimeSnapshotID {
 		return rejection(command.CommandID, "SNAPSHOT_MISMATCH", "SNAPSHOT_MISMATCH", "command snapshot does not match session", false, command.RuntimeSnapshotID)
+	}
+	if session.StateTruth.ManualConfirmationRequired ||
+		session.StateTruth.RestorationStatus == domain.SessionRestorationManualConfirmationRequired {
+		return rejection(command.CommandID, "SESSION_START_CONFIRMATION_REQUIRED", "VALIDATION",
+			"the Session start state requires explicit operator confirmation before Cue GO", false, session.ID)
 	}
 	// Reject an orphan RUNNING execution when the Hub no longer tracks it.
 	// Live overlapping GO calls are explicitly authorized by RuntimeControl.
