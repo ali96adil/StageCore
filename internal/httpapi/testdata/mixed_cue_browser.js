@@ -93,17 +93,20 @@
     if (!response.ok) throw new Error(`native Tab key request returned HTTP ${response.status}`);
     return labelInput;
   };
-  const measureInspectorViewports = async () => {
+  const setViewport = async (width, height, mobile) => {
+    const response = await fetch("/mixed-cue-viewport-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ width, height, mobile }),
+    });
+    if (!response.ok) throw new Error(`viewport gate failed at ${width}x${height}: ${response.status}`);
+    await waitFor(() => window.innerWidth === width, `applying ${width}x${height} viewport`);
+  };
+  const measureInspectorViewports = async (linkedParentID) => {
     const measurements = [];
     for (const [width, height, mobile] of [
       [390, 844, true], [720, 900, false], [768, 1024, true], [1024, 768, false], [1440, 900, false],
     ]) {
-      const response = await fetch("/mixed-cue-viewport-ready", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ width, height, mobile }),
-      });
-      if (!response.ok) throw new Error(`viewport gate failed at ${width}x${height}: ${response.status}`);
-      await waitFor(() => window.innerWidth === width, `applying ${width}x${height} viewport`);
+      await setViewport(width, height, mobile);
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const navigation = document.querySelector(".cue-inspection-navigation");
       if (!navigation) throw new Error(`Cue Inspector navigation disappeared at ${width}x${height}`);
@@ -116,16 +119,21 @@
         throw new Error(`Cue Inspector responsive geometry failed at ${width}x${height}: pageWidth=${pageWidth}, viewport=${window.innerWidth}, navigation=${JSON.stringify({left: bounds.left, right: bounds.right, width: bounds.width})}`);
       }
       const table = navigation.closest(".table-wrap");
+      const cueList = document.querySelector(".cue-list-table-wrap");
+      const cueListTable = cueList?.querySelector(".cue-list-table");
+      const cueListRow = cueList?.querySelector("tr[data-cue-id]");
+      const cueListOverflow = !!cueList && cueList.scrollWidth > cueList.clientWidth + 1;
+      const linkedGroup = document.querySelector(`#content tr[data-cue-id="${linkedParentID}"] .cue-link-cell`);
       measurements.push({ width, height, mobile, pageOverflow,
         navigationVisible, navigationWidth: Math.round(bounds.width), tableClientWidth: table?.clientWidth || 0,
-        tableScrollWidth: table?.scrollWidth || 0 });
+        tableScrollWidth: table?.scrollWidth || 0, cueListOverflow,
+        cueListClientWidth: cueList?.clientWidth || 0, cueListScrollWidth: cueList?.scrollWidth || 0,
+        cueListRole: cueListTable?.getAttribute("role") || "",
+        cueListCardLayout: !!cueListRow && getComputedStyle(cueListRow).display === "grid",
+        cueListDataLabels: cueListRow?.querySelectorAll("td[data-label]").length || 0,
+        linkedGroupVisible: !!linkedGroup && linkedGroup.innerText.trim().length > 0 });
     }
-    const restore = await fetch("/mixed-cue-viewport-ready", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ width: 390, height: 844, mobile: true }),
-    });
-    if (!restore.ok) throw new Error(`restoring 390x844 viewport failed: ${restore.status}`);
-    await waitFor(() => window.innerWidth === 390, "restoring mobile viewport");
+    await setViewport(390, 844, true);
     return measurements;
   };
 
@@ -136,6 +144,7 @@
     const configResponse = await fetch("/mixed-cue-config", { cache: "no-store" });
     if (!configResponse.ok) throw new Error(`test configuration returned HTTP ${configResponse.status}`);
     const config = await configResponse.json();
+    await setViewport(390, 844, true);
     state.user = { user_id: config.user, username: "owner", role: "OWNER" };
     state.csrf = config.csrf;
     state.project = { project_id: config.project, name: config.name };
@@ -205,7 +214,7 @@
       ltrInspector?.querySelector("summary")?.click();
       await waitFor(() => ltrInspector?.querySelector(".cue-inspection-navigation"),
         "opening the Cue Inspector for LTR viewport measurements");
-      const responsiveLayoutsLTR = await measureInspectorViewports();
+      const responsiveLayoutsLTR = await measureInspectorViewports(parentID);
       const labelCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-label-cell`);
       const plainCell = document.querySelector(`#content tr[data-cue-id="${parentID}"] td:not(.cue-label-cell)`);
       const editButton = document.querySelector(`#content tr[data-cue-id="${parentID}"] .cue-edit`);
@@ -414,10 +423,19 @@
       body: JSON.stringify({ x: firstSummaryBounds.left + firstSummaryBounds.width / 2,
         y: firstSummaryBounds.top + firstSummaryBounds.height / 2 })
     });
-    if (!touchResponse.ok) throw new Error(`Inspector touch gate failed: ${touchResponse.status}`);
+    if (!touchResponse.ok) {
+      const touchRow = firstNavigationDetails?.closest("tr");
+      const touchCell = firstNavigationDetails?.closest("td");
+      const cueTable = document.querySelector(".cue-list-table");
+      const touchGeometry = { viewport: window.innerWidth,
+        table: cueTable && { width: cueTable.getBoundingClientRect().width, scrollWidth: cueTable.scrollWidth, display: getComputedStyle(cueTable).display },
+        row: touchRow && { left: touchRow.getBoundingClientRect().left, right: touchRow.getBoundingClientRect().right, width: touchRow.getBoundingClientRect().width, display: getComputedStyle(touchRow).display },
+        cell: touchCell && { left: touchCell.getBoundingClientRect().left, right: touchCell.getBoundingClientRect().right, width: touchCell.getBoundingClientRect().width, display: getComputedStyle(touchCell).display } };
+      throw new Error(`Inspector touch gate failed: ${touchResponse.status}, bounds=${JSON.stringify(firstSummaryBounds)}, geometry=${JSON.stringify(touchGeometry)}, body=${await touchResponse.text()}`);
+    }
     await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),
       "opening the first Cue in the long-list Inspector by touch");
-    const responsiveLayoutsRTL = await measureInspectorViewports();
+    const responsiveLayoutsRTL = await measureInspectorViewports(parentID);
     const inspectorShortcutTrace = [];
     firstNavigationDetails.addEventListener("keydown", (event) => inspectorShortcutTrace.push({
       key: event.key, target: event.target?.tagName, targetClass: event.target?.className,

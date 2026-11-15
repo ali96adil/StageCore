@@ -649,21 +649,21 @@ async function renderCues(message = "", messageKind = "success") {
       <p id="cueListCount" class="muted" aria-live="polite" style="margin:10px 0 0">${state.cues.length} / ${state.cues.length} Cues shown</p>
       <p class="muted" style="margin:4px 0 0">Filtering changes this view only; sequence order and the published Snapshot are unchanged.</p>
     </section>
-    <div class="table-wrap" style="margin-top:14px">
-      <table>
-        <thead><tr><th>Order</th><th>Label</th><th>Name</th><th>Group</th><th>State</th><th>Actions</th><th>Controls</th></tr></thead>
-        <tbody>
+    <div class="table-wrap cue-list-table-wrap" style="margin-top:14px">
+      <table class="cue-list-table" role="table">
+        <thead role="rowgroup"><tr role="row"><th role="columnheader">Order</th><th role="columnheader">Label</th><th role="columnheader">Name</th><th role="columnheader">Group</th><th role="columnheader">State</th><th role="columnheader">Actions</th><th role="columnheader">Controls</th></tr></thead>
+        <tbody role="rowgroup">
           ${state.cues.length ? state.cues.map((cue, index) => {
             const record = cueSearchRecord(cue, cuesByID, cueParents);
             return `
-            <tr class="${cueRelationshipClass(cue, cueParents)}" data-cue-id="${esc(cue.cue_id)}" data-search="${esc(record.search)}" data-action-types="${esc(record.actionTypes)}" data-mixed="${record.mixed}" data-enabled="${cue.enabled}" data-linked="${record.linked}">
-              <td>${esc(cue.order_index)}</td>
-              <td class="cue-label-cell" data-cue-color="${cueColor(cue)}">${esc(cue.display_label || "—")}</td>
-              <td><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
-              <td class="cue-link-cell">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
-              <td>${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
-              <td>${esc(cue.actions?.length || 0)}</td>
-              <td><div class="row-actions">
+            <tr role="row" class="${cueRelationshipClass(cue, cueParents)}" data-cue-id="${esc(cue.cue_id)}" data-search="${esc(record.search)}" data-action-types="${esc(record.actionTypes)}" data-mixed="${record.mixed}" data-enabled="${cue.enabled}" data-linked="${record.linked}">
+              <td role="cell" data-label="Order">${esc(cue.order_index)}</td>
+              <td role="cell" class="cue-label-cell" data-label="Label" data-cue-color="${cueColor(cue)}">${esc(cue.display_label || "—")}</td>
+              <td role="cell" data-label="Name"><strong>${esc(cue.name)}</strong><br><small class="muted">${esc(cue.criticality)}${Number(cuePolicyObject(cue).start_delay_ms || 0) > 0 ? " · Start Delay " + esc(Number(cuePolicyObject(cue).start_delay_ms) / 1000) + " s" : ""}</small></td>
+              <td role="cell" class="cue-link-cell" data-label="Group">${renderCueRelationship(cue, state.cues, cueParents) || `<span class="cue-link-none">—</span>`}</td>
+              <td role="cell" data-label="State">${pill(cue.enabled ? "ENABLED" : "DISABLED", cue.enabled ? "good" : "neutral")}</td>
+              <td role="cell" data-label="Actions">${esc(cue.actions?.length || 0)}</td>
+              <td role="cell" data-label="Controls"><div class="row-actions">
                 ${canControl ? `<button class="button primary cue-test" data-id="${esc(cue.cue_id)}" ${!runtimeCuesByID.has(cue.cue_id) || runtimeMode === "SHOW" || runtimeBlackout ? "disabled" : ""} type="button">Test Cue</button>` : ""}
                 ${canModify && hasDraft ? `
                   <button class="button cue-up" data-id="${esc(cue.cue_id)}" ${index === 0 ? "disabled" : ""} type="button">↑</button>

@@ -345,7 +345,7 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	}
 	defer browserLog.Close()
 	launch := func() (*exec.Cmd, chan error, *websocket.Conn, error) {
-		cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage",
+		cmd := exec.CommandContext(ctx, chrome, "--headless", "--no-sandbox", "--disable-dev-shm-usage", "--force-device-scale-factor=1",
 			"--remote-debugging-port=0", "--remote-allow-origins=*",
 			"--disable-background-networking", "--window-size=390,844", "--user-data-dir="+profileDir, server.URL)
 		cmd.Stdout, cmd.Stderr = browserLog, browserLog
@@ -453,14 +453,21 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		}
 	}
 	type viewportEvidence struct {
-		Width             int  `json:"width"`
-		Height            int  `json:"height"`
-		Mobile            bool `json:"mobile"`
-		PageOverflow      bool `json:"pageOverflow"`
-		NavigationVisible bool `json:"navigationVisible"`
-		NavigationWidth   int  `json:"navigationWidth"`
-		TableClientWidth  int  `json:"tableClientWidth"`
-		TableScrollWidth  int  `json:"tableScrollWidth"`
+		Width              int    `json:"width"`
+		Height             int    `json:"height"`
+		Mobile             bool   `json:"mobile"`
+		PageOverflow       bool   `json:"pageOverflow"`
+		NavigationVisible  bool   `json:"navigationVisible"`
+		NavigationWidth    int    `json:"navigationWidth"`
+		TableClientWidth   int    `json:"tableClientWidth"`
+		TableScrollWidth   int    `json:"tableScrollWidth"`
+		CueListOverflow    bool   `json:"cueListOverflow"`
+		CueListClientWidth int    `json:"cueListClientWidth"`
+		CueListScrollWidth int    `json:"cueListScrollWidth"`
+		CueListRole        string `json:"cueListRole"`
+		CueListCardLayout  bool   `json:"cueListCardLayout"`
+		CueListDataLabels  int    `json:"cueListDataLabels"`
+		LinkedGroupVisible bool   `json:"linkedGroupVisible"`
 	}
 	var report struct {
 		Status                string             `json:"status"`
@@ -518,14 +525,18 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		want := []struct {
 			width, height int
 			mobile        bool
-		}{{390, 844, true}, {720, 900, false}, {768, 1024, true}, {1024, 768, false}, {1440, 900, false}}
+			card          bool
+		}{{390, 844, true, true}, {720, 900, false, true}, {768, 1024, true, true}, {1024, 768, false, true}, {1440, 900, false, false}}
 		if len(measurements) != len(want) {
 			return false
 		}
 		for index, measurement := range measurements {
 			if measurement.Width != want[index].width || measurement.Height != want[index].height ||
 				measurement.Mobile != want[index].mobile || measurement.PageOverflow ||
-				!measurement.NavigationVisible || measurement.NavigationWidth <= 0 {
+				!measurement.NavigationVisible || measurement.NavigationWidth <= 0 || measurement.CueListOverflow ||
+				measurement.CueListClientWidth <= 0 || measurement.CueListScrollWidth > measurement.CueListClientWidth+1 ||
+				measurement.CueListRole != "table" || measurement.CueListCardLayout != want[index].card ||
+				measurement.CueListDataLabels != 7 || !measurement.LinkedGroupVisible {
 				return false
 			}
 		}
