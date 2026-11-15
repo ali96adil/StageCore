@@ -13,14 +13,15 @@ modified.
 StageCore #503–#508 and #514–#516 remain open at the heads listed below; their
 listed Go 1.26/1.27 checks pass. StageCore Draft PR #534 is open on
 `integration/stagecore-rc` at remote HEAD
-`29ac4b566e19728c0c4b03886b7a144a3b17cb88`. Core run `43734098541` passed
-every check on that exact SHA, including Go 1.26/1.27 tests, isolated
-installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux ARM64
-builds. Companion `43734097838` and Camera Relay `43734097852` passed on the
-same SHA. The normal ten-commit policy/preset batch is already on #534. Local
-HEAD `a552734afb29fb154a2b33ac53f2b5996032d6bd` was seven commits ahead with
-a clean worktree after the exact remote/PR SHA was rechecked; a normal push is
-now safe.
+`993da0848e37511ffeb181188e0fa286dcbc19a9`. Core run `43737062171` is active
+on that exact SHA: Go 1.27 passed and Go 1.26 Test is running. Companion
+`43737062177` and Camera Relay `43737062158` passed. The predecessor SHA
+`29ac4b566e19728c0c4b03886b7a144a3b17cb88` passed Core Go 1.26/1.27 tests,
+isolated installed-copy rollback, Browser Cue Delivery, Vet, Race and Linux
+ARM64 builds, plus Companion and Camera Relay. Local HEAD
+`543ab133a45176716c57e308a654f19f7801d253` adds a real-Chrome native preset
+name/description entry test and is one clean commit ahead; hold its push until
+the new exact-head Core run completes.
 
 The current Chrome browser regression covers the Mixed Lighting+OSC preset
 save/focus, native search typing and Backspace, preview, insertion and Draft
