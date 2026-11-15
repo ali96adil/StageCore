@@ -124,6 +124,42 @@ func TestTabletControllerListSuppressesDevicesAfterProjectGrantRevocation(t *tes
 	}
 }
 
+func TestTabletControllerListSuppressesStoreErrorAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := tabletControllerDispatchFunc(func(context.Context, deviceexperience.CreateCommandInput) (deviceexperience.DeviceCommand, error) {
+		return deviceexperience.DeviceCommand{}, nil
+	})
+	handler := New(
+		withOperatorTabletController(f.h.auth, devices, runtime, f.projects, tabletControllerHooks{
+			BeforeListErrorResponse: func() {
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke project.view before Tablet list error delivery: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	if _, err := f.h.db.DB.ExecContext(ctx, "DROP TABLE stage_devices"); err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/tablet-controller", f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "TABLET_LIST_FAILED") {
+		t.Fatalf("Tablet list Store error escaped after Project grant revocation: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 type tabletRelayFlashDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f tabletRelayFlashDoerFunc) Do(request *http.Request) (*http.Response, error) {

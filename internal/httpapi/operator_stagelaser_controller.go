@@ -36,7 +36,8 @@ type stageLaserCueActionDescriptor struct {
 }
 
 type stageLaserControllerHooks struct {
-	BeforeCueAliasCreate func()
+	BeforeCueAliasCreate    func()
+	BeforeReadErrorResponse func(route string)
 }
 
 func WithOperatorStageLaserController(
@@ -61,11 +62,23 @@ func withOperatorStageLaserController(
 		s.mux.HandleFunc("GET /api/v1/projects/{project_id}/stagelaser-controller", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			if _, err := stageStore.GetProject(r.Context(), projectID); err != nil {
+				if hooks.BeforeReadErrorResponse != nil {
+					hooks.BeforeReadErrorResponse("project")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeProjectStoreError(w, err)
 				return
 			}
 			items, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if hooks.BeforeReadErrorResponse != nil {
+					hooks.BeforeReadErrorResponse("devices")
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "STAGELASER_DEVICES_UNAVAILABLE"})
 				return
 			}

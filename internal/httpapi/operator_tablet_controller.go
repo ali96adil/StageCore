@@ -296,6 +296,7 @@ type tabletRelayFlashDoer interface {
 
 type tabletControllerHooks struct {
 	BeforeListResponse        func()
+	BeforeListErrorResponse   func()
 	BeforeCommandReadResponse func()
 	BeforeCueAliasCreate      func()
 }
@@ -335,6 +336,12 @@ func withOperatorTabletController(
 			projectID := strings.TrimSpace(r.PathValue("project_id"))
 			all, err := devices.ListDevices(r.Context(), projectID)
 			if err != nil {
+				if hooks.BeforeListErrorResponse != nil {
+					hooks.BeforeListErrorResponse()
+				}
+				if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "TABLET_LIST_FAILED", "detail": err.Error()})
 				return
 			}

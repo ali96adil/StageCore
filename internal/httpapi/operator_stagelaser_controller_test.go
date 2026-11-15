@@ -73,6 +73,41 @@ func TestStageLaserCueActionDoesNotCreateAliasAfterCueGrantRevocation(t *testing
 	}
 }
 
+func TestStageLaserControllerSuppressesStoreErrorAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorStageLaserController(f.h.auth, devices, f.projects, stageLaserControllerHooks{
+			BeforeReadErrorResponse: func(route string) {
+				if route == "devices" {
+					if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+						t.Errorf("revoke project.view before StageLaser device-list error delivery: %v", err)
+					}
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	if _, err := f.h.db.DB.ExecContext(ctx, "DROP TABLE stage_devices"); err != nil {
+		t.Fatal(err)
+	}
+	request := authenticatedReadRequest(http.MethodGet,
+		"/api/v1/projects/"+f.projectID+"/stagelaser-controller", f.operator.Token)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || strings.Contains(response.Body.String(), "STAGELASER_DEVICES_UNAVAILABLE") {
+		t.Fatalf("StageLaser device-list Store error escaped after Project grant revocation: HTTP %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestOperatorStageLaserCueActionTranslatorBuildsCanonicalDesiredState(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
