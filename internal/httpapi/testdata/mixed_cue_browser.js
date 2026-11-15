@@ -365,15 +365,51 @@
     const navigationRows = visibleCueRows();
     if (navigationRows.length !== 123) throw new Error(`Cue navigation list=${navigationRows.length}, want 123`);
     const firstNavigationDetails = navigationRows[0].querySelector("details");
-    firstNavigationDetails?.querySelector("summary")?.click();
+    const firstNavigationSummary = firstNavigationDetails?.querySelector("summary");
+    firstNavigationSummary?.scrollIntoView({ block: "center" });
+    const firstSummaryBounds = firstNavigationSummary?.getBoundingClientRect();
+    const touchResponse = await fetch("/mixed-cue-inspector-touch-ready", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: firstSummaryBounds.left + firstSummaryBounds.width / 2,
+        y: firstSummaryBounds.top + firstSummaryBounds.height / 2 })
+    });
+    if (!touchResponse.ok) throw new Error(`Inspector touch gate failed: ${touchResponse.status}`);
     await waitFor(() => firstNavigationDetails?.querySelector(".cue-inspection-navigation"),
-      "opening the first Cue in the long-list Inspector");
+      "opening the first Cue in the long-list Inspector by touch");
+    const inspectorShortcutTrace = [];
+    firstNavigationDetails.addEventListener("keydown", (event) => inspectorShortcutTrace.push({
+      key: event.key, target: event.target?.tagName, targetClass: event.target?.className,
+      composing: event.isComposing, prevented: event.defaultPrevented,
+    }));
+    const requestInspectorKey = async (key) => {
+      const response = await fetch("/mixed-cue-inspector-key-ready", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key })
+      });
+      if (!response.ok) throw new Error(`Inspector keyboard gate failed for ${key}: ${response.status}`);
+    };
+    firstNavigationDetails.querySelector("summary")?.focus();
+    await requestInspectorKey("j");
+    try {
+      await waitFor(() => navigationRows[1].querySelector("details")?.open,
+        "moving to the next Cue with the Inspector J shortcut");
+    } catch (error) {
+      throw new Error(`${error?.message || error}; shortcutTrace=${JSON.stringify(inspectorShortcutTrace)}, firstOpen=${firstNavigationDetails.open}, nextOpen=${navigationRows[1].querySelector("details")?.open}, active=${document.activeElement?.outerHTML?.slice(0, 180)}`);
+    }
+    navigationRows[1].querySelector("summary")?.focus();
+    await requestInspectorKey("k");
+    await waitFor(() => firstNavigationDetails?.open,
+      "moving to the previous Cue with the Inspector K shortcut");
     for (let index = 1; index < navigationRows.length; index++) {
       const current = navigationRows[index - 1];
       const currentNavigation = current.querySelector(".cue-inspection-navigation");
       const nextButton = currentNavigation?.querySelectorAll("button")[1];
       if (!nextButton || nextButton.disabled) throw new Error(`Next Cue control disabled at list position ${index}`);
-      nextButton.click();
+      if (index === 1) {
+        nextButton.focus();
+        await requestInspectorKey("Enter");
+      } else {
+        nextButton.click();
+      }
       const targetRow = navigationRows[index];
       const targetDetails = targetRow.querySelector("details");
       const targetCue = state.cues[index];
@@ -533,6 +569,12 @@
     if (!quickLabelInput?.getAttribute("aria-label") || !quickLabelInput.closest("label") ||
         !quickNotesInput?.getAttribute("aria-label") || !quickNotesInput.closest("label")) {
       throw new Error("Cue Inspector quick-edit fields lack accessible labels");
+    }
+    quickLabelInput.focus();
+    const labelBeforeShortcutKey = quickLabelInput.value;
+    await requestInspectorKey("j");
+    if (document.activeElement !== quickLabelInput || quickLabelInput.value !== `${labelBeforeShortcutKey}j` || !inspector.open) {
+      throw new Error("Inspector J shortcut intercepted text entered in a quick-edit field");
     }
     setValue(quickLabelInput, quickEditedLabel);
     setValue(quickNotesInput, quickEditedNotes);

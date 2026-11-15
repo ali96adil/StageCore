@@ -1986,13 +1986,15 @@
       const previous = document.createElement("button");
       previous.type = "button";
       previous.className = "button ghost";
-      previous.textContent = tr("الكيو السابق", "Previous Cue");
-      previous.setAttribute("aria-label", tr("افحص الكيو السابق", "Inspect previous Cue"));
+      previous.textContent = tr("الكيو السابق (K)", "Previous Cue (K)");
+      previous.setAttribute("aria-label", tr("افحص الكيو السابق (K)", "Inspect previous Cue (K)"));
+      previous.setAttribute("aria-keyshortcuts", "k");
       const next = document.createElement("button");
       next.type = "button";
       next.className = "button ghost";
-      next.textContent = tr("الكيو التالي", "Next Cue");
-      next.setAttribute("aria-label", tr("افحص الكيو التالي", "Inspect next Cue"));
+      next.textContent = tr("الكيو التالي (J)", "Next Cue (J)");
+      next.setAttribute("aria-label", tr("افحص الكيو التالي (J)", "Inspect next Cue (J)"));
+      next.setAttribute("aria-keyshortcuts", "j");
       const moveSelection = (offset) => {
         const rows = Array.from(content.querySelectorAll("tr[data-cue-id]")).filter((row) => !row.hidden);
         const index = rows.findIndex((row) => row.dataset.cueId === cue.cue_id);
@@ -2011,6 +2013,16 @@
       next.disabled = index < 0 || index >= rows.length - 1;
       previous.addEventListener("click", () => moveSelection(-1));
       next.addEventListener("click", () => moveSelection(1));
+      details.addEventListener("keydown", (event) => {
+        if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+        const target = event.target;
+        if (target?.isContentEditable || target?.closest?.("input,textarea,select,[contenteditable='true']")) return;
+        const key = String(event.key || "").toLowerCase();
+        const button = key === "k" ? previous : key === "j" ? next : null;
+        if (!button || button.disabled || !details.open) return;
+        event.preventDefault();
+        button.click();
+      });
       navigation.append(previous, next);
       details.append(navigation);
       const plan = planCueInspection(cue, cues);

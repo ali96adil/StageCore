@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -69,6 +70,19 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	if err := registry.Register("sim.test", simulator.Adapter{}); err != nil {
 		t.Fatal(err)
 	}
+	baselineSnapshot, publishReport, err := publish.New(st, registry).Publish(ctx, project.ID, revision.ID, owner.Session.User.ID)
+	if err != nil || !publishReport.Valid || baselineSnapshot.ID == "" {
+		t.Fatalf("publish isolated baseline Snapshot for immutability acceptance: snapshot=%+v report=%+v err=%v",
+			baselineSnapshot, publishReport, err)
+	}
+	revision, err = st.EnsureProjectDraft(ctx, project.ID, owner.Session.User.ID, "Cue Inspector browser acceptance")
+	if err != nil {
+		t.Fatalf("fork isolated baseline into an editable Draft: %v", err)
+	}
+	project, err = st.GetProject(ctx, project.ID)
+	if err != nil || project.CurrentRevisionID != revision.ID {
+		t.Fatalf("load Inspector Draft after Snapshot publish: project=%+v revision=%+v err=%v", project, revision, err)
+	}
 	runtime := runtimecontrol.New(st, registry)
 	handler := New(
 		WithOperatorWeb(),
@@ -89,6 +103,15 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 	}
 	browserResult := make(chan string, 1)
 	focusRequests := make(chan chan struct{}, 2)
+	keyCommandID := 100
+	inspectorKeyRequests := make(chan struct {
+		key    string
+		resume chan struct{}
+	}, 4)
+	inspectorTouchRequests := make(chan struct {
+		x, y   float64
+		resume chan struct{}
+	}, 1)
 	staleReadyRequests := make(chan struct {
 		cueID  string
 		resume chan struct{}
@@ -122,6 +145,53 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 			resume := make(chan struct{})
 			select {
 			case focusRequests <- resume:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/mixed-cue-inspector-key-ready":
+			var request struct {
+				Key string `json:"key"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				(request.Key != "j" && request.Key != "k" && request.Key != "Enter") {
+				http.Error(w, "invalid Inspector key", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case inspectorKeyRequests <- struct {
+				key    string
+				resume chan struct{}
+			}{key: request.Key, resume: resume}:
+			case <-r.Context().Done():
+				return
+			}
+			select {
+			case <-resume:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+		case "/mixed-cue-inspector-touch-ready":
+			var request struct {
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request); err != nil ||
+				request.X < 0 || request.X > 390 || request.Y < 0 || request.Y > 844 {
+				http.Error(w, "invalid Inspector touch coordinates", http.StatusBadRequest)
+				return
+			}
+			resume := make(chan struct{})
+			select {
+			case inspectorTouchRequests <- struct {
+				x, y   float64
+				resume chan struct{}
+			}{x: request.X, y: request.Y, resume: resume}:
 			case <-r.Context().Done():
 				return
 			}
@@ -237,6 +307,17 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 				t.Fatalf("send native Tab key to isolated Chrome: %v", err)
 			}
 			close(resume)
+		case request := <-inspectorKeyRequests:
+			if err := dispatchChromeKey(cdp, keyCommandID, request.key, false); err != nil {
+				t.Fatalf("send native %s key to Cue Inspector: %v", request.key, err)
+			}
+			keyCommandID += 2
+			close(request.resume)
+		case request := <-inspectorTouchRequests:
+			if err := dispatchChromeTouch(cdp, request.x, request.y); err != nil {
+				t.Fatalf("send emulated touch to Cue Inspector: %v", err)
+			}
+			close(request.resume)
 		case request := <-staleReadyRequests:
 			cue, err := st.GetCue(ctx, request.cueID)
 			if err != nil || cue.RevisionID != revision.ID {
@@ -446,8 +527,12 @@ func TestBrowserCreatesNestedMixedCueChainInDraft(t *testing.T) {
 		t.Fatalf("browser authoring must not start a runtime session: session=%+v err=%v", active, err)
 	}
 	snapshot, err := st.LatestPublishedRuntimeSnapshotForProject(ctx, project.ID)
-	if err != nil || snapshot != nil {
-		t.Fatalf("browser recovery/preview must not publish a Snapshot: snapshot=%+v err=%v", snapshot, err)
+	if err != nil || snapshot == nil || snapshot.ID != baselineSnapshot.ID ||
+		snapshot.RevisionID != baselineSnapshot.RevisionID || snapshot.SnapshotVersion != baselineSnapshot.SnapshotVersion ||
+		snapshot.ContentHash != baselineSnapshot.ContentHash || snapshot.Status != baselineSnapshot.Status ||
+		!bytes.Equal(snapshot.Manifest, baselineSnapshot.Manifest) {
+		t.Fatalf("browser authoring/inspection changed the immutable Published Snapshot: before=%+v after=%+v err=%v",
+			baselineSnapshot, snapshot, err)
 	}
 }
 
@@ -507,6 +592,10 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 		virtualKeyCode = 9
 	case "Enter":
 		virtualKeyCode = 13
+	case "j":
+		virtualKeyCode = 74
+	case "k":
+		virtualKeyCode = 75
 	case "o":
 		virtualKeyCode = 79
 	case "n":
@@ -517,7 +606,7 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 	eventTypes := []string{"keyDown", "keyUp"}
 	for id, eventType := range eventTypes {
 		eventKey, eventCode := key, key
-		if key == "o" || key == "n" {
+		if key == "o" || key == "n" || key == "j" || key == "k" {
 			eventCode = "Key" + strings.ToUpper(key)
 		}
 		params := map[string]any{
@@ -528,7 +617,7 @@ func dispatchChromeKey(conn *websocket.Conn, firstID int, key string, shift bool
 			params["text"] = "\r"
 			params["unmodifiedText"] = "\r"
 		}
-		if (key == "o" || key == "n") && eventType == "keyDown" {
+		if (key == "o" || key == "n" || key == "j" || key == "k") && eventType == "keyDown" {
 			params["text"] = key
 			params["unmodifiedText"] = key
 		}
