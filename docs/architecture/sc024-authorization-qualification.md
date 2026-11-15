@@ -1698,3 +1698,24 @@ read errors now pass through the live-session/Project-view fence before any
 error details are returned. The test requires the scoped `PROJECT_NOT_FOUND`
 denial and `no-store`. All `TestLightingConfiguration*` tests passed normally
 and under Race, and `go vet ./internal/httpapi` plus `git diff --check` passed.
+
+
+## SC-024 continuation · 2026-11-15 · StageAudio error delivery fences
+
+The staged StageAudio API returned a runtime-status 503 when the active-session
+lookup failed, without rechecking the live Project grant. Its command counterpart
+had the same early failure path, and an unconfigured sidecar returned
+`STAGEAUDIO_NOT_CONFIGURED` before checking the Project's `audio.control` grant.
+
+Three temporary-SQLite regressions reproduce the boundaries: drop `sessions`
+only in the test database and revoke the grant at the status/command error
+boundary, or call the unconfigured command without a Project grant. The routes
+now return the scoped unavailable response before exposing those service-state
+errors. The revoked-command test also verifies zero calls to the fake local
+sidecar. These cases use no StageAudio process, playback, network adapter, or
+physical output.
+
+The focused StageAudio and unified-ACL tests pass normally and under Race;
+`go vet ./internal/httpapi` and `git diff --check` pass. This closes these
+three staged delivery gaps only; the whole-server audit remains open and
+Production ACL stays disabled.
