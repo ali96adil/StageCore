@@ -3678,6 +3678,44 @@ This entry supersedes the preceding push instruction.
   cold-boot qualification and all production ACL activation remain out of
   scope.
 
+## Resume update — 2026-11-15 · verified batch ready for normal push
+
+- Core CI `43654085363` completed successfully on exact remote/PR HEAD
+  `460db92eb9a8457b840aa0ddd7aef1b5ebb91c43`: Go 1.26 Test, Browser Cue
+  Delivery, Vet, Race, and Linux ARM64 product builds passed; Go 1.27 Test
+  and Vet passed. Companion Core `43654085383` and Camera Relay
+  `43654085434` passed on the same SHA. PR #534 remains OPEN/Draft.
+- The reviewed branch/PR HEAD remains `460db92`; local code/test HEAD is
+  `e71cd16abf82c8031e55ac873ad0468690daa198`, seven commits ahead before this
+  checkpoint commit. The local batch contains the pushed-batch checkpoint
+  `5aa7183`, expired-session retirement `fcb5fbf`, checkpoints `0f9aac9` and
+  `3a43c9d`, passive/renewal boundary regressions `55f339d`, evidence update
+  `e66308f`, and Chrome Cue history qualification `e71cd16`. No push has yet
+  been made from this batch.
+- SC-002 fake-clock coverage now includes initial expiry observation through
+  request and passive-stream validation, renewal expiring during token
+  generation, rollback rejection of the old cookie, and local Owner sign-in
+  with a fresh session. Full `internal/userauth` normal and Race suites,
+  `go vet ./internal/userauth`, and the focused HTTP renewal regression passed.
+- SC-009 now has real Chrome coverage at 390×844 RTL. The test uses native
+  DevTools Enter to Undo and emulated touch to Redo, verifies the original
+  Cue/Action identity returns with no horizontal overflow, and checks that no
+  runtime Session or Published Snapshot is created. The focused Chrome test
+  passed normally and under Race; Cue history Node tests, `go vet
+  ./internal/httpapi`, gofmt, JavaScript syntax, and `git diff --check` passed.
+  Core Browser Cue Delivery now includes this new test for the next run.
+- Linked PR review remains unchanged and all are OPEN with passing exact-head
+  checks: TabletPlayer #36 `91613da`; ESP32 DMX #39 `3ad7749`; ESP32 Camera
+  #20 `455b066`; StageLaser #56 `b14a578` and #57 `c4ff10b`. The first four
+  are Draft; #57 is open and not Draft. No linked repository was modified.
+- No active workflow remains on remote `460db92`. Next action: recheck remote
+  and PR heads, push this completed batch as a normal fast-forward to the same
+  branch, then wait for all new exact-head Core/Companion/Camera workflows
+  before the next push. Do not merge or activate production Project ACL.
+- Safety remains unchanged: production services/data/Vault, original show
+  data, real device commands, firmware, production ACL, force push, merge,
+  paid actions and backup deletion remain untouched.
+
 ## Resume update — 2026-11-14 23:35 UTC · Race failure and SC-024 keyboard gate
 
 - Branch: `integration/stagecore-rc`; PR #534 remains OPEN/Draft. Before this
