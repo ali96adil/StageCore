@@ -2334,3 +2334,10 @@ handlers do not invoke business services, Runtime Control, Vault, Companion,
 or device adapters. This validates the policy map and the live route gate as a
 set; it does not close response-delivery races in each real handler or imply
 that Project ACL has been enabled in the production assembler.
+
+`TestQualifiedOwnerRouteMatrix` adds no-op probes for every pattern in
+`ownerRouteQualification`. The qualified route gate accepts an Owner and
+returns `FORBIDDEN` for a scoped Operator, even where that account has unrelated
+Project grants. No handler side effect is executed; direct device, firmware,
+transfer, capsule-import, and project administration routes remain Owner-only
+in the qualified test assembly.

@@ -80,29 +80,6 @@ func TestQualifiedProjectRoutePermissionMatrix(t *testing.T) {
 		}
 		return append(grants, projectaccess.ProjectView)
 	}
-	concretePath := func(pattern string, projectID string) string {
-		_, path, ok := strings.Cut(pattern, " ")
-		if !ok {
-			t.Fatalf("invalid permission-map route pattern %q", pattern)
-		}
-		for {
-			start := strings.IndexByte(path, '{')
-			if start < 0 {
-				return path
-			}
-			end := strings.IndexByte(path[start:], '}')
-			if end < 0 {
-				t.Fatalf("unterminated path parameter in %q", pattern)
-			}
-			name := path[start+1 : start+end]
-			value := "qualification-" + name
-			if name == "project_id" {
-				value = projectID
-			}
-			path = path[:start] + value + path[start+end+1:]
-		}
-	}
-
 	for _, pattern := range routes {
 		method, _, ok := strings.Cut(pattern, " ")
 		if !ok {
@@ -112,7 +89,7 @@ func TestQualifiedProjectRoutePermissionMatrix(t *testing.T) {
 		if len(permissions) == 0 {
 			t.Fatalf("route %q has no explicit Project permission", pattern)
 		}
-		path := concretePath(pattern, project.ID)
+		path := qualificationProbePath(t, pattern, project.ID)
 		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, withViewMembership(permissions)); err != nil {
 			t.Fatalf("grant %v for %s: %v", permissions, pattern, err)
 		}
@@ -134,10 +111,92 @@ func TestQualifiedProjectRoutePermissionMatrix(t *testing.T) {
 		if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, withViewMembership(permissions)); err != nil {
 			t.Fatalf("restore grant for cross-Project check %s: %v", pattern, err)
 		}
-		foreignPath := concretePath(pattern, foreign.ID)
+		foreignPath := qualificationProbePath(t, pattern, foreign.ID)
 		if response := request(method, foreignPath); response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "PROJECT_NOT_FOUND") {
 			t.Errorf("Project grant crossed scope for %s %s: HTTP %d %s", method, foreignPath, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestQualifiedOwnerRouteMatrix(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "owner-route-matrix", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerOwnerProbes := func(server *Server) {
+		for pattern := range ownerRouteQualification {
+			server.mux.HandleFunc(pattern, withAuthenticatedSession(h.auth, isUnsafeMethod(methodFromPattern(pattern)),
+				func(w http.ResponseWriter, r *http.Request, session userauth.Session, token string) {
+					if _, ok := qualifyProjectRoute(w, r, h.auth, session, token); !ok {
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				}))
+		}
+	}
+	handler := New(registerOwnerProbes, WithProjectRouteQualification(access)).Handler()
+	routes := make([]string, 0, len(ownerRouteQualification))
+	for pattern := range ownerRouteQualification {
+		routes = append(routes, pattern)
+	}
+	sort.Strings(routes)
+	if len(routes) == 0 {
+		t.Fatal("Owner route qualification map is empty")
+	}
+	request := func(login userauth.Credential, pattern string) *httptest.ResponseRecorder {
+		t.Helper()
+		method := methodFromPattern(pattern)
+		path := qualificationProbePath(t, pattern, "probe-project")
+		req := authenticatedExecutionEnvironmentRequest(t, login.Token, login.CSRFToken, method, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	for _, pattern := range routes {
+		if response := request(owner, pattern); response.Code != http.StatusNoContent {
+			t.Errorf("Owner could not pass qualification gate for %s: HTTP %d %s", pattern, response.Code, response.Body.String())
+		}
+		if response := request(operatorLogin, pattern); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "FORBIDDEN") {
+			t.Errorf("scoped Operator crossed Owner-only gate for %s: HTTP %d %s", pattern, response.Code, response.Body.String())
+		}
+	}
+}
+
+func qualificationProbePath(t *testing.T, pattern, projectID string) string {
+	t.Helper()
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		t.Fatalf("invalid permission-map route pattern %q", pattern)
+	}
+	for {
+		start := strings.IndexByte(path, '{')
+		if start < 0 {
+			return path
+		}
+		end := strings.IndexByte(path[start:], '}')
+		if end < 0 {
+			t.Fatalf("unterminated path parameter in %q", pattern)
+		}
+		name := path[start+1 : start+end]
+		value := "qualification-" + name
+		if name == "project_id" {
+			value = projectID
+		}
+		path = path[:start] + value + path[start+end+1:]
 	}
 }
 
