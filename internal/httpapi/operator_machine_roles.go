@@ -81,7 +81,8 @@ type roleAssignmentView struct {
 }
 
 type machineRoleHooks struct {
-	BeforeListResponse func()
+	BeforeListResponse     func()
+	BeforeMutationResponse func()
 }
 
 func WithOperatorMachineRoles(auth *userauth.Service, stageStore *store.Store) Option {
@@ -174,6 +175,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_CREATE_FAILED")
 			return
 		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusCreated, makeMachineRoleView(role))
 	}))
 
@@ -191,6 +195,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 		})
 		if err != nil {
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_UPDATE_FAILED")
+			return
+		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
@@ -215,6 +222,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RETIRE_FAILED")
 			return
 		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
 	}))
 
@@ -227,6 +237,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 		)
 		if err != nil {
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RESTORE_FAILED")
+			return
+		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
 			return
 		}
 		writeJSON(w, http.StatusOK, makeMachineRoleView(updated))
@@ -243,6 +256,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			strings.TrimSpace(r.PathValue("machine_role_id")),
 		); err != nil {
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_DELETE_FAILED")
+			return
+		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -271,6 +287,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			return
 		}
 		updated, err := stageStore.GetMachineRole(r.Context(), roleID)
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
+			return
+		}
 		if err != nil {
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_REQUIREMENT_FAILED")
 			return
@@ -299,6 +318,9 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_ASSIGN_FAILED")
 			return
 		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
+			return
+		}
 		writeJSON(w, http.StatusCreated, makeRoleAssignmentView(assignment))
 	}))
 
@@ -323,8 +345,18 @@ func registerOperatorMachineRoleRoutes(mux *http.ServeMux, auth *userauth.Servic
 			writeMachineRoleStoreError(w, err, "MACHINE_ROLE_RELEASE_FAILED")
 			return
 		}
+		if !machineRoleMutationResponseAllowed(w, r, auth, session, hooks) {
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+}
+
+func machineRoleMutationResponseAllowed(w http.ResponseWriter, r *http.Request, auth *userauth.Service, session userauth.Session, hooks machineRoleHooks) bool {
+	if hooks.BeforeMutationResponse != nil {
+		hooks.BeforeMutationResponse()
+	}
+	return recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure)
 }
 
 func writeMachineRoleStoreError(w http.ResponseWriter, err error, fallback string) {

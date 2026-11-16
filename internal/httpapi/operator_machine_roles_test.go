@@ -117,6 +117,41 @@ func TestOperatorMachineRoleListDoesNotExposeForeignProjectCompanions(t *testing
 	}
 }
 
+func TestOperatorMachineRoleCreateSuppressesCommittedResultAfterProjectGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.DeviceConfigure}); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(
+		withOperatorMachineRoles(f.h.auth, f.projects, machineRoleHooks{BeforeMutationResponse: func() {
+			if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+				t.Errorf("revoke machine-role grant before response: %v", err)
+			}
+		}}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	path := "/api/v1/projects/" + f.projectID + "/machine-roles"
+	body := []byte(`{"role_key":"VIDEO-MAIN","display_name":"Main Video","required_capabilities":["local.echo"],"required":true}`)
+	req := authenticatedMutationRequest(t, http.MethodPost, path, body, f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), "VIDEO-MAIN") || strings.Contains(response.Body.String(), "machine_role_id") {
+		t.Fatalf("revoked Operator received a committed machine-role result: HTTP %d %s", response.Code, response.Body.String())
+	}
+	roles, err := f.projects.ListMachineRoles(ctx, f.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 1 || roles[0].RoleKey != "VIDEO-MAIN" {
+		t.Fatalf("committed machine-role state was not retained after response suppression: %+v", roles)
+	}
+}
+
 func TestOperatorMachineRoleProvisioningRequiresAuthAndTrustedCompanion(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()

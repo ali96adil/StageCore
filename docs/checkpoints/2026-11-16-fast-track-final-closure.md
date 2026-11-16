@@ -51,3 +51,12 @@ Related PR heads last verified green:
 1. Recheck remote branch and PR #534 ancestry, then push the tested test+checkpoint batch normally to `integration/stagecore-rc`.
 2. Wait for Core, Companion Core and Camera Relay CI at the exact new SHA; do not interrupt an active run with another push.
 3. Continue only a reproducible SC-024 whole-server delivery gap. If none is demonstrated, keep the overall NO-GO status explicit and stop at feature freeze; do not add secondary improvements.
+
+## SC-024 continuation — machine-role mutation delivery
+
+- Starting local and remote HEAD: `c8218938f54acdc592e3d821a369adf4fcb6b160`; PR #534 is still OPEN / DRAFT. Core `43792209563`, Companion Core `43792209517`, and Camera Relay `43792209633` for that starting HEAD are all completed successfully; no run was active before preparing this batch.
+- Added post-commit session and `DeviceConfigure` grant revalidation before returning results from all eight machine-role mutation operations. The deterministic regression revokes the grant after create commits, expects a non-retryable 403 with no role ID, and verifies the role remains committed.
+- Focused `go test ./internal/httpapi -run '^TestOperatorMachineRole' -count=1`, focused HTTP API Race tests, `go vet ./internal/httpapi`, and `git diff --check` pass locally. The Race run for this code/test batch passed in the previous continuation. No media-upload change was retained: a probe that kept the controlling `media.upload` grant active did not demonstrate an authorization gap.
+- This handoff is part of the code commit for the batch. On resume, run `git rev-parse HEAD` for its exact local SHA; remote HEAD remains `c8218938f54acdc592e3d821a369adf4fcb6b160` until the normal push succeeds. Push only after rechecking the branch has not advanced, then wait for Core, Companion Core, and Camera Relay on the new exact SHA before another push.
+- SC-024 whole-server permission/delivery reconciliation and installed-copy migration/recovery qualification remain NO-GO. Project ACL is still off. Pi ARM64 performance remains **PERFORMANCE QUALIFICATION PENDING**; do not retry the failed SSH path without a new connectivity premise or use the stable Pi. No production, Vault, real-device, firmware, or show-output action was performed.
+- Next critical task: after exact-head CI is green, inspect the next concrete post-commit result-delivery boundary in the project-scoped Stage Device mutation handlers; require a reproducible grant-revocation case before changing them. Keep PR #534 Draft and production ACL disabled.

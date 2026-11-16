@@ -2352,3 +2352,19 @@ read-only and mutation methods. The probe validates route classification and
 the outer authorization guard; it deliberately does not execute install,
 update, permission-write, or plugin business handlers and does not qualify
 their asynchronous delivery boundaries.
+
+## SC-024 continuation · 2026-11-16 · machine-role mutation result fence
+
+Machine-role create/update/retire/restore/delete, runtime-requirement, role
+assignment, and release handlers now recheck the live session and
+`DeviceConfigure` project grant after the store operation commits and before
+returning IDs or result details. If authority is revoked in that interval, the
+response withholds the committed result and marks the effect non-retryable;
+the committed state is not described as rolled back. The regression
+`TestOperatorMachineRoleCreateSuppressesCommittedResultAfterProjectGrantRevocation`
+revokes `DeviceConfigure` after commit, verifies a 403 with no role ID, and
+confirms that the role remains committed. The focused machine-role tests,
+Race tests, and `go vet ./internal/httpapi` pass locally. Production assembly
+and Migration 53 are unchanged; Project ACL remains disabled. This is one
+additional handler family, not complete endpoint-to-policy or deployed
+Companion/session compatibility qualification.
