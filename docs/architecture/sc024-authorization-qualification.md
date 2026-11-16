@@ -2426,3 +2426,23 @@ configured application or hardware command. Full normal tests across
 focused Race coverage, `go vet` for all three packages, and diff/format checks
 passed. Full normal and Race tests for all three packages passed, as did
 `go vet` and diff/format checks.
+
+## SC-024 continuation · 2026-11-16 · post-dispatch result delivery fence
+
+The new HTTP and Script adapter checks prevented dispatch after authority was
+revoked during adapter preparation, but Runtime Control returned an adapter's
+result without rechecking the live authorization. Red-first
+`TestHTTPActionSuppressesResultAfterDispatchAuthorityRevocation` held a local
+loopback server response until after revocation and reproduced
+`COMPLETED` / `ACCEPTED` / `HTTP 202 Accepted` reaching the caller. No external
+endpoint was used.
+
+`stoppableExecutor` now checks the same per-action authority after the adapter
+returns and before Cue Engine stores/emits its result. If authority ended, it
+returns a generic non-success result and withholds the adapter summary while
+preserving the actual ACK and `DispatchNotAttempted` value. It does not claim
+that a request already sent was canceled or safe to replay. Focused normal and
+Race dispatch tests, full normal and Race tests for `internal/httpaction`,
+`internal/runtimecontrol`, and `internal/scriptaction`, `go vet` for those
+packages, and `git diff --check` pass. Production ACL remains disabled; no
+production service, external endpoint, or physical output was used.

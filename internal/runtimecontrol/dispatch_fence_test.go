@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -195,5 +196,69 @@ func TestHTTPActionRechecksDispatchAuthorityBeforeRedirectFollowup(t *testing.T)
 	if result.ErrorCode != capability.DispatchAuthorityRevokedCode || result.Result != domain.ExecutionFailed ||
 		result.AckLevel != contracts.AckNone || result.DispatchNotAttempted {
 		t.Fatalf("redirect revocation did not preserve the already-attempted first request: %+v", result)
+	}
+}
+
+func TestHTTPActionSuppressesResultAfterDispatchAuthorityRevocation(t *testing.T) {
+	requestReceived := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseResponse) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(requestReceived)
+		<-releaseResponse
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	defer release()
+
+	target, err := json.Marshal(map[string]string{"url": server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	var checks atomic.Int32
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		checks.Add(1)
+		if revoked.Load() {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	executor := newStoppableExecutor(httpaction.NewWithClient(server.Client()))
+	resultCh := make(chan capability.Result, 1)
+	go func() {
+		resultCh <- executor.Execute(ctx, capability.Request{
+			ExecutionID: "http-action-revoked-before-result", ProjectID: "project-a",
+			SessionID: "show-a", RuntimeSnapshotID: "snapshot-a", CorrelationID: "cue-a",
+			Capability: httpaction.CapabilityKey,
+			Target: &capability.Target{
+				Ref: "HTTP-OUT", LogicalType: "http", Configuration: target,
+			},
+			Parameters: json.RawMessage(`{"method":"POST"}`), TimeoutMS: 2000,
+		})
+	}()
+	select {
+	case <-requestReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP Action did not reach the local test server")
+	}
+	revoked.Store(true)
+	release()
+	var result capability.Result
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP Action did not return after the local response")
+	}
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.AckLevel != contracts.AckAccepted || result.DispatchNotAttempted {
+		t.Fatalf("result suppression misreported the already-attempted HTTP Action: %+v", result)
+	}
+	if result.ResponseSummary != "Cue action may have completed; result withheld after project authority ended" {
+		t.Fatalf("revoked caller received an adapter result instead of the generic outcome: %+v", result)
+	}
+	if checks.Load() < 3 {
+		t.Fatalf("dispatch authority checks=%d, want admission, network dispatch, and result delivery", checks.Load())
 	}
 }

@@ -1306,7 +1306,20 @@ func (e *stoppableExecutor) Execute(ctx context.Context, req capability.Request)
 			ErrorCode: code, ResponseSummary: "Cue was stopped before capability dispatch",
 		}
 	}
-	return e.inner.Execute(executionCtx, req)
+	result := e.inner.Execute(executionCtx, req)
+	if authorize, ok := ctx.Value(dispatchAuthorizationKey{}).(func(context.Context, capability.Request) error); ok &&
+		authorize != nil && result.ErrorCode != capability.DispatchAuthorityRevokedCode {
+		if err := capability.CheckDispatch(executionCtx); errors.Is(err, capability.ErrDispatchAuthorityRevoked) {
+			result.Result = domain.ExecutionFailed
+			result.ErrorCode = capability.DispatchAuthorityRevokedCode
+			if result.DispatchNotAttempted {
+				result.ResponseSummary = "Cue action result withheld after project authority ended before dispatch"
+			} else {
+				result.ResponseSummary = "Cue action may have completed; result withheld after project authority ended"
+			}
+		}
+	}
+	return result
 }
 
 func (e *stoppableExecutor) stop(correlationID string) {

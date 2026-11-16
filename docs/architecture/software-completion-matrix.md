@@ -375,3 +375,16 @@ live-source read / Stage Device show-requirement revocation tests pass normally
 and under Race; `go vet ./internal/httpapi` and `git diff --check` pass. No
 camera or device transport is called. This closes one result-delivery boundary
 only; whole-server qualification and production ACL activation remain open.
+
+## SC-024 Cue result delivery fence — 2026-11-16
+
+Runtime Control now rechecks the live per-action grant after an adapter returns
+and before persisting/emitting its result. Red-first local-loopback coverage
+reproduced an HTTP 202 result escaping after authority was revoked while the
+request was in flight. The result is now withheld with a generic revocation
+failure while preserving the actual ACK and attempted-dispatch state; an
+already-sent effect is not claimed to be canceled or replay-safe. Focused and
+full package normal/Race tests plus `go vet` pass. This closes one delivery
+boundary; SC-024 remains partial pending the complete route/policy and
+asynchronous-delivery audit, Companion compatibility, and cutover qualification.
+Project ACL remains disabled.

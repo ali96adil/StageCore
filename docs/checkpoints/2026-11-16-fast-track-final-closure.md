@@ -127,6 +127,14 @@ Related PR heads last verified green:
 - The first red-first test confirmed the old HTTP 200/result leak; no device socket or physical target was called. No production changes, ACL activation, firmware, Vault mutation, or show output occurred. Pi performance remains **PERFORMANCE QUALIFICATION PENDING**.
 - Next: after the current Core CI completes, push this fix on the same branch, verify Core/Companion/Camera Relay CI, and continue only if another concrete critical-path gap is reproduced. Keep PR #534 Draft.
 
+## SC-024 continuation — post-dispatch result delivery fence
+
+- Starting local/remote HEAD: `91aa3cd08c95edf52a777346b6b5eee0b078ea28`; tag `stagecore-rc-lab-2026-11-16-r8` points to this exact source. PR #534 is OPEN / DRAFT and all Core, Companion Core, and Camera Relay CI checks on this SHA passed. No CI is active for this base.
+- Red-first `TestHTTPActionSuppressesResultAfterDispatchAuthorityRevocation` used a local loopback server that accepted the HTTP request, held its response, then returned HTTP 202 after the test revoked the live grant. Before the fix the adapter result reached Runtime Control as `COMPLETED` / `ACCEPTED` / `HTTP 202 Accepted`.
+- `stoppableExecutor` now rechecks the per-action dispatch authority after adapter completion and before Cue Engine stores or emits the result. On revocation it withholds the adapter summary and returns a generic failure while preserving the actual ACK and `DispatchNotAttempted`; it does not claim an already-sent operation was canceled or safe to replay.
+- Focused normal and Race dispatch tests pass. Full normal and Race tests for `internal/httpaction`, `internal/runtimecontrol`, and `internal/scriptaction` pass; `go vet` for the same packages and `git diff --check` pass. No production service, external endpoint, Vault, show data, or physical output was used.
+- Current local worktree has two modified files: `internal/runtimecontrol/service.go` and `internal/runtimecontrol/dispatch_fence_test.go`, plus this qualification note, matrix entry, and checkpoint. It is based directly on `91aa3cd`; not yet committed or pushed. Re-run `git status`, inspect the diff, commit this batch, and push only to `integration/stagecore-rc`. Wait for all Core/Companion/Camera Relay checks at the new exact SHA before another change. Keep `r8` immutable; issue `r9` only if the resulting head meets RC acceptance. Keep ACL disabled, PR #534 Draft, and Pi performance **PENDING**.
+
 ## #455 — same-output arbitration for concurrent Cues
 
 - Starting local/remote HEAD: `c38b5275a66349a5609615a77ebc12370b9530d3`; PR #534 exact-head Core, Companion Core and Camera Relay checks had passed before this batch.
