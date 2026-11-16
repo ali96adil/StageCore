@@ -11,6 +11,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/domain"
+	"github.com/ali96adil/StageCore/internal/runtimecontrol"
 	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/store"
 )
@@ -25,6 +26,7 @@ type Service struct {
 	engine      *cueengine.Engine
 	twin        *simulator.DigitalTwin
 	checkpoints *simulator.CheckpointManager
+	runtime     *runtimecontrol.Service
 }
 
 type StartRequest struct {
@@ -41,7 +43,7 @@ type StartRequest struct {
 type CueRequest struct {
 	SessionID            string
 	Issuer               string
-	RequestID             string
+	RequestID            string
 	ExpectedCurrentCueID *string
 	RequestedCueID       *string
 	OperatorNote         *string
@@ -63,16 +65,134 @@ type Status struct {
 	Events            []contracts.EventEnvelope     `json:"events"`
 }
 
-func New(s *store.Store, engine *cueengine.Engine, twin *simulator.DigitalTwin) *Service {
+type simulationSessionJSON struct {
+	ID                    string                       `json:"id"`
+	SessionID             string                       `json:"session_id"`
+	ProjectID             string                       `json:"project_id"`
+	RuntimeSnapshotID     string                       `json:"runtime_snapshot_id"`
+	Type                  domain.SessionType           `json:"type"`
+	Name                  string                       `json:"name"`
+	StartedAt             time.Time                    `json:"started_at"`
+	EndedAt               *time.Time                   `json:"ended_at,omitempty"`
+	Status                domain.SessionStatus         `json:"status"`
+	CurrentCueID          *string                      `json:"current_cue_id,omitempty"`
+	LastCompletedCueID    *string                      `json:"last_completed_cue_id,omitempty"`
+	NextCueID             *string                      `json:"next_cue_id,omitempty"`
+	LifecycleState        domain.SessionLifecycleState `json:"lifecycle_state"`
+	EndReason             string                       `json:"end_reason,omitempty"`
+	ManagedOutputBlackout bool                         `json:"managed_output_blackout"`
+	RehearsalPurpose      domain.RehearsalPurpose      `json:"rehearsal_purpose,omitempty"`
+	StartPosition         struct {
+		Version  int                             `json:"version"`
+		Kind     domain.SessionStartPositionKind `json:"kind"`
+		CueID    *string                         `json:"cue_id,omitempty"`
+		Metadata json.RawMessage                 `json:"metadata,omitempty"`
+	} `json:"start_position"`
+	StateTruth struct {
+		Version                    int                             `json:"version"`
+		RestorationStatus          domain.SessionRestorationStatus `json:"restoration_status"`
+		DesiredStateRef            *string                         `json:"desired_state_ref,omitempty"`
+		VerifiedStateRef           *string                         `json:"verified_state_ref,omitempty"`
+		ManualConfirmationRequired bool                            `json:"manual_confirmation_required"`
+	} `json:"state_truth"`
+}
+
+// MarshalJSON keeps the Simulation operator API's nested Session and
+// checkpoint fields in the snake_case shape consumed by the Operator UI.
+func (s Status) MarshalJSON() ([]byte, error) {
+	type checkpointJSON struct {
+		ID                   string          `json:"checkpoint_id"`
+		SourceSessionID      string          `json:"source_session_id"`
+		ProjectID            string          `json:"project_id"`
+		RuntimeSnapshotID    string          `json:"runtime_snapshot_id"`
+		StateContractVersion int             `json:"state_contract_version"`
+		CapturedAt           time.Time       `json:"captured_at"`
+		CurrentCueID         *string         `json:"current_cue_id,omitempty"`
+		LastCompletedCueID   *string         `json:"last_completed_cue_id,omitempty"`
+		NextCueID            *string         `json:"next_cue_id,omitempty"`
+		TwinState            json.RawMessage `json:"twin_state,omitempty"`
+		ContentHash          string          `json:"content_hash"`
+	}
+	type cueExecutionJSON struct {
+		ID             string                 `json:"cue_execution_id"`
+		SessionID      string                 `json:"session_id"`
+		CueID          string                 `json:"cue_id"`
+		CorrelationID  string                 `json:"correlation_id"`
+		TriggerSource  string                 `json:"trigger_source"`
+		StartedAt      time.Time              `json:"started_at"`
+		CompletedAt    *time.Time             `json:"completed_at,omitempty"`
+		Result         domain.ExecutionResult `json:"result"`
+		ManualOverride bool                   `json:"manual_override"`
+	}
+	type wireStatus struct {
+		ProjectID         string                    `json:"project_id"`
+		RuntimeSnapshotID string                    `json:"runtime_snapshot_id,omitempty"`
+		Session           *simulationSessionJSON    `json:"session,omitempty"`
+		Twin              simulator.SessionSnapshot `json:"digital_twin"`
+		Checkpoints       []checkpointJSON          `json:"checkpoints"`
+		CueExecutions     []cueExecutionJSON        `json:"cue_executions"`
+		Events            []contracts.EventEnvelope `json:"events"`
+	}
+	wire := wireStatus{
+		ProjectID: s.ProjectID, RuntimeSnapshotID: s.RuntimeSnapshotID, Twin: s.Twin,
+		Checkpoints:   make([]checkpointJSON, 0, len(s.Checkpoints)),
+		CueExecutions: make([]cueExecutionJSON, 0, len(s.CueExecutions)), Events: s.Events,
+	}
+	if s.Session != nil {
+		session := s.Session
+		wire.Session = &simulationSessionJSON{
+			ID: session.ID, SessionID: session.ID, ProjectID: session.ProjectID,
+			RuntimeSnapshotID: session.RuntimeSnapshotID, Type: session.Type, Name: session.Name,
+			StartedAt: session.StartedAt, EndedAt: session.EndedAt, Status: session.Status,
+			CurrentCueID: session.CurrentCueID, LastCompletedCueID: session.LastCompletedCueID,
+			NextCueID: session.NextCueID, LifecycleState: session.LifecycleState,
+			EndReason: session.EndReason, ManagedOutputBlackout: session.ManagedOutputBlackout,
+			RehearsalPurpose: session.RehearsalPurpose,
+		}
+		wire.Session.StartPosition.Version = session.StartPosition.Version
+		wire.Session.StartPosition.Kind = session.StartPosition.Kind
+		wire.Session.StartPosition.CueID = session.StartPosition.CueID
+		wire.Session.StartPosition.Metadata = session.StartPosition.Metadata
+		wire.Session.StateTruth.Version = session.StateTruth.Version
+		wire.Session.StateTruth.RestorationStatus = session.StateTruth.RestorationStatus
+		wire.Session.StateTruth.DesiredStateRef = session.StateTruth.DesiredStateRef
+		wire.Session.StateTruth.VerifiedStateRef = session.StateTruth.VerifiedStateRef
+		wire.Session.StateTruth.ManualConfirmationRequired = session.StateTruth.ManualConfirmationRequired
+	}
+	for _, checkpoint := range s.Checkpoints {
+		wire.Checkpoints = append(wire.Checkpoints, checkpointJSON{
+			ID: checkpoint.ID, SourceSessionID: checkpoint.SourceSessionID, ProjectID: checkpoint.ProjectID,
+			RuntimeSnapshotID: checkpoint.RuntimeSnapshotID, StateContractVersion: checkpoint.StateContractVersion,
+			CapturedAt: checkpoint.CapturedAt, CurrentCueID: checkpoint.CurrentCueID,
+			LastCompletedCueID: checkpoint.LastCompletedCueID, NextCueID: checkpoint.NextCueID,
+			TwinState: checkpoint.TwinState, ContentHash: checkpoint.ContentHash,
+		})
+	}
+	for _, execution := range s.CueExecutions {
+		wire.CueExecutions = append(wire.CueExecutions, cueExecutionJSON{
+			ID: execution.ID, SessionID: execution.SessionID, CueID: execution.CueID,
+			CorrelationID: execution.CorrelationID, TriggerSource: execution.TriggerSource,
+			StartedAt: execution.StartedAt, CompletedAt: execution.CompletedAt,
+			Result: execution.Result, ManualOverride: execution.ManualOverride,
+		})
+	}
+	return json.Marshal(wire)
+}
+
+func New(s *store.Store, engine *cueengine.Engine, twin *simulator.DigitalTwin, runtime ...*runtimecontrol.Service) *Service {
 	if s == nil || engine == nil || twin == nil {
 		return nil
 	}
-	return &Service{
+	service := &Service{
 		store:       s,
 		engine:      engine,
 		twin:        twin,
 		checkpoints: simulator.NewCheckpointManager(s, twin),
 	}
+	if len(runtime) > 0 {
+		service.runtime = runtime[0]
+	}
+	return service
 }
 
 func (s *Service) Start(ctx context.Context, req StartRequest) (domain.Session, contracts.CommandResult) {
@@ -242,6 +362,13 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		OperatorNote:         req.OperatorNote,
 	})
 	command := commandEnvelope(req.RequestID, cueengine.CueGoCommandType, session.ProjectID, session.RuntimeSnapshotID, req.Issuer, payload)
+	if s.runtime != nil {
+		return s.runtime.ScheduleGo(ctx, runtimecontrol.CueRequest{
+			SessionID: session.ID, Issuer: req.Issuer, RequestID: req.RequestID,
+			ExpectedCurrentCueID: req.ExpectedCurrentCueID,
+			RequestedCueID:       requested, OperatorNote: req.OperatorNote,
+		})
+	}
 	return s.engine.ExecuteCueGo(ctx, session.ID, command)
 }
 
@@ -268,6 +395,13 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) contracts.CommandRe
 	}
 	if session.Type != domain.SessionSimulation || session.Status != domain.SessionActive || session.LifecycleState != domain.SessionLifecycleActive {
 		return finish(rejected(command.CommandID, "SIMULATION_NOT_ACTIVE", "an ACTIVE SIMULATION Session is required", session.ID))
+	}
+	if s.runtime != nil {
+		release, stopErr := s.runtime.BeginSessionCueStop(ctx, session.ID)
+		if stopErr != nil {
+			return finish(failed(command.CommandID, "SIMULATION_CUE_STOP_FAILED", "Simulation could not confirm active Cue cancellation", session.ID))
+		}
+		defer release()
 	}
 	// The lifecycle change and its event must share a single authorization
 	// check at commit. Otherwise grant revocation between writes could leave

@@ -39,6 +39,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/simulationcontrol"
 	"github.com/ali96adil/StageCore/internal/simulationinput"
 	"github.com/ali96adil/StageCore/internal/simulationreport"
+	"github.com/ali96adil/StageCore/internal/simulator"
 	"github.com/ali96adil/StageCore/internal/stageaudio"
 	"github.com/ali96adil/StageCore/internal/storagehealth"
 	"github.com/ali96adil/StageCore/internal/timecode"
@@ -136,6 +137,9 @@ func main() {
 	runtimeControl := runtimecontrol.New(
 		application.Store,
 		application.Capabilities,
+		runtimecontrol.WithSimulationExecutor(simulator.NewSessionExecutorWithDigitalTwin(
+			application.Store, application.Capabilities, application.DigitalTwin,
+		)),
 		runtimecontrol.WithSessionStartGate(sessionsafety.NewStageDeviceSnapshotGate(
 			application.Store,
 			application.DeviceExperience,
@@ -190,7 +194,7 @@ func main() {
 		})
 	})
 
-	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin)
+	simulation := simulationcontrol.New(application.Store, application.CueEngine, application.DigitalTwin, runtimeControl)
 	if simulation == nil {
 		logger.Error("simulation control startup failed")
 		os.Exit(1)

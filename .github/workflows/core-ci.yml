@@ -37,6 +37,7 @@ jobs:
         if: matrix.go == '1.26.x'
         run: |
           node --check internal/operatorweb/static/app.js
+          node --check internal/operatorweb/static/simulation.js
           node --check internal/operatorweb/static/timing-intelligence.js
           node --check internal/operatorweb/static/memory.js
           node --check internal/operatorweb/static/phase4.js

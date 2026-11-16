@@ -245,7 +245,7 @@
       } }, t("بدأت جلسة Simulation.", "Simulation started."));
     });
 
-    el("simGo")?.addEventListener("click", () => mutate("/go", { method: "POST", json: { request_id: requestID() } }, t("تم تنفيذ GO افتراضياً.", "Virtual GO completed.")));
+    el("simGo")?.addEventListener("click", () => mutate("/go", { method: "POST", json: { request_id: requestID() } }, t("جُدول GO افتراضياً، وتُحدَّث حالة التنفيذ تلقائياً.", "Virtual GO scheduled; execution status refreshes automatically.")));
     el("simConfirmStart")?.addEventListener("click", () => mutate("/confirm-start", { method: "POST", json: {} }, t("تم تأكيد حالة البداية بدون ادعاء verification.", "Start state accepted without claiming verification.")));
     el("simCheckpointCapture")?.addEventListener("click", () => mutate("/checkpoints", { method: "POST", json: {} }, t("تم حفظ Checkpoint.", "Checkpoint captured.")));
     el("simResetTwin")?.addEventListener("click", () => mutate("/reset", { method: "POST", json: {} }, t("تم Reset للـDigital Twin فقط.", "Digital Twin reset.")));

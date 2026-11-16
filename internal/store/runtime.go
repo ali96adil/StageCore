@@ -307,6 +307,56 @@ func (s *Store) SessionManagedOutputBlackout(ctx context.Context, sessionID stri
 	return value == 1, nil
 }
 
+func (s *Store) SetSessionCueSchedulingPaused(ctx context.Context, sessionID string, paused bool, updatedBy string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	updatedBy = strings.TrimSpace(updatedBy)
+	if sessionID == "" || updatedBy == "" {
+		return fmt.Errorf("%w: session and actor are required", domain.ErrInvalidInput)
+	}
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session.Status != domain.SessionActive {
+		return fmt.Errorf("%w: Cue scheduling state requires an active session", domain.ErrConflict)
+	}
+	value := 0
+	if paused {
+		value = 1
+	}
+	result, err := capability.ExecAuthorized(ctx, s.db, `
+		INSERT INTO runtime_cue_scheduling_state (session_id, paused, updated_by, updated_at_us)
+		SELECT session_id, ?, ?, ? FROM sessions
+		WHERE session_id = ? AND status = 'ACTIVE'
+		ON CONFLICT(session_id) DO UPDATE SET
+			paused = excluded.paused,
+			updated_by = excluded.updated_by,
+			updated_at_us = excluded.updated_at_us
+	`, value, updatedBy, clock.UnixMicros(s.clock.Now().UTC()), session.ID)
+	if err != nil {
+		return fmt.Errorf("set session Cue scheduling state: %w", err)
+	}
+	return requireOneRow(result)
+}
+
+func (s *Store) SessionCueSchedulingPaused(ctx context.Context, sessionID string) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false, fmt.Errorf("%w: session is required", domain.ErrInvalidInput)
+	}
+	var paused int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT paused FROM runtime_cue_scheduling_state WHERE session_id = ?
+	`, sessionID).Scan(&paused)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read session Cue scheduling state: %w", err)
+	}
+	return paused == 1, nil
+}
+
 func (s *Store) SetSessionCurrentCue(ctx context.Context, sessionID, cueID string) error {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
@@ -515,9 +565,15 @@ func (s *Store) ListEvents(ctx context.Context, sessionID string) ([]contracts.E
 		}
 		event.OccurredAt = clock.FromUnixMicros(occurredUS)
 		event.ObservedAt = clock.FromUnixMicros(observedUS)
-		if snapshotID.Valid { event.RuntimeSnapshotID = snapshotID.String }
-		if correlationID.Valid { event.CorrelationID = correlationID.String }
-		if causationID.Valid { event.CausationID = causationID.String }
+		if snapshotID.Valid {
+			event.RuntimeSnapshotID = snapshotID.String
+		}
+		if correlationID.Valid {
+			event.CorrelationID = correlationID.String
+		}
+		if causationID.Valid {
+			event.CausationID = causationID.String
+		}
 		event.TraceContext = json.RawMessage(trace)
 		event.Payload = json.RawMessage(payload)
 		out = append(out, event)
@@ -532,20 +588,30 @@ func (s *Store) FindCommandRecord(ctx context.Context, command contracts.Command
 		// to read a result for a different Project or operation.
 		return domain.CommandRecord{}, false, domain.ErrNotFound
 	}
-	if err != nil || found || command.IdempotencyKey == "" { return record, found, err }
+	if err != nil || found || command.IdempotencyKey == "" {
+		return record, found, err
+	}
 	return s.getCommandRecord(ctx, `SELECT command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us FROM command_records WHERE project_id = ? AND command_type = ? AND idempotency_key = ?`, command.ProjectID, command.CommandType, command.IdempotencyKey)
 }
 
 func (s *Store) ReserveCommand(ctx context.Context, command contracts.CommandEnvelope) (domain.CommandRecord, bool, error) {
-	if existing, found, err := s.FindCommandRecord(ctx, command); err != nil || found { return existing, false, err }
+	if existing, found, err := s.FindCommandRecord(ctx, command); err != nil || found {
+		return existing, false, err
+	}
 	now := s.clock.Now().UTC()
 	issuedAt := command.IssuedAt.UTC()
-	if issuedAt.IsZero() { issuedAt = now }
+	if issuedAt.IsZero() {
+		issuedAt = now
+	}
 	correlationID := command.CorrelationID
-	if correlationID == "" { correlationID = command.CommandID }
+	if correlationID == "" {
+		correlationID = command.CommandID
+	}
 	_, err := capability.ExecAuthorized(ctx, s.db, `INSERT INTO command_records (command_id, command_type, schema_version, issued_at_us, project_id, runtime_snapshot_id, idempotency_key, correlation_id, status, result_json, created_at_us, updated_at_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACCEPTED', '{}', ?, ?)`, command.CommandID, command.CommandType, command.SchemaVersion, clock.UnixMicros(issuedAt), command.ProjectID, command.RuntimeSnapshotID, command.IdempotencyKey, correlationID, clock.UnixMicros(now), clock.UnixMicros(now))
 	if err != nil {
-		if existing, found, lookupErr := s.FindCommandRecord(ctx, command); lookupErr == nil && found { return existing, false, nil }
+		if existing, found, lookupErr := s.FindCommandRecord(ctx, command); lookupErr == nil && found {
+			return existing, false, nil
+		}
 		return domain.CommandRecord{}, false, fmt.Errorf("reserve command: %w", err)
 	}
 	return domain.CommandRecord{CommandID: command.CommandID, CommandType: command.CommandType, SchemaVersion: command.SchemaVersion, ProjectID: command.ProjectID, SnapshotID: command.RuntimeSnapshotID, IdempotencyKey: command.IdempotencyKey, CorrelationID: correlationID, Status: string(contracts.CommandAccepted), ResultJSON: json.RawMessage(`{}`), IssuedAt: issuedAt, CreatedAt: now, UpdatedAt: now}, true, nil
@@ -579,9 +645,13 @@ func (s *Store) UpdateAcceptedCommandResult(ctx context.Context, commandID strin
 
 func (s *Store) finishCommand(ctx context.Context, q execer, commandID string, result contracts.CommandResult) error {
 	resultJSON, err := json.Marshal(result)
-	if err != nil { return fmt.Errorf("marshal command result: %w", err) }
+	if err != nil {
+		return fmt.Errorf("marshal command result: %w", err)
+	}
 	res, err := q.ExecContext(ctx, `UPDATE command_records SET status = ?, result_json = ?, updated_at_us = ? WHERE command_id = ? AND status = 'ACCEPTED'`, result.Status, string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
-	if err != nil { return fmt.Errorf("finish command: %w", err) }
+	if err != nil {
+		return fmt.Errorf("finish command: %w", err)
+	}
 	return requireOneRow(res)
 }
 
@@ -590,8 +660,12 @@ func (s *Store) getCommandRecord(ctx context.Context, query string, args ...any)
 	var issuedUS, createdUS, updatedUS int64
 	var resultJSON string
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&record.CommandID, &record.CommandType, &record.SchemaVersion, &issuedUS, &record.ProjectID, &record.SnapshotID, &record.IdempotencyKey, &record.CorrelationID, &record.Status, &resultJSON, &createdUS, &updatedUS)
-	if errors.Is(err, sql.ErrNoRows) { return domain.CommandRecord{}, false, nil }
-	if err != nil { return domain.CommandRecord{}, false, fmt.Errorf("get command record: %w", err) }
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.CommandRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.CommandRecord{}, false, fmt.Errorf("get command record: %w", err)
+	}
 	record.ResultJSON = json.RawMessage(resultJSON)
 	record.IssuedAt = clock.FromUnixMicros(issuedUS)
 	record.CreatedAt = clock.FromUnixMicros(createdUS)
@@ -601,19 +675,35 @@ func (s *Store) getCommandRecord(ctx context.Context, query string, args ...any)
 
 func (s *Store) HasRunningCueExecution(ctx context.Context, sessionID string) (bool, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cue_executions WHERE session_id = ? AND result = 'RUNNING'`, sessionID).Scan(&count); err != nil { return false, fmt.Errorf("check running cue execution: %w", err) }
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cue_executions WHERE session_id = ? AND result = 'RUNNING'`, sessionID).Scan(&count); err != nil {
+		return false, fmt.Errorf("check running cue execution: %w", err)
+	}
 	return count > 0, nil
 }
 
 func requireOneRow(result sql.Result) error {
 	affected, err := result.RowsAffected()
-	if err != nil { return fmt.Errorf("rows affected: %w", err) }
-	if affected != 1 { return domain.ErrConflict }
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if affected != 1 {
+		return domain.ErrConflict
+	}
 	return nil
 }
 
-func nullableText(value string) any { if value == "" { return nil }; return value }
-func nullableString(value *string) any { if value == nil || *value == "" { return nil }; return *value }
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+func nullableString(value *string) any {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return *value
+}
 
 func terminalCommandStatus(status string) bool {
 	switch contracts.CommandStatus(status) {
@@ -625,19 +715,27 @@ func terminalCommandStatus(status string) bool {
 }
 
 func decodeCommandResult(record domain.CommandRecord) (contracts.CommandResult, error) {
-	if !terminalCommandStatus(record.Status) { return contracts.CommandResult{}, fmt.Errorf("command record is not terminal") }
+	if !terminalCommandStatus(record.Status) {
+		return contracts.CommandResult{}, fmt.Errorf("command record is not terminal")
+	}
 	var result contracts.CommandResult
-	if err := json.Unmarshal(record.ResultJSON, &result); err != nil { return contracts.CommandResult{}, fmt.Errorf("decode command result: %w", err) }
+	if err := json.Unmarshal(record.ResultJSON, &result); err != nil {
+		return contracts.CommandResult{}, fmt.Errorf("decode command result: %w", err)
+	}
 	return result, nil
 }
 
 func (s *Store) StoredCommandResult(record domain.CommandRecord) (contracts.CommandResult, bool, error) {
-	if !terminalCommandStatus(record.Status) { return contracts.CommandResult{}, false, nil }
+	if !terminalCommandStatus(record.Status) {
+		return contracts.CommandResult{}, false, nil
+	}
 	result, err := decodeCommandResult(record)
 	return result, true, err
 }
 
 func durationMilliseconds(started, completed time.Time) int64 {
-	if completed.Before(started) { return 0 }
+	if completed.Before(started) {
+		return 0
+	}
 	return completed.Sub(started).Milliseconds()
 }

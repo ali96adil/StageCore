@@ -179,6 +179,119 @@ func TestRehearsalGOContinuesWhileTimingCapturePaused(t *testing.T) {
 	}
 }
 
+func TestCueSchedulingPauseBlocksNewRunsButDoesNotInterruptAcceptedCue(t *testing.T) {
+	h := newRuntimeHarness(t,
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+	)
+	ctx := context.Background()
+	executor := &gatedOutputExecutor{requests: make(chan capability.Request, 2), release: make(chan struct{})}
+	h.service = New(h.store, executor)
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009801",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+	accepted := h.service.ScheduleGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009802",
+	})
+	if accepted.Status != contracts.CommandAccepted {
+		t.Fatalf("GO acceptance=%+v", accepted)
+	}
+	select {
+	case <-executor.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("accepted Cue did not reach its gated Action")
+	}
+	paused := h.service.PauseCueScheduling(ctx, CueSchedulingRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009803",
+	})
+	if paused.Status != contracts.CommandCompleted {
+		t.Fatalf("pause=%+v", paused)
+	}
+	close(executor.release)
+	acceptedExecutionID := cueExecutionIDFromResult(t, accepted)
+	completed := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		executions, err := h.store.ListCueExecutions(ctx, session.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, execution := range executions {
+			if execution.ID == acceptedExecutionID && execution.Result == domain.ExecutionCompleted {
+				completed = true
+			}
+		}
+		if completed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatal("accepted Cue was interrupted by pause instead of completing")
+	}
+
+	// Pause state is durable and applies only to new scheduling, including GO
+	// requests arriving through a Runtime Control instance created later.
+	restartedControl := New(h.store, executor)
+	if isPaused, err := restartedControl.CueSchedulingPaused(ctx, session.ID); err != nil || !isPaused {
+		t.Fatalf("persisted scheduling pause=%t err=%v", isPaused, err)
+	}
+	blocked := restartedControl.ScheduleGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009804",
+	})
+	if blocked.Status != contracts.CommandRejected || blocked.Error == nil || blocked.Error.ErrorCode != "CUE_SCHEDULING_PAUSED" {
+		t.Fatalf("GO during pause=%+v, want CUE_SCHEDULING_PAUSED", blocked)
+	}
+	resumed := restartedControl.ResumeCueScheduling(ctx, CueSchedulingRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009805",
+	})
+	if resumed.Status != contracts.CommandCompleted {
+		t.Fatalf("resume=%+v", resumed)
+	}
+	next := restartedControl.ScheduleGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009806",
+	})
+	if next.Status != contracts.CommandCompleted && next.Status != contracts.CommandAccepted {
+		t.Fatalf("GO after resume=%+v", next)
+	}
+	if next.Status == contracts.CommandAccepted {
+		nextExecutionID := cueExecutionIDFromResult(t, next)
+		deadline = time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			executions, err := h.store.ListCueExecutions(ctx, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			finished := false
+			for _, execution := range executions {
+				if execution.ID == nextExecutionID && execution.Result == domain.ExecutionCompleted {
+					finished = true
+				}
+			}
+			if finished {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("GO accepted after Resume did not complete")
+	}
+}
+
+func cueExecutionIDFromResult(t *testing.T, result contracts.CommandResult) string {
+	t.Helper()
+	var receipt struct {
+		CueExecutionID string `json:"cue_execution_id"`
+	}
+	if err := json.Unmarshal(result.Payload, &receipt); err != nil || receipt.CueExecutionID == "" {
+		t.Fatalf("missing Cue execution receipt in %s: %v", result.Payload, err)
+	}
+	return receipt.CueExecutionID
+}
+
 func TestNextGoOverlapsPendingDelayWithoutCancellingFirstCue(t *testing.T) {
 	h := newRuntimeHarnessWithPolicies(t,
 		[]json.RawMessage{

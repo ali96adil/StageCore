@@ -71,7 +71,8 @@ func (s *Service) CheckRuntimeIntent(
 		if status != "ACTIVE" || lifecycle != "ACTIVE" {
 			return ErrDenied
 		}
-		if sessionType != "SHOW" && sessionType != "REHEARSAL" {
+		simulationIntent := sessionType == "SIMULATION" && intent != RuntimeForceExit
+		if sessionType != "SHOW" && sessionType != "REHEARSAL" && !simulationIntent {
 			return ErrDenied // never reuse live SHOW authority in SIMULATION
 		}
 	}
@@ -80,34 +81,55 @@ func (s *Service) CheckRuntimeIntent(
 	switch intent {
 	case RuntimeGO, RuntimeJump:
 		needed = RehearsalControl
-		if sessionType == "SHOW" { needed = ShowGO }
+		if sessionType == "SHOW" {
+			needed = ShowGO
+		}
 	case RuntimeStopCue:
 		needed = RehearsalControl
-		if sessionType == "SHOW" { needed = ShowStop }
+		if sessionType == "SHOW" {
+			needed = ShowStop
+		}
 	case RuntimeStopSession:
 		needed = RehearsalControl
-		if sessionType == "SHOW" { needed = ShowEnterExit }
+		if sessionType == "SHOW" {
+			needed = ShowEnterExit
+		}
 	case RuntimeBlackoutEngage:
 		// Safety action is independently granted even after SHOW GO is
-		// revoked. Sessionless emergency only applies to ProjectID.
+		// revoked. Sessionless emergency only applies to ProjectID. A
+		// Simulation Session uses rehearsal authority because its blackout
+		// is a virtual latch and the runtime cannot dispatch physical output.
 		needed = ShowBlackoutEngage
+		if sessionType == "SIMULATION" {
+			needed = RehearsalControl
+		}
 	case RuntimeBlackoutClear, RuntimeForceExit:
 		// Clearing an engaged emergency blackout or skipping stop safety
-		// is much riskier than engaging one: keep strictly Owner-only
-		// until separately reviewed recovery/operator procedures exist.
+		// is much riskier than engaging one. Physical SHOW recovery remains
+		// Owner-only; clearing a virtual Simulation latch uses rehearsal
+		// authority because it cannot release physical output restrictions.
 		needed = ProjectView
+		if intent == RuntimeBlackoutClear && sessionType == "SIMULATION" {
+			needed = RehearsalControl
+		}
 	}
 	if err := s.Check(ctx, userID, projectID, needed); err != nil {
 		return err
 	}
-	if intent == RuntimeBlackoutClear || intent == RuntimeForceExit {
+	if intent == RuntimeForceExit || (intent == RuntimeBlackoutClear && sessionType != "SIMULATION") {
 		var role string
 		var enabled int
 		err := s.db.QueryRowContext(ctx,
-			`SELECT role, enabled FROM local_users WHERE user_id=?`, userID).Scan(&role,&enabled)
-		if errors.Is(err, sql.ErrNoRows) { return ErrDenied }
-		if err != nil { return fmt.Errorf("check privileged runtime recovery role: %w", err) }
-		if role != "OWNER" || enabled != 1 { return ErrDenied }
+			`SELECT role, enabled FROM local_users WHERE user_id=?`, userID).Scan(&role, &enabled)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrDenied
+		}
+		if err != nil {
+			return fmt.Errorf("check privileged runtime recovery role: %w", err)
+		}
+		if role != "OWNER" || enabled != 1 {
+			return ErrDenied
+		}
 	}
 	return nil
 }

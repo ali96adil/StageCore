@@ -142,7 +142,9 @@ internal/httpapi/operator_runtime.go	GET /api/v1/projects/{project_id}/runtime
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/emergency-blackout
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/go
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/jump
+internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/pause-cue-scheduling
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/project-blackout
+internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/resume-cue-scheduling
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/start
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/stop
 internal/httpapi/operator_runtime.go	POST /api/v1/projects/{project_id}/runtime/stop-session

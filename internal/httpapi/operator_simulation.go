@@ -111,7 +111,7 @@ func registerOperatorSimulationRoutes(mux *http.ServeMux, auth *userauth.Service
 		if !authorizeSimulationResponse(w, r, auth, session, hooks) {
 			return
 		}
-		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": created})
+		writeRuntimeCommandResponse(w, http.StatusCreated, result, map[string]any{"session": makeSessionView(created)})
 	}))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/simulation/go", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {

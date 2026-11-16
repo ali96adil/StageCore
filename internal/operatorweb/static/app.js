@@ -1389,6 +1389,18 @@ async function renderRuntime(startPolling = false) {
   const canControl = canRuntime();
   const snapshot = runtime.runtime_snapshot;
   const emergencyBlackout = !!runtime.managed_output_blackout;
+  const cueSchedulingPaused = !!runtime.cue_scheduling_paused;
+  const simulationSession = active?.type === "SIMULATION";
+  const emergencyBlackoutHeadline = emergencyBlackout
+    ? (simulationSession ? "SIMULATED BLACKOUT ACTIVE — GO/JUMP are blocked." : "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked.")
+    : "STOP ALL CUES is not a blackout.";
+  const emergencyBlackoutBody = emergencyBlackout
+    ? (simulationSession
+      ? "The virtual Emergency Blackout latch is active for this Simulation Session. No physical output was dispatched."
+      : "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design.")
+    : (simulationSession
+      ? "STOP ALL CUES interrupts active virtual Cues and pending delays. SIMULATE EMERGENCY BLACKOUT changes only this Session's virtual latch; it cannot dispatch to physical outputs."
+      : "STOP ALL CUES interrupts all active Cues and pending delays in this Session. It does not guarantee blackout. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped.");
   const blockers = (preflight?.checks || []).filter((check) => check.status === "BLOCK").length;
   const warnings = (preflight?.checks || []).filter((check) => check.status === "WARN").length;
   const showBlocked = preflight?.status === "BLOCK";
@@ -1465,9 +1477,10 @@ async function renderRuntime(startPolling = false) {
           <button id="editBlackoutClearButton" class="button ghost" ${!canControl || !snapshot ? "disabled" : ""} type="button">Clear Tablet / Native Visual Blackout</button>
           <small class="muted">EDIT Blackout is sessionless. Lighting stays dark after Clear until an explicit Lighting action restores it.</small>
           <small class="muted">Operational readiness is advisory: missing Mac/Companion, Stage Devices, live sources or stale snapshots stay visible below and do not disable SHOW. Structural Snapshot/security/storage/timecode configuration BLOCK conditions still prevent SHOW entry.</small>` : `
-          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout ? "disabled" : ""} type="button">GO</button>
+          <button id="goButton" class="button primary big" ${!canControl || !next || emergencyBlackout || cueSchedulingPaused ? "disabled" : ""} type="button">GO</button>
+          <button id="cueSchedulingToggle" class="button ${cueSchedulingPaused ? "primary" : "ghost"}" ${!canControl ? "disabled" : ""} type="button">${cueSchedulingPaused ? "Resume Cue Scheduling" : "Pause Cue Scheduling"}</button>
           <button id="stopCueButton" class="button danger big" ${!canControl ? "disabled" : ""} type="button">STOP ALL CUES</button>
-          <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT"}</button>
+          <button id="emergencyBlackoutButton" class="button ${emergencyBlackout ? "warn" : "danger"} big" ${!canControl ? "disabled" : ""} type="button">${simulationSession ? (emergencyBlackout ? "CLEAR SIMULATED BLACKOUT" : "SIMULATE EMERGENCY BLACKOUT") : (emergencyBlackout ? "CLEAR MANAGED BLACKOUT" : "EMERGENCY BLACKOUT")}</button>
           <label>Jump to Cue
             <select id="jumpCueSelect">
               <option value="">Select published Cue…</option>
@@ -1477,14 +1490,15 @@ async function renderRuntime(startPolling = false) {
               }).join("")}
             </select>
           </label>
-          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout ? "disabled" : ""} type="button">Confirmed Jump</button>
+          <button id="jumpButton" class="button warn" ${!canControl || emergencyBlackout || cueSchedulingPaused ? "disabled" : ""} type="button">Confirmed Jump</button>
           ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopTablets" type="checkbox" value="${esc(active.session_id)}"> Stop tablet playback when ending this rehearsal</label>` : ""}
           ${canControl && active.type === "REHEARSAL" ? `<label class="check-row"><input id="rehearsalStopExternal" type="checkbox" value="${esc(active.session_id)}"> Run external STOP actions configured in this Snapshot</label>` : ""}
-          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackout ? "MANAGED BLACKOUT ACTIVE — GO/JUMP are blocked." : "STOP ALL CUES is not a blackout."}</strong> ${emergencyBlackout ? "Managed Lighting, Tablet and Native Visual outputs have been commanded to their blackout state. Audio and external VDMX/OSC are unchanged by design." : "STOP ALL CUES interrupts all active Cues and pending delays in this Session. EMERGENCY BLACKOUT is a separate P0 operation for managed Lighting, Tablet and Native Visual outputs. Audio and external VDMX/OSC are never silently stopped."}</div>`}
+          <button id="stopSessionButton" class="button ghost" ${!canControl ? "disabled" : ""} type="button">Stop ${esc(active.type)} Session</button>\n          ${state.runtimeForceExitAvailable ? `<button id="forceStopSessionButton" class="button danger" ${!canControl ? "disabled" : ""} type="button">FORCE EXIT · bypass blackout confirmation</button>` : ""}\n          <div class="message ${emergencyBlackout ? "error" : "warn"}"><strong>${emergencyBlackoutHeadline}</strong> ${emergencyBlackoutBody}</div>`}
         <div class="runtime-meta">
           <span>Session: ${esc(active?.session_id || "—")}</span>
           <span>Snapshot: ${esc(snapshot?.runtime_snapshot_id || "—")}</span>
         </div>
+        ${cueSchedulingPaused ? '<div class="message warn"><strong>CUE SCHEDULING PAUSED</strong> Pause blocks new GO and JUMP commands. Accepted Cues and actions already sent to external systems continue. Use STOP to interrupt pending delays and currently interruptible Actions.</div>' : ""}
       </section>
     </div>
     <div class="stat-grid">
@@ -1503,8 +1517,9 @@ async function renderRuntime(startPolling = false) {
   el("editBlackoutButton")?.addEventListener("click", () => setProjectBlackoutRuntime(true));
   el("editBlackoutClearButton")?.addEventListener("click", () => setProjectBlackoutRuntime(false));
   el("goButton")?.addEventListener("click", () => goRuntime(projectID, runtime));
+  el("cueSchedulingToggle")?.addEventListener("click", () => setCueSchedulingPaused(projectID, runtime, !cueSchedulingPaused));
   el("stopCueButton")?.addEventListener("click", stopCueRuntime);
-  el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout));
+  el("emergencyBlackoutButton")?.addEventListener("click", () => setEmergencyBlackoutRuntime(!emergencyBlackout, simulationSession));
   el("jumpButton")?.addEventListener("click", () => jumpRuntime(projectID, runtime));
   el("stopSessionButton")?.addEventListener("click", () => stopSessionRuntime(active));
   el("forceStopSessionButton")?.addEventListener("click", forceStopSessionRuntime);
@@ -1553,6 +1568,20 @@ async function startRuntime(mode) {
 
 async function goRuntime(projectID, runtime) {
   await dispatchRuntimeCue(projectID, runtime, "go");
+}
+
+async function setCueSchedulingPaused(projectID, runtime, paused) {
+  const sessionID = runtime.session?.session_id;
+  if (!sessionID) return;
+  try {
+    await api(`/api/v1/projects/${projectID}/runtime/${paused ? "pause-cue-scheduling" : "resume-cue-scheduling"}`, {
+      method: "POST",
+      json: { request_id: requestID(), expected_session_id: sessionID },
+    });
+    await renderRuntime(true);
+  } catch (error) {
+    setMessage(globalMessage, errorMessage(error), error.status === 409 ? "warn" : "error");
+  }
 }
 
 async function dispatchRuntimeCue(projectID, runtime, operation, extra = {}) {
@@ -1612,10 +1641,14 @@ function emergencyDomainSummary(payload) {
     .join(" · ");
 }
 
-async function setEmergencyBlackoutRuntime(enabled) {
-  const warning = enabled
-    ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt all active Cues and command managed Lighting, StageLaser, Tablet and Native Visual outputs to safe state. Audio and external VDMX/OSC will NOT be stopped."
-    : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting stays dark and StageLaser stays DISARMED/OFF until explicit Lighting / ARM / Laser Cue actions. GO will only unlock after the managed clear succeeds.";
+async function setEmergencyBlackoutRuntime(enabled, simulationOnly = false) {
+  const warning = simulationOnly
+    ? (enabled
+      ? "Simulate Emergency Blackout for this Simulation Session? This changes only the virtual latch and cannot dispatch to physical outputs."
+      : "Clear the virtual Emergency Blackout latch? No physical outputs are contacted.")
+    : (enabled
+      ? "Activate EMERGENCY BLACKOUT? StageCore will first latch blackout and block GO, then interrupt all active Cues and command managed Lighting, StageLaser, Tablet and Native Visual outputs to safe state. Audio and external VDMX/OSC will NOT be stopped."
+      : "Clear managed blackout? Tablet and Native Visual blackout will be cleared, but Lighting stays dark and StageLaser stays DISARMED/OFF until explicit Lighting / ARM / Laser Cue actions. GO will only unlock after the managed clear succeeds.");
   if (!confirm(warning)) return;
   try {
     const payload = await api(`/api/v1/projects/${encodeURIComponent(state.project.project_id)}/runtime/emergency-blackout`, {
@@ -1627,7 +1660,10 @@ async function setEmergencyBlackoutRuntime(enabled) {
       },
     });
     const summary = emergencyDomainSummary(payload.result?.payload);
-    setMessage(globalMessage, `${enabled ? "Emergency Blackout applied." : "Managed blackout cleared."}${summary ? " " + summary : ""}`, enabled ? "warn" : "success");
+    const resultMessage = simulationOnly
+      ? `${enabled ? "Virtual Emergency Blackout applied." : "Virtual Emergency Blackout cleared."} No physical outputs were contacted.`
+      : `${enabled ? "Emergency Blackout applied." : "Managed blackout cleared."}${summary ? " " + summary : ""}`;
+    setMessage(globalMessage, resultMessage, enabled ? "warn" : "success");
     await renderRuntime(true);
   } catch (error) {
     try { await renderRuntime(true); } catch (_) {}

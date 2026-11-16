@@ -84,6 +84,8 @@ var projectRoutePermissions = map[string][]projectaccess.Permission{
 	"POST " + projectRoute + "/runtime/start":                                        {projectaccess.ProjectView},
 	"POST " + projectRoute + "/runtime/go":                                           {projectaccess.ProjectView},
 	"POST " + projectRoute + "/runtime/jump":                                         {projectaccess.ProjectView},
+	"POST " + projectRoute + "/runtime/pause-cue-scheduling":                         {projectaccess.ProjectView},
+	"POST " + projectRoute + "/runtime/resume-cue-scheduling":                        {projectaccess.ProjectView},
 	"POST " + projectRoute + "/runtime/stop":                                         {projectaccess.ProjectView},
 	"POST " + projectRoute + "/runtime/stop-session":                                 {projectaccess.ProjectView},
 	"POST " + projectRoute + "/runtime/emergency-blackout":                           {projectaccess.ProjectView},

@@ -74,6 +74,7 @@ type runtimeStatusView struct {
 	ActiveExecutionCount  int                    `json:"active_execution_count"`
 	LatestExecution       *runtimeExecutionView  `json:"latest_execution"`
 	ManagedOutputBlackout bool                   `json:"managed_output_blackout"`
+	CueSchedulingPaused   bool                   `json:"cue_scheduling_paused"`
 }
 
 type runtimeStatusBuilder func(*http.Request, string) (runtimeStatusView, error)
@@ -93,6 +94,44 @@ func withOperatorRuntimeStatusBuilder(auth *userauth.Service, projectStore *stor
 	}
 }
 
+func runtimeCueSchedulingTransition(auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service, paused bool) sessionHandler {
+	return func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
+		var body runtimeCommandRequest
+		if !decodeBoundedJSON(w, r, &body) {
+			return
+		}
+		active, ok := activeRuntimeSession(w, r, projectStore)
+		if !ok {
+			return
+		}
+		if body.ExpectedSessionID != nil && active.ID != *body.ExpectedSessionID {
+			writeJSON(w, http.StatusConflict, map[string]any{"error_code": "RUNTIME_SESSION_CHANGED"})
+			return
+		}
+		if !qualifyRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
+			return
+		}
+		request := runtimecontrol.CueSchedulingRequest{SessionID: active.ID, Issuer: session.User.ID, RequestID: strings.TrimSpace(body.RequestID)}
+		ctx := browserCueDispatchContext(r, auth, session, active.ID, projectaccess.RuntimeGO)
+		var result contracts.CommandResult
+		if paused {
+			result = runtime.PauseCueScheduling(ctx, request)
+		} else {
+			result = runtime.ResumeCueScheduling(ctx, request)
+		}
+		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionRuntimeControl) {
+			return
+		}
+		if !recheckCommittedRuntimeIntent(w, r, active.ID, projectaccess.RuntimeGO) {
+			return
+		}
+		writeRuntimeCommandResponse(w, http.StatusOK, result, map[string]any{
+			"cue_scheduling_paused": paused,
+			"scope":                 "NEW_GO_AND_JUMP_ADMISSION_ONLY",
+		})
+	}
+}
+
 func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, projectStore *store.Store, runtime *runtimecontrol.Service, buildStatus runtimeStatusBuilder) {
 	mux.HandleFunc("GET /api/v1/projects/{project_id}/runtime", withPermission(auth, userauth.PermissionProjectRead, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		view, err := buildStatus(r, r.PathValue("project_id"))
@@ -105,6 +144,14 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		if !allowLiveProjectRead(w, r, auth, session, userauth.PermissionProjectRead) {
 			return
+		}
+		if view.Session != nil {
+			paused, stateErr := runtime.CueSchedulingPaused(r.Context(), view.Session.ID)
+			if stateErr != nil {
+				writeProjectStoreError(w, stateErr)
+				return
+			}
+			view.CueSchedulingPaused = paused
 		}
 		writeJSON(w, http.StatusOK, view)
 	}))
@@ -202,6 +249,9 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		}
 		writeRuntimeCommandResponse(w, http.StatusOK, result, nil)
 	}))
+
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/pause-cue-scheduling", withPermission(auth, userauth.PermissionRuntimeControl, runtimeCueSchedulingTransition(auth, projectStore, runtime, true)))
+	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/resume-cue-scheduling", withPermission(auth, userauth.PermissionRuntimeControl, runtimeCueSchedulingTransition(auth, projectStore, runtime, false)))
 
 	mux.HandleFunc("POST /api/v1/projects/{project_id}/runtime/go", withPermission(auth, userauth.PermissionRuntimeControl, func(w http.ResponseWriter, r *http.Request, session userauth.Session) {
 		var body runtimeCommandRequest
@@ -345,6 +395,11 @@ func registerOperatorRuntimeRoutes(mux *http.ServeMux, auth *userauth.Service, p
 		var scoped []projectaccess.Permission
 		if body.Enabled {
 			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.ShowBlackoutEngage}
+			if active.Type == domain.SessionSimulation {
+				scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}
+			}
+		} else if active.Type == domain.SessionSimulation {
+			scoped = []projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}
 		}
 		ctx := projectMutationContext(r, auth, session, userauth.PermissionRuntimeControl, nil, scoped...)
 		if !body.Enabled {
