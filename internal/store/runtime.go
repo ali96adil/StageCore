@@ -223,10 +223,15 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (domain.Sessio
 	var endedUS sql.NullInt64
 	var current sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT session_id, project_id, runtime_snapshot_id, session_type, name, started_at_us, ended_at_us, status, current_cue_id, rehearsal_purpose
-		FROM sessions WHERE session_id = ?`, sessionID).Scan(
+		SELECT sessions.session_id, sessions.project_id, sessions.runtime_snapshot_id, sessions.session_type, sessions.name,
+		       sessions.started_at_us, sessions.ended_at_us, sessions.status, sessions.current_cue_id, sessions.rehearsal_purpose,
+		       COALESCE(runtime_safety_state.managed_output_blackout, 0)
+		FROM sessions
+		LEFT JOIN runtime_safety_state ON runtime_safety_state.session_id = sessions.session_id
+		WHERE sessions.session_id = ?`, sessionID).Scan(
 		&session.ID, &session.ProjectID, &session.RuntimeSnapshotID, &sessionType, &session.Name,
 		&startedUS, &endedUS, &status, &current, &session.RehearsalPurpose,
+		&session.ManagedOutputBlackout,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Session{}, domain.ErrNotFound

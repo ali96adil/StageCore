@@ -196,6 +196,72 @@ func TestInternalRuntimeSnapshotBindingFiresOnceAndSurvivesRuntimeRestart(t *tes
 	assertEventCount(t, ctx, handle, session.ID, "timecode.binding.inhibited", 1)
 }
 
+func TestInternalTimecodeGOIsInhibitedByEmergencyBlackout(t *testing.T) {
+	ctx := context.Background()
+	stageStore, handle := newIntegrationStore(t)
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Timecode Blackout"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.CreateAlias(ctx, domain.ProjectDeviceAlias{
+		ProjectID: project.ID, LogicalName: "SHOW-CLOCK", LogicalType: SourceTargetLogicalType,
+		ProjectConfig: json.RawMessage(`{"source_id":"blackout-clock","kind":"INTERNAL","rate":"30"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cue, err := stageStore.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Intro", OrderIndex: 0, Enabled: true,
+		ExecutionPolicy: json.RawMessage(`{"timecode":{"binding_id":"intro-at-10","at":"00:00:00:10","expiry_frames":2,"enabled":true}}`),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSnapshot, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := stageStore.CreateSession(ctx, runtimeSnapshot.ID, domain.SessionShow, "Show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntimeService(stageStore, cueengine.New(stageStore))
+	start := time.Now().UTC()
+	if err := runtime.StartInternal(ctx, session.ID, start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.PollInternal(ctx, session.ID, start.Add(300*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetSessionManagedOutputBlackout(ctx, session.ID, true, "test-emergency-blackout"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := runtime.PollInternal(ctx, session.ID, start.Add(334*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Commands) != 0 || len(result.Decisions) != 1 || result.Decisions[0].State != DecisionInhibited {
+		t.Fatalf("timecode GO must be inhibited during emergency blackout: %#v", result)
+	}
+	if result.Decisions[0].Reason != "managed output blackout is active" {
+		t.Fatalf("blackout inhibition reason=%q", result.Decisions[0].Reason)
+	}
+	assertRuntimeCounts(t, ctx, stageStore, handle, session.ID, 0, 0)
+	updated, err := stageStore.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.ManagedOutputBlackout {
+		t.Fatal("authoritative session lookup did not return persisted emergency blackout")
+	}
+	if updated.CurrentCueID != nil && *updated.CurrentCueID == cue.ID {
+		t.Fatal("blackout-inhibited timecode GO advanced the cue cursor")
+	}
+}
+
 type staticPreflightBase struct {
 	report preflight.Report
 }

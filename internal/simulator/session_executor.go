@@ -71,6 +71,9 @@ func (e *SessionExecutor) Execute(ctx context.Context, req capability.Request) c
 	if session.Status != domain.SessionActive {
 		return gateFailure("SESSION_NOT_ACTIVE", "authoritative execution session is not active")
 	}
+	if session.ManagedOutputBlackout && (session.Type == domain.SessionRehearsal || session.Type == domain.SessionShow) {
+		return gateFailure("EMERGENCY_BLACKOUT_ACTIVE", "managed outputs are inhibited by emergency blackout")
+	}
 
 	// Canonicalize authority before either execution path. Caller-supplied
 	// SessionID/SnapshotID can never redirect Digital Twin state or physical

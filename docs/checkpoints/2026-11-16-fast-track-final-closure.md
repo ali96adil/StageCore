@@ -1,5 +1,15 @@
 # Fast-track final closure checkpoint — 2026-11-16
 
+## Latest continuation — Emergency Blackout blocks direct Timecode GO
+
+- Branch: `integration/stagecore-rc`; PR #534 remains open / Draft. Local and remote HEAD before this unpushed change: `438d4c2339f79063f77c2e1a55df5d5654d5c069`.
+- A red-first isolated test reproduced an internal Timecode binding executing its Cue Engine GO while the persisted Emergency Blackout latch was active. This direct Timecode path bypasses Runtime Control's admission check.
+- The runtime Session lookup now reads the persisted blackout latch in its existing query. Timecode marks a pending automatic GO inhibited before dispatch when the latch is active. The SessionExecutor also blocks Rehearsal/Show actions when an authoritative lookup sees the latch, covering direct execution and later actions in an already-running Cue. SIMULATION remains Digital Twin-only.
+- The regression verifies no command record, CueExecution, or cursor advancement occurs when blackout precedes the timecode trigger. A separate SessionExecutor test verifies operational dispatch is denied for both REHEARSAL and SHOW.
+- Validation: full `go test` for `internal/timecode`, `internal/simulator`, `internal/store`, `internal/cueengine`, and `internal/runtimecontrol`; focused Timecode and SessionExecutor regressions under Race; `go vet` for timecode/simulator/store; `git diff --check` — pass. No physical executor was used.
+- Core run `43825875106` completed successfully for the previous SHA `438d4c2339f79063f77c2e1a55df5d5654d5c069`, including Go 1.26 Race and Linux ARM64 product builds. Companion Core `43825875199` and Camera Relay `43825875097` also passed on that same SHA. The Emergency Blackout fix is a new local, unpushed commit. Recheck the branch, then push normally; wait for Core, Companion Core, and Camera Relay checks on the resulting exact SHA before declaring RC LAB READY.
+- Pi ARM64 performance remains **PERFORMANCE QUALIFICATION PENDING**. SC-024 remains an independent NO-GO before full Software Complete. The existing qualified tag `stagecore-rc-lab-2026-11-16-r4` still points to `62c59ad7d28dc9143bf7cdfa6432c9a75fbbc38c`; do not retag it. Production, stable Pi, real devices, firmware, and ACL activation remain untouched.
+
 ## Latest continuation — Cue output arbitration across direct callers
 
 - Branch: `integration/stagecore-rc`; existing Draft PR: #534. Starting local and remote HEAD was `62c59ad7d28dc9143bf7cdfa6432c9a75fbbc38c`; that exact SHA's Core, Companion Core, and Camera Relay workflows were already complete and green.

@@ -99,16 +99,17 @@ const (
 )
 
 type Session struct {
-	RehearsalPurpose  RehearsalPurpose
-	ID                string
-	ProjectID         string
-	RuntimeSnapshotID string
-	Type              SessionType
-	Name              string
-	StartedAt         time.Time
-	EndedAt           *time.Time
-	Status            SessionStatus
-	CurrentCueID      *string
+	RehearsalPurpose      RehearsalPurpose
+	ManagedOutputBlackout bool
+	ID                    string
+	ProjectID             string
+	RuntimeSnapshotID     string
+	Type                  SessionType
+	Name                  string
+	StartedAt             time.Time
+	EndedAt               *time.Time
+	Status                SessionStatus
+	CurrentCueID          *string
 
 	ContractVersion    int
 	LifecycleState     SessionLifecycleState
