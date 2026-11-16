@@ -1,5 +1,14 @@
 # Fast-track final closure checkpoint — 2026-11-16
 
+## Latest continuation — SC-024 partial-activation guard alias bypass
+
+- Starting local and remote HEAD: `65db23c50025aba9267bcf5a4811d8c27253c8c5`; PR #534 is OPEN / DRAFT. The starting HEAD's Core, Companion, and Camera Relay checks were green. The qualified tag `stagecore-rc-lab-2026-11-16-r6` remains pinned to that starting SHA.
+- A focused regression demonstrated that `TestSC024NoPartialProjectACLFeatureActivationInProduction` only searched for the literal `httpapi.Option(...)` spelling and missed the same guarded option called through an import alias such as `acl.WithProjectRouteQualification(...)`.
+- The production-source guard now parses Go ASTs and identifies the guarded option by selector or direct function name, independent of package alias. No production assembly or route was changed; Project ACL remains disabled. This closes a gap in the partial-activation safety gate, not the full SC-024 audit or cutover qualification.
+- Validation: the alias regression failed against the text scan and passes with AST inspection. `go test ./internal/httpapi -run '^TestSC024' -count=1`, the same command with `-race`, `go vet ./internal/httpapi`, and `git diff --check` pass locally.
+- This code+handoff change is based on the exact green `65db23c...` head. On continuation, inspect the current local SHA and remote branch, push normally only if the remote still matches the base, then wait for Core, Companion, and Camera Relay CI for the resulting exact SHA before another push. Do not move or recreate tag `r6`.
+- SC-024 whole-server permission/delivery and atomic cutover qualification remain open. Pi runtime performance remains **PERFORMANCE QUALIFICATION PENDING**. Keep PR #534 Draft; do not touch production, stable Pi, real devices, firmware, show data, or ACL activation.
+
 ## Latest continuation — SC-024 live-source mutation result fencing
 
 - Starting local and remote HEAD: `61a84da0d86e62bab9545ef9dbb2a3d8516f7e26`; that exact SHA has completed Core, Companion Core, and Camera Relay CI successfully. PR #534 remains OPEN / DRAFT. No CI run is active for the current remote HEAD.

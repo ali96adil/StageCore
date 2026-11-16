@@ -189,13 +189,64 @@ func TestSC024NoPartialProjectACLFeatureActivationInProduction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, option := range guardedOptions {
-				if bytes.Contains(source, []byte("httpapi."+option+"(")) ||
-					bytes.Contains(source, []byte("httpapi.\n"+option+"(")) {
-					t.Fatalf("partial scoped Project ACL option %q wired in production %s before complete cutover", option, filename)
-				}
+			options, err := partialProjectACLReferences(string(source), guardedOptions)
+			if err != nil {
+				t.Fatalf("parse production source %s: %v", filename, err)
+			}
+			if len(options) > 0 {
+				t.Fatalf("partial scoped Project ACL option %q wired in production %s before complete cutover", options[0], filename)
 			}
 		}
+	}
+}
+
+func partialProjectACLReferences(source string, guardedOptions []string) ([]string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), "production.go", source, 0)
+	if err != nil {
+		return nil, err
+	}
+	guarded := make(map[string]struct{}, len(guardedOptions))
+	for _, option := range guardedOptions {
+		guarded[option] = struct{}{}
+	}
+	seen := make(map[string]struct{})
+	var references []string
+	ast.Inspect(file, func(node ast.Node) bool {
+		var name string
+		switch expression := node.(type) {
+		case *ast.CallExpr:
+			switch function := expression.Fun.(type) {
+			case *ast.SelectorExpr:
+				name = function.Sel.Name
+			case *ast.Ident:
+				name = function.Name
+			}
+		case *ast.SelectorExpr:
+			name = expression.Sel.Name
+		}
+		if _, blocked := guarded[name]; blocked {
+			if _, added := seen[name]; !added {
+				seen[name] = struct{}{}
+				references = append(references, name)
+			}
+		}
+		return true
+	})
+	sort.Strings(references)
+	return references, nil
+}
+
+func TestSC024ProductionGuardRecognizesAliasedHTTPAPIImport(t *testing.T) {
+	const source = `package main
+import acl "github.com/ali96adil/StageCore/internal/httpapi"
+func assemble() { _ = acl.WithProjectRouteQualification(nil) }
+`
+	got, err := partialProjectACLReferences(source, []string{"WithProjectRouteQualification"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "WithProjectRouteQualification" {
+		t.Fatalf("aliased scoped ACL option was not recognized: got %v", got)
 	}
 }
 
