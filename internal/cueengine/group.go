@@ -17,10 +17,10 @@ type delayStopKey struct{}
 
 type cueGoAdmissionKey struct{}
 
-// CueGoAdmission runs after the immutable selected Cue group is resolved but
-// before execution rows, session position, or outputs are changed. Runtime
-// Control uses it to reserve physical output resources atomically.
-type CueGoAdmission func(snapshot.Manifest, []snapshot.Cue) *contracts.CommandResult
+// CueGoAdmission runs after the immutable selected Cue group and physical
+// output resources are resolved but before execution rows, session position,
+// or outputs are changed. Runtime Control uses it for safety and STOP gates.
+type CueGoAdmission func(snapshot.Manifest, []snapshot.Cue, []string) *contracts.CommandResult
 
 // WithCueGoAdmission lets the caller enforce additional Runtime admission
 // policy against the exact Cue group selected by the Cue Engine.

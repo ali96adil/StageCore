@@ -1,5 +1,15 @@
 # Fast-track final closure checkpoint — 2026-11-16
 
+## Latest continuation — Cue output arbitration across direct callers
+
+- Branch: `integration/stagecore-rc`; existing Draft PR: #534. Starting local and remote HEAD was `62c59ad7d28dc9143bf7cdfa6432c9a75fbbc38c`; that exact SHA's Core, Companion Core, and Camera Relay workflows were already complete and green.
+- A red-first simulated regression demonstrated that two direct Cue Engine instances could dispatch different Sessions to the same configured physical output concurrently. Runtime Control's arbitration did not cover those direct Engine entry points.
+- Cue Engine now resolves output identities once for the selected immutable Cue group, asks the shared Store to reserve them before creating an execution or advancing the cursor, and releases the reservation after the Cue reaches a terminal result. Runtime Control uses the same resolved identity set. SIMULATION Sessions skip physical-output reservations and continue using only their Digital Twin. Unknown physical identity remains a wildcard.
+- `TestCueEngineDirectGORejectsOutputHeldByAnotherSession` proves the second direct GO is rejected before creating an execution or advancing its Session, then succeeds after the first Cue releases the output. Existing nested linked-output conflict coverage also passes.
+- Local verification: `go test ./internal/runtimecontrol ./internal/cueengine ./internal/store -count=1`; focused Race regressions for direct/Runtime Control arbitration and Mixed Cue simulation; `go vet` for all three packages; `git diff --check` — all pass. The full three-package Race attempt first exposed the SIMULATION false-positive; after excluding SIMULATION physical reservations, the affected test passed under Race. The Store package's full Race suite passed.
+- Apple M3 Max performance spot checks: Store reservation was about 0.57–1.09 µs/op at 10,000 iterations (7–9 allocations/op). Ten-sample simulated 24-Action flat/linked Engine runs recorded P95s around 12.7–14.3 ms; scheduled linked P95 was 24.0–24.6 ms and schedule-jitter P95 1.16–1.94 ms. These small local samples do not qualify Raspberry Pi performance; Pi remains **PERFORMANCE QUALIFICATION PENDING**.
+- At the time of this checkpoint, the new batch still requires exact-HEAD Core, Companion Core, and Camera Relay CI. Do not push again while those checks are running. Keep PR #534 Draft. SC-024 remains a separate NO-GO; Project ACL, production services/data, physical outputs, and the stable Pi remain untouched.
+
 ## Repository and CI state
 
 - Main repository: `ali96adil/StageCore`; branch: `integration/stagecore-rc`.

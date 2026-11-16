@@ -729,8 +729,11 @@ func (s *Service) goRequest(ctx context.Context, req CueRequest, acknowledgeSche
 	// Every request admitted through this service uses its serialized,
 	// persisted admission decision. Direct CueEngine requests remain strict.
 	runCtx = cueengine.WithConcurrentCueGo(runCtx)
-	runCtx = cueengine.WithCueGoAdmission(runCtx, func(manifest snapshot.Manifest, group []snapshot.Cue) *contracts.CommandResult {
-		return s.admitCueOutputResources(session.ID, req.RequestID, manifest, group)
+	runCtx = cueengine.WithCueGoAdmission(runCtx, func(_ snapshot.Manifest, group []snapshot.Cue, resources []string) *contracts.CommandResult {
+		if session.Type == domain.SessionSimulation {
+			return nil
+		}
+		return s.admitCueOutputResources(session.ID, req.RequestID, resources, group)
 	})
 	if runs == nil {
 		runs = make(map[string]activeRun)

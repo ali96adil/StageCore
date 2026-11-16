@@ -3,12 +3,14 @@ package runtimecontrol
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
 	"github.com/ali96adil/StageCore/internal/contracts"
+	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/db"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/snapshot"
@@ -18,6 +20,137 @@ import (
 type gatedOutputExecutor struct {
 	requests chan capability.Request
 	release  chan struct{}
+}
+
+func TestCueEngineDirectGORejectsOutputHeldByAnotherSession(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.Open(ctx, db.Config{DataRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	stageStore := store.New(database.DB, clock.Real{})
+	project, revision, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Direct output conflict", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageStore.CreateAlias(ctx, domain.ProjectDeviceAlias{
+		ProjectID: project.ID, LogicalName: "LIGHT-A", LogicalType: "LIGHTING",
+		ProjectConfig: json.RawMessage(`{"device_id":"dmx-shared"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cue, err := stageStore.CreateCueWithActions(ctx, domain.Cue{
+		RevisionID: revision.ID, DisplayLabel: "1", Name: "Shared output", OrderIndex: 1,
+		CueType: "STANDARD", Criticality: "NORMAL", Enabled: true,
+		ExecutionPolicy: json.RawMessage(`{}`),
+	}, []domain.Action{{
+		OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "LIGHT-A",
+		CapabilityKey: "lighting.channels.fade", Parameters: json.RawMessage(`{"channels":{"warm_a":35}}`),
+		TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+		PriorityClass: domain.PriorityP1, Enabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stageStore.SetRevisionStatus(ctx, revision.ID, domain.RevisionValidated); err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := snapshot.NewBuilder(stageStore).Create(ctx, revision.ID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSession, err := stageStore.CreateSession(ctx, published.ID, domain.SessionRehearsal, "first direct caller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := stageStore.CreateSession(ctx, published.ID, domain.SessionRehearsal, "second direct caller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &gatedOutputExecutor{requests: make(chan capability.Request, 2), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	releaseOutputs := func() { releaseOnce.Do(func() { close(executor.release) }) }
+	firstEngine := cueengine.NewWithExecutor(stageStore, executor)
+	secondEngine := cueengine.NewWithExecutor(stageStore, executor)
+	makeCommand := func(commandID string) contracts.CommandEnvelope {
+		return contracts.CommandEnvelope{
+			CommandID: commandID, CommandType: cueengine.CueGoCommandType,
+			SchemaVersion: contracts.SchemaVersion1, IssuedAt: time.Now().UTC(),
+			ProjectID: project.ID, RuntimeSnapshotID: published.ID,
+			Issuer: "owner", Priority: "P1", Payload: json.RawMessage(`{}`),
+		}
+	}
+	firstDone := make(chan contracts.CommandResult, 1)
+	var secondDone chan contracts.CommandResult
+	firstFinished := false
+	secondFinished := false
+	defer func() {
+		releaseOutputs()
+		if !firstFinished {
+			<-firstDone
+		}
+		if secondDone != nil && !secondFinished {
+			<-secondDone
+		}
+	}()
+	go func() {
+		firstDone <- firstEngine.ExecuteCueGo(ctx, firstSession.ID, makeCommand("00000000-0000-7000-8000-000000009701"))
+	}()
+	select {
+	case request := <-executor.requests:
+		if request.Target == nil || request.Target.Ref != "LIGHT-A" {
+			t.Fatalf("first direct output request=%+v", request.Target)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first direct Cue did not reach the simulated output")
+	}
+
+	secondDone = make(chan contracts.CommandResult, 1)
+	go func() {
+		secondDone <- secondEngine.ExecuteCueGo(ctx, secondSession.ID, makeCommand("00000000-0000-7000-8000-000000009702"))
+	}()
+	select {
+	case request := <-executor.requests:
+		t.Fatalf("second Session dispatched to the output already held by the first: %+v", request.Target)
+	case result := <-secondDone:
+		secondFinished = true
+		if result.Status != contracts.CommandRejected || result.Error == nil || result.Error.ErrorCode != "CUE_OUTPUT_CONFLICT" {
+			t.Fatalf("second direct GO=%+v, want CUE_OUTPUT_CONFLICT", result)
+		}
+		if result.Error.AffectedEntityID != cue.ID {
+			t.Fatalf("conflicting Cue ID=%q want active Cue %q", result.Error.AffectedEntityID, cue.ID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second direct GO did not reject the shared output or dispatch")
+	}
+
+	state, err := stageStore.GetSession(ctx, secondSession.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.CurrentCueID != nil {
+		t.Fatalf("conflicting GO advanced second Session to Cue %s", *state.CurrentCueID)
+	}
+	executions, err := stageStore.ListCueExecutions(ctx, secondSession.ID)
+	if err != nil || len(executions) != 0 {
+		t.Fatalf("conflicting GO created Cue executions=%+v err=%v", executions, err)
+	}
+
+	releaseOutputs()
+	select {
+	case result := <-firstDone:
+		firstFinished = true
+		if result.Status != contracts.CommandCompleted {
+			t.Fatalf("first direct GO=%+v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("first direct Cue did not finish after releasing simulated output")
+	}
+	afterRelease := secondEngine.ExecuteCueGo(ctx, secondSession.ID, makeCommand("00000000-0000-7000-8000-000000009703"))
+	if afterRelease.Status != contracts.CommandCompleted {
+		t.Fatalf("shared output reservation was not released after completion: %+v", afterRelease)
+	}
 }
 
 func (e *gatedOutputExecutor) Execute(ctx context.Context, req capability.Request) capability.Result {

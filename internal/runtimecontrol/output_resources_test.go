@@ -72,7 +72,7 @@ func BenchmarkCueOutputAdmissionLinked24Actions(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		started := time.Now()
-		result := service.admitCueOutputResources("session", "active", manifest, group)
+		result := service.admitCueOutputResources("session", "active", cueOutputResources(manifest, group), group)
 		latencies[i] = time.Since(started)
 		if result != nil {
 			b.Fatalf("simulated resource admission rejected: %+v", result)

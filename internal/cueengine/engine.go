@@ -177,12 +177,25 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if groupErr != nil {
 		return rejection(command.CommandID, "CUE_GROUP_INVALID", "VALIDATION", groupErr.Error(), false, selected.ID)
 	}
+	var outputResources []string
+	if session.Type != domain.SessionSimulation {
+		outputResources = OutputResourcesForCueGroup(manifest, group)
+	}
 	if admission, ok := ctx.Value(cueGoAdmissionKey{}).(CueGoAdmission); ok && admission != nil {
-		if result := admission(manifest, group); result != nil {
+		if result := admission(manifest, group, outputResources); result != nil {
 			result.CommandID = command.CommandID
 			return *result
 		}
 	}
+	releaseOutputResources := func() {}
+	if session.Type != domain.SessionSimulation {
+		var conflictingCueID string
+		releaseOutputResources, conflictingCueID = e.store.ReserveOutputResources(command.CommandID, selected.ID, outputResources)
+		if conflictingCueID != "" {
+			return outputResourceConflict(command.CommandID, conflictingCueID)
+		}
+	}
+	defer releaseOutputResources()
 	linkedIDs := linkedCueIDs(group)
 
 	cueExecution, err := e.store.CreateCueExecution(ctx, sessionID, selected.ID, command.CorrelationID, command.Issuer)
@@ -303,6 +316,18 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	}
 	resultPayload, _ := json.Marshal(resultBody)
 	return contracts.CommandResult{CommandID: command.CommandID, Status: commandStatus, Payload: resultPayload, Error: commandError}
+}
+
+func outputResourceConflict(commandID, activeCueID string) contracts.CommandResult {
+	return contracts.CommandResult{
+		CommandID: commandID,
+		Status:    contracts.CommandRejected,
+		Error: &contracts.ContractError{
+			ErrorCode: "CUE_OUTPUT_CONFLICT", Category: "SAFETY",
+			Message:   "another active Cue (" + activeCueID + ") may control the same output; wait for it to finish or STOP ALL CUES before trying again",
+			Retryable: false, AffectedEntityID: activeCueID,
+		},
+	}
 }
 
 func (e *Engine) executeActions(
