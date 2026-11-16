@@ -71,6 +71,8 @@ type stageDeviceRouteHooks struct {
 	BeforeDeviceMetadataResponse func(route string)
 	BeforeProjectDeviceListResponse func()
 	BeforeLiveVideoSourcesResponse func()
+	BeforeShowRequirementResponse func()
+	BeforeVisualCheckResponse func()
 }
 
 func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.Repository,
@@ -197,6 +199,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					status = http.StatusBadRequest
 				}
 				writeJSON(w, status, map[string]any{"error": "STAGE_DEVICE_SHOW_REQUIREMENT_UPDATE_FAILED", "detail": err.Error()})
+				return
+			}
+			if len(hooks) > 0 && hooks[0].BeforeShowRequirementResponse != nil {
+				hooks[0].BeforeShowRequirementResponse()
+			}
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"assignment": assignment})
@@ -593,6 +601,12 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 							status = http.StatusBadRequest
 						}
 						writeJSON(w, status, map[string]any{"error": "STAGELASER_VISUAL_CHECK_NOT_RECORDED", "detail": err.Error()})
+						return
+					}
+					if len(hooks) > 0 && hooks[0].BeforeVisualCheckResponse != nil {
+						hooks[0].BeforeVisualCheckResponse()
+					}
+					if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionCompanionPair, access, projectaccess.DeviceConfigure) {
 						return
 					}
 					writeJSON(w, http.StatusCreated, map[string]any{

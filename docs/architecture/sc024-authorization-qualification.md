@@ -2368,3 +2368,22 @@ Race tests, and `go vet ./internal/httpapi` pass locally. Production assembly
 and Migration 53 are unchanged; Project ACL remains disabled. This is one
 additional handler family, not complete endpoint-to-policy or deployed
 Companion/session compatibility qualification.
+
+## SC-024 continuation · 2026-11-16 · Stage Device assignment result fence
+
+The project-scoped Stage Device `show-requirement` mutation now performs the
+same final session and `DeviceConfigure` check after its assignment row commits
+and before returning the assignment record. The red-first regression
+`TestOperatorStageDeviceShowRequirementSuppressesCommittedResultAfterGrantRevocation`
+observed HTTP 200 and assignment details after revoking `DeviceConfigure`;
+after the fix, it requires a non-retryable committed-effect denial and verifies
+that the stored assignment remains changed. The focused normal and Race tests,
+`go vet ./internal/httpapi`, and diff check pass. Production ACL remains off.
+
+The Owner-only StageLaser visual-check record endpoint also revalidates its
+session after committing the human observation and before returning its
+details. `TestStageLaserVisualCheckSuppressesCommittedResultAfterSessionRevocation`
+reproduced HTTP 201 after the Owner logged out at that boundary; the fixed
+response is a non-retryable committed-effect denial, while the observation
+remains stored. The test uses a simulated reported state and sends no device
+command. Focused normal and Race coverage passes.

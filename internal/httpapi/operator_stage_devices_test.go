@@ -415,6 +415,77 @@ func TestStageLaserVisualCheckRecordsDiscrepancyWithoutMutatingDevice(t *testing
 	}
 }
 
+func TestStageLaserVisualCheckSuppressesCommittedResultAfterSessionRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	stageStore := store.New(h.db.DB, clock.Real{})
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := stageStore.CreateProject(ctx, store.CreateProjectParams{Name: "Visual result revocation", CreatedBy: owner.Session.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const laserID = "stagelaser-acl-visual-result-01"
+	if _, err := devices.RegisterUnassignedV2(ctx, deviceexperience.Device{
+		ID: laserID, Kind: deviceexperience.DeviceGeneric,
+		ProfileID: stagelaser.ProfileID, DisplayName: "Laser ACL Visual Check",
+		Platform: "esp32", Architecture: "riscv32", ClientVersion: "0.1.0-test",
+		ProtocolVersion: deviceexperience.ProtocolVersion2, Enabled: true,
+		Capabilities: stagelaser.CapabilityKeys(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observed := json.RawMessage(`{"logical_state":"OFF","boot_id":"acl-boot","arm_state":"DISARMED","state_quality":"TRACKED"}`)
+	if _, err := devices.ObserveDevice(ctx, deviceexperience.RuntimeObservation{
+		DeviceID: laserID, Connection: deviceexperience.ConnectionOnline,
+		Readiness: deviceexperience.ReadinessBlocker, ObservedState: observed, NetworkState: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(
+		withOperatorStageDevices(h.auth, devices, runtime, stageStore, access, stageDeviceRouteHooks{
+			BeforeVisualCheckResponse: func() {
+				revoked = true
+				if err := h.auth.Logout(ctx, owner.Token); err != nil {
+					t.Errorf("revoke Owner session before visual-check response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(access),
+	).Handler()
+	path := "/api/v1/projects/" + project.ID + "/stage-devices/" + laserID + "/stagelaser-visual-check"
+	payload := []byte(`{"visual_state":"ON","expected_device_reported_state":"OFF","expected_device_boot_id":"acl-boot","confirm":"RECORD_VISUAL_OBSERVATION_ONLY"}`)
+	request := authenticatedMutationRequest(t, http.MethodPost, path, payload, owner.Token, owner.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatalf("test did not revoke the Owner session after visual-check commit: HTTP %d %s", response.Code, response.Body.String())
+	}
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), "visual_check") || strings.Contains(response.Body.String(), "acl-boot") {
+		t.Fatalf("revoked Owner session received committed visual check: HTTP %d %s", response.Code, response.Body.String())
+	}
+	stored, err := devices.LatestStageLaserVisualCheck(ctx, laserID, project.ID)
+	if err != nil || stored == nil || stored.VisualState != "ON" {
+		t.Fatalf("committed visual check should remain stored after response suppression: %+v, %v", stored, err)
+	}
+}
+
 func TestStageDeviceOwnerReadSuppressesResultsAfterSessionRevocation(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
@@ -1359,6 +1430,68 @@ func TestOperatorStageDeviceShowRequirementCanBeChangedForActiveV2Assignment(t *
 	}
 	if stored.RequiredForShow {
 		t.Fatalf("show requirement was not persisted: %+v", stored)
+	}
+}
+
+func TestOperatorStageDeviceShowRequirementSuppressesCommittedResultAfterGrantRevocation(t *testing.T) {
+	f := setupProjectAccessAPI(t)
+	ctx := context.Background()
+	devices, err := deviceexperience.NewRepository(f.h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := deviceexperience.Device{
+		ID: "acl-show-requirement-01", Kind: deviceexperience.DeviceTabletPlayer,
+		DisplayName: "Show Requirement Tablet", ProtocolVersion: deviceexperience.ProtocolVersion2,
+		ProfileID: deviceexperience.TabletPlayerProfileID, Capabilities: []string{"tablet.media.play"}, Enabled: true,
+	}
+	if _, err := devices.RegisterUnassignedV2(ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.h.db.DB.ExecContext(ctx, `
+		UPDATE stage_device_assignments
+		SET assignment_state='ACTIVE', project_id=?, runtime_snapshot_id='snapshot-current', assignment_epoch=2
+		WHERE device_id=?
+	`, f.projectID, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	permissions := []projectaccess.Permission{projectaccess.ProjectView, projectaccess.DeviceConfigure}
+	if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, permissions); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(
+		withOperatorStageDevices(f.h.auth, devices, runtime, f.projects, f.access, stageDeviceRouteHooks{
+			BeforeShowRequirementResponse: func() {
+				revoked = true
+				if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, f.projectID, nil); err != nil {
+					t.Errorf("revoke Device Configure before response: %v", err)
+				}
+			},
+		}),
+		WithProjectRouteQualification(f.access),
+	).Handler()
+	path := "/api/v1/projects/" + f.projectID + "/stage-devices/" + device.ID + "/show-requirement"
+	req := authenticatedMutationRequest(t, http.MethodPut, path, []byte(`{"required_for_show":false}`), f.operator.Token, f.operator.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if !revoked {
+		t.Fatal("test did not revoke Device Configure after the assignment commit")
+	}
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), `"effect_may_have_been_committed":true`) ||
+		!strings.Contains(response.Body.String(), `"retryable":false`) ||
+		strings.Contains(response.Body.String(), "assignment_epoch") || strings.Contains(response.Body.String(), device.ID) {
+		t.Fatalf("revoked Operator received committed assignment result: HTTP %d %s", response.Code, response.Body.String())
+	}
+	stored, err := devices.GetAssignmentRecord(ctx, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RequiredForShow {
+		t.Fatalf("assignment mutation should remain committed after response suppression: %+v", stored)
 	}
 }
 
