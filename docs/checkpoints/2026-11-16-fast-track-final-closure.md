@@ -1,5 +1,15 @@
 # Fast-track final closure checkpoint — 2026-11-16
 
+## Latest continuation — SC-024 live-source mutation result fencing
+
+- Starting local and remote HEAD: `61a84da0d86e62bab9545ef9dbb2a3d8516f7e26`; that exact SHA has completed Core, Companion Core, and Camera Relay CI successfully. PR #534 remains OPEN / DRAFT. No CI run is active for the current remote HEAD.
+- A red-first isolated HTTP regression reproduced `PUT /api/v1/projects/{project_id}/live-video-sources/{source_id}` returning HTTP 200 and private source details after the operator's `DeviceConfigure` grant was revoked after the SQLite write committed.
+- The handler now revalidates the live browser session, global ProjectEdit permission, and scoped DeviceConfigure grant before returning the source record. If authority was revoked, it emits a non-retryable committed-effect response and keeps the already-committed source stored.
+- `TestProjectLiveVideoSourceUpdateSuppressesCommittedResultAfterGrantRevocation` proves the old leak, confirms the update committed, and then verifies the scoped result is suppressed. It uses temporary SQLite and a fake response-boundary hook; it performs no network or device I/O.
+- Local verification passes: focused tests for the new mutation, existing live-source read revocation, and Stage Device show-requirement result; the same set under Race; `go vet ./internal/httpapi`; `git diff --check`.
+- This code + matrix + checkpoint batch is local and unpushed. Before pushing, recheck remote `integration/stagecore-rc` still equals `61a84da...`; then push normally to the existing branch and wait for exact-head Core, Companion Core, and Camera Relay workflows. Do not retag the already-qualified `stagecore-rc-lab-2026-11-16-r5` at `61a84da...`; a new tag is only appropriate after the new SHA's checks pass.
+- This closes one SC-024 response-delivery boundary only. Whole-server ACL delivery/cutover remains incomplete; Project ACL stays disabled. Pi ARM64 performance remains **PERFORMANCE QUALIFICATION PENDING**. Production, stable Pi, real devices, firmware, and show data remain untouched.
+
 ## Latest continuation — Emergency Blackout blocks direct Timecode GO
 
 - Branch: `integration/stagecore-rc`; PR #534 remains open / Draft. Local and remote HEAD before this unpushed change: `438d4c2339f79063f77c2e1a55df5d5654d5c069`.

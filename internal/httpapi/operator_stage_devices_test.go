@@ -1056,6 +1056,87 @@ func TestProjectLiveVideoSourcesSuppressesResultsAfterSessionRevocation(t *testi
 	}
 }
 
+func TestProjectLiveVideoSourceUpdateSuppressesCommittedResultAfterGrantRevocation(t *testing.T) {
+	h := newAuthHarness(t)
+	ctx := context.Background()
+	projects := store.New(h.db.DB, clock.Real{})
+	project, _, err := projects.CreateProject(ctx, store.CreateProjectParams{Name: "Live source update revoke", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := deviceexperience.NewRepository(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sourceID = "live-source-update-revoke"
+	if _, err := devices.UpsertLiveSource(ctx, deviceexperience.LiveSource{
+		ID: sourceID, ProjectID: project.ID, Name: "Original camera source",
+		Class: deviceexperience.SourceNetworkStream, EndpointRef: "rtsp://camera.test/original",
+		Config: json.RawMessage(`{}`), DesiredEnabled: true, Readiness: deviceexperience.ReadinessReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	access, err := projectaccess.New(h.db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := h.auth.Login(ctx, "owner", h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := h.auth.CreateUser(ctx, "live-source-update-operator", h.password, userauth.RoleOperator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorLogin, err := h.auth.Login(ctx, operator.Username, h.password, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID,
+		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.DeviceConfigure}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := devicechannel.New(devices, nil)
+	defer runtime.Close()
+	revoked := false
+	handler := New(WithProjectRouteQualification(access), withOperatorStageDevices(
+		h.auth, devices, runtime, projects, access, stageDeviceRouteHooks{
+			BeforeLiveSourceUpdateResponse: func() {
+				revoked = true
+				if err := access.SetPermissions(ctx, owner.Session.User.ID, operator.ID, project.ID, []projectaccess.Permission{}); err != nil {
+					t.Errorf("revoke DeviceConfigure before live-source result delivery: %v", err)
+				}
+			},
+		},
+	)).Handler()
+	payload := `{"name":"Updated private camera","source_class":"NETWORK_STREAM","endpoint_ref":"rtsp://camera.test/updated","capabilities":[],"config":{},"desired_enabled":true,"readiness":"READY"}`
+	request := authenticatedMutationRequest(t, http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/live-video-sources/"+sourceID,
+		[]byte(payload), operatorLogin.Token, operatorLogin.CSRFToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if !revoked {
+		t.Fatal("test did not revoke DeviceConfigure after the source update committed")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusForbidden || body["effect_may_have_been_committed"] != true || body["retryable"] != false {
+		t.Fatalf("revoked operator received source result or retryable response: HTTP %d %s", response.Code, response.Body.String())
+	}
+	if _, leaked := body["source_id"]; leaked || strings.Contains(response.Body.String(), "Updated private camera") || strings.Contains(response.Body.String(), "camera.test/updated") {
+		t.Fatalf("revoked operator received the committed source details: %s", response.Body.String())
+	}
+	updated, err := devices.GetLiveSource(ctx, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Updated private camera" || updated.EndpointRef != "rtsp://camera.test/updated" {
+		t.Fatalf("revocation incorrectly rolled back the already committed source: %#v", updated)
+	}
+}
+
 func TestStageDeviceOperationsSuppressCommittedRecordsAfterOwnerRevocation(t *testing.T) {
 	for _, operation := range []string{"software-transfer", "lighting-activation"} {
 		t.Run(operation, func(t *testing.T) {

@@ -361,3 +361,17 @@ These feature-specific boundaries do not qualify or enable the general
 whole-server Project ACL cutover. Focused normal and Race runs and
 `go vet ./internal/httpapi` pass; no production setting was inspected or
 changed.
+
+## SC-024 live-source mutation result fencing — 2026-11-16
+
+The project-scoped `PUT /live-video-sources/{source_id}` route now rechecks the
+authenticated browser session, global ProjectEdit permission, and live
+Project `DeviceConfigure` grant after `UpsertLiveSource` commits and before
+returning the updated source. A red-first temporary-SQLite HTTP regression
+reproduced HTTP 200 with source details after revoking `DeviceConfigure` at the
+response boundary. The fixed route returns a non-retryable committed-effect
+denial while preserving the stored update. The regression and neighboring
+live-source read / Stage Device show-requirement revocation tests pass normally
+and under Race; `go vet ./internal/httpapi` and `git diff --check` pass. No
+camera or device transport is called. This closes one result-delivery boundary
+only; whole-server qualification and production ACL activation remain open.

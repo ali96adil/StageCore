@@ -71,6 +71,7 @@ type stageDeviceRouteHooks struct {
 	BeforeDeviceMetadataResponse func(route string)
 	BeforeProjectDeviceListResponse func()
 	BeforeLiveVideoSourcesResponse func()
+	BeforeLiveSourceUpdateResponse func()
 	BeforeShowRequirementResponse func()
 	BeforeVisualCheckResponse func()
 }
@@ -92,6 +93,7 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 		beforeDeviceMetadataResponse := func(string) {}
 		beforeProjectDeviceListResponse := func() {}
 		beforeLiveVideoSourcesResponse := func() {}
+		beforeLiveSourceUpdateResponse := func() {}
 		if len(hooks) > 0 {
 			if hooks[0].Dispatch != nil {
 				dispatchCommand = hooks[0].Dispatch
@@ -119,6 +121,9 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 			}
 			if hooks[0].BeforeLiveVideoSourcesResponse != nil {
 				beforeLiveVideoSourcesResponse = hooks[0].BeforeLiveVideoSourcesResponse
+			}
+			if hooks[0].BeforeLiveSourceUpdateResponse != nil {
+				beforeLiveSourceUpdateResponse = hooks[0].BeforeLiveSourceUpdateResponse
 			}
 		}
 
@@ -1683,6 +1688,10 @@ func withOperatorStageDevices(auth *userauth.Service, devices *deviceexperience.
 					status = http.StatusConflict
 				}
 				writeJSON(w, status, map[string]any{"error": "LIVE_SOURCE_UPDATE_FAILED", "detail": err.Error()})
+				return
+			}
+			beforeLiveSourceUpdateResponse()
+			if !recheckCommittedProjectMutation(w, r, auth, session, userauth.PermissionProjectEdit, nil, projectaccess.DeviceConfigure) {
 				return
 			}
 			writeJSON(w, http.StatusOK, updated)
