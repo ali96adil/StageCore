@@ -1,5 +1,14 @@
 # Fast-track final closure checkpoint — 2026-11-16
 
+## Current continuation — performance refresh from the r7 source
+
+- Repository/branch: `ali96adil/StageCore`, `integration/stagecore-rc`. Starting code/local/remote HEAD for this documentation refresh was `d5e60226591cd50a6b9c4a7dfc37f09d040283a0`; the working tree was clean before it. Draft PR #534 remains open. Remote tag `stagecore-rc-lab-2026-11-16-r7` dereferences to this exact code SHA. If this refresh is committed, that commit becomes the branch HEAD while r7 continues to identify the unchanged code candidate.
+- Exact-head CI is green at d5: Core `43847441080`, Companion Core `43847440926`, Camera Relay `43847440935`. No new code changed in this continuation; this does not supersede the r7 code tag.
+- Reran the existing Apple M3 simulation benchmarks because runtime code changed after the earlier 2026-11-16 performance report. The results are now in `docs/architecture/cue-execution-performance-qualification.md`: flat Mixed and compound linked 24-Action Engine P95 are 10.96 and 11.73 ms; a linked 100-Cue/200-Action group is 81.08 ms at P95; the 100-Cue/200-Action sustained Rehearsal records GO P95 3.388 ms at one Go CPU. These are full simulated engine/runtime paths, excluding HTTP, ACL, and external outputs.
+- The 100-sample Mac stress confirmation measured 32 delayed GO cancellations at P95 86.39 ms for STOP and 87.51 ms for Emergency Blackout with `GOMAXPROCS=4`, versus 11.58/12.87 ms at one Go CPU. CPU profile is dominated by SQLite syscalls (`syscall.rawsyscalln` 87% flat; SQLite VM 79% cumulative). No latency SLO exists and this is not a Pi result, so no durability or batching change is justified by this evidence.
+- Process RSS from benchmark commands includes fixtures and migrations (burst 225,247,232 B; 32-cue safety 233,717,760 B; sustained 221,020,160 B); it is not Hub service memory. Performance qualification remains **PENDING** until a trusted isolated Pi 4 runtime measurement; do not retry SSH without a new connectivity premise or use `stagecore-pi`.
+- SC-024 whole-server policy/delivery and atomic cutover qualification remain open; production ACL remains disabled. The current source review found no new red-first authorization defect to fix in this continuation. Next work: continue only a reproducible, route-specific SC-024 delivery gap or an independently verified critical-path defect; maintain production and physical-device restrictions.
+
 ## Latest continuation — SC-024 partial-activation guard alias bypass
 
 - Starting local and remote HEAD: `65db23c50025aba9267bcf5a4811d8c27253c8c5`; PR #534 is OPEN / DRAFT. The starting HEAD's Core, Companion, and Camera Relay checks were green. The qualified tag `stagecore-rc-lab-2026-11-16-r6` remains pinned to that starting SHA.

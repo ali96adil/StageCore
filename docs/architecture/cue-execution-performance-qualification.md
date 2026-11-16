@@ -603,3 +603,86 @@ jitter `0.531 ms`, 17 GC cycles, `692,038 ns` GC pause, `39,824,392 B`, and
 linked group; linked-group admission cost is isolated in the microbenchmark
 above. Current-source Pi CPU/RAM, P95/P99, scheduling, and safety-command
 qualification remain **PERFORMANCE QUALIFICATION PENDING**.
+
+## Current source at RC r7 · 2026-11-16 · `d5e6022`
+
+The runtime source changed after the preceding M3 refresh, including scheduled
+Cue acknowledgement, output arbitration across direct Cue Engine callers,
+Timecode blackout fencing, and the Stage Device mutation result fence. This
+focused follow-up reran the existing simulation benchmarks on Apple M3,
+`darwin/arm64`, Go 1.27.1. Every Engine action used a Digital Twin and temporary
+SQLite; the Emergency Blackout callback was a test double. No device,
+production service, Project ACL, or real output was accessed. Full Engine
+completion is reported separately from ACL, HTTP, and external-output cost.
+
+### Mixed and nested linked Cue Engine completion
+
+The six-Cue/24-Action cases used 1,000 samples at one Go CPU. Scale cases used
+100 samples except linked 25- and 50-Cue confirmation, which used 1,000.
+P99 in 100-sample cases is the top sample, not a high-confidence tail bound.
+
+| Workload | P50 / P95 / P99 | Latency jitter P95 | Schedule jitter P50 / P95 / P99 | GC/op; pause/op | Allocations/GO |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed, 24 Actions | 9.784 / 10.96 / 11.38 ms | 1.203 ms | — | — | 444,054 B; 8,287 |
+| Linked compound, 6 Cues / 24 Actions | 10.29 / 11.73 / 12.43 ms | 1.436 ms | — | — | 454,445 B; 8,381 |
+| Scheduled linked, 6 Cues / 24 Actions | 23.38 / 24.19 / 24.93 ms | 0.818 ms | 1.286 / 1.781 / 2.250 ms | — | 455,681 B; 8,396 |
+| Flat Mixed, 50 Actions | 18.43 / 19.71 / 21.14 ms | 1.284 ms | — | 0.35; 5.994 µs | 901,447 B; 16,729 |
+| Flat Mixed, 100 Actions | 36.28 / 38.01 / 38.80 ms | 1.899 ms | — | 0.72; 12.210 µs | 1,782,923 B; 32,986 |
+| Flat Mixed, 200 Actions | 75.31 / 77.81 / 79.14 ms | 3.837 ms | — | 1.47; 24.456 µs | 3,548,148 B; 65,529 |
+| Linked chain, 25 Cues / 50 Actions | 19.80 / 22.02 / 24.00 ms | 2.221 ms | — | 0.385; 6.852 µs | 969,063 B; 17,197 |
+| Linked chain, 50 Cues / 100 Actions | 39.34 / 42.35 / 45.40 ms | 3.175 ms | — | 0.782; 13.712 µs | 1,923,675 B; 33,944 |
+| Linked chain, 100 Cues / 200 Actions | 77.03 / 81.08 / 87.52 ms | 4.690 ms | — | 1.48; 24.992 µs | 3,832,863 B; 67,569 |
+| Scheduled linked, 25 Cues / 50 Actions | 22.36 / 22.95 / 23.60 ms | 0.591 ms | 0.693 / 1.485 / 3.258 ms | 0.37; 6.683 µs | 974,237 B; 17,254 |
+
+### Concurrent GO burst and 100-Cue/200-Action rehearsal
+
+The burst used 100 simultaneous releases per row; GO percentiles aggregate
+individual requests. The sustained Rehearsal ran ten sessions of 100 sequential
+GOs per CPU setting.
+
+| GO concurrency / Go CPUs | GO P50 / P95 / P99 | GO jitter P95 | Burst P50 / P95 / P99 | Burst jitter P95 | Launch skew P50 / P95 / P99 | GC/burst; pause | Allocations/burst |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 / 1 | 30.87 / 36.75 / 38.39 ms | 6.563 ms | 39.00 / 41.82 / 43.52 ms | 2.813 ms | 2.091 / 4.363 / 4.680 ms | 0.72; 12.945 µs | 1,818,461 B; 33,520 |
+| 4 / 4 | 44.58 / 46.78 / 47.40 ms | 11.890 ms | 45.64 / 47.15 / 48.31 ms | 1.509 ms | 3.083 / 8.583 / 12.88 ms | 0.91; 32.737 µs | 1,923,536 B; 35,574 |
+| 8 / 1 | 62.39 / 75.87 / 83.80 ms | 14.365 ms | 82.82 / 94.42 / 95.64 ms | 11.599 ms | 4.809 / 9.724 / 10.660 ms | 1.34; 24.798 µs | 3,634,437 B; 66,968 |
+| 8 / 4 | 82.41 / 93.83 / 96.05 ms | 44.312 ms | 92.63 / 95.56 / 96.49 ms | 3.733 ms | 7.625 / 14.96 / 19.00 ms | 1.71; 62.439 µs | 3,845,080 B; 71,139 |
+
+| Sustained Rehearsal / Go CPUs | GO P50 / P95 / P99 | GO jitter P95 | GC / 100-GO session; pause | Allocations / 100-GO session |
+| --- | ---: | ---: | ---: | ---: |
+| 100 Cues / 200 Actions · 1 | 2.543 / 3.388 / 3.747 ms | 0.845 ms | 15.30; 252.054 µs | 39,385,014 B; 299,257 |
+| 100 Cues / 200 Actions · 4 | 2.542 / 3.111 / 3.527 ms | 0.589 ms | 19.60; 500.026 µs | 39,646,488 B; 301,812 |
+
+### STOP and Emergency Blackout under delayed GO load
+
+Each row used 100 measured safety operations with all GO requests blocked by a
+60-second simulated Cue start delay. Results include Runtime Control and
+SQLite persistence; they are not pure Engine or ACL timings.
+
+| Operation / active Cues / Go CPUs | P50 / P95 / P99 | Latency jitter P95 | GC/op; pause/op | Allocations/op |
+| --- | ---: | ---: | ---: | ---: |
+| STOP / 8 / 1 | 2.604 / 3.266 / 4.195 ms | 0.662 ms | 0.01; 0.251 µs | 57,302 B; 1,277 |
+| STOP / 8 / 4 | 11.11 / 13.84 / 14.06 ms | 2.737 ms | 0.12; 5.033 µs | 295,586 B; 4,599 |
+| STOP / 32 / 1 | 10.37 / 11.58 / 11.84 ms | 1.202 ms | 0.04; 0.855 µs | 205,063 B; 4,496 |
+| STOP / 32 / 4 | 62.49 / 86.39 / 97.59 ms | 27.757 ms | 1.20; 44.948 µs | 2,827,774 B; 24,608 |
+| Blackout / 8 / 1 | 2.789 / 3.536 / 3.613 ms | 0.747 ms | 0.03; 0.648 µs | 62,356 B; 1,405 |
+| Blackout / 8 / 4 | 11.32 / 13.92 / 15.06 ms | 2.784 ms | 0.15; 5.948 µs | 301,499 B; 4,738 |
+| Blackout / 32 / 1 | 10.92 / 12.87 / 13.50 ms | 1.952 ms | 0.05; 1.045 µs | 210,786 B; 4,633 |
+| Blackout / 32 / 4 | 61.33 / 87.51 / 96.47 ms | 26.566 ms | 1.22; 48.971 µs | 2,834,722 B; 24,830 |
+
+The repeatable 4-CPU increase at 32 simultaneous delayed GOs is a stress
+observation, not a Pi result or a pass/fail limit; no full-completion SLO was
+provided. A CPU profile of 100 repetitions showed 87% of samples in raw
+syscalls, with SQLite VM execution cumulative at 79% and `database/sql`
+`ExecContext` cumulative at 65%. This points to SQLite persistence and syscall
+contention in this temporary-database harness; it does not justify changing
+durability or batching semantics without an ARM64 result and an accepted
+latency target.
+
+The burst command took 28.16 seconds wall time (14.22 user / 12.10 system CPU)
+and peaked at 225,247,232 bytes RSS. The STOP/Blackout load command took 41.70
+seconds (34.93 user / 6.04 system CPU) and peaked at 233,717,760 bytes RSS.
+The sustained command took 11.30 seconds (8.87 user / 3.49 system CPU) and
+peaked at 221,020,160 bytes RSS. These are whole test-process figures with
+fixture setup and migrations, not Hub service CPU or memory. Raspberry Pi 4
+ARM64 remains **PERFORMANCE QUALIFICATION PENDING**; no isolated Pi SSH retry
+was made in this continuation.
