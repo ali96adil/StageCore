@@ -58,6 +58,30 @@ func NewWithExecutor(s *store.Store, executor capability.Executor) *Engine {
 }
 
 func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+	return e.executeCueGo(ctx, sessionID, command, nil)
+}
+
+// ExecuteCueGoWithScheduleAck returns an ACCEPTED result as soon as the Cue
+// execution, current-Cue position and command progress are durably recorded.
+// The final command result is persisted after the linked Cue group completes.
+func (e *Engine) ExecuteCueGoWithScheduleAck(
+	ctx context.Context,
+	sessionID string,
+	command contracts.CommandEnvelope,
+	onAccepted func(contracts.CommandResult),
+) contracts.CommandResult {
+	if onAccepted == nil {
+		return rejection(command.CommandID, "CUE_SCHEDULE_ACK_REQUIRED", "VALIDATION", "schedule acknowledgement callback is required", false, command.CommandID)
+	}
+	return e.executeCueGo(ctx, sessionID, command, &cueGoScheduleState{onAccepted: onAccepted})
+}
+
+type cueGoScheduleState struct {
+	onAccepted func(contracts.CommandResult)
+	accepted   bool
+}
+
+func (e *Engine) executeCueGo(ctx context.Context, sessionID string, command contracts.CommandEnvelope, schedule *cueGoScheduleState) contracts.CommandResult {
 	if result := validateEnvelope(command); result != nil {
 		return *result
 	}
@@ -77,14 +101,21 @@ func (e *Engine) ExecuteCueGo(ctx context.Context, sessionID string, command con
 	if command.CorrelationID == "" {
 		command.CorrelationID = record.CorrelationID
 	}
-	result := e.executeReserved(ctx, sessionID, command)
-	if err := e.store.FinishCommand(ctx, command.CommandID, result); err != nil {
+	result := e.executeReserved(ctx, sessionID, command, schedule)
+	finishCtx := ctx
+	if schedule != nil && schedule.accepted {
+		// Once accepted, the Hub owns this durable execution independently of
+		// the HTTP request lifetime. Dispatch authorization values are retained
+		// and revalidated at each output boundary.
+		finishCtx = context.WithoutCancel(ctx)
+	}
+	if err := e.store.FinishCommand(finishCtx, command.CommandID, result); err != nil {
 		return internalFailure(command.CommandID, "COMMAND_FINISH_FAILED", err)
 	}
 	return result
 }
 
-func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope) contracts.CommandResult {
+func (e *Engine) executeReserved(ctx context.Context, sessionID string, command contracts.CommandEnvelope, schedule *cueGoScheduleState) contracts.CommandResult {
 	e.advanceMu.Lock()
 	launchLocked := true
 	defer func() {
@@ -171,6 +202,27 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if err := e.store.SetSessionCurrentCue(ctx, sessionID, selected.ID); err != nil {
 		_ = e.store.FinishCueExecution(ctx, cueExecution.ID, domain.ExecutionFailed)
 		return internalFailure(command.CommandID, "CURRENT_CUE_UPDATE_FAILED", err)
+	}
+	if schedule != nil {
+		acceptedPayload, _ := json.Marshal(map[string]any{
+			"cue_execution_id": cueExecution.ID,
+			"cue_id":           selected.ID,
+			"linked_cue_ids":   linkedIDs,
+			"result":           domain.ExecutionRunning,
+		})
+		acceptedResult := contracts.CommandResult{
+			CommandID: command.CommandID,
+			Status:    contracts.CommandAccepted,
+			Payload:   acceptedPayload,
+		}
+		if err := e.store.UpdateAcceptedCommandResult(ctx, command.CommandID, acceptedResult); err != nil {
+			cleanupCtx := context.WithoutCancel(ctx)
+			_ = e.store.FinishCueExecution(cleanupCtx, cueExecution.ID, domain.ExecutionFailed)
+			return internalFailure(command.CommandID, "CUE_SCHEDULE_ACK_PERSIST_FAILED", err)
+		}
+		schedule.accepted = true
+		schedule.onAccepted(acceptedResult)
+		ctx = context.WithoutCancel(ctx)
 	}
 	// A second GO may now select and launch the following Cue while this
 	// execution waits in its own delay or runs its independent Actions.
@@ -614,6 +666,15 @@ func (e *Engine) emit(
 func (e *Engine) duplicateResult(record domain.CommandRecord) contracts.CommandResult {
 	if result, terminal, err := e.store.StoredCommandResult(record); err == nil && terminal {
 		return result
+	}
+	if record.Status == string(contracts.CommandAccepted) {
+		var accepted contracts.CommandResult
+		if json.Unmarshal(record.ResultJSON, &accepted) == nil &&
+			accepted.CommandID == record.CommandID &&
+			accepted.Status == contracts.CommandAccepted &&
+			len(accepted.Payload) != 0 {
+			return accepted
+		}
 	}
 	return rejection(
 		record.CommandID,

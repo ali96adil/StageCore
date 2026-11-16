@@ -11,6 +11,7 @@ import (
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/contracts"
+	"github.com/ali96adil/StageCore/internal/cueengine"
 	"github.com/ali96adil/StageCore/internal/domain"
 )
 
@@ -30,6 +31,117 @@ func waitForCueAdvancement(t *testing.T, h *runtimeHarness, sessionID, wantCueID
 			t.Fatalf("Cue %s was not selected/advanced", wantCueID)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestGOAcknowledgesDurableScheduleBeforeActionsFinish(t *testing.T) {
+	h := newRuntimeHarness(t,
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+		json.RawMessage(`{"simulation":{"behavior":"COMPLETE"}}`),
+	)
+	ctx := context.Background()
+	executor := &gatedOutputExecutor{requests: make(chan capability.Request, 2), release: make(chan struct{})}
+	h.service = New(h.store, executor)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(executor.release) }) }
+	defer release()
+
+	session, started := h.service.StartSession(ctx, StartRequest{
+		ProjectID: h.project.ID, Mode: domain.SessionRehearsal, Issuer: "owner",
+		RequestID: "00000000-0000-7000-8000-000000009601",
+	})
+	if started.Status != contracts.CommandCompleted {
+		t.Fatalf("start=%+v", started)
+	}
+
+	requestID := "00000000-0000-7000-8000-000000009602"
+	firstCtx, cancelFirst := context.WithCancel(ctx)
+	defer cancelFirst()
+	result := h.service.ScheduleGo(firstCtx, CueRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: requestID,
+	})
+	if result.Status != contracts.CommandAccepted {
+		release()
+		t.Fatalf("GO acceptance=%+v, want ACCEPTED while its simulated Action is blocked", result)
+	}
+	// The command is owned by Runtime Control after the durable ACK; request
+	// cancellation must not silently abandon an accepted execution.
+	cancelFirst()
+	select {
+	case <-executor.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("GO did not start the simulated Action")
+	}
+
+	var accepted struct {
+		CueExecutionID string `json:"cue_execution_id"`
+		CueID          string `json:"cue_id"`
+		Result         string `json:"result"`
+	}
+	if err := json.Unmarshal(result.Payload, &accepted); err != nil {
+		t.Fatalf("decode schedule acceptance payload %q: %v", result.Payload, err)
+	}
+	if accepted.CueExecutionID == "" || accepted.CueID != h.cues[0].ID || accepted.Result != string(domain.ExecutionRunning) {
+		t.Fatalf("schedule acceptance payload=%+v; want durable RUNNING execution for %s", accepted, h.cues[0].ID)
+	}
+	current, err := h.store.GetSession(ctx, session.ID)
+	if err != nil || current.CurrentCueID == nil || *current.CurrentCueID != h.cues[0].ID {
+		t.Fatalf("session current cue=%v err=%v; GO ack must follow durable cursor advancement", current.CurrentCueID, err)
+	}
+	rows, err := h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(rows) != 1 || rows[0].ID != accepted.CueExecutionID || rows[0].Result != domain.ExecutionRunning {
+		t.Fatalf("scheduled executions=%+v err=%v; GO ack must follow durable RUNNING row", rows, err)
+	}
+	record, found, err := h.store.FindCommandRecord(ctx, contracts.CommandEnvelope{
+		CommandID: requestID, CommandType: cueengine.CueGoCommandType, ProjectID: h.project.ID,
+	})
+	if err != nil || !found || record.Status != string(contracts.CommandAccepted) {
+		t.Fatalf("accepted command record=%+v found=%t err=%v", record, found, err)
+	}
+	var stored contracts.CommandResult
+	if err := json.Unmarshal(record.ResultJSON, &stored); err != nil || stored.Status != contracts.CommandAccepted || string(stored.Payload) != string(result.Payload) {
+		t.Fatalf("stored acceptance=%+v payload=%s err=%v", stored, record.ResultJSON, err)
+	}
+
+	duplicate := h.service.ScheduleGo(ctx, CueRequest{SessionID: session.ID, Issuer: "owner", RequestID: requestID})
+	if duplicate.Status != contracts.CommandAccepted || string(duplicate.Payload) != string(result.Payload) {
+		t.Fatalf("duplicate schedule=%+v; want same idempotent acceptance", duplicate)
+	}
+
+	expectedCurrent := h.cues[0].ID
+	second := h.service.ScheduleGo(ctx, CueRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009604",
+		ExpectedCurrentCueID: &expectedCurrent,
+	})
+	if second.Status != contracts.CommandAccepted {
+		t.Fatalf("next GO did not schedule while the first Action remained blocked: %+v", second)
+	}
+	select {
+	case <-executor.requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second GO did not start its independent simulated Action")
+	}
+	rows, err = h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(rows) != 2 || rows[0].Result != domain.ExecutionRunning || rows[1].Result != domain.ExecutionRunning {
+		t.Fatalf("overlapping scheduled Cue rows=%+v err=%v", rows, err)
+	}
+
+	if stop := h.service.StopCue(ctx, StopRequest{
+		SessionID: session.ID, Issuer: "owner", RequestID: "00000000-0000-7000-8000-000000009603",
+	}); stop.Status != contracts.CommandCompleted {
+		t.Fatalf("STOP ALL CUES while scheduled Action is blocked=%+v", stop)
+	}
+	rows, err = h.store.ListCueExecutions(ctx, session.ID)
+	if err != nil || len(rows) != 2 || rows[0].Result != domain.ExecutionCancelled || rows[1].Result != domain.ExecutionCancelled {
+		t.Fatalf("STOP did not persist the accepted Cue's terminal result: executions=%+v err=%v", rows, err)
+	}
+	for _, commandID := range []string{requestID, "00000000-0000-7000-8000-000000009604"} {
+		record, found, err := h.store.FindCommandRecord(ctx, contracts.CommandEnvelope{
+			CommandID: commandID, CommandType: cueengine.CueGoCommandType, ProjectID: h.project.ID,
+		})
+		if err != nil || !found || record.Status != string(contracts.CommandCancelled) {
+			t.Fatalf("terminal command %s=%+v found=%t err=%v; STOP must finalize accepted commands", commandID, record, found, err)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	stageapp "github.com/ali96adil/StageCore/internal/app"
 	"github.com/ali96adil/StageCore/internal/config"
+	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/hubsecurity"
 	"github.com/ali96adil/StageCore/internal/preflight"
 	"github.com/ali96adil/StageCore/internal/publish"
@@ -202,9 +203,24 @@ func TestSoftwareMVPOperatorWorkflowSurvivesHubRestart(t *testing.T) {
 		"request_id": "00000000-0000-7000-8000-000000000102",
 		"operator_note": "GO from software MVP acceptance",
 	}, http.StatusOK, true)
-	if !strings.Contains(string(goBody), `"status":"COMPLETED"`) {
-		t.Fatalf("GO did not complete: %s", goBody)
+	var goPayload struct {
+		Result struct {
+			Status  string          `json:"status"`
+			Payload json.RawMessage `json:"payload"`
+		} `json:"result"`
 	}
+	decodeAcceptanceJSON(t, goBody, &goPayload)
+	if goPayload.Result.Status != "ACCEPTED" {
+		t.Fatalf("GO schedule was not durably accepted: %s", goBody)
+	}
+	var goReceipt struct {
+		CueExecutionID string `json:"cue_execution_id"`
+	}
+	decodeAcceptanceJSON(t, goPayload.Result.Payload, &goReceipt)
+	if goReceipt.CueExecutionID == "" {
+		t.Fatalf("GO schedule omitted Cue execution ID: %s", goBody)
+	}
+	waitForRuntimeCueResult(t, application.Store, ctx, sessionID, goReceipt.CueExecutionID, domain.ExecutionCompleted)
 	runtimeBody := client.request(http.MethodGet, "/api/v1/projects/"+projectID+"/runtime", nil, http.StatusOK, true)
 	if !strings.Contains(string(runtimeBody), `"result":"COMPLETED"`) || !strings.Contains(string(runtimeBody), cueID) {
 		t.Fatalf("runtime did not expose completed Cue execution: %s", runtimeBody)

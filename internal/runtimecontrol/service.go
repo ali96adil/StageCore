@@ -102,6 +102,7 @@ type activeRun struct {
 	correlationID string
 	cueID         string
 	resources     []string
+	acceptedResult *contracts.CommandResult
 	done          chan struct{}
 	cancel        context.CancelFunc
 }
@@ -650,6 +651,17 @@ func (s *Service) ProjectBlackout(ctx context.Context, req ProjectEmergencyReque
 }
 
 func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResult {
+	return s.goRequest(ctx, req, false)
+}
+
+// ScheduleGo returns after the Cue selection, execution row, current position
+// and accepted command progress have been durably recorded. Runtime Control
+// owns the active run until its terminal result is persisted.
+func (s *Service) ScheduleGo(ctx context.Context, req CueRequest) contracts.CommandResult {
+	return s.goRequest(ctx, req, true)
+}
+
+func (s *Service) goRequest(ctx context.Context, req CueRequest, acknowledgeSchedule bool) contracts.CommandResult {
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.Issuer) == "" || strings.TrimSpace(req.RequestID) == "" {
 		return rejected(req.RequestID, "RUNTIME_CONTEXT_REQUIRED", "session, issuer and request_id are required", req.SessionID)
 	}
@@ -724,14 +736,17 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		runs = make(map[string]activeRun)
 		s.active[session.ID] = runs
 	}
-	if _, duplicate := runs[req.RequestID]; duplicate {
+	if existing, duplicate := runs[req.RequestID]; duplicate {
 		s.mu.Unlock()
 		cancel()
+		if acknowledgeSchedule && existing.acceptedResult != nil {
+			return *existing.acceptedResult
+		}
 		return rejected(req.RequestID, "DUPLICATE_UNRESOLVED", "this Cue GO request is already active", req.RequestID)
 	}
 	runs[req.RequestID] = run
 	s.mu.Unlock()
-	defer func() {
+	cleanup := func() {
 		cancel()
 		s.executor.clear(command.CorrelationID)
 		s.mu.Lock()
@@ -743,7 +758,54 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 		}
 		close(done)
 		s.mu.Unlock()
-	}()
+	}
+	if acknowledgeSchedule {
+		accepted := make(chan contracts.CommandResult, 1)
+		completed := make(chan contracts.CommandResult, 1)
+		go func() {
+			scheduleAccepted := false
+			result := s.engine.ExecuteCueGoWithScheduleAck(runCtx, session.ID, command, func(result contracts.CommandResult) {
+				scheduleAccepted = true
+				s.mu.Lock()
+				if current := s.active[session.ID]; current != nil {
+					active := current[req.RequestID]
+					acceptedCopy := result
+					active.acceptedResult = &acceptedCopy
+					current[req.RequestID] = active
+				}
+				s.mu.Unlock()
+				accepted <- result
+			})
+			cleanup()
+			if !scheduleAccepted {
+				completed <- result
+			}
+		}()
+		select {
+		case result := <-accepted:
+			return result
+		default:
+		}
+		select {
+		case result := <-accepted:
+			return result
+		case result := <-completed:
+			return result
+		case <-ctx.Done():
+			select {
+			case result := <-accepted:
+				return result
+			default:
+			}
+			select {
+			case result := <-completed:
+				return result
+			default:
+			}
+			return cancelledBeforeCueAdmission(req.RequestID, "CUE_GO_REQUEST_CANCELLED", "GO was cancelled before its schedule was acknowledged", session.ID)
+		}
+	}
+	defer cleanup()
 	return s.engine.ExecuteCueGo(runCtx, session.ID, command)
 }
 

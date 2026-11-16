@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ali96adil/StageCore/internal/capability"
 	"github.com/ali96adil/StageCore/internal/clock"
@@ -22,6 +24,32 @@ import (
 	"github.com/ali96adil/StageCore/internal/snapshot"
 	"github.com/ali96adil/StageCore/internal/store"
 )
+
+func waitForRuntimeCueResult(t *testing.T, projectStore *store.Store, ctx context.Context, sessionID, executionID string, want domain.ExecutionResult) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		executions, err := projectStore.ListCueExecutions(ctx, sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, execution := range executions {
+			if execution.ID != executionID {
+				continue
+			}
+			if execution.Result != domain.ExecutionRunning {
+				if execution.Result != want {
+					t.Fatalf("Cue execution %s result=%s want=%s", executionID, execution.Result, want)
+				}
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Cue execution %s did not reach %s before deadline", executionID, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestRehearsalStartSuppressesResultAfterGrantRevocationAtCommit(t *testing.T) {
 	f := setupProjectAccessAPI(t)
@@ -359,7 +387,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if err := json.Unmarshal(goRes.Body.Bytes(), &goResponse); err != nil {
 		t.Fatal(err)
 	}
-	if goResponse.Result.Status != contracts.CommandCompleted {
+	if goResponse.Result.Status != contracts.CommandAccepted {
 		t.Fatalf("GO result=%+v", goResponse.Result)
 	}
 	var goReceipt struct {
@@ -373,6 +401,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if goReceipt.CueID != first.ID || len(goReceipt.LinkedCueIDs) != 2 {
 		t.Fatalf("GO did not execute the root's full nested Cue chain: %+v", goReceipt)
 	}
+	waitForRuntimeCueResult(t, projectStore, ctx, start.Session.ID, goReceipt.CueExecutionID, domain.ExecutionCompleted)
 	goActions, err := projectStore.ListActionExecutions(ctx, goReceipt.CueExecutionID)
 	if err != nil || len(goActions) != 3 {
 		t.Fatalf("GO root+chain Action executions=%+v err=%v", goActions, err)
@@ -492,7 +521,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if err := json.Unmarshal(jumpRes.Body.Bytes(), &jumpResponse); err != nil {
 		t.Fatal(err)
 	}
-	if jumpResponse.Result.Status != contracts.CommandCompleted {
+	if jumpResponse.Result.Status != contracts.CommandAccepted {
 		t.Fatalf("Jump result=%+v", jumpResponse.Result)
 	}
 	var jumpReceipt struct {
@@ -506,6 +535,7 @@ func TestAuthenticatedOperatorRuntimeRehearsalGoJumpAndStop(t *testing.T) {
 	if jumpReceipt.CueID != nested.ID || len(jumpReceipt.LinkedCueIDs) != 1 || jumpReceipt.LinkedCueIDs[0] != nestedLeaf.ID {
 		t.Fatalf("HTTP JUMP did not select only the nested subtree: %+v", jumpReceipt)
 	}
+	waitForRuntimeCueResult(t, projectStore, ctx, start.Session.ID, jumpReceipt.CueExecutionID, domain.ExecutionCompleted)
 	jumpActions, err := projectStore.ListActionExecutions(ctx, jumpReceipt.CueExecutionID)
 	if err != nil {
 		t.Fatal(err)
@@ -711,12 +741,12 @@ func testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T, 
 	}, []domain.Action{
 		{
 			OrderIndex: 0, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.revoke",
-			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 		{
 			OrderIndex: 1, ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.after-revoke",
-			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{}`),
+			Parameters: json.RawMessage(`{}`), TimeoutPolicy: json.RawMessage(`{}`), ErrorPolicy: json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 			PriorityClass: domain.PriorityP1, Enabled: true,
 		},
 	})
@@ -734,13 +764,21 @@ func testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T, 
 		[]projectaccess.Permission{projectaccess.ProjectView, projectaccess.RehearsalControl}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionRehearsal, "revocation rehearsal", ""); err != nil {
+	active, err := f.projects.StartOperationalSession(ctx, published.ID, domain.SessionRehearsal, "revocation rehearsal", "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	var sentBeforeRevocation, sentAfterRevocation atomic.Int32
+	firstActionStarted := make(chan struct{}, 1)
+	releaseFirstAction := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirstAction) }) }
+	defer release()
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.revoke", capability.ExecutorFunc(func(context.Context, capability.Request) capability.Result {
 		sentBeforeRevocation.Add(1)
+		firstActionStarted <- struct{}{}
+		<-releaseFirstAction
 		if err := f.access.SetPermissions(ctx, f.owner.Session.User.ID, f.operatorID, project.ID,
 			[]projectaccess.Permission{projectaccess.ProjectView}); err != nil {
 			t.Errorf("revoke SHOW GO grant: %v", err)
@@ -773,6 +811,28 @@ func testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T, 
 		[]byte(body), f.operator.Token, f.operator.CSRFToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("authorized GO/JUMP schedule acknowledgement returned %d: %s", res.Code, res.Body.String())
+	}
+	var response struct {
+		Result contracts.CommandResult `json:"result"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil || response.Result.Status != contracts.CommandAccepted {
+		t.Fatalf("GO/JUMP schedule response=%+v err=%v", response, err)
+	}
+	var receipt struct {
+		CueExecutionID string `json:"cue_execution_id"`
+	}
+	if err := json.Unmarshal(response.Result.Payload, &receipt); err != nil || receipt.CueExecutionID == "" {
+		t.Fatalf("schedule receipt=%s err=%v", response.Result.Payload, err)
+	}
+	select {
+	case <-firstActionStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("accepted Cue did not reach the first simulated output")
+	}
+	release()
+	waitForRuntimeCueResult(t, f.projects, ctx, active.ID, receipt.CueExecutionID, domain.ExecutionFailed)
 	if sentBeforeRevocation.Load() != 1 || sentAfterRevocation.Load() != 0 {
 		t.Fatalf("dispatch counts before/after grant revocation = %d/%d, want 1/0; response=%d %s",
 			sentBeforeRevocation.Load(), sentAfterRevocation.Load(), res.Code, res.Body.String())
@@ -780,11 +840,8 @@ func testQualifiedDelayedCueStopsDispatchAfterShowGrantRevocation(t *testing.T, 
 	if err := f.access.Check(ctx, f.operator.Session.User.ID, project.ID, projectaccess.ProjectView); err != nil {
 		t.Fatalf("test must retain project.view while revoking runtime control: %v", err)
 	}
-	if res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), "cue_execution_id") ||
-		!strings.Contains(res.Body.String(), `"effect_may_be_committed":true`) ||
-		!strings.Contains(res.Body.String(), `"effect_may_have_been_committed":true`) ||
-		!strings.Contains(res.Body.String(), `"retryable":false`) {
-		t.Fatalf("revoked runtime intent (jump=%t) received cue result or retryable response: HTTP %d %s", jump, res.Code, res.Body.String())
+	if strings.Contains(res.Body.String(), `"result":"COMPLETED"`) || strings.Contains(res.Body.String(), "failed_action") {
+		t.Fatalf("schedule ACK exposed a terminal result before revocation was rechecked: HTTP %d %s", res.Code, res.Body.String())
 	}
 }
 
@@ -967,7 +1024,7 @@ func TestEmergencyBlackoutSuppressesResultAfterOwnerRevocation(t *testing.T) {
 	}
 }
 
-func TestLegacyBrowserCueRevocationSuppressesDispatchAndReply(t *testing.T) {
+func TestLegacyBrowserCueRevocationAfterScheduleAckSuppressesDispatch(t *testing.T) {
 	f := setupProjectAccessAPI(t)
 	ctx := context.Background()
 	project, err := f.projects.GetProject(ctx, f.projectID)
@@ -981,6 +1038,7 @@ func TestLegacyBrowserCueRevocationSuppressesDispatchAndReply(t *testing.T) {
 		RevisionID: project.CurrentRevisionID, Name: "Revocation Cue", OrderIndex: 1, Enabled: true,
 	}, []domain.Action{{
 		ExecutionMode: "SEQUENTIAL", TargetRef: "SIM", CapabilityKey: "sim.test",
+		ErrorPolicy:   json.RawMessage(`{"on_error":"FAIL_CUE"}`),
 		PriorityClass: domain.PriorityP1, Enabled: true,
 	}}); err != nil {
 		t.Fatal(err)
@@ -991,22 +1049,32 @@ func TestLegacyBrowserCueRevocationSuppressesDispatchAndReply(t *testing.T) {
 	if _, _, err := snapshot.NewBuilder(f.projects).Create(ctx, project.CurrentRevisionID, f.owner.Session.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	crossedBoundary := false
+	var adapterReached, writeAllowed atomic.Bool
 	registry := capability.NewRegistry()
 	if err := registry.Register("sim.test", capability.ExecutorFunc(func(ctx context.Context, _ capability.Request) capability.Result {
+		adapterReached.Store(true)
+		beforeLogout := capability.CheckDispatch(ctx)
+		if beforeLogout != nil {
+			t.Errorf("initial simulated output dispatch was unexpectedly denied: %v", beforeLogout)
+		}
 		if err := f.h.auth.Logout(ctx, f.owner.Token); err != nil {
-			t.Fatal(err)
+			t.Errorf("revoke browser session at simulated output boundary: %v", err)
+			return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone, ErrorCode: "TEST_LOGOUT_FAILED"}
 		}
-		crossedBoundary = true
-		if !errors.Is(capability.CheckDispatch(ctx), capability.ErrDispatchAuthorityRevoked) {
-			t.Error("revoked browser session still authorized the adapter write")
+		afterLogout := capability.CheckDispatch(ctx)
+		if errors.Is(afterLogout, capability.ErrDispatchAuthorityRevoked) {
+			return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone, ErrorCode: capability.DispatchAuthorityRevokedCode}
 		}
-		return capability.Result{Result: domain.ExecutionFailed, AckLevel: contracts.AckNone, ErrorCode: capability.DispatchAuthorityRevokedCode}
+		if afterLogout != nil {
+			t.Errorf("dispatch check after logout returned unexpected error: %v", afterLogout)
+		}
+		writeAllowed.Store(true)
+		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckDevice}
 	})); err != nil {
 		t.Fatal(err)
 	}
 	runtime := runtimecontrol.New(f.projects, registry)
-	_, started := runtime.StartSession(ctx, runtimecontrol.StartRequest{
+	session, started := runtime.StartSession(ctx, runtimecontrol.StartRequest{
 		ProjectID: project.ID, Mode: domain.SessionRehearsal, Issuer: f.owner.Session.User.ID,
 		RequestID: "00000000-0000-7000-8000-000000000995",
 	})
@@ -1018,7 +1086,23 @@ func TestLegacyBrowserCueRevocationSuppressesDispatchAndReply(t *testing.T) {
 		[]byte(`{"request_id":"00000000-0000-7000-8000-000000000996"}`), f.owner.Token, f.owner.CSRFToken)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-	if !crossedBoundary || res.Code != http.StatusUnauthorized || strings.Contains(res.Body.String(), "cue_execution_id") {
-		t.Fatalf("boundary=%t status=%d body=%s", crossedBoundary, res.Code, res.Body)
+	if res.Code != http.StatusOK {
+		t.Fatalf("authorized schedule ACK status=%d body=%s", res.Code, res.Body)
+	}
+	var response struct {
+		Result contracts.CommandResult `json:"result"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil || response.Result.Status != contracts.CommandAccepted {
+		t.Fatalf("schedule ACK=%+v err=%v", response, err)
+	}
+	var receipt struct {
+		CueExecutionID string `json:"cue_execution_id"`
+	}
+	if err := json.Unmarshal(response.Result.Payload, &receipt); err != nil || receipt.CueExecutionID == "" {
+		t.Fatalf("schedule receipt=%s err=%v", response.Result.Payload, err)
+	}
+	waitForRuntimeCueResult(t, f.projects, ctx, session.ID, receipt.CueExecutionID, domain.ExecutionFailed)
+	if !adapterReached.Load() || writeAllowed.Load() {
+		t.Fatalf("simulated adapter reached=%t write allowed=%t after session revocation", adapterReached.Load(), writeAllowed.Load())
 	}
 }

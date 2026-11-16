@@ -550,6 +550,28 @@ func (s *Store) FinishCommand(ctx context.Context, commandID string, result cont
 	return s.finishCommand(ctx, s.db, commandID, result)
 }
 
+// UpdateAcceptedCommandResult durably records the accepted schedule for a
+// command that remains in progress. The terminal execution result is written
+// later by FinishCommand.
+func (s *Store) UpdateAcceptedCommandResult(ctx context.Context, commandID string, result contracts.CommandResult) error {
+	if strings.TrimSpace(commandID) == "" || result.CommandID != commandID || result.Status != contracts.CommandAccepted || len(result.Payload) == 0 {
+		return fmt.Errorf("%w: accepted command progress requires matching ID and payload", domain.ErrInvalidInput)
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("marshal accepted command progress: %w", err)
+	}
+	updated, err := capability.ExecAuthorized(ctx, s.db, `
+		UPDATE command_records
+		SET result_json = ?, updated_at_us = ?
+		WHERE command_id = ? AND status = 'ACCEPTED'`,
+		string(resultJSON), clock.UnixMicros(s.clock.Now()), commandID)
+	if err != nil {
+		return fmt.Errorf("update accepted command progress: %w", err)
+	}
+	return requireOneRow(updated)
+}
+
 func (s *Store) finishCommand(ctx context.Context, q execer, commandID string, result contracts.CommandResult) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil { return fmt.Errorf("marshal command result: %w", err) }
