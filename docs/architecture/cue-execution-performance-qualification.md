@@ -384,6 +384,83 @@ project, and a 100-Cue/200-Action Rehearsal. Every Action completed in the
 Digital Twin and the physical-executor probe remained at zero. Production
 services, ACL enforcement, data, Vault, and real outputs were not used.
 
+## Current-source local simulation refresh · 2026-11-16
+
+The following runs use source HEAD `072e5beadf2c89a573a027a459de663153e6476a`
+on an Apple M3 Max (`darwin/arm64`, Go 1.27.1). They refresh the earlier M3
+baseline because the measured Engine path changed afterward: Cue GO now loads
+Session foundation state and rejects Sessions requiring manual restoration
+confirmation, and Runtime Control's bounded STOP wait changed from 2 to 5
+seconds. Every workload used a temporary SQLite database, `SIMULATION` or
+Rehearsal, and the Digital Twin; the physical executor remained at zero calls.
+Engine values exclude Project ACL, HTTP, and external output latency. These
+local Mac results do not qualify ARM64 Pi performance.
+
+The 24-Action cases use 1,000 samples at one Go CPU:
+
+| Workload | P50 | P95 | P99 | Latency jitter P95 | Schedule jitter P50 / P95 / P99 | Allocations per GO |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed Cue, 24 Actions | 9.838 ms | 10.98 ms | 11.50 ms | 1.234 ms | — | 441,092 B; 8,257 allocs |
+| Six linked compound Cues, 24 Actions | 10.18 ms | 11.69 ms | 12.60 ms | 1.511 ms | — | 452,012 B; 8,364 allocs |
+| Scheduled linked compound Cues, 24 Actions | 23.38 ms | 24.29 ms | 25.03 ms | 0.917 ms | 1.295 / 1.767 / 2.326 ms | 453,209 B; 8,379 allocs |
+
+The scale cases use 100 samples at one Go CPU. P99 is the top sample for
+these 100-sample cases and is a stress observation rather than a stable tail
+limit:
+
+| Workload | P50 | P95 | P99 | Latency jitter P95 | GC/op; pause/op | Allocations per GO |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed Cue, 50 Actions | 19.44 ms | 20.67 ms | 21.98 ms | 1.739 ms | 0.33; 6.091 µs | 895,926 B; 16,682 allocs |
+| Flat Mixed Cue, 100 Actions | 37.80 ms | 40.31 ms | 42.67 ms | 2.514 ms | 0.73; 12.811 µs | 1,771,825 B; 32,885 allocs |
+| Flat Mixed Cue, 200 Actions | 74.79 ms | 79.36 ms | 104.1 ms | 5.424 ms | 1.42; 24.568 µs | 3,525,707 B; 65,331 allocs |
+| Linked chain, 25 Cues / 50 Actions | 19.60 ms | 21.56 ms | 22.43 ms | 1.963 ms | 0.34; 6.585 µs | 963,109 B; 17,132 allocs |
+| Linked chain, 50 Cues / 100 Actions | 38.39 ms | 40.02 ms | 40.42 ms | 1.632 ms | 0.81; 14.323 µs | 1,912,848 B; 33,850 allocs |
+| Linked chain, 100 Cues / 200 Actions | 76.31 ms | 81.51 ms | 85.01 ms | 5.200 ms | 1.49; 26.401 µs | 3,808,754 B; 67,342 allocs |
+| Scheduled linked chain, 25 Cues / 50 Actions | 22.50 ms | 23.16 ms | 23.67 ms | 0.659 ms | 0.35; 6.578 µs | 969,055 B; 17,215 allocs |
+
+The scheduled 25-Cue case recorded schedule jitter P50/P95/P99 of
+`0.772/1.614/4.360 ms`. The corresponding engine execution P99 includes the
+configured Cue start delays.
+
+Concurrent nested Mixed Cue bursts use 100 bursts per concurrency setting.
+The per-GO percentiles aggregate all GO samples in those bursts:
+
+| GO concurrency / Go CPUs | Per-GO P50 / P95 / P99 | Burst P50 / P95 / P99 | Launch skew P50 / P95 / P99 | GC/burst | Allocations/burst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4 / 1 | 29.91 / 35.45 / 36.96 ms | 38.43 / 40.47 / 42.06 ms | 2.133 / 4.282 / 4.564 ms | 0.66 | 1,807,318 B; 33,416 allocs |
+| 4 / 4 | 42.61 / 44.68 / 45.70 ms | 43.93 / 45.26 / 46.57 ms | 3.375 / 8.959 / 12.08 ms | 0.91 | 1,911,128 B; 35,458 allocs |
+| 8 / 1 | 64.35 / 77.87 / 91.41 ms | 85.46 / 90.33 / 91.65 ms | 4.979 / 9.793 / 10.698 ms | 1.35 | 3,618,000 B; 66,889 allocs |
+| 8 / 4 | 81.09 / 93.69 / 95.96 ms | 92.79 / 95.55 / 96.73 ms | 5.333 / 11.58 / 17.92 ms | 1.82 | 3,826,055 B; 70,990 allocs |
+
+Per-GO latency jitter P95 was `5.874/11.626/14.978/42.587 ms` in the table
+row order; burst-completion jitter P95 was `2.130/1.387/5.034/7.453 ms`.
+
+For a sustained reference Rehearsal, 10 measured sessions each executed 100
+GO requests over 100 Cues / 200 Actions, yielding 1,000 GO latency samples.
+Per-GO P50/P95/P99 was `2.487/3.353/3.648 ms`; P95 jitter was `0.865 ms`.
+The 100-GO session averaged 15.10 GC cycles, `247.226 µs` of GC pause,
+`39,187,287 B`, and 297,769 allocations.
+
+STOP and Emergency Blackout were measured with 32 delayed GO Cues active at
+each operation. The callback was a simulation test double:
+
+| Operation | P50 | P95 | P99 | Latency jitter P95 | GC/op; pause/op | Allocations/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| STOP | 10.08 ms | 11.74 ms | 12.29 ms | 1.660 ms | 0.01; 0.166 µs | 204,269 B; 4,504 allocs |
+| Emergency Blackout | 10.55 ms | 12.05 ms | 12.11 ms | 1.506 ms | 0.01; 0.189 µs | 209,250 B; 4,633 allocs |
+
+These local benchmark process trees reported maximum RSS of about
+`215–219 MiB` for the 24-Action, STOP/Blackout, and burst commands. The burst
+command took 27.82 seconds wall time (13.89 user / 12.17 system seconds); the
+32-Cue safety command took 17.96 seconds (15.45 user / 4.03 system seconds).
+RSS includes test setup, schema migrations and SQLite fixtures; it is not Hub
+service memory or a Pi deployment measurement.
+
+The repeated 24-Action Mac medians are close to the previous M3 measurements.
+The larger current-source measurements show no evidence to justify a new
+engine optimization on this host. Pi CPU/RAM controllers and Pi tail latency
+remain unqualified until the isolated Pi identity becomes available.
+
 ## Separate ACL component measurements
 
 The live-session and Project authorization benchmark was run separately on the

@@ -11,6 +11,10 @@
 
 ## Critical-path work and evidence
 
+### Current-source local performance refresh
+
+The simulator-only Apple M3 refresh is recorded in `docs/architecture/cue-execution-performance-qualification.md`. It was repeated because Cue GO began loading Session foundation state and applying the manual-restore gate, and Runtime Control's STOP wait changed from 2 to 5 seconds after the previous Mac baseline. The flat/linked 24-Action P50/P95/P99 remained close to the earlier M3 figures; larger Mixed and linked-chain cases, delayed scheduling, burst/sustained rehearsal, STOP, and Emergency Blackout are tabulated in the report. This run used temporary SQLite roots and a Digital Twin; no physical executor was called. The local process RSS includes fixtures and is not deployed Hub memory. No performance optimization is justified by these Mac results. Raspberry Pi 4 ARM64 timing, CPU/RAM, GC/allocations, and schedule behavior remain **PERFORMANCE QUALIFICATION PENDING**; do not retry SSH without a new isolated-connectivity premise.
+
 Added `TestIsolatedInstalledCopyProjectACLAndVaultRollback` in `internal/update/installed_copy_integration_test.go`. It uses a disposable Linux install, fake systemd/Doctor, local readiness server and temporary SQLite/Vault roots. The test starts from schema 52, seeds a published Snapshot and Vault object, migrates to 53 and stores Project grants, then runs the actual update Service, Installer and Snapshotter. Dry-run must leave state unchanged. A simulated bad candidate migrates to the current schema, then changes grants, deletes the Snapshot, creates a candidate-only Project and tampers with Vault bytes. Rollback must restore the old binary/config and schema 53, SQLite integrity and foreign keys, the original Project/grants/read-only cutover preview, the published Snapshot/Cue manifest and Vault object bytes. Reopening with current code then migrates the restored database forward without losing the grant or Snapshot.
 
 - Linux ARM64 Go 1.26 focused normal test: PASS.
