@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/ali96adil/StageCore/internal/contracts"
 	"github.com/ali96adil/StageCore/internal/domain"
 	"github.com/ali96adil/StageCore/internal/httpaction"
+	"github.com/ali96adil/StageCore/internal/scriptaction"
 )
 
 type dispatchProbe struct {
@@ -261,4 +263,81 @@ func TestHTTPActionSuppressesResultAfterDispatchAuthorityRevocation(t *testing.T
 	if checks.Load() < 3 {
 		t.Fatalf("dispatch authority checks=%d, want admission, network dispatch, and result delivery", checks.Load())
 	}
+}
+
+func TestScriptActionStopsRunningChildAfterDispatchAuthorityRevocation(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedMarker := t.TempDir() + "/script-completed.txt"
+	target, err := json.Marshal(map[string]any{
+		"executable": executable,
+		"arguments":  []string{"-test.run=TestRuntimeControlScriptHelperWaitForAuthorityRevocation", "--", completedMarker},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	ctx := WithDispatchAuthorization(context.Background(), func(context.Context, capability.Request) error {
+		if revoked.Load() {
+			return capability.ErrDispatchAuthorityRevoked
+		}
+		return nil
+	})
+	executor := newStoppableExecutor(scriptaction.New())
+	resultCh := make(chan capability.Result, 1)
+	go func() {
+		resultCh <- executor.Execute(ctx, capability.Request{
+			ExecutionID: "script-action-revoked-in-flight", ProjectID: "project-a",
+			SessionID: "show-a", RuntimeSnapshotID: "snapshot-a", CorrelationID: "cue-script",
+			Capability: scriptaction.CapabilityKey,
+			Target:     &capability.Target{Ref: "SCRIPT-LOCAL", LogicalType: "script", Configuration: target},
+			Parameters: json.RawMessage(`{}`), TimeoutMS: 2000,
+		})
+	}()
+	startedMarker := completedMarker + ".started"
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(startedMarker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Script child did not start its local helper")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	revoked.Store(true)
+	var result capability.Result
+	select {
+	case result = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Script Action did not stop after authority revocation")
+	}
+	if result.Result != domain.ExecutionFailed || result.ErrorCode != capability.DispatchAuthorityRevokedCode ||
+		result.AckLevel != contracts.AckAccepted || result.DispatchNotAttempted {
+		t.Fatalf("in-flight Script Action result lost its attempted-dispatch semantics: %+v", result)
+	}
+	if _, err := os.Stat(completedMarker); !os.IsNotExist(err) {
+		t.Fatalf("Script child continued its side effect after authority revocation; stat error=%v", err)
+	}
+}
+
+func TestRuntimeControlScriptHelperWaitForAuthorityRevocation(t *testing.T) {
+	completedMarker, ok := runtimeControlHelperMarker()
+	if !ok {
+		return
+	}
+	_ = os.WriteFile(completedMarker+".started", []byte("started"), 0o600)
+	time.Sleep(400 * time.Millisecond)
+	_ = os.WriteFile(completedMarker, []byte("completed"), 0o600)
+}
+
+func runtimeControlHelperMarker() (string, bool) {
+	for index, value := range os.Args {
+		if value == "--" && index+1 < len(os.Args) {
+			return os.Args[index+1], true
+		}
+	}
+	return "", false
 }

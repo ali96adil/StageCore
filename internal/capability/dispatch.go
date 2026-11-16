@@ -17,6 +17,11 @@ func WithDispatchCheck(ctx context.Context, check func(context.Context) error) c
 	return context.WithValue(ctx, dispatchCheckKey{}, check)
 }
 
+func HasDispatchCheck(ctx context.Context) bool {
+	check, ok := ctx.Value(dispatchCheckKey{}).(func(context.Context) error)
+	return ok && check != nil
+}
+
 func CheckDispatch(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err

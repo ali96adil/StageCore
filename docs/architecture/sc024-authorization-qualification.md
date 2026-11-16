@@ -2446,3 +2446,22 @@ Race dispatch tests, full normal and Race tests for `internal/httpaction`,
 `internal/runtimecontrol`, and `internal/scriptaction`, `go vet` for those
 packages, and `git diff --check` pass. Production ACL remains disabled; no
 production service, external endpoint, or physical output was used.
+
+## SC-024 continuation · 2026-11-16 · in-flight Script Action revocation
+
+The post-dispatch result fence did not stop a Script child that was already
+running when its Project grant was revoked. Red-first
+`TestScriptActionStopsRunningChildAfterDispatchAuthorityRevocation` waited for
+a local helper child to start, revoked its test authority, and observed the
+helper's later marker side effect before cancellation was added.
+
+When a dispatch check is attached, Script Action now polls that live check
+while its child runs and cancels the bounded child context on revocation; the
+existing result fence then withholds the child outcome. Legacy executions with
+no dispatch check do not create a watcher or poll. The isolated regression
+requires a generic revoked-authority failure, preserves the accepted ACK and
+attempted-dispatch classification, and confirms the delayed local marker was
+not written. This is best-effort cancellation: it cannot retract effects that
+occur before revocation is observed or guarantee termination of subprocesses
+spawned by the configured child. Whole-server SC-024 qualification remains
+open, and Production ACL remains disabled.

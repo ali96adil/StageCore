@@ -22,6 +22,7 @@ const (
 	defaultTimeout = 5 * time.Second
 	maxTimeout     = 30 * time.Second
 	maxArguments   = 128
+	dispatchPoll   = 50 * time.Millisecond
 )
 
 type Executor struct{}
@@ -112,6 +113,8 @@ func (Executor) Execute(ctx context.Context, req capability.Request) capability.
 	if err := cmd.Start(); err != nil {
 		return scriptFailure("SCRIPT_START_FAILED", "Script child process could not be started", contracts.AckNone)
 	}
+	stopWatching := watchDispatchAuthority(execCtx, cancel)
+	defer stopWatching()
 	err := cmd.Wait()
 	if err == nil {
 		return capability.Result{Result: domain.ExecutionCompleted, AckLevel: contracts.AckAccepted, ResponseSummary: "Script child process exited successfully"}
@@ -127,6 +130,36 @@ func (Executor) Execute(ctx context.Context, req capability.Request) capability.
 		return scriptFailure(fmt.Sprintf("SCRIPT_EXIT_%d", exitErr.ExitCode()), fmt.Sprintf("Script child process exited with status %d", exitErr.ExitCode()), contracts.AckAccepted)
 	}
 	return scriptFailure("SCRIPT_EXECUTION_FAILED", "Script child process failed", contracts.AckAccepted)
+}
+
+func watchDispatchAuthority(ctx context.Context, cancel context.CancelFunc) func() {
+	if !capability.HasDispatchCheck(ctx) {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(dispatchPoll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				if errors.Is(capability.CheckDispatch(ctx), capability.ErrDispatchAuthorityRevoked) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 func scriptTimeout(timeoutMS int64) time.Duration {
