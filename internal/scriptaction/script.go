@@ -84,6 +84,31 @@ func (Executor) Execute(ctx context.Context, req capability.Request) capability.
 		}
 		cmd.Dir = directory
 	}
+	if err := capability.CheckDispatch(execCtx); err != nil {
+		switch {
+		case errors.Is(err, capability.ErrDispatchAuthorityRevoked):
+			return capability.Result{
+				Result: domain.ExecutionFailed, AckLevel: contracts.AckNone,
+				ErrorCode:            capability.DispatchAuthorityRevokedCode,
+				ResponseSummary:      "Script Action authority ended before child process start",
+				DispatchNotAttempted: true,
+			}
+		case errors.Is(execCtx.Err(), context.DeadlineExceeded):
+			return capability.Result{
+				Result: domain.ExecutionTimedOut, AckLevel: contracts.AckNone,
+				ErrorCode: "SCRIPT_TIMEOUT", ResponseSummary: "Script Action timed out before child process start",
+				DispatchNotAttempted: true,
+			}
+		case errors.Is(execCtx.Err(), context.Canceled):
+			return capability.Result{
+				Result: domain.ExecutionCancelled, AckLevel: contracts.AckNone,
+				ErrorCode: "SCRIPT_CANCELLED", ResponseSummary: "Script Action was cancelled before child process start",
+				DispatchNotAttempted: true,
+			}
+		default:
+			return scriptFailure("SCRIPT_DISPATCH_REJECTED", "Script Action was rejected before child process start", contracts.AckNone)
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return scriptFailure("SCRIPT_START_FAILED", "Script child process could not be started", contracts.AckNone)
 	}

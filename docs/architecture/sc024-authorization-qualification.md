@@ -2387,3 +2387,42 @@ reproduced HTTP 201 after the Owner logged out at that boundary; the fixed
 response is a non-retryable committed-effect denial, while the observation
 remains stored. The test uses a simulated reported state and sends no device
 command. Focused normal and Race coverage passes.
+
+## SC-024 continuation · 2026-11-16 · HTTP Action network dispatch fence
+
+Runtime Control checked live Project dispatch authority before entering a Cue
+adapter, but the HTTP Action then parsed the target, resolved any configured
+secret, and called `http.Client.Do` without another check at its transport
+boundary. A red-first regression using a local loopback HTTP server revoked the
+authority after Runtime Control's admission check and reproduced the request
+reaching the server. The HTTP executor now wraps the configured RoundTripper
+with a request-scoped dispatch check; the check applies to initial requests and
+redirect follow-ups while preserving the caller's Client and Transport
+configuration. A denied first request returns `DispatchNotAttempted`; if a
+prior redirect request was already sent, the result does not claim the action
+was unsent.
+
+`TestHTTPActionRechecksDispatchAuthorityBeforeNetworkRequest` verifies that a
+revoked first request sends no bytes and allows safe retry classification.
+`TestHTTPActionRechecksDispatchAuthorityBeforeRedirectFollowup` verifies the
+initial 307 may already have been observed but a redirected request is blocked
+after revocation and is not described as unattempted. Both tests use only local
+loopback servers. Full normal tests for `internal/httpaction` and
+`internal/runtimecontrol`, focused normal/Race dispatch tests, `go vet` for
+both packages, formatting, and diff checks passed. No production ACL, external
+network endpoint, service, or physical output was used; production ACL remains
+disabled.
+
+The same review found a local process adapter gap: Script Actions could pass
+Runtime Control admission and start their configured child process without
+checking the dispatch fence again. Red-first
+`TestScriptActionDoesNotStartChildAfterDispatchAuthorityRevocation` observed
+the helper process write its marker despite revoked authority. The Script
+executor now checks immediately before `cmd.Start` and returns
+`DispatchNotAttempted` only when no child process was started. The regression
+uses a local `/bin/sh` helper and a temporary marker; it does not launch a
+configured application or hardware command. Full normal tests across
+`internal/httpaction`, `internal/runtimecontrol`, and `internal/scriptaction`,
+focused Race coverage, `go vet` for all three packages, and diff/format checks
+passed. Full normal and Race tests for all three packages passed, as did
+`go vet` and diff/format checks.
