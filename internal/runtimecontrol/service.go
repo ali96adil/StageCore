@@ -100,6 +100,8 @@ type Service struct {
 type activeRun struct {
 	requestID     string
 	correlationID string
+	cueID         string
+	resources     []string
 	done          chan struct{}
 	cancel        context.CancelFunc
 }
@@ -715,6 +717,9 @@ func (s *Service) Go(ctx context.Context, req CueRequest) contracts.CommandResul
 	// Every request admitted through this service uses its serialized,
 	// persisted admission decision. Direct CueEngine requests remain strict.
 	runCtx = cueengine.WithConcurrentCueGo(runCtx)
+	runCtx = cueengine.WithCueGoAdmission(runCtx, func(manifest snapshot.Manifest, group []snapshot.Cue) *contracts.CommandResult {
+		return s.admitCueOutputResources(session.ID, req.RequestID, manifest, group)
+	})
 	if runs == nil {
 		runs = make(map[string]activeRun)
 		s.active[session.ID] = runs

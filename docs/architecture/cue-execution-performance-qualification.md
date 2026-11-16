@@ -557,3 +557,49 @@ current-source Pi run cannot start until the isolated endpoint is reachable.
 Continue software work while access is unavailable. Physical outputs remained
 simulated; this report does not qualify hardware or production release. Keep
 production services/data untouched and Production Project ACL disabled.
+
+## 2026-11-16 output-admission delta — local ARM64 simulation
+
+The concurrent-Cue output reservation added to Runtime Control was measured
+separately from Engine completion and ACL/HTTP. The host was an Apple M3 Max
+(`darwin/arm64`); all runtime output tests used a simulated executor and made
+no device or network calls.
+
+The admission microbenchmark resolves six target configurations for a nested
+six-Cue/24-Action group (four Actions per target) and checks the active-run
+reservation under one and four Go CPUs. An initial version reparsed each
+repeated target for every Action. Deduplicating `TargetRef` within the selected
+group reduced the measured admission cost:
+
+| Admission implementation | Go CPUs | P50 | P95 | P99 | P95 jitter | Allocated bytes / allocs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before per-group target de-duplication | 1 | 57.96 µs | 126.3 µs | 167.8 µs | 68.29 µs | 31,582 B / 732 |
+| After per-group target de-duplication | 1 | 19.46 µs | 51.50 µs | 83.21 µs | 32.04 µs | 8,877 B / 186 |
+| After per-group target de-duplication | 4 | 14.96 µs | 23.96 µs | 61.83 µs | 9.000 µs | 8,885 B / 186 |
+
+The final 1-CPU sample improved P95 by about 59% and allocation volume by about
+72% versus the initial implementation. These are admission-only samples, not
+full Cue latency or Pi qualification. Explicit tablet/output group IDs come
+from target configuration; generic Project alias `group_name` is not treated as
+a physical identity because it may describe an organizational grouping.
+
+`BenchmarkMixedCueGroupExecution` separately measured full simulated Engine
+completion for flat and linked 24-Action groups, 10 samples per case and CPU
+setting. P99 is the top sample in this small run:
+
+| Workload | Go CPUs | P50 / P95 / P99 | Latency jitter P95 | Schedule jitter P50 / P95 / P99 | Allocated bytes / allocs |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Flat Mixed, 24 Actions | 1 | 10.15 / 13.49 / 13.49 ms | 3.335 ms | — | 441,345 B / 8,258 |
+| Flat Mixed, 24 Actions | 4 | 10.30 / 13.36 / 13.36 ms | 3.065 ms | — | 456,135 B / 8,554 |
+| Linked compound, 6 Cues / 24 Actions | 1 | 9.504 / 12.66 / 12.66 ms | 3.155 ms | — | 452,196 B / 8,369 |
+| Linked compound, 6 Cues / 24 Actions | 4 | 10.19 / 13.47 / 13.47 ms | 3.280 ms | — | 477,775 B / 8,852 |
+| Scheduled linked compound, 6 Cues / 24 Actions | 1 | 23.13 / 24.32 / 24.32 ms | 1.194 ms | 1.282 / 1.841 / 2.221 ms | 453,558 B / 8,385 |
+| Scheduled linked compound, 6 Cues / 24 Actions | 4 | 23.71 / 24.88 / 24.88 ms | 1.177 ms | 0.945 / 1.175 / 1.215 ms | 470,271 B / 8,685 |
+
+The full Runtime Control reference rehearsal (100 Cues / 200 Actions, one
+session and 100 GO samples) recorded P50/P95/P99 `2.487/3.018/3.301 ms`, P95
+jitter `0.531 ms`, 17 GC cycles, `692,038 ns` GC pause, `39,824,392 B`, and
+301,310 allocations. This workload uses the simulator adapter and is not a
+linked group; linked-group admission cost is isolated in the microbenchmark
+above. Current-source Pi CPU/RAM, P95/P99, scheduling, and safety-command
+qualification remain **PERFORMANCE QUALIFICATION PENDING**.

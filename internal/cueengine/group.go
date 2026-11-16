@@ -15,6 +15,19 @@ import (
 // cancelling the latter prevents durable execution and command finalization.
 type delayStopKey struct{}
 
+type cueGoAdmissionKey struct{}
+
+// CueGoAdmission runs after the immutable selected Cue group is resolved but
+// before execution rows, session position, or outputs are changed. Runtime
+// Control uses it to reserve physical output resources atomically.
+type CueGoAdmission func(snapshot.Manifest, []snapshot.Cue) *contracts.CommandResult
+
+// WithCueGoAdmission lets the caller enforce additional Runtime admission
+// policy against the exact Cue group selected by the Cue Engine.
+func WithCueGoAdmission(ctx context.Context, admission CueGoAdmission) context.Context {
+	return context.WithValue(ctx, cueGoAdmissionKey{}, admission)
+}
+
 // WithDelayStop lets RuntimeControl interrupt a pending start delay without
 // cancelling database writes used to persist the Cue's terminal result.
 func WithDelayStop(ctx context.Context, stop <-chan struct{}) context.Context {

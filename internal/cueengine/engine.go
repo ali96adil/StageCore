@@ -146,6 +146,12 @@ func (e *Engine) executeReserved(ctx context.Context, sessionID string, command 
 	if groupErr != nil {
 		return rejection(command.CommandID, "CUE_GROUP_INVALID", "VALIDATION", groupErr.Error(), false, selected.ID)
 	}
+	if admission, ok := ctx.Value(cueGoAdmissionKey{}).(CueGoAdmission); ok && admission != nil {
+		if result := admission(manifest, group); result != nil {
+			result.CommandID = command.CommandID
+			return *result
+		}
+	}
 	linkedIDs := linkedCueIDs(group)
 
 	cueExecution, err := e.store.CreateCueExecution(ctx, sessionID, selected.ID, command.CorrelationID, command.Issuer)
